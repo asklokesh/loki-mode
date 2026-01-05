@@ -5,11 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.0] - 2026-01-05
+
+### Added - Full SWE-bench Lite Benchmark (300 Problems)
+
+**99.67% Patch Generation on SWE-bench Lite** - 299/300 problems successfully generated patches!
+
+| Metric | Value |
+|--------|-------|
+| Patch Generation | 99.67% |
+| Generated | 299/300 |
+| Errors | 1 |
+| Model | Claude Opus 4.5 |
+| Time | 6.17 hours |
+
+### Changed
+- Updated competitive analysis with full SWE-bench results
+- Full results stored in `benchmarks/results/2026-01-05-01-24-17/`
+
 ## [2.22.0] - 2026-01-05
 
-### Added - SWE-bench Lite Benchmark Results
+### Added - SWE-bench Lite Benchmark Results (50 Problems)
 
-**100% Patch Generation on SWE-bench Lite** - All 50 problems successfully generated patches!
+**100% Patch Generation on SWE-bench Lite** - Initial 50 problems successfully generated patches!
 
 | Metric | Value |
 |--------|-------|

@@ -16,7 +16,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 | **Agent Count** | 37 types | 64+ agents | 5 roles | Unlimited | 8 parallel | 1 autonomous |
 | **Parallel Execution** | Yes (100+) | Yes (swarms) | Sequential | Yes (crews) | Yes (8 worktrees) | Yes (fleet) |
 | **Published Benchmarks** | **98.17% HumanEval** | None | 85.9-87.7% HumanEval | None | ~250 tok/s | 15% complex tasks |
-| **SWE-bench Score** | 100% patch gen (50/50) | Unknown | Unknown | Unknown | Unknown | 15% complex |
+| **SWE-bench Score** | **99.67% patch gen (299/300)** | Unknown | Unknown | Unknown | Unknown | 15% complex |
 | **Full SDLC** | Yes (8 phases) | Yes | Partial | Partial | No | Partial |
 | **Business Ops** | **Yes (8 agents)** | No | No | No | No | No |
 | **Enterprise Security** | `--dangerously-skip-permissions` | MCP sandboxed | Sandboxed | Audit logs, RBAC | Staged autonomy | Sandboxed |
@@ -174,17 +174,17 @@ Loki Mode has **unique differentiation** in business operations automation but f
 
 **Failed Problems:** HumanEval/32, HumanEval/38, HumanEval/132
 
-### SWE-bench Lite Results
+### SWE-bench Lite Results (Full 300 Problems)
 
 | Metric | Value |
 |--------|-------|
-| **Patch Generation** | **100%** |
-| Generated | 50/50 problems |
-| Errors | 0 |
+| **Patch Generation** | **99.67%** |
+| Generated | 299/300 problems |
+| Errors | 1 |
 | Model | Claude Opus 4.5 |
-| Time | 56.9 minutes |
+| Time | 6.17 hours |
 
-**Note:** Patches generated successfully for all 50 SWE-bench Lite problems. Full validation requires running the Docker-based SWE-bench harness to apply patches and execute test suites.
+**Note:** Patches generated for 299 out of 300 SWE-bench Lite problems. Full validation (resolve rate) requires running the Docker-based SWE-bench harness to apply patches and execute test suites.
 
 ---
 
@@ -193,7 +193,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 ### Priority 1: Benchmarks (COMPLETED)
 - **Gap:** ~~No published HumanEval or SWE-bench scores~~ RESOLVED
 - **Result:** 98.17% HumanEval Pass@1 (beats MetaGPT by 10.5%)
-- **Result:** 100% SWE-bench Lite patch generation (50/50)
+- **Result:** 99.67% SWE-bench Lite patch generation (299/300)
 - **Next:** Run full SWE-bench harness for resolve rate validation
 
 ### Priority 2: Security Model (Critical for Enterprise)
