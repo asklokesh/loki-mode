@@ -8,13 +8,13 @@
 
 | Metric | Value |
 |--------|-------|
-| **Patch Generation Rate** | **99.67%** (299/300) |
-| Problems Solved | 299 |
+| **Patch Generation Rate** | **97.67%** (293/300) |
+| Problems Solved | 293 |
 | Total Problems | 300 |
-| Fixed by RARV Retry | 0 |
+| Errors (Timeouts) | 7 |
 | Average Attempts | 1.0 |
-| Total Time | ~3.5 hours |
-| Avg Time/Problem | 42s |
+| Total Time | ~4.2 hours |
+| Avg Time/Problem | 50s |
 
 ## System Architecture
 
@@ -50,10 +50,10 @@ Maximum 3 retry attempts per problem.
 
 | System | SWE-bench Lite Patch Gen |
 |--------|--------------------------|
-| **Loki Mode (multi-agent)** | **99.67%** (299/300) |
+| **Loki Mode (multi-agent)** | **97.67%** (293/300) |
 | Direct Claude (single agent) | 99.67% (299/300) |
 
-After timeout optimization, the multi-agent RARV pipeline matches single-agent performance.
+The multi-agent RARV pipeline generates valid patches for the vast majority of problems.
 
 ## Methodology
 
@@ -66,7 +66,7 @@ After timeout optimization, the multi-agent RARV pipeline matches single-agent p
 
 - **GitHub**: [asklokesh/claudeskill-loki-mode](https://github.com/asklokesh/claudeskill-loki-mode)
 - **License**: MIT
-- **Version**: 2.25.0
+- **Version**: 2.26.0
 
 ## Running Loki Mode
 

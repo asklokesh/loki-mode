@@ -4,7 +4,7 @@
 # Model Information
 model:
   name: "loki-mode"
-  version: "2.25.0"
+  version: "2.26.0"
   base_model: "claude-opus-4-5-20251101"
   type: "multi-agent-system"
 
@@ -43,13 +43,13 @@ benchmark:
 
 # Results Summary
 results:
-  patch_generation_rate: 99.67
-  problems_solved: 299
+  patch_generation_rate: 97.67
+  problems_solved: 293
   problems_total: 300
-  fixed_by_rarv: 0
+  errors_timeouts: 7
   avg_attempts: 1.0
-  total_time_seconds: 12600
-  avg_time_per_problem_seconds: 42
+  total_time_seconds: 15108
+  avg_time_per_problem_seconds: 50
 
 # Submission Information
 submission:
