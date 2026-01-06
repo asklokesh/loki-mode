@@ -5,12 +5,48 @@ Video demonstration of Loki Mode - Multi-agent autonomous startup system.
 ## Quick Start
 
 ```bash
-# Record terminal demo with asciinema
-./demo/record-demo.sh
+# Full end-to-end demo with screen recording (RECOMMENDED)
+./demo/record-full-demo.sh simple-todo
 
-# Or manually run the demo
-./demo/run-demo.sh
+# Or run the simulated terminal demo
+./demo/run-demo-auto.sh
 ```
+
+## Full End-to-End Demo
+
+The `record-full-demo.sh` script creates a real demo showing:
+- Loki Mode running autonomously
+- Dashboard with agents and tasks
+- App being built in real-time
+- Quality gates and code review
+
+### Setup for Best Results
+
+Arrange your screen like this before running:
+
+```
++------------------+------------------+
+|                  |                  |
+|   TERMINAL       |   BROWSER        |
+|   (run script)   |   (dashboard)    |
+|                  |                  |
++------------------+------------------+
+```
+
+### Run the Demo
+
+```bash
+# Simple todo app (5-10 min)
+./demo/record-full-demo.sh simple-todo
+
+# Static landing page (3-5 min)
+./demo/record-full-demo.sh static-landing
+
+# Full-stack app (15-30 min)
+./demo/record-full-demo.sh full-stack
+```
+
+The dashboard opens at: http://127.0.0.1:57374/dashboard/index.html
 
 ## Demo Contents
 
