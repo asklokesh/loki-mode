@@ -5,7 +5,7 @@ description: Multi-agent autonomous startup system for Claude Code. Triggers on 
 
 # Loki Mode - Multi-Agent Autonomous Startup System
 
-> **Version 2.28.0** | PRD to Production | Zero Human Intervention
+> **Version 2.29.0** | PRD to Production | Zero Human Intervention
 > Research-enhanced with 2025 patterns: Anti-Sycophancy, Episodic Memory, Hierarchical Planning, ToolOrchestra Efficiency
 
 ---
@@ -428,4 +428,4 @@ Detailed documentation is split into reference files for progressive loading:
 
 ---
 
-**Version:** 2.28.0 | **Lines:** ~410 | **Research-Enhanced for Claude Code Agent Skills**
+**Version:** 2.29.0 | **Lines:** ~415 | **Research-Enhanced for Claude Code Agent Skills**

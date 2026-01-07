@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.29.0] - 2026-01-07
+
+### Added - Research-Backed Multi-Agent Best Practices
+
+**Research sources analyzed (15+ papers/guides):**
+- [Anthropic: Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)
+- [Stanford/Harvard: Demo-to-Deployment Gap](https://www.marktechpost.com/2025/12/24/)
+- [Maxim AI: Production Multi-Agent Systems](https://www.getmaxim.ai/articles/best-practices-for-building-production-ready-multi-agent-systems/)
+- [UiPath: Agent Builder Best Practices](https://www.uipath.com/blog/ai/agent-builder-best-practices)
+- [Assessment Framework for Agentic AI (arXiv 2512.12791)](https://arxiv.org/html/2512.12791v1)
+- [Measurement Imbalance in Agentic AI (arXiv 2506.02064)](https://arxiv.org/abs/2506.02064)
+
+**New Metrics & Schema Fields:**
+- `correlation_id`: Distributed tracing across multi-agent sessions (Maxim AI)
+- `tool_reliability_rate`: Separate from tool selection - key demo-to-deploy gap (Stanford/Harvard)
+- `recovery_rate`: Successful retries / total retries
+- `goal_adherence`: Did agent stay on task? (0.0-1.0)
+
+**New Principles:**
+- **Single-Responsibility Agents**: Each agent has ONE clear goal and narrow scope (UiPath)
+- **Multi-Dimensional Evaluation**: Technical + Human-Centered + Safety + Economic axes
+
+**Model Selection Clarification:**
+- **Opus**: Planning and architecture ONLY
+- **Sonnet**: Development and functional testing
+- **Haiku**: Unit tests, monitoring, and simple tasks
+
+### Changed
+- SKILL.md: Added Single-Responsibility Principle to subagent guidance
+- SKILL.md: Clarified model selection (Opus=planning, Sonnet=dev, Haiku=tests)
+- SKILL.md: Dynamic Agent Selection table now shows Planning/Development/Testing columns
+- tool-orchestration.md: Added correlation_id, tool_reliability_rate to schema
+- tool-orchestration.md: Added Multi-Dimensional Evaluation section
+- tool-orchestration.md: Expanded sources with 8 new research references
+
+### Research Validation
+Loki Mode already implements most research-backed patterns:
+| Pattern | Research Source | Status |
+|---------|----------------|--------|
+| Evaluator-optimizer | Anthropic | RARV cycle |
+| Parallelization | Anthropic | Parallel review |
+| Routing | Anthropic | Model selection |
+| Failure handling | Maxim AI | Circuit breakers |
+| Skill library | Voyager | Procedural memory |
+| Four-pillar evaluation | arXiv 2512.12791 | Quality pillars |
+
+---
+
 ## [2.28.0] - 2026-01-06
 
 ### Added - ToolOrchestra-Inspired Efficiency & Reward System
