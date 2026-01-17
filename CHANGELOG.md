@@ -5,6 +5,68 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.36.6] - 2026-01-17
+
+### Validated - 2026 Research Resources (RLM, Token-Aware Planning, Claude Code Patterns)
+
+**Comprehensive validation of 8 external resources against Loki Mode v2.36.5. All patterns already implemented or not applicable.**
+
+#### Resources Analyzed
+
+| Resource | Key Patterns | Assessment |
+|----------|--------------|------------|
+| **arXiv 2512.24601 (RLM)** | Python REPL context, recursive self-invocation, 10M+ token handling | Different use case - extreme context scenarios, not Claude Code workflows |
+| **ysz/recursive-llm** | Depth-bound recursion, async parallelization, two-model optimization | Already covered via sub-agent architecture + parallel Haiku agents |
+| **Token-aware planning** | Context rot (<256k effective), sub-agent isolation, compaction | Already comprehensive (SKILL.md:880-920, run.sh compaction) |
+| **davila7/claude-code-templates** | 100+ agents, semantic validator, hooks with matchers | Loki has 37 specialized agents (better organization), guardrails, hooks |
+| **pguso/agents-from-scratch** | "Agents are loops, state, constraints" | Educational - Loki Mode IS the production implementation |
+| **Boris Cherny Tips (Jan 2026)** | 5 Claudes parallel, Opus thinking, ~42hr sessions, hooks | All present: 10+ Haiku parallel, model tiering, CONTINUITY.md |
+| **Inner/outer loop bottleneck** | AI dev creates CI/CD bottleneck | Loki Mode IS the solution - automated quality gates |
+| **azidan/codemap** | Symbol-to-line-range mapping, hash staleness, 60-80% token savings | Complementary MCP tool, not a pattern to implement |
+
+#### Key Findings
+
+**1. Recursive Language Models (MIT, Dec 2025):**
+- Handles 10M+ tokens via Python REPL context storage
+- Two-model optimization (expensive root, cheap branches)
+- Assessment: Specialized for extreme context, not typical Claude Code workflows
+- Loki Mode's CONTINUITY.md + compaction + sub-agents already sufficient
+
+**2. Token-Aware Planning / Context Engineering:**
+- Context rot phenomenon: effective window <256k even with 1M limit
+- Sub-agent architectures with clean context windows
+- ADK compaction triggers at configurable thresholds
+- Assessment: Already implemented (COMPACTION_INTERVAL=25, sub-agent isolation)
+
+**3. Claude Code Templates (davila7):**
+- 100+ agents, 159+ commands, semantic/reference validators
+- Proper hook specifications with tool matchers
+- Assessment: Loki has superior architecture (37 specialized vs generic templates)
+
+**4. CodeMap (azidan):**
+- Symbol-to-line-range precision reduces tokens 60-80%
+- Per-directory distributed indexing
+- Hash-based staleness detection
+- Assessment: Complementary MCP tool for I/O optimization, not core pattern
+
+#### Patterns Already Present in Loki Mode
+
+| External Pattern | Loki Mode Implementation |
+|-----------------|-------------------------|
+| Parallel execution (5 Claudes) | 10+ Haiku agents in parallel (SKILL.md:21) |
+| Model tiering | Opus/Sonnet/Haiku with explicit categories (SKILL.md:163-244) |
+| Background agents | run_in_background parameter (SKILL.md:247-267) |
+| Context compaction | COMPACTION_INTERVAL=25 (run.sh:140) |
+| Sub-agent isolation | Fresh context per sub-task (SKILL.md:920-928) |
+| Hooks system | Event-driven hooks (SKILL.md:758-792) |
+| CI/CD automation | 7 quality gates, deterministic outer loops (SKILL.md:540-558) |
+
+#### Conclusion
+
+**No updates needed.** Loki Mode v2.36.5 implements a superset of all analyzed patterns. Resources validated existing architecture rather than identifying gaps.
+
+---
+
 ## [2.36.5] - 2026-01-15
 
 ### Added - Antigravity/Amazon Q Comparison and Transformation Patterns
