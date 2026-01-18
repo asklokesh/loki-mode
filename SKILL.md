@@ -5,7 +5,7 @@ description: Multi-agent autonomous startup system for Claude Code. Triggers on 
 
 # Loki Mode - Multi-Agent Autonomous Startup System
 
-> **Version 2.36.10** | PRD to Production | Zero Human Intervention
+> **Version 2.36.11** | PRD to Production | Zero Human Intervention
 > Research-enhanced: OpenAI SDK, DeepMind, Anthropic, AWS Bedrock, Agent SDK, HN Production (2025)
 
 ---
@@ -70,6 +70,7 @@ Development <- QA <- Deployment <- Business Ops <- Growth Loop
 ### Essential Patterns
 
 **Simplicity First:** Start simple. Only escalate complexity when simpler approaches fail. 37 agents available, but most tasks need 1-3. (Anthropic)
+**Quality Over Velocity:** Velocity gains are TRANSIENT, quality degradation is PERSISTENT. Never sacrifice quality for speed. (arXiv 2511.04427v2)
 **Spec-First:** `OpenAPI -> Tests -> Code -> Validate`
 **TDD Workflow:** `Write failing tests -> Implement to pass -> Refactor` (Anthropic - preferred for new features)
 **Code Review:** `Blind Review (parallel) -> Debate (if disagree) -> Devil's Advocate -> Merge`
@@ -89,6 +90,10 @@ Development <- QA <- Deployment <- Business Ops <- Growth Loop
 **Deterministic Validation:** `LLM output -> Rule-based checks -> Retry or approve` (HN Production)
 **Routing Mode:** `Simple task -> Direct dispatch | Complex task -> Supervisor orchestration` (AWS Bedrock)
 **E2E Browser Testing:** `Playwright MCP -> Automate browser -> Verify UI features visually` (Anthropic Harness)
+**Problem Classification:** `Classify problem type -> Apply domain expert hints -> Generate solution` (OptiMind)
+**Ensemble Solutions:** `Generate multiple solutions -> Select by consensus or feedback` (OptiMind)
+**Idempotent Operations:** All operations safe under retry. Use Kubernetes-style reconciliation. (k8s-valkey-operator)
+**Formal State Machines:** Explicit phase transitions with defined states. No ambiguous states. (k8s-valkey-operator)
 
 ---
 
@@ -347,6 +352,174 @@ Task(description="Refactor database layer for performance", prompt="...")     # 
 - **Supervisor Mode:** Full context - CONTINUITY.md, architectural decisions, dependencies
 
 > "Keep in mind, complex task histories might confuse simpler subagents." - AWS Best Practices
+
+### Problem Classification with Expert Hints (OptiMind Pattern)
+
+**Classify problems before solving. Apply domain-specific expert hints to reduce errors.**
+
+```yaml
+problem_classification:
+  purpose: "Categorize task -> Apply relevant expertise -> Generate solution"
+
+  categories:
+    crud_operations:
+      hints:
+        - "Check for existing similar endpoints before creating new"
+        - "Ensure proper input validation and error handling"
+        - "Follow RESTful conventions for HTTP methods"
+      common_errors: ["Missing validation", "Inconsistent naming", "N+1 queries"]
+
+    authentication:
+      hints:
+        - "Never store plaintext passwords"
+        - "Use secure session management"
+        - "Implement rate limiting on auth endpoints"
+      common_errors: ["Weak hashing", "Session fixation", "Missing CSRF"]
+
+    database_operations:
+      hints:
+        - "Always use parameterized queries"
+        - "Add appropriate indexes for queries"
+        - "Consider transaction boundaries"
+      common_errors: ["SQL injection", "Missing migrations", "Deadlocks"]
+
+    frontend_components:
+      hints:
+        - "Ensure accessibility (ARIA labels, keyboard navigation)"
+        - "Handle loading and error states"
+        - "Prevent XSS in user inputs"
+      common_errors: ["Missing error boundaries", "Memory leaks", "Prop drilling"]
+
+    infrastructure:
+      hints:
+        - "Use environment variables for configuration"
+        - "Implement health checks"
+        - "Plan for horizontal scaling"
+      common_errors: ["Hardcoded secrets", "Missing monitoring", "Single points of failure"]
+
+  workflow:
+    1. Classify incoming task into category
+    2. Load relevant hints from category
+    3. Include hints in agent prompt
+    4. Generate solution
+    5. Verify against common_errors list
+```
+
+**Research source:** [OptiMind (Microsoft Research)](https://www.microsoft.com/en-us/research/blog/optimind-a-small-language-model-with-optimization-expertise/)
+
+### Ensemble Solution Generation (OptiMind Pattern)
+
+**For critical decisions, generate multiple solutions and select by consensus.**
+
+```python
+# For critical tasks, use ensemble approach
+def solve_critical_task(task):
+    solutions = []
+
+    # Generate 3 independent solutions
+    for i in range(3):
+        solution = Task(
+            model="opus",
+            description=f"Solution attempt {i+1}",
+            prompt=f"Solve: {task}. This is attempt {i+1} of 3. Be thorough."
+        )
+        solutions.append(solution)
+
+    # Select by consensus or use feedback
+    if all_solutions_agree(solutions):
+        return solutions[0]  # Consensus
+    else:
+        # Use debate to resolve disagreement
+        return resolve_via_debate(solutions)
+```
+
+**When to use ensemble:**
+- Architecture decisions
+- Security-sensitive code
+- Database schema design
+- API contract changes
+
+**When NOT to use:**
+- Simple CRUD operations
+- Bug fixes with clear solution
+- Documentation updates
+
+### Formal State Machines (k8s-valkey-operator Pattern)
+
+**Define explicit state transitions. No ambiguous states allowed.**
+
+```yaml
+phase_state_machine:
+  states:
+    - bootstrap
+    - discovery
+    - architecture
+    - infrastructure
+    - development
+    - qa
+    - deployment
+    - business_ops
+    - growth_loop
+    - completed
+    - failed
+
+  transitions:
+    bootstrap:
+      success: discovery
+      failure: failed
+    discovery:
+      success: architecture
+      failure: bootstrap  # Retry with more context
+    architecture:
+      success: infrastructure
+      failure: discovery   # Need more requirements
+    infrastructure:
+      success: development
+      failure: architecture  # Design issue
+    development:
+      success: qa
+      failure: development  # Retry current feature
+    qa:
+      success: deployment
+      failure: development  # Fix and re-test
+    deployment:
+      success: business_ops
+      failure: qa  # Rollback and investigate
+    business_ops:
+      success: growth_loop
+      failure: deployment  # Re-deploy with fixes
+    growth_loop:
+      success: growth_loop  # Continuous
+      failure: business_ops
+
+  invariants:
+    - "Only one active state at a time"
+    - "All transitions logged to CONTINUITY.md"
+    - "Failed state requires explicit recovery action"
+    - "State changes trigger phase artifacts"
+```
+
+**Idempotent Operations:**
+```python
+# All operations must be safe to retry
+def safe_operation(task):
+    # Check if already completed
+    if task_already_done(task):
+        return existing_result(task)
+
+    # Create checkpoint before operation
+    checkpoint = create_checkpoint()
+
+    try:
+        result = execute_task(task)
+        mark_task_complete(task, result)
+        return result
+    except Exception as e:
+        restore_checkpoint(checkpoint)
+        raise
+```
+
+**Research source:** [k8s-valkey-operator](https://github.com/smoketurner/k8s-valkey-operator)
 
 ### E2E Testing with Playwright MCP (Anthropic Harness Pattern)
 
@@ -623,6 +796,66 @@ artifact_generation:
 **OpenAI insight:** "Layered defense - multiple specialized guardrails create resilient agents."
 
 See `references/quality-control.md` and `references/openai-patterns.md` for details.
+
+---
+
+## Velocity-Quality Feedback Loop (CRITICAL)
+
+**Research from arXiv 2511.04427v2 - empirical study of 807 repositories with LLM agent assistants.**
+
+### Key Findings
+
+| Metric | Finding | Implication |
+|--------|---------|-------------|
+| Initial Velocity | +281% lines added | Impressive but TRANSIENT |
+| Quality Degradation | +30% static warnings, +41% complexity | PERSISTENT problem |
+| Cancellation Point | 3.28x complexity OR 4.94x warnings | Completely negates velocity gains |
+
+### The Trap to Avoid
+
+```
+Initial excitement -> Velocity spike -> Quality degradation accumulates
+                                               |
+                                               v
+                               Complexity cancels velocity gains
+                                               |
+                                               v
+                               Frustration -> Abandonment cycle
+```
+
+**CRITICAL RULE:** Every velocity gain MUST be accompanied by quality verification.
+
+### Mandatory Quality Checks (Per Task)
+
+```yaml
+velocity_quality_balance:
+  before_commit:
+    - static_analysis: "Run ESLint/Pylint/CodeQL - warnings must not increase"
+    - complexity_check: "Cyclomatic complexity must not increase >10%"
+    - test_coverage: "Coverage must not decrease"
+
+  thresholds:
+    max_new_warnings: 0  # Zero tolerance for new warnings
+    max_complexity_increase: 10%  # Per file, per commit
+    min_coverage: 80%  # Never drop below
+
+  if_threshold_violated:
+    action: "BLOCK commit, fix before proceeding"
+    reason: "Velocity gains without quality are net negative"
+```
+
+### Metrics to Track
+
+```
+.loki/metrics/quality/
++-- warnings.json      # Static analysis warning count over time
++-- complexity.json    # Cyclomatic complexity per file
++-- coverage.json      # Test coverage percentage
++-- velocity.json      # Lines added/commits per hour
++-- ratio.json         # Quality/Velocity ratio (must stay positive)
+```
+
+**Research source:** [Cursor Impact Study (arXiv 2511.04427v2)](https://arxiv.org/html/2511.04427v2)
 
 ---
 
@@ -1281,4 +1514,4 @@ Detailed documentation is split into reference files for progressive loading:
 
 ---
 
-**Version:** 2.36.10 | **Lines:** ~1220 | **Research-Enhanced: 2026 Patterns (arXiv, HN, Labs, OpenCode, Cursor, Devin, Codex, Kiro, Antigravity, Amazon Q, RLM, Zencoder, Anthropic Best Practices)**
+**Version:** 2.36.11 | **Lines:** ~1350 | **Research-Enhanced: 2026 Patterns (arXiv, HN, Labs, OpenCode, Cursor, Devin, Codex, Kiro, Antigravity, Amazon Q, RLM, Zencoder, Anthropic, OptiMind, k8s-valkey-operator)**

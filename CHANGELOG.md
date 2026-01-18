@@ -5,6 +5,51 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.36.11] - 2026-01-17
+
+### Added - External Research Integration (Velocity-Quality, OptiMind, k8s-valkey-operator)
+
+**Analyzed three external sources and integrated key patterns into SKILL.md.**
+
+#### Research Sources Analyzed
+
+| Source | Key Findings |
+|--------|--------------|
+| [arXiv 2511.04427v2](https://arxiv.org/abs/2511.04427) | LLM agents: 281% velocity gains are TRANSIENT, 30% warnings + 41% complexity are PERSISTENT |
+| [Microsoft OptiMind](https://ai.azure.com/catalog/models/microsoft-optimind-sft) | Problem classification, domain expert hints, ensemble solution generation |
+| [k8s-valkey-operator](https://github.com/smoketurner/k8s-valkey-operator) | Formal state machines, idempotent operations, Kubernetes reconciliation patterns |
+
+#### Improvements Made
+
+1. **Velocity-Quality Feedback Loop (CRITICAL)** (New Section)
+   - Documented the arXiv finding: 3.28x complexity OR 4.94x warnings cancels ALL velocity gains
+   - Added mandatory quality checks per task (static analysis, complexity, coverage)
+   - Zero tolerance threshold for new warnings
+
+2. **Problem Classification with Expert Hints** (New Section - OptiMind Pattern)
+   - Categories: crud_operations, authentication, database_operations, frontend_components, infrastructure
+   - Domain-specific hints and common errors per category
+   - Enables targeted guidance before implementation
+
+3. **Ensemble Solution Generation** (New Section - OptiMind Pattern)
+   - Generate multiple solutions for complex tasks
+   - Select by consensus or feedback-based ranking
+   - When to use: architecture decisions, optimization problems
+
+4. **Formal State Machines** (New Section - k8s-valkey-operator Pattern)
+   - Explicit SDLC phase state machine with defined transitions
+   - Idempotent operations pattern (safe under retry)
+   - State invariants for each phase
+
+5. **Essential Patterns Updated**
+   - Added: Quality Over Velocity, Problem Classification, Ensemble Solutions, Idempotent Operations, Formal State Machines
+
+#### Key Insight
+
+The arXiv research provides empirical evidence for why Loki Mode's quality gates are critical: without them, velocity gains are completely negated by accumulated technical debt.
+
+---
+
 ## [2.36.10] - 2026-01-17
 
 ### Added - Anthropic Best Practices Integration

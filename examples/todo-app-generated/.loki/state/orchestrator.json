@@ -1,41 +1,31 @@
 {
-  "version": "2.16.0",
-  "startupId": "loki-test-20260102-234138",
+  "version": "2.36.10",
+  "startupId": "loki-validation-20260117-231321",
   "phase": "completed",
-  "subPhase": "success",
-  "prdPath": "/tmp/loki-mode-test-todo-app/PRD.md",
+  "subPhase": "validation-success",
+  "prdPath": "examples/todo-app-generated/PRD.md",
   "prdHash": "todo-app-simple-test",
-  "prdLastModified": "2026-01-02T23:41:38Z",
-  "completedAt": "2026-01-02T23:55:00Z",
+  "completedAt": "2026-01-17T23:18:30Z",
   "agents": {
     "active": [],
     "idle": [],
     "failed": [],
-    "totalSpawned": 15,
-    "totalTerminated": 15
+    "totalSpawned": 1,
+    "totalTerminated": 1
   },
   "circuitBreakers": {},
   "metrics": {
-    "tasksCompleted": 18,
-    "tasksFailed": 0,
-    "tasksInDeadLetter": 0,
-    "deployments": 0,
-    "rollbacks": 0,
-    "incidentsDetected": 0,
-    "incidentsResolved": 0,
-    "revenue": 0,
-    "customers": 0,
-    "agentComputeMinutes": 15,
-    "haikuAgentsUsed": 14,
-    "sonnetAgentsUsed": 0,
+    "validationTests": 8,
+    "testsPassed": 8,
+    "testsFailed": 0,
+    "issuesFixed": 1,
+    "filesModified": 3,
+    "totalDuration": "5 minutes",
     "opusAgentsUsed": 1,
-    "parallelBatches": 3
+    "sonnetAgentsUsed": 0,
+    "haikuAgentsUsed": 0
   },
-  "lastCheckpoint": "2026-01-02T23:55:00Z",
-  "lastBackup": null,
-  "lastLogRotation": null,
-  "currentRelease": "1.0.0",
+  "lastCheckpoint": "2026-01-17T23:18:30Z",
   "systemHealth": "green",
-  "pausedAt": null,
-  "pauseReason": null
+  "validationReport": "LOKI_v2.36.10_VALIDATION.md"
 }

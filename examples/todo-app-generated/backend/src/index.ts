@@ -1,6 +1,6 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import { initializeDatabase, closeDatabase } from './db';
+import { initDatabase } from './db/db';
 import todosRouter from './routes/todos';
 
 const app: Express = express();
@@ -10,14 +10,6 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Initialize database on startup
-try {
-  initializeDatabase();
-} catch (error) {
-  console.error('Failed to initialize database:', error);
-  process.exit(1);
-}
-
 // Routes
 app.use('/api', todosRouter);
 
@@ -26,19 +18,28 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'Backend server is running' });
 });
 
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Start server after database is ready
+async function start() {
+  try {
+    await initDatabase();
+    const server = app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('Shutting down gracefully...');
-  closeDatabase();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
+    // Graceful shutdown
+    process.on('SIGINT', () => {
+      console.log('Shutting down gracefully...');
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+start();
 
 export default app;

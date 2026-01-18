@@ -1,59 +1,55 @@
 # Loki Mode Working Memory
-Last Updated: 2026-01-02T23:55:00Z
+Last Updated: 2026-01-17T23:18:30Z
 Current Phase: completed
-Current Iteration: Final
+Current Iteration: v2.36.10 Validation Complete
 
 ## Active Goal
-Simple Todo App - COMPLETED ✅
+Simple Todo App - v2.36.10 VALIDATION COMPLETE
 
 ## Current Task
-- ID: ALL TASKS COMPLETED
-- Description: All 18 tasks successfully executed
+- ID: VALIDATION-COMPLETE
+- Description: All tests passed
 - Status: completed
-- Completion Time: ~15 minutes (with Haiku parallelization)
+- Duration: ~5 minutes
 
-## Just Completed
-ALL TASKS (001-018):
-- task-001: Project structure ✅
-- task-002: Backend initialization ✅
-- task-003: Frontend initialization ✅
-- task-004: Database setup ✅
-- task-005-008: API endpoints (parallel execution) ✅
-- task-009: API client ✅
-- task-010: useTodos hook ✅
-- task-011-012: TodoForm & TodoItem (parallel) ✅
-- task-013-015: TodoList, EmptyState, ConfirmDialog ✅
-- task-016: App assembly ✅
-- task-017: CSS styling ✅
-- task-018: E2E testing ✅
+## Session Summary
+
+### Tests Executed
+1. Backend startup - PASS
+2. Frontend build - PASS (301ms)
+3. Frontend dev server - PASS (port 3000)
+4. API Health - PASS
+5. API Create - PASS
+6. API Read - PASS
+7. API Update - PASS
+8. API Delete - PASS
+
+### Issues Fixed
+- better-sqlite3 native compilation failure on Node.js v25/Python 3.14
+- Solution: Replaced with sql.js (pure JS WebAssembly SQLite)
+
+### Files Modified
+- backend/package.json: Updated dependencies
+- backend/src/db/db.ts: Rewrote with sql.js wrapper
+- backend/src/index.ts: Async database init
+
+### Artifacts Generated
+- LOKI_v2.36.10_VALIDATION.md: Full validation report
 
 ## Performance Metrics
-- Total Tasks: 18
-- Completed: 18 (100%)
-- Failed: 0
-- Haiku Agents Used: 14
-- Sonnet Agents Used: 0
-- Opus Agents Used: 1 (architecture planning)
-- Parallel Executions: 3 batches (tasks 002-003, 005-008, 011-012)
-- Estimated Time Saved: 8x faster with parallelization
+- Total Time: ~5 minutes (of 15 minute budget)
+- Backend Install: 2s
+- Frontend Build: 301ms
+- API Tests: <1 minute
 
-## Active Blockers
-- (none)
+## Mistakes & Learnings
+1. Node.js v25.2.1 + Python 3.14 breaks native module compilation
+   - node-gyp relies on distutils (removed in Python 3.14)
+   - Solution: Use pure JS alternatives (sql.js, tsx)
 
-## Key Decisions This Session
-- Using Simple Todo App PRD for test
-- Local-only deployment (no cloud)
-- Tech Stack: React + TypeScript (frontend), Node.js + Express (backend), SQLite (database)
-
-## Working Context
-System starting fresh. Testing Loki Mode v2.16.0 with example PRD.
-PRD Requirements:
-- Add Todo (title input, submit button)
-- View Todos (list display, completion status)
-- Complete Todo (checkbox/button, visual indicator)
-- Delete Todo (delete button with confirmation)
-- No auth, no deployment, local testing only
-
-## Files Currently Being Modified
-- .loki/CONTINUITY.md: initialization
-- .loki/state/orchestrator.json: system state
+## Loki Mode Features Validated
+- RARV cycle execution
+- Autonomous problem-solving
+- TodoWrite progress tracking
+- CONTINUITY.md maintenance
+- Simplicity First principle (chose simpler solution)
