@@ -5,6 +5,65 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-01-18
+
+### Major Release - Progressive Disclosure Architecture ("Thin Skill")
+
+**Complete rewrite of SKILL.md from 1350+ lines to ~120 lines core with on-demand module loading.**
+
+#### Why This Matters
+- **Context Preservation**: Original 1350-line SKILL.md consumed 10-15% of Claude's context window before any work began
+- **Research-Backed**: 12gramsofcarbon.com analysis found most skills are "slop" at 150+ lines; recommended <150 lines always-on
+- **Production-Tested**: HN 2025 patterns confirm "less is more" for agent context
+- **Code-Only Principle**: rijnard.com pattern - produce executable code witnesses, not verbose descriptions
+
+#### Architecture
+
+**Before (v2.x):**
+```
+SKILL.md (1350 lines) -> Always loaded -> 10-15% context consumed
+```
+
+**After (v3.0):**
+```
+SKILL.md (~120 lines)     # Always loaded: core essentials only
+skills/00-index.md        # Module routing table
+skills/{module}.md        # Loaded on-demand (1-3 at a time)
+```
+
+#### New Structure
+```
+skills/
+  00-index.md          # Module selection rules + routing
+  model-selection.md   # Task tool, parallelization, thinking modes
+  quality-gates.md     # 7-gate system, velocity-quality balance
+  testing.md           # Playwright, E2E, property-based testing
+  production.md        # HN patterns, CI/CD, context management
+  troubleshooting.md   # Issues, red flags, fallbacks
+  agents.md            # 37 agent types, structured prompting
+  artifacts.md         # Generation, code transformation
+  patterns-advanced.md # OptiMind, k8s-valkey, Constitutional AI
+```
+
+#### Usage
+1. Read `skills/00-index.md` at task start
+2. Load only 1-3 relevant modules for current task
+3. Execute with focused context
+4. Unload modules when task changes
+
+#### Research Sources Integrated
+- [12gramsofcarbon.com](https://12gramsofcarbon.com/p/your-agent-skills-are-all-slop) - Skill size limits
+- [rijnard.com](https://rijnard.com/blog/the-code-only-agent) - Code-only agent pattern
+- [platform.claude.com/docs](https://platform.claude.com/docs/en/build-with-claude/context-windows) - Context window management
+- [Claude Code --agents flag](https://claude.ai/code) - Custom agent definitions via JSON
+
+#### Breaking Changes
+- SKILL.md no longer contains detailed patterns (moved to modules)
+- Must read `skills/00-index.md` to find detailed content
+- Behavior remains identical, only loading strategy changed
+
+---
+
 ## [2.37.1] - 2026-01-18
 
 ### Fixed - Direct SQLite Sync for Vibe Kanban

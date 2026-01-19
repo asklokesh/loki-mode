@@ -173,6 +173,36 @@ Key patterns incorporated from practitioner experience:
 
 ---
 
+## v3.0.0 Additions
+
+### Agent Interoperability
+
+| Resource | Contribution |
+|----------|--------------|
+| [Google A2A Protocol](https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/) | Agent Cards, capability discovery, JSON-RPC 2.0 |
+| [A2A Protocol v0.3](https://cloud.google.com/blog/products/ai-machine-learning/agent2agent-protocol-is-getting-an-upgrade) | gRPC support, security card signing, enterprise features |
+| [A2A Project GitHub](https://github.com/a2aproject/A2A) | Open protocol specification, SDK implementations |
+
+### Agentic Patterns
+
+| Resource | Contribution |
+|----------|--------------|
+| [Awesome Agentic Patterns](https://github.com/nibzard/awesome-agentic-patterns) | 105+ production patterns catalog, feedback loops, tool patterns |
+| [Agent Orchestration Critique](https://moridinamael.github.io/agent-orchestration/) | "Ralph Wiggum Mode" - simpler orchestration beats complex frameworks |
+
+### Key Patterns Incorporated
+
+| Pattern | Source | Implementation |
+|---------|--------|----------------|
+| Agent Cards | A2A Protocol | `.loki/state/agents/` capability discovery |
+| Structured Handoffs | A2A Protocol | JSON message format for agent-to-agent communication |
+| Sub-Agent Spawning | awesome-agentic-patterns | Task tool with focused prompts |
+| Dual LLM Pattern | awesome-agentic-patterns | Opus for planning, Haiku for execution |
+| CI Feedback Loop | awesome-agentic-patterns | Test results injected into retry prompts |
+| Minimal Orchestration | moridinamael | Simple continuation over complex frameworks |
+
+---
+
 ## License
 
 This acknowledgements file documents the research and resources that influenced Loki Mode's design. All referenced works retain their original licenses and copyrights.
@@ -181,4 +211,4 @@ Loki Mode itself is released under the MIT License.
 
 ---
 
-*Last updated: v2.35.0*
+*Last updated: v3.0.0*

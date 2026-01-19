@@ -15,8 +15,18 @@ claude --dangerously-skip-permissions
 ## Project Structure
 
 ```
-SKILL.md                    # Main skill definition (read this first)
-references/                 # Detailed documentation (loaded progressively)
+SKILL.md                    # Slim core skill (~120 lines) - progressive disclosure
+skills/                     # On-demand skill modules (v3.0 architecture)
+  00-index.md               # Module selection rules and routing
+  model-selection.md        # Task tool, parallelization, thinking modes
+  quality-gates.md          # 7-gate system, velocity-quality balance
+  testing.md                # Playwright, E2E, property-based testing
+  production.md             # HN patterns, CI/CD, context management
+  troubleshooting.md        # Common issues, red flags, fallbacks
+  agents.md                 # 37 agent types, structured prompting
+  artifacts.md              # Generation, code transformation
+  patterns-advanced.md      # OptiMind, k8s-valkey, Constitutional AI
+references/                 # Detailed documentation
   openai-patterns.md        # OpenAI Agents SDK: guardrails, tripwires, handoffs
   lab-research-patterns.md  # DeepMind + Anthropic: Constitutional AI, debate
   production-patterns.md    # HN 2025: What actually works in production
@@ -34,7 +44,7 @@ references/                 # Detailed documentation (loaded progressively)
   deployment.md             # Cloud deployment instructions
   business-ops.md           # Business operation workflows
   mcp-integration.md        # MCP server capabilities
-autonomy/                   # Runtime state and constitution
+autonomy/                   # Runtime and autonomous execution
 benchmarks/                 # SWE-bench and HumanEval benchmarks
 ```
 
@@ -74,7 +84,7 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v2.35.0
+- Current: v3.0.0
 - MINOR bump for new features
 - PATCH bump for fixes
 
