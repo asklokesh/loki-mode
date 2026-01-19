@@ -30,13 +30,24 @@ jobs:
         id: check_tag
         run: |
           if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if release exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "release_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "release_exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Create release artifacts
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_release.outputs.release_exists == 'false'
         run: |
           mkdir -p release
 
@@ -90,15 +101,15 @@ jobs:
           cd ..
 
       - name: Create Git Tag
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_tag.outputs.tag_exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}" || echo "Tag push failed (may be blocked by repo rules), continuing..."
 
       - name: Extract changelog for this version
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_release.outputs.release_exists == 'false'
         id: changelog
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -109,7 +120,7 @@ jobs:
           echo "$CHANGELOG" > changelog_body.txt
 
       - name: Create GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
+        if: steps.check_release.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -123,6 +134,6 @@ jobs:
             --notes-file changelog_body.txt
 
       - name: Skip message
-        if: steps.check_tag.outputs.exists == 'true'
+        if: steps.check_release.outputs.release_exists == 'true'
         run: |
-          echo "Tag v${{ steps.version.outputs.version }} already exists. Skipping release."
+          echo "Release v${{ steps.version.outputs.version }} already exists. Skipping."
