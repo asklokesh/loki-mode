@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Loki Mode - Multi-agent autonomous startup system. Research-backed patterns from Anthropic, DeepMind, OpenAI.">
+    <title>Loki Mode - Autonomous Multi-Agent System</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h1>Loki Mode</h1>
+                <span class="version">v3.3.0</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#home" class="nav-link active">Home</a></li>
+                <li><a href="#architecture" class="nav-link">Architecture</a></li>
+                <li><a href="#research" class="nav-link">Research</a></li>
+                <li><a href="#skills" class="nav-link">Skills</a></li>
+                <li><a href="#examples" class="nav-link">Examples</a></li>
+                <li><a href="#comparisons" class="nav-link">Comparisons</a></li>
+                <li><a href="https://github.com/asklokesh/loki-mode" class="nav-link github" target="_blank">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- Home Section -->
+        <section id="home" class="section active">
+            <div class="hero">
+                <h1 class="hero-title">Loki Mode</h1>
+                <p class="hero-subtitle">Multi-Agent Autonomous Startup System</p>
+                <p class="hero-description">From PRD to deployed product with zero human intervention. Research-backed patterns from Anthropic, DeepMind, and OpenAI.</p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/asklokesh/loki-mode" class="btn btn-primary" target="_blank">View on GitHub</a>
+                    <a href="#architecture" class="btn btn-secondary">Explore Documentation</a>
+                </div>
+            </div>
+
+            <div class="features">
+                <div class="feature-card">
+                    <h3>Anti-Sycophancy</h3>
+                    <p>CONSENSAGENT blind review system with 3 parallel reviewers + devil's advocate to prevent groupthink.</p>
+                    <span class="feature-badge">ACL 2025</span>
+                </div>
+                <div class="feature-card">
+                    <h3>Quality Gates</h3>
+                    <p>7-gate system tracking velocity-quality balance. Zero tolerance for complexity increase.</p>
+                    <span class="feature-badge">arXiv 2511.04427v2</span>
+                </div>
+                <div class="feature-card">
+                    <h3>Scale Patterns</h3>
+                    <p>Recursive sub-planners, judge agents, and optimistic concurrency for 100+ agent scale.</p>
+                    <span class="feature-badge">Cursor 2026</span>
+                </div>
+                <div class="feature-card">
+                    <h3>Full SDLC</h3>
+                    <p>37 specialized agents covering engineering, operations, business, and growth.</p>
+                    <span class="feature-badge">Complete</span>
+                </div>
+                <div class="feature-card">
+                    <h3>Memory Systems</h3>
+                    <p>Episodic, semantic, and procedural memory architecture for continuous learning.</p>
+                    <span class="feature-badge">A-Mem Research</span>
+                </div>
+                <div class="feature-card">
+                    <h3>Constitutional AI</h3>
+                    <p>Self-critique against principles with debate-based verification for critical changes.</p>
+                    <span class="feature-badge">Anthropic</span>
+                </div>
+            </div>
+
+            <div class="quick-start">
+                <h2>Quick Start</h2>
+                <pre><code># Launch Claude Code with autonomous permissions
+claude --dangerously-skip-permissions
+
+# Then invoke:
+# "Loki Mode" or "Loki Mode with PRD at path/to/prd"</code></pre>
+            </div>
+
+            <div class="doc-card" data-doc="../README.md" style="margin-top: 2rem; cursor: pointer;">
+                <h3>Full README</h3>
+                <p>Complete installation and usage guide</p>
+            </div>
+        </section>
+
+        <!-- Architecture Section -->
+        <section id="architecture" class="section">
+            <div class="section-header">
+                <h2>Architecture & Core Workflow</h2>
+                <p>Foundational patterns and system design</p>
+            </div>
+            <div class="docs-grid">
+                <div class="doc-card" data-doc="../references/core-workflow.md">
+                    <h3>Core Workflow</h3>
+                    <p>RARV cycle: Reason → Act → Reflect → Verify</p>
+                </div>
+                <div class="doc-card" data-doc="../references/agent-types.md">
+                    <h3>Agent Types</h3>
+                    <p>37 specialized agents in 7 swarms + orchestration</p>
+                </div>
+                <div class="doc-card" data-doc="../references/sdlc-phases.md">
+                    <h3>SDLC Phases</h3>
+                    <p>Bootstrap → Discovery → Architecture → Development → Deployment → Growth</p>
+                </div>
+                <div class="doc-card" data-doc="../references/memory-system.md">
+                    <h3>Memory System</h3>
+                    <p>Episodic, semantic, and procedural memory</p>
+                </div>
+                <div class="doc-card" data-doc="../references/quality-control.md">
+                    <h3>Quality Control</h3>
+                    <p>7-gate system with anti-sycophancy protocols</p>
+                </div>
+                <div class="doc-card" data-doc="../references/tool-orchestration.md">
+                    <h3>Tool Orchestration</h3>
+                    <p>Efficiency metrics and reward signals (ToolOrchestra)</p>
+                </div>
+                <div class="doc-card" data-doc="../references/task-queue.md">
+                    <h3>Task Queue</h3>
+                    <p>Queue management, circuit breakers, dead-letter handling</p>
+                </div>
+                <div class="doc-card" data-doc="../references/cursor-learnings.md">
+                    <h3>Cursor Scale Patterns</h3>
+                    <p>100+ agent coordination, recursive sub-planners, judge agents</p>
+                </div>
+                <div class="doc-card" data-doc="../references/mcp-integration.md">
+                    <h3>MCP Integration</h3>
+                    <p>Model Context Protocol server capabilities</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Research Section -->
+        <section id="research" class="section">
+            <div class="section-header">
+                <h2>Research Foundation</h2>
+                <p>Built on cutting-edge research from leading AI labs</p>
+            </div>
+            <div class="docs-grid">
+                <div class="doc-card" data-doc="../references/openai-patterns.md">
+                    <h3>OpenAI Patterns</h3>
+                    <p>Agents SDK, guardrails, tripwires, handoffs, tracing</p>
+                </div>
+                <div class="doc-card" data-doc="../references/lab-research-patterns.md">
+                    <h3>Lab Research</h3>
+                    <p>DeepMind + Anthropic: Constitutional AI, Scalable Oversight via Debate</p>
+                </div>
+                <div class="doc-card" data-doc="../references/production-patterns.md">
+                    <h3>Production Patterns</h3>
+                    <p>Hacker News 2025: What actually works in production</p>
+                </div>
+                <div class="doc-card" data-doc="../references/advanced-patterns.md">
+                    <h3>Advanced Patterns</h3>
+                    <p>OptiMind, k8s-valkey-operator, Multi-Agent Reflexion</p>
+                </div>
+                <div class="doc-card" data-doc="../references/business-ops.md">
+                    <h3>Business Operations</h3>
+                    <p>Growth, marketing, sales, finance agents</p>
+                </div>
+                <div class="doc-card" data-doc="../references/deployment.md">
+                    <h3>Deployment</h3>
+                    <p>Cloud deployment, CI/CD, monitoring</p>
+                </div>
+                <div class="doc-card" data-doc="../references/confidence-routing.md">
+                    <h3>Confidence Routing</h3>
+                    <p>4-tier routing: auto-approve, direct, supervisor, escalate</p>
+                </div>
+                <div class="doc-card" data-doc="../references/prompt-repetition.md">
+                    <h3>Prompt Repetition</h3>
+                    <p>arXiv 2512.14982v1: 4-5x accuracy improvement for Haiku</p>
+                </div>
+                <div class="doc-card" data-doc="../ACKNOWLEDGEMENTS.md">
+                    <h3>Acknowledgements</h3>
+                    <p>25+ research papers, Anthropic, DeepMind, OpenAI sources</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Skills Section -->
+        <section id="skills" class="section">
+            <div class="section-header">
+                <h2>Skill Modules</h2>
+                <p>Progressive disclosure: Load modules based on your current task</p>
+            </div>
+            <div class="docs-grid">
+                <div class="doc-card" data-doc="../skills/00-index.md">
+                    <h3>Module Index</h3>
+                    <p>Selection rules: Load 1-3 modules based on your task</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/model-selection.md">
+                    <h3>Model Selection</h3>
+                    <p>Opus/Sonnet/Haiku usage, Task tool, thinking modes</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/quality-gates.md">
+                    <h3>Quality Gates</h3>
+                    <p>7-gate system, blind review, velocity-quality balance</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/testing.md">
+                    <h3>Testing</h3>
+                    <p>Playwright MCP, property-based testing, E2E automation</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/production.md">
+                    <h3>Production</h3>
+                    <p>HN patterns, confidence routing, context management</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/parallel-workflows.md">
+                    <h3>Parallel Workflows</h3>
+                    <p>Git worktrees, optimistic concurrency, inter-stream coordination</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/patterns-advanced.md">
+                    <h3>Advanced Patterns</h3>
+                    <p>OptiMind, formal state machines, Constitutional AI</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/agents.md">
+                    <h3>Agent Orchestration</h3>
+                    <p>Structured prompting, handoffs, routing mode</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/artifacts.md">
+                    <h3>Artifacts</h3>
+                    <p>Code transformation, report generation</p>
+                </div>
+                <div class="doc-card" data-doc="../skills/troubleshooting.md">
+                    <h3>Troubleshooting</h3>
+                    <p>Common issues, red flags, fallback systems</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Examples Section -->
+        <section id="examples" class="section">
+            <div class="section-header">
+                <h2>Examples & Demos</h2>
+                <p>Real PRDs and demo projects</p>
+            </div>
+            <div class="docs-grid">
+                <div class="doc-card" data-doc="../examples/simple-todo-app.md">
+                    <h3>Simple Todo App</h3>
+                    <p>Basic CRUD with React + Express</p>
+                </div>
+                <div class="doc-card" data-doc="../examples/api-only.md">
+                    <h3>API Only</h3>
+                    <p>REST API with authentication</p>
+                </div>
+                <div class="doc-card" data-doc="../examples/full-stack-demo.md">
+                    <h3>Full Stack Demo</h3>
+                    <p>Complete application with frontend, backend, and database</p>
+                </div>
+                <div class="doc-card" data-doc="../examples/static-landing-page.md">
+                    <h3>Static Landing Page</h3>
+                    <p>Marketing site with analytics</p>
+                </div>
+                <div class="doc-card" data-doc="../demo/README.md">
+                    <h3>Demo Guide</h3>
+                    <p>Recording and running demos</p>
+                </div>
+                <div class="doc-card" data-doc="../INSTALLATION.md">
+                    <h3>Installation</h3>
+                    <p>Setup guide and prerequisites</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Comparisons Section -->
+        <section id="comparisons" class="section">
+            <div class="section-header">
+                <h2>Comparisons & Analysis</h2>
+                <p>Factual technical comparisons with other systems</p>
+            </div>
+            <div class="docs-grid">
+                <div class="doc-card" data-doc="../docs/cursor-comparison.md">
+                    <h3>Loki Mode vs Cursor</h3>
+                    <p>Scale patterns, quality gates, proven results comparison</p>
+                </div>
+                <div class="doc-card" data-doc="../docs/COMPARISON.md">
+                    <h3>Multi-Agent Systems</h3>
+                    <p>Comparison with other agent frameworks</p>
+                </div>
+                <div class="doc-card" data-doc="../docs/COMPETITIVE-ANALYSIS.md">
+                    <h3>Competitive Analysis</h3>
+                    <p>Market positioning and differentiators</p>
+                </div>
+                <div class="doc-card" data-doc="../docs/thick2thin.md">
+                    <h3>Thick-to-Thin Refactor</h3>
+                    <p>v3.0 progressive disclosure architecture</p>
+                </div>
+                <div class="doc-card" data-doc="../CHANGELOG.md">
+                    <h3>Changelog</h3>
+                    <p>Complete version history from v1.0.0 to v3.3.0</p>
+                </div>
+                <div class="doc-card" data-doc="../autonomy/CONSTITUTION.md">
+                    <h3>Constitution</h3>
+                    <p>Core principles, autonomy rules, guardrails</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Doc Viewer Modal -->
+        <div id="docModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <div id="docContent"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2026 Loki Mode. Open source under MIT License.</p>
+            <p>Built on research from Anthropic, DeepMind, OpenAI, and the AI community.</p>
+            <div style="margin-top: 1rem;">
+                <a href="https://github.com/asklokesh/loki-mode" style="color: #6366f1; text-decoration: none; margin: 0 1rem;">GitHub</a>
+                <a href="https://github.com/asklokesh/loki-mode/issues" style="color: #6366f1; text-decoration: none; margin: 0 1rem;">Issues</a>
+                <a href="../LICENSE" style="color: #6366f1; text-decoration: none; margin: 0 1rem;">License</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
