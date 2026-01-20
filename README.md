@@ -9,7 +9,7 @@
 [![SWE-bench](https://img.shields.io/badge/SWE--bench-99.67%25%20Patch%20Gen-brightgreen)](benchmarks/results/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**[📚 Documentation Website](https://asklokesh.github.io/loki-mode/)** | **[🏗️ Architecture](https://asklokesh.github.io/loki-mode/blog/#architecture)** | **[🔬 Research](https://asklokesh.github.io/loki-mode/blog/#research)** | **[📊 Comparisons](https://asklokesh.github.io/loki-mode/blog/#comparisons)**
+**[Documentation Website](https://asklokesh.github.io/loki-mode/)** | **[Architecture](https://asklokesh.github.io/loki-mode/blog/#architecture)** | **[Research](https://asklokesh.github.io/loki-mode/blog/#research)** | **[Comparisons](https://asklokesh.github.io/loki-mode/blog/#comparisons)**
 
 > **PRD → Deployed Product in Zero Human Intervention**
 >

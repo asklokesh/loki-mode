@@ -91,7 +91,8 @@ Follows semantic versioning: MAJOR.MINOR.PATCH
 - PATCH bump for fixes
 
 ### Code Style
-- No emojis in code or documentation
+- **CRITICAL: NEVER use emojis** - Not in code, documentation, commit messages, README, or any output
+- **No emoji exceptions** - This includes website content, markdown files, and all text
 - Clear, concise comments only when necessary
 - Follow existing patterns in codebase
 
