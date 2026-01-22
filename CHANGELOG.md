@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-01-21
+
+### Added - CLI, Config Files, and Distribution
+
+**Major release: Complete distribution system with CLI wrapper, YAML configuration, and multiple installation methods.**
+
+#### loki CLI Wrapper (`autonomy/loki`)
+- `loki start [PRD]` - Start Loki Mode with optional PRD file
+- `loki stop` - Stop execution immediately via STOP signal
+- `loki pause` - Pause after current session via PAUSE signal
+- `loki resume` - Resume paused execution
+- `loki status` - Show current status, phase, pending tasks
+- `loki dashboard` - Open dashboard in browser
+- `loki import` - Import GitHub issues as tasks
+- `loki config [show|init|edit|path]` - Manage configuration
+- `loki version` - Show version
+- Options: `--parallel`, `--simple`, `--complex`, `--github`, `--no-dashboard`
+
+#### YAML Configuration (`autonomy/config.example.yaml`)
+- 50+ configurable settings organized in sections
+- Search order: `.loki/config.yaml` (project) -> `~/.config/loki-mode/config.yaml` (global)
+- Security: Input validation, symlink rejection, regex escaping
+- Fallback YAML parser (no external dependencies)
+
+#### Distribution Methods
+- **Homebrew**: `brew install asklokesh/tap/loki-mode`
+- **npm**: `npm install -g loki-mode`
+- **Docker**: `docker pull asklokesh/loki-mode:4.1.0`
+- **Manual**: Clone and symlink `loki` to PATH
+
+#### Dashboard Enhancements
+- **Terminal Output**: Live log viewer with auto-scroll toggle
+- **Quick Actions Bar**: Pause All, Resume, Import GitHub, Export Report
+- **GitHub Import Modal**: Import issues with repo/labels/milestone filters
+- Memory management: MAX_TERMINAL_LINES = 1000
+
+#### Security Hardening
+- `sanitizeShellArg()` - Prevents command injection in GitHub import
+- `validateRepoFormat()` - Validates owner/repo format
+- `validate_yaml_value()` - Rejects shell metacharacters in config values
+- `escape_regex()` - Prevents regex injection in sed patterns
+- Symlink rejection for project-local config files
+
+#### Files Added
+- `autonomy/loki` - CLI wrapper script
+- `autonomy/config.example.yaml` - Configuration template
+- `Dockerfile` - Docker image definition
+- `docker-compose.yml` - Docker compose configuration
+- `package.json` - npm package definition
+- `bin/postinstall.js` - npm post-install script
+- `dist/homebrew/loki-mode.rb` - Homebrew formula
+
+---
+
 ## [4.0.0] - 2026-01-21
 
 ### Added - Realtime Dashboard with Anthropic Design Language

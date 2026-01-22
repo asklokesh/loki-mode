@@ -1,4 +1,4 @@
-# Loki Mode Dashboard v4.0.0
+# Loki Mode Dashboard v4.1.0
 
 A production-ready realtime dashboard for monitoring and managing Loki Mode autonomous operations.
 
@@ -33,7 +33,7 @@ The dashboard automatically syncs with Loki Mode when it's running, polling `das
 The sidebar provides navigation and system status at a glance.
 
 #### Logo & Version
-- Loki Mode branding with current version (v4.0.0)
+- Loki Mode branding with current version (v4.1.0)
 - Version updates automatically from server state
 
 #### Theme Toggle
@@ -220,7 +220,7 @@ dashboard-state.json       fetch() + render
 ```json
 {
   "timestamp": "2026-01-21T10:30:00Z",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "mode": "autonomous",
   "phase": "DEVELOPMENT",
   "complexity": "standard",
@@ -341,6 +341,7 @@ Useful for:
 
 | Version | Changes |
 |---------|---------|
+| v4.1.0 | Terminal output, quick actions, GitHub import modal, config file support |
 | v4.0.0 | Complete rewrite with Anthropic design, realtime sync, mobile support |
 | v3.x | Basic status display (no interactivity) |
 

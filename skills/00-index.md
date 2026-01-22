@@ -25,6 +25,7 @@
 | Generating artifacts, reports | `artifacts.md` |
 | Parallel features, git worktrees | `parallel-workflows.md` |
 | Scale patterns (50+ agents) | `parallel-workflows.md` + `references/cursor-learnings.md` |
+| GitHub issues, PRs, syncing | `github-integration.md` |
 
 ## Module Descriptions
 
@@ -97,6 +98,14 @@
 - Inter-stream communication via signals
 - Auto-merge completed features
 - Orchestrator state management
+
+### github-integration.md (v4.1.0)
+**When:** Working with GitHub issues, creating PRs, syncing status
+- Import open issues as pending tasks
+- Create PRs on feature completion
+- Sync task status back to GitHub issues
+- Filter by labels, milestone, assignee
+- Requires `gh` CLI authenticated
 
 ## How to Load
 

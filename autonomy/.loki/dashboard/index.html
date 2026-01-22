@@ -1092,6 +1092,235 @@
         ::-webkit-scrollbar-track { background: var(--bg-primary); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+        /* Terminal Output Panel */
+        .terminal-section {
+            margin-bottom: 24px;
+        }
+
+        .terminal-container {
+            background: #1a1a1b;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: #232325;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .terminal-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #a1a1a6;
+        }
+
+        .terminal-dots {
+            display: flex;
+            gap: 6px;
+        }
+
+        .terminal-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot.red { background: #ff5f56; }
+        .terminal-dot.yellow { background: #ffbd2e; }
+        .terminal-dot.green { background: #27c93f; }
+
+        .terminal-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-btn {
+            padding: 4px 10px;
+            background: #2a2a2d;
+            border: 1px solid #3d3d42;
+            border-radius: 4px;
+            color: #a1a1a6;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+
+        .terminal-btn:hover {
+            background: #3d3d42;
+            color: #f5f5f5;
+        }
+
+        .terminal-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .terminal-output {
+            padding: 14px;
+            max-height: 350px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #e5e5e5;
+            background: #1a1a1b;
+        }
+
+        .terminal-line {
+            display: flex;
+            gap: 10px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .terminal-line .timestamp {
+            color: #6b6b70;
+            flex-shrink: 0;
+        }
+
+        .terminal-line .level-info { color: #3b82f6; }
+        .terminal-line .level-success { color: #22c55e; }
+        .terminal-line .level-warning { color: #eab308; }
+        .terminal-line .level-error { color: #ef4444; }
+        .terminal-line .level-step { color: #a855f7; }
+        .terminal-line .level-agent { color: #d97757; }
+
+        .terminal-line .message {
+            flex: 1;
+        }
+
+        .terminal-empty {
+            color: #6b6b70;
+            text-align: center;
+            padding: 40px;
+        }
+
+        /* Quick Actions Bar */
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+
+        .quick-action-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+
+        .quick-action-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .quick-action-btn.pause:hover {
+            background: var(--yellow-muted);
+            color: var(--yellow);
+            border-color: var(--yellow);
+        }
+
+        .quick-action-btn.resume:hover {
+            background: var(--green-muted);
+            color: var(--green);
+            border-color: var(--green);
+        }
+
+        .quick-action-btn.github:hover {
+            background: var(--purple-muted);
+            color: var(--purple);
+            border-color: var(--purple);
+        }
+
+        .quick-action-btn.export:hover {
+            background: var(--blue-muted);
+            color: var(--blue);
+            border-color: var(--blue);
+        }
+
+        /* GitHub Import Modal */
+        .github-form .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .github-preview {
+            margin-top: 14px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .github-preview-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .github-issue-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .github-issue-item:last-child {
+            border-bottom: none;
+        }
+
+        .github-issue-number {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .github-issue-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            .quick-actions {
+                flex-wrap: wrap;
+            }
+            .quick-action-btn {
+                flex: 1 1 45%;
+            }
+            .github-form .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1117,7 +1346,7 @@
                 <div class="logo-icon">L</div>
                 <div>
                     <div class="logo-text">Loki Mode</div>
-                    <div class="logo-version" id="version">v4.0.0</div>
+                    <div class="logo-version" id="version">v4.1.0</div>
                 </div>
             </div>
 
@@ -1150,6 +1379,10 @@
                 <div class="sidebar-item" data-section="system">
                     <svg class="sidebar-icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
                     System Status
+                </div>
+                <div class="sidebar-item" data-section="terminal">
+                    <svg class="sidebar-icon" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    Terminal Output
                 </div>
             </nav>
 
@@ -1241,6 +1474,26 @@
                     <div class="stat-label">Failed</div>
                     <div class="stat-value" id="stat-failed">0</div>
                 </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="quick-actions">
+                <button class="quick-action-btn pause" onclick="triggerPause()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    Pause All
+                </button>
+                <button class="quick-action-btn resume" onclick="triggerResume()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Resume
+                </button>
+                <button class="quick-action-btn github" onclick="openGitHubModal()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    Import GitHub
+                </button>
+                <button class="quick-action-btn export" onclick="exportTasks()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                    Export Report
+                </button>
             </div>
 
             <!-- Kanban Board -->
@@ -1381,6 +1634,33 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Terminal Output -->
+            <div class="terminal-section" id="section-terminal">
+                <div class="section-header">
+                    <h2 class="section-title">Terminal Output</h2>
+                </div>
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <div class="terminal-title">
+                            <div class="terminal-dots">
+                                <span class="terminal-dot red"></span>
+                                <span class="terminal-dot yellow"></span>
+                                <span class="terminal-dot green"></span>
+                            </div>
+                            loki-mode -- agent output
+                        </div>
+                        <div class="terminal-controls">
+                            <button class="terminal-btn active" id="terminal-auto-scroll" onclick="toggleAutoScroll()">Auto-scroll</button>
+                            <button class="terminal-btn" onclick="clearTerminal()">Clear</button>
+                            <button class="terminal-btn" onclick="downloadLogs()">Download</button>
+                        </div>
+                    </div>
+                    <div class="terminal-output" id="terminal-output">
+                        <div class="terminal-empty">No log output yet. Terminal will update when Loki Mode is running.</div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -1426,6 +1706,61 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeAddTaskModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Add Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- GitHub Import Modal -->
+    <div class="modal-overlay" id="github-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Import from GitHub</h3>
+                <button class="modal-close" onclick="closeGitHubModal()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form class="github-form" onsubmit="importGitHubIssues(event)">
+                <div class="form-group">
+                    <label class="form-label">Repository</label>
+                    <input type="text" class="form-input" id="github-repo" placeholder="owner/repo (leave empty for auto-detect)">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Labels (comma-separated)</label>
+                        <input type="text" class="form-input" id="github-labels" placeholder="bug,enhancement">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Milestone</label>
+                        <input type="text" class="form-input" id="github-milestone" placeholder="v1.0.0">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Assignee</label>
+                        <input type="text" class="form-input" id="github-assignee" placeholder="@me or username">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Limit</label>
+                        <input type="number" class="form-input" id="github-limit" value="20" min="1" max="100">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">State</label>
+                    <select class="form-select" id="github-state">
+                        <option value="open">Open issues only</option>
+                        <option value="closed">Closed issues only</option>
+                        <option value="all">All issues</option>
+                    </select>
+                </div>
+                <div class="github-preview" id="github-preview" style="display: none;">
+                    <div class="github-preview-title">Preview: <span id="github-preview-count">0</span> issues found</div>
+                    <div id="github-preview-list"></div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="previewGitHubIssues()">Preview</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeGitHubModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Import</button>
                 </div>
             </form>
         </div>
@@ -1521,7 +1856,11 @@
 
         function startPolling() {
             fetchServerState();
-            pollInterval = setInterval(fetchServerState, CONFIG.POLL_INTERVAL);
+            fetchTerminalLogs();
+            pollInterval = setInterval(() => {
+                fetchServerState();
+                fetchTerminalLogs();
+            }, CONFIG.POLL_INTERVAL);
         }
 
         function stopPolling() {
@@ -1552,7 +1891,7 @@
             if (!serverState) return;
 
             // Update version
-            document.getElementById('version').textContent = 'v' + (serverState.version || '4.0.0');
+            document.getElementById('version').textContent = 'v' + (serverState.version || '4.1.0');
 
             // Update status panel
             updateStatusPanel();
@@ -1909,6 +2248,293 @@
             alert('To stop Loki Mode, create this file:\ntouch .loki/STOP\n\nOr press Ctrl+C twice in the terminal.');
         }
 
+        function triggerResume() {
+            alert('To resume Loki Mode, remove the pause file:\nrm .loki/PAUSE\n\nOr use: loki resume');
+        }
+
+        // ============================================
+        // Terminal Output
+        // ============================================
+        const MAX_TERMINAL_LINES = 1000;
+        let terminalLines = [];
+        let autoScroll = true;
+        let lastLogPosition = 0;
+
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            const btn = document.getElementById('terminal-auto-scroll');
+            btn.classList.toggle('active', autoScroll);
+            if (autoScroll) {
+                scrollTerminalToBottom();
+            }
+        }
+
+        function scrollTerminalToBottom() {
+            const output = document.getElementById('terminal-output');
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearTerminal() {
+            terminalLines = [];
+            renderTerminal();
+        }
+
+        function downloadLogs() {
+            const content = terminalLines.map(line =>
+                `[${line.timestamp}] [${line.level.toUpperCase()}] ${line.message}`
+            ).join('\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'loki-mode-logs-' + Date.now() + '.txt';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function parseLogLine(line) {
+            // Parse log format: [TIMESTAMP] [LEVEL] MESSAGE or similar
+            const patterns = [
+                /^\[(\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.*)$/,
+                /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s*\[(\w+)\]\s*(.*)$/,
+                /^\[(\w+)\]\s*(.*)$/
+            ];
+
+            for (const pattern of patterns) {
+                const match = line.match(pattern);
+                if (match) {
+                    if (match.length === 4) {
+                        return { timestamp: match[1], level: match[2].toLowerCase(), message: match[3] };
+                    } else if (match.length === 3) {
+                        return { timestamp: new Date().toLocaleTimeString(), level: match[1].toLowerCase(), message: match[2] };
+                    }
+                }
+            }
+
+            // Default: treat as info
+            return { timestamp: new Date().toLocaleTimeString(), level: 'info', message: line };
+        }
+
+        function getLevelClass(level) {
+            const levelMap = {
+                'info': 'level-info',
+                'success': 'level-success',
+                'warn': 'level-warning',
+                'warning': 'level-warning',
+                'error': 'level-error',
+                'err': 'level-error',
+                'step': 'level-step',
+                'agent': 'level-agent',
+                'debug': 'level-info'
+            };
+            return levelMap[level] || 'level-info';
+        }
+
+        function renderTerminal() {
+            const output = document.getElementById('terminal-output');
+
+            if (terminalLines.length === 0) {
+                output.innerHTML = '<div class="terminal-empty">No log output yet. Terminal will update when Loki Mode is running.</div>';
+                return;
+            }
+
+            output.innerHTML = terminalLines.map(line => `
+                <div class="terminal-line">
+                    <span class="timestamp">[${line.timestamp}]</span>
+                    <span class="${getLevelClass(line.level)}">[${line.level.toUpperCase()}]</span>
+                    <span class="message">${escapeHtml(line.message)}</span>
+                </div>
+            `).join('');
+
+            if (autoScroll) {
+                scrollTerminalToBottom();
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function fetchTerminalLogs() {
+            try {
+                const response = await fetch('../logs/agent.log?t=' + Date.now());
+                if (!response.ok) {
+                    return;
+                }
+                const text = await response.text();
+                const lines = text.split('\n').filter(line => line.trim());
+
+                // Only add new lines
+                if (lines.length > terminalLines.length) {
+                    const newLines = lines.slice(terminalLines.length);
+                    newLines.forEach(line => {
+                        terminalLines.push(parseLogLine(line));
+                    });
+
+                    // Limit memory growth - keep only the last MAX_TERMINAL_LINES
+                    if (terminalLines.length > MAX_TERMINAL_LINES) {
+                        terminalLines = terminalLines.slice(-MAX_TERMINAL_LINES);
+                    }
+
+                    renderTerminal();
+                }
+            } catch (error) {
+                // Silently fail - log file may not exist yet
+            }
+        }
+
+        // ============================================
+        // GitHub Import
+        // ============================================
+        let githubPreviewIssues = [];
+
+        // Sanitize shell arguments to prevent command injection
+        function sanitizeShellArg(input) {
+            if (!input) return '';
+            // Remove dangerous shell metacharacters
+            return input.replace(/[`$"\\!;&|><(){}[\]\n\r]/g, '').trim();
+        }
+
+        // Validate repository format (owner/repo)
+        function validateRepoFormat(repo) {
+            if (!repo) return true; // Empty is valid (auto-detect)
+            return /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo);
+        }
+
+        function openGitHubModal() {
+            document.getElementById('github-modal').classList.add('active');
+            document.getElementById('github-preview').style.display = 'none';
+            githubPreviewIssues = [];
+        }
+
+        function closeGitHubModal() {
+            document.getElementById('github-modal').classList.remove('active');
+            document.getElementById('github-repo').value = '';
+            document.getElementById('github-labels').value = '';
+            document.getElementById('github-milestone').value = '';
+            document.getElementById('github-assignee').value = '';
+            document.getElementById('github-preview').style.display = 'none';
+            githubPreviewIssues = [];
+        }
+
+        function buildGitHubCommand() {
+            const repo = sanitizeShellArg(document.getElementById('github-repo').value);
+            const labels = sanitizeShellArg(document.getElementById('github-labels').value);
+            const milestone = sanitizeShellArg(document.getElementById('github-milestone').value);
+            const assignee = sanitizeShellArg(document.getElementById('github-assignee').value);
+            const limitVal = parseInt(document.getElementById('github-limit').value, 10);
+            const limit = Math.max(1, Math.min(100, isNaN(limitVal) ? 20 : limitVal));
+            const state = document.getElementById('github-state').value;
+
+            // Validate repo format if provided
+            if (repo && !validateRepoFormat(repo)) {
+                return { error: 'Invalid repository format. Use: owner/repo' };
+            }
+
+            let cmd = 'gh issue list --json number,title,body,labels,assignees,milestone --state ' + state + ' --limit ' + limit;
+
+            if (repo) {
+                cmd += ' --repo ' + repo;
+            }
+            if (labels) {
+                labels.split(',').forEach(label => {
+                    const sanitizedLabel = sanitizeShellArg(label);
+                    if (sanitizedLabel) {
+                        cmd += ' --label "' + sanitizedLabel + '"';
+                    }
+                });
+            }
+            if (milestone) {
+                cmd += ' --milestone "' + milestone + '"';
+            }
+            if (assignee) {
+                cmd += ' --assignee "' + assignee + '"';
+            }
+
+            return cmd;
+        }
+
+        async function previewGitHubIssues() {
+            const previewDiv = document.getElementById('github-preview');
+            const listDiv = document.getElementById('github-preview-list');
+            const countSpan = document.getElementById('github-preview-count');
+
+            // Show loading
+            previewDiv.style.display = 'block';
+            listDiv.innerHTML = '<div style="color: var(--text-muted);">Loading issues... (requires gh CLI)</div>';
+
+            // In a real implementation, this would call the backend
+            // For the dashboard, we show instructions
+            const cmd = buildGitHubCommand();
+
+            // Check for validation error
+            if (cmd && cmd.error) {
+                listDiv.innerHTML = `<div style="color: var(--red);">${escapeHtml(cmd.error)}</div>`;
+                countSpan.textContent = '0';
+                return;
+            }
+
+            listDiv.innerHTML = `
+                <div style="color: var(--text-muted); font-size: 11px;">
+                    <p style="margin-bottom: 8px;">To preview issues, run this command in terminal:</p>
+                    <code style="display: block; background: #2a2a2d; padding: 8px; border-radius: 4px; word-break: break-all; color: #e5e5e5;">${escapeHtml(cmd)}</code>
+                    <p style="margin-top: 8px;">Or use the CLI: <code>loki import --preview</code></p>
+                </div>
+            `;
+            countSpan.textContent = '?';
+        }
+
+        function importGitHubIssues(e) {
+            e.preventDefault();
+
+            // Sanitize all inputs to prevent command injection
+            const repo = sanitizeShellArg(document.getElementById('github-repo').value);
+            const labels = sanitizeShellArg(document.getElementById('github-labels').value);
+            const milestone = sanitizeShellArg(document.getElementById('github-milestone').value);
+            const assignee = sanitizeShellArg(document.getElementById('github-assignee').value);
+            const limitVal = parseInt(document.getElementById('github-limit').value, 10);
+            const limit = Math.max(1, Math.min(100, isNaN(limitVal) ? 20 : limitVal));
+            const state = document.getElementById('github-state').value;
+
+            // Validate repo format
+            if (repo && !validateRepoFormat(repo)) {
+                alert('Invalid repository format. Use: owner/repo');
+                return;
+            }
+
+            // Build the import command for the user
+            let cliCmd = 'loki import';
+            if (repo) cliCmd += ' --repo ' + repo;
+            if (labels) cliCmd += ' --labels "' + labels + '"';
+            if (milestone) cliCmd += ' --milestone "' + milestone + '"';
+            if (assignee) cliCmd += ' --assignee "' + assignee + '"';
+            if (limit !== 20) cliCmd += ' --limit ' + limit;
+            if (state !== 'open') cliCmd += ' --state ' + state;
+
+            // Also build env vars for run.sh
+            let envSetup = 'export LOKI_GITHUB_IMPORT=true';
+            if (repo) envSetup += '\nexport LOKI_GITHUB_REPO="' + repo + '"';
+            if (labels) envSetup += '\nexport LOKI_GITHUB_LABELS="' + labels + '"';
+            if (milestone) envSetup += '\nexport LOKI_GITHUB_MILESTONE="' + milestone + '"';
+            if (assignee) envSetup += '\nexport LOKI_GITHUB_ASSIGNEE="' + assignee + '"';
+            if (limit !== 20) envSetup += '\nexport LOKI_GITHUB_LIMIT=' + limit;
+
+            const message = `To import GitHub issues, run one of these commands:
+
+Option 1 - Using CLI:
+${cliCmd}
+
+Option 2 - Using environment variables:
+${envSetup}
+
+Then start Loki Mode and issues will be imported automatically.`;
+
+            alert(message);
+            closeGitHubModal();
+        }
+
         // ============================================
         // Export
         // ============================================
@@ -1955,7 +2581,7 @@
             });
 
             // Scroll spy - update sidebar active state based on scroll position
-            const sections = ['kanban', 'agents', 'system'];
+            const sections = ['kanban', 'agents', 'system', 'terminal'];
             const mainContent = document.querySelector('.main-content');
             if (mainContent) {
                 mainContent.addEventListener('scroll', () => {
@@ -1979,9 +2605,18 @@
                 }
             });
 
+            document.getElementById('github-modal').addEventListener('click', e => {
+                if (e.target.classList.contains('modal-overlay')) {
+                    closeGitHubModal();
+                }
+            });
+
             // Keyboard shortcuts
             document.addEventListener('keydown', e => {
-                if (e.key === 'Escape') closeAddTaskModal();
+                if (e.key === 'Escape') {
+                    closeAddTaskModal();
+                    closeGitHubModal();
+                }
                 if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
                     openAddTaskModal();

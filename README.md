@@ -90,6 +90,26 @@ PRD → Research → Architecture → Development → Testing → Deployment →
 
 ---
 
+## Features & Documentation
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| **CLI (v4.1.0)** | `loki` command for start/stop/pause/status | [CLI Commands](#cli-commands-v410) |
+| **Config Files** | YAML configuration support | [autonomy/config.example.yaml](autonomy/config.example.yaml) |
+| **Dashboard** | Realtime Kanban board, agent monitoring | [Dashboard Guide](docs/dashboard-guide.md) |
+| **37 Agent Types** | Engineering, Ops, Business, Data, Product, Growth | [Agent Definitions](references/agent-types.md) |
+| **RARV Cycle** | Reason-Act-Reflect-Verify workflow | [Core Workflow](references/core-workflow.md) |
+| **Quality Gates** | 7-gate review system with anti-sycophancy | [Quality Control](references/quality-control.md) |
+| **Memory System** | Episodic, semantic, procedural memory | [Memory Architecture](references/memory-system.md) |
+| **Parallel Workflows** | Git worktree-based parallelism | [Parallel Workflows](skills/parallel-workflows.md) |
+| **GitHub Integration** | Issue import, PR creation, status sync | [GitHub Integration](skills/github-integration.md) |
+| **Distribution** | npm, Homebrew, Docker installation | [Installation Guide](docs/INSTALLATION.md) |
+| **Research Foundation** | OpenAI, DeepMind, Anthropic patterns | [Acknowledgements](docs/ACKNOWLEDGEMENTS.md) |
+| **Benchmarks** | HumanEval 98.78%, SWE-bench 99.67% | [Benchmark Results](benchmarks/results/) |
+| **Comparisons** | vs Auto-Claude, Cursor | [Auto-Claude](docs/auto-claude-comparison.md), [Cursor](docs/cursor-comparison.md) |
+
+---
+
 ## Dashboard & Real-Time Monitoring
 
 Monitor your autonomous startup being built in real-time through the Loki Mode dashboard:
@@ -230,11 +250,21 @@ There is **NEVER** a "finished" state. After completing the PRD, Loki Mode:
 ### **1. Install**
 
 ```bash
-# Clone to your Claude Code skills directory
+# Option A: npm (recommended)
+npm install -g loki-mode
+
+# Option B: Homebrew (macOS/Linux)
+brew tap asklokesh/tap && brew install loki-mode
+loki-mode-install-skill  # Set up Claude Code integration
+
+# Option C: Docker
+docker pull asklokesh/loki-mode:4.1.0
+
+# Option D: Git clone
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 ```
 
-See [INSTALLATION.md](INSTALLATION.md) for other installation methods (Web, API Console, minimal curl install).
+See [Installation Guide](docs/INSTALLATION.md) for detailed instructions.
 
 ### **2. Create a PRD**
 
@@ -263,19 +293,27 @@ Save as `my-prd.md`.
 ### **3. Run Loki Mode**
 
 ```bash
-# Autonomous mode (recommended)
+# Using the CLI (v4.1.0)
+loki start ./my-prd.md
+
+# Or using run.sh directly
 ./autonomy/run.sh ./my-prd.md
 
-# Or manual mode
+# Or manual mode in Claude Code
 claude --dangerously-skip-permissions
 > Loki Mode with PRD at ./my-prd.md
 ```
 
 ### **4. Monitor Progress**
 
-Open the dashboard in your browser (auto-opens) or check status:
-
 ```bash
+# Check status
+loki status
+
+# Open dashboard in browser
+loki dashboard
+
+# Or watch terminal output
 watch -n 2 cat .loki/STATUS.txt
 ```
 
@@ -284,6 +322,39 @@ watch -n 2 cat .loki/STATUS.txt
 Seriously. Go get coffee. It'll be deployed when you get back.
 
 **That's it.** No configuration. No manual steps. No intervention.
+
+---
+
+## CLI Commands (v4.1.0)
+
+The `loki` CLI provides easy access to all Loki Mode features:
+
+| Command | Description |
+|---------|-------------|
+| `loki start [PRD]` | Start Loki Mode with optional PRD file |
+| `loki stop` | Stop execution immediately |
+| `loki pause` | Pause after current session |
+| `loki resume` | Resume paused execution |
+| `loki status` | Show current status |
+| `loki dashboard` | Open dashboard in browser |
+| `loki import` | Import GitHub issues as tasks |
+| `loki config show` | Show configuration |
+| `loki config init` | Create config file from template |
+| `loki version` | Show version |
+
+### Configuration File
+
+Create a YAML config file for persistent settings:
+
+```bash
+# Initialize config
+loki config init
+
+# Or copy template manually
+cp ~/.claude/skills/loki-mode/autonomy/config.example.yaml .loki/config.yaml
+```
+
+Config search order: `.loki/config.yaml` (project) -> `~/.config/loki-mode/config.yaml` (global)
 
 ---
 
@@ -565,7 +636,7 @@ Loki Mode incorporates research and patterns from leading AI labs and practition
 - [LerianStudio/ring](https://github.com/LerianStudio/ring) - Subagent-driven-development pattern
 - [Awesome Agentic Patterns](https://github.com/nibzard/awesome-agentic-patterns) - 105+ production patterns
 
-**[Full Acknowledgements](ACKNOWLEDGEMENTS.md)** - Complete list of 50+ research papers, articles, and resources
+**[Full Acknowledgements](docs/ACKNOWLEDGEMENTS.md)** - Complete list of 50+ research papers, articles, and resources
 
 Built for the [Claude Code](https://claude.ai) ecosystem, powered by Anthropic's Claude models (Sonnet, Haiku, Opus).
 

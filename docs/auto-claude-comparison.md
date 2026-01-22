@@ -8,7 +8,7 @@
 | **Release Type** | Desktop app (Electron) | CLI skill |
 | **License** | AGPL-3.0 | MIT |
 | **Requires** | Claude Pro/Max subscription | Claude API (any tier) |
-| **Version** | v2.7.5 (stable) | v3.3.0 |
+| **Version** | v2.7.5 (stable) | v4.1.0 |
 | **Created** | Dec 2025 | Jan 2026 |
 | **Community** | Discord, YouTube | GitHub only |
 
@@ -32,7 +32,7 @@ Auto-Claude provides:
 - SHA256 checksums
 - VirusTotal scans for security
 
-**Loki Mode:** Git clone only. No packaged releases.
+**Loki Mode:** npm, Homebrew, Docker, and git clone. Multiple distribution methods.
 
 **Verdict: Auto-Claude wins** - Professional distribution.
 

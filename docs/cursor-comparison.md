@@ -222,4 +222,4 @@ We incorporated Cursor's proven patterns:
 
 ---
 
-**Loki Mode v3.3.0** | github.com/asklokesh/loki-mode
+**Loki Mode v4.1.0** | github.com/asklokesh/loki-mode

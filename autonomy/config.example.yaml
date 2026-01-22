@@ -1,0 +1,152 @@
+# Loki Mode Configuration File
+# Copy to .loki/config.yaml in your project or ~/.config/loki-mode/config.yaml
+# Environment variables override these values
+# Version: 4.1.0
+
+#===============================================================================
+# Core Settings
+#===============================================================================
+core:
+  # Max retry attempts for rate limits and transient failures
+  max_retries: 50
+  # Base wait time in seconds for exponential backoff
+  base_wait: 60
+  # Maximum wait time in seconds
+  max_wait: 3600
+  # Skip prerequisite checks (not recommended)
+  skip_prereqs: false
+
+#===============================================================================
+# Dashboard Settings
+#===============================================================================
+dashboard:
+  # Enable web dashboard
+  enabled: true
+  # Dashboard port
+  port: 57374
+
+#===============================================================================
+# Resource Monitoring
+#===============================================================================
+resources:
+  # Check resources every N seconds
+  check_interval: 300
+  # CPU percentage threshold to warn
+  cpu_threshold: 80
+  # Memory percentage threshold to warn
+  mem_threshold: 80
+
+#===============================================================================
+# Security & Safety
+#===============================================================================
+security:
+  # Require approval before execution (staged autonomy)
+  staged_autonomy: false
+  # Enable audit logging
+  audit_log: false
+  # Limit concurrent agent spawning
+  max_parallel_agents: 10
+  # Run in sandboxed container (requires Docker)
+  sandbox_mode: false
+  # Comma-separated paths agents can modify (empty = all)
+  allowed_paths: ""
+  # Comma-separated blocked shell commands
+  blocked_commands: "rm -rf /,dd if=,mkfs,:(){ :|:& };:"
+
+#===============================================================================
+# Testing Phases (enable/disable specific test phases)
+#===============================================================================
+phases:
+  unit_tests: true
+  api_tests: true
+  e2e_tests: true
+  security: true
+  integration: true
+  code_review: true
+  web_research: true
+  performance: true
+  accessibility: true
+  regression: true
+  uat: true
+
+#===============================================================================
+# Completion & Iteration Control
+#===============================================================================
+completion:
+  # EXPLICIT stop condition text (empty = runs until stopped)
+  promise: ""
+  # Max loop iterations before exit
+  max_iterations: 1000
+  # Ignore ALL completion signals (runs forever)
+  perpetual_mode: false
+
+#===============================================================================
+# Model & Routing Settings
+#===============================================================================
+model:
+  # Enable prompt repetition for Haiku agents
+  prompt_repetition: true
+  # Enable confidence-based routing
+  confidence_routing: true
+  # Autonomy level: perpetual, checkpoint, or supervised
+  autonomy_mode: perpetual
+  # Suggest compaction every N iterations
+  compaction_interval: 25
+
+#===============================================================================
+# Parallel Execution (Git Worktrees)
+#===============================================================================
+parallel:
+  # Enable git worktree-based parallelism
+  enabled: false
+  # Maximum parallel worktrees
+  max_worktrees: 5
+  # Maximum concurrent Claude sessions
+  max_sessions: 3
+  # Run testing stream in parallel
+  testing: true
+  # Run documentation stream in parallel
+  docs: true
+  # Run blog stream if site has blog
+  blog: false
+  # Auto-merge completed features
+  auto_merge: true
+
+#===============================================================================
+# Complexity Tier
+#===============================================================================
+complexity:
+  # Force complexity tier: auto, simple, moderate, complex, enterprise
+  tier: auto
+
+#===============================================================================
+# GitHub Integration
+#===============================================================================
+github:
+  # Import open issues as tasks
+  import: false
+  # Create PR when feature complete
+  pr: false
+  # Sync status back to issues
+  sync: false
+  # Override repo detection (owner/repo)
+  repo: ""
+  # Filter by labels (comma-separated)
+  labels: ""
+  # Filter by milestone
+  milestone: ""
+  # Filter by assignee
+  assignee: ""
+  # Max issues to import
+  limit: 100
+  # Label for PRs (empty = no label)
+  pr_label: ""
+
+#===============================================================================
+# Notifications
+#===============================================================================
+notifications:
+  # Enable desktop notifications
+  enabled: true
+  # Play sound with notifications
+  sound: true

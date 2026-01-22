@@ -204,4 +204,4 @@ drift_prevention:
 
 ---
 
-**v3.3.0 | Cursor Scaling Learnings**
+**v4.1.0 | Cursor Scaling Learnings**

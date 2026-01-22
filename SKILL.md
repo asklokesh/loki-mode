@@ -3,11 +3,11 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with zero human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v4.0.0
+# Loki Mode v4.1.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
-**New in v4.0.0:** Realtime web dashboard with Anthropic design language, Kanban board, agent monitoring. See `docs/dashboard-guide.md`.
+**New in v4.1.0:** Config file support (YAML), `loki` CLI wrapper, GitHub integration, desktop notifications, Docker image, npm/Homebrew distribution. See `autonomy/config.example.yaml`.
 
 ---
 
@@ -188,4 +188,4 @@ Auto-detected or force with `LOKI_COMPLEXITY`:
 
 ---
 
-**v4.0.0 | Realtime Dashboard + Anthropic Design | ~120 lines core**
+**v4.1.0 | CLI + Config + Distribution | ~120 lines core**

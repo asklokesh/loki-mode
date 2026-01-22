@@ -78,6 +78,21 @@
 #   Standard (6 phases): 3-10 files, 1-2 services, features, bug fixes
 #   Complex (8 phases):  10+ files, multiple services, external integrations
 #
+# GitHub Integration (v4.1.0):
+#   LOKI_GITHUB_IMPORT   - Import open issues as tasks (default: false)
+#   LOKI_GITHUB_PR       - Create PR when feature complete (default: false)
+#   LOKI_GITHUB_SYNC     - Sync status back to issues (default: false)
+#   LOKI_GITHUB_REPO     - Override repo detection (default: from git remote)
+#   LOKI_GITHUB_LABELS   - Filter by labels (comma-separated)
+#   LOKI_GITHUB_MILESTONE - Filter by milestone
+#   LOKI_GITHUB_ASSIGNEE - Filter by assignee
+#   LOKI_GITHUB_LIMIT    - Max issues to import (default: 100)
+#   LOKI_GITHUB_PR_LABEL - Label for PRs (default: none, avoids error if label missing)
+#
+# Desktop Notifications (v4.1.0):
+#   LOKI_NOTIFICATIONS   - Enable desktop notifications (default: true)
+#   LOKI_NOTIFICATION_SOUND - Play sound with notifications (default: true)
+#
 # Human Intervention (Auto-Claude pattern):
 #   PAUSE file:          touch .loki/PAUSE - pauses after current session
 #   HUMAN_INPUT.md:      echo "instructions" > .loki/HUMAN_INPUT.md
@@ -112,6 +127,270 @@ PROJECT_DIR="${LOKI_ORIGINAL_PROJECT_DIR:-$PROJECT_DIR}"
 
 # Clean up temp script on exit
 trap 'rm -f "${BASH_SOURCE[0]}" 2>/dev/null' EXIT
+
+#===============================================================================
+# Configuration File Support (v4.1.0)
+# Loads settings from config file, environment variables take precedence
+#===============================================================================
+load_config_file() {
+    local config_file=""
+
+    # Search for config file in order of priority
+    # Security: Reject symlinks to prevent path traversal attacks
+    # 1. Project-local config
+    if [ -f ".loki/config.yaml" ] && [ ! -L ".loki/config.yaml" ]; then
+        config_file=".loki/config.yaml"
+    elif [ -f ".loki/config.yml" ] && [ ! -L ".loki/config.yml" ]; then
+        config_file=".loki/config.yml"
+    # 2. User-global config (symlinks allowed in home dir - user controls it)
+    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yaml"
+    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yml"
+    fi
+
+    # If no config file found, return silently
+    if [ -z "$config_file" ]; then
+        return 0
+    fi
+
+    # Check for yq (YAML parser)
+    if ! command -v yq &> /dev/null; then
+        # Fallback: parse simple YAML with sed/grep
+        parse_simple_yaml "$config_file"
+        return 0
+    fi
+
+    # Use yq for proper YAML parsing
+    parse_yaml_with_yq "$config_file"
+}
+
+# Fallback YAML parser for simple key: value format
+parse_simple_yaml() {
+    local file="$1"
+
+    # Parse core settings
+    set_from_yaml "$file" "core.max_retries" "LOKI_MAX_RETRIES"
+    set_from_yaml "$file" "core.base_wait" "LOKI_BASE_WAIT"
+    set_from_yaml "$file" "core.max_wait" "LOKI_MAX_WAIT"
+    set_from_yaml "$file" "core.skip_prereqs" "LOKI_SKIP_PREREQS"
+
+    # Dashboard
+    set_from_yaml "$file" "dashboard.enabled" "LOKI_DASHBOARD"
+    set_from_yaml "$file" "dashboard.port" "LOKI_DASHBOARD_PORT"
+
+    # Resources
+    set_from_yaml "$file" "resources.check_interval" "LOKI_RESOURCE_CHECK_INTERVAL"
+    set_from_yaml "$file" "resources.cpu_threshold" "LOKI_RESOURCE_CPU_THRESHOLD"
+    set_from_yaml "$file" "resources.mem_threshold" "LOKI_RESOURCE_MEM_THRESHOLD"
+
+    # Security
+    set_from_yaml "$file" "security.staged_autonomy" "LOKI_STAGED_AUTONOMY"
+    set_from_yaml "$file" "security.audit_log" "LOKI_AUDIT_LOG"
+    set_from_yaml "$file" "security.max_parallel_agents" "LOKI_MAX_PARALLEL_AGENTS"
+    set_from_yaml "$file" "security.sandbox_mode" "LOKI_SANDBOX_MODE"
+    set_from_yaml "$file" "security.allowed_paths" "LOKI_ALLOWED_PATHS"
+    set_from_yaml "$file" "security.blocked_commands" "LOKI_BLOCKED_COMMANDS"
+
+    # Phases
+    set_from_yaml "$file" "phases.unit_tests" "LOKI_PHASE_UNIT_TESTS"
+    set_from_yaml "$file" "phases.api_tests" "LOKI_PHASE_API_TESTS"
+    set_from_yaml "$file" "phases.e2e_tests" "LOKI_PHASE_E2E_TESTS"
+    set_from_yaml "$file" "phases.security" "LOKI_PHASE_SECURITY"
+    set_from_yaml "$file" "phases.integration" "LOKI_PHASE_INTEGRATION"
+    set_from_yaml "$file" "phases.code_review" "LOKI_PHASE_CODE_REVIEW"
+    set_from_yaml "$file" "phases.web_research" "LOKI_PHASE_WEB_RESEARCH"
+    set_from_yaml "$file" "phases.performance" "LOKI_PHASE_PERFORMANCE"
+    set_from_yaml "$file" "phases.accessibility" "LOKI_PHASE_ACCESSIBILITY"
+    set_from_yaml "$file" "phases.regression" "LOKI_PHASE_REGRESSION"
+    set_from_yaml "$file" "phases.uat" "LOKI_PHASE_UAT"
+
+    # Completion
+    set_from_yaml "$file" "completion.promise" "LOKI_COMPLETION_PROMISE"
+    set_from_yaml "$file" "completion.max_iterations" "LOKI_MAX_ITERATIONS"
+    set_from_yaml "$file" "completion.perpetual_mode" "LOKI_PERPETUAL_MODE"
+
+    # Model
+    set_from_yaml "$file" "model.prompt_repetition" "LOKI_PROMPT_REPETITION"
+    set_from_yaml "$file" "model.confidence_routing" "LOKI_CONFIDENCE_ROUTING"
+    set_from_yaml "$file" "model.autonomy_mode" "LOKI_AUTONOMY_MODE"
+    set_from_yaml "$file" "model.compaction_interval" "LOKI_COMPACTION_INTERVAL"
+
+    # Parallel
+    set_from_yaml "$file" "parallel.enabled" "LOKI_PARALLEL_MODE"
+    set_from_yaml "$file" "parallel.max_worktrees" "LOKI_MAX_WORKTREES"
+    set_from_yaml "$file" "parallel.max_sessions" "LOKI_MAX_PARALLEL_SESSIONS"
+    set_from_yaml "$file" "parallel.testing" "LOKI_PARALLEL_TESTING"
+    set_from_yaml "$file" "parallel.docs" "LOKI_PARALLEL_DOCS"
+    set_from_yaml "$file" "parallel.blog" "LOKI_PARALLEL_BLOG"
+    set_from_yaml "$file" "parallel.auto_merge" "LOKI_AUTO_MERGE"
+
+    # Complexity
+    set_from_yaml "$file" "complexity.tier" "LOKI_COMPLEXITY"
+
+    # GitHub
+    set_from_yaml "$file" "github.import" "LOKI_GITHUB_IMPORT"
+    set_from_yaml "$file" "github.pr" "LOKI_GITHUB_PR"
+    set_from_yaml "$file" "github.sync" "LOKI_GITHUB_SYNC"
+    set_from_yaml "$file" "github.repo" "LOKI_GITHUB_REPO"
+    set_from_yaml "$file" "github.labels" "LOKI_GITHUB_LABELS"
+    set_from_yaml "$file" "github.milestone" "LOKI_GITHUB_MILESTONE"
+    set_from_yaml "$file" "github.assignee" "LOKI_GITHUB_ASSIGNEE"
+    set_from_yaml "$file" "github.limit" "LOKI_GITHUB_LIMIT"
+    set_from_yaml "$file" "github.pr_label" "LOKI_GITHUB_PR_LABEL"
+
+    # Notifications
+    set_from_yaml "$file" "notifications.enabled" "LOKI_NOTIFICATIONS"
+    set_from_yaml "$file" "notifications.sound" "LOKI_NOTIFICATION_SOUND"
+}
+
+# Validate YAML value to prevent injection attacks
+validate_yaml_value() {
+    local value="$1"
+    local max_length="${2:-1000}"
+
+    # Reject empty values
+    if [ -z "$value" ]; then
+        return 1
+    fi
+
+    # Reject values with dangerous shell metacharacters
+    # Allow alphanumeric, spaces, dots, dashes, underscores, slashes, colons, commas, @
+    if [[ "$value" =~ [\$\`\|\;\&\>\<\(\)\{\}\[\]\\] ]]; then
+        return 1
+    fi
+
+    # Reject values that are too long (DoS protection)
+    if [ "${#value}" -gt "$max_length" ]; then
+        return 1
+    fi
+
+    # Reject values with newlines (could corrupt variables)
+    if [[ "$value" == *$'\n'* ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Escape regex metacharacters for safe grep usage
+escape_regex() {
+    local input="$1"
+    # Escape: . * ? + [ ] ^ $ { } | ( ) \
+    printf '%s' "$input" | sed 's/[.[\*?+^${}|()\\]/\\&/g'
+}
+
+# Helper: Extract value from YAML and set env var if not already set
+set_from_yaml() {
+    local file="$1"
+    local yaml_path="$2"
+    local env_var="$3"
+
+    # Skip if env var is already set
+    if [ -n "${!env_var:-}" ]; then
+        return 0
+    fi
+
+    # Extract value using grep and sed (handles simple YAML)
+    # Convert yaml path like "core.max_retries" to search pattern
+    local value=""
+    local key="${yaml_path##*.}"  # Get last part of path
+
+    # Escape regex metacharacters in key for safe grep
+    local escaped_key
+    escaped_key=$(escape_regex "$key")
+
+    # Simple grep for the key (works for flat or indented YAML)
+    # Use read to avoid xargs command execution risks
+    value=$(grep -E "^\s*${escaped_key}:" "$file" 2>/dev/null | head -1 | sed -E 's/.*:\s*//' | sed 's/#.*//' | sed 's/^["\x27]//;s/["\x27]$//' | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Validate value before export (security check)
+    if [ -n "$value" ] && [ "$value" != "null" ] && validate_yaml_value "$value"; then
+        export "$env_var=$value"
+    fi
+}
+
+# Parse YAML using yq (proper parser)
+parse_yaml_with_yq() {
+    local file="$1"
+    local mappings=(
+        "core.max_retries:LOKI_MAX_RETRIES"
+        "core.base_wait:LOKI_BASE_WAIT"
+        "core.max_wait:LOKI_MAX_WAIT"
+        "core.skip_prereqs:LOKI_SKIP_PREREQS"
+        "dashboard.enabled:LOKI_DASHBOARD"
+        "dashboard.port:LOKI_DASHBOARD_PORT"
+        "resources.check_interval:LOKI_RESOURCE_CHECK_INTERVAL"
+        "resources.cpu_threshold:LOKI_RESOURCE_CPU_THRESHOLD"
+        "resources.mem_threshold:LOKI_RESOURCE_MEM_THRESHOLD"
+        "security.staged_autonomy:LOKI_STAGED_AUTONOMY"
+        "security.audit_log:LOKI_AUDIT_LOG"
+        "security.max_parallel_agents:LOKI_MAX_PARALLEL_AGENTS"
+        "security.sandbox_mode:LOKI_SANDBOX_MODE"
+        "security.allowed_paths:LOKI_ALLOWED_PATHS"
+        "security.blocked_commands:LOKI_BLOCKED_COMMANDS"
+        "phases.unit_tests:LOKI_PHASE_UNIT_TESTS"
+        "phases.api_tests:LOKI_PHASE_API_TESTS"
+        "phases.e2e_tests:LOKI_PHASE_E2E_TESTS"
+        "phases.security:LOKI_PHASE_SECURITY"
+        "phases.integration:LOKI_PHASE_INTEGRATION"
+        "phases.code_review:LOKI_PHASE_CODE_REVIEW"
+        "phases.web_research:LOKI_PHASE_WEB_RESEARCH"
+        "phases.performance:LOKI_PHASE_PERFORMANCE"
+        "phases.accessibility:LOKI_PHASE_ACCESSIBILITY"
+        "phases.regression:LOKI_PHASE_REGRESSION"
+        "phases.uat:LOKI_PHASE_UAT"
+        "completion.promise:LOKI_COMPLETION_PROMISE"
+        "completion.max_iterations:LOKI_MAX_ITERATIONS"
+        "completion.perpetual_mode:LOKI_PERPETUAL_MODE"
+        "model.prompt_repetition:LOKI_PROMPT_REPETITION"
+        "model.confidence_routing:LOKI_CONFIDENCE_ROUTING"
+        "model.autonomy_mode:LOKI_AUTONOMY_MODE"
+        "model.compaction_interval:LOKI_COMPACTION_INTERVAL"
+        "parallel.enabled:LOKI_PARALLEL_MODE"
+        "parallel.max_worktrees:LOKI_MAX_WORKTREES"
+        "parallel.max_sessions:LOKI_MAX_PARALLEL_SESSIONS"
+        "parallel.testing:LOKI_PARALLEL_TESTING"
+        "parallel.docs:LOKI_PARALLEL_DOCS"
+        "parallel.blog:LOKI_PARALLEL_BLOG"
+        "parallel.auto_merge:LOKI_AUTO_MERGE"
+        "complexity.tier:LOKI_COMPLEXITY"
+        "github.import:LOKI_GITHUB_IMPORT"
+        "github.pr:LOKI_GITHUB_PR"
+        "github.sync:LOKI_GITHUB_SYNC"
+        "github.repo:LOKI_GITHUB_REPO"
+        "github.labels:LOKI_GITHUB_LABELS"
+        "github.milestone:LOKI_GITHUB_MILESTONE"
+        "github.assignee:LOKI_GITHUB_ASSIGNEE"
+        "github.limit:LOKI_GITHUB_LIMIT"
+        "github.pr_label:LOKI_GITHUB_PR_LABEL"
+        "notifications.enabled:LOKI_NOTIFICATIONS"
+        "notifications.sound:LOKI_NOTIFICATION_SOUND"
+    )
+
+    for mapping in "${mappings[@]}"; do
+        local yaml_path="${mapping%%:*}"
+        local env_var="${mapping##*:}"
+
+        # Skip if env var is already set
+        if [ -n "${!env_var:-}" ]; then
+            continue
+        fi
+
+        # Extract value using yq
+        local value
+        value=$(yq eval ".$yaml_path // \"\"" "$file" 2>/dev/null)
+
+        # Set env var if value found and not empty/null
+        # Also validate for security (prevent injection)
+        if [ -n "$value" ] && [ "$value" != "null" ] && [ "$value" != "" ] && validate_yaml_value "$value"; then
+            export "$env_var=$value"
+        fi
+    done
+}
+
+# Load config file before setting defaults
+load_config_file
 
 # Configuration
 MAX_RETRIES=${LOKI_MAX_RETRIES:-50}
@@ -316,6 +595,478 @@ get_phase_names() {
             echo "RESEARCH DESIGN IMPLEMENT TEST REVIEW DEPLOY"
             ;;
     esac
+}
+
+#===============================================================================
+# GitHub Integration Functions (v4.1.0)
+#===============================================================================
+
+# GitHub integration settings
+GITHUB_IMPORT=${LOKI_GITHUB_IMPORT:-false}
+GITHUB_PR=${LOKI_GITHUB_PR:-false}
+GITHUB_SYNC=${LOKI_GITHUB_SYNC:-false}
+GITHUB_REPO=${LOKI_GITHUB_REPO:-""}
+GITHUB_LABELS=${LOKI_GITHUB_LABELS:-""}
+GITHUB_MILESTONE=${LOKI_GITHUB_MILESTONE:-""}
+GITHUB_ASSIGNEE=${LOKI_GITHUB_ASSIGNEE:-""}
+GITHUB_LIMIT=${LOKI_GITHUB_LIMIT:-100}
+GITHUB_PR_LABEL=${LOKI_GITHUB_PR_LABEL:-""}
+
+# Check if gh CLI is available and authenticated
+check_github_cli() {
+    if ! command -v gh &> /dev/null; then
+        log_warn "gh CLI not found. Install with: brew install gh"
+        return 1
+    fi
+
+    if ! gh auth status &> /dev/null; then
+        log_warn "gh CLI not authenticated. Run: gh auth login"
+        return 1
+    fi
+
+    return 0
+}
+
+# Get current repo from git remote or LOKI_GITHUB_REPO
+get_github_repo() {
+    if [ -n "$GITHUB_REPO" ]; then
+        echo "$GITHUB_REPO"
+        return
+    fi
+
+    # Try to detect from git remote
+    local remote_url
+    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+
+    if [ -z "$remote_url" ]; then
+        return 1
+    fi
+
+    # Extract owner/repo from various URL formats
+    # https://github.com/owner/repo.git
+    # git@github.com:owner/repo.git
+    local repo
+    repo=$(echo "$remote_url" | sed -E 's/.*github.com[:/]([^/]+\/[^/]+)(\.git)?$/\1/')
+    repo="${repo%.git}"
+
+    if [ -n "$repo" ] && [[ "$repo" == *"/"* ]]; then
+        echo "$repo"
+        return 0
+    fi
+
+    return 1
+}
+
+# Import issues from GitHub as tasks
+import_github_issues() {
+    if [ "$GITHUB_IMPORT" != "true" ]; then
+        return 0
+    fi
+
+    if ! check_github_cli; then
+        return 1
+    fi
+
+    local repo
+    repo=$(get_github_repo)
+    if [ -z "$repo" ]; then
+        log_error "Could not determine GitHub repo. Set LOKI_GITHUB_REPO=owner/repo"
+        return 1
+    fi
+
+    log_info "Importing issues from GitHub: $repo"
+
+    # Build gh issue list command with filters
+    local gh_args=("issue" "list" "--repo" "$repo" "--state" "open" "--limit" "$GITHUB_LIMIT" "--json" "number,title,body,labels,url,milestone,assignees")
+
+    if [ -n "$GITHUB_LABELS" ]; then
+        IFS=',' read -ra LABELS <<< "$GITHUB_LABELS"
+        for label in "${LABELS[@]}"; do
+            # Trim whitespace from label
+            label=$(echo "$label" | xargs)
+            gh_args+=("--label" "$label")
+        done
+    fi
+
+    if [ -n "$GITHUB_MILESTONE" ]; then
+        gh_args+=("--milestone" "$GITHUB_MILESTONE")
+    fi
+
+    if [ -n "$GITHUB_ASSIGNEE" ]; then
+        gh_args+=("--assignee" "$GITHUB_ASSIGNEE")
+    fi
+
+    # Fetch issues with error capture
+    local issues gh_error
+    if ! issues=$(gh "${gh_args[@]}" 2>&1); then
+        gh_error="$issues"
+        if echo "$gh_error" | grep -q "rate limit"; then
+            log_error "GitHub API rate limit exceeded. Wait and retry."
+        else
+            log_error "Failed to fetch issues: $gh_error"
+        fi
+        return 1
+    fi
+
+    if [ -z "$issues" ] || [ "$issues" == "[]" ]; then
+        log_info "No open issues found matching filters"
+        return 0
+    fi
+
+    # Convert issues to tasks
+    local pending_file=".loki/queue/pending.json"
+    local task_count=0
+
+    # Ensure pending.json exists
+    if [ ! -f "$pending_file" ]; then
+        echo '{"tasks":[]}' > "$pending_file"
+    fi
+
+    # Parse issues and add to pending queue
+    # Use process substitution to avoid subshell variable scope bug
+    while read -r issue; do
+        local number title body full_body url labels
+        number=$(echo "$issue" | jq -r '.number')
+        title=$(echo "$issue" | jq -r '.title')
+        full_body=$(echo "$issue" | jq -r '.body // ""')
+        # Truncate body with indicator if needed
+        if [ ${#full_body} -gt 500 ]; then
+            body="${full_body:0:497}..."
+        else
+            body="$full_body"
+        fi
+        url=$(echo "$issue" | jq -r '.url')
+        labels=$(echo "$issue" | jq -c '[.labels[].name]')
+
+        # Check if task already exists
+        if jq -e ".tasks[] | select(.github_issue == $number)" "$pending_file" &>/dev/null; then
+            log_info "Issue #$number already imported, skipping"
+            continue
+        fi
+
+        # Determine priority from labels
+        local priority="normal"
+        if echo "$labels" | grep -qE '"(priority:critical|P0)"'; then
+            priority="critical"
+        elif echo "$labels" | grep -qE '"(priority:high|P1)"'; then
+            priority="high"
+        elif echo "$labels" | grep -qE '"(priority:medium|P2)"'; then
+            priority="medium"
+        elif echo "$labels" | grep -qE '"(priority:low|P3)"'; then
+            priority="low"
+        fi
+
+        # Add task to pending queue
+        local task_id="github-$number"
+        local task_json
+        task_json=$(jq -n \
+            --arg id "$task_id" \
+            --arg title "$title" \
+            --arg desc "GitHub Issue #$number: $body" \
+            --argjson num "$number" \
+            --arg url "$url" \
+            --argjson labels "$labels" \
+            --arg priority "$priority" \
+            --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+                id: $id,
+                title: $title,
+                description: $desc,
+                source: "github",
+                github_issue: $num,
+                github_url: $url,
+                labels: $labels,
+                priority: $priority,
+                status: "pending",
+                created_at: $created
+            }')
+
+        # Append to pending.json with temp file cleanup on error
+        local temp_file
+        temp_file=$(mktemp)
+        trap "rm -f '$temp_file'" RETURN
+        if jq ".tasks += [$task_json]" "$pending_file" > "$temp_file" && mv "$temp_file" "$pending_file"; then
+            log_info "Imported issue #$number: $title"
+            task_count=$((task_count + 1))
+        else
+            log_warn "Failed to import issue #$number"
+            rm -f "$temp_file"
+        fi
+    done < <(echo "$issues" | jq -c '.[]')
+
+    log_info "Imported $task_count issues from GitHub"
+}
+
+# Create PR for completed feature
+create_github_pr() {
+    local feature_name="$1"
+    local branch_name="${2:-$(git rev-parse --abbrev-ref HEAD)}"
+
+    if [ "$GITHUB_PR" != "true" ]; then
+        return 0
+    fi
+
+    if ! check_github_cli; then
+        return 1
+    fi
+
+    local repo
+    repo=$(get_github_repo)
+    if [ -z "$repo" ]; then
+        log_error "Could not determine GitHub repo"
+        return 1
+    fi
+
+    log_info "Creating PR for: $feature_name"
+
+    # Generate PR body from completed tasks
+    local pr_body=".loki/reports/pr-body.md"
+    mkdir -p "$(dirname "$pr_body")"
+
+    cat > "$pr_body" << EOF
+## Summary
+
+Automated implementation by Loki Mode v4.1.0
+
+### Feature: $feature_name
+
+### Tasks Completed
+EOF
+
+    # Add completed tasks from ledger
+    if [ -f ".loki/ledger.json" ]; then
+        jq -r '.completed_tasks[]? | "- [x] \(.title // .id)"' .loki/ledger.json >> "$pr_body" 2>/dev/null || true
+    fi
+
+    cat >> "$pr_body" << EOF
+
+### Quality Gates
+- Static Analysis: $([ -f ".loki/quality/static-analysis.pass" ] && echo "PASS" || echo "PENDING")
+- Unit Tests: $([ -f ".loki/quality/unit-tests.pass" ] && echo "PASS" || echo "PENDING")
+- Code Review: $([ -f ".loki/quality/code-review.pass" ] && echo "PASS" || echo "PENDING")
+
+### Related Issues
+EOF
+
+    # Find related GitHub issues
+    if [ -f ".loki/ledger.json" ]; then
+        jq -r '.completed_tasks[]? | select(.github_issue) | "Closes #\(.github_issue)"' .loki/ledger.json >> "$pr_body" 2>/dev/null || true
+    fi
+
+    # Build PR create command
+    local pr_args=("pr" "create" "--repo" "$repo" "--title" "[Loki Mode] $feature_name" "--body-file" "$pr_body")
+
+    # Add label only if specified (avoids error if label doesn't exist)
+    if [ -n "$GITHUB_PR_LABEL" ]; then
+        pr_args+=("--label" "$GITHUB_PR_LABEL")
+    fi
+
+    # Create PR and capture output
+    local pr_url
+    if ! pr_url=$(gh "${pr_args[@]}" 2>&1); then
+        log_error "Failed to create PR: $pr_url"
+        return 1
+    fi
+
+    log_info "PR created: $pr_url"
+}
+
+# Sync task status to GitHub issue
+sync_github_status() {
+    local task_id="$1"
+    local status="$2"
+    local message="${3:-}"
+
+    if [ "$GITHUB_SYNC" != "true" ]; then
+        return 0
+    fi
+
+    if ! check_github_cli; then
+        return 1
+    fi
+
+    # Extract issue number from task_id (format: github-123)
+    local issue_number
+    issue_number=$(echo "$task_id" | sed 's/github-//')
+
+    if ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+        return 0  # Not a GitHub-sourced task
+    fi
+
+    local repo
+    repo=$(get_github_repo)
+    if [ -z "$repo" ]; then
+        return 1
+    fi
+
+    case "$status" in
+        "in_progress")
+            gh issue comment "$issue_number" --repo "$repo" \
+                --body "Loki Mode: Task in progress - ${message:-implementing solution...}" \
+                2>/dev/null || true
+            ;;
+        "completed")
+            gh issue comment "$issue_number" --repo "$repo" \
+                --body "Loki Mode: Implementation complete. ${message:-}" \
+                2>/dev/null || true
+            ;;
+        "closed")
+            gh issue close "$issue_number" --repo "$repo" \
+                --reason "completed" \
+                --comment "Loki Mode: Fixed. ${message:-}" \
+                2>/dev/null || true
+            ;;
+    esac
+}
+
+# Export tasks to GitHub issues (reverse sync)
+export_tasks_to_github() {
+    if ! check_github_cli; then
+        return 1
+    fi
+
+    local repo
+    repo=$(get_github_repo)
+    if [ -z "$repo" ]; then
+        log_error "Could not determine GitHub repo"
+        return 1
+    fi
+
+    local pending_file=".loki/queue/pending.json"
+    if [ ! -f "$pending_file" ]; then
+        log_warn "No pending tasks to export"
+        return 0
+    fi
+
+    # Export non-GitHub tasks as issues
+    jq -c '.tasks[] | select(.source != "github")' "$pending_file" 2>/dev/null | while read -r task; do
+        local title desc
+        title=$(echo "$task" | jq -r '.title')
+        desc=$(echo "$task" | jq -r '.description // ""')
+
+        log_info "Creating issue: $title"
+        gh issue create --repo "$repo" \
+            --title "$title" \
+            --body "$desc" \
+            --label "loki-mode" \
+            2>/dev/null || log_warn "Failed to create issue: $title"
+    done
+}
+
+#===============================================================================
+# Desktop Notifications (v4.1.0)
+#===============================================================================
+
+# Notification settings
+NOTIFICATIONS_ENABLED=${LOKI_NOTIFICATIONS:-true}
+NOTIFICATION_SOUND=${LOKI_NOTIFICATION_SOUND:-true}
+
+# Send desktop notification (cross-platform)
+send_notification() {
+    local title="$1"
+    local message="$2"
+    local urgency="${3:-normal}"  # low, normal, critical
+
+    if [ "$NOTIFICATIONS_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    # Validate inputs - skip empty notifications
+    if [ -z "$title" ] && [ -z "$message" ]; then
+        return 0
+    fi
+    title="${title:-Notification}"  # Default title if empty
+
+    # macOS: use osascript
+    if command -v osascript &> /dev/null; then
+        # Escape backslashes first, then double quotes for AppleScript
+        local escaped_title="${title//\\/\\\\}"
+        escaped_title="${escaped_title//\"/\\\"}"
+        local escaped_message="${message//\\/\\\\}"
+        escaped_message="${escaped_message//\"/\\\"}"
+
+        osascript -e "display notification \"$escaped_message\" with title \"Loki Mode\" subtitle \"$escaped_title\"" 2>/dev/null || true
+
+        # Play sound if enabled (low urgency intentionally silent)
+        if [ "$NOTIFICATION_SOUND" = "true" ]; then
+            case "$urgency" in
+                critical)
+                    osascript -e 'beep 3' 2>/dev/null || true
+                    ;;
+                normal)
+                    osascript -e 'beep' 2>/dev/null || true
+                    ;;
+                low)
+                    # Intentionally no sound for low urgency notifications
+                    ;;
+            esac
+        fi
+        return 0
+    fi
+
+    # Linux: use notify-send
+    if command -v notify-send &> /dev/null; then
+        local notify_urgency="normal"
+        case "$urgency" in
+            critical) notify_urgency="critical" ;;
+            low) notify_urgency="low" ;;
+            *) notify_urgency="normal" ;;
+        esac
+
+        # Escape markup characters for notify-send (supports basic Pango)
+        local safe_title="${title//&/&amp;}"
+        safe_title="${safe_title//</&lt;}"
+        safe_title="${safe_title//>/&gt;}"
+        local safe_message="${message//&/&amp;}"
+        safe_message="${safe_message//</&lt;}"
+        safe_message="${safe_message//>/&gt;}"
+
+        notify-send -u "$notify_urgency" "Loki Mode: $safe_title" "$safe_message" 2>/dev/null || true
+        return 0
+    fi
+
+    # Fallback: terminal bell for critical notifications
+    if [ "$urgency" = "critical" ]; then
+        printf '\a'  # Bell character
+    fi
+
+    return 0
+}
+
+# Convenience notification functions
+notify_task_started() {
+    local task_name="$1"
+    send_notification "Task Started" "$task_name" "low"
+}
+
+notify_task_completed() {
+    local task_name="$1"
+    send_notification "Task Completed" "$task_name" "normal"
+}
+
+notify_task_failed() {
+    local task_name="$1"
+    local error="${2:-Unknown error}"
+    send_notification "Task Failed" "$task_name: $error" "critical"
+}
+
+notify_phase_complete() {
+    local phase_name="$1"
+    send_notification "Phase Complete" "$phase_name" "normal"
+}
+
+notify_all_complete() {
+    send_notification "All Tasks Complete" "Loki Mode has finished all tasks" "normal"
+}
+
+notify_intervention_needed() {
+    local reason="$1"
+    send_notification "Intervention Needed" "$reason" "critical"
+}
+
+notify_rate_limit() {
+    local wait_time="$1"
+    send_notification "Rate Limited" "Waiting ${wait_time}s before retry" "normal"
 }
 
 #===============================================================================
@@ -2536,6 +3287,7 @@ if __name__ == "__main__":
                 echo ""
                 log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
                 log_info "Explicit completion promise detected in output."
+                notify_all_complete
                 save_state $retry "completion_promise_fulfilled" 0
                 return 0
             fi
@@ -2562,6 +3314,7 @@ if __name__ == "__main__":
             local human_time=$(format_duration $wait_time)
             log_warn "Rate limit detected! Waiting until reset (~$human_time)..."
             log_info "Rate limit resets at approximately $(date -v+${wait_time}S '+%I:%M %p' 2>/dev/null || date -d "+${wait_time} seconds" '+%I:%M %p' 2>/dev/null || echo 'soon')"
+            notify_rate_limit "$wait_time"
         else
             wait_time=$(calculate_wait $retry)
             log_warn "Will retry in ${wait_time}s..."
@@ -2609,6 +3362,7 @@ check_human_intervention() {
     # Check for PAUSE file
     if [ -f "$loki_dir/PAUSE" ]; then
         log_warn "PAUSE file detected - pausing execution"
+        notify_intervention_needed "Execution paused via PAUSE file"
         rm -f "$loki_dir/PAUSE"
         handle_pause
         return 1
@@ -2745,7 +3499,7 @@ main() {
     echo "  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝    ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝"
     echo -e "${NC}"
     echo -e "  ${CYAN}Autonomous Multi-Agent Startup System${NC}"
-    echo -e "  ${CYAN}Version: $(cat "$PROJECT_DIR/VERSION" 2>/dev/null || echo "2.x.x")${NC}"
+    echo -e "  ${CYAN}Version: $(cat "$PROJECT_DIR/VERSION" 2>/dev/null || echo "4.x.x")${NC}"
     echo ""
 
     # Parse arguments
@@ -2800,6 +3554,11 @@ main() {
 
     # Initialize .loki directory
     init_loki_dir
+
+    # Import GitHub issues if enabled (v4.1.0)
+    if [ "$GITHUB_IMPORT" = "true" ]; then
+        import_github_issues
+    fi
 
     # Start web dashboard (if enabled)
     if [ "$ENABLE_DASHBOARD" = "true" ]; then

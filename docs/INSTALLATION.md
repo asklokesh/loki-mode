@@ -2,11 +2,16 @@
 
 Complete installation instructions for all platforms and use cases.
 
+**Version:** v4.1.0
+
 ---
 
 ## Table of Contents
 
 - [Quick Install (Recommended)](#quick-install-recommended)
+- [npm (Node.js)](#npm-nodejs)
+- [Homebrew (macOS/Linux)](#homebrew-macoslinux)
+- [Docker](#docker)
 - [Claude Code (CLI)](#claude-code-cli)
 - [Claude.ai (Web)](#claudeai-web)
 - [Anthropic API Console](#anthropic-api-console)
@@ -17,14 +22,171 @@ Complete installation instructions for all platforms and use cases.
 
 ## Quick Install (Recommended)
 
-**For Claude Code users:**
+Choose your preferred method:
 
 ```bash
-# Clone to your skills directory
+# Option A: npm (easiest)
+npm install -g loki-mode
+
+# Option B: Homebrew (macOS/Linux)
+brew tap asklokesh/tap && brew install loki-mode
+
+# Option C: Docker
+docker pull asklokesh/loki-mode:4.1.0
+
+# Option D: Git clone
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 ```
 
 **Done!** Skip to [Verify Installation](#verify-installation).
+
+---
+
+## npm (Node.js)
+
+Install via npm for the easiest setup with automatic PATH configuration.
+
+### Prerequisites
+
+- Node.js 16.0.0 or later
+
+### Installation
+
+```bash
+# Global installation
+npm install -g loki-mode
+
+# The skill is automatically installed to ~/.claude/skills/loki-mode
+```
+
+### Usage
+
+```bash
+# Use the CLI
+loki start ./my-prd.md
+loki status
+loki dashboard
+
+# Or invoke in Claude Code
+claude --dangerously-skip-permissions
+> Loki Mode with PRD at ./my-prd.md
+```
+
+### Updating
+
+```bash
+npm update -g loki-mode
+```
+
+### Uninstalling
+
+```bash
+npm uninstall -g loki-mode
+rm -rf ~/.claude/skills/loki-mode
+```
+
+---
+
+## Homebrew (macOS/Linux)
+
+Install via Homebrew with automatic dependency management.
+
+### Prerequisites
+
+- Homebrew (https://brew.sh)
+
+### Installation
+
+```bash
+# Add the tap
+brew tap asklokesh/tap
+
+# Install Loki Mode
+brew install loki-mode
+
+# Set up Claude Code skill integration
+loki-mode-install-skill
+```
+
+### Dependencies
+
+Homebrew automatically installs:
+- bash 4.0+ (for associative arrays)
+- jq (JSON processing)
+- gh (GitHub CLI for integration)
+
+### Usage
+
+```bash
+# Use the CLI
+loki start ./my-prd.md
+loki status
+loki --help
+```
+
+### Updating
+
+```bash
+brew upgrade loki-mode
+```
+
+### Uninstalling
+
+```bash
+brew uninstall loki-mode
+rm -rf ~/.claude/skills/loki-mode
+```
+
+---
+
+## Docker
+
+Run Loki Mode in a container for isolated execution.
+
+### Prerequisites
+
+- Docker installed and running
+
+### Installation
+
+```bash
+# Pull the image
+docker pull asklokesh/loki-mode:4.1.0
+
+# Or use docker-compose
+curl -o docker-compose.yml https://raw.githubusercontent.com/asklokesh/loki-mode/main/docker-compose.yml
+```
+
+### Usage
+
+```bash
+# Run with a PRD file
+docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:4.1.0 start ./my-prd.md
+
+# Interactive mode
+docker run -it -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:4.1.0
+
+# Using docker-compose
+docker-compose run loki start ./my-prd.md
+```
+
+### Environment Variables
+
+Pass your configuration via environment variables:
+
+```bash
+docker run -e LOKI_MAX_RETRIES=100 -e LOKI_BASE_WAIT=120 \
+  -v $(pwd):/workspace -w /workspace \
+  asklokesh/loki-mode:4.1.0 start ./my-prd.md
+```
+
+### Updating
+
+```bash
+docker pull asklokesh/loki-mode:latest
+```
+
+---
 
 ---
 
@@ -181,7 +343,8 @@ After installation, you should have this structure:
 loki-mode/
 ├── SKILL.md              # Main skill file (required)
 ├── README.md             # Documentation
-├── INSTALLATION.md       # This file
+├── docs/
+│   └── INSTALLATION.md   # This file
 ├── CHANGELOG.md          # Version history
 ├── VERSION               # Current version number
 ├── LICENSE               # MIT License

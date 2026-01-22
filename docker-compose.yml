@@ -1,0 +1,37 @@
+# Loki Mode Docker Compose (v4.1.0)
+# Usage: docker-compose run loki start
+# Note: version key removed - deprecated in Docker Compose v2+
+
+services:
+  loki:
+    build: .
+    image: loki-mode:latest
+    volumes:
+      # Mount current directory as workspace
+      - .:/workspace:rw
+      # Persist .loki state between runs
+      - loki-state:/workspace/.loki
+      # Share git config for commits
+      - ~/.gitconfig:/root/.gitconfig:ro
+      # Share SSH keys for git operations
+      - ~/.ssh:/root/.ssh:ro
+      # Share GitHub CLI auth
+      - ~/.config/gh:/root/.config/gh:ro
+    environment:
+      # Loki Mode configuration
+      - LOKI_NOTIFICATIONS=false  # No desktop notifications in container
+      - LOKI_DASHBOARD=true
+      - LOKI_DASHBOARD_PORT=57374
+      # Pass through GitHub token if set
+      - GITHUB_TOKEN
+      - GH_TOKEN
+    ports:
+      # Expose dashboard
+      - "57374:57374"
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  loki-state:
+    driver: local

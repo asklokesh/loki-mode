@@ -1,0 +1,526 @@
+#!/bin/bash
+#===============================================================================
+# Loki Mode CLI Wrapper (v4.1.0)
+# Simple command-line interface for Loki Mode
+#
+# Installation:
+#   ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
+#
+# Usage:
+#   loki start [PRD]      - Start Loki Mode (optionally with PRD)
+#   loki stop             - Stop execution immediately
+#   loki pause            - Pause after current session
+#   loki resume           - Resume paused execution
+#   loki status           - Show current status
+#   loki dashboard        - Open dashboard in browser
+#   loki import           - Import GitHub issues
+#   loki help             - Show this help
+#===============================================================================
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Find the skill installation
+find_skill_dir() {
+    local dirs=(
+        "$HOME/.claude/skills/loki-mode"
+        "$(dirname "$0")/.."
+        "."
+    )
+
+    for dir in "${dirs[@]}"; do
+        if [ -f "$dir/SKILL.md" ] && [ -f "$dir/autonomy/run.sh" ]; then
+            echo "$dir"
+            return 0
+        fi
+    done
+
+    echo ""
+    return 1
+}
+
+SKILL_DIR=$(find_skill_dir)
+if [ -z "$SKILL_DIR" ]; then
+    echo -e "${RED}Error: Could not find Loki Mode installation${NC}"
+    echo "Expected at: ~/.claude/skills/loki-mode"
+    exit 1
+fi
+
+RUN_SH="$SKILL_DIR/autonomy/run.sh"
+LOKI_DIR=".loki"
+
+# Get version from VERSION file
+get_version() {
+    if [ -f "$SKILL_DIR/VERSION" ]; then
+        cat "$SKILL_DIR/VERSION"
+    else
+        echo "unknown"
+    fi
+}
+
+# Show help
+show_help() {
+    local version=$(get_version)
+    echo -e "${BOLD}Loki Mode v$version${NC}"
+    echo ""
+    echo "Usage: loki <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  start [PRD]      Start Loki Mode (optionally with PRD file)"
+    echo "  stop             Stop execution immediately"
+    echo "  pause            Pause after current session"
+    echo "  resume           Resume paused execution"
+    echo "  status           Show current status"
+    echo "  dashboard        Open dashboard in browser"
+    echo "  import           Import GitHub issues as tasks"
+    echo "  config [cmd]     Manage configuration (show|init|edit|path)"
+    echo "  version          Show version"
+    echo "  help             Show this help"
+    echo ""
+    echo "Options for 'start':"
+    echo "  --parallel       Enable parallel mode with git worktrees"
+    echo "  --simple         Force simple complexity tier (3 phases)"
+    echo "  --complex        Force complex complexity tier (8 phases)"
+    echo "  --github         Enable GitHub issue import"
+    echo "  --no-dashboard   Disable web dashboard"
+    echo ""
+    echo "Examples:"
+    echo "  loki start                    # Start in current directory"
+    echo "  loki start ./prd.md           # Start with PRD file"
+    echo "  loki start --parallel         # Start in parallel mode"
+    echo "  loki pause                    # Pause execution"
+    echo "  loki status                   # Check current status"
+    echo ""
+    echo "Environment Variables:"
+    echo "  See: $RUN_SH (header comments)"
+}
+
+# Start Loki Mode
+cmd_start() {
+    local args=()
+    local prd_file=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --parallel)
+                args+=("--parallel")
+                shift
+                ;;
+            --simple)
+                export LOKI_COMPLEXITY=simple
+                shift
+                ;;
+            --complex)
+                export LOKI_COMPLEXITY=complex
+                shift
+                ;;
+            --github)
+                export LOKI_GITHUB_IMPORT=true
+                shift
+                ;;
+            --no-dashboard)
+                export LOKI_DASHBOARD=false
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+            *)
+                prd_file="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [ -n "$prd_file" ]; then
+        args+=("$prd_file")
+    fi
+
+    echo -e "${GREEN}Starting Loki Mode...${NC}"
+    exec "$RUN_SH" "${args[@]}"
+}
+
+# Stop execution immediately
+cmd_stop() {
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${YELLOW}No .loki directory found. Is Loki Mode running?${NC}"
+        exit 1
+    fi
+
+    touch "$LOKI_DIR/STOP"
+    echo -e "${RED}STOP signal sent. Execution will halt immediately.${NC}"
+}
+
+# Pause after current session
+cmd_pause() {
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${YELLOW}No .loki directory found. Is Loki Mode running?${NC}"
+        exit 1
+    fi
+
+    touch "$LOKI_DIR/PAUSE"
+    echo -e "${YELLOW}PAUSE signal sent. Execution will pause after current session.${NC}"
+}
+
+# Resume paused execution
+cmd_resume() {
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${YELLOW}No .loki directory found.${NC}"
+        exit 1
+    fi
+
+    if [ -f "$LOKI_DIR/PAUSE" ]; then
+        rm -f "$LOKI_DIR/PAUSE"
+        echo -e "${GREEN}PAUSE file removed. You may need to restart Loki Mode.${NC}"
+    elif [ -f "$LOKI_DIR/STOP" ]; then
+        rm -f "$LOKI_DIR/STOP"
+        echo -e "${GREEN}STOP file removed. You may need to restart Loki Mode.${NC}"
+    else
+        echo -e "${YELLOW}No pause/stop files found.${NC}"
+    fi
+}
+
+# Show current status
+cmd_status() {
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${YELLOW}No .loki directory found.${NC}"
+        echo "Loki Mode has not been initialized in this directory."
+        exit 0
+    fi
+
+    echo -e "${BOLD}Loki Mode Status${NC}"
+    echo ""
+
+    # Check status file
+    if [ -f "$LOKI_DIR/STATUS.txt" ]; then
+        echo -e "${CYAN}Current Status:${NC}"
+        cat "$LOKI_DIR/STATUS.txt"
+        echo ""
+    fi
+
+    # Check for signals
+    if [ -f "$LOKI_DIR/PAUSE" ]; then
+        echo -e "${YELLOW}PAUSE signal active${NC}"
+    fi
+    if [ -f "$LOKI_DIR/STOP" ]; then
+        echo -e "${RED}STOP signal active${NC}"
+    fi
+
+    # Check orchestrator state
+    if [ -f "$LOKI_DIR/state/orchestrator.json" ]; then
+        echo -e "${CYAN}Orchestrator State:${NC}"
+        jq -r '.currentPhase // "unknown"' "$LOKI_DIR/state/orchestrator.json" 2>/dev/null || echo "unknown"
+    fi
+
+    # Check pending tasks
+    if [ -f "$LOKI_DIR/queue/pending.json" ]; then
+        local task_count=$(jq '.tasks | length' "$LOKI_DIR/queue/pending.json" 2>/dev/null || echo "0")
+        echo -e "${CYAN}Pending Tasks:${NC} $task_count"
+    fi
+
+    # Check dashboard
+    if [ -f "$LOKI_DIR/dashboard/index.html" ]; then
+        local port=${LOKI_DASHBOARD_PORT:-57374}
+        echo -e "${CYAN}Dashboard:${NC} http://127.0.0.1:$port/dashboard/index.html"
+    fi
+}
+
+# Open dashboard in browser
+cmd_dashboard() {
+    local port=${LOKI_DASHBOARD_PORT:-57374}
+    local url="http://127.0.0.1:$port/dashboard/index.html"
+
+    if [ ! -d "$LOKI_DIR/dashboard" ]; then
+        echo -e "${YELLOW}Dashboard not found. Start Loki Mode first.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}Opening dashboard: $url${NC}"
+
+    # Open in browser (cross-platform)
+    if command -v open &> /dev/null; then
+        open "$url"
+    elif command -v xdg-open &> /dev/null; then
+        xdg-open "$url"
+    else
+        echo "Please open in browser: $url"
+    fi
+}
+
+# Import GitHub issues
+cmd_import() {
+    if [ ! -d "$LOKI_DIR" ]; then
+        mkdir -p "$LOKI_DIR/queue"
+    fi
+
+    export LOKI_GITHUB_IMPORT=true
+
+    # Check gh CLI
+    if ! command -v gh &> /dev/null; then
+        echo -e "${RED}Error: gh CLI not found. Install with: brew install gh${NC}"
+        exit 1
+    fi
+
+    if ! gh auth status &> /dev/null; then
+        echo -e "${RED}Error: gh CLI not authenticated. Run: gh auth login${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}Importing GitHub issues...${NC}"
+    # Source the functions from run.sh and call import
+    source "$RUN_SH" 2>/dev/null || true
+    if type import_github_issues &>/dev/null; then
+        import_github_issues
+    else
+        echo -e "${YELLOW}Import function not available. Using fallback.${NC}"
+        gh issue list --json number,title,url --limit 20
+    fi
+}
+
+# Show configuration
+cmd_config() {
+    local subcommand="${1:-show}"
+
+    case "$subcommand" in
+        show)
+            cmd_config_show
+            ;;
+        init)
+            cmd_config_init
+            ;;
+        edit)
+            cmd_config_edit
+            ;;
+        path)
+            cmd_config_path
+            ;;
+        *)
+            echo -e "${YELLOW}Usage: loki config [show|init|edit|path]${NC}"
+            echo ""
+            echo "  show   Show current configuration (default)"
+            echo "  init   Create a config file from template"
+            echo "  edit   Open config file in editor"
+            echo "  path   Show config file paths"
+            ;;
+    esac
+}
+
+cmd_config_show() {
+    echo -e "${BOLD}Loki Mode Configuration${NC}"
+    echo ""
+    echo -e "${CYAN}Installation:${NC} $SKILL_DIR"
+    echo -e "${CYAN}Version:${NC} $(get_version)"
+    echo ""
+
+    # Check for config files
+    local config_file=""
+    if [ -f ".loki/config.yaml" ]; then
+        config_file=".loki/config.yaml"
+        echo -e "${GREEN}Config file:${NC} $config_file (project-local)"
+    elif [ -f ".loki/config.yml" ]; then
+        config_file=".loki/config.yml"
+        echo -e "${GREEN}Config file:${NC} $config_file (project-local)"
+    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yaml"
+        echo -e "${GREEN}Config file:${NC} $config_file (user-global)"
+    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yml"
+        echo -e "${GREEN}Config file:${NC} $config_file (user-global)"
+    else
+        echo -e "${YELLOW}Config file:${NC} Not found (using defaults)"
+    fi
+    echo ""
+
+    echo -e "${CYAN}Current Settings:${NC}"
+    echo ""
+    echo "Core:"
+    echo "  max_retries:      ${LOKI_MAX_RETRIES:-50}"
+    echo "  base_wait:        ${LOKI_BASE_WAIT:-60}s"
+    echo "  max_wait:         ${LOKI_MAX_WAIT:-3600}s"
+    echo ""
+    echo "Dashboard:"
+    echo "  enabled:          ${LOKI_DASHBOARD:-true}"
+    echo "  port:             ${LOKI_DASHBOARD_PORT:-57374}"
+    echo ""
+    echo "Notifications:"
+    echo "  enabled:          ${LOKI_NOTIFICATIONS:-true}"
+    echo "  sound:            ${LOKI_NOTIFICATION_SOUND:-true}"
+    echo ""
+    echo "GitHub Integration:"
+    echo "  import:           ${LOKI_GITHUB_IMPORT:-false}"
+    echo "  pr:               ${LOKI_GITHUB_PR:-false}"
+    echo "  sync:             ${LOKI_GITHUB_SYNC:-false}"
+    echo ""
+    echo "Execution:"
+    echo "  complexity:       ${LOKI_COMPLEXITY:-auto}"
+    echo "  parallel_mode:    ${LOKI_PARALLEL_MODE:-false}"
+    echo "  max_iterations:   ${LOKI_MAX_ITERATIONS:-1000}"
+    echo "  autonomy_mode:    ${LOKI_AUTONOMY_MODE:-perpetual}"
+    echo ""
+    echo -e "Run ${CYAN}loki config path${NC} to see all config file locations"
+}
+
+cmd_config_init() {
+    local template="$SKILL_DIR/autonomy/config.example.yaml"
+    local target=".loki/config.yaml"
+    local global_target="${HOME}/.config/loki-mode/config.yaml"
+
+    if [ ! -f "$template" ]; then
+        echo -e "${RED}Error: Config template not found at $template${NC}"
+        exit 1
+    fi
+
+    echo -e "${BOLD}Initialize Configuration${NC}"
+    echo ""
+    echo "Where do you want to create the config file?"
+    echo ""
+    echo "  1) $target (project-local, recommended)"
+    echo "  2) $global_target (user-global)"
+    echo ""
+    read -p "Choice [1]: " choice
+    choice="${choice:-1}"
+
+    case "$choice" in
+        1)
+            mkdir -p ".loki"
+            cp "$template" "$target"
+            echo -e "${GREEN}Created: $target${NC}"
+            ;;
+        2)
+            mkdir -p "${HOME}/.config/loki-mode"
+            cp "$template" "$global_target"
+            echo -e "${GREEN}Created: $global_target${NC}"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+
+    echo ""
+    echo "Edit with: loki config edit"
+}
+
+cmd_config_edit() {
+    local config_file=""
+
+    # Find existing config file
+    if [ -f ".loki/config.yaml" ]; then
+        config_file=".loki/config.yaml"
+    elif [ -f ".loki/config.yml" ]; then
+        config_file=".loki/config.yml"
+    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yaml"
+    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
+        config_file="${HOME}/.config/loki-mode/config.yml"
+    fi
+
+    if [ -z "$config_file" ]; then
+        echo -e "${YELLOW}No config file found.${NC}"
+        read -p "Create one? [Y/n]: " create
+        create="${create:-Y}"
+        if [[ "$create" =~ ^[Yy] ]]; then
+            cmd_config_init
+            config_file=".loki/config.yaml"
+        else
+            exit 0
+        fi
+    fi
+
+    # Open in editor
+    local editor="${EDITOR:-${VISUAL:-vim}}"
+    echo -e "${GREEN}Opening $config_file with $editor${NC}"
+    "$editor" "$config_file"
+}
+
+cmd_config_path() {
+    echo -e "${BOLD}Config File Search Paths${NC}"
+    echo ""
+    echo "Loki Mode searches for config files in this order:"
+    echo ""
+
+    local paths=(
+        ".loki/config.yaml"
+        ".loki/config.yml"
+        "${HOME}/.config/loki-mode/config.yaml"
+        "${HOME}/.config/loki-mode/config.yml"
+    )
+
+    for path in "${paths[@]}"; do
+        if [ -f "$path" ]; then
+            echo -e "  ${GREEN}[FOUND]${NC}  $path"
+        else
+            echo -e "  ${YELLOW}[-----]${NC}  $path"
+        fi
+    done
+
+    echo ""
+    echo "Template: $SKILL_DIR/autonomy/config.example.yaml"
+    echo ""
+    echo "Create a config file with: loki config init"
+}
+
+# Show version
+cmd_version() {
+    echo "Loki Mode v$(get_version)"
+}
+
+# Main command dispatcher
+main() {
+    if [ $# -eq 0 ]; then
+        show_help
+        exit 0
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        start)
+            cmd_start "$@"
+            ;;
+        stop)
+            cmd_stop
+            ;;
+        pause)
+            cmd_pause
+            ;;
+        resume)
+            cmd_resume
+            ;;
+        status)
+            cmd_status
+            ;;
+        dashboard)
+            cmd_dashboard
+            ;;
+        import)
+            cmd_import
+            ;;
+        config)
+            cmd_config "$@"
+            ;;
+        version|--version|-v)
+            cmd_version
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}Unknown command: $command${NC}"
+            echo "Run 'loki help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

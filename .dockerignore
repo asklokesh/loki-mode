@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+node_modules
+dist
+*.log
+
+# Local state
+.loki
+.env
+.env.*
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Benchmarks (large files)
+benchmarks/datasets
+benchmarks/results
+
+# Blog assets
+blog/
+
+# Development
+*.bak
+*.tmp

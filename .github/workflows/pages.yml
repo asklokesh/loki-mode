@@ -8,8 +8,8 @@ on:
       - 'blog/**'
       - 'README.md'
       - 'CHANGELOG.md'
-      - 'ACKNOWLEDGEMENTS.md'
-      - 'INSTALLATION.md'
+      - 'docs/ACKNOWLEDGEMENTS.md'
+      - 'docs/INSTALLATION.md'
       - 'LICENSE'
       - 'references/**'
       - 'skills/**'
@@ -50,8 +50,8 @@ jobs:
           # The website references files like ../README.md, ../references/*, etc.
           cp README.md _site/
           cp CHANGELOG.md _site/
-          cp ACKNOWLEDGEMENTS.md _site/
-          cp INSTALLATION.md _site/
+          cp docs/ACKNOWLEDGEMENTS.md _site/
+          cp docs/INSTALLATION.md _site/
           cp LICENSE _site/ 2>/dev/null || true
 
           # Copy directories that blog references

@@ -444,4 +444,4 @@ All rules in this constitution are **machine-enforceable**:
 
 *"In autonomous systems, trust is built on invariants, not intentions."*
 
-**v3.2.0 | Aligned with SKILL.md and run.sh | 2026-01-19**
+**v4.1.0 | CLI, Config, Distribution | 2026-01-21**

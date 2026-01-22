@@ -27,7 +27,7 @@ skills/                     # On-demand skill modules (v3.0 architecture)
   artifacts.md              # Generation, code transformation
   patterns-advanced.md      # OptiMind, k8s-valkey, Constitutional AI
   parallel-workflows.md     # Git worktrees, parallel streams, auto-merge
-references/                 # Detailed documentation
+references/                 # Detailed documentation (19 files)
   openai-patterns.md        # OpenAI Agents SDK: guardrails, tripwires, handoffs
   lab-research-patterns.md  # DeepMind + Anthropic: Constitutional AI, debate
   production-patterns.md    # HN 2025: What actually works in production
@@ -38,13 +38,15 @@ references/                 # Detailed documentation
   agent-types.md            # 37 specialized agent definitions
   sdlc-phases.md            # Full SDLC workflow
   task-queue.md             # Queue system, circuit breakers
-  spec-driven-dev.md        # OpenAPI-first development
-  architecture.md           # Directory structure, state schemas
   core-workflow.md          # RARV cycle, autonomy rules
-  claude-best-practices.md  # Boris Cherny patterns
   deployment.md             # Cloud deployment instructions
   business-ops.md           # Business operation workflows
   mcp-integration.md        # MCP server capabilities
+  competitive-analysis.md   # Auto-Claude, MemOS, Dexter comparison
+  confidence-routing.md     # Model selection by confidence
+  cursor-learnings.md       # Cursor scaling patterns
+  prompt-repetition.md      # Haiku prompt optimization
+  agents.md                 # Agent dispatch patterns
 autonomy/                   # Runtime and autonomous execution
 benchmarks/                 # SWE-bench and HumanEval benchmarks
 ```
@@ -78,16 +80,16 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 ## Development Guidelines
 
 ### When Modifying SKILL.md
-- Keep under 500 lines (currently ~370)
+- Keep under 500 lines (currently ~190)
 - Reference detailed docs in `references/` instead of inlining
 - Update version in header AND footer
 - Update CHANGELOG.md with new version entry
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v4.0.0
+- Current: v4.1.0
 - MAJOR bump for architecture changes (v4.0.0 = realtime dashboard)
-- MINOR bump for new features
+- MINOR bump for new features (v4.1.0 = CLI + config + distribution)
 - PATCH bump for fixes
 
 ### Code Style
