@@ -20,7 +20,7 @@ Development <- QA <- Deployment <- Business Ops <- Growth Loop
 
 ## Phase 0: Bootstrap
 
-**Purpose:** Initialize Loki Mode environment
+**Purpose:** Initialize Loki Loop environment
 
 ### Actions:
 1. Create `.loki/` directory structure

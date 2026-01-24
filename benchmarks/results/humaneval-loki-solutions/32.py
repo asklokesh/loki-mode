@@ -1,5 +1,5 @@
 # HumanEval/32
-# Loki Mode Multi-Agent Solution
+# Loki Loop Multi-Agent Solution
 # Attempts: 3
 # Passed: False
 

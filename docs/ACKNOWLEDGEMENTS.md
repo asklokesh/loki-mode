@@ -1,6 +1,6 @@
 # Acknowledgements
 
-Loki Mode stands on the shoulders of giants. This project incorporates research, patterns, and insights from the leading AI labs, academic institutions, and practitioners in the field.
+Loki Loop stands on the shoulders of giants. This project incorporates research, patterns, and insights from the leading AI labs, academic institutions, and practitioners in the field.
 
 ---
 
@@ -8,9 +8,9 @@ Loki Mode stands on the shoulders of giants. This project incorporates research,
 
 ### Anthropic
 
-Loki Mode is built for Claude and incorporates Anthropic's cutting-edge research on AI safety and agent development.
+Loki Loop is built for Claude and incorporates Anthropic's cutting-edge research on AI safety and agent development.
 
-| Paper/Resource | Contribution to Loki Mode |
+| Paper/Resource | Contribution to Loki Loop |
 |----------------|---------------------------|
 | [Constitutional AI: Harmlessness from AI Feedback](https://www.anthropic.com/research/constitutional-ai-harmlessness-from-ai-feedback) | Self-critique against principles, revision workflow |
 | [Building Effective Agents](https://www.anthropic.com/research/building-effective-agents) | Evaluator-optimizer pattern, parallelization, routing |
@@ -25,9 +25,9 @@ Loki Mode is built for Claude and incorporates Anthropic's cutting-edge research
 
 ### Google DeepMind
 
-DeepMind's research on world models, hierarchical reasoning, and scalable oversight informs Loki Mode's architecture.
+DeepMind's research on world models, hierarchical reasoning, and scalable oversight informs Loki Loop's architecture.
 
-| Paper/Resource | Contribution to Loki Mode |
+| Paper/Resource | Contribution to Loki Loop |
 |----------------|---------------------------|
 | [SIMA 2: Generalist AI Agent](https://deepmind.google/blog/sima-2-an-agent-that-plays-reasons-and-learns-with-you-in-virtual-3d-worlds/) | Self-improvement loop, reward model training |
 | [Gemini Robotics 1.5](https://deepmind.google/blog/gemini-robotics-15-brings-ai-agents-into-the-physical-world/) | Hierarchical reasoning (planner + executor) |
@@ -41,7 +41,7 @@ DeepMind's research on world models, hierarchical reasoning, and scalable oversi
 
 OpenAI's Agents SDK and deep research patterns provide foundational patterns for agent orchestration.
 
-| Paper/Resource | Contribution to Loki Mode |
+| Paper/Resource | Contribution to Loki Loop |
 |----------------|---------------------------|
 | [Agents SDK Documentation](https://openai.github.io/openai-agents-python/) | Tracing spans, guardrails, tripwires |
 | [A Practical Guide to Building Agents](https://cdn.openai.com/business-guides-and-resources/a-practical-guide-to-building-agents.pdf) | Agent architecture best practices |
@@ -58,9 +58,9 @@ OpenAI's Agents SDK and deep research patterns provide foundational patterns for
 
 ### Amazon Web Services (AWS)
 
-AWS Bedrock's multi-agent collaboration patterns inform Loki Mode's routing and dispatch strategies.
+AWS Bedrock's multi-agent collaboration patterns inform Loki Loop's routing and dispatch strategies.
 
-| Paper/Resource | Contribution to Loki Mode |
+| Paper/Resource | Contribution to Loki Loop |
 |----------------|---------------------------|
 | [Multi-Agent Orchestration Guidance](https://aws.amazon.com/solutions/guidance/multi-agent-orchestration-on-aws/) | Three coordination mechanisms, architectural patterns |
 | [Bedrock Multi-Agent Collaboration](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-multi-agent-collaboration.html) | Supervisor mode, routing mode, 10-agent limit |
@@ -144,7 +144,7 @@ Battle-tested insights from practitioners deploying agents in production.
 
 ## Individual Contributors
 
-Special thanks to thought leaders whose patterns and insights shaped Loki Mode:
+Special thanks to thought leaders whose patterns and insights shaped Loki Loop:
 
 | Contributor | Contribution |
 |-------------|--------------|
@@ -225,9 +225,9 @@ Key patterns incorporated from practitioner experience:
 
 ## License
 
-This acknowledgements file documents the research and resources that influenced Loki Mode's design. All referenced works retain their original licenses and copyrights.
+This acknowledgements file documents the research and resources that influenced Loki Loop's design. All referenced works retain their original licenses and copyrights.
 
-Loki Mode itself is released under the MIT License.
+Loki Loop itself is released under the MIT License.
 
 ---
 

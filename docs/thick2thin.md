@@ -142,7 +142,7 @@ Content that didn't exist in v2.38.0:
 ## Recommendation
 
 **Use v3.0.0 thin skill for:**
-- Production Loki Mode sessions
+- Production Loki Loop sessions
 - Long-running autonomous operations
 - Context-constrained environments
 

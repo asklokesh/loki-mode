@@ -29,7 +29,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "========================================"
-echo "Loki Mode Timeout & Stuck Process Tests"
+echo "Loki Loop Timeout & Stuck Process Tests"
 echo "========================================"
 echo ""
 

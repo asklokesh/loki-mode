@@ -1,5 +1,5 @@
 #!/bin/bash
-# Export Loki Mode tasks to Vibe Kanban format
+# Export Loki Loop tasks to Vibe Kanban format
 # Usage: ./scripts/export-to-vibe-kanban.sh [export_dir]
 
 set -uo pipefail
@@ -17,7 +17,7 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 # Check if .loki directory exists
 if [ ! -d "$LOKI_DIR" ]; then
-    log_warn "No .loki directory found. Run Loki Mode first."
+    log_warn "No .loki directory found. Run Loki Loop first."
     exit 1
 fi
 
@@ -156,7 +156,7 @@ print(f"EXPORTED:{exported}")
 EOF
 }
 
-log_info "Exporting Loki Mode tasks to Vibe Kanban..."
+log_info "Exporting Loki Loop tasks to Vibe Kanban..."
 log_info "Export directory: $EXPORT_DIR"
 log_info "Current phase: $CURRENT_PHASE"
 

@@ -1,14 +1,14 @@
-# Loki Mode Voice-Over Script
+# Loki Loop Voice-Over Script
 
-Complete narration for Loki Mode demo video.
+Complete narration for Loki Loop demo video.
 
 ---
 
 ## Introduction (0:00 - 0:30)
 
-> Welcome to Loki Mode - a multi-agent autonomous startup system for Claude Code.
+> Welcome to Loki Loop - a multi-agent autonomous startup system for Claude Code.
 >
-> Loki Mode takes your product requirements document and transforms it into a fully functioning application - with zero human intervention.
+> Loki Loop takes your product requirements document and transforms it into a fully functioning application - with zero human intervention.
 >
 > Today I'll show you how it works by building a complete todo application from scratch.
 
@@ -16,19 +16,19 @@ Complete narration for Loki Mode demo video.
 
 ## Setup (0:30 - 1:00)
 
-> First, we launch Claude Code with the dangerously-skip-permissions flag. This allows Loki Mode to run autonomously without asking for confirmation at every step.
+> First, we launch Claude Code with the dangerously-skip-permissions flag. This allows Loki Loop to run autonomously without asking for confirmation at every step.
 >
 > [Show terminal: `claude --dangerously-skip-permissions`]
 >
-> Now we invoke Loki Mode with our PRD.
+> Now we invoke Loki Loop with our PRD.
 
 ---
 
 ## Invocation (1:00 - 1:30)
 
-> [Type: "Loki Mode with PRD at examples/simple-todo-app.md"]
+> [Type: "Loki Loop with PRD at examples/simple-todo-app.md"]
 >
-> Loki Mode immediately begins the RARV cycle - Reason, Act, Reflect, Verify.
+> Loki Loop immediately begins the RARV cycle - Reason, Act, Reflect, Verify.
 >
 > It first reads the PRD to understand what we're building.
 
@@ -36,7 +36,7 @@ Complete narration for Loki Mode demo video.
 
 ## Bootstrap Phase (1:30 - 2:30)
 
-> Notice Loki Mode is now in the Bootstrap phase. It's setting up the project structure.
+> Notice Loki Loop is now in the Bootstrap phase. It's setting up the project structure.
 >
 > [Show: .loki directory being created]
 >
@@ -45,13 +45,13 @@ Complete narration for Loki Mode demo video.
 > - Queue files for task management
 > - State tracking for the orchestrator
 >
-> This is how Loki Mode maintains context even during long-running operations.
+> This is how Loki Loop maintains context even during long-running operations.
 
 ---
 
 ## Discovery Phase (2:30 - 3:30)
 
-> Now we're in Discovery. Loki Mode is analyzing our PRD and extracting requirements.
+> Now we're in Discovery. Loki Loop is analyzing our PRD and extracting requirements.
 >
 > [Show: Tasks being generated]
 >
@@ -67,7 +67,7 @@ Complete narration for Loki Mode demo video.
 
 ## Architecture Phase (3:30 - 4:30)
 
-> The Architecture phase is where Loki Mode designs the system.
+> The Architecture phase is where Loki Loop designs the system.
 >
 > [Show: OpenAPI spec being created]
 >
@@ -85,7 +85,7 @@ Complete narration for Loki Mode demo video.
 >
 > Each task appears on our kanban board. As agents claim tasks, they move from "To Do" to "In Progress" to "Done".
 >
-> This gives you real-time visibility into what Loki Mode is doing.
+> This gives you real-time visibility into what Loki Loop is doing.
 
 ---
 
@@ -95,7 +95,7 @@ Complete narration for Loki Mode demo video.
 >
 > [Show: Multiple agents being spawned]
 >
-> Loki Mode spawns specialized agents:
+> Loki Loop spawns specialized agents:
 > - A backend agent implementing the Express server
 > - A frontend agent building the React UI
 > - A database agent setting up SQLite
@@ -122,7 +122,7 @@ Complete narration for Loki Mode demo video.
 >
 > [Show: Three reviewers being dispatched]
 >
-> Loki Mode dispatches THREE reviewers in parallel:
+> Loki Loop dispatches THREE reviewers in parallel:
 > 1. Code quality reviewer - checks patterns and best practices
 > 2. Business logic reviewer - verifies requirements are met
 > 3. Security reviewer - scans for vulnerabilities
@@ -161,13 +161,13 @@ Complete narration for Loki Mode demo video.
 > - Decisions made and why
 > - Mistakes and learnings
 >
-> If Loki Mode runs out of context or needs to restart, it reads this file first. This is how it maintains coherence across long sessions.
+> If Loki Loop runs out of context or needs to restart, it reads this file first. This is how it maintains coherence across long sessions.
 
 ---
 
 ## Memory System (11:00 - 12:00)
 
-> Loki Mode has a three-layer memory system.
+> Loki Loop has a three-layer memory system.
 >
 > Episodic memory records what happened - specific actions and their outcomes.
 >
@@ -197,7 +197,7 @@ Complete narration for Loki Mode demo video.
 
 ## Recap (13:00 - 14:00)
 
-> Let's recap what Loki Mode did:
+> Let's recap what Loki Loop did:
 >
 > 1. Read and analyzed the PRD
 > 2. Designed the architecture with OpenAPI specs
@@ -212,7 +212,7 @@ Complete narration for Loki Mode demo video.
 
 ## Call to Action (14:00 - 14:30)
 
-> Loki Mode is available now on GitHub.
+> Loki Loop is available now on GitHub.
 >
 > Install it as a Claude Code skill and start building.
 >

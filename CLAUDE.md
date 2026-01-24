@@ -1,4 +1,4 @@
-# Loki Mode - Claude Code Skill
+# Loki Loop - Claude Code Skill
 
 Multi-agent autonomous startup system for Claude Code. Takes PRD to fully deployed, revenue-generating product with zero human intervention.
 
@@ -9,7 +9,7 @@ Multi-agent autonomous startup system for Claude Code. Takes PRD to fully deploy
 claude --dangerously-skip-permissions
 
 # Then invoke:
-# "Loki Mode" or "Loki Mode with PRD at path/to/prd"
+# "Loki Loop" or "Loki Loop with PRD at path/to/prd"
 ```
 
 ## Project Structure
@@ -91,8 +91,8 @@ Before documenting ANY feature, installation method, or capability:
 
 **Example verification:**
 ```bash
-# Before documenting "npm install -g loki-mode"
-npm view loki-mode  # Does package exist on registry?
+# Before documenting "npm install -g loki-loop"
+npm view loki-loop  # Does package exist on registry?
 
 # Before documenting a CLI command
 which loki && loki --help  # Does command exist?
@@ -117,9 +117,9 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v4.2.0
+- Current: v4.3.0
 - MAJOR bump for architecture changes (v4.0.0 = realtime dashboard)
-- MINOR bump for new features (v4.2.0 = foundational principles)
+- MINOR bump for new features (v4.3.0 = foundational principles)
 - PATCH bump for fixes
 
 ### Code Style

@@ -1,6 +1,6 @@
 # Dashboard Screenshots
 
-This directory contains screenshots for the Loki Mode README.
+This directory contains screenshots for the Loki Loop README.
 
 ---
 
@@ -8,10 +8,10 @@ This directory contains screenshots for the Loki Mode README.
 
 ### 1. `dashboard-agents.png`
 
-**What to capture:** The agent monitoring section of the Loki Mode dashboard showing active agents.
+**What to capture:** The agent monitoring section of the Loki Loop dashboard showing active agents.
 
 **How to create:**
-1. Run Loki Mode with a test project:
+1. Run Loki Loop with a test project:
    ```bash
    cd /path/to/test/project
    ../../autonomy/run.sh examples/simple-todo-app.md
@@ -43,7 +43,7 @@ This directory contains screenshots for the Loki Mode README.
 **What to capture:** The task queue kanban board section.
 
 **How to create:**
-1. Using the same running Loki Mode instance from above
+1. Using the same running Loki Loop instance from above
 
 2. Scroll down to the **"Task Queue" section**
 
@@ -87,7 +87,7 @@ open README.md
 Check that:
 - [ ] Images load without errors
 - [ ] Resolution is clear and readable
-- [ ] Colors match the Loki Mode design (cream background, coral accents)
+- [ ] Colors match the Loki Loop design (cream background, coral accents)
 - [ ] Text in screenshots is legible
 
 ---
@@ -101,12 +101,12 @@ If you don't have live agent data yet, you can use the test data provided in thi
 cd /Users/lokesh/git/jobman  # or any test project
 mkdir -p .agent/sub-agents .loki/state .loki/queue
 
-# Copy test data from Loki Mode repo
-cp ~/git/loki-mode/tests/fixtures/agents/*.json .agent/sub-agents/
-cp ~/git/loki-mode/tests/fixtures/queue/*.json .loki/queue/
+# Copy test data from Loki Loop repo
+cp ~/git/loki-loop/tests/fixtures/agents/*.json .agent/sub-agents/
+cp ~/git/loki-loop/tests/fixtures/queue/*.json .loki/queue/
 
 # Generate dashboard
-~/git/loki-mode/autonomy/run.sh --generate-dashboard-only
+~/git/loki-loop/autonomy/run.sh --generate-dashboard-only
 
 # Open dashboard
 open .loki/dashboard/index.html
@@ -137,11 +137,11 @@ If you want to create mock/placeholder screenshots quickly:
 3. Edit `.loki/queue/*.json` to populate task columns
 4. Refresh dashboard and capture screenshots
 
-This gives you polished screenshots without waiting for a full Loki Mode run.
+This gives you polished screenshots without waiting for a full Loki Loop run.
 
 ---
 
-**Note:** Screenshots should demonstrate Loki Mode's capabilities while being clean and professional. Avoid showing:
+**Note:** Screenshots should demonstrate Loki Loop's capabilities while being clean and professional. Avoid showing:
 - Personal information or API keys
 - Error states (unless specifically demonstrating error handling)
 - Cluttered or confusing data

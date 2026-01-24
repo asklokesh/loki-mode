@@ -85,7 +85,7 @@ See `references/openai-patterns.md` for full tracing implementation.
 
 ### Why Track Efficiency?
 
-ToolOrchestra achieves 70% cost reduction vs GPT-5 by explicitly optimizing for efficiency. Loki Mode should track:
+ToolOrchestra achieves 70% cost reduction vs GPT-5 by explicitly optimizing for efficiency. Loki Loop should track:
 
 - **Token usage** per task (input + output)
 - **Wall clock time** per task
@@ -650,7 +650,7 @@ Based on [Measurement Imbalance research (arXiv 2506.02064)](https://arxiv.org/a
 
 > "Technical metrics dominate assessments (83%), while human-centered (30%), safety (53%), and economic (30%) remain peripheral"
 
-**Loki Mode tracks four evaluation axes:**
+**Loki Loop tracks four evaluation axes:**
 
 | Axis | Metrics | Current Coverage |
 |------|---------|------------------|

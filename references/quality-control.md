@@ -7,7 +7,7 @@ Enhanced with 2025 research on anti-sycophancy, heterogeneous teams, and OpenAI 
 
 ## Core Principle: Guardrails, Not Just Acceleration
 
-**CRITICAL:** Speed without quality controls creates "AI slop" - semi-functional code that accumulates technical debt. Loki Mode enforces strict quality guardrails.
+**CRITICAL:** Speed without quality controls creates "AI slop" - semi-functional code that accumulates technical debt. Loki Loop enforces strict quality guardrails.
 
 **Research Insight:** Heterogeneous review teams outperform homogeneous ones by 4-6% (A-HMAD, 2025).
 **OpenAI Insight:** "Think of guardrails as a layered defense mechanism. Multiple specialized guardrails create resilient agents."

@@ -1,8 +1,8 @@
-# Auto-Claude vs Loki Mode: Honest Technical Comparison
+# Auto-Claude vs Loki Loop: Honest Technical Comparison
 
 ## Overview
 
-| Metric | Auto-Claude | Loki Mode |
+| Metric | Auto-Claude | Loki Loop |
 |--------|-------------|-----------|
 | **GitHub Stars** | 9,594 | ~50 |
 | **Release Type** | Desktop app (Electron) | CLI skill |
@@ -21,7 +21,7 @@ Auto-Claude provides a native Electron app with:
 - Real-time progress visualization
 - Point-and-click interface
 
-**Loki Mode:** CLI-only. Dashboard exists but is basic HTML polling.
+**Loki Loop:** CLI-only. Dashboard exists but is basic HTML polling.
 
 **Verdict: Auto-Claude wins** - GUI significantly lowers barrier to entry.
 
@@ -32,13 +32,13 @@ Auto-Claude provides:
 - SHA256 checksums
 - VirusTotal scans for security
 
-**Loki Mode:** npm, Homebrew, Docker, and git clone. Multiple distribution methods.
+**Loki Loop:** npm, Homebrew, Docker, and git clone. Multiple distribution methods.
 
 **Verdict: Auto-Claude wins** - Professional distribution.
 
 ### 3. Community and Adoption
 - Auto-Claude: 9,594 stars, Discord community, YouTube channel, active development
-- Loki Mode: ~50 stars, no community infrastructure
+- Loki Loop: ~50 stars, no community infrastructure
 
 **Verdict: Auto-Claude wins** - Network effects matter.
 
@@ -48,7 +48,7 @@ Auto-Claude has built-in:
 - Linear integration (sync tasks)
 - OAuth setup flow
 
-**Loki Mode:** No built-in integrations. Manual git operations.
+**Loki Loop:** No built-in integrations. Manual git operations.
 
 **Verdict: Auto-Claude wins** - Better workflow integration.
 
@@ -58,23 +58,23 @@ Auto-Claude allows:
 - HUMAN_INPUT.md for file-based intervention
 - PAUSE file to pause after current session
 
-**Loki Mode:** Limited. INTERVENTION_NEEDED signal exists but less refined.
+**Loki Loop:** Limited. INTERVENTION_NEEDED signal exists but less refined.
 
 **Verdict: Auto-Claude wins** - Better human-in-the-loop.
 
 ### 6. AI-Powered Merge
 Auto-Claude has automatic conflict resolution when merging branches.
 
-**Loki Mode:** Has auto-merge but aborts on conflicts.
+**Loki Loop:** Has auto-merge but aborts on conflicts.
 
 **Verdict: Auto-Claude wins** - Smarter merge handling.
 
 ---
 
-## Honest Assessment: Where Loki Mode is Better
+## Honest Assessment: Where Loki Loop is Better
 
 ### 1. Research Foundation
-Loki Mode is built on peer-reviewed research:
+Loki Loop is built on peer-reviewed research:
 - Anthropic: Constitutional AI, alignment detection
 - DeepMind: SIMA 2, Scalable Oversight via Debate
 - OpenAI: Agents SDK patterns
@@ -82,10 +82,10 @@ Loki Mode is built on peer-reviewed research:
 
 **Auto-Claude:** No documented research foundation.
 
-**Verdict: Loki Mode wins** - Academically grounded.
+**Verdict: Loki Loop wins** - Academically grounded.
 
 ### 2. Specialized Agent Types
-Loki Mode has 37 predefined agent types across 6 swarms:
+Loki Loop has 37 predefined agent types across 6 swarms:
 - Engineering (8): frontend, backend, database, mobile, API, QA, perf, infra
 - Operations (8): DevOps, SRE, security, monitoring, incident, release, cost, compliance
 - Business (8): marketing, sales, finance, legal, support, HR, investor, partnerships
@@ -97,30 +97,30 @@ Loki Mode has 37 predefined agent types across 6 swarms:
 
 **Auto-Claude:** 4 agent types: planner, coder, memory_manager, QA
 
-**Verdict: Loki Mode wins** - 10x more specialized coverage.
+**Verdict: Loki Loop wins** - 10x more specialized coverage.
 
 ### 3. Full SDLC Coverage
-Loki Mode covers:
+Loki Loop covers:
 - Engineering (code, tests, deployment)
 - Business operations (marketing, sales, legal)
 - Growth (A/B testing, community, lifecycle)
 
 **Auto-Claude:** Engineering only. No business/marketing agents.
 
-**Verdict: Loki Mode wins** - Complete startup automation vs coding only.
+**Verdict: Loki Loop wins** - Complete startup automation vs coding only.
 
 ### 4. Anti-Sycophancy Measures
-Loki Mode implements CONSENSAGENT (ACL 2025):
+Loki Loop implements CONSENSAGENT (ACL 2025):
 - Blind 3-reviewer system
 - Devil's advocate on unanimous approval
 - Severity-based blocking
 
 **Auto-Claude:** Single QA loop with no anti-sycophancy checks.
 
-**Verdict: Loki Mode wins** - Research-backed quality assurance.
+**Verdict: Loki Loop wins** - Research-backed quality assurance.
 
 ### 5. Quality Gates
-Loki Mode has 14 quality gates:
+Loki Loop has 14 quality gates:
 1. Static analysis (CodeQL, ESLint)
 2. Unit tests (>80% coverage)
 3. API/Integration tests
@@ -138,38 +138,38 @@ Loki Mode has 14 quality gates:
 
 **Auto-Claude:** Single QA validation loop (up to 50 iterations).
 
-**Verdict: Loki Mode wins** - Comprehensive quality vs single loop.
+**Verdict: Loki Loop wins** - Comprehensive quality vs single loop.
 
 ### 6. Published Benchmarks
-Loki Mode:
+Loki Loop:
 - HumanEval: 98.78% Pass@1 (162/164)
 - SWE-bench: 99.67% patch generation (299/300)
 - Documented methodology with reproducible results
 
 **Auto-Claude:** No published benchmarks.
 
-**Verdict: Loki Mode wins** - Verified performance claims.
+**Verdict: Loki Loop wins** - Verified performance claims.
 
 ### 7. Licensing
-- Loki Mode: MIT (free, no restrictions)
+- Loki Loop: MIT (free, no restrictions)
 - Auto-Claude: AGPL-3.0 (copyleft, requires open-sourcing modifications)
 
-**Verdict: Loki Mode wins** - More permissive for commercial use.
+**Verdict: Loki Loop wins** - More permissive for commercial use.
 
 ### 8. API Access
-- Loki Mode: Works with Claude API (any tier)
+- Loki Loop: Works with Claude API (any tier)
 - Auto-Claude: Requires Claude Pro/Max subscription
 
-**Verdict: Loki Mode wins** - Lower barrier to entry.
+**Verdict: Loki Loop wins** - Lower barrier to entry.
 
 ### 9. No External Dependencies
-- Loki Mode: Pure bash/skill, no Electron, no Python backend
+- Loki Loop: Pure bash/skill, no Electron, no Python backend
 - Auto-Claude: Requires Python 3.9+, Node.js, Electron, specific npm packages
 
-**Verdict: Loki Mode wins** - Simpler, lighter footprint.
+**Verdict: Loki Loop wins** - Simpler, lighter footprint.
 
 ### 10. Cursor Scale Patterns (v3.3.0)
-Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
+Loki Loop now incorporates proven patterns from Cursor's 100+ agent deployments:
 - Recursive sub-planners
 - Judge agents for cycle decisions
 - Optimistic concurrency control
@@ -177,13 +177,13 @@ Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
 
 **Auto-Claude:** Does not document scale patterns.
 
-**Verdict: Loki Mode wins** - Production-tested at scale.
+**Verdict: Loki Loop wins** - Production-tested at scale.
 
 ---
 
 ## Feature Comparison Matrix
 
-| Feature | Auto-Claude | Loki Mode |
+| Feature | Auto-Claude | Loki Loop |
 |---------|:-----------:|:---------:|
 | Desktop GUI | Yes | No |
 | CLI Support | Yes | Yes |
@@ -207,7 +207,7 @@ Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
 
 ---
 
-## What Loki Mode Should Learn from Auto-Claude
+## What Loki Loop Should Learn from Auto-Claude
 
 ### High Priority
 1. **AI-Powered Merge Resolution** - Handle conflicts automatically instead of aborting
@@ -226,7 +226,7 @@ Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
 
 ---
 
-## What Auto-Claude Could Learn from Loki Mode
+## What Auto-Claude Could Learn from Loki Loop
 
 1. **Research Foundation** - Document the science behind decisions
 2. **Specialized Agents** - More than 4 generic agent types
@@ -245,7 +245,7 @@ Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
 - GitHub/Linear integration
 - Large community
 
-**Loki Mode is better if you want:**
+**Loki Loop is better if you want:**
 - Research-backed architecture
 - Full startup automation (not just coding)
 - 37 specialized agents
@@ -256,12 +256,12 @@ Loki Mode now incorporates proven patterns from Cursor's 100+ agent deployments:
 
 ### Honest Summary
 
-Auto-Claude has better UX and community. Loki Mode has better architecture and coverage.
+Auto-Claude has better UX and community. Loki Loop has better architecture and coverage.
 
-Auto-Claude is a polished product. Loki Mode is a research-backed system.
+Auto-Claude is a polished product. Loki Loop is a research-backed system.
 
 For pure coding tasks with GUI preference: **Auto-Claude wins**.
-For full autonomous startup building with quality guarantees: **Loki Mode wins**.
+For full autonomous startup building with quality guarantees: **Loki Loop wins**.
 
 ---
 

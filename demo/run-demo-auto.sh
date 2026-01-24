@@ -1,5 +1,5 @@
 #!/bin/bash
-# Loki Mode Auto Demo - Non-interactive version for recording
+# Loki Loop Auto Demo - Non-interactive version for recording
 # Usage: ./demo/run-demo-auto.sh
 
 set -euo pipefail
@@ -71,7 +71,7 @@ sleep 3
 
 # Bootstrap
 banner "STEP 2: Bootstrap Phase"
-step "Initializing Loki Mode..."
+step "Initializing Loki Loop..."
 sleep 1
 
 echo ""
@@ -288,6 +288,6 @@ sleep 2
 echo -e "${CYAN}From PRD to Production${NC}"
 echo -e "${CYAN}Zero Human Intervention${NC}"
 echo ""
-echo "github.com/asklokesh/loki-mode"
+echo "github.com/asklokesh/loki-loop"
 echo ""
 sleep 3

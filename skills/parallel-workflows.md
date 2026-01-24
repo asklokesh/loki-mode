@@ -133,15 +133,15 @@ Each worktree runs an independent Claude session:
 ```bash
 # Feature development session
 cd ../project-feature-auth
-claude --dangerously-skip-permissions -p "Loki Mode: Implement user authentication. Read .loki/CONTINUITY.md for context."
+claude --dangerously-skip-permissions -p "Loki Loop: Implement user authentication. Read .loki/CONTINUITY.md for context."
 
 # Testing session (continuous)
 cd ../project-testing
-claude --dangerously-skip-permissions -p "Loki Mode: Run all tests. Watch for changes. Report failures to .loki/state/test-results.json"
+claude --dangerously-skip-permissions -p "Loki Loop: Run all tests. Watch for changes. Report failures to .loki/state/test-results.json"
 
 # Documentation session
 cd ../project-docs
-claude --dangerously-skip-permissions -p "Loki Mode: Update documentation for recent changes. Check git log for what changed."
+claude --dangerously-skip-permissions -p "Loki Loop: Update documentation for recent changes. Check git log for what changed."
 ```
 
 ---
@@ -362,7 +362,7 @@ for feature in "${features[@]}"; do
   (
     cd "$worktree_path"
     claude --dangerously-skip-permissions \
-      -p "Loki Mode: Implement ${feature}. Check .loki/CONTINUITY.md for context." \
+      -p "Loki Loop: Implement ${feature}. Check .loki/CONTINUITY.md for context." \
       >> ".loki/logs/session-${feature}.log" 2>&1
   ) &
 

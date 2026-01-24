@@ -90,7 +90,7 @@ Every iteration follows this cycle:
 ### CONTINUITY.md Template
 
 ```markdown
-# Loki Mode Working Memory
+# Loki Loop Working Memory
 Last Updated: [ISO timestamp]
 Current Phase: [bootstrap|discovery|architecture|development|qa|deployment|growth]
 Current Iteration: [number]

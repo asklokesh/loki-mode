@@ -6,7 +6,7 @@ Research-backed patterns from OpenAI's Agents SDK, Deep Research, and autonomous
 
 ## Overview
 
-OpenAI's agent ecosystem provides four key architectural innovations for Loki Mode:
+OpenAI's agent ecosystem provides four key architectural innovations for Loki Loop:
 
 1. **Tracing Spans** - Hierarchical event tracking with span types
 2. **Guardrails & Tripwires** - Input/output validation with early termination

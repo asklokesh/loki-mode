@@ -1,7 +1,7 @@
 # PRD: REST API Service
 
 ## Overview
-A simple REST API for managing notes. Tests Loki Mode's backend-only capabilities.
+A simple REST API for managing notes. Tests Loki Loop's backend-only capabilities.
 
 ## Target Users
 Developers who need a notes API.

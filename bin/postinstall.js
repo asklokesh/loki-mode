@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Loki Mode postinstall script
+ * Loki Loop postinstall script
  * Sets up the Claude Code skill symlink
  */
 
@@ -9,11 +9,11 @@ const path = require('path');
 const os = require('os');
 
 const homeDir = os.homedir();
-const skillDir = path.join(homeDir, '.claude', 'skills', 'loki-mode');
+const skillDir = path.join(homeDir, '.claude', 'skills', 'loki-loop');
 const packageDir = path.join(__dirname, '..');
 
 console.log('');
-console.log('Loki Mode v4.1.0 installed!');
+console.log('Loki Loop v4.1.0 installed!');
 console.log('');
 
 // Try to create skill symlink
@@ -50,11 +50,11 @@ try {
 
 console.log('');
 console.log('Usage:');
-console.log('  loki start [PRD]    - Start Loki Mode');
+console.log('  loki start [PRD]    - Start Loki Loop');
 console.log('  loki status         - Check status');
 console.log('  loki --help         - Show all commands');
 console.log('');
 console.log('Or in Claude Code:');
 console.log('  claude --dangerously-skip-permissions');
-console.log('  Then say: "Loki Mode"');
+console.log('  Then say: "Loki Loop"');
 console.log('');

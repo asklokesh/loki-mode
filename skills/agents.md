@@ -216,7 +216,7 @@ Priority order for context:
 
 ## Agentic Patterns Reference (awesome-agentic-patterns)
 
-**Patterns used in Loki Mode:**
+**Patterns used in Loki Loop:**
 
 | Pattern | Implementation |
 |---------|---------------|

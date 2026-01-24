@@ -1,5 +1,5 @@
-# Loki Mode Configuration File
-# Copy to .loki/config.yaml in your project or ~/.config/loki-mode/config.yaml
+# Loki Loop Configuration File
+# Copy to .loki/config.yaml in your project or ~/.config/loki-loop/config.yaml
 # Environment variables override these values
 # Version: 4.1.0
 

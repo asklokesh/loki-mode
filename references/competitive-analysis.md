@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document analyzes key competitors and research sources for autonomous coding systems, identifying patterns we've incorporated into Loki Mode.
+This document analyzes key competitors and research sources for autonomous coding systems, identifying patterns we've incorporated into Loki Loop.
 
 ## Auto-Claude (9,594 stars)
 
@@ -38,7 +38,7 @@ Auto-Claude/
 4. **Double Ctrl+C** - Single pause, double exit
 
 ### Patterns Not Adopted (and why)
-- **Electron GUI** - Loki Mode is CLI-first, reduces dependencies
+- **Electron GUI** - Loki Loop is CLI-first, reduces dependencies
 - **Graphiti memory** - We have episodic/semantic memory, may enhance later
 - **Linear integration** - Lower priority, can add via MCP
 
@@ -181,7 +181,7 @@ Dexter shows value of domain specialization. Our 37 agent types follow this patt
    - 62% experimenting with AI agents
    - Most haven't scaled across enterprise
 
-### Loki Mode Alignment
+### Loki Loop Alignment
 - Multi-agent architecture (37 types, 6 swarms)
 - Plan Agents (orchestrator, planner)
 - Execution Agents (eng-*, ops-*, biz-*)
@@ -189,10 +189,10 @@ Dexter shows value of domain specialization. Our 37 agent types follow this patt
 
 ---
 
-## Summary: Loki Mode Competitive Position
+## Summary: Loki Loop Competitive Position
 
 ### Strengths vs Competitors
-| Feature | Auto-Claude | Dexter | MemOS | Loki Mode |
+| Feature | Auto-Claude | Dexter | MemOS | Loki Loop |
 |---------|:-----------:|:------:|:-----:|:---------:|
 | Desktop GUI | Yes | No | No | No |
 | CLI Support | Yes | Yes | Yes | Yes |

@@ -1,6 +1,6 @@
 {
-  "name": "loki-mode",
-  "version": "4.2.0",
+  "name": "loki-loop",
+  "version": "4.3.0",
   "description": "Multi-agent autonomous startup system for Claude Code",
   "keywords": [
     "claude",
@@ -11,19 +11,19 @@
     "startup",
     "multi-agent"
   ],
-  "homepage": "https://github.com/asklokesh/loki-mode",
+  "homepage": "https://github.com/asklokesh/loki-loop",
   "bugs": {
-    "url": "https://github.com/asklokesh/loki-mode/issues"
+    "url": "https://github.com/asklokesh/loki-loop/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/asklokesh/loki-mode.git"
+    "url": "git+https://github.com/asklokesh/loki-loop.git"
   },
   "license": "MIT",
   "author": "Lokesh",
   "bin": {
     "loki": "./autonomy/loki",
-    "loki-mode": "./bin/loki-mode.js"
+    "loki-loop": "./bin/loki-loop.js"
   },
   "files": [
     "SKILL.md",

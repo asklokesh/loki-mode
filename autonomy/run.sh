@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Loki Mode - Autonomous Runner
+# Loki Loop - Autonomous Runner
 # Single script that handles prerequisites, setup, and autonomous execution
 #
 # Usage:
@@ -143,10 +143,10 @@ load_config_file() {
     elif [ -f ".loki/config.yml" ] && [ ! -L ".loki/config.yml" ]; then
         config_file=".loki/config.yml"
     # 2. User-global config (symlinks allowed in home dir - user controls it)
-    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yaml"
-    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yaml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yml"
     fi
 
     # If no config file found, return silently
@@ -826,7 +826,7 @@ create_github_pr() {
     cat > "$pr_body" << EOF
 ## Summary
 
-Automated implementation by Loki Mode v4.1.0
+Automated implementation by Loki Loop v4.1.0
 
 ### Feature: $feature_name
 
@@ -854,7 +854,7 @@ EOF
     fi
 
     # Build PR create command
-    local pr_args=("pr" "create" "--repo" "$repo" "--title" "[Loki Mode] $feature_name" "--body-file" "$pr_body")
+    local pr_args=("pr" "create" "--repo" "$repo" "--title" "[Loki Loop] $feature_name" "--body-file" "$pr_body")
 
     # Add label only if specified (avoids error if label doesn't exist)
     if [ -n "$GITHUB_PR_LABEL" ]; then
@@ -902,18 +902,18 @@ sync_github_status() {
     case "$status" in
         "in_progress")
             gh issue comment "$issue_number" --repo "$repo" \
-                --body "Loki Mode: Task in progress - ${message:-implementing solution...}" \
+                --body "Loki Loop: Task in progress - ${message:-implementing solution...}" \
                 2>/dev/null || true
             ;;
         "completed")
             gh issue comment "$issue_number" --repo "$repo" \
-                --body "Loki Mode: Implementation complete. ${message:-}" \
+                --body "Loki Loop: Implementation complete. ${message:-}" \
                 2>/dev/null || true
             ;;
         "closed")
             gh issue close "$issue_number" --repo "$repo" \
                 --reason "completed" \
-                --comment "Loki Mode: Fixed. ${message:-}" \
+                --comment "Loki Loop: Fixed. ${message:-}" \
                 2>/dev/null || true
             ;;
     esac
@@ -948,7 +948,7 @@ export_tasks_to_github() {
         gh issue create --repo "$repo" \
             --title "$title" \
             --body "$desc" \
-            --label "loki-mode" \
+            --label "loki-loop" \
             2>/dev/null || log_warn "Failed to create issue: $title"
     done
 }
@@ -985,7 +985,7 @@ send_notification() {
         local escaped_message="${message//\\/\\\\}"
         escaped_message="${escaped_message//\"/\\\"}"
 
-        osascript -e "display notification \"$escaped_message\" with title \"Loki Mode\" subtitle \"$escaped_title\"" 2>/dev/null || true
+        osascript -e "display notification \"$escaped_message\" with title \"Loki Loop\" subtitle \"$escaped_title\"" 2>/dev/null || true
 
         # Play sound if enabled (low urgency intentionally silent)
         if [ "$NOTIFICATION_SOUND" = "true" ]; then
@@ -1021,7 +1021,7 @@ send_notification() {
         safe_message="${safe_message//</&lt;}"
         safe_message="${safe_message//>/&gt;}"
 
-        notify-send -u "$notify_urgency" "Loki Mode: $safe_title" "$safe_message" 2>/dev/null || true
+        notify-send -u "$notify_urgency" "Loki Loop: $safe_title" "$safe_message" 2>/dev/null || true
         return 0
     fi
 
@@ -1056,7 +1056,7 @@ notify_phase_complete() {
 }
 
 notify_all_complete() {
-    send_notification "All Tasks Complete" "Loki Mode has finished all tasks" "normal"
+    send_notification "All Tasks Complete" "Loki Loop has finished all tasks" "normal"
 }
 
 notify_intervention_needed() {
@@ -1197,7 +1197,7 @@ spawn_worktree_session() {
     (
         cd "$worktree_path"
         claude --dangerously-skip-permissions \
-            -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
+            -p "Loki Loop: $task_prompt. Read .loki/CONTINUITY.md for context." \
             >> "$log_file" 2>&1
     ) &
 
@@ -1558,11 +1558,11 @@ check_prerequisites() {
 #===============================================================================
 
 check_skill_installed() {
-    log_header "Checking Loki Mode Skill"
+    log_header "Checking Loki Loop Skill"
 
     local skill_locations=(
-        "$HOME/.claude/skills/loki-mode/SKILL.md"
-        ".claude/skills/loki-mode/SKILL.md"
+        "$HOME/.claude/skills/loki-loop/SKILL.md"
+        ".claude/skills/loki-loop/SKILL.md"
         "$PROJECT_DIR/SKILL.md"
     )
 
@@ -1573,7 +1573,7 @@ check_skill_installed() {
         fi
     done
 
-    log_warn "Loki Mode skill not found in standard locations"
+    log_warn "Loki Loop skill not found in standard locations"
     log_info "The skill will be used from: $PROJECT_DIR/SKILL.md"
 
     if [ -f "$PROJECT_DIR/SKILL.md" ]; then
@@ -1590,7 +1590,7 @@ check_skill_installed() {
 #===============================================================================
 
 init_loki_dir() {
-    log_header "Initializing Loki Mode Directory"
+    log_header "Initializing Loki Loop Directory"
 
     mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts}
     mkdir -p .loki/queue
@@ -1839,7 +1839,7 @@ generate_dashboard() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Loki Mode Dashboard</title>
+    <title>Loki Loop Dashboard</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -2948,15 +2948,15 @@ build_prompt() {
 
     if [ $retry -eq 0 ]; then
         if [ -n "$prd" ]; then
-            echo "Loki Mode with PRD at $prd. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Loop with PRD at $prd. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode. $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Loop. $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     else
         if [ -n "$prd" ]; then
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $context_injection $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Loop - Resume iteration #$iteration (retry #$retry). PRD: $prd. $context_injection $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $context_injection Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Loop - Resume iteration #$iteration (retry #$retry). $context_injection Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     fi
 }
@@ -3407,7 +3407,7 @@ handle_pause() {
 
     # Create resume instructions file
     cat > "$loki_dir/PAUSED.md" << 'EOF'
-# Loki Mode - Paused
+# Loki Loop - Paused
 
 Execution is currently paused. Options:
 

@@ -1,11 +1,11 @@
-# Loki Mode Docker Image
-# Build: docker build -t loki-mode .
-# Run: docker run -it -v $(pwd):/workspace loki-mode
+# Loki Loop Docker Image
+# Build: docker build -t loki-loop .
+# Run: docker run -it -v $(pwd):/workspace loki-loop
 
 FROM ubuntu:22.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="4.2.0"
+LABEL version="4.3.0"
 LABEL description="Multi-agent autonomous startup system for Claude Code"
 
 # Prevent interactive prompts during install
@@ -32,9 +32,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
-WORKDIR /opt/loki-mode
+WORKDIR /opt/loki-loop
 
-# Copy Loki Mode files
+# Copy Loki Loop files
 COPY SKILL.md VERSION ./
 COPY autonomy/ ./autonomy/
 COPY skills/ ./skills/
@@ -46,8 +46,8 @@ RUN chmod +x autonomy/run.sh autonomy/loki
 
 # Set up symlinks
 RUN mkdir -p /root/.claude/skills && \
-    ln -sf /opt/loki-mode /root/.claude/skills/loki-mode && \
-    ln -sf /opt/loki-mode/autonomy/loki /usr/local/bin/loki
+    ln -sf /opt/loki-loop /root/.claude/skills/loki-loop && \
+    ln -sf /opt/loki-loop/autonomy/loki /usr/local/bin/loki
 
 # Set workspace as working directory
 WORKDIR /workspace

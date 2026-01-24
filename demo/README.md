@@ -1,6 +1,6 @@
-# Loki Mode Demo
+# Loki Loop Demo
 
-Video demonstration of Loki Mode - Multi-agent autonomous startup system.
+Video demonstration of Loki Loop - Multi-agent autonomous startup system.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ Video demonstration of Loki Mode - Multi-agent autonomous startup system.
 ## Full End-to-End Demo
 
 The `record-full-demo.sh` script creates a real demo showing:
-- Loki Mode running autonomously
+- Loki Loop running autonomously
 - Dashboard with agents and tasks
 - App being built in real-time
 - Quality gates and code review
@@ -104,7 +104,7 @@ See `voice-over-script.md` for the complete narration script with timestamps.
 ## Demo Scenarios
 
 ### Simple Todo App (5 min)
-Best for quick demos. Shows core Loki Mode workflow.
+Best for quick demos. Shows core Loki Loop workflow.
 
 ```bash
 ./demo/run-demo.sh simple-todo

@@ -1,20 +1,20 @@
 #!/bin/bash
 #===============================================================================
-# Loki Mode Benchmark Runner
+# Loki Loop Benchmark Runner
 # Run HumanEval and SWE-bench benchmarks to validate multi-agent performance
 #
 # Usage:
 #   ./benchmarks/run-benchmarks.sh [benchmark] [options]
 #   ./benchmarks/run-benchmarks.sh humaneval              # Setup only
 #   ./benchmarks/run-benchmarks.sh humaneval --execute    # Direct Claude (baseline)
-#   ./benchmarks/run-benchmarks.sh humaneval --execute --loki  # Multi-agent Loki Mode
+#   ./benchmarks/run-benchmarks.sh humaneval --execute --loki  # Multi-agent Loki Loop
 #   ./benchmarks/run-benchmarks.sh humaneval --execute --limit 10  # First 10 problems
 #   ./benchmarks/run-benchmarks.sh swebench --execute     # Run SWE-bench
 #   ./benchmarks/run-benchmarks.sh all --execute          # Run all benchmarks
 #
 # Options:
 #   --execute       Actually run problems through Claude (vs just setup)
-#   --loki          Use Loki Mode multi-agent system (Architect->Engineer->QA->Reviewer)
+#   --loki          Use Loki Loop multi-agent system (Architect->Engineer->QA->Reviewer)
 #   --limit N       Only run first N problems (useful for testing)
 #   --parallel N    Run N problems in parallel (default: 1)
 #   --model MODEL   Claude model to use (default: sonnet)
@@ -38,7 +38,7 @@ RESULTS_DIR="$SCRIPT_DIR/results/$(date +%Y-%m-%d-%H-%M-%S)"
 
 # Configuration
 EXECUTE_MODE=false
-LOKI_MODE=false  # Use multi-agent Loki Mode vs direct Claude
+LOKI_MODE=false  # Use multi-agent Loki Loop vs direct Claude
 PROBLEM_LIMIT=0  # 0 = all problems
 PARALLEL_COUNT=1
 CLAUDE_MODEL="sonnet"
@@ -484,7 +484,7 @@ print(f"{'='*60}\n")
 # Compare to competitors
 print("  Competitor Comparison:")
 print(f"  - MetaGPT:     85.9-87.7%")
-print(f"  - Loki Mode:   {pass_rate:.1f}%")
+print(f"  - Loki Loop:   {pass_rate:.1f}%")
 if pass_rate >= 85:
     print(f"  Status: \033[0;32mCOMPETITIVE\033[0m")
 elif pass_rate >= 70:
@@ -500,7 +500,7 @@ HUMANEVAL_EXECUTE
 }
 
 #===============================================================================
-# Loki Mode Multi-Agent HumanEval Benchmark
+# Loki Loop Multi-Agent HumanEval Benchmark
 # Uses: Architect -> Engineer -> QA -> Reviewer with RARV cycle
 #===============================================================================
 
@@ -511,7 +511,7 @@ run_humaneval_loki() {
 
     mkdir -p "$solutions_dir"
 
-    log_info "Executing HumanEval with Loki Mode Multi-Agent System..."
+    log_info "Executing HumanEval with Loki Loop Multi-Agent System..."
     log_info "Model: $CLAUDE_MODEL | Retries: $MAX_RETRIES | Limit: ${PROBLEM_LIMIT:-all}"
     log_info "Agents: Architect -> Engineer -> QA -> Reviewer (RARV cycle)"
 
@@ -555,7 +555,7 @@ print(f"  Agent Pipeline: Architect -> Engineer -> QA -> Reviewer")
 print(f"{'='*70}\n")
 
 def call_agent(agent_name, prompt, timeout=PROBLEM_TIMEOUT):
-    """Call a Loki Mode agent with a specific role."""
+    """Call a Loki Loop agent with a specific role."""
     try:
         result = subprocess.run(
             ['claude', '-p', prompt, '--model', CLAUDE_MODEL],
@@ -705,7 +705,7 @@ Output the COMPLETE corrected function - no explanations, just code.'''
 
 def solve_with_loki_mode(problem):
     """
-    Solve a HumanEval problem using Loki Mode multi-agent system.
+    Solve a HumanEval problem using Loki Loop multi-agent system.
 
     Pipeline: Architect -> Engineer -> QA -> [Reviewer -> Engineer-Fix]* -> Pass/Fail
     """
@@ -840,7 +840,7 @@ for i, problem in enumerate(problems):
     solution_file = f"{solutions_dir}/{task_num}.py"
     with open(solution_file, 'w') as f:
         f.write(f"# {task_id}\n")
-        f.write(f"# Loki Mode Multi-Agent Solution\n")
+        f.write(f"# Loki Loop Multi-Agent Solution\n")
         f.write(f"# Attempts: {problem_result['attempts']}\n")
         f.write(f"# Passed: {problem_result['passed']}\n\n")
         if problem_result["solution"]:
@@ -896,7 +896,7 @@ print(f"{'='*70}")
 print(f"\n  Comparison (baseline: MetaGPT 85.9-87.7%):")
 print(f"  - MetaGPT (multi-agent):     85.9-87.7%")
 print(f"  - Direct Claude:             98.17% (from previous run)")
-print(f"  - Loki Mode (multi-agent):   {pass_rate:.1f}%")
+print(f"  - Loki Loop (multi-agent):   {pass_rate:.1f}%")
 if pass_rate >= 98:
     print(f"  Status: \033[0;32mEXCELLENT - Beats both!\033[0m")
 elif pass_rate >= 90:
@@ -908,7 +908,7 @@ else:
 print(f"{'='*70}\n")
 HUMANEVAL_LOKI
 
-    log_success "Loki Mode HumanEval benchmark complete"
+    log_success "Loki Loop HumanEval benchmark complete"
     log_info "Results: $results_file"
     log_info "Solutions: $solutions_dir/"
 }
@@ -1160,7 +1160,7 @@ for i, problem in enumerate(problems):
     results["predictions"].append({
         "instance_id": instance_id,
         "model_patch": solution["model_patch"] or "",
-        "model_name_or_path": f"loki-mode-{CLAUDE_MODEL}"
+        "model_name_or_path": f"loki-loop-{CLAUDE_MODEL}"
     })
 
     # Save intermediate results
@@ -1204,12 +1204,12 @@ SWEBENCH_EXECUTE
 }
 
 #===============================================================================
-# Loki Mode Multi-Agent SWE-bench Benchmark
+# Loki Loop Multi-Agent SWE-bench Benchmark
 # Uses: Architect -> Engineer -> QA -> Reviewer with RARV cycle
 #===============================================================================
 
 run_swebench_loki() {
-    log_info "Executing SWE-bench Lite with Loki Mode Multi-Agent System..."
+    log_info "Executing SWE-bench Lite with Loki Loop Multi-Agent System..."
     log_info "Model: $CLAUDE_MODEL | Retries: $MAX_RETRIES | Limit: ${PROBLEM_LIMIT:-all}"
     log_info "Agents: Architect -> Engineer -> QA -> Reviewer (RARV cycle)"
     log_info "Trajectory logging: ENABLED (for official submission)"
@@ -1271,7 +1271,7 @@ except Exception as e:
     sys.exit(1)
 
 def call_agent(agent_name, prompt, timeout=PROBLEM_TIMEOUT):
-    """Call a Loki Mode agent with a specific role. Returns (output, error, metadata)."""
+    """Call a Loki Loop agent with a specific role. Returns (output, error, metadata)."""
     start_time = time.time()
     try:
         result = subprocess.run(
@@ -1491,7 +1491,7 @@ def save_trajectory(instance_id, trajectory_steps):
 
     with open(traj_file, 'w') as f:
         f.write(f"# Trajectory: {instance_id}\n\n")
-        f.write(f"**Generated by:** Loki Mode Multi-Agent System\n")
+        f.write(f"**Generated by:** Loki Loop Multi-Agent System\n")
         f.write(f"**Model:** {CLAUDE_MODEL}\n")
         f.write(f"**Timestamp:** {datetime.now().isoformat()}\n\n")
         f.write("---\n\n")
@@ -1542,7 +1542,7 @@ def save_logs(instance_id, patch, result):
     report_file = f"{log_dir}/report.json"
     report = {
         "instance_id": instance_id,
-        "model_name_or_path": f"loki-mode-{CLAUDE_MODEL}",
+        "model_name_or_path": f"loki-loop-{CLAUDE_MODEL}",
         "model_patch": patch or "",
         "attempts": result.get("attempts", 1),
         "success": result.get("error") is None,
@@ -1556,7 +1556,7 @@ def save_logs(instance_id, patch, result):
     test_file = f"{log_dir}/test_output.txt"
     with open(test_file, 'w') as f:
         f.write(f"# Test output for {instance_id}\n")
-        f.write(f"# Generated by Loki Mode\n")
+        f.write(f"# Generated by Loki Loop\n")
         f.write(f"# Note: Run SWE-bench harness for actual test results\n\n")
         f.write(f"Patch generated: {'Yes' if patch else 'No'}\n")
         f.write(f"Attempts: {result.get('attempts', 1)}\n")
@@ -1565,7 +1565,7 @@ def save_logs(instance_id, patch, result):
     return log_dir
 
 def solve_with_loki_mode(problem):
-    """Solve SWE-bench problem using Loki Mode multi-agent system with full trajectory logging."""
+    """Solve SWE-bench problem using Loki Loop multi-agent system with full trajectory logging."""
     instance_id = problem["instance_id"]
     trajectory_steps = []  # Full trajectory for official submission
     agent_trace = []       # Summary trace for results JSON
@@ -1690,7 +1690,7 @@ for i, problem in enumerate(problems):
     patch_file = f"{patches_dir}/{instance_id.replace('/', '_')}.patch"
     with open(patch_file, 'w') as f:
         f.write(f"# {instance_id}\n")
-        f.write(f"# Loki Mode Multi-Agent Patch\n")
+        f.write(f"# Loki Loop Multi-Agent Patch\n")
         f.write(f"# Attempts: {result['attempts']}\n\n")
         if result["model_patch"]:
             f.write(result["model_patch"])
@@ -1713,7 +1713,7 @@ for i, problem in enumerate(problems):
     results["predictions"].append({
         "instance_id": instance_id,
         "model_patch": result["model_patch"] or "",
-        "model_name_or_path": f"loki-mode-{CLAUDE_MODEL}",
+        "model_name_or_path": f"loki-loop-{CLAUDE_MODEL}",
         "attempts": result["attempts"]
     })
 
@@ -1752,7 +1752,7 @@ print(f"  - Logs: {logs_dir}/ ({len(os.listdir(logs_dir))} dirs)")
 print(f"{'='*70}")
 print(f"\n  Comparison:")
 print(f"  - Direct Claude:             99.67% patch gen")
-print(f"  - Loki Mode (multi-agent):   {gen_rate:.1f}% patch gen")
+print(f"  - Loki Loop (multi-agent):   {gen_rate:.1f}% patch gen")
 print(f"{'='*70}")
 print(f"\n  Next Step: Run SWE-bench evaluator")
 print(f"  python -m swebench.harness.run_evaluation \\")
@@ -1760,7 +1760,7 @@ print(f"    --predictions {predictions_file}")
 print(f"{'='*70}\n")
 SWEBENCH_LOKI
 
-    log_success "Loki Mode SWE-bench patch generation complete"
+    log_success "Loki Loop SWE-bench patch generation complete"
     log_info "Results: $RESULTS_DIR/swebench-loki-results.json"
     log_info "Predictions: $RESULTS_DIR/swebench-loki-predictions.json"
 }
@@ -1782,13 +1782,13 @@ from datetime import datetime
 
 RESULTS_DIR = os.environ.get('RESULTS_DIR', './results')
 
-summary = f"""# Loki Mode Benchmark Results
+summary = f"""# Loki Loop Benchmark Results
 
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## Overview
 
-This directory contains benchmark results for Loki Mode multi-agent system.
+This directory contains benchmark results for Loki Loop multi-agent system.
 
 """
 
@@ -1815,7 +1815,7 @@ if os.path.exists(humaneval_file):
 | System | Pass@1 |
 |--------|--------|
 | MetaGPT | 85.9-87.7% |
-| **Loki Mode** | **{he.get('pass_rate', 'N/A')}%** |
+| **Loki Loop** | **{he.get('pass_rate', 'N/A')}%** |
 
 """
     else:
@@ -1864,7 +1864,7 @@ To run: \`./benchmarks/run-benchmarks.sh swebench --execute\`
 
 summary += """## Methodology
 
-Loki Mode uses its multi-agent architecture to solve each problem:
+Loki Loop uses its multi-agent architecture to solve each problem:
 1. **Architect Agent** analyzes the problem
 2. **Engineer Agent** implements the solution
 3. **QA Agent** validates with test cases
@@ -1906,7 +1906,7 @@ main() {
 
     echo ""
     echo "========================================"
-    echo "  Loki Mode Benchmark Runner"
+    echo "  Loki Loop Benchmark Runner"
     if [ "$EXECUTE_MODE" = true ]; then
         echo "  Mode: EXECUTE"
     else

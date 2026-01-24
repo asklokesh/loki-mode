@@ -52,7 +52,7 @@ jobs:
           mkdir -p release
 
           # ============================================
-          # Artifact 1: loki-mode.zip (for Claude.ai website)
+          # Artifact 1: loki-loop.zip (for Claude.ai website)
           # SKILL.md at ROOT level for direct upload
           # ============================================
           mkdir -p release/skill-root
@@ -60,44 +60,44 @@ jobs:
           cp -r references release/skill-root/
 
           cd release/skill-root
-          zip -r ../loki-mode-${{ steps.version.outputs.version }}.zip .
+          zip -r ../loki-loop-${{ steps.version.outputs.version }}.zip .
           cd ../..
 
           # Also create .skill file (same as zip, different extension)
-          cp release/loki-mode-${{ steps.version.outputs.version }}.zip release/loki-mode-${{ steps.version.outputs.version }}.skill
+          cp release/loki-loop-${{ steps.version.outputs.version }}.zip release/loki-loop-${{ steps.version.outputs.version }}.skill
 
           # ============================================
-          # Artifact 2: loki-mode-api.zip (for console.anthropic.com)
-          # SKILL.md inside loki-mode/ folder (API requires folder wrapper)
+          # Artifact 2: loki-loop-api.zip (for console.anthropic.com)
+          # SKILL.md inside loki-loop/ folder (API requires folder wrapper)
           # ============================================
-          mkdir -p release/api-package/loki-mode
-          cp SKILL.md release/api-package/loki-mode/
-          cp -r references release/api-package/loki-mode/
+          mkdir -p release/api-package/loki-loop
+          cp SKILL.md release/api-package/loki-loop/
+          cp -r references release/api-package/loki-loop/
 
           cd release/api-package
-          zip -r ../loki-mode-api-${{ steps.version.outputs.version }}.zip loki-mode
+          zip -r ../loki-loop-api-${{ steps.version.outputs.version }}.zip loki-loop
           cd ../..
 
           # ============================================
-          # Artifact 3: loki-mode-claude-code.zip
-          # For Claude Code: full package with loki-mode/ folder
+          # Artifact 3: loki-loop-claude-code.zip
+          # For Claude Code: full package with loki-loop/ folder
           # Extract to ~/.claude/skills/
           # ============================================
-          mkdir -p release/loki-mode
-          cp SKILL.md release/loki-mode/
-          cp README.md release/loki-mode/
-          cp LICENSE release/loki-mode/ 2>/dev/null || true
-          cp VERSION release/loki-mode/
-          cp CHANGELOG.md release/loki-mode/
-          cp -r references release/loki-mode/
-          cp -r examples release/loki-mode/
-          cp -r tests release/loki-mode/
-          cp -r scripts release/loki-mode/
-          cp -r autonomy release/loki-mode/
+          mkdir -p release/loki-loop
+          cp SKILL.md release/loki-loop/
+          cp README.md release/loki-loop/
+          cp LICENSE release/loki-loop/ 2>/dev/null || true
+          cp VERSION release/loki-loop/
+          cp CHANGELOG.md release/loki-loop/
+          cp -r references release/loki-loop/
+          cp -r examples release/loki-loop/
+          cp -r tests release/loki-loop/
+          cp -r scripts release/loki-loop/
+          cp -r autonomy release/loki-loop/
 
           cd release
-          zip -r loki-mode-claude-code-${{ steps.version.outputs.version }}.zip loki-mode
-          tar -czvf loki-mode-claude-code-${{ steps.version.outputs.version }}.tar.gz loki-mode
+          zip -r loki-loop-claude-code-${{ steps.version.outputs.version }}.zip loki-loop
+          tar -czvf loki-loop-claude-code-${{ steps.version.outputs.version }}.tar.gz loki-loop
           cd ..
 
       - name: Create Git Tag
@@ -125,12 +125,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "v${{ steps.version.outputs.version }}" \
-            release/loki-mode-${{ steps.version.outputs.version }}.zip \
-            release/loki-mode-${{ steps.version.outputs.version }}.skill \
-            release/loki-mode-api-${{ steps.version.outputs.version }}.zip \
-            release/loki-mode-claude-code-${{ steps.version.outputs.version }}.zip \
-            release/loki-mode-claude-code-${{ steps.version.outputs.version }}.tar.gz \
-            --title "Loki Mode v${{ steps.version.outputs.version }}" \
+            release/loki-loop-${{ steps.version.outputs.version }}.zip \
+            release/loki-loop-${{ steps.version.outputs.version }}.skill \
+            release/loki-loop-api-${{ steps.version.outputs.version }}.zip \
+            release/loki-loop-claude-code-${{ steps.version.outputs.version }}.zip \
+            release/loki-loop-claude-code-${{ steps.version.outputs.version }}.tar.gz \
+            --title "Loki Loop v${{ steps.version.outputs.version }}" \
             --notes-file changelog_body.txt
 
       - name: Skip message

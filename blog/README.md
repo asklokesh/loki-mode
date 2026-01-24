@@ -1,6 +1,6 @@
-# Loki Mode Website
+# Loki Loop Website
 
-Static website for Loki Mode documentation, research references, and blog posts.
+Static website for Loki Loop documentation, research references, and blog posts.
 
 ## Structure
 
@@ -49,7 +49,7 @@ blog/
 - Acknowledgements
 
 ### 4. Comparisons
-- Loki Mode vs Cursor
+- Loki Loop vs Cursor
 - Multi-agent systems comparison
 - Competitive analysis
 
@@ -73,11 +73,11 @@ blog/
    - Folder: **/ (root)**
 4. Save
 
-Site will be available at: `https://asklokesh.github.io/loki-mode/blog/`
+Site will be available at: `https://asklokesh.github.io/loki-loop/blog/`
 
 ### Alternative: Root Redirect (Optional)
 
-To make `https://asklokesh.github.io/loki-mode/` redirect to the blog:
+To make `https://asklokesh.github.io/loki-loop/` redirect to the blog:
 
 1. Create `index.html` in repository root:
 ```html
@@ -88,7 +88,7 @@ To make `https://asklokesh.github.io/loki-mode/` redirect to the blog:
     <title>Redirecting...</title>
 </head>
 <body>
-    <p>Redirecting to <a href="blog/">Loki Mode</a>...</p>
+    <p>Redirecting to <a href="blog/">Loki Loop</a>...</p>
 </body>
 </html>
 ```
@@ -107,7 +107,7 @@ To make `https://asklokesh.github.io/loki-mode/` redirect to the blog:
 
 ```bash
 # Serve from repository root
-cd /path/to/loki-mode  # NOT cd blog/
+cd /path/to/loki-loop  # NOT cd blog/
 
 # Python
 python3 -m http.server 8000
@@ -216,7 +216,7 @@ Modify grid layouts in `css/style.css`:
 
 ## License
 
-MIT License - Same as Loki Mode core
+MIT License - Same as Loki Loop core
 
 ## Contributing
 
@@ -227,5 +227,5 @@ MIT License - Same as Loki Mode core
 
 ## Support
 
-- GitHub Issues: https://github.com/asklokesh/loki-mode/issues
+- GitHub Issues: https://github.com/asklokesh/loki-loop/issues
 - Documentation: See `references/` directory

@@ -1,4 +1,4 @@
-# Loki Mode vs Cursor: Technical Comparison
+# Loki Loop vs Cursor: Technical Comparison
 
 > Factual analysis of multi-agent autonomous systems
 > Date: January 19, 2026
@@ -7,26 +7,26 @@
 
 ## Executive Summary
 
-| Dimension | Cursor | Loki Mode | Winner |
+| Dimension | Cursor | Loki Loop | Winner |
 |-----------|--------|-----------|--------|
 | **Proven Scale** | 1M+ LoC, 100+ agents | Benchmarks only | Cursor |
-| **Research Foundation** | Empirical iteration | 25+ academic citations | Loki Mode |
-| **Quality Assurance** | Workers self-manage | 7-gate system + anti-sycophancy | Loki Mode |
-| **Anti-Sycophancy** | Not mentioned | CONSENSAGENT blind review | Loki Mode |
-| **Velocity-Quality Balance** | Not mentioned | arXiv-backed metrics | Loki Mode |
-| **Full SDLC Coverage** | Code generation focus | PRD to production + growth | Loki Mode |
-| **Memory Systems** | Not detailed | Episodic/semantic/procedural | Loki Mode |
+| **Research Foundation** | Empirical iteration | 25+ academic citations | Loki Loop |
+| **Quality Assurance** | Workers self-manage | 7-gate system + anti-sycophancy | Loki Loop |
+| **Anti-Sycophancy** | Not mentioned | CONSENSAGENT blind review | Loki Loop |
+| **Velocity-Quality Balance** | Not mentioned | arXiv-backed metrics | Loki Loop |
+| **Full SDLC Coverage** | Code generation focus | PRD to production + growth | Loki Loop |
+| **Memory Systems** | Not detailed | Episodic/semantic/procedural | Loki Loop |
 | **Scale Patterns** | Battle-tested | Now incorporated (v3.3.0) | Tie |
 
 ---
 
-## Where Loki Mode is Scientifically Better
+## Where Loki Loop is Scientifically Better
 
 ### 1. Anti-Sycophancy Protocol (CONSENSAGENT Research)
 
 **The Problem:** AI agents tend to agree with each other, reinforcing mistakes rather than catching them.
 
-**Loki Mode Solution:**
+**Loki Loop Solution:**
 ```
 3 Blind Parallel Reviewers (cannot see each other's findings)
         |
@@ -47,7 +47,7 @@ Aggregated findings with independent verification
 
 **The Problem:** AI-generated code shows +281% velocity but +30% static warnings, +41% complexity. At 3.28x complexity, velocity gains are completely negated.
 
-**Loki Mode Solution:**
+**Loki Loop Solution:**
 ```yaml
 velocity_quality_balance:
   before_commit:
@@ -68,7 +68,7 @@ velocity_quality_balance:
 
 ### 3. 7-Gate Quality System
 
-**Loki Mode's Gates:**
+**Loki Loop's Gates:**
 1. Input Guardrails - Validate scope, detect injection (OpenAI SDK pattern)
 2. Static Analysis - CodeQL, ESLint, type checking
 3. Blind Review System - 3 parallel reviewers
@@ -79,13 +79,13 @@ velocity_quality_balance:
 
 **Cursor:** Removed dedicated quality roles. Quote: "Dedicated integrator roles created more bottlenecks than they solved."
 
-**Trade-off:** Cursor optimizes for throughput at scale. Loki Mode optimizes for quality with configurable intensity.
+**Trade-off:** Cursor optimizes for throughput at scale. Loki Loop optimizes for quality with configurable intensity.
 
 ---
 
 ### 4. Constitutional AI Self-Critique
 
-**Loki Mode Pattern:**
+**Loki Loop Pattern:**
 ```
 Generate -> Critique against principles -> Revise -> Re-critique -> Final
 ```
@@ -98,7 +98,7 @@ Generate -> Critique against principles -> Revise -> Re-critique -> Final
 
 ### 5. Memory Architecture
 
-**Loki Mode:**
+**Loki Loop:**
 ```
 .loki/memory/
   episodic/    # Specific interaction traces
@@ -116,7 +116,7 @@ Generate -> Critique against principles -> Revise -> Re-critique -> Final
 
 ### 6. Full SDLC Coverage
 
-**Loki Mode Phases:**
+**Loki Loop Phases:**
 ```
 BOOTSTRAP -> DISCOVERY -> ARCHITECTURE -> INFRASTRUCTURE
      -> DEVELOPMENT -> QA -> DEPLOYMENT -> GROWTH (continuous)
@@ -138,7 +138,7 @@ BOOTSTRAP -> DISCOVERY -> ARCHITECTURE -> INFRASTRUCTURE
 
 ### 7. Debate-Based Verification
 
-**Loki Mode Pattern:**
+**Loki Loop Pattern:**
 ```
 For critical changes:
   1. Agent A proposes solution
@@ -161,7 +161,7 @@ For critical changes:
 - "Trillions of tokens" deployed
 - Hundreds of concurrent agents
 
-**Loki Mode:** Benchmarks only (SWE-bench, HumanEval). No 1M+ LoC projects demonstrated.
+**Loki Loop:** Benchmarks only (SWE-bench, HumanEval). No 1M+ LoC projects demonstrated.
 
 ### 2. Empirical Iteration
 Cursor learned through failure:
@@ -169,16 +169,16 @@ Cursor learned through failure:
 - File locking created deadlocks -> Moved to optimistic concurrency
 - Integrators created bottlenecks -> Removed them
 
-**Loki Mode:** Research-based design. Not yet validated at Cursor's scale.
+**Loki Loop:** Research-based design. Not yet validated at Cursor's scale.
 
 ### 3. Simplicity Principle
 > "A surprising amount of the system's behavior comes down to how we prompt the agents. The harness and models matter, but the prompts matter more."
 
-**Loki Mode:** More complex infrastructure (7 gates, 37 agent types, memory systems). May be over-engineered for some use cases.
+**Loki Loop:** More complex infrastructure (7 gates, 37 agent types, memory systems). May be over-engineered for some use cases.
 
 ---
 
-## What Loki Mode Learned from Cursor (v3.3.0)
+## What Loki Loop Learned from Cursor (v3.3.0)
 
 We incorporated Cursor's proven patterns:
 
@@ -191,7 +191,7 @@ We incorporated Cursor's proven patterns:
 
 ## Conclusion
 
-**Loki Mode is scientifically better in:**
+**Loki Loop is scientifically better in:**
 - Quality assurance (research-backed 7-gate system)
 - Anti-sycophancy (CONSENSAGENT blind review)
 - Velocity-quality balance (arXiv metrics)
@@ -203,13 +203,13 @@ We incorporated Cursor's proven patterns:
 - Empirical learning (iteration through failure)
 - Simplicity at scale (removed bottlenecks)
 
-**Best of both worlds:** Loki Mode v3.3.0 incorporates Cursor's scale patterns while maintaining research-backed quality assurance.
+**Best of both worlds:** Loki Loop v3.3.0 incorporates Cursor's scale patterns while maintaining research-backed quality assurance.
 
 ---
 
 ## References
 
-### Loki Mode Research Foundation
+### Loki Loop Research Foundation
 - [CONSENSAGENT](https://aclanthology.org/2025.findings-acl.1141/) - Anti-sycophancy
 - [arXiv 2511.04427v2](https://arxiv.org/abs/2511.04427) - Velocity-quality balance
 - [Anthropic Constitutional AI](https://www.anthropic.com/research/constitutional-ai-harmlessness-from-ai-feedback)
@@ -222,4 +222,4 @@ We incorporated Cursor's proven patterns:
 
 ---
 
-**Loki Mode v4.1.0** | github.com/asklokesh/loki-mode
+**Loki Loop v4.1.0** | github.com/asklokesh/loki-loop

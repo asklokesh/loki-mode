@@ -1,13 +1,13 @@
 #!/bin/bash
 #===============================================================================
-# Loki Mode CLI Wrapper (v4.1.0)
-# Simple command-line interface for Loki Mode
+# Loki Loop CLI Wrapper (v4.2.0)
+# Simple command-line interface for Loki Loop
 #
 # Installation:
-#   ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
+#   ln -sf ~/.claude/skills/loki-loop/autonomy/loki /usr/local/bin/loki
 #
 # Usage:
-#   loki start [PRD]      - Start Loki Mode (optionally with PRD)
+#   loki start [PRD]      - Start Loki Loop (optionally with PRD)
 #   loki stop             - Stop execution immediately
 #   loki pause            - Pause after current session
 #   loki resume           - Resume paused execution
@@ -31,7 +31,7 @@ NC='\033[0m'
 # Find the skill installation
 find_skill_dir() {
     local dirs=(
-        "$HOME/.claude/skills/loki-mode"
+        "$HOME/.claude/skills/loki-loop"
         "$(dirname "$0")/.."
         "."
     )
@@ -49,8 +49,8 @@ find_skill_dir() {
 
 SKILL_DIR=$(find_skill_dir)
 if [ -z "$SKILL_DIR" ]; then
-    echo -e "${RED}Error: Could not find Loki Mode installation${NC}"
-    echo "Expected at: ~/.claude/skills/loki-mode"
+    echo -e "${RED}Error: Could not find Loki Loop installation${NC}"
+    echo "Expected at: ~/.claude/skills/loki-loop"
     exit 1
 fi
 
@@ -69,12 +69,12 @@ get_version() {
 # Show help
 show_help() {
     local version=$(get_version)
-    echo -e "${BOLD}Loki Mode v$version${NC}"
+    echo -e "${BOLD}Loki Loop v$version${NC}"
     echo ""
     echo "Usage: loki <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  start [PRD]      Start Loki Mode (optionally with PRD file)"
+    echo "  start [PRD]      Start Loki Loop (optionally with PRD file)"
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume paused execution"
@@ -103,7 +103,7 @@ show_help() {
     echo "  See: $RUN_SH (header comments)"
 }
 
-# Start Loki Mode
+# Start Loki Loop
 cmd_start() {
     local args=()
     local prd_file=""
@@ -145,14 +145,14 @@ cmd_start() {
         args+=("$prd_file")
     fi
 
-    echo -e "${GREEN}Starting Loki Mode...${NC}"
+    echo -e "${GREEN}Starting Loki Loop...${NC}"
     exec "$RUN_SH" "${args[@]}"
 }
 
 # Stop execution immediately
 cmd_stop() {
     if [ ! -d "$LOKI_DIR" ]; then
-        echo -e "${YELLOW}No .loki directory found. Is Loki Mode running?${NC}"
+        echo -e "${YELLOW}No .loki directory found. Is Loki Loop running?${NC}"
         exit 1
     fi
 
@@ -163,7 +163,7 @@ cmd_stop() {
 # Pause after current session
 cmd_pause() {
     if [ ! -d "$LOKI_DIR" ]; then
-        echo -e "${YELLOW}No .loki directory found. Is Loki Mode running?${NC}"
+        echo -e "${YELLOW}No .loki directory found. Is Loki Loop running?${NC}"
         exit 1
     fi
 
@@ -180,10 +180,10 @@ cmd_resume() {
 
     if [ -f "$LOKI_DIR/PAUSE" ]; then
         rm -f "$LOKI_DIR/PAUSE"
-        echo -e "${GREEN}PAUSE file removed. You may need to restart Loki Mode.${NC}"
+        echo -e "${GREEN}PAUSE file removed. You may need to restart Loki Loop.${NC}"
     elif [ -f "$LOKI_DIR/STOP" ]; then
         rm -f "$LOKI_DIR/STOP"
-        echo -e "${GREEN}STOP file removed. You may need to restart Loki Mode.${NC}"
+        echo -e "${GREEN}STOP file removed. You may need to restart Loki Loop.${NC}"
     else
         echo -e "${YELLOW}No pause/stop files found.${NC}"
     fi
@@ -193,11 +193,11 @@ cmd_resume() {
 cmd_status() {
     if [ ! -d "$LOKI_DIR" ]; then
         echo -e "${YELLOW}No .loki directory found.${NC}"
-        echo "Loki Mode has not been initialized in this directory."
+        echo "Loki Loop has not been initialized in this directory."
         exit 0
     fi
 
-    echo -e "${BOLD}Loki Mode Status${NC}"
+    echo -e "${BOLD}Loki Loop Status${NC}"
     echo ""
 
     # Check status file
@@ -240,7 +240,7 @@ cmd_dashboard() {
     local url="http://127.0.0.1:$port/dashboard/index.html"
 
     if [ ! -d "$LOKI_DIR/dashboard" ]; then
-        echo -e "${YELLOW}Dashboard not found. Start Loki Mode first.${NC}"
+        echo -e "${YELLOW}Dashboard not found. Start Loki Loop first.${NC}"
         exit 1
     fi
 
@@ -315,7 +315,7 @@ cmd_config() {
 }
 
 cmd_config_show() {
-    echo -e "${BOLD}Loki Mode Configuration${NC}"
+    echo -e "${BOLD}Loki Loop Configuration${NC}"
     echo ""
     echo -e "${CYAN}Installation:${NC} $SKILL_DIR"
     echo -e "${CYAN}Version:${NC} $(get_version)"
@@ -329,11 +329,11 @@ cmd_config_show() {
     elif [ -f ".loki/config.yml" ]; then
         config_file=".loki/config.yml"
         echo -e "${GREEN}Config file:${NC} $config_file (project-local)"
-    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yaml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yaml"
         echo -e "${GREEN}Config file:${NC} $config_file (user-global)"
-    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yml"
         echo -e "${GREEN}Config file:${NC} $config_file (user-global)"
     else
         echo -e "${YELLOW}Config file:${NC} Not found (using defaults)"
@@ -372,7 +372,7 @@ cmd_config_show() {
 cmd_config_init() {
     local template="$SKILL_DIR/autonomy/config.example.yaml"
     local target=".loki/config.yaml"
-    local global_target="${HOME}/.config/loki-mode/config.yaml"
+    local global_target="${HOME}/.config/loki-loop/config.yaml"
 
     if [ ! -f "$template" ]; then
         echo -e "${RED}Error: Config template not found at $template${NC}"
@@ -396,7 +396,7 @@ cmd_config_init() {
             echo -e "${GREEN}Created: $target${NC}"
             ;;
         2)
-            mkdir -p "${HOME}/.config/loki-mode"
+            mkdir -p "${HOME}/.config/loki-loop"
             cp "$template" "$global_target"
             echo -e "${GREEN}Created: $global_target${NC}"
             ;;
@@ -418,10 +418,10 @@ cmd_config_edit() {
         config_file=".loki/config.yaml"
     elif [ -f ".loki/config.yml" ]; then
         config_file=".loki/config.yml"
-    elif [ -f "${HOME}/.config/loki-mode/config.yaml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yaml"
-    elif [ -f "${HOME}/.config/loki-mode/config.yml" ]; then
-        config_file="${HOME}/.config/loki-mode/config.yml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yaml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yaml"
+    elif [ -f "${HOME}/.config/loki-loop/config.yml" ]; then
+        config_file="${HOME}/.config/loki-loop/config.yml"
     fi
 
     if [ -z "$config_file" ]; then
@@ -445,14 +445,14 @@ cmd_config_edit() {
 cmd_config_path() {
     echo -e "${BOLD}Config File Search Paths${NC}"
     echo ""
-    echo "Loki Mode searches for config files in this order:"
+    echo "Loki Loop searches for config files in this order:"
     echo ""
 
     local paths=(
         ".loki/config.yaml"
         ".loki/config.yml"
-        "${HOME}/.config/loki-mode/config.yaml"
-        "${HOME}/.config/loki-mode/config.yml"
+        "${HOME}/.config/loki-loop/config.yaml"
+        "${HOME}/.config/loki-loop/config.yml"
     )
 
     for path in "${paths[@]}"; do
@@ -471,7 +471,7 @@ cmd_config_path() {
 
 # Show version
 cmd_version() {
-    echo "Loki Mode v$(get_version)"
+    echo "Loki Loop v$(get_version)"
 }
 
 # Main command dispatcher

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Real-time sync watcher for Loki Mode -> Vibe Kanban
+# Real-time sync watcher for Loki Loop -> Vibe Kanban
 # Watches .loki/queue/ for changes and automatically exports tasks
 
 set -uo pipefail
@@ -21,7 +21,7 @@ log_sync() { echo -e "${BLUE}[SYNC]${NC} $*"; }
 
 # Check prerequisites
 if [ ! -d "$LOKI_DIR" ]; then
-    log_warn "No .loki directory found. Run Loki Mode first."
+    log_warn "No .loki directory found. Run Loki Loop first."
     exit 1
 fi
 
@@ -31,7 +31,7 @@ if [ ! -f "$EXPORT_SCRIPT" ]; then
 fi
 
 if [ ! -d "$QUEUE_DIR" ]; then
-    log_warn "Queue directory not found. Waiting for Loki Mode to create it..."
+    log_warn "Queue directory not found. Waiting for Loki Loop to create it..."
     mkdir -p "$QUEUE_DIR"
 fi
 

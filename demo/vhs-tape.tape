@@ -1,4 +1,4 @@
-# Loki Mode Demo - VHS Tape
+# Loki Loop Demo - VHS Tape
 # Generate with: vhs demo/vhs-tape.tape
 # Output: demo/loki-demo.gif
 
@@ -13,7 +13,7 @@ Set Padding 20
 Set TypingSpeed 50ms
 
 # Title screen
-Type "# Loki Mode - Multi-Agent Autonomous Startup System"
+Type "# Loki Loop - Multi-Agent Autonomous Startup System"
 Enter
 Sleep 2s
 
@@ -32,12 +32,12 @@ Type "claude --dangerously-skip-permissions"
 Enter
 Sleep 2s
 
-# Step 2: Invoke Loki Mode
-Type "Loki Mode with PRD at examples/simple-todo-app.md"
+# Step 2: Invoke Loki Loop
+Type "Loki Loop with PRD at examples/simple-todo-app.md"
 Enter
 Sleep 3s
 
-# Simulate Loki Mode output
+# Simulate Loki Loop output
 Hide
 Type@0ms "echo ''"
 Enter
@@ -210,7 +210,7 @@ Type "clear"
 Enter
 Show
 
-Type "# Loki Mode - From PRD to Production"
+Type "# Loki Loop - From PRD to Production"
 Enter
 Sleep 1s
 
@@ -218,6 +218,6 @@ Type "# Zero Human Intervention"
 Enter
 Sleep 1s
 
-Type "# github.com/asklokesh/loki-mode"
+Type "# github.com/asklokesh/loki-loop"
 Enter
 Sleep 3s

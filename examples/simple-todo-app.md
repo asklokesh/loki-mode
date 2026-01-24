@@ -1,7 +1,7 @@
 # PRD: Simple Todo App
 
 ## Overview
-A minimal todo application for testing Loki Mode with a simple, well-defined scope.
+A minimal todo application for testing Loki Loop with a simple, well-defined scope.
 
 ## Target Users
 Individual users who want a simple way to track tasks.
@@ -57,4 +57,4 @@ Individual users who want a simple way to track tasks.
 
 ---
 
-**Purpose:** This PRD is intentionally simple to allow quick testing of Loki Mode's core functionality without waiting for complex builds or deployments.
+**Purpose:** This PRD is intentionally simple to allow quick testing of Loki Loop's core functionality without waiting for complex builds or deployments.

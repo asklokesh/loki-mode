@@ -340,7 +340,7 @@ def iterative_verify_first(task, max_iterations=3):
 
 ### When to Use Each Structure
 
-| Structure | Use When | Loki Mode Application |
+| Structure | Use When | Loki Loop Application |
 |-----------|----------|----------------------|
 | **Centralized** | Need consistency, single source of truth | Orchestrator for phase management |
 | **Decentralized** | Need fault tolerance, parallel execution | Agent swarms for implementation |

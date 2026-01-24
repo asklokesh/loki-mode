@@ -1,4 +1,4 @@
-# Loki Mode Agent Constitution
+# Loki Loop Agent Constitution
 
 > **Machine-Enforceable Behavioral Contract for All Agents**
 > Version 4.2.0 | Immutable Principles | Context-Preserved Lineage

@@ -1,16 +1,16 @@
-# Loki Mode Competitive Analysis
+# Loki Loop Competitive Analysis
 
 *Last Updated: 2026-01-05*
 
 ## Executive Summary
 
-Loki Mode has **unique differentiation** in business operations automation but faces significant gaps in benchmarks, community adoption, and enterprise security features compared to established competitors.
+Loki Loop has **unique differentiation** in business operations automation but faces significant gaps in benchmarks, community adoption, and enterprise security features compared to established competitors.
 
 ---
 
 ## Factual Comparison Table
 
-| Feature | Loki Mode | Claude-Flow | MetaGPT | CrewAI | Cursor Agent | Devin |
+| Feature | Loki Loop | Claude-Flow | MetaGPT | CrewAI | Cursor Agent | Devin |
 |---------|-----------|-------------|---------|--------|--------------|-------|
 | **GitHub Stars** | 349 | 10,700 | 62,400 | 25,000+ | N/A (Commercial) | N/A (Commercial) |
 | **Agent Count** | 37 types | 64+ agents | 5 roles | Unlimited | 8 parallel | 1 autonomous |
@@ -49,7 +49,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 - Complex setup compared to single-skill approach
 - Heavy infrastructure requirements
 
-**What Loki Mode Can Learn:**
+**What Loki Loop Can Learn:**
 - AgentDB-style persistent memory across projects
 - MCP protocol integration for tool orchestration
 - Enterprise CLAUDE.MD templates (Agile, Enterprise, Compliance)
@@ -74,7 +74,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 - No real-time monitoring/dashboard
 - No business operations
 
-**What Loki Mode Can Learn:**
+**What Loki Loop Can Learn:**
 - SOP encoding into prompts (reduces cascading errors)
 - Benchmark methodology for HumanEval/SWE-bench
 - Token cost tracking per task
@@ -98,7 +98,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 - Scaling requires careful resource management
 - Enterprise features require paid tier
 
-**What Loki Mode Can Learn:**
+**What Loki Loop Can Learn:**
 - Flows architecture for production deployments
 - Tracing and observability patterns
 - Enterprise security features (audit logs, RBAC)
@@ -122,7 +122,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 - No full SDLC (code editing focus)
 - No business operations
 
-**What Loki Mode Can Learn:**
+**What Loki Loop Can Learn:**
 - `.cursor/rules` equivalent for agent constraints
 - Staged autonomy patterns
 - Git worktree isolation for parallel work
@@ -145,7 +145,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 - Requires clear upfront specifications
 - $20-500/month pricing
 
-**What Loki Mode Can Learn:**
+**What Loki Loop Can Learn:**
 - Fleet parallelization for repetitive tasks
 - Migration-specific agent capabilities
 - PR merge tracking as success metric
@@ -156,7 +156,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 
 ### HumanEval Results (Three-Way Comparison)
 
-**Loki Mode Multi-Agent (with RARV):**
+**Loki Loop Multi-Agent (with RARV):**
 
 | Metric | Value |
 |--------|-------|
@@ -182,7 +182,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 
 | System | HumanEval Pass@1 | Agent Type |
 |--------|------------------|------------|
-| **Loki Mode (multi-agent)** | **98.78%** | Architect->Engineer->QA->Reviewer |
+| **Loki Loop (multi-agent)** | **98.78%** | Architect->Engineer->QA->Reviewer |
 | Direct Claude | 98.17% | Single agent |
 | MetaGPT | 85.9-87.7% | Multi-agent (5 roles) |
 
@@ -202,7 +202,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 | Model | Claude Opus 4.5 |
 | Time | 6.17 hours |
 
-**Loki Mode Multi-Agent (with RARV):**
+**Loki Loop Multi-Agent (with RARV):**
 
 | Metric | Value |
 |--------|-------|
@@ -217,7 +217,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 | System | SWE-bench Patch Gen | Notes |
 |--------|---------------------|-------|
 | **Direct Claude** | **99.67%** (299/300) | Single agent, minimal overhead |
-| **Loki Mode (multi-agent)** | **99.67%** (299/300) | 4-agent pipeline with RARV |
+| **Loki Loop (multi-agent)** | **99.67%** (299/300) | 4-agent pipeline with RARV |
 | Devin | ~15% complex tasks | Commercial, different benchmark |
 
 **Key Finding:** After timeout optimization (Architect: 60s->120s), the multi-agent RARV pipeline matches direct Claude's performance on SWE-bench. Both achieve 99.67% patch generation rate.
@@ -256,7 +256,7 @@ Loki Mode has **unique differentiation** in business operations automation but f
 
 ---
 
-## Loki Mode's Unique Advantages
+## Loki Loop's Unique Advantages
 
 ### 1. Business Operations Automation (No Competitor Has This)
 - Marketing agents (campaigns, content, SEO)

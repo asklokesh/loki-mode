@@ -1,13 +1,13 @@
 ---
-name: loki-mode
-description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with zero human intervention. Requires --dangerously-skip-permissions flag.
+name: loki-loop
+description: Multi-agent autonomous startup system. Triggers on "Loki Loop". Takes PRD to deployed product with zero human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v4.2.0
+# Loki Loop v4.3.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
-**New in v4.2.0:** Foundational Principles (WHY behind rules), Priority Order for conflict resolution, Memory > Reasoning insight. See `autonomy/CONSTITUTION.md`.
+**New in v4.3.0:** Rebranded from Loki Mode to Loki Loop - emphasizing the RARV cycle. See CHANGELOG.md.
 
 ---
 
@@ -154,7 +154,7 @@ GROWTH ──[continuous improvement loop]──> GROWTH
 ```bash
 # Standard mode
 claude --dangerously-skip-permissions
-# Then say: "Loki Mode" or "Loki Mode with PRD at path/to/prd.md"
+# Then say: "Loki Loop" or "Loki Loop with PRD at path/to/prd.md"
 
 # Parallel mode (git worktrees)
 ./autonomy/run.sh --parallel ./prd.md
@@ -188,4 +188,4 @@ Auto-detected or force with `LOKI_COMPLEXITY`:
 
 ---
 
-**v4.2.0 | Foundational Principles | ~190 lines core**
+**v4.3.0 | Loki Loop Rebrand | ~190 lines core**

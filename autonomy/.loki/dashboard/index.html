@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Loki Mode Dashboard - Multi-agent autonomous system monitor">
+    <meta name="description" content="Loki Loop Dashboard - Multi-agent autonomous system monitor">
     <meta name="theme-color" content="#d97757">
-    <title>Loki Mode Dashboard</title>
+    <title>Loki Loop Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23d97757' rx='15' width='100' height='100'/><text x='50' y='72' font-size='60' font-weight='bold' text-anchor='middle' fill='white'>L</text></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1328,7 +1328,7 @@
     <div class="mobile-header">
         <div class="mobile-logo">
             <div class="mobile-logo-icon">L</div>
-            Loki Mode
+            Loki Loop
         </div>
         <div class="mobile-controls">
             <div class="mobile-status">
@@ -1345,7 +1345,7 @@
             <div class="logo">
                 <div class="logo-icon">L</div>
                 <div>
-                    <div class="logo-text">Loki Mode</div>
+                    <div class="logo-text">Loki Loop</div>
                     <div class="logo-version" id="version">v4.1.0</div>
                 </div>
             </div>
@@ -1552,7 +1552,7 @@
                     <h2 class="section-title">Active Agents</h2>
                 </div>
                 <div class="agents-grid" id="agents-grid">
-                    <div class="empty-state">No active agents. Agents will appear when Loki Mode is running.</div>
+                    <div class="empty-state">No active agents. Agents will appear when Loki Loop is running.</div>
                 </div>
             </div>
 
@@ -1648,7 +1648,7 @@
                                 <span class="terminal-dot yellow"></span>
                                 <span class="terminal-dot green"></span>
                             </div>
-                            loki-mode -- agent output
+                            loki-loop -- agent output
                         </div>
                         <div class="terminal-controls">
                             <button class="terminal-btn active" id="terminal-auto-scroll" onclick="toggleAutoScroll()">Auto-scroll</button>
@@ -1657,7 +1657,7 @@
                         </div>
                     </div>
                     <div class="terminal-output" id="terminal-output">
-                        <div class="terminal-empty">No log output yet. Terminal will update when Loki Mode is running.</div>
+                        <div class="terminal-empty">No log output yet. Terminal will update when Loki Loop is running.</div>
                     </div>
                 </div>
             </div>
@@ -2096,7 +2096,7 @@
             const agents = serverState?.agents || [];
 
             if (agents.length === 0) {
-                grid.innerHTML = '<div class="empty-state">No active agents. Agents will appear when Loki Mode is running.</div>';
+                grid.innerHTML = '<div class="empty-state">No active agents. Agents will appear when Loki Loop is running.</div>';
                 return;
             }
 
@@ -2241,15 +2241,15 @@
         // Human Intervention
         // ============================================
         function triggerPause() {
-            alert('To pause Loki Mode, create this file:\ntouch .loki/PAUSE\n\nOr press Ctrl+C once in the terminal.');
+            alert('To pause Loki Loop, create this file:\ntouch .loki/PAUSE\n\nOr press Ctrl+C once in the terminal.');
         }
 
         function triggerStop() {
-            alert('To stop Loki Mode, create this file:\ntouch .loki/STOP\n\nOr press Ctrl+C twice in the terminal.');
+            alert('To stop Loki Loop, create this file:\ntouch .loki/STOP\n\nOr press Ctrl+C twice in the terminal.');
         }
 
         function triggerResume() {
-            alert('To resume Loki Mode, remove the pause file:\nrm .loki/PAUSE\n\nOr use: loki resume');
+            alert('To resume Loki Loop, remove the pause file:\nrm .loki/PAUSE\n\nOr use: loki resume');
         }
 
         // ============================================
@@ -2287,7 +2287,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'loki-mode-logs-' + Date.now() + '.txt';
+            a.download = 'loki-loop-logs-' + Date.now() + '.txt';
             a.click();
             URL.revokeObjectURL(url);
         }
@@ -2334,7 +2334,7 @@
             const output = document.getElementById('terminal-output');
 
             if (terminalLines.length === 0) {
-                output.innerHTML = '<div class="terminal-empty">No log output yet. Terminal will update when Loki Mode is running.</div>';
+                output.innerHTML = '<div class="terminal-empty">No log output yet. Terminal will update when Loki Loop is running.</div>';
                 return;
             }
 
@@ -2529,7 +2529,7 @@ ${cliCmd}
 Option 2 - Using environment variables:
 ${envSetup}
 
-Then start Loki Mode and issues will be imported automatically.`;
+Then start Loki Loop and issues will be imported automatically.`;
 
             alert(message);
             closeGitHubModal();
@@ -2548,7 +2548,7 @@ Then start Loki Mode and issues will be imported automatically.`;
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'loki-mode-export-' + Date.now() + '.json';
+            a.download = 'loki-loop-export-' + Date.now() + '.json';
             a.click();
             URL.revokeObjectURL(url);
         }

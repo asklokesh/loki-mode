@@ -74,7 +74,7 @@ with open("$SUBMISSION_DIR/all_preds.jsonl", 'w') as f:
         entry = {
             "instance_id": pred["instance_id"],
             "model_patch": pred["model_patch"],
-            "model_name_or_path": pred.get("model_name_or_path", "loki-mode")
+            "model_name_or_path": pred.get("model_name_or_path", "loki-loop")
         }
         f.write(json.dumps(entry) + '\n')
 
@@ -177,10 +177,10 @@ cat > "$SUBMISSION_DIR/SUBMISSION_CHECKLIST.md" << 'CHECKLIST'
    cp -r /path/to/submission evaluation/lite/20260105_loki_mode
 
    # Create PR
-   git checkout -b loki-mode-submission
+   git checkout -b loki-loop-submission
    git add .
-   git commit -m "Add Loki Mode submission"
-   git push origin loki-mode-submission
+   git commit -m "Add Loki Loop submission"
+   git push origin loki-loop-submission
    ```
 
 4. **Submit PR with:**
@@ -191,7 +191,7 @@ cat > "$SUBMISSION_DIR/SUBMISSION_CHECKLIST.md" << 'CHECKLIST'
 ## Contact
 
 For questions about this submission, open an issue at:
-https://github.com/asklokesh/loki-mode/issues
+https://github.com/asklokesh/loki-loop/issues
 CHECKLIST
 
 # Final summary

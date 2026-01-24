@@ -1,5 +1,5 @@
 #!/bin/bash
-# Record Loki Mode demo with asciinema
+# Record Loki Loop demo with asciinema
 # Usage: ./demo/record-demo.sh [simple-todo|full-stack]
 
 set -euo pipefail
@@ -29,7 +29,7 @@ else
 fi
 
 echo "============================================"
-echo "  Loki Mode Demo Recording"
+echo "  Loki Loop Demo Recording"
 echo "============================================"
 echo ""
 echo "Demo type:   $DEMO_TYPE"
@@ -46,7 +46,7 @@ read -r
 
 # Record the demo
 $ASCIINEMA_PATH rec \
-    --title "Loki Mode Demo - $DEMO_TYPE" \
+    --title "Loki Loop Demo - $DEMO_TYPE" \
     --command "$SCRIPT_DIR/run-demo.sh $DEMO_TYPE" \
     --idle-time-limit 3 \
     "$OUTPUT_FILE"

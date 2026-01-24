@@ -1,19 +1,19 @@
-# Loki Mode
+# Loki Loop
 
 **The First Truly Autonomous Multi-Agent Startup System**
 
 [![Claude Code](https://img.shields.io/badge/Claude-Code-orange)](https://claude.ai)
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-37-blue)]()
-[![Loki Mode](https://img.shields.io/badge/Loki%20Mode-98.78%25%20Pass%401-blueviolet)](benchmarks/results/)
+[![Loki Loop](https://img.shields.io/badge/Loki%20Loop-98.78%25%20Pass%401-blueviolet)](benchmarks/results/)
 [![HumanEval](https://img.shields.io/badge/HumanEval-98.17%25%20Pass%401-brightgreen)](benchmarks/results/)
 [![SWE-bench](https://img.shields.io/badge/SWE--bench-99.67%25%20Patch%20Gen-brightgreen)](benchmarks/results/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**[Documentation Website](https://asklokesh.github.io/loki-mode/)** | **[Architecture](https://asklokesh.github.io/loki-mode/blog/#architecture)** | **[Research](https://asklokesh.github.io/loki-mode/blog/#research)** | **[Comparisons](https://asklokesh.github.io/loki-mode/blog/#comparisons)**
+**[Documentation Website](https://asklokesh.github.io/loki-loop/)** | **[Architecture](https://asklokesh.github.io/loki-loop/blog/#architecture)** | **[Research](https://asklokesh.github.io/loki-loop/blog/#research)** | **[Comparisons](https://asklokesh.github.io/loki-loop/blog/#comparisons)**
 
 > **PRD → Deployed Product in Zero Human Intervention**
 >
-> Loki Mode transforms a Product Requirements Document into a fully built, tested, deployed, and revenue-generating product while you sleep. No manual steps. No intervention. Just results.
+> Loki Loop transforms a Product Requirements Document into a fully built, tested, deployed, and revenue-generating product while you sleep. No manual steps. No intervention. Just results.
 
 ---
 
@@ -21,7 +21,7 @@
 
 [![asciicast](https://asciinema.org/a/EqNo5IVTaPJfCjLmnYgZ9TC3E.svg)](https://asciinema.org/a/EqNo5IVTaPJfCjLmnYgZ9TC3E)
 
-*Click to watch Loki Mode build a complete Todo App from PRD - zero human intervention*
+*Click to watch Loki Loop build a complete Todo App from PRD - zero human intervention*
 
 ---
 
@@ -31,21 +31,21 @@
 
 ```bash
 # Install
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git ~/.claude/skills/loki-loop
 
 # Run
 claude --dangerously-skip-permissions
 
 # Then say:
-Loki Mode with PRD at ./my-prd.md
+Loki Loop with PRD at ./my-prd.md
 ```
 
 ### Option 2: Shell Script
 
 ```bash
 # Clone repo
-git clone https://github.com/asklokesh/loki-mode.git
-cd loki-mode
+git clone https://github.com/asklokesh/loki-loop.git
+cd loki-loop
 
 # Run directly
 ./autonomy/run.sh ./my-prd.md
@@ -54,21 +54,21 @@ cd loki-mode
 ### Option 3: npm
 
 ```bash
-npm install -g loki-mode
+npm install -g loki-loop
 loki start ./my-prd.md
 ```
 
 ### Option 4: Homebrew (macOS/Linux)
 
 ```bash
-brew install asklokesh/tap/loki-mode
+brew install asklokesh/tap/loki-loop
 loki start ./my-prd.md
 ```
 
 ### Option 5: Docker
 
 ```bash
-docker run -v $(pwd):/workspace asklokesh/loki-mode:4.2.0 ./my-prd.md
+docker run -v $(pwd):/workspace asklokesh/loki-loop:4.3.0 ./my-prd.md
 ```
 
 See [Installation Guide](docs/INSTALLATION.md) for more details.
@@ -81,20 +81,20 @@ See [Installation Guide](docs/INSTALLATION.md) for more details.
 
 | System | Pass@1 | Details |
 |--------|--------|---------|
-| **Loki Mode (Multi-Agent)** | **98.78%** | 162/164 problems, RARV cycle recovered 2 |
+| **Loki Loop (Multi-Agent)** | **98.78%** | 162/164 problems, RARV cycle recovered 2 |
 | Direct Claude | 98.17% | 161/164 problems (baseline) |
 | MetaGPT | 85.9-87.7% | Published benchmark |
 
-**Loki Mode beats MetaGPT by +11-13%** thanks to the RARV (Reason-Act-Reflect-Verify) cycle.
+**Loki Loop beats MetaGPT by +11-13%** thanks to the RARV (Reason-Act-Reflect-Verify) cycle.
 
 ### Full Results
 
 | Benchmark | Score | Details |
 |-----------|-------|---------|
-| **Loki Mode HumanEval** | **98.78% Pass@1** | 162/164 (multi-agent with RARV) |
+| **Loki Loop HumanEval** | **98.78% Pass@1** | 162/164 (multi-agent with RARV) |
 | **Direct Claude HumanEval** | **98.17% Pass@1** | 161/164 (single agent baseline) |
 | **Direct Claude SWE-bench** | **99.67% patch gen** | 299/300 problems |
-| **Loki Mode SWE-bench** | **99.67% patch gen** | 299/300 problems |
+| **Loki Loop SWE-bench** | **99.67% patch gen** | 299/300 problems |
 | Model | Claude Opus 4.5 | |
 
 **Key Finding:** Multi-agent RARV matches single-agent performance on both benchmarks after timeout optimization. The 4-agent pipeline (Architect->Engineer->QA->Reviewer) achieves the same 99.67% patch generation as direct Claude.
@@ -103,23 +103,23 @@ See [benchmarks/results/](benchmarks/results/) for full methodology and solution
 
 ---
 
-## What is Loki Mode?
+## What is Loki Loop?
 
-Loki Mode is a Claude Code skill that orchestrates **37 specialized AI agent types** across **6 swarms** to autonomously build, test, deploy, and scale complete startups. It dynamically spawns only the agents you need—**5-10 for simple projects, 100+ for complex startups**—working in parallel with continuous self-verification.
+Loki Loop is a Claude Code skill that orchestrates **37 specialized AI agent types** across **6 swarms** to autonomously build, test, deploy, and scale complete startups. It dynamically spawns only the agents you need—**5-10 for simple projects, 100+ for complex startups**—working in parallel with continuous self-verification.
 
 ```
 PRD → Research → Architecture → Development → Testing → Deployment → Marketing → Revenue
 ```
 
-**Just say "Loki Mode" and point to a PRD. Walk away. Come back to a deployed product.**
+**Just say "Loki Loop" and point to a PRD. Walk away. Come back to a deployed product.**
 
 ---
 
-## Why Loki Mode?
+## Why Loki Loop?
 
 ### **Better Than Anything Out There**
 
-| What Others Do | What Loki Mode Does |
+| What Others Do | What Loki Loop Does |
 |----------------|---------------------|
 | **Single agent** writes code linearly | **100+ agents** work in parallel across engineering, ops, business, data, product, and growth |
 | **Manual deployment** required | **Autonomous deployment** to AWS, GCP, Azure, Vercel, Railway with blue-green and canary strategies |
@@ -162,11 +162,11 @@ PRD → Research → Architecture → Development → Testing → Deployment →
 
 ## Dashboard & Real-Time Monitoring
 
-Monitor your autonomous startup being built in real-time through the Loki Mode dashboard:
+Monitor your autonomous startup being built in real-time through the Loki Loop dashboard:
 
 ### **Agent Monitoring**
 
-<img width="1200" alt="Loki Mode Dashboard - Active Agents" src="docs/screenshots/dashboard-agents.png" />
+<img width="1200" alt="Loki Loop Dashboard - Active Agents" src="docs/screenshots/dashboard-agents.png" />
 
 **Track all active agents in real-time:**
 - **Agent ID** and **Type** (frontend, backend, QA, DevOps, etc.)
@@ -177,7 +177,7 @@ Monitor your autonomous startup being built in real-time through the Loki Mode d
 
 ### **Task Queue Visualization**
 
-<img width="1200" alt="Loki Mode Dashboard - Task Queue" src="docs/screenshots/dashboard-tasks.png" />
+<img width="1200" alt="Loki Loop Dashboard - Task Queue" src="docs/screenshots/dashboard-tasks.png" />
 
 **Four-column kanban view:**
 - **Pending**: Queued tasks waiting for agents
@@ -231,7 +231,7 @@ Auto-refreshes every 3 seconds. Works with any modern browser.
 
 ### **RARV Cycle: Reason-Act-Reflect-Verify**
 
-Loki Mode doesn't just write code—it **thinks, acts, learns, and verifies**:
+Loki Loop doesn't just write code—it **thinks, acts, learns, and verifies**:
 
 ```
 1. REASON
@@ -265,7 +265,7 @@ Loki Mode doesn't just write code—it **thinks, acts, learns, and verifies**:
 
 ### **Perpetual Improvement Mode**
 
-There is **NEVER** a "finished" state. After completing the PRD, Loki Mode:
+There is **NEVER** a "finished" state. After completing the PRD, Loki Loop:
 - Runs performance optimizations
 - Adds missing test coverage
 - Improves documentation
@@ -301,17 +301,17 @@ There is **NEVER** a "finished" state. After completing the PRD, Loki Mode:
 
 ```bash
 # Option A: npm (recommended)
-npm install -g loki-mode
+npm install -g loki-loop
 
 # Option B: Homebrew (macOS/Linux)
-brew tap asklokesh/tap && brew install loki-mode
-loki-mode-install-skill  # Set up Claude Code integration
+brew tap asklokesh/tap && brew install loki-loop
+loki-loop-install-skill  # Set up Claude Code integration
 
 # Option C: Docker
-docker pull asklokesh/loki-mode:4.1.0
+docker pull asklokesh/loki-loop:4.1.0
 
 # Option D: Git clone
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git ~/.claude/skills/loki-loop
 ```
 
 See [Installation Guide](docs/INSTALLATION.md) for detailed instructions.
@@ -340,7 +340,7 @@ Build a todo app with AI-powered task suggestions and deadline predictions.
 
 Save as `my-prd.md`.
 
-### **3. Run Loki Mode**
+### **3. Run Loki Loop**
 
 ```bash
 # Using the CLI (v4.1.0)
@@ -351,7 +351,7 @@ loki start ./my-prd.md
 
 # Or manual mode in Claude Code
 claude --dangerously-skip-permissions
-> Loki Mode with PRD at ./my-prd.md
+> Loki Loop with PRD at ./my-prd.md
 ```
 
 ### **4. Monitor Progress**
@@ -377,11 +377,11 @@ Seriously. Go get coffee. It'll be deployed when you get back.
 
 ## CLI Commands (v4.1.0)
 
-The `loki` CLI provides easy access to all Loki Mode features:
+The `loki` CLI provides easy access to all Loki Loop features:
 
 | Command | Description |
 |---------|-------------|
-| `loki start [PRD]` | Start Loki Mode with optional PRD file |
+| `loki start [PRD]` | Start Loki Loop with optional PRD file |
 | `loki stop` | Stop execution immediately |
 | `loki pause` | Pause after current session |
 | `loki resume` | Resume paused execution |
@@ -401,16 +401,16 @@ Create a YAML config file for persistent settings:
 loki config init
 
 # Or copy template manually
-cp ~/.claude/skills/loki-mode/autonomy/config.example.yaml .loki/config.yaml
+cp ~/.claude/skills/loki-loop/autonomy/config.example.yaml .loki/config.yaml
 ```
 
-Config search order: `.loki/config.yaml` (project) -> `~/.config/loki-mode/config.yaml` (global)
+Config search order: `.loki/config.yaml` (project) -> `~/.config/loki-loop/config.yaml` (global)
 
 ---
 
 ## Agent Swarms (37 Types)
 
-Loki Mode has **37 predefined agent types** organized into **6 specialized swarms**. The orchestrator spawns only what you need—simple projects use 5-10 agents, complex startups spawn 100+.
+Loki Loop has **37 predefined agent types** organized into **6 specialized swarms**. The orchestrator spawns only what you need—simple projects use 5-10 agents, complex startups spawn 100+.
 
 <img width="5309" height="979" alt="Agent Swarms Visualization" src="https://github.com/user-attachments/assets/7d18635d-a606-401f-8d9f-430e6e4ee689" />
 
@@ -443,7 +443,7 @@ See [references/agents.md](references/agents.md) for complete agent type definit
 
 ### **Skill Architecture (v3.0+)**
 
-Loki Mode uses a **progressive disclosure architecture** to minimize context usage:
+Loki Loop uses a **progressive disclosure architecture** to minimize context usage:
 
 ```
 SKILL.md (~190 lines)         # Always loaded: core RARV cycle, autonomy rules
@@ -517,7 +517,7 @@ IMPLEMENT → REVIEW (parallel) → AGGREGATE → FIX → RE-REVIEW → COMPLETE
 
 ## Example PRDs
 
-Test Loki Mode with these pre-built PRDs in the `examples/` directory:
+Test Loki Loop with these pre-built PRDs in the `examples/` directory:
 
 | PRD | Complexity | Est. Time | Description |
 |-----|------------|-----------|-------------|
@@ -601,7 +601,7 @@ Integrate with [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) for a visua
 # 1. Start Vibe Kanban (terminal 1)
 npx vibe-kanban
 
-# 2. Run Loki Mode (terminal 2)
+# 2. Run Loki Loop (terminal 2)
 ./autonomy/run.sh ./prd.md
 
 # 3. Export tasks to see them in Vibe Kanban (terminal 3)
@@ -660,7 +660,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-Loki Mode incorporates research and patterns from leading AI labs and practitioners:
+Loki Loop incorporates research and patterns from leading AI labs and practitioners:
 
 ### Research Foundation
 
@@ -695,7 +695,7 @@ Built for the [Claude Code](https://claude.ai) ecosystem, powered by Anthropic's
 **Ready to build a startup while you sleep?**
 
 ```bash
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git ~/.claude/skills/loki-loop
 ./autonomy/run.sh your-prd.md
 ```
 

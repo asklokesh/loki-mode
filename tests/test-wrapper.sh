@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test: Loki Mode Wrapper Script
+# Test: Loki Loop Wrapper Script
 # Tests the autonomous wrapper functionality
 
 set -uo pipefail
@@ -28,7 +28,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "=========================================="
-echo "Loki Mode Wrapper Script Tests"
+echo "Loki Loop Wrapper Script Tests"
 echo "=========================================="
 echo ""
 
@@ -158,17 +158,17 @@ fi
 # Test 7: Resume prompt generation
 log_test "Resume prompt generation"
 python3 << 'EOF'
-def build_resume_prompt(retry, prd_path=None, initial_prompt="Loki Mode"):
+def build_resume_prompt(retry, prd_path=None, initial_prompt="Loki Loop"):
     if retry == 0:
         return initial_prompt
     else:
         if prd_path:
-            return f"Loki Mode - Resume from checkpoint. PRD at {prd_path}. This is retry #{retry} after rate limit. Check .loki/state/ for current progress and continue from where we left off."
+            return f"Loki Loop - Resume from checkpoint. PRD at {prd_path}. This is retry #{retry} after rate limit. Check .loki/state/ for current progress and continue from where we left off."
         else:
-            return f"Loki Mode - Resume from checkpoint. This is retry #{retry} after rate limit. Check .loki/state/ for current progress and continue from where we left off."
+            return f"Loki Loop - Resume from checkpoint. This is retry #{retry} after rate limit. Check .loki/state/ for current progress and continue from where we left off."
 
 # Test initial prompt
-assert build_resume_prompt(0) == "Loki Mode"
+assert build_resume_prompt(0) == "Loki Loop"
 
 # Test resume prompt without PRD
 resume = build_resume_prompt(3)

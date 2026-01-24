@@ -58,8 +58,8 @@ jobs:
           context: .
           push: true
           tags: |
-            asklokesh/loki-mode:${{ steps.version.outputs.version }}
-            asklokesh/loki-mode:latest
+            asklokesh/loki-loop:${{ steps.version.outputs.version }}
+            asklokesh/loki-loop:latest
 
   update-homebrew:
     runs-on: ubuntu-latest
@@ -79,7 +79,7 @@ jobs:
       - name: Compute SHA256
         id: sha
         run: |
-          URL="https://github.com/asklokesh/loki-mode/archive/refs/tags/${{ steps.version.outputs.version }}.tar.gz"
+          URL="https://github.com/asklokesh/loki-loop/archive/refs/tags/${{ steps.version.outputs.version }}.tar.gz"
           SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
           echo "sha256=${SHA}" >> $GITHUB_OUTPUT
 

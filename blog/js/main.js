@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Local: blog/index.html references ../README.md
     // GitHub Pages: index.html at root, so ./README.md
     function normalizePath(path) {
-        // Check if we're on GitHub Pages (path starts with /loki-mode/ or similar)
+        // Check if we're on GitHub Pages (path starts with /loki-loop/ or similar)
         const isGitHubPages = window.location.hostname.includes('github.io');
 
         if (isGitHubPages && path.startsWith('../')) {

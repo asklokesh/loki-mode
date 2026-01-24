@@ -91,11 +91,11 @@ Task(
 
 ---
 
-## Loki Mode Integration
+## Loki Loop Integration
 
 ### Automatic Application
 
-Loki Mode automatically applies prompt repetition for Haiku agents on eligible tasks:
+Loki Loop automatically applies prompt repetition for Haiku agents on eligible tasks:
 
 ```python
 def prepare_task_prompt(task, model):

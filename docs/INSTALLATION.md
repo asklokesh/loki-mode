@@ -1,4 +1,4 @@
-# Loki Mode Installation Guide
+# Loki Loop Installation Guide
 
 Complete installation instructions for all platforms and use cases.
 
@@ -26,16 +26,16 @@ Choose your preferred method:
 
 ```bash
 # Option A: npm (easiest)
-npm install -g loki-mode
+npm install -g loki-loop
 
 # Option B: Homebrew (macOS/Linux)
-brew tap asklokesh/tap && brew install loki-mode
+brew tap asklokesh/tap && brew install loki-loop
 
 # Option C: Docker
-docker pull asklokesh/loki-mode:4.1.0
+docker pull asklokesh/loki-loop:4.1.0
 
 # Option D: Git clone
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git ~/.claude/skills/loki-loop
 ```
 
 **Done!** Skip to [Verify Installation](#verify-installation).
@@ -54,9 +54,9 @@ Install via npm for the easiest setup with automatic PATH configuration.
 
 ```bash
 # Global installation
-npm install -g loki-mode
+npm install -g loki-loop
 
-# The skill is automatically installed to ~/.claude/skills/loki-mode
+# The skill is automatically installed to ~/.claude/skills/loki-loop
 ```
 
 ### Usage
@@ -69,20 +69,20 @@ loki dashboard
 
 # Or invoke in Claude Code
 claude --dangerously-skip-permissions
-> Loki Mode with PRD at ./my-prd.md
+> Loki Loop with PRD at ./my-prd.md
 ```
 
 ### Updating
 
 ```bash
-npm update -g loki-mode
+npm update -g loki-loop
 ```
 
 ### Uninstalling
 
 ```bash
-npm uninstall -g loki-mode
-rm -rf ~/.claude/skills/loki-mode
+npm uninstall -g loki-loop
+rm -rf ~/.claude/skills/loki-loop
 ```
 
 ---
@@ -101,11 +101,11 @@ Install via Homebrew with automatic dependency management.
 # Add the tap
 brew tap asklokesh/tap
 
-# Install Loki Mode
-brew install loki-mode
+# Install Loki Loop
+brew install loki-loop
 
 # Set up Claude Code skill integration
-loki-mode-install-skill
+loki-loop-install-skill
 ```
 
 ### Dependencies
@@ -127,21 +127,21 @@ loki --help
 ### Updating
 
 ```bash
-brew upgrade loki-mode
+brew upgrade loki-loop
 ```
 
 ### Uninstalling
 
 ```bash
-brew uninstall loki-mode
-rm -rf ~/.claude/skills/loki-mode
+brew uninstall loki-loop
+rm -rf ~/.claude/skills/loki-loop
 ```
 
 ---
 
 ## Docker
 
-Run Loki Mode in a container for isolated execution.
+Run Loki Loop in a container for isolated execution.
 
 ### Prerequisites
 
@@ -151,20 +151,20 @@ Run Loki Mode in a container for isolated execution.
 
 ```bash
 # Pull the image
-docker pull asklokesh/loki-mode:4.1.0
+docker pull asklokesh/loki-loop:4.1.0
 
 # Or use docker-compose
-curl -o docker-compose.yml https://raw.githubusercontent.com/asklokesh/loki-mode/main/docker-compose.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/asklokesh/loki-loop/main/docker-compose.yml
 ```
 
 ### Usage
 
 ```bash
 # Run with a PRD file
-docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:4.1.0 start ./my-prd.md
+docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-loop:4.1.0 start ./my-prd.md
 
 # Interactive mode
-docker run -it -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:4.1.0
+docker run -it -v $(pwd):/workspace -w /workspace asklokesh/loki-loop:4.1.0
 
 # Using docker-compose
 docker-compose run loki start ./my-prd.md
@@ -177,13 +177,13 @@ Pass your configuration via environment variables:
 ```bash
 docker run -e LOKI_MAX_RETRIES=100 -e LOKI_BASE_WAIT=120 \
   -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:4.1.0 start ./my-prd.md
+  asklokesh/loki-loop:4.1.0 start ./my-prd.md
 ```
 
 ### Updating
 
 ```bash
-docker pull asklokesh/loki-mode:latest
+docker pull asklokesh/loki-loop:latest
 ```
 
 ---
@@ -192,13 +192,13 @@ docker pull asklokesh/loki-mode:latest
 
 ## Claude Code (CLI)
 
-Loki Mode can be installed for Claude Code in three ways:
+Loki Loop can be installed for Claude Code in three ways:
 
 ### Option A: Git Clone (Recommended)
 
 **Personal installation (available in all projects):**
 ```bash
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git ~/.claude/skills/loki-loop
 ```
 
 **Project-specific installation:**
@@ -207,7 +207,7 @@ git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 cd /path/to/your/project
 
 # Clone to local skills directory
-git clone https://github.com/asklokesh/loki-mode.git .claude/skills/loki-mode
+git clone https://github.com/asklokesh/loki-loop.git .claude/skills/loki-loop
 ```
 
 ### Option B: Download from Releases
@@ -217,14 +217,14 @@ git clone https://github.com/asklokesh/loki-mode.git .claude/skills/loki-mode
 cd ~/.claude/skills
 
 # Get latest version number
-VERSION=$(curl -s https://api.github.com/repos/asklokesh/loki-mode/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d 'v')
+VERSION=$(curl -s https://api.github.com/repos/asklokesh/loki-loop/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d 'v')
 
 # Download and extract
-curl -L -o loki-mode.zip "https://github.com/asklokesh/loki-mode/releases/download/v${VERSION}/loki-mode-claude-code-${VERSION}.zip"
-unzip loki-mode.zip && rm loki-mode.zip
+curl -L -o loki-loop.zip "https://github.com/asklokesh/loki-loop/releases/download/v${VERSION}/loki-loop-claude-code-${VERSION}.zip"
+unzip loki-loop.zip && rm loki-loop.zip
 ```
 
-**Result:** Creates `~/.claude/skills/loki-mode/SKILL.md`
+**Result:** Creates `~/.claude/skills/loki-loop/SKILL.md`
 
 ### Option C: Minimal Install (curl)
 
@@ -232,23 +232,23 @@ If you only want the essential files without the full repository:
 
 ```bash
 # Create directory structure
-mkdir -p ~/.claude/skills/loki-mode/references
+mkdir -p ~/.claude/skills/loki-loop/references
 
 # Download core skill file
-curl -o ~/.claude/skills/loki-mode/SKILL.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/SKILL.md
+curl -o ~/.claude/skills/loki-loop/SKILL.md \
+  https://raw.githubusercontent.com/asklokesh/loki-loop/main/SKILL.md
 
 # Download agent definitions
-curl -o ~/.claude/skills/loki-mode/references/agents.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agents.md
+curl -o ~/.claude/skills/loki-loop/references/agents.md \
+  https://raw.githubusercontent.com/asklokesh/loki-loop/main/references/agents.md
 
 # Download deployment guides
-curl -o ~/.claude/skills/loki-mode/references/deployment.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/deployment.md
+curl -o ~/.claude/skills/loki-loop/references/deployment.md \
+  https://raw.githubusercontent.com/asklokesh/loki-loop/main/references/deployment.md
 
 # Download business operations reference
-curl -o ~/.claude/skills/loki-mode/references/business-ops.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/business-ops.md
+curl -o ~/.claude/skills/loki-loop/references/business-ops.md \
+  https://raw.githubusercontent.com/asklokesh/loki-loop/main/references/business-ops.md
 ```
 
 **Note:** This minimal install won't include examples, tests, or the autonomous runner. Use Option A or B for full functionality.
@@ -257,14 +257,14 @@ curl -o ~/.claude/skills/loki-mode/references/business-ops.md \
 
 ## Claude.ai (Web)
 
-For using Loki Mode on the Claude.ai web interface:
+For using Loki Loop on the Claude.ai web interface:
 
 ### Step 1: Download the Skill Package
 
-1. Go to [Releases](https://github.com/asklokesh/loki-mode/releases)
+1. Go to [Releases](https://github.com/asklokesh/loki-loop/releases)
 2. Download **either**:
-   - `loki-mode-X.X.X.zip` (standard format)
-   - `loki-mode-X.X.X.skill` (skill format)
+   - `loki-loop-X.X.X.zip` (standard format)
+   - `loki-loop-X.X.X.skill` (skill format)
 
    Both contain the same skill and will work.
 
@@ -282,12 +282,12 @@ For using Loki Mode on the Claude.ai web interface:
 
 ## Anthropic API Console
 
-For using Loki Mode through the Anthropic API Console (console.anthropic.com):
+For using Loki Loop through the Anthropic API Console (console.anthropic.com):
 
 ### Step 1: Download the API Package
 
-1. Go to [Releases](https://github.com/asklokesh/loki-mode/releases)
-2. Download **`loki-mode-api-X.X.X.zip`** (note the `-api-` version)
+1. Go to [Releases](https://github.com/asklokesh/loki-loop/releases)
+2. Download **`loki-loop-api-X.X.X.zip`** (note the `-api-` version)
 
    **Important:** The API version has a different file structure than the web version.
 
@@ -296,9 +296,9 @@ For using Loki Mode through the Anthropic API Console (console.anthropic.com):
 1. Go to [console.anthropic.com](https://console.anthropic.com)
 2. Navigate to **Skills** section
 3. Click **Upload Skill**
-4. Select the downloaded `loki-mode-api-X.X.X.zip` file
+4. Select the downloaded `loki-loop-api-X.X.X.zip` file
 
-**File Structure:** The API package has `SKILL.md` inside a `loki-mode/` folder as required by the API.
+**File Structure:** The API package has `SKILL.md` inside a `loki-loop/` folder as required by the API.
 
 ---
 
@@ -309,13 +309,13 @@ For using Loki Mode through the Anthropic API Console (console.anthropic.com):
 Check that the skill file is in place:
 
 ```bash
-cat ~/.claude/skills/loki-mode/SKILL.md | head -10
+cat ~/.claude/skills/loki-loop/SKILL.md | head -10
 ```
 
 **Expected output:** Should show YAML frontmatter starting with:
 ```yaml
 ---
-name: loki-mode
+name: loki-loop
 description: Multi-Agent Autonomous Startup System
 ...
 ---
@@ -324,7 +324,7 @@ description: Multi-Agent Autonomous Startup System
 ### For Claude.ai (Web)
 
 1. Start a new conversation
-2. Type: `Loki Mode`
+2. Type: `Loki Loop`
 3. Claude should recognize the skill and ask for a PRD
 
 ### For API Console
@@ -340,7 +340,7 @@ description: Multi-Agent Autonomous Startup System
 After installation, you should have this structure:
 
 ```
-loki-mode/
+loki-loop/
 ├── SKILL.md              # Main skill file (required)
 ├── README.md             # Documentation
 ├── docs/
@@ -376,19 +376,19 @@ loki-mode/
 
 ### Skill Not Found
 
-**Problem:** Claude doesn't recognize "Loki Mode" command.
+**Problem:** Claude doesn't recognize "Loki Loop" command.
 
 **Solutions:**
 1. **Check installation path:**
    ```bash
-   ls -la ~/.claude/skills/loki-mode/SKILL.md
+   ls -la ~/.claude/skills/loki-loop/SKILL.md
    ```
 
 2. **Verify YAML frontmatter:**
    ```bash
-   cat ~/.claude/skills/loki-mode/SKILL.md | head -5
+   cat ~/.claude/skills/loki-loop/SKILL.md | head -5
    ```
-   Should show `name: loki-mode`
+   Should show `name: loki-loop`
 
 3. **Restart Claude Code:**
    ```bash
@@ -418,13 +418,13 @@ ls -la ~/.claude/
 2. **Try alternate download method:**
    ```bash
    # Use wget instead of curl
-   wget -O ~/.claude/skills/loki-mode/SKILL.md \
-     https://raw.githubusercontent.com/asklokesh/loki-mode/main/SKILL.md
+   wget -O ~/.claude/skills/loki-loop/SKILL.md \
+     https://raw.githubusercontent.com/asklokesh/loki-loop/main/SKILL.md
    ```
 
 3. **Manual download:**
    - Visit the URL in a browser
-   - Save file manually to `~/.claude/skills/loki-mode/`
+   - Save file manually to `~/.claude/skills/loki-loop/`
 
 ### Autonomous Runner Won't Start
 
@@ -438,8 +438,8 @@ ls -la ~/.claude/
 
 2. **Run from repository root:**
    ```bash
-   # Make sure you're in the loki-mode directory
-   cd ~/.claude/skills/loki-mode
+   # Make sure you're in the loki-loop directory
+   cd ~/.claude/skills/loki-loop
    ./autonomy/run.sh
    ```
 
@@ -459,7 +459,7 @@ ls -la ~/.claude/
 **Solution:**
 ```bash
 # Ensure all reference files are present
-ls -la ~/.claude/skills/loki-mode/references/
+ls -la ~/.claude/skills/loki-loop/references/
 
 # Should show:
 # agents.md
@@ -467,18 +467,18 @@ ls -la ~/.claude/skills/loki-mode/references/
 # business-ops.md
 
 # If missing, download them:
-curl -o ~/.claude/skills/loki-mode/references/agents.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agents.md
+curl -o ~/.claude/skills/loki-loop/references/agents.md \
+  https://raw.githubusercontent.com/asklokesh/loki-loop/main/references/agents.md
 ```
 
 ---
 
-## Updating Loki Mode
+## Updating Loki Loop
 
 ### For Git Installations
 
 ```bash
-cd ~/.claude/skills/loki-mode
+cd ~/.claude/skills/loki-loop
 git pull origin main
 ```
 
@@ -491,7 +491,7 @@ git pull origin main
 ### Check Current Version
 
 ```bash
-cat ~/.claude/skills/loki-mode/VERSION
+cat ~/.claude/skills/loki-loop/VERSION
 ```
 
 ---
@@ -502,19 +502,19 @@ cat ~/.claude/skills/loki-mode/VERSION
 
 ```bash
 # Remove the skill directory
-rm -rf ~/.claude/skills/loki-mode
+rm -rf ~/.claude/skills/loki-loop
 ```
 
 ### Claude.ai (Web)
 
 1. Go to **Settings → Features → Skills**
-2. Find "loki-mode" in the list
+2. Find "loki-loop" in the list
 3. Click **Remove**
 
 ### API Console
 
 1. Go to **Skills** section
-2. Find "loki-mode"
+2. Find "loki-loop"
 3. Click **Delete**
 
 ---
@@ -532,14 +532,14 @@ After installation:
 
 3. **Create Your First PRD:** See the Quick Start section in README
 
-4. **Join the Community:** Report issues or contribute at [GitHub](https://github.com/asklokesh/loki-mode)
+4. **Join the Community:** Report issues or contribute at [GitHub](https://github.com/asklokesh/loki-loop)
 
 ---
 
 ## Need Help?
 
-- **Issues/Bugs:** [GitHub Issues](https://github.com/asklokesh/loki-mode/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/asklokesh/loki-mode/discussions)
+- **Issues/Bugs:** [GitHub Issues](https://github.com/asklokesh/loki-loop/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/asklokesh/loki-loop/discussions)
 - **Documentation:** [README.md](README.md)
 
 ---

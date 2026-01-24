@@ -1,9 +1,9 @@
 #!/bin/bash
-# Loki Mode Wrapper Script
+# Loki Loop Wrapper Script
 # Provides true autonomy by auto-resuming on rate limits or interruptions
 #
 # How it works:
-# 1. Launches Claude Code with Loki Mode prompt
+# 1. Launches Claude Code with Loki Loop prompt
 # 2. Monitors the process - when Claude exits, checks exit code
 # 3. On rate limit (exit code != 0), waits with exponential backoff
 # 4. Restarts automatically, telling Claude to resume from checkpoint
@@ -52,13 +52,13 @@ INITIAL_PROMPT=""
 
 if [ -n "$PRD_PATH" ]; then
     if [ -f "$PRD_PATH" ]; then
-        INITIAL_PROMPT="Loki Mode with PRD at $PRD_PATH"
+        INITIAL_PROMPT="Loki Loop with PRD at $PRD_PATH"
     else
         log_error "PRD file not found: $PRD_PATH"
         exit 1
     fi
 else
-    INITIAL_PROMPT="Loki Mode"
+    INITIAL_PROMPT="Loki Loop"
 fi
 
 # Save wrapper state
@@ -127,7 +127,7 @@ is_rate_limit() {
     return 1
 }
 
-# Check if Loki Mode completed successfully
+# Check if Loki Loop completed successfully
 is_completed() {
     # Check for completion markers
     if [ -f ".loki/state/orchestrator.json" ]; then
@@ -156,9 +156,9 @@ build_resume_prompt() {
     else
         # Resume from checkpoint
         if [ -n "$PRD_PATH" ]; then
-            echo "Loki Mode - Resume from checkpoint. PRD at $PRD_PATH. This is retry #$retry after rate limit. Check .loki/state/ for current progress and continue from where we left off."
+            echo "Loki Loop - Resume from checkpoint. PRD at $PRD_PATH. This is retry #$retry after rate limit. Check .loki/state/ for current progress and continue from where we left off."
         else
-            echo "Loki Mode - Resume from checkpoint. This is retry #$retry after rate limit. Check .loki/state/ for current progress and continue from where we left off."
+            echo "Loki Loop - Resume from checkpoint. This is retry #$retry after rate limit. Check .loki/state/ for current progress and continue from where we left off."
         fi
     fi
 }
@@ -166,7 +166,7 @@ build_resume_prompt() {
 # Main execution loop
 main() {
     log_info "=========================================="
-    log_info "Loki Mode Autonomous Wrapper"
+    log_info "Loki Loop Autonomous Wrapper"
     log_info "=========================================="
     log_info "PRD: ${PRD_PATH:-Interactive}"
     log_info "Max retries: $MAX_RETRIES"
@@ -208,7 +208,7 @@ main() {
         # Check for successful completion
         if [ $exit_code -eq 0 ]; then
             if is_completed; then
-                log_success "Loki Mode completed successfully!"
+                log_success "Loki Loop completed successfully!"
                 save_state $retry "completed" 0
                 exit 0
             else
@@ -223,7 +223,7 @@ main() {
 
                     # Re-check completion
                     if is_completed; then
-                        log_success "Loki Mode completed!"
+                        log_success "Loki Loop completed!"
                         exit 0
                     fi
                 fi

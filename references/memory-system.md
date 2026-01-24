@@ -23,7 +23,7 @@ An agent with good reasoning and excellent memory will:
 - Build on successful approaches
 - Maintain continuity across long-running operations
 
-**Implication for Loki Mode:** Invest heavily in memory architecture. The episodic-to-semantic consolidation pipeline, Zettelkasten linking, and CONTINUITY.md working memory are not optional optimizations - they are the core competitive advantage.
+**Implication for Loki Loop:** Invest heavily in memory architecture. The episodic-to-semantic consolidation pipeline, Zettelkasten linking, and CONTINUITY.md working memory are not optional optimizations - they are the core competitive advantage.
 
 ---
 

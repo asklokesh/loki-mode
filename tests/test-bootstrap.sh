@@ -28,7 +28,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "========================================"
-echo "Loki Mode Bootstrap Tests"
+echo "Loki Loop Bootstrap Tests"
 echo "========================================"
 echo "Test directory: $TEST_DIR"
 echo ""

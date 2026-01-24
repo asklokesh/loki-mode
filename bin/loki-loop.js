@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Loki Mode CLI wrapper for npm distribution
+ * Loki Loop CLI wrapper for npm distribution
  * Delegates to the bash CLI
  */
 

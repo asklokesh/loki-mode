@@ -1,8 +1,8 @@
 # Agent Type Definitions
 
-Complete specifications for all 37 specialized agent types in the Loki Mode multi-agent system.
+Complete specifications for all 37 specialized agent types in the Loki Loop multi-agent system.
 
-**Note:** These are agent TYPE definitions, not a fixed count. Loki Mode dynamically spawns agents based on project needs - a simple todo app might use 5-10 agents, while a complex startup could spawn 100+ agents working in parallel.
+**Note:** These are agent TYPE definitions, not a fixed count. Loki Loop dynamically spawns agents based on project needs - a simple todo app might use 5-10 agents, while a complex startup could spawn 100+ agents working in parallel.
 
 ## Agent Role Prompt Template
 

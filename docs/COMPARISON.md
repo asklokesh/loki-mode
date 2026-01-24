@@ -2,14 +2,14 @@
 
 > Last Updated: January 17, 2026 (v2.36.8)
 >
-> A comprehensive comparison of Loki Mode against major autonomous coding agents and AI IDEs in the market.
+> A comprehensive comparison of Loki Loop against major autonomous coding agents and AI IDEs in the market.
 > Deep-dive comparisons validated by Opus feedback loops.
 
 ---
 
 ## Overview Comparison
 
-| Feature | **Loki Mode** | **Zencoder** | **Devin** | **OpenAI Codex** | **Cursor** | **Claude Code** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Zencoder** | **Devin** | **OpenAI Codex** | **Cursor** | **Claude Code** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|--------------|-----------|-----------------|------------|-----------------|----------|-----------------|--------------|--------------|
 | **Type** | Skill/Framework | Enterprise Platform | Standalone Agent | Cloud Agent | AI IDE | CLI Agent | AI IDE | AI IDE | Cloud Agent | AI IDE (OSS) |
 | **Autonomy Level** | Full (zero human) | High | Full | High | Medium-High | High | High | High | High | High |
@@ -22,7 +22,7 @@
 
 ## Multi-Agent & Orchestration
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Multi-Agent** | 37 agents in 7 swarms | Single | Single | Up to 8 parallel | Background | Manager Surface | Multiple types | 4 built-in |
 | **Orchestration** | Full orchestrator | N/A | N/A | Git worktree | Hooks | Manager view | Workflow | Subagents |
@@ -33,7 +33,7 @@
 
 ## Quality Control & Code Review
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Code Review** | 3 blind reviewers + devil's advocate | Basic | Basic | BugBot PR | Property-based | Artifacts | Doc/Review | Basic |
 | **Anti-Sycophancy** | Yes (CONSENSAGENT) | No | No | No | No | No | No | No |
@@ -44,7 +44,7 @@
 
 ## Spec-Driven Development
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Spec-First** | OpenAPI-first | Natural lang | Natural lang | Natural lang | requirements.md, design.md, tasks.md | Natural lang | Natural lang | AGENTS.md |
 | **PRD Support** | Native parsing | Ticket-based | Issue-based | No | Native specs | No | Issue-based | No |
@@ -54,7 +54,7 @@
 
 ## Memory & Context
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Memory System** | Episodic + Semantic + Procedural | Session | Task-scoped | Memories (flat) | Steering files | Knowledge base | Customization | Session |
 | **Cross-Session** | Yes (ledgers, handoffs) | Limited | No | Yes | Yes | Yes | Yes | No |
@@ -65,7 +65,7 @@
 
 ## Self-Verification & Testing
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Verification Cycle** | RARV (Reason-Act-Reflect-Verify) | Plan-Execute | Plan-Execute | Execute | Spec-Design-Task | Plan-Verify | Execute | Plan-Build |
 | **Property-Based Testing** | Yes (fast-check) | No | No | No | Yes | No | No | No |
@@ -77,7 +77,7 @@
 
 ## Model Selection & Routing
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Model Strategy** | Opus=plan, Sonnet=dev, Haiku=ops | GPT-4 | codex-1 | Multi-model | Claude family | Gemini 3 + Claude + GPT | Bedrock | Multi-provider |
 | **Confidence Routing** | 4-tier (auto/direct/supervisor/escalate) | No | No | No | No | No | No | No |
@@ -87,7 +87,7 @@
 
 ## Code Transformation & Migration
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Language Upgrades** | Yes (Java, Python, Node) | No | No | No | No | No | Yes (/transform) | No |
 | **DB Migrations** | Yes (Oracle->PG, MySQL->PG) | No | No | No | No | No | Yes | No |
@@ -97,7 +97,7 @@
 
 ## Artifact Generation
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Verification Reports** | Yes (on phase complete) | No | No | No | No | Yes | No | No |
 | **Architecture Diagrams** | Yes (mermaid) | No | No | No | Yes | Yes | Yes | No |
@@ -108,7 +108,7 @@
 
 ## Skills & Extensibility
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Skills System** | IS a SKILL.md | N/A | $skill-creator, $skill-installer | Rules | SKILL.md compatible | N/A | N/A | SKILL.md compatible |
 | **Plugin System** | Wrapper script | N/A | N/A | Extensions | Hooks | N/A | MCP | JS/TS plugins |
@@ -118,7 +118,7 @@
 
 ## Research Foundation
 
-| Feature | **Loki Mode** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
+| Feature | **Loki Loop** | **Devin** | **Codex** | **Cursor** | **Kiro** | **Antigravity** | **Amazon Q** | **OpenCode** |
 |---------|--------------|-----------|-----------|------------|----------|-----------------|--------------|--------------|
 | **Research Base** | OpenAI SDK, DeepMind, Anthropic, ToolOrchestra, CONSENSAGENT, MAR, GoalAct | Proprietary | RL on coding | Proprietary | AWS | DeepMind | AWS | N/A |
 | **Papers Cited** | 10+ | None public | None public | None public | None public | Gemini papers | None public | None public |
@@ -134,7 +134,7 @@
 | **OpenAI Codex** | ~70%+ | GPT-5.2-Codex |
 | **Devin 2.0** | 67% | PR merge rate doubled |
 | **Amazon Q Developer** | 66% | State-of-the-art claim |
-| **Loki Mode** | Inherits Claude | Framework, not model |
+| **Loki Loop** | Inherits Claude | Framework, not model |
 
 ---
 
@@ -144,14 +144,14 @@
 
 ### Feature Comparison
 
-| Feature | **Zencoder** | **Loki Mode** | **Assessment** |
+| Feature | **Zencoder** | **Loki Loop** | **Assessment** |
 |---------|-------------|---------------|----------------|
 | **Four Pillars** | Structured Workflows, SDD, Multi-Agent Verification, Parallel Execution | SDLC + RARV + 7 Gates + Worktrees | TIE |
 | **Spec-Driven Dev** | Specs as first-class objects | OpenAPI-first | TIE |
 | **Multi-Agent Verification** | Model diversity (Claude vs OpenAI, 54% improvement) | 3 blind reviewers + devil's advocate | Different approach (N/A for Claude Code - only Claude models) |
-| **Quality Gates** | Built-in verification loops | 7 explicit gates + anti-sycophancy | **Loki Mode** |
-| **Memory System** | Not documented | 3-tier episodic/semantic/procedural | **Loki Mode** |
-| **Agent Specialization** | Custom Zen Agents | 37 pre-defined specialized agents | **Loki Mode** |
+| **Quality Gates** | Built-in verification loops | 7 explicit gates + anti-sycophancy | **Loki Loop** |
+| **Memory System** | Not documented | 3-tier episodic/semantic/procedural | **Loki Loop** |
+| **Agent Specialization** | Custom Zen Agents | 37 pre-defined specialized agents | **Loki Loop** |
 | **CI Failure Analysis** | Explicit pattern with auto-fix | DevOps agent only | **ADOPTED from Zencoder** |
 | **Review Comment Resolution** | Auto-apply simple changes | Manual review | **ADOPTED from Zencoder** |
 | **Dependency Management** | Scheduled PRs, one group at a time | Mentioned only | **ADOPTED from Zencoder** |
@@ -173,10 +173,10 @@
 |---------|-----------------|-----------------|
 | Model Diversity | Claude critiques OpenAI code (54% improvement) | Claude Code only has Claude models available |
 | Multi-Repo Support | Cross-repo change coordination | Claude Code is single-context per session |
-| IDE Plugins | VS Code, JetBrains integrations | Loki Mode is a skill, not a plugin |
+| IDE Plugins | VS Code, JetBrains integrations | Loki Loop is a skill, not a plugin |
 | Repo Grokking | Proprietary semantic indexing | Claude Code has native codebase exploration |
 
-### Where Loki Mode EXCEEDS Zencoder
+### Where Loki Loop EXCEEDS Zencoder
 
 1. **Quality Control**: 7 explicit gates + blind review + devil's advocate vs built-in loops
 2. **Memory System**: 3-tier (episodic/semantic/procedural) with cross-project learning
@@ -185,11 +185,11 @@
 5. **Autonomy Design**: Zero human intervention from PRD to production
 6. **Research Foundation**: 10+ academic papers integrated vs proprietary
 
-### Where Zencoder EXCEEDS Loki Mode
+### Where Zencoder EXCEEDS Loki Loop
 
 1. **Multi-Repo**: Cross-repository change coordination (N/A for Claude Code)
 2. **Model Diversity**: Can use Claude to critique OpenAI-generated code (Claude Code limitation)
-3. **IDE Integration**: Native plugins for VS Code, JetBrains (Loki Mode is CLI-based)
+3. **IDE Integration**: Native plugins for VS Code, JetBrains (Loki Loop is CLI-based)
 
 ---
 
@@ -228,7 +228,7 @@
 
 | Agent | Killer Feature |
 |-------|---------------|
-| **Loki Mode** | Zero-human-intervention full SDLC, 37 agents in 7 swarms, Constitutional AI, anti-sycophancy, cross-project learning, code transformation, property-based testing |
+| **Loki Loop** | Zero-human-intervention full SDLC, 37 agents in 7 swarms, Constitutional AI, anti-sycophancy, cross-project learning, code transformation, property-based testing |
 | **Devin** | Full software engineer persona, Slack integration, 67% PR merge rate |
 | **OpenAI Codex** | Skills marketplace, $skill-creator, GPT-5.2-Codex, secure sandbox |
 | **Cursor** | 8 parallel agents, BugBot, Memories, $10B valuation, Composer model (250 tok/s) |
@@ -239,9 +239,9 @@
 
 ---
 
-## Summary: Where Loki Mode Excels
+## Summary: Where Loki Loop Excels
 
-| Dimension | Loki Mode Advantage |
+| Dimension | Loki Loop Advantage |
 |-----------|-------------------|
 | **Autonomy** | Only agent designed for TRUE zero human intervention |
 | **Multi-Agent** | 37 specialized agents in 7 swarms vs 1-8 in competitors |
@@ -257,7 +257,7 @@
 
 ## Where Competitors Excel
 
-| Competitor | Advantage Over Loki Mode |
+| Competitor | Advantage Over Loki Loop |
 |------------|-------------------------|
 | **Kiro** | Native spec files (requirements.md, design.md, tasks.md) |
 | **Antigravity** | Browser video recording, Manager Surface for human orchestration |

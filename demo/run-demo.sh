@@ -1,5 +1,5 @@
 #!/bin/bash
-# Loki Mode Demo Runner
+# Loki Loop Demo Runner
 # Usage: ./demo/run-demo.sh [simple-todo|full-stack]
 
 set -euo pipefail
@@ -41,7 +41,7 @@ pause() {
 # Demo introduction
 banner "LOKI MODE DEMO"
 
-echo "Loki Mode - Multi-Agent Autonomous Startup System"
+echo "Loki Loop - Multi-Agent Autonomous Startup System"
 echo ""
 echo "This demo will show:"
 echo "  - Autonomous project generation from PRD"
@@ -102,19 +102,19 @@ git commit -m "Initial commit" --allow-empty
 info "Git initialized"
 pause
 
-# Show how to invoke Loki Mode
-banner "STEP 4: Invoking Loki Mode"
+# Show how to invoke Loki Loop
+banner "STEP 4: Invoking Loki Loop"
 
-step "To invoke Loki Mode, you would run:"
+step "To invoke Loki Loop, you would run:"
 echo ""
 echo -e "${CYAN}  claude --dangerously-skip-permissions${NC}"
 echo ""
 echo "Then type:"
 echo ""
-echo -e "${CYAN}  Loki Mode with PRD at $PRD_FILE${NC}"
+echo -e "${CYAN}  Loki Loop with PRD at $PRD_FILE${NC}"
 echo ""
 
-info "Loki Mode will then:"
+info "Loki Loop will then:"
 info "  1. Read and analyze the PRD"
 info "  2. Create .loki/ directory for state management"
 info "  3. Generate tasks and add to queue"
@@ -301,7 +301,7 @@ pause
 # Final summary
 banner "DEMO COMPLETE"
 
-echo "Loki Mode Demo Summary:"
+echo "Loki Loop Demo Summary:"
 echo ""
 echo "  PRD:            $DEMO_NAME"
 echo "  Workspace:      $DEMO_WORKSPACE"
@@ -310,12 +310,12 @@ echo "  Tasks Complete: 12"
 echo "  Agents Used:    8"
 echo "  Reviews Passed: 4"
 echo ""
-echo "To run Loki Mode for real:"
+echo "To run Loki Loop for real:"
 echo ""
 echo -e "  ${CYAN}claude --dangerously-skip-permissions${NC}"
-echo -e "  ${CYAN}> Loki Mode with PRD at $PRD_FILE${NC}"
+echo -e "  ${CYAN}> Loki Loop with PRD at $PRD_FILE${NC}"
 echo ""
-echo "Documentation: https://github.com/asklokesh/loki-mode"
+echo "Documentation: https://github.com/asklokesh/loki-loop"
 echo ""
 
 # Cleanup prompt

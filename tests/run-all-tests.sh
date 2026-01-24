@@ -1,6 +1,6 @@
 #!/bin/bash
-# Loki Mode Test Suite Runner
-# Runs all test cases for the Loki Mode skill
+# Loki Loop Test Suite Runner
+# Runs all test cases for the Loki Loop skill
 
 set -euo pipefail
 

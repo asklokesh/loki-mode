@@ -27,7 +27,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "========================================"
-echo "Loki Mode Circuit Breaker Tests"
+echo "Loki Loop Circuit Breaker Tests"
 echo "========================================"
 echo ""
 

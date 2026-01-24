@@ -1,10 +1,10 @@
 # Vibe Kanban Integration
 
-Loki Mode can optionally integrate with [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) to provide a visual dashboard for monitoring autonomous execution.
+Loki Loop can optionally integrate with [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) to provide a visual dashboard for monitoring autonomous execution.
 
-## Why Use Vibe Kanban with Loki Mode?
+## Why Use Vibe Kanban with Loki Loop?
 
-| Feature | Loki Mode Alone | + Vibe Kanban |
+| Feature | Loki Loop Alone | + Vibe Kanban |
 |---------|-----------------|---------------|
 | Task visualization | File-based queues | Visual kanban board |
 | Progress monitoring | Log files | Real-time dashboard |
@@ -25,7 +25,7 @@ This will:
 - Automatically open the UI in your browser
 - Keep the server running (leave this terminal open)
 
-### Step 2: Run Loki Mode
+### Step 2: Run Loki Loop
 
 Open a NEW terminal in your project directory:
 
@@ -35,7 +35,7 @@ Open a NEW terminal in your project directory:
 
 # Option B: Manual Mode via Claude Code
 claude --dangerously-skip-permissions
-# Then: "Loki Mode with PRD at ./prd.md"
+# Then: "Loki Loop with PRD at ./prd.md"
 ```
 
 ### Step 3: Sync Tasks to Vibe Kanban (One Script)
@@ -74,7 +74,7 @@ Tasks appear immediately in Vibe Kanban (no refresh needed). All synced tasks ha
 npx vibe-kanban
 ```
 
-### 2. Enable Integration in Loki Mode
+### 2. Enable Integration in Loki Loop
 
 Set environment variable before running:
 
@@ -99,7 +99,7 @@ vibe-kanban:
 The sync script writes directly to Vibe Kanban's SQLite database:
 
 ```
-Loki Mode (.loki/queue/)     sync-to-vibe-kanban.sh     Vibe Kanban (SQLite)
+Loki Loop (.loki/queue/)     sync-to-vibe-kanban.sh     Vibe Kanban (SQLite)
          │                            │                          │
          ├─ pending.json ────────────►├─────────────────────────►│ todo
          ├─ in-progress.json ────────►├─────────────────────────►│ inprogress
@@ -130,7 +130,7 @@ This ensures clean sync without duplicates.
 
 ## Export Script
 
-Add this to export Loki Mode tasks to Vibe Kanban:
+Add this to export Loki Loop tasks to Vibe Kanban:
 
 ```bash
 #!/bin/bash
@@ -177,7 +177,7 @@ fi
 
 ## Real-Time Sync (Advanced)
 
-For real-time sync, run the watcher alongside Loki Mode:
+For real-time sync, run the watcher alongside Loki Loop:
 
 ```bash
 #!/bin/bash
@@ -211,13 +211,13 @@ Vibe Kanban runs each agent in isolated git worktrees, perfect for Loki's parall
 Pause autonomous execution, review changes visually, then resume.
 
 ### 4. Multi-Project Dashboard
-If running Loki Mode on multiple projects, see all in one Vibe Kanban instance.
+If running Loki Loop on multiple projects, see all in one Vibe Kanban instance.
 
 ## Comparison: When to Use What
 
 | Scenario | Recommendation |
 |----------|----------------|
-| Fully autonomous, no monitoring | Loki Mode + Wrapper only |
+| Fully autonomous, no monitoring | Loki Loop + Wrapper only |
 | Need visual progress dashboard | Add Vibe Kanban |
 | Want manual task prioritization | Use Vibe Kanban to reorder |
 | Code review before merge | Use Vibe Kanban's diff viewer |
@@ -230,7 +230,7 @@ If running Loki Mode on multiple projects, see all in one Vibe Kanban instance.
 **Cause:** No tasks in `.loki/queue/` yet.
 
 **Solutions:**
-1. Make sure Loki Mode is actually running and has created tasks
+1. Make sure Loki Loop is actually running and has created tasks
 2. Check if `.loki/queue/` directory exists: `ls -la .loki/queue/`
 3. Verify queue files have content: `cat .loki/queue/pending.json`
 4. If running manual mode, Loki creates tasks as it works - give it time to start
@@ -273,7 +273,7 @@ If running Loki Mode on multiple projects, see all in one Vibe Kanban instance.
 **Important:** This is a manual integration, not automatic. Here's what to expect:
 
 1. Start Vibe Kanban (terminal 1, keeps running)
-2. Start Loki Mode (terminal 2, keeps running)
+2. Start Loki Loop (terminal 2, keeps running)
 3. Wait for Loki to create some tasks
 4. Run export script (terminal 3, one-time or via watcher)
 5. Refresh Vibe Kanban in browser to see tasks

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sync Loki Mode tasks to Vibe Kanban SQLite database
+# Sync Loki Loop tasks to Vibe Kanban SQLite database
 # Works on macOS and Linux, auto-detects project name from current directory
 
 set -uo pipefail
@@ -31,7 +31,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Validate prerequisites
 if [ ! -d "$LOKI_DIR" ]; then
-    log_error "No .loki directory found. Run Loki Mode first."
+    log_error "No .loki directory found. Run Loki Loop first."
     exit 1
 fi
 

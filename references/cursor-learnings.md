@@ -34,7 +34,7 @@
 
 **Lesson:** Trust workers to handle conflicts. Remove unnecessary oversight layers at scale.
 
-**Implication for Loki Mode:** The 3-reviewer blind review system may become a bottleneck at 100+ agent scale. Consider:
+**Implication for Loki Loop:** The 3-reviewer blind review system may become a bottleneck at 100+ agent scale. Consider:
 - Making review optional for low-risk changes
 - Allowing workers to self-merge trivial fixes
 - Escalating only high-risk changes to full review
@@ -143,7 +143,7 @@ judge_agent:
 **Implementation:**
 ```yaml
 drift_prevention:
-  context_reset_interval: 25_iterations  # Already in Loki Mode
+  context_reset_interval: 25_iterations  # Already in Loki Loop
   mandatory_state_dump: true
   fresh_planner_spawn: every_major_milestone
 ```
@@ -162,7 +162,7 @@ drift_prevention:
 
 ---
 
-## Applying to Loki Mode
+## Applying to Loki Loop
 
 ### Already Implemented (Aligned)
 

@@ -1,9 +1,33 @@
 # Changelog
 
-All notable changes to Loki Mode will be documented in this file.
+All notable changes to Loki Loop will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [4.3.0] - 2026-01-23
+
+### Changed - Rebrand to Loki Loop
+
+**Major rebrand: loki-mode is now loki-loop. The name emphasizes the RARV (Reason-Act-Reflect-Verify) loop that powers autonomous execution.**
+
+#### Name Changes
+- Package renamed from `loki-mode` to `loki-loop`
+- npm: `npm install -g loki-loop`
+- Homebrew: `brew install asklokesh/tap/loki-loop`
+- Docker: `asklokesh/loki-loop`
+- GitHub repo will be renamed to `loki-loop`
+
+#### Why "Loki Loop"?
+- Emphasizes the continuous RARV cycle at the heart of the system
+- Alliterative and memorable
+- Prepares for future `autonomi.dev` brand umbrella
+- Loop captures the perpetual improvement philosophy
+
+#### Migration
+No code changes required. The `loki` CLI command remains the same.
+
+---
 
 ## [4.2.0] - 2026-01-22
 
@@ -47,7 +71,7 @@ Prominent documentation of the core insight: "Your Agent's Reasoning Is Fine - I
 **Major release: Complete distribution system with CLI wrapper, YAML configuration, and multiple installation methods.**
 
 #### loki CLI Wrapper (`autonomy/loki`)
-- `loki start [PRD]` - Start Loki Mode with optional PRD file
+- `loki start [PRD]` - Start Loki Loop with optional PRD file
 - `loki stop` - Stop execution immediately via STOP signal
 - `loki pause` - Pause after current session via PAUSE signal
 - `loki resume` - Resume paused execution
@@ -60,14 +84,14 @@ Prominent documentation of the core insight: "Your Agent's Reasoning Is Fine - I
 
 #### YAML Configuration (`autonomy/config.example.yaml`)
 - 50+ configurable settings organized in sections
-- Search order: `.loki/config.yaml` (project) -> `~/.config/loki-mode/config.yaml` (global)
+- Search order: `.loki/config.yaml` (project) -> `~/.config/loki-loop/config.yaml` (global)
 - Security: Input validation, symlink rejection, regex escaping
 - Fallback YAML parser (no external dependencies)
 
 #### Distribution Methods
-- **Homebrew**: `brew install asklokesh/tap/loki-mode`
-- **npm**: `npm install -g loki-mode`
-- **Docker**: `docker pull asklokesh/loki-mode:4.1.0`
+- **Homebrew**: `brew install asklokesh/tap/loki-loop`
+- **npm**: `npm install -g loki-loop`
+- **Docker**: `docker pull asklokesh/loki-loop:4.1.0`
 - **Manual**: Clone and symlink `loki` to PATH
 
 #### Dashboard Enhancements
@@ -90,7 +114,7 @@ Prominent documentation of the core insight: "Your Agent's Reasoning Is Fine - I
 - `docker-compose.yml` - Docker compose configuration
 - `package.json` - npm package definition
 - `bin/postinstall.js` - npm post-install script
-- `dist/homebrew/loki-mode.rb` - Homebrew formula
+- `dist/homebrew/loki-loop.rb` - Homebrew formula
 
 ---
 
@@ -98,7 +122,7 @@ Prominent documentation of the core insight: "Your Agent's Reasoning Is Fine - I
 
 ### Added - Realtime Dashboard with Anthropic Design Language
 
-**Major release: Production-ready web dashboard for monitoring and managing Loki Mode operations.**
+**Major release: Production-ready web dashboard for monitoring and managing Loki Loop operations.**
 
 #### Dashboard Features
 - **Realtime Sync**: File-based polling every 2 seconds via `dashboard-state.json`
@@ -164,7 +188,7 @@ Prominent documentation of the core insight: "Your Agent's Reasoning Is Fine - I
 
 #### Honest Assessment
 - **Auto-Claude wins:** Desktop GUI, packaged releases, community, integrations
-- **Loki Mode wins:** Research foundation, 37 agents, full SDLC, anti-sycophancy, MIT license, benchmarks
+- **Loki Loop wins:** Research foundation, 37 agents, full SDLC, anti-sycophancy, MIT license, benchmarks
 
 ---
 
@@ -392,10 +416,10 @@ skills/
 ```bash
 # Run from any project directory with .loki folder
 cd ~/git/your-project
-~/.claude/skills/loki-mode/scripts/sync-to-vibe-kanban.sh
+~/.claude/skills/loki-loop/scripts/sync-to-vibe-kanban.sh
 
 # Or use the watcher for automatic sync
-~/.claude/skills/loki-mode/scripts/vibe-sync-watcher.sh
+~/.claude/skills/loki-loop/scripts/vibe-sync-watcher.sh
 ```
 
 #### Updated
@@ -488,7 +512,7 @@ cd ~/git/your-project
 
 #### Key Insight
 
-The arXiv research provides empirical evidence for why Loki Mode's quality gates are critical: without them, velocity gains are completely negated by accumulated technical debt.
+The arXiv research provides empirical evidence for why Loki Loop's quality gates are critical: without them, velocity gains are completely negated by accumulated technical debt.
 
 ---
 
@@ -542,13 +566,13 @@ These patterns were already correctly implemented:
 
 ### Added - MCP Integration Reference with Parallel AI
 
-**Created `references/mcp-integration.md` documenting recommended MCP servers for Loki Mode.**
+**Created `references/mcp-integration.md` documenting recommended MCP servers for Loki Loop.**
 
 #### Parallel AI Integration
 
 Added Parallel AI as recommended MCP server for enhanced web research:
 
-| Capability | Benefit for Loki Mode |
+| Capability | Benefit for Loki Loop |
 |------------|----------------------|
 | Deep Research API | 48% accuracy on complex research (vs native LLM search) |
 | Evidence-based results | Provenance for every output - aligns with quality gates |
@@ -561,7 +585,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 - Playwright MCP for E2E testing (existing)
 - MCP configuration locations
-- Usage patterns in Loki Mode agents
+- Usage patterns in Loki Loop agents
 - Evaluation criteria for new MCP servers
 
 ---
@@ -607,14 +631,14 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### Zencoder Features Analyzed
 
-| Feature | Zencoder | Loki Mode | Assessment |
+| Feature | Zencoder | Loki Loop | Assessment |
 |---------|----------|-----------|------------|
 | Four Pillars | Structured Workflows, SDD, Multi-Agent Verification, Parallel Execution | SDLC + RARV + 7 Gates + Worktrees | TIE |
 | Spec-Driven Development | Specs as first-class objects | OpenAPI-first | TIE |
 | Multi-Agent Verification | Model diversity (Claude vs OpenAI, 54% improvement) | 3 blind reviewers + devil's advocate | Different (N/A for Claude Code) |
-| Quality Gates | Built-in verification loops | 7 explicit gates + anti-sycophancy | Loki Mode |
-| Memory System | Not documented | 3-tier episodic/semantic/procedural | Loki Mode |
-| Agent Specialization | Custom Zen Agents | 37 pre-defined specialized | Loki Mode |
+| Quality Gates | Built-in verification loops | 7 explicit gates + anti-sycophancy | Loki Loop |
+| Memory System | Not documented | 3-tier episodic/semantic/procedural | Loki Loop |
+| Agent Specialization | Custom Zen Agents | 37 pre-defined specialized | Loki Loop |
 | CI Failure Analysis | Explicit pattern with auto-fix | DevOps agent only | **ADOPTED** |
 | Review Comment Resolution | Auto-apply simple changes | Manual review | **ADOPTED** |
 | Dependency Management | Scheduled PRs, one group at a time | Mentioned only | **ADOPTED** |
@@ -647,10 +671,10 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 |---------|----------|-----------------|
 | Model Diversity | Claude critiques OpenAI code | Claude Code only has Claude models |
 | Multi-Repo Support | Cross-repo changes | Claude Code is single-context |
-| IDE Plugins | VS Code, JetBrains | Loki Mode is a skill, not a plugin |
+| IDE Plugins | VS Code, JetBrains | Loki Loop is a skill, not a plugin |
 | Repo Grokking | Proprietary indexing | Claude Code has native exploration |
 
-#### Where Loki Mode Remains SUPERIOR
+#### Where Loki Loop Remains SUPERIOR
 
 1. **Quality Control**: 7 gates + blind review + devil's advocate vs built-in loops
 2. **Memory System**: 3-tier (episodic/semantic/procedural) vs none documented
@@ -664,7 +688,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 ### Validated - 2026 Research Resources (RLM, Token-Aware Planning, Claude Code Patterns)
 
-**Comprehensive validation of 8 external resources against Loki Mode v2.36.5. All patterns already implemented or not applicable.**
+**Comprehensive validation of 8 external resources against Loki Loop v2.36.5. All patterns already implemented or not applicable.**
 
 #### Resources Analyzed
 
@@ -674,9 +698,9 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 | **ysz/recursive-llm** | Depth-bound recursion, async parallelization, two-model optimization | Already covered via sub-agent architecture + parallel Haiku agents |
 | **Token-aware planning** | Context rot (<256k effective), sub-agent isolation, compaction | Already comprehensive (SKILL.md:880-920, run.sh compaction) |
 | **davila7/claude-code-templates** | 100+ agents, semantic validator, hooks with matchers | Loki has 37 specialized agents (better organization), guardrails, hooks |
-| **pguso/agents-from-scratch** | "Agents are loops, state, constraints" | Educational - Loki Mode IS the production implementation |
+| **pguso/agents-from-scratch** | "Agents are loops, state, constraints" | Educational - Loki Loop IS the production implementation |
 | **Boris Cherny Tips (Jan 2026)** | 5 Claudes parallel, Opus thinking, ~42hr sessions, hooks | All present: 10+ Haiku parallel, model tiering, CONTINUITY.md |
-| **Inner/outer loop bottleneck** | AI dev creates CI/CD bottleneck | Loki Mode IS the solution - automated quality gates |
+| **Inner/outer loop bottleneck** | AI dev creates CI/CD bottleneck | Loki Loop IS the solution - automated quality gates |
 | **azidan/codemap** | Symbol-to-line-range mapping, hash staleness, 60-80% token savings | Complementary MCP tool, not a pattern to implement |
 
 #### Key Findings
@@ -685,7 +709,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 - Handles 10M+ tokens via Python REPL context storage
 - Two-model optimization (expensive root, cheap branches)
 - Assessment: Specialized for extreme context, not typical Claude Code workflows
-- Loki Mode's CONTINUITY.md + compaction + sub-agents already sufficient
+- Loki Loop's CONTINUITY.md + compaction + sub-agents already sufficient
 
 **2. Token-Aware Planning / Context Engineering:**
 - Context rot phenomenon: effective window <256k even with 1M limit
@@ -704,9 +728,9 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 - Hash-based staleness detection
 - Assessment: Complementary MCP tool for I/O optimization, not core pattern
 
-#### Patterns Already Present in Loki Mode
+#### Patterns Already Present in Loki Loop
 
-| External Pattern | Loki Mode Implementation |
+| External Pattern | Loki Loop Implementation |
 |-----------------|-------------------------|
 | Parallel execution (5 Claudes) | 10+ Haiku agents in parallel (SKILL.md:21) |
 | Model tiering | Opus/Sonnet/Haiku with explicit categories (SKILL.md:163-244) |
@@ -718,7 +742,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### Conclusion
 
-**No updates needed.** Loki Mode v2.36.5 implements a superset of all analyzed patterns. Resources validated existing architecture rather than identifying gaps.
+**No updates needed.** Loki Loop v2.36.5 implements a superset of all analyzed patterns. Resources validated existing architecture rather than identifying gaps.
 
 ---
 
@@ -730,23 +754,23 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### Google Antigravity Features Analyzed
 
-| Feature | Antigravity | Loki Mode | Assessment |
+| Feature | Antigravity | Loki Loop | Assessment |
 |---------|-------------|-----------|------------|
 | Manager Surface | Interactive agent control | Monitoring dashboard | Different purpose (human vs autonomous) |
 | Artifacts System | Screenshots, video, diagrams | Traces, tests | Enhanced: Artifact generation added |
 | Browser Subagents | Full recording, DOM capture | Playwright MCP | Equivalent + screenshots |
-| Outcome Verification | Trust artifacts | 7 quality gates | Loki Mode superior |
-| Knowledge Base | Simple snippets | 3-tier memory | Loki Mode superior |
+| Outcome Verification | Trust artifacts | 7 quality gates | Loki Loop superior |
+| Knowledge Base | Simple snippets | 3-tier memory | Loki Loop superior |
 | Multi-Model | Gemini 3, Claude, GPT-OSS | Opus/Sonnet/Haiku | Both multi-model |
 
 #### Amazon Q Developer Features Analyzed
 
-| Feature | Amazon Q | Loki Mode | Assessment |
+| Feature | Amazon Q | Loki Loop | Assessment |
 |---------|----------|-----------|------------|
 | SWE-Bench | 66% verified | Uses Claude | Framework, not model |
 | Code Transformation | /transform (Java, SQL, .NET) | Not present | **ADOPTED** |
 | MCP Support | Full protocol | Playwright MCP | Equivalent |
-| Model Routing | Bedrock | 4-tier confidence | Loki Mode superior |
+| Model Routing | Bedrock | 4-tier confidence | Loki Loop superior |
 | CLI Agent | Fast local | run.sh wrapper | Equivalent |
 
 #### Patterns ADOPTED (HIGH/MEDIUM Priority)
@@ -772,7 +796,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 | Video Recording | Antigravity | Requires human review |
 | Interactive Agent Spawning | Antigravity | Violates autonomous design |
 
-#### Where Loki Mode is SUPERIOR
+#### Where Loki Loop is SUPERIOR
 
 1. **Memory System**: 3-tier (episodic/semantic/procedural) vs simple snippets
 2. **Quality Control**: 7 gates + blind review + devil's advocate vs artifact trust
@@ -791,7 +815,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### OpenAI Codex Features Analyzed
 
-| Feature | Codex | Loki Mode | Assessment |
+| Feature | Codex | Loki Loop | Assessment |
 |---------|-------|-----------|------------|
 | Skills System | SKILL.md + scripts/ + references/ | IS a SKILL.md | Already compatible |
 | Progressive Disclosure | Load name/desc first | Implicit via references/ | Already better |
@@ -801,7 +825,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### AWS Kiro Features Analyzed
 
-| Feature | Kiro | Loki Mode | Assessment |
+| Feature | Kiro | Loki Loop | Assessment |
 |---------|------|-----------|------------|
 | Spec Files | requirements.md, design.md, tasks.md | OpenAPI-first | Both valid approaches |
 | Agent Steering | .kiro/steering/ | CLAUDE.md + CONTINUITY.md + memory | Already more comprehensive |
@@ -839,7 +863,7 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 | $skill-creator | Codex | Humans create skills beforehand |
 | Multi-Repository Agent | Kiro | Not aligned with single-product use case |
 
-#### Where Loki Mode is SUPERIOR
+#### Where Loki Loop is SUPERIOR
 
 1. **Zero Human Intervention**: Neither Codex nor Kiro designed for this
 2. **Memory Depth**: 3-tier (episodic/semantic/procedural) vs none/basic
@@ -859,20 +883,20 @@ Added Parallel AI as recommended MCP server for enhanced web research:
 
 #### Cursor 2.0 Features Analyzed
 
-| Feature | Cursor | Loki Mode | Assessment |
+| Feature | Cursor | Loki Loop | Assessment |
 |---------|--------|-----------|------------|
 | Multi-Agent Parallel | 8 agents with worktree isolation | Sequential (was restricted) | ADOPTED: Worktree isolation |
 | Composer Model | Proprietary 250 tok/s | Uses Claude | Different architecture |
-| BugBot PR Review | GitHub integration | Pre-commit review | Loki Mode superior (prevent vs detect) |
-| Memories | Flat fact storage | 3-tier structured | Loki Mode superior |
+| BugBot PR Review | GitHub integration | Pre-commit review | Loki Loop superior (prevent vs detect) |
+| Memories | Flat fact storage | 3-tier structured | Loki Loop superior |
 | YOLO Mode | Auto-apply with allowlist | Full autonomous | Already more comprehensive |
 | Tool Call Limits | 25 ops before approval | Guardrails/tripwires | Different approach (autonomous) |
 
 #### Devin 2.0 Features Analyzed
 
-| Feature | Devin | Loki Mode | Assessment |
+| Feature | Devin | Loki Loop | Assessment |
 |---------|-------|-----------|------------|
-| Task Dispatch | One agent dispatches to others | 37 agents in 7 swarms | Loki Mode more comprehensive |
+| Task Dispatch | One agent dispatches to others | 37 agents in 7 swarms | Loki Loop more comprehensive |
 | Confidence Clarification | Asks user when unsure | Escalates to human | Both valid for different use cases |
 | DeepWiki | Auto-generate docs | techwriter agent | Similar capability |
 | Specialized Models | Kevin 32B for CUDA | Opus/Sonnet/Haiku tiering | Both optimize model selection |
@@ -909,7 +933,7 @@ workflow:
 | Confidence-based Clarification | Devin | "NEVER ask questions" is core rule |
 | VM Isolation | Cursor | Infrastructure cost, marginal benefit |
 
-#### Where Loki Mode is SUPERIOR
+#### Where Loki Loop is SUPERIOR
 
 1. **Memory System**: 3-tier (episodic/semantic/procedural) vs Cursor's flat facts
 2. **Quality Control**: 7 gates + 3-reviewer blind + devil's advocate vs basic permissions
@@ -929,16 +953,16 @@ workflow:
 
 #### OpenCode Features Analyzed
 
-| Feature | OpenCode | Loki Mode | Assessment |
+| Feature | OpenCode | Loki Loop | Assessment |
 |---------|----------|-----------|------------|
 | Architecture | Client/server (Bun+Go) | CLI skill (bash) | Different design goals |
 | Provider Support | Multi-provider | Claude-only | Intentional for deep integration |
 | LSP Integration | Native (25+ langs) | None | Not adopted (violates deterministic validation) |
-| Agents | 4 built-in | 37 in 7 swarms | Loki Mode more comprehensive |
+| Agents | 4 built-in | 37 in 7 swarms | Loki Loop more comprehensive |
 | Plugin System | JS/TS hooks | Wrapper script | Not adopted (adds complexity) |
 | Skills | SKILL.md compatible | IS a SKILL.md | Aligned |
-| Quality Gates | Basic permissions | 7 gates + 3-reviewer + devil's advocate | Loki Mode superior |
-| Memory | Session-based | Episodic/Semantic/Procedural | Loki Mode more sophisticated |
+| Quality Gates | Basic permissions | 7 gates + 3-reviewer + devil's advocate | Loki Loop superior |
+| Memory | Session-based | Episodic/Semantic/Procedural | Loki Loop more sophisticated |
 
 #### Patterns Evaluated and NOT Adopted
 
@@ -968,7 +992,7 @@ LOKI_COMPACTION_INTERVAL=25  # Suggest compaction every N iterations
 1. Deep analysis of OpenCode docs, architecture, and Oh-My-OpenCode
 2. Opus feedback loop for critical evaluation
 3. Determined most OpenCode patterns are for interactive use (human-in-loop)
-4. Loki Mode's autonomous patterns are architecturally superior for its use case
+4. Loki Loop's autonomous patterns are architecturally superior for its use case
 5. Only proactive compaction adopted as genuinely beneficial
 
 **See `docs/COMPARISON.md` for full competitive analysis.**
@@ -983,9 +1007,9 @@ LOKI_COMPACTION_INTERVAL=25  # Suggest compaction every N iterations
 
 #### Audit Outcome: ARCHITECTURE VALIDATED
 
-Loki Mode already implements patterns from state-of-the-art research. Key papers validate our design choices:
+Loki Loop already implements patterns from state-of-the-art research. Key papers validate our design choices:
 
-| Paper | Key Finding | Loki Mode Status |
+| Paper | Key Finding | Loki Loop Status |
 |-------|-------------|------------------|
 | **Scaling Agent Systems** | Centralized +80.8% on parallelizable tasks | HAVE: Centralized orchestrator |
 | **Scaling Agent Systems** | Sequential reasoning degrades 39-70% | HAVE: Parallel blind review |
@@ -1121,7 +1145,7 @@ LOKI_AUTONOMY_MODE=perpetual      # perpetual|checkpoint|supervised (Tim Dettmer
 
 ### Research Findings
 
-**What Loki Mode Already Does Excellently:**
+**What Loki Loop Already Does Excellently:**
 - RARV cycle with self-verification (Boris Cherny: 2-3x quality)
 - Blind code review (CONSENSAGENT anti-sycophancy)
 - Constitutional AI (Anthropic principles)
@@ -1162,9 +1186,9 @@ LOKI_AUTONOMY_MODE=perpetual      # perpetual|checkpoint|supervised (Tim Dettmer
 
 **Audit Outcome: No Critical Features Missing**
 
-Loki Mode already implements more comprehensive versions of:
+Loki Loop already implements more comprehensive versions of:
 
-| Feature | Loki Mode | Best External |
+| Feature | Loki Loop | Best External |
 |---------|-----------|---------------|
 | Agent Types | 37 specialized | Sisyphus: 11 |
 | Memory System | Episodic/semantic/procedural + cross-project | Worldview: single-project |
@@ -1369,7 +1393,7 @@ Comprehensive guide covering:
 - **Debate Verification**: `Proponent defends -> Opponent challenges -> Synthesize`
 
 **New Sections in SKILL.md:**
-- **Constitutional AI Principles**: Loki Mode constitution with 8 core principles
+- **Constitutional AI Principles**: Loki Loop constitution with 8 core principles
 - **Debate-Based Verification**: For architecture decisions and security changes
 
 ### Changed
@@ -1381,7 +1405,7 @@ Comprehensive guide covering:
 
 ### Research Insights Applied
 
-| Lab | Key Insight | Loki Mode Implementation |
+| Lab | Key Insight | Loki Loop Implementation |
 |-----|-------------|-------------------------|
 | DeepMind | "Hierarchical reasoning separates planning from execution" | Orchestrator = planner, agents = executors |
 | DeepMind | "Debate can verify beyond human capability" | Debate verification for critical changes |
@@ -1493,7 +1517,7 @@ Comprehensive guide covering:
 - tool-orchestration.md: Expanded sources with 8 new research references
 
 ### Research Validation
-Loki Mode already implements most research-backed patterns:
+Loki Loop already implements most research-backed patterns:
 | Pattern | Research Source | Status |
 |---------|----------------|--------|
 | Evaluator-optimizer | Anthropic | RARV cycle |
@@ -1562,9 +1586,9 @@ Loki Mode already implements most research-backed patterns:
 - Directory Structure includes metrics subsystem
 - References includes `tool-orchestration.md`
 
-### Comparison: Loki Mode vs ToolOrchestra
+### Comparison: Loki Loop vs ToolOrchestra
 
-| Feature | ToolOrchestra | Loki Mode 2.28.0 |
+| Feature | ToolOrchestra | Loki Loop 2.28.0 |
 |---------|---------------|------------------|
 | Multi-turn reasoning | Orchestrator-8B | RARV cycle |
 | Efficiency tracking | ✅ 70% cost reduction | ✅ Now implemented |
@@ -1665,14 +1689,14 @@ Loki Mode already implements most research-backed patterns:
 
 ## [2.25.0] - 2026-01-05
 
-### Added - Loki Mode SWE-bench Benchmark (99.67% Patch Generation)
+### Added - Loki Loop SWE-bench Benchmark (99.67% Patch Generation)
 
 **Full SWE-bench Lite Multi-Agent Benchmark** - 299/300 problems!
 
 | System | SWE-bench Patch Gen | Notes |
 |--------|---------------------|-------|
 | Direct Claude | 99.67% (299/300) | Single agent baseline |
-| **Loki Mode (multi-agent)** | **99.67%** (299/300) | 4-agent pipeline with RARV |
+| **Loki Loop (multi-agent)** | **99.67%** (299/300) | 4-agent pipeline with RARV |
 
 **Key Results:**
 - 299/300 problems generated patches (matches single-agent baseline)
@@ -1683,20 +1707,20 @@ Loki Mode already implements most research-backed patterns:
 **Key Finding:** After timeout optimization, multi-agent RARV matches single-agent performance on SWE-bench. The 4-agent pipeline adds verification without sacrificing coverage.
 
 ### Changed
-- Updated README with SWE-bench Loki Mode results
+- Updated README with SWE-bench Loki Loop results
 - Updated competitive analysis with benchmark comparison
 - Increased Architect timeout from 60s to 120s for complex problems
 - Increased Reviewer timeout from 30s to 60s
 
 ## [2.24.0] - 2026-01-05
 
-### Added - Loki Mode Multi-Agent Benchmark (98.78% Pass@1)
+### Added - Loki Loop Multi-Agent Benchmark (98.78% Pass@1)
 
-**True Multi-Agent Benchmark Implementation** - Now benchmarks actually use the Loki Mode agent pipeline!
+**True Multi-Agent Benchmark Implementation** - Now benchmarks actually use the Loki Loop agent pipeline!
 
 | System | HumanEval Pass@1 | Agent Type |
 |--------|------------------|------------|
-| **Loki Mode (multi-agent)** | **98.78%** | Architect->Engineer->QA->Reviewer |
+| **Loki Loop (multi-agent)** | **98.78%** | Architect->Engineer->QA->Reviewer |
 | Direct Claude | 98.17% | Single agent |
 | MetaGPT | 85.9-87.7% | Multi-agent |
 
@@ -1718,7 +1742,7 @@ Loki Mode already implements most research-backed patterns:
 - Three-way comparison in README and competitive analysis
 
 ### Changed
-- Updated README with Loki Mode badge (98.78%)
+- Updated README with Loki Loop badge (98.78%)
 - Updated competitive analysis with three-way comparison
 - Results stored in `benchmarks/results/humaneval-loki-results.json`
 
@@ -1779,7 +1803,7 @@ Loki Mode already implements most research-backed patterns:
 
 **Competitor Comparison:**
 - MetaGPT: 85.9-87.7%
-- **Loki Mode: 98.17%** (+10.5%)
+- **Loki Loop: 98.17%** (+10.5%)
 
 ### Fixed
 - **Benchmark Indentation Bug** - Solutions now include complete function with proper indentation
@@ -1841,7 +1865,7 @@ Full implementation of benchmark execution that runs problems through Claude:
 ### Fixed
 - **Enterprise Security Defaults** - All enterprise features now OFF by default
   - `LOKI_AUDIT_LOG` changed from `true` to `false`
-  - Ensures Loki Mode works exactly as before with `--dangerously-skip-permissions`
+  - Ensures Loki Loop works exactly as before with `--dangerously-skip-permissions`
   - Enterprise features are opt-in, not forced
 
 ## [2.19.0] - 2026-01-04
@@ -1889,7 +1913,7 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 - **Automatic Learning Extraction** - Parses CONTINUITY.md "Mistakes & Learnings" section at session end
 - **Contextual Loading** - Loads relevant learnings based on PRD content at session start
 - **Relevant Learnings File** - `.loki/state/relevant-learnings.json` for agent access
-- **Addresses Gap** - Competitors like Claude-Flow have AgentDB; now Loki Mode has cross-project memory
+- **Addresses Gap** - Competitors like Claude-Flow have AgentDB; now Loki Loop has cross-project memory
 
 #### 4. Competitive Analysis Documentation (`docs/COMPETITIVE-ANALYSIS.md`)
 - **Factual Comparison Table** - Real metrics vs competitors
@@ -1898,7 +1922,7 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
   - Production readiness assessment
 - **Detailed Competitor Analysis** - Claude-Flow, MetaGPT, CrewAI, Cursor, Devin
 - **Critical Gaps Identified** - 5 priority areas for improvement
-- **Loki Mode Advantages** - Business ops, full SDLC, RARV, resource monitoring
+- **Loki Loop Advantages** - Business ops, full SDLC, RARV, resource monitoring
 - **Improvement Roadmap** - Phased plan for addressing gaps
 
 ### Changed
@@ -1943,7 +1967,7 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 - **Cleanup Handlers** - `stop_status_monitor()` now also stops resource monitor (run.sh:335)
 
 ### Why This Matters
-**User Problem:** "Loki Mode spinning agents made my computer unusable and I had to hard restart"
+**User Problem:** "Loki Loop spinning agents made my computer unusable and I had to hard restart"
 **Solution:** Resource monitoring prevents this by:
 1. Continuously tracking CPU and memory usage every 5 minutes
 2. Warning when thresholds are exceeded
@@ -1963,7 +1987,7 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 ### Changed
 - **README.md Complete Restructure** - Transformed README to focus on value proposition and user experience:
   - **New Hero Section:** Clear tagline "The First Truly Autonomous Multi-Agent Startup System" with compelling value prop
-  - **"Why Loki Mode?" Section:** Direct comparison table showing what others do vs. what Loki Mode does
+  - **"Why Loki Loop?" Section:** Direct comparison table showing what others do vs. what Loki Loop does
   - **Core Advantages List:** 5 key differentiators (truly autonomous, massively parallel, production-ready, self-improving, zero babysitting)
   - **Dashboard & Real-Time Monitoring Section:** Dedicated section showcasing agent monitoring and task queue visualization with screenshot placeholders
   - **Autonomous Capabilities Section:** Prominent explanation of RARV cycle, perpetual improvement mode, and auto-resume/self-healing
@@ -1993,9 +2017,9 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 - **User Experience:** README now immediately conveys value and differentiators
 - **Clarity:** Installation details no longer clutter the main README
 - **Visual Appeal:** Dashboard screenshots section makes capabilities tangible
-- **Competitive Positioning:** Clear comparison shows why Loki Mode is better than alternatives
+- **Competitive Positioning:** Clear comparison shows why Loki Loop is better than alternatives
 - **Autonomous Focus:** RARV cycle and perpetual improvement are now prominent features
-- **Ease of Use:** Quick Start shows users can literally "walk away" after starting Loki Mode
+- **Ease of Use:** Quick Start shows users can literally "walk away" after starting Loki Loop
 - **Professional Documentation:** Meets industry standards with proper structure, badges, and navigation
 - **User Request:** Directly addresses "focus on what it is, how it's better than anything out there, autonomous capabilities, usage for the user, dashboard screenshots and standard things"
 
@@ -2017,7 +2041,7 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 ### Why This Matters
 The previous "37 agents" messaging was misleading because:
 - **37 is the number of agent TYPES**, not the number of agents that spawn
-- Loki Mode **dynamically spawns** only the agents needed for your specific project
+- Loki Loop **dynamically spawns** only the agents needed for your specific project
 - A simple todo app might use 5-10 agents total
 - A complex startup could spawn 100+ agents working in parallel (multiple instances of the same type)
 - The system is designed for **functionality-based scaling**, not fixed counts
@@ -2223,7 +2247,7 @@ This release incorporates best practices from AI infrastructure thought leaders:
 - **Community Consensus** - Machine-enforceable rules over advisory markdown
 
 ### Breaking Changes
-None - All additions are backward compatible with existing Loki Mode projects.
+None - All additions are backward compatible with existing Loki Loop projects.
 
 ### Migration Guide
 For existing `.loki/` projects:
@@ -2471,7 +2495,7 @@ For existing `.loki/` projects:
 2. **MCP**: Standardized agent communication for composability across platforms
 3. **Spec-Driven Development**: Specifications as executable contracts, not afterthoughts
 
-Loki Mode now combines the best practices from GitHub's ecosystem:
+Loki Loop now combines the best practices from GitHub's ecosystem:
 - **Speed**: Autonomous multi-agent development
 - **Control**: Static analysis + AI review + spec validation
 - **Interoperability**: MCP-compatible agents work with any AI platform
@@ -2536,7 +2560,7 @@ Loki Mode now combines the best practices from GitHub's ecosystem:
 ### Philosophy
 "Speed and control aren't trade-offs. They reinforce each other." - GitHub
 
-AI accelerates velocity but can introduce "AI slop" (semi-functional code accumulating technical debt). Loki Mode now pairs acceleration with visible guardrails: static analysis catches machine-detectable issues, structured prompting ensures intentional development, and decision documentation demonstrates thinking beyond shipping features.
+AI accelerates velocity but can introduce "AI slop" (semi-functional code accumulating technical debt). Loki Loop now pairs acceleration with visible guardrails: static analysis catches machine-detectable issues, structured prompting ensures intentional development, and decision documentation demonstrates thinking beyond shipping features.
 
 ## [2.11.0] - 2026-01-02
 
@@ -2575,14 +2599,14 @@ CONTINUITY.md provides a simpler, more explicit "every turn" memory protocol tha
 ## [2.10.1] - 2026-01-01
 
 ### Fixed
-- **API Console Upload** - Added `loki-mode-api-X.X.X.zip` artifact for console.anthropic.com
-  - API requires SKILL.md inside a folder wrapper (`loki-mode/SKILL.md`)
+- **API Console Upload** - Added `loki-loop-api-X.X.X.zip` artifact for console.anthropic.com
+  - API requires SKILL.md inside a folder wrapper (`loki-loop/SKILL.md`)
   - Claude.ai uses flat structure (`SKILL.md` at root)
   - Updated release workflow to generate both formats
   - Three release artifacts now available:
-    - `loki-mode-X.X.X.zip` - for Claude.ai website
-    - `loki-mode-api-X.X.X.zip` - for console.anthropic.com
-    - `loki-mode-claude-code-X.X.X.zip` - for Claude Code CLI
+    - `loki-loop-X.X.X.zip` - for Claude.ai website
+    - `loki-loop-api-X.X.X.zip` - for console.anthropic.com
+    - `loki-loop-claude-code-X.X.X.zip` - for Claude Code CLI
 
 ## [2.10.0] - 2025-12-31
 
@@ -2612,7 +2636,7 @@ CONTINUITY.md provides a simpler, more explicit "every turn" memory protocol tha
 - Build prompt includes ledger/handoff content for continuity
 
 ### Philosophy
-Instead of "degrade gracefully through compression", Loki Mode now uses "reset cleanly with memory preservation" - ensuring perfect context continuity across unlimited iterations.
+Instead of "degrade gracefully through compression", Loki Loop now uses "reset cleanly with memory preservation" - ensuring perfect context continuity across unlimited iterations.
 
 ## [2.9.1] - 2025-12-31
 
@@ -2677,7 +2701,7 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.7.0] - 2025-12-28
 
 ### Added
-- **Codebase Analysis Mode** - When no PRD is provided, Loki Mode now:
+- **Codebase Analysis Mode** - When no PRD is provided, Loki Loop now:
   1. **Auto-detects PRD files** - Searches for `PRD.md`, `REQUIREMENTS.md`, `SPEC.md`, `PROJECT.md` and docs variants
   2. **Analyzes existing codebase** - If no PRD found, performs comprehensive codebase analysis:
      - Scans directory structure and identifies tech stack
@@ -2815,8 +2839,8 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 
 ### Fixed
 - **Proper Skill File Format** - Release artifacts now follow Claude's expected format:
-  - `loki-mode-X.X.X.zip` / `.skill` - For Claude.ai (SKILL.md at root)
-  - `loki-mode-claude-code-X.X.X.zip` - For Claude Code (loki-mode/ folder)
+  - `loki-loop-X.X.X.zip` / `.skill` - For Claude.ai (SKILL.md at root)
+  - `loki-loop-claude-code-X.X.X.zip` - For Claude Code (loki-loop/ folder)
 
 ### Improved
 - **Installation Instructions** - Separate instructions for Claude.ai vs Claude Code
@@ -2825,7 +2849,7 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.0.2] - 2025-12-27
 
 ### Fixed
-- **Release Artifact Structure** - Zip now contains `loki-mode/` folder (not `loki-mode-X.X.X/`)
+- **Release Artifact Structure** - Zip now contains `loki-loop/` folder (not `loki-loop-X.X.X/`)
   - Users can extract directly to skills directory without renaming
   - Only includes essential skill files (no .git or .github folders)
 
@@ -2891,7 +2915,7 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [1.0.0] - 2025-12-27
 
 ### Added
-- **Initial Release** of Loki Mode skill for Claude Code
+- **Initial Release** of Loki Loop skill for Claude Code
 
 - **Multi-Agent Architecture** - 37 specialized agents across 6 swarms:
   - Engineering Swarm (8 agents): frontend, backend, database, mobile, API, QA, perf, infra
@@ -2947,14 +2971,14 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
   - `references/deployment.md` - Cloud deployment guides
   - `references/business-ops.md` - Business operation workflows
 
-[2.4.0]: https://github.com/asklokesh/loki-mode/compare/v2.3.0...v2.4.0
-[2.3.0]: https://github.com/asklokesh/loki-mode/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/asklokesh/loki-mode/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/asklokesh/loki-mode/compare/v2.0.3...v2.1.0
-[2.0.3]: https://github.com/asklokesh/loki-mode/compare/v2.0.2...v2.0.3
-[2.0.2]: https://github.com/asklokesh/loki-mode/compare/v2.0.1...v2.0.2
-[2.0.1]: https://github.com/asklokesh/loki-mode/compare/v2.0.0...v2.0.1
-[2.0.0]: https://github.com/asklokesh/loki-mode/compare/v1.1.0...v2.0.0
-[1.1.0]: https://github.com/asklokesh/loki-mode/compare/v1.0.1...v1.1.0
-[1.0.1]: https://github.com/asklokesh/loki-mode/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/asklokesh/loki-mode/releases/tag/v1.0.0
+[2.4.0]: https://github.com/asklokesh/loki-loop/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/asklokesh/loki-loop/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/asklokesh/loki-loop/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/asklokesh/loki-loop/compare/v2.0.3...v2.1.0
+[2.0.3]: https://github.com/asklokesh/loki-loop/compare/v2.0.2...v2.0.3
+[2.0.2]: https://github.com/asklokesh/loki-loop/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/asklokesh/loki-loop/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/asklokesh/loki-loop/compare/v1.1.0...v2.0.0
+[1.1.0]: https://github.com/asklokesh/loki-loop/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/asklokesh/loki-loop/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/asklokesh/loki-loop/releases/tag/v1.0.0

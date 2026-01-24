@@ -27,7 +27,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "========================================"
-echo "Loki Mode State Recovery Tests"
+echo "Loki Loop State Recovery Tests"
 echo "========================================"
 echo ""
 

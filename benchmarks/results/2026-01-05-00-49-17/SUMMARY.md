@@ -1,10 +1,10 @@
-# Loki Mode Benchmark Results
+# Loki Loop Benchmark Results
 
 **Generated:** 2026-01-05 01:10:21
 
 ## Overview
 
-This directory contains benchmark results for Loki Mode multi-agent system.
+This directory contains benchmark results for Loki Loop multi-agent system.
 
 ## HumanEval Results
 
@@ -22,11 +22,11 @@ This directory contains benchmark results for Loki Mode multi-agent system.
 | System | Pass@1 |
 |--------|--------|
 | MetaGPT | 85.9-87.7% |
-| **Loki Mode** | **98.17%** |
+| **Loki Loop** | **98.17%** |
 
 ## Methodology
 
-Loki Mode uses its multi-agent architecture to solve each problem:
+Loki Loop uses its multi-agent architecture to solve each problem:
 1. **Architect Agent** analyzes the problem
 2. **Engineer Agent** implements the solution
 3. **QA Agent** validates with test cases

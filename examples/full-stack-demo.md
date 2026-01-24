@@ -1,7 +1,7 @@
 # PRD: Full-Stack Demo App
 
 ## Overview
-A complete full-stack application demonstrating Loki Mode's end-to-end capabilities. A simple bookmark manager with tags.
+A complete full-stack application demonstrating Loki Loop's end-to-end capabilities. A simple bookmark manager with tags.
 
 ## Target Users
 Users who want to save and organize bookmarks.
@@ -120,4 +120,4 @@ CREATE TABLE bookmark_tags (
 
 ---
 
-**Purpose:** Comprehensive test of Loki Mode's full capabilities including frontend, backend, database, and code review agents. Expect ~30-60 minutes for full execution.
+**Purpose:** Comprehensive test of Loki Loop's full capabilities including frontend, backend, database, and code review agents. Expect ~30-60 minutes for full execution.

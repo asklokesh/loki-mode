@@ -1,10 +1,10 @@
-# Loki Mode Dashboard v4.1.0
+# Loki Loop Dashboard v4.1.0
 
-A production-ready realtime dashboard for monitoring and managing Loki Mode autonomous operations.
+A production-ready realtime dashboard for monitoring and managing Loki Loop autonomous operations.
 
 ## Overview
 
-The Loki Mode Dashboard provides a visual interface to:
+The Loki Loop Dashboard provides a visual interface to:
 - Monitor task progress across Kanban columns
 - Track active agents and their status
 - View system health (RARV cycle, memory, quality gates)
@@ -22,7 +22,7 @@ python3 -m http.server 8080
 open http://localhost:8080/dashboard/index.html
 ```
 
-The dashboard automatically syncs with Loki Mode when it's running, polling `dashboard-state.json` every 2 seconds.
+The dashboard automatically syncs with Loki Loop when it's running, polling `dashboard-state.json` every 2 seconds.
 
 ---
 
@@ -33,7 +33,7 @@ The dashboard automatically syncs with Loki Mode when it's running, polling `das
 The sidebar provides navigation and system status at a glance.
 
 #### Logo & Version
-- Loki Mode branding with current version (v4.1.0)
+- Loki Loop branding with current version (v4.1.0)
 - Version updates automatically from server state
 
 #### Theme Toggle
@@ -94,7 +94,7 @@ Four-column task queue visualization:
 
 #### Task Cards
 
-**Server Tasks** (from Loki Mode):
+**Server Tasks** (from Loki Loop):
 - Orange left border
 - Non-draggable (controlled by system)
 - Shows task ID, title, priority, type, agent
@@ -137,7 +137,7 @@ Three system cards:
 Visual representation of the Reason-Act-Reflect-Verify cycle:
 - Active step highlighted with accent color
 - Arrow indicators between steps
-- Updates in realtime as Loki Mode progresses
+- Updates in realtime as Loki Loop progresses
 
 #### Memory System
 Progress bars for three memory types:
@@ -285,7 +285,7 @@ The dashboard adapts to different screen sizes:
 
 ### Mobile Header
 On small screens, a mobile header appears with:
-- Loki Mode logo
+- Loki Loop logo
 - Connection status
 - Theme toggle
 
@@ -317,7 +317,7 @@ Useful for:
 ## Troubleshooting
 
 ### Dashboard Shows "Offline"
-1. Ensure Loki Mode is running: `./autonomy/run.sh`
+1. Ensure Loki Loop is running: `./autonomy/run.sh`
 2. Check that `dashboard-state.json` exists in `.loki/`
 3. Verify HTTP server is running on correct port
 

@@ -28,7 +28,7 @@ trap cleanup EXIT
 cd "$TEST_DIR"
 
 echo "========================================"
-echo "Loki Mode Task Queue Tests"
+echo "Loki Loop Task Queue Tests"
 echo "========================================"
 echo ""
 

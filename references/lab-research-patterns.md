@@ -73,7 +73,7 @@ class SelfImprovementLoop:
         return next_agent
 ```
 
-**Loki Mode Application:**
+**Loki Loop Application:**
 - Generate test scenarios automatically
 - Score code quality with learned criteria
 - Bootstrap agent training across projects
@@ -102,7 +102,7 @@ class SelfImprovementLoop:
 +------------------------------------------------------------------+
 ```
 
-**Loki Mode Application:**
+**Loki Loop Application:**
 - Orchestrator = ER model (planning, tool calls)
 - Implementation agents = VLA model (code actions)
 - Task decomposition before execution
@@ -246,7 +246,7 @@ class ConstitutionalAI:
         return train_preference_model(preferences)
 ```
 
-**Loki Mode Constitution Example:**
+**Loki Loop Constitution Example:**
 ```yaml
 loki_constitution:
   - "Never delete production data without explicit backup"
@@ -302,7 +302,7 @@ class DefectionProbe:
         return None
 ```
 
-**Loki Mode Application:**
+**Loki Loop Application:**
 - Monitor agent actions for anomalies
 - Flag unusual file access patterns
 - Detect attempts to bypass quality gates
@@ -482,7 +482,7 @@ prompt_injection_defense:
 
 ---
 
-## Combined Patterns for Loki Mode
+## Combined Patterns for Loki Loop
 
 ### Self-Improving Multi-Agent System
 

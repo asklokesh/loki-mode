@@ -121,7 +121,7 @@ Example full configuration:
 
 ---
 
-## Using MCP Tools in Loki Mode
+## Using MCP Tools in Loki Loop
 
 MCP tools are automatically available to Claude Code when configured. The orchestrator can dispatch agents that use these tools:
 
@@ -169,7 +169,7 @@ Task(
 
 ## Adding New MCP Servers
 
-When evaluating new MCP servers for Loki Mode integration, assess:
+When evaluating new MCP servers for Loki Loop integration, assess:
 
 1. **Autonomous fit:** Does it work without human intervention?
 2. **Evidence quality:** Does it provide verifiable, citable results?

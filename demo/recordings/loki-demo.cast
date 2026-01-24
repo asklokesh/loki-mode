@@ -1,4 +1,4 @@
-{"version":3,"term":{"cols":80,"rows":24,"type":"xterm-256color"},"timestamp":1768855918,"idle_time_limit":2.0,"command":"./demo/run-demo-auto.sh","title":"Loki Mode Demo v3.2.0","env":{"SHELL":"/bin/zsh"}}
+{"version":3,"term":{"cols":80,"rows":24,"type":"xterm-256color"},"timestamp":1768855918,"idle_time_limit":2.0,"command":"./demo/run-demo-auto.sh","title":"Loki Loop Demo v3.2.0","env":{"SHELL":"/bin/zsh"}}
 [0.286, "o", "\u001b[3J\u001b[H\u001b[2J"]
 [0.001, "o", "\r\n"]
 [0.000, "o", "\u001b[0;36m========================================\u001b[0m\r\n\u001b[0;36m  LOKI MODE\u001b[0m\r\n\u001b[0;36m========================================\u001b[0m\r\n\r\n"]
@@ -13,7 +13,7 @@
 [0.000, "o", "\u001b[0;36m========================================\u001b[0m\r\n"]
 [0.000, "o", "\u001b[0;36m  STEP 2: Bootstrap Phase\u001b[0m\r\n\u001b[0;36m========================================\u001b[0m\r\n"]
 [0.000, "o", "\r\n"]
-[1.007, "o", "\u001b[0;32m>>> Initializing Loki Mode...\u001b[0m\r\n"]
+[1.007, "o", "\u001b[0;32m>>> Initializing Loki Loop...\u001b[0m\r\n"]
 [1.513, "o", "\r\n.loki/\r\n  CONTINUITY.md      <- Working memory\r\n"]
 [0.000, "o", "  queue/\r\n    pending.json     <- Task queue\r\n"]
 [0.000, "o", "    in-progress.json\r\n    completed.json\r\n  state/\r\n    orchestrator.json <- Phase tracking\r\n  specs/\r\n"]
@@ -112,5 +112,5 @@
 [0.000, "o", "  Human input:      0\r\n"]
 [0.000, "o", "\r\n"]
 [2.011, "o", "\u001b[0;36mFrom PRD to Production\u001b[0m\r\n\u001b[0;36mZero Human Intervention\u001b[0m\r\n\r\n"]
-[0.000, "o", "github.com/asklokesh/loki-mode\r\n\r\n"]
+[0.000, "o", "github.com/asklokesh/loki-loop\r\n\r\n"]
 [3.011, "x", "0"]

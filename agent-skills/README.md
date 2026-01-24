@@ -1,6 +1,6 @@
 # Agent Skills Directory
 
-Modular, declarative skill files for Loki Mode agents following the Vercel Labs agent-skills pattern.
+Modular, declarative skill files for Loki Loop agents following the Vercel Labs agent-skills pattern.
 
 ---
 
@@ -120,7 +120,7 @@ def discover_agent_skills():
 ### Publishing Skills
 
 Skills can be:
-1. **Bundled with Loki Mode** (this directory)
+1. **Bundled with Loki Loop** (this directory)
 2. **Published as separate repos** (following agent-skills spec)
 3. **Installed dynamically** via `/install-skill` command
 
@@ -133,7 +133,7 @@ description: Does something amazing
 author: username
 repository: https://github.com/user/my-awesome-skill
 compatible_with:
-  - loki-mode: ">=2.36.0"
+  - loki-loop: ">=2.36.0"
   - claude-code: ">=1.0.0"
 ```
 
@@ -159,7 +159,7 @@ compatible_with:
 1. **Single Responsibility** - Each skill does ONE thing well
 2. **Clear Activation Conditions** - Specify when agents should use the skill
 3. **Examples Included** - Show concrete usage patterns
-4. **Version Compatibility** - Document compatible Loki Mode versions
+4. **Version Compatibility** - Document compatible Loki Loop versions
 5. **Test Coverage** - Include test cases for skill behavior
 
 ---

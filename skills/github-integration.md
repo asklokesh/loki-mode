@@ -87,7 +87,7 @@ When a feature branch is complete:
 ```bash
 # Automatic PR creation (label is optional via LOKI_GITHUB_PR_LABEL)
 gh pr create \
-  --title "[Loki Mode] $FEATURE_NAME" \
+  --title "[Loki Loop] $FEATURE_NAME" \
   --body-file .loki/reports/pr-body.md
 ```
 
@@ -96,7 +96,7 @@ gh pr create \
 ```markdown
 ## Summary
 
-Automated implementation by Loki Mode v4.1.0
+Automated implementation by Loki Loop v4.1.0
 
 ### Tasks Completed
 - [x] Task 1: Description
@@ -124,10 +124,10 @@ When task status changes, comment on source issue:
 
 ```bash
 # Add progress comment
-gh issue comment 123 --body "Loki Mode: Task in progress - implementing solution..."
+gh issue comment 123 --body "Loki Loop: Task in progress - implementing solution..."
 
 # Mark complete
-gh issue comment 123 --body "Loki Mode: Implementation complete. PR #456 created."
+gh issue comment 123 --body "Loki Loop: Implementation complete. PR #456 created."
 
 # Close issue with PR
 gh issue close 123 --reason "completed" --comment "Fixed via #456"

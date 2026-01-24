@@ -1,11 +1,11 @@
 #!/bin/bash
 #===============================================================================
-# Record Full Loki Mode End-to-End Demo
+# Record Full Loki Loop End-to-End Demo
 #
 # This script:
 # 1. Creates a fresh demo workspace
 # 2. Starts screen recording
-# 3. Runs Loki Mode with a PRD
+# 3. Runs Loki Loop with a PRD
 # 4. Opens dashboard in browser
 # 5. Records until completion or timeout
 # 6. Outputs final video
@@ -130,7 +130,7 @@ cd "$DEMO_WORKSPACE"
 
 # Initialize git
 git init -q
-git config user.email "demo@loki-mode.local"
+git config user.email "demo@loki-loop.local"
 git config user.name "Loki Demo"
 
 # Copy PRD
@@ -138,10 +138,10 @@ cp "$PRD_SOURCE" ./PRD.md
 git add PRD.md
 git commit -m "Initial PRD" -q
 
-# Copy Loki Mode skill to workspace
-mkdir -p .claude/skills/loki-mode
-cp "$PROJECT_DIR/SKILL.md" .claude/skills/loki-mode/
-cp -r "$PROJECT_DIR/references" .claude/skills/loki-mode/ 2>/dev/null || true
+# Copy Loki Loop skill to workspace
+mkdir -p .claude/skills/loki-loop
+cp "$PROJECT_DIR/SKILL.md" .claude/skills/loki-loop/
+cp -r "$PROJECT_DIR/references" .claude/skills/loki-loop/ 2>/dev/null || true
 
 log_info "Workspace ready: $DEMO_WORKSPACE"
 
@@ -189,9 +189,9 @@ cleanup() {
 
 trap cleanup INT TERM
 
-# Run Loki Mode
+# Run Loki Loop
 echo ""
-log_step "Starting Loki Mode..."
+log_step "Starting Loki Loop..."
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${CYAN}  LOKI MODE OUTPUT${NC}"

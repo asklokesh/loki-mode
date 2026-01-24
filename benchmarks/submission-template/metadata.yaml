@@ -1,9 +1,9 @@
 # SWE-bench Submission Metadata
-# For Loki Mode Multi-Agent System
+# For Loki Loop Multi-Agent System
 
 # Model Information
 model:
-  name: "loki-mode"
+  name: "loki-loop"
   version: "2.25.0"
   base_model: "claude-opus-4-5-20251101"
   type: "multi-agent-system"
@@ -54,8 +54,8 @@ results:
 # Submission Information
 submission:
   date: "2026-01-05"
-  author: "Loki Mode Team"
-  repository: "https://github.com/asklokesh/loki-mode"
+  author: "Loki Loop Team"
+  repository: "https://github.com/asklokesh/loki-loop"
   license: "MIT"
 
 # Contact
@@ -65,7 +65,7 @@ contact:
 
 # Notes
 notes: |
-  Loki Mode is a multi-agent system built as a Claude Code skill.
+  Loki Loop is a multi-agent system built as a Claude Code skill.
   It uses a 4-agent pipeline (Architect -> Engineer -> QA -> Reviewer)
   with a RARV (Reason-Act-Reflect-Verify) cycle for self-correction.
 

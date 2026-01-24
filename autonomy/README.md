@@ -1,4 +1,4 @@
-# Loki Mode - Autonomous Runner
+# Loki Loop - Autonomous Runner
 
 Single script that handles everything: prerequisites, setup, Vibe Kanban monitoring, and autonomous execution with auto-resume.
 
@@ -142,7 +142,7 @@ The autonomy runner creates:
 ├── logs/
 │   └── autonomy-*.log     # Execution logs
 ├── state/
-│   └── orchestrator.json  # Loki Mode phase tracking
+│   └── orchestrator.json  # Loki Loop phase tracking
 └── COMPLETED              # Created when done
 ```
 
@@ -177,14 +177,14 @@ npm install -g @anthropic-ai/claude-code
 ```
 
 ### "SKILL.md not found"
-Make sure you're running from the loki-mode directory or have installed the skill:
+Make sure you're running from the loki-loop directory or have installed the skill:
 ```bash
 # Option 1: Run from project directory
-cd /path/to/loki-mode
+cd /path/to/loki-loop
 ./autonomy/run.sh
 
 # Option 2: Install skill globally
-cp -r . ~/.claude/skills/loki-mode/
+cp -r . ~/.claude/skills/loki-loop/
 ```
 
 ### "Max retries exceeded"
