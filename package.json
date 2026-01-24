@@ -1,6 +1,6 @@
 {
   "name": "loki-loop",
-  "version": "4.3.0",
+  "version": "4.3.1",
   "description": "Multi-agent autonomous startup system for Claude Code",
   "keywords": [
     "claude",
@@ -22,7 +22,7 @@
   "license": "MIT",
   "author": "Lokesh",
   "bin": {
-    "loki": "./autonomy/loki",
+    "loki": "./bin/loki-loop.js",
     "loki-loop": "./bin/loki-loop.js"
   },
   "files": [
