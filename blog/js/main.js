@@ -1,5 +1,18 @@
 // Navigation
 document.addEventListener('DOMContentLoaded', () => {
+    // Auto-fetch version from GitHub VERSION file
+    fetch('https://raw.githubusercontent.com/asklokesh/loki-mode/main/VERSION')
+        .then(response => response.text())
+        .then(version => {
+            const versionEl = document.getElementById('app-version');
+            if (versionEl && version.trim()) {
+                versionEl.textContent = 'v' + version.trim();
+            }
+        })
+        .catch(() => {
+            // Silently fail - keep hardcoded version as fallback
+        });
+
     // Configure marked for secure rendering
     marked.setOptions({
         breaks: true,

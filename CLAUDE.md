@@ -135,7 +135,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.1.2
+- Current: v5.1.3
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
 - MINOR bump for new features (v5.1.0 = dynamic tier selection)
 - PATCH bump for fixes (v5.1.2 = npm bin path fix)
