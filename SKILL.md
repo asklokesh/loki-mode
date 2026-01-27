@@ -210,10 +210,22 @@ When running with `autonomy/run.sh`, you can intervene:
 | Method | Effect |
 |--------|--------|
 | `touch .loki/PAUSE` | Pauses after current session |
-| `echo "instructions" > .loki/HUMAN_INPUT.md` | Injects instructions into next prompt |
+| `echo "instructions" > .loki/HUMAN_INPUT.md` | Injects directive into next prompt (executed immediately) |
 | `touch .loki/STOP` | Stops immediately |
 | Ctrl+C (once) | Pauses, shows options |
 | Ctrl+C (twice) | Exits immediately |
+
+### Hints vs Directives
+
+| Type | File | Behavior |
+|------|------|----------|
+| **Hint** | `.loki/CONTINUITY.md` "Mistakes & Learnings" | Passive memory - remembered but not acted upon |
+| **Directive** | `.loki/HUMAN_INPUT.md` | Active instruction - executed BEFORE normal tasks |
+
+**Example directive** (check all .astro files):
+```bash
+echo "Check all .astro files for missing BaseLayout imports. Fix any issues found. Add a compilation test to prevent this regression." > .loki/HUMAN_INPUT.md
+```
 
 ---
 
