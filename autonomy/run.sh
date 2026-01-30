@@ -1865,6 +1865,57 @@ EOF
 }
 
 #===============================================================================
+# Copy Skill Files for Degraded Mode Providers
+#===============================================================================
+
+copy_skill_files_for_degraded_mode() {
+    # For non-Claude providers (Gemini, Codex), skill files must be in the
+    # project's .loki/ directory because these CLIs have workspace restrictions
+    # and cannot read files from the skill installation directory.
+
+    if [ "${PROVIDER_DEGRADED:-false}" != "true" ]; then
+        return 0  # Claude doesn't need this
+    fi
+
+    local skills_src="$PROJECT_DIR/skills"
+    local skills_dst=".loki/skills"
+
+    if [ ! -d "$skills_src" ]; then
+        log_warn "Skills directory not found at $skills_src"
+        return 1
+    fi
+
+    # Create destination and copy skill files
+    mkdir -p "$skills_dst"
+
+    # Copy all skill markdown files
+    local copied=0
+    for skill_file in "$skills_src"/*.md; do
+        if [ -f "$skill_file" ]; then
+            cp "$skill_file" "$skills_dst/"
+            ((copied++))
+        fi
+    done
+
+    # Also copy SKILL.md to .loki/ and rewrite paths for workspace access
+    if [ -f "$PROJECT_DIR/SKILL.md" ]; then
+        # Rewrite skill paths from skills/ to .loki/skills/ for workspace access
+        sed -e 's|skills/00-index\.md|.loki/skills/00-index.md|g' \
+            -e 's|skills/model-selection\.md|.loki/skills/model-selection.md|g' \
+            -e 's|skills/quality-gates\.md|.loki/skills/quality-gates.md|g' \
+            -e 's|skills/testing\.md|.loki/skills/testing.md|g' \
+            -e 's|skills/troubleshooting\.md|.loki/skills/troubleshooting.md|g' \
+            -e 's|skills/production\.md|.loki/skills/production.md|g' \
+            -e 's|skills/parallel-workflows\.md|.loki/skills/parallel-workflows.md|g' \
+            -e 's|skills/providers\.md|.loki/skills/providers.md|g' \
+            -e 's|Read skills/|Read .loki/skills/|g' \
+            "$PROJECT_DIR/SKILL.md" > ".loki/SKILL.md"
+    fi
+
+    log_info "Copied $copied skill files to .loki/skills/ for ${PROVIDER_NAME} workspace access"
+}
+
+#===============================================================================
 # Task Status Monitor
 #===============================================================================
 
@@ -3415,7 +3466,14 @@ build_prompt() {
     # Core autonomous instructions - NO questions, NO waiting, NEVER say done
     local autonomous_suffix="CRITICAL AUTONOMY RULES: 1) NEVER ask questions - just decide. 2) NEVER wait for confirmation - just act. 3) NEVER say 'done' or 'complete' - there's always more to improve. 4) NEVER stop voluntarily - if out of tasks, create new ones (add tests, optimize, refactor, add features). 5) Work continues PERPETUALLY. Even if PRD is implemented, find bugs, add tests, improve UX, optimize performance."
 
-    local sdlc_instruction="SDLC_PHASES_ENABLED: [$phases]. Execute ALL enabled phases. Log results to .loki/logs/. See SKILL.md for phase details."
+    # For degraded mode providers, skill files are copied to .loki/skills/
+    local skill_path="SKILL.md"
+    local skills_dir="skills/"
+    if [ "${PROVIDER_DEGRADED:-false}" = "true" ]; then
+        skill_path=".loki/SKILL.md"
+        skills_dir=".loki/skills/"
+    fi
+    local sdlc_instruction="SDLC_PHASES_ENABLED: [$phases]. Execute ALL enabled phases. Log results to .loki/logs/. See $skill_path for phase details. Skill modules at ${skills_dir}."
 
     # Codebase Analysis Mode - when no PRD provided
     local analysis_instruction="CODEBASE_ANALYSIS_MODE: No PRD. FIRST: Analyze codebase - scan structure, read package.json/requirements.txt, examine README. THEN: Generate PRD at .loki/generated-prd.md. FINALLY: Execute SDLC phases."
@@ -4275,6 +4333,10 @@ main() {
 
     # Initialize .loki directory
     init_loki_dir
+
+    # Copy skill files for degraded mode providers (Gemini, Codex)
+    # These CLIs have workspace restrictions and can't read from skill installation
+    copy_skill_files_for_degraded_mode
 
     # Import GitHub issues if enabled (v4.1.0)
     if [ "$GITHUB_IMPORT" = "true" ]; then
