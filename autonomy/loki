@@ -88,6 +88,7 @@ show_help() {
     echo "Options for 'start':"
     echo "  --provider NAME  AI provider: claude (default), codex, gemini"
     echo "  --parallel       Enable parallel mode with git worktrees"
+    echo "  --bg, --background  Run in background mode"
     echo "  --simple         Force simple complexity tier (3 phases)"
     echo "  --complex        Force complex complexity tier (8 phases)"
     echo "  --github         Enable GitHub issue import"
@@ -96,6 +97,7 @@ show_help() {
     echo "Examples:"
     echo "  loki start                    # Start in current directory"
     echo "  loki start ./prd.md           # Start with PRD file"
+    echo "  loki start --bg               # Start in background"
     echo "  loki start --parallel         # Start in parallel mode"
     echo "  loki pause                    # Pause execution"
     echo "  loki status                   # Check current status"
@@ -129,6 +131,10 @@ cmd_start() {
                 ;;
             --parallel)
                 args+=("--parallel")
+                shift
+                ;;
+            --bg|--background)
+                args+=("--bg")
                 shift
                 ;;
             --simple)

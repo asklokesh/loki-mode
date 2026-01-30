@@ -524,6 +524,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 #===============================================================================
@@ -4203,8 +4204,9 @@ main() {
         [ -n "$LOKI_PROVIDER" ] && cmd_args+=("--provider" "$LOKI_PROVIDER")
         [ "${LOKI_ALLOW_HAIKU:-}" = "true" ] && cmd_args+=("--allow-haiku")
 
-        # Run in background
-        nohup "${BASH_SOURCE[0]}" "${cmd_args[@]}" > "$log_file" 2>&1 &
+        # Run in background using the ORIGINAL script (not the temp copy)
+        local original_script="$SCRIPT_DIR/run.sh"
+        nohup "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 &
         local bg_pid=$!
         echo "$bg_pid" > "$pid_file"
 
