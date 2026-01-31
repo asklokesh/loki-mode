@@ -1,0 +1,253 @@
+#===============================================================================
+# Loki Mode Security-Hardened Sandbox Dockerfile
+# Multi-stage build for minimal attack surface
+#
+# Build:  docker build -t loki-mode:sandbox -f Dockerfile.sandbox .
+# Run:    ./autonomy/sandbox.sh start
+#
+# Security Features:
+#   - Multi-stage build (smaller final image, no build tools)
+#   - Non-root user execution (UID 1000)
+#   - Minimal base image (Debian slim)
+#   - No shell history persistence
+#   - Read-only root filesystem compatible
+#   - Health checks for container orchestration
+#   - Explicit capability requirements documented
+#
+# Note: Alpine was considered but rejected due to:
+#   - musl libc compatibility issues with Node.js native modules
+#   - Claude/Codex/Gemini CLI npm packages may have glibc dependencies
+#   - Debian slim provides good balance of size and compatibility
+#===============================================================================
+
+#-------------------------------------------------------------------------------
+# Stage 1: Builder - Install CLIs and dependencies
+#-------------------------------------------------------------------------------
+FROM debian:bookworm-slim AS builder
+
+# Security: Avoid caching sensitive data in apt lists
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 LTS (required for Claude CLI and npm packages)
+# Security: Use official NodeSource repository with GPG verification
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GitHub CLI
+# Security: Use official GitHub repository with GPG verification
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AI CLIs globally
+# Security: npm install with --ignore-scripts prevents arbitrary code execution during install
+# Note: These are placeholder package names - update when official packages are available
+WORKDIR /opt/cli-install
+
+# Claude CLI (Anthropic official)
+RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
+    echo "Claude CLI not available on npm, will need manual install"
+
+# Codex CLI (OpenAI) - install if available
+RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
+    echo "Codex CLI not available on npm, will need manual install"
+
+# Gemini CLI (Google) - install if available
+RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
+    echo "Gemini CLI not available on npm, will need manual install"
+
+#-------------------------------------------------------------------------------
+# Stage 2: Runtime - Minimal production image
+#-------------------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+LABEL maintainer="Lokesh Mure"
+LABEL version="5.5.1"
+LABEL description="Security-hardened sandbox for Loki Mode multi-agent system"
+LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
+
+# Security: Prevent interactive prompts and reduce image size
+ENV DEBIAN_FRONTEND=noninteractive \
+    # Security: Disable npm update checks (reduces network exposure)
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    # Security: Prevent shell history from persisting
+    HISTFILE=/dev/null \
+    # Runtime: Set proper locale
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    # Loki: Default configuration
+    LOKI_SANDBOX_MODE=true
+
+# Install minimal runtime dependencies
+# Security: --no-install-recommends reduces attack surface
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core utilities
+    bash \
+    ca-certificates \
+    curl \
+    # Version control
+    git \
+    # JSON processing (required by loki scripts)
+    jq \
+    # Python runtime (for some AI CLI dependencies)
+    python3-minimal \
+    # Process management
+    procps \
+    # Network utilities for health checks
+    netcat-openbsd \
+    # Timezone data (for log timestamps)
+    tzdata \
+    # Security: Clean up apt cache
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /var/cache/apt/archives/*
+
+# Copy Node.js and npm from builder
+# Security: Only copy runtime, not build tools
+COPY --from=builder /usr/bin/node /usr/bin/node
+COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
+COPY --from=builder /usr/bin/npm /usr/bin/npm
+COPY --from=builder /usr/bin/npx /usr/bin/npx
+
+# Copy GitHub CLI from builder
+COPY --from=builder /usr/bin/gh /usr/bin/gh
+
+# Copy installed CLI tools from builder (global node_modules)
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Create symlinks for node binaries
+RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm 2>/dev/null || true \
+    && ln -sf /usr/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx 2>/dev/null || true
+
+#-------------------------------------------------------------------------------
+# Security: Create non-root user
+#-------------------------------------------------------------------------------
+# Security: Use specific UID/GID for predictable permissions
+# UID 1000 is commonly mapped to host user for volume mounts
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+RUN groupadd --gid ${USER_GID} loki \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} --shell /bin/bash --create-home loki \
+    # Security: Remove unnecessary SUID binaries
+    && find / -perm /4000 -type f -exec chmod u-s {} \; 2>/dev/null || true \
+    && find / -perm /2000 -type f -exec chmod g-s {} \; 2>/dev/null || true
+
+#-------------------------------------------------------------------------------
+# Install Loki Mode
+#-------------------------------------------------------------------------------
+# Create app directory with proper ownership
+RUN mkdir -p /opt/loki-mode && chown loki:loki /opt/loki-mode
+
+WORKDIR /opt/loki-mode
+
+# Copy Loki Mode files with explicit ownership
+# Security: Copy only necessary files, not entire repo
+COPY --chown=loki:loki SKILL.md VERSION ./
+COPY --chown=loki:loki autonomy/ ./autonomy/
+COPY --chown=loki:loki providers/ ./providers/
+COPY --chown=loki:loki skills/ ./skills/
+COPY --chown=loki:loki references/ ./references/
+
+# Copy docs if they exist (optional)
+COPY --chown=loki:loki docs/ ./docs/ 2>/dev/null || true
+
+# Make scripts executable
+RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh 2>/dev/null || true \
+    && chmod +x providers/*.sh 2>/dev/null || true
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /home/loki/.claude/skills \
+    && mkdir -p /home/loki/.config/gh \
+    && mkdir -p /home/loki/.ssh \
+    && chown -R loki:loki /home/loki
+
+# Set up symlinks for loki user
+RUN ln -sf /opt/loki-mode /home/loki/.claude/skills/loki-mode \
+    && ln -sf /opt/loki-mode/autonomy/loki /usr/local/bin/loki
+
+#-------------------------------------------------------------------------------
+# Configure workspace
+#-------------------------------------------------------------------------------
+# Create workspace directory
+RUN mkdir -p /workspace && chown loki:loki /workspace
+
+# Security: Create .loki directory for state (can be mounted as volume)
+RUN mkdir -p /workspace/.loki && chown loki:loki /workspace/.loki
+
+WORKDIR /workspace
+
+#-------------------------------------------------------------------------------
+# Health check
+#-------------------------------------------------------------------------------
+# Security: Health check runs as container user
+# Checks: loki CLI accessible, workspace writable, node available
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD loki version > /dev/null 2>&1 && \
+        test -w /workspace && \
+        node --version > /dev/null 2>&1 || exit 1
+
+#-------------------------------------------------------------------------------
+# Runtime configuration
+#-------------------------------------------------------------------------------
+# Security: Switch to non-root user
+USER loki
+
+# Expose ports for dashboard and API
+# Security: Ports > 1024 don't require root
+EXPOSE 9898 57374
+
+# Security: Set restrictive umask
+# New files will be created with 644 (files) and 755 (directories)
+RUN echo "umask 022" >> /home/loki/.bashrc
+
+#-------------------------------------------------------------------------------
+# Entrypoint
+#-------------------------------------------------------------------------------
+# Security: Use exec form to avoid shell injection
+# Default command shows help; sandbox.sh overrides with actual command
+ENTRYPOINT ["/opt/loki-mode/autonomy/loki"]
+CMD ["help"]
+
+#===============================================================================
+# Security Notes for Operators:
+#
+# 1. Run with --security-opt=no-new-privileges:true
+#    Prevents privilege escalation via setuid binaries
+#
+# 2. Run with --cap-drop=ALL --cap-add=<needed>
+#    Minimal capabilities: CHOWN, SETUID, SETGID, DAC_OVERRIDE
+#
+# 3. Resource limits (enforced by sandbox.sh):
+#    --cpus=2 --memory=4g --pids-limit=256
+#
+# 4. Network isolation options:
+#    --network=none     (most secure, no network)
+#    --network=bridge   (default, isolated network)
+#    --network=host     (least secure, avoid)
+#
+# 5. Filesystem security:
+#    Mount project as read-only when possible: -v ./project:/workspace:ro
+#    Use named volume for .loki state: -v loki-state:/workspace/.loki:rw
+#
+# 6. API keys should be passed as environment variables, not mounted files:
+#    -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e GOOGLE_API_KEY
+#
+# 7. For production, consider:
+#    - Using seccomp profiles to restrict syscalls
+#    - AppArmor/SELinux profiles for additional isolation
+#    - Running in a VM or dedicated sandbox environment
+#===============================================================================

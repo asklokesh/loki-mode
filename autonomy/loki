@@ -55,6 +55,7 @@ if [ -z "$SKILL_DIR" ]; then
 fi
 
 RUN_SH="$SKILL_DIR/autonomy/run.sh"
+SANDBOX_SH="$SKILL_DIR/autonomy/sandbox.sh"
 LOKI_DIR=".loki"
 
 # Get version from VERSION file
@@ -83,6 +84,7 @@ show_help() {
     echo "  dashboard        Open dashboard in browser"
     echo "  serve            Start HTTP API server (alias for api start)"
     echo "  api [cmd]        HTTP API server (start|stop|status)"
+    echo "  sandbox [cmd]    Docker sandbox (start|stop|status|logs|shell|build)"
     echo "  import           Import GitHub issues as tasks"
     echo "  config [cmd]     Manage configuration (show|init|edit|path)"
     echo "  version          Show version"
@@ -96,6 +98,7 @@ show_help() {
     echo "  --complex        Force complex complexity tier (8 phases)"
     echo "  --github         Enable GitHub issue import"
     echo "  --no-dashboard   Disable web dashboard"
+    echo "  --sandbox        Run in Docker sandbox for isolation"
     echo ""
     echo "Examples:"
     echo "  loki start                    # Start in current directory"
@@ -156,6 +159,10 @@ cmd_start() {
                 export LOKI_DASHBOARD=false
                 shift
                 ;;
+            --sandbox)
+                export LOKI_SANDBOX_MODE=true
+                shift
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 exit 1
@@ -169,6 +176,36 @@ cmd_start() {
 
     if [ -n "$prd_file" ]; then
         args+=("$prd_file")
+    fi
+
+    # Handle sandbox mode - delegate to sandbox.sh
+    if [[ "${LOKI_SANDBOX_MODE:-}" == "true" ]]; then
+        if [ ! -f "$SANDBOX_SH" ]; then
+            echo -e "${RED}Error: sandbox.sh not found at $SANDBOX_SH${NC}"
+            exit 1
+        fi
+
+        # Check Docker availability
+        if ! command -v docker &> /dev/null; then
+            echo -e "${RED}Error: Docker not found${NC}"
+            echo ""
+            echo "Docker is required for sandbox mode. Install it:"
+            echo "  macOS:  brew install --cask docker"
+            echo "  Linux:  curl -fsSL https://get.docker.com | sh"
+            exit 1
+        fi
+
+        if ! docker info &> /dev/null 2>&1; then
+            echo -e "${RED}Error: Docker daemon not running${NC}"
+            echo ""
+            echo "Start Docker:"
+            echo "  macOS:  Open Docker Desktop app"
+            echo "  Linux:  sudo systemctl start docker"
+            exit 1
+        fi
+
+        echo -e "${GREEN}Starting Loki Mode in Docker sandbox...${NC}"
+        exec "$SANDBOX_SH" start "${args[@]}"
     fi
 
     # Show provider info
@@ -625,6 +662,42 @@ cmd_api() {
     esac
 }
 
+# Sandbox management (delegates to sandbox.sh)
+cmd_sandbox() {
+    local subcommand="${1:-help}"
+    shift || true
+
+    if [ ! -f "$SANDBOX_SH" ]; then
+        echo -e "${RED}Error: sandbox.sh not found at $SANDBOX_SH${NC}"
+        echo "Expected at: $SKILL_DIR/autonomy/sandbox.sh"
+        exit 1
+    fi
+
+    # Check Docker availability
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Error: Docker not found${NC}"
+        echo ""
+        echo "Docker is required for sandbox mode. Install it:"
+        echo "  macOS:  brew install --cask docker"
+        echo "  Linux:  curl -fsSL https://get.docker.com | sh"
+        echo ""
+        echo "After installation, start Docker Desktop or the Docker daemon."
+        exit 1
+    fi
+
+    if ! docker info &> /dev/null 2>&1; then
+        echo -e "${RED}Error: Docker daemon not running${NC}"
+        echo ""
+        echo "Start Docker:"
+        echo "  macOS:  Open Docker Desktop app"
+        echo "  Linux:  sudo systemctl start docker"
+        exit 1
+    fi
+
+    # Delegate to sandbox.sh
+    exec "$SANDBOX_SH" "$subcommand" "$@"
+}
+
 # Main command dispatcher
 main() {
     if [ $# -eq 0 ]; then
@@ -662,6 +735,9 @@ main() {
             ;;
         api)
             cmd_api "$@"
+            ;;
+        sandbox)
+            cmd_sandbox "$@"
             ;;
         import)
             cmd_import
