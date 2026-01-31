@@ -33,9 +33,14 @@ const { EventEmitter } = require('events');
 // Configuration
 //=============================================================================
 
-const DEFAULT_PORT = 57375;
+const DEFAULT_PORT = 9898;
 const DEFAULT_HOST = '127.0.0.1';
-const PROJECT_DIR = process.env.LOKI_PROJECT_DIR || path.resolve(__dirname, '..');
+const PROJECT_DIR = process.env.LOKI_PROJECT_DIR || process.cwd();
+
+// Security constants
+const VALID_PROVIDERS = ['claude', 'codex', 'gemini'];
+const MAX_BODY_SIZE = 1024 * 1024; // 1MB limit
+const MAX_LOG_LINES = 1000;
 const LOKI_DIR = path.join(PROJECT_DIR, '.loki');
 
 // Parse CLI args
@@ -103,9 +108,29 @@ class EventBus extends EventEmitter {
   }
 
   startHeartbeat() {
-    setInterval(() => {
+    this.heartbeatInterval = setInterval(() => {
       this.broadcast('heartbeat', { time: Date.now() });
     }, 30000);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  cleanup() {
+    this.stopHeartbeat();
+    // Close all SSE clients
+    for (const client of this.clients) {
+      try {
+        client.end();
+      } catch (e) {
+        // Client may already be closed
+      }
+    }
+    this.clients.clear();
   }
 }
 
@@ -133,6 +158,19 @@ class ProcessManager {
     }
 
     const { prd, provider = 'claude' } = options;
+
+    // Validate provider (security: prevent command injection)
+    if (!VALID_PROVIDERS.includes(provider)) {
+      throw new Error(`Invalid provider: ${provider}. Must be one of: ${VALID_PROVIDERS.join(', ')}`);
+    }
+
+    // Validate PRD path (security: prevent path traversal)
+    if (prd) {
+      const normalizedPrd = path.normalize(prd);
+      if (normalizedPrd.includes('..') || path.isAbsolute(normalizedPrd) && !normalizedPrd.startsWith(PROJECT_DIR)) {
+        throw new Error('Invalid PRD path: path traversal not allowed');
+      }
+    }
     this.prdPath = prd;
     this.provider = provider;
     this.status = 'starting';
@@ -203,6 +241,7 @@ class ProcessManager {
       this.status = 'failed';
       eventBus.broadcast('session:failed', { error: err.message });
       this.process = null;
+      this.stopFileWatcher();
     });
 
     // Start watching .loki/ for state changes
@@ -341,6 +380,17 @@ class ProcessManager {
   }
 
   async injectInput(input) {
+    // Validate input
+    if (typeof input !== 'string' || input.length === 0) {
+      throw new Error('Input must be a non-empty string');
+    }
+    if (input.length > MAX_BODY_SIZE) {
+      throw new Error('Input too large');
+    }
+
+    // Ensure .loki directory exists
+    await fs.promises.mkdir(LOKI_DIR, { recursive: true });
+
     const inputFile = path.join(LOKI_DIR, 'HUMAN_INPUT.md');
     await fs.promises.writeFile(inputFile, input);
     eventBus.broadcast('input:injected', { preview: input.slice(0, 100) });
@@ -371,8 +421,11 @@ async function handleRequest(req, res) {
   const method = req.method;
   const pathname = url.pathname;
 
-  // CORS headers for local development
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS headers - restrict to localhost for security
+  const origin = req.headers.origin || '';
+  const allowedOrigins = ['http://localhost', 'http://127.0.0.1'];
+  const isAllowed = allowedOrigins.some(allowed => origin.startsWith(allowed));
+  res.setHeader('Access-Control-Allow-Origin', isAllowed ? origin : 'http://localhost');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -397,7 +450,7 @@ async function handleRequest(req, res) {
     }
 
     if (method === 'GET' && pathname === '/logs') {
-      const lines = parseInt(url.searchParams.get('lines') || '50', 10);
+      const lines = Math.min(parseInt(url.searchParams.get('lines') || '50', 10), MAX_LOG_LINES);
       return handleLogs(res, lines);
     }
 
@@ -495,7 +548,18 @@ function sendJson(res, status, data) {
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    let size = 0;
+
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      body += chunk;
+    });
+
     req.on('end', () => {
       try {
         resolve(body ? JSON.parse(body) : {});
@@ -503,6 +567,7 @@ function parseBody(req) {
         reject(new Error('Invalid JSON body'));
       }
     });
+
     req.on('error', reject);
   });
 }
@@ -516,6 +581,7 @@ const server = http.createServer(handleRequest);
 // Graceful shutdown
 function shutdown() {
   console.log('\nShutting down...');
+  eventBus.cleanup();
   processManager.stop().then(() => {
     server.close(() => {
       console.log('Server closed');
@@ -527,23 +593,35 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
+// Ensure .loki directories exist
+async function ensureDirectories() {
+  await fs.promises.mkdir(path.join(LOKI_DIR, 'logs'), { recursive: true });
+  await fs.promises.mkdir(path.join(LOKI_DIR, 'queue'), { recursive: true });
+  await fs.promises.mkdir(path.join(LOKI_DIR, 'state'), { recursive: true });
+}
+
 // Start server
-server.listen(PORT, HOST, () => {
-  console.log(`Loki API server running at http://${HOST}:${PORT}`);
-  console.log(`Project directory: ${PROJECT_DIR}`);
-  console.log('');
-  console.log('Endpoints:');
-  console.log('  GET  /health  - Health check');
-  console.log('  GET  /status  - Session status');
-  console.log('  GET  /events  - SSE event stream');
-  console.log('  GET  /logs    - Recent logs');
-  console.log('  POST /start   - Start session');
-  console.log('  POST /stop    - Stop session');
-  console.log('  POST /pause   - Pause session');
-  console.log('  POST /resume  - Resume session');
-  console.log('  POST /input   - Inject human input');
-  console.log('');
-  eventBus.startHeartbeat();
+ensureDirectories().then(() => {
+  server.listen(PORT, HOST, () => {
+    console.log(`Loki API server running at http://${HOST}:${PORT}`);
+    console.log(`Project directory: ${PROJECT_DIR}`);
+    console.log('');
+    console.log('Endpoints:');
+    console.log('  GET  /health  - Health check');
+    console.log('  GET  /status  - Session status');
+    console.log('  GET  /events  - SSE event stream');
+    console.log('  GET  /logs    - Recent logs');
+    console.log('  POST /start   - Start session');
+    console.log('  POST /stop    - Stop session');
+    console.log('  POST /pause   - Pause session');
+    console.log('  POST /resume  - Resume session');
+    console.log('  POST /input   - Inject human input');
+    console.log('');
+    eventBus.startHeartbeat();
+  });
+}).catch(err => {
+  console.error('Failed to initialize:', err);
+  process.exit(1);
 });
 
 module.exports = { server, processManager, eventBus };

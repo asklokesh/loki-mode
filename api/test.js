@@ -34,7 +34,7 @@ const fs = require('fs');
 // Test Configuration
 //=============================================================================
 
-const PORT = 57399; // Use a different port for testing
+const PORT = 19898; // Use a different port for testing (9898 + 10000)
 const HOST = '127.0.0.1';
 const BASE_URL = `http://${HOST}:${PORT}`;
 const SERVER_PATH = path.join(__dirname, 'server.js');
@@ -406,6 +406,36 @@ async function testInvalidJSON() {
 }
 
 //=============================================================================
+// Security Tests
+//=============================================================================
+
+async function testInvalidProvider() {
+  // First ensure clean state
+  await request('POST', '/stop');
+  await sleep(200);
+
+  const res = await request('POST', '/start', { provider: 'malicious; rm -rf /' });
+  if (res.status === 500 && res.data.error && res.data.error.includes('Invalid provider')) {
+    pass('Invalid provider rejected');
+  } else {
+    fail('Invalid provider rejection', `Expected 500 with Invalid provider error, got ${res.status}: ${JSON.stringify(res.data)}`);
+  }
+}
+
+async function testPathTraversal() {
+  // First ensure clean state
+  await request('POST', '/stop');
+  await sleep(200);
+
+  const res = await request('POST', '/start', { prd: '../../../etc/passwd', provider: 'claude' });
+  if (res.status === 500 && res.data.error && res.data.error.includes('path traversal')) {
+    pass('Path traversal attack rejected');
+  } else {
+    fail('Path traversal rejection', `Expected 500 with path traversal error, got ${res.status}: ${JSON.stringify(res.data)}`);
+  }
+}
+
+//=============================================================================
 // Test Runner
 //=============================================================================
 
@@ -434,6 +464,8 @@ async function runTests() {
     await testLogs();
     await test404();
     await testInvalidJSON();
+    await testInvalidProvider();
+    await testPathTraversal();
     await testStartSession();
     await testDuplicateStart();
     await testStopSession();

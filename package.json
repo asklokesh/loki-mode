@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "description": "Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
   "keywords": [
     "claude",
