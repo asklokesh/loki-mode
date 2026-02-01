@@ -4371,8 +4371,10 @@ main() {
         [ "${LOKI_ALLOW_HAIKU:-}" = "true" ] && cmd_args+=("--allow-haiku")
 
         # Run in background using the ORIGINAL script (not the temp copy)
+        # CRITICAL: Unset LOKI_RUNNING_FROM_TEMP so the background process does its own self-copy
+        # Otherwise it would run directly from the original file and the trap would delete it
         local original_script="$SCRIPT_DIR/run.sh"
-        nohup "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 &
+        LOKI_RUNNING_FROM_TEMP= nohup "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 &
         local bg_pid=$!
         echo "$bg_pid" > "$pid_file"
 

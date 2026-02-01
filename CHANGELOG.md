@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.6] - 2026-02-01
+
+### Fixed - Critical: run.sh deletion bug
+
+**Critical fix: Background mode was deleting run.sh from npm installation.**
+
+#### Bug Fix
+- **Root cause**: When starting background mode, `LOKI_RUNNING_FROM_TEMP` was exported to the child process, causing it to skip self-copy and run directly from the original file. The exit trap then deleted the original run.sh instead of the temp copy.
+- **Fix**: Unset `LOKI_RUNNING_FROM_TEMP` before starting the nohup background process
+- **Impact**: `loki status` and `loki stop` would fail with "Could not find Loki Mode installation" after running `loki start --bg`
+
+---
+
 ## [5.8.5] - 2026-02-01
 
 ### Improved - CLI UX

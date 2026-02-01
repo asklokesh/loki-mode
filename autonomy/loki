@@ -75,9 +75,31 @@ find_skill_dir() {
 # Use || true to prevent set -e from exiting before error message
 SKILL_DIR=$(find_skill_dir) || true
 if [ -z "$SKILL_DIR" ]; then
-    echo -e "${RED}Error: Could not find Loki Mode installation${NC}"
-    echo "Expected at: ~/.claude/skills/loki-mode"
-    echo "Or install via: npm install -g loki-mode"
+    # Check if installation exists but is incomplete (missing run.sh)
+    _check_dir1="$HOME/.claude/skills/loki-mode"
+    _check_dir2="$(dirname "$(resolve_script_path "$0")")/.."
+    _incomplete_install=""
+
+    for _dir in "$_check_dir1" "$_check_dir2"; do
+        if [ -f "$_dir/SKILL.md" ] && [ ! -f "$_dir/autonomy/run.sh" ]; then
+            _incomplete_install="$_dir"
+            break
+        fi
+    done
+
+    if [ -n "$_incomplete_install" ]; then
+        echo -e "${RED}Error: Loki Mode installation is incomplete${NC}"
+        echo "Missing: $_incomplete_install/autonomy/run.sh"
+        echo ""
+        echo -e "${YELLOW}Fix with:${NC}"
+        echo "  npm uninstall -g loki-mode && npm install -g loki-mode"
+        echo ""
+        echo "This can happen when npm cache is corrupted."
+    else
+        echo -e "${RED}Error: Could not find Loki Mode installation${NC}"
+        echo "Expected at: ~/.claude/skills/loki-mode"
+        echo "Or install via: npm install -g loki-mode"
+    fi
     exit 1
 fi
 
