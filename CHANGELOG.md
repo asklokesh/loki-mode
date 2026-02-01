@@ -5,6 +5,80 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.0] - 2026-02-01
+
+### Added - VS Code Extension Chat and Logs
+
+**Minor release: Interactive chat and real-time log viewing in VS Code extension.**
+
+#### Chat View
+- **Interactive chat panel**: Chat with AI while Loki Mode runs in the background
+- **Provider selection**: Choose Claude, Codex, or Gemini for chat
+- **Message history**: View conversation history with timestamps
+- **Input injection**: Messages are injected into the running Loki session
+- **Clear history**: Button to clear chat history
+
+#### Logs View
+- **Real-time log viewer**: View session logs with auto-scroll
+- **Log level filtering**: Filter by debug, info, warn, error
+- **Auto-refresh**: Logs update every 2 seconds when running
+- **Log file parsing**: Supports multiple log formats
+- **Refresh and clear**: Manual refresh and clear buttons
+
+#### API Enhancements
+- `POST /chat` - Send chat messages to Loki session
+- `GET /chat/history` - Retrieve chat history
+- `DELETE /chat/history` - Clear chat history
+- Enhanced `/logs` endpoint for VS Code consumption
+
+#### Technical
+- New `ChatViewProvider` webview provider
+- New `LogsViewProvider` webview provider
+- Improved API client integration
+- Enhanced event handling
+
+#### Security Fixes
+- Fixed XSS vulnerability in chat message rendering (escape role and provider)
+- Added input validation for provider selection from webview
+- Fixed chat endpoint to work when prompt injection is disabled
+- Added DELETE to CORS allowed methods for `/chat/history`
+- Added message history limit (100 messages) to prevent memory growth
+- Implemented `Disposable` interface for proper resource cleanup
+
+#### Performance Improvements
+- Changed synchronous `fs.readFileSync` to async `fs.promises.readFile`
+- Fixed race condition in log polling startup
+- Added log level validation and normalization
+- Removed unused fields and dead code
+
+---
+
+## [5.7.3] - 2026-02-01
+
+### Fixed - CLI Works from Any Directory
+
+**Patch release: Fixed loki command to work from any directory.**
+
+#### CLI Fixes
+- **Symlink resolution**: Added `resolve_script_path()` function to follow npm/Homebrew symlinks
+- **Silent failure fix**: Added `|| true` to show error message instead of silent exit
+- **API directory**: Added `api/` to npm package for `loki api` commands
+
+---
+
+## [5.7.2] - 2026-02-01
+
+### Fixed - CI Workflow for VS Code Publish
+
+**Patch release: Fixed VS Code marketplace publishing in CI.**
+
+#### CI Fixes
+- Added `permissions: contents: write` to publish-vscode job
+- Reordered steps: marketplace publish before GitHub upload
+- Ensures extension is published even if upload fails
+
+---
+
 ## [5.7.1] - 2026-02-01
 
 ### Fixed - VS Code Extension UX

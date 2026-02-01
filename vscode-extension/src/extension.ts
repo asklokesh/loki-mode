@@ -3,6 +3,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Config } from './utils/config';
 import { Logger, logger } from './utils/logger';
+import { ChatViewProvider } from './views/chatViewProvider';
+import { LogsViewProvider } from './views/logsViewProvider';
+import { LokiApiClient } from './api/client';
 
 // State tracking
 let isRunning = false;
@@ -150,6 +153,9 @@ class TasksProvider implements vscode.TreeDataProvider<TaskItem> {
 // Tree providers
 let sessionsProvider: SessionsProvider;
 let tasksProvider: TasksProvider;
+let chatViewProvider: ChatViewProvider;
+let logsViewProvider: LogsViewProvider;
+let apiClient: LokiApiClient;
 
 /**
  * Check if the workspace has a .loki directory
@@ -613,9 +619,16 @@ async function openPrd(): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
     logger.info('Activating Loki Mode extension...');
 
+    // Initialize API client
+    apiClient = new LokiApiClient(Config.apiBaseUrl);
+
     // Initialize tree providers
     sessionsProvider = new SessionsProvider();
     tasksProvider = new TasksProvider();
+
+    // Initialize webview providers
+    chatViewProvider = new ChatViewProvider(context.extensionUri, apiClient);
+    logsViewProvider = new LogsViewProvider(context.extensionUri, apiClient);
 
     // Register tree views
     const sessionsView = vscode.window.createTreeView('loki-sessions', {
@@ -627,6 +640,17 @@ export function activate(context: vscode.ExtensionContext): void {
         treeDataProvider: tasksProvider,
         showCollapseAll: false
     });
+
+    // Register webview providers
+    const chatView = vscode.window.registerWebviewViewProvider(
+        ChatViewProvider.viewType,
+        chatViewProvider
+    );
+
+    const logsView = vscode.window.registerWebviewViewProvider(
+        LogsViewProvider.viewType,
+        logsViewProvider
+    );
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -675,6 +699,8 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         sessionsView,
         tasksView,
+        chatView,
+        logsView,
         statusBarItem,
         configListener,
         ...commands
@@ -702,6 +728,15 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
     logger.info('Deactivating Loki Mode extension...');
     stopPolling();
+    if (logsViewProvider) {
+        logsViewProvider.dispose();
+    }
+    if (chatViewProvider) {
+        chatViewProvider.dispose();
+    }
+    if (apiClient) {
+        apiClient.dispose();
+    }
     logger.info('Loki Mode extension deactivated');
     Logger.dispose();
 }

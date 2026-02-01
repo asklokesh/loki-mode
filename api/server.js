@@ -56,6 +56,76 @@ for (let i = 0; i < args.length; i++) {
 }
 
 //=============================================================================
+// Chat System
+//=============================================================================
+
+const chatHistory = [];
+const MAX_CHAT_HISTORY = 100;
+
+async function handleChat(body) {
+  const { message, provider = 'claude' } = body;
+
+  // Add user message to history
+  const userMsg = {
+    id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    role: 'user',
+    content: message,
+    timestamp: new Date().toISOString(),
+    provider
+  };
+  chatHistory.push(userMsg);
+
+  // Trim history if too long
+  while (chatHistory.length > MAX_CHAT_HISTORY) {
+    chatHistory.shift();
+  }
+
+  // If Loki is running, write message directly to HUMAN_INPUT.md
+  // (bypasses prompt injection check since chat is intentional user action)
+  if (processManager.status === 'running') {
+    try {
+      // Validate input
+      if (typeof message !== 'string' || message.length === 0) {
+        return { success: false, error: 'Message must be a non-empty string' };
+      }
+      if (message.length > 1024 * 1024) {
+        return { success: false, error: 'Message too large (max 1MB)' };
+      }
+
+      // Write directly to HUMAN_INPUT.md (chat bypasses security gate)
+      const lokiDir = path.join(process.cwd(), '.loki');
+      await fs.promises.mkdir(lokiDir, { recursive: true });
+      const inputFile = path.join(lokiDir, 'HUMAN_INPUT.md');
+      await fs.promises.writeFile(inputFile, `[Chat] ${message}`);
+      eventBus.broadcast('input:injected', { preview: message.slice(0, 100), source: 'chat' });
+
+      const assistantMsg = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+        role: 'assistant',
+        content: 'Message sent to Loki Mode session. The AI will process it in the current workflow.',
+        timestamp: new Date().toISOString(),
+        provider
+      };
+      chatHistory.push(assistantMsg);
+      return { success: true, response: assistantMsg.content, injected: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // If not running, respond with a helpful message
+  const assistantMsg = {
+    id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    role: 'assistant',
+    content: 'Loki Mode is not currently running. Start a session first with the "Start" button, then your messages will be processed by the AI.',
+    timestamp: new Date().toISOString(),
+    provider
+  };
+  chatHistory.push(assistantMsg);
+  return { success: true, response: assistantMsg.content, injected: false };
+}
+
+//=============================================================================
 // Event Bus (SSE Broadcasting)
 //=============================================================================
 
@@ -436,7 +506,7 @@ async function handleRequest(req, res) {
   const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
   const isAllowed = localhostPattern.test(origin);
   res.setHeader('Access-Control-Allow-Origin', isAllowed ? origin : 'http://localhost');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (method === 'OPTIONS') {
@@ -492,6 +562,27 @@ async function handleRequest(req, res) {
       }
       const result = await processManager.injectInput(body.input);
       return sendJson(res, 200, result);
+    }
+
+    // Chat endpoint - interactive conversation while Loki runs
+    if (method === 'POST' && pathname === '/chat') {
+      const body = await parseBody(req);
+      if (!body.message) {
+        return sendJson(res, 400, { error: 'Missing message field' });
+      }
+      const result = await handleChat(body);
+      return sendJson(res, 200, result);
+    }
+
+    // Get chat history
+    if (method === 'GET' && pathname === '/chat/history') {
+      return sendJson(res, 200, { messages: chatHistory.slice(-50) });
+    }
+
+    // Clear chat history
+    if (method === 'DELETE' && pathname === '/chat/history') {
+      chatHistory.length = 0;
+      return sendJson(res, 200, { success: true });
     }
 
     // 404
