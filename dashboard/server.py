@@ -37,6 +37,9 @@ from .models import (
     TaskPriority,
     TaskStatus,
 )
+from . import registry
+from . import auth
+from . import audit
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -205,6 +208,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static file serving is configured at the end of the file (after all API routes)
 
 
 # Health endpoint
@@ -676,6 +681,338 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+
+
+# =============================================================================
+# Cross-Project Registry API
+# =============================================================================
+
+class RegisteredProjectResponse(BaseModel):
+    """Schema for registered project response."""
+    id: str
+    path: str
+    name: str
+    alias: Optional[str]
+    registered_at: str
+    updated_at: str
+    last_accessed: Optional[str]
+    has_loki_dir: bool
+    status: str
+
+
+class RegisterProjectRequest(BaseModel):
+    """Schema for registering a project."""
+    path: str
+    name: Optional[str] = None
+    alias: Optional[str] = None
+
+
+class DiscoverResponse(BaseModel):
+    """Schema for discovery response."""
+    path: str
+    name: str
+    has_state: bool
+    has_prd: bool
+
+
+class SyncResponse(BaseModel):
+    """Schema for sync response."""
+    added: int
+    updated: int
+    missing: int
+    total: int
+
+
+class HealthResponse(BaseModel):
+    """Schema for project health response."""
+    status: str
+    checks: dict
+
+
+@app.get("/api/registry/projects", response_model=list[RegisteredProjectResponse])
+async def list_registered_projects(include_inactive: bool = False):
+    """List all registered projects."""
+    projects = registry.list_projects(include_inactive=include_inactive)
+    return projects
+
+
+@app.post("/api/registry/projects", response_model=RegisteredProjectResponse, status_code=201)
+async def register_project(request: RegisterProjectRequest):
+    """Register a new project."""
+    try:
+        project = registry.register_project(
+            path=request.path,
+            name=request.name,
+            alias=request.alias,
+        )
+        return project
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/registry/projects/{identifier}", response_model=RegisteredProjectResponse)
+async def get_registered_project(identifier: str):
+    """Get a registered project by ID, path, or alias."""
+    project = registry.get_project(identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+    return project
+
+
+@app.delete("/api/registry/projects/{identifier}", status_code=204)
+async def unregister_project(identifier: str):
+    """Remove a project from the registry."""
+    if not registry.unregister_project(identifier):
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+
+
+@app.get("/api/registry/projects/{identifier}/health", response_model=HealthResponse)
+async def get_project_health(identifier: str):
+    """Check the health of a registered project."""
+    health = registry.check_project_health(identifier)
+    if health["status"] == "not_found":
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+    return health
+
+
+@app.post("/api/registry/projects/{identifier}/access")
+async def update_project_access(identifier: str):
+    """Update the last accessed timestamp for a project."""
+    project = registry.update_last_accessed(identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+    return project
+
+
+@app.get("/api/registry/discover", response_model=list[DiscoverResponse])
+async def discover_projects(max_depth: int = 3):
+    """Discover projects with .loki directories."""
+    discovered = registry.discover_projects(max_depth=max_depth)
+    return discovered
+
+
+@app.post("/api/registry/sync", response_model=SyncResponse)
+async def sync_registry():
+    """Sync the registry with discovered projects."""
+    result = registry.sync_registry_with_discovery()
+    return {
+        "added": result["added"],
+        "updated": result["updated"],
+        "missing": result["missing"],
+        "total": result["total"],
+    }
+
+
+@app.get("/api/registry/tasks")
+async def get_cross_project_tasks(project_ids: Optional[str] = None):
+    """Get tasks from multiple projects for unified view."""
+    ids = project_ids.split(",") if project_ids else None
+    tasks = registry.get_cross_project_tasks(ids)
+    return tasks
+
+
+@app.get("/api/registry/learnings")
+async def get_cross_project_learnings():
+    """Get learnings from the global learnings database."""
+    learnings = registry.get_cross_project_learnings()
+    return learnings
+
+
+# =============================================================================
+# Enterprise Features (Optional - enabled via environment variables)
+# =============================================================================
+
+@app.get("/api/enterprise/status")
+async def get_enterprise_status():
+    """Check which enterprise features are enabled."""
+    return {
+        "auth_enabled": auth.is_enterprise_mode(),
+        "audit_enabled": audit.is_audit_enabled(),
+        "enterprise_mode": auth.is_enterprise_mode() or audit.is_audit_enabled(),
+    }
+
+
+# Token management endpoints (only active when LOKI_ENTERPRISE_AUTH=true)
+class TokenCreateRequest(BaseModel):
+    """Schema for creating a token."""
+    name: str = Field(..., min_length=1, max_length=255, description="Human-readable token name")
+    scopes: Optional[list[str]] = Field(None, description="Permission scopes (default: ['*'] for all)")
+    expires_days: Optional[int] = Field(None, gt=0, description="Days until expiration (must be positive)")
+
+
+class TokenResponse(BaseModel):
+    """Schema for token response."""
+    id: str
+    name: str
+    scopes: list[str]
+    created_at: str
+    expires_at: Optional[str]
+    last_used: Optional[str]
+    revoked: bool
+    token: Optional[str] = None  # Only on creation
+
+
+@app.post("/api/enterprise/tokens", response_model=TokenResponse, status_code=201)
+async def create_token(request: TokenCreateRequest):
+    """
+    Generate a new API token (enterprise only).
+
+    The raw token is only returned once on creation - save it securely.
+    """
+    if not auth.is_enterprise_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Enterprise authentication not enabled. Set LOKI_ENTERPRISE_AUTH=true"
+        )
+
+    try:
+        token_data = auth.generate_token(
+            name=request.name,
+            scopes=request.scopes,
+            expires_days=request.expires_days,
+        )
+
+        # Audit log
+        audit.log_event(
+            action="create",
+            resource_type="token",
+            resource_id=token_data["id"],
+            details={"name": request.name, "scopes": request.scopes},
+        )
+
+        return token_data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/enterprise/tokens", response_model=list[TokenResponse])
+async def list_tokens(include_revoked: bool = False):
+    """List all API tokens (enterprise only)."""
+    if not auth.is_enterprise_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Enterprise authentication not enabled"
+        )
+
+    return auth.list_tokens(include_revoked=include_revoked)
+
+
+@app.delete("/api/enterprise/tokens/{identifier}")
+async def revoke_token(identifier: str, permanent: bool = False):
+    """
+    Revoke or delete a token (enterprise only).
+
+    Args:
+        identifier: Token ID or name
+        permanent: If true, permanently delete instead of revoke
+    """
+    if not auth.is_enterprise_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Enterprise authentication not enabled"
+        )
+
+    if permanent:
+        success = auth.delete_token(identifier)
+        action = "delete"
+    else:
+        success = auth.revoke_token(identifier)
+        action = "revoke"
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    # Audit log
+    audit.log_event(
+        action=action,
+        resource_type="token",
+        resource_id=identifier,
+    )
+
+    return {"status": "ok", "action": action, "identifier": identifier}
+
+
+# Audit log endpoints (only active when LOKI_ENTERPRISE_AUDIT=true)
+class AuditQueryParams(BaseModel):
+    """Query parameters for audit logs."""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    action: Optional[str] = None
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    user_id: Optional[str] = None
+    success: Optional[bool] = None
+    limit: int = 100
+    offset: int = 0
+
+
+@app.get("/api/enterprise/audit")
+async def query_audit_logs(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """
+    Query audit logs (enterprise only).
+
+    Date format: YYYY-MM-DD
+    """
+    if not audit.is_audit_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Enterprise audit logging not enabled. Set LOKI_ENTERPRISE_AUDIT=true"
+        )
+
+    return audit.query_logs(
+        start_date=start_date,
+        end_date=end_date,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/enterprise/audit/summary")
+async def get_audit_summary(days: int = 7):
+    """Get audit activity summary (enterprise only)."""
+    if not audit.is_audit_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Enterprise audit logging not enabled"
+        )
+
+    return audit.get_audit_summary(days=days)
+
+
+# =============================================================================
+# Static File Serving (Production/Docker)
+# =============================================================================
+# Must be configured AFTER all API routes to avoid conflicts
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(STATIC_DIR):
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    # Check if assets directory exists (built frontend)
+    ASSETS_DIR = os.path.join(STATIC_DIR, "assets")
+    if os.path.isdir(ASSETS_DIR):
+        app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+    # Serve index.html for root
+    @app.get("/", include_in_schema=False)
+    async def serve_index():
+        """Serve the frontend SPA."""
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="Frontend not built")
 
 
 def run_server(host: str = None, port: int = None) -> None:

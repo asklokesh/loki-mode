@@ -2096,6 +2096,12 @@ main() {
         memory)
             cmd_memory "$@"
             ;;
+        projects)
+            cmd_projects "$@"
+            ;;
+        enterprise)
+            cmd_enterprise "$@"
+            ;;
         version|--version|-v)
             cmd_version
             ;;
@@ -2564,6 +2570,857 @@ if total_removed > 0:
         *)
             echo -e "${RED}Unknown memory command: $subcommand${NC}"
             echo "Run 'loki memory help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+# Cross-project registry management
+cmd_projects() {
+    local subcommand="${1:-list}"
+    local registry_dir="${HOME}/.loki/dashboard"
+    local registry_file="${registry_dir}/projects.json"
+
+    # Ensure directory exists
+    mkdir -p "$registry_dir"
+
+    # Initialize empty registry if needed
+    if [ ! -f "$registry_file" ]; then
+        echo '{"version":"1.0","projects":{}}' > "$registry_file"
+    fi
+
+    case "$subcommand" in
+        list|ls)
+            echo -e "${BOLD}Registered Projects${NC}"
+            echo ""
+
+            python3 -c "
+import json
+import os
+from datetime import datetime
+
+registry_file = '$registry_file'
+if os.path.exists(registry_file):
+    with open(registry_file, 'r') as f:
+        data = json.load(f)
+        projects = data.get('projects', {})
+        if not projects:
+            print('  (no projects registered)')
+            print('')
+            print('Use \"loki projects add <path>\" to register a project')
+        else:
+            # Sort by last accessed
+            sorted_projects = sorted(
+                projects.values(),
+                key=lambda p: p.get('last_accessed') or p.get('registered_at', ''),
+                reverse=True
+            )
+            for p in sorted_projects:
+                status_icon = '[OK]' if os.path.isdir(p['path']) else '[MISSING]'
+                alias = f\" ({p['alias']})\" if p.get('alias') else ''
+                print(f\"  {status_icon} {p['name']}{alias}\")
+                print(f\"      Path: {p['path']}\")
+                if p.get('last_accessed'):
+                    print(f\"      Last accessed: {p['last_accessed'][:10]}\")
+                print()
+else:
+    print('  (no projects registered)')
+" 2>/dev/null
+            ;;
+
+        add)
+            local path="${2:-$(pwd)}"
+            local name=""
+            local alias=""
+            shift 2 2>/dev/null || shift 1 2>/dev/null || true
+
+            # Parse optional args
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --name|-n)
+                        name="${2:-}"
+                        shift 2
+                        ;;
+                    --alias|-a)
+                        alias="${2:-}"
+                        shift 2
+                        ;;
+                    *)
+                        shift
+                        ;;
+                esac
+            done
+
+            # Resolve path
+            path=$(cd "$path" 2>/dev/null && pwd || echo "$path")
+
+            if [ ! -d "$path" ]; then
+                echo -e "${RED}Error: Path does not exist: $path${NC}"
+                exit 1
+            fi
+
+            python3 -c "
+import json
+import os
+import hashlib
+from datetime import datetime, timezone
+
+registry_file = '$registry_file'
+path = '$path'
+name = '$name' or os.path.basename(path)
+alias = '$alias' or None
+
+# Generate project ID
+project_id = hashlib.md5(path.encode()).hexdigest()[:12]
+
+# Load registry
+with open(registry_file, 'r') as f:
+    data = json.load(f)
+
+projects = data.get('projects', {})
+now = datetime.now(timezone.utc).isoformat()
+
+if project_id in projects:
+    # Update existing
+    projects[project_id]['name'] = name
+    if alias:
+        projects[project_id]['alias'] = alias
+    projects[project_id]['updated_at'] = now
+    print(f'Updated: {name}')
+else:
+    # Add new
+    projects[project_id] = {
+        'id': project_id,
+        'path': path,
+        'name': name,
+        'alias': alias,
+        'registered_at': now,
+        'updated_at': now,
+        'last_accessed': None,
+        'has_loki_dir': os.path.isdir(os.path.join(path, '.loki')),
+        'status': 'active',
+    }
+    print(f'Registered: {name}')
+
+data['projects'] = projects
+with open(registry_file, 'w') as f:
+    json.dump(data, f, indent=2)
+
+print(f'  Path: {path}')
+if alias:
+    print(f'  Alias: {alias}')
+" 2>/dev/null
+            ;;
+
+        remove|rm)
+            local identifier="${2:-}"
+
+            if [ -z "$identifier" ]; then
+                echo -e "${RED}Error: Specify project ID, path, or alias${NC}"
+                exit 1
+            fi
+
+            python3 -c "
+import json
+import os
+
+registry_file = '$registry_file'
+identifier = '$identifier'
+
+with open(registry_file, 'r') as f:
+    data = json.load(f)
+
+projects = data.get('projects', {})
+found_id = None
+
+for pid, project in projects.items():
+    if pid == identifier or project['path'] == identifier or project.get('alias') == identifier:
+        found_id = pid
+        break
+
+if found_id:
+    name = projects[found_id]['name']
+    del projects[found_id]
+    data['projects'] = projects
+    with open(registry_file, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f'Removed: {name}')
+else:
+    print(f'Not found: {identifier}')
+    exit(1)
+" 2>/dev/null
+            ;;
+
+        discover)
+            echo -e "${BOLD}Discovering Projects${NC}"
+            echo ""
+
+            python3 -c "
+import os
+from pathlib import Path
+
+home = Path.home()
+search_paths = [
+    home / 'git',
+    home / 'projects',
+    home / 'code',
+    home / 'dev',
+    home / 'workspace',
+    home / 'src',
+]
+
+discovered = []
+
+def search_dir(path, depth=0, max_depth=3):
+    if depth > max_depth:
+        return
+    try:
+        if not path.is_dir():
+            return
+        loki_dir = path / '.loki'
+        if loki_dir.is_dir():
+            discovered.append({
+                'path': str(path),
+                'name': path.name,
+                'has_state': (loki_dir / 'state' / 'session.json').exists(),
+            })
+            return
+        for child in path.iterdir():
+            if child.is_dir() and not child.name.startswith('.'):
+                search_dir(child, depth + 1, max_depth)
+    except (PermissionError, OSError):
+        pass
+
+for search_path in search_paths:
+    if search_path.exists():
+        search_dir(search_path)
+
+if not discovered:
+    print('  No projects with .loki directories found')
+else:
+    print(f'  Found {len(discovered)} project(s):')
+    print('')
+    for p in discovered:
+        status = '[active]' if p['has_state'] else '[idle]'
+        print(f\"  {status} {p['name']}\")
+        print(f\"      {p['path']}\")
+        print()
+    print('Use \"loki projects sync\" to register all discovered projects')
+" 2>/dev/null
+            ;;
+
+        sync)
+            echo -e "${BOLD}Syncing Project Registry${NC}"
+            echo ""
+
+            python3 -c "
+import json
+import os
+import hashlib
+from pathlib import Path
+from datetime import datetime, timezone
+
+registry_file = '$registry_file'
+home = Path.home()
+
+# Load registry
+with open(registry_file, 'r') as f:
+    data = json.load(f)
+projects = data.get('projects', {})
+
+# Discover projects
+search_paths = [
+    home / 'git',
+    home / 'projects',
+    home / 'code',
+    home / 'dev',
+    home / 'workspace',
+    home / 'src',
+]
+
+discovered = []
+
+def search_dir(path, depth=0, max_depth=3):
+    if depth > max_depth:
+        return
+    try:
+        if not path.is_dir():
+            return
+        loki_dir = path / '.loki'
+        if loki_dir.is_dir():
+            discovered.append(str(path))
+            return
+        for child in path.iterdir():
+            if child.is_dir() and not child.name.startswith('.'):
+                search_dir(child, depth + 1, max_depth)
+    except (PermissionError, OSError):
+        pass
+
+for search_path in search_paths:
+    if search_path.exists():
+        search_dir(search_path)
+
+# Add new projects
+added = 0
+now = datetime.now(timezone.utc).isoformat()
+
+for path in discovered:
+    project_id = hashlib.md5(path.encode()).hexdigest()[:12]
+    if project_id not in projects:
+        projects[project_id] = {
+            'id': project_id,
+            'path': path,
+            'name': os.path.basename(path),
+            'alias': None,
+            'registered_at': now,
+            'updated_at': now,
+            'last_accessed': None,
+            'has_loki_dir': True,
+            'status': 'active',
+        }
+        added += 1
+        print(f'  Added: {os.path.basename(path)}')
+
+# Check for missing
+missing = 0
+for pid, project in list(projects.items()):
+    if not os.path.isdir(project['path']):
+        project['status'] = 'missing'
+        missing += 1
+
+data['projects'] = projects
+with open(registry_file, 'w') as f:
+    json.dump(data, f, indent=2)
+
+print('')
+print(f'Added: {added}, Missing: {missing}, Total: {len(projects)}')
+" 2>/dev/null
+            ;;
+
+        health)
+            local identifier="${2:-$(pwd)}"
+
+            python3 -c "
+import json
+import os
+
+registry_file = '$registry_file'
+identifier = '$identifier'
+
+# If it's a path, resolve it
+if os.path.isdir(identifier):
+    identifier = os.path.abspath(identifier)
+
+with open(registry_file, 'r') as f:
+    data = json.load(f)
+
+projects = data.get('projects', {})
+project = None
+
+for p in projects.values():
+    if p['id'] == identifier or p['path'] == identifier or p.get('alias') == identifier:
+        project = p
+        break
+
+if not project:
+    print(f'Project not found: {identifier}')
+    exit(1)
+
+path = project['path']
+checks = {
+    'Path exists': os.path.isdir(path),
+    '.loki dir exists': os.path.isdir(os.path.join(path, '.loki')),
+    'Session state': os.path.isfile(os.path.join(path, '.loki', 'state', 'session.json')),
+    'PRD exists': any(
+        os.path.isfile(os.path.join(path, f))
+        for f in ['PRD.md', 'prd.md', 'docs/PRD.md', 'docs/prd.md']
+    ),
+}
+
+print(f\"Project: {project['name']}\")
+print(f\"Path: {path}\")
+print('')
+print('Health Checks:')
+for check, passed in checks.items():
+    icon = '[OK]' if passed else '[FAIL]'
+    print(f'  {icon} {check}')
+" 2>/dev/null
+            ;;
+
+        --help|-h|help)
+            echo -e "${BOLD}loki projects${NC} - Manage cross-project registry"
+            echo ""
+            echo "Usage: loki projects <command> [args]"
+            echo ""
+            echo "Commands:"
+            echo "  list              List all registered projects"
+            echo "  add <path>        Register a project"
+            echo "  remove <id>       Remove a project from registry"
+            echo "  discover          Find projects with .loki directories"
+            echo "  sync              Auto-discover and register projects"
+            echo "  health <id>       Check project health status"
+            echo ""
+            echo "Options for 'add':"
+            echo "  --name, -n        Display name for the project"
+            echo "  --alias, -a       Short alias for quick access"
+            echo ""
+            echo "Examples:"
+            echo "  loki projects list"
+            echo "  loki projects add . --alias myapp"
+            echo "  loki projects add ~/git/project --name 'My Project'"
+            echo "  loki projects discover"
+            echo "  loki projects sync"
+            echo "  loki projects health myapp"
+            ;;
+
+        *)
+            echo -e "${RED}Unknown projects command: $subcommand${NC}"
+            echo "Run 'loki projects help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+# Enterprise features (optional - requires env vars)
+cmd_enterprise() {
+    local subcommand="${1:-status}"
+    local token_dir="${HOME}/.loki/dashboard"
+    local token_file="${token_dir}/tokens.json"
+
+    # Ensure directory exists
+    mkdir -p "$token_dir"
+
+    # Initialize empty tokens if needed
+    if [ ! -f "$token_file" ]; then
+        echo '{"version":"1.0","tokens":{}}' > "$token_file"
+        chmod 600 "$token_file"
+    fi
+
+    case "$subcommand" in
+        status)
+            echo -e "${BOLD}Enterprise Features Status${NC}"
+            echo ""
+
+            local auth_enabled="${LOKI_ENTERPRISE_AUTH:-false}"
+            local audit_enabled="${LOKI_ENTERPRISE_AUDIT:-false}"
+
+            if [ "$auth_enabled" = "true" ] || [ "$auth_enabled" = "1" ]; then
+                echo -e "  Authentication: ${GREEN}Enabled${NC}"
+            else
+                echo -e "  Authentication: ${DIM}Disabled${NC}"
+            fi
+
+            if [ "$audit_enabled" = "true" ] || [ "$audit_enabled" = "1" ]; then
+                echo -e "  Audit Logging:  ${GREEN}Enabled${NC}"
+            else
+                echo -e "  Audit Logging:  ${DIM}Disabled${NC}"
+            fi
+
+            echo ""
+            echo "Enable with environment variables:"
+            echo "  export LOKI_ENTERPRISE_AUTH=true"
+            echo "  export LOKI_ENTERPRISE_AUDIT=true"
+            ;;
+
+        token)
+            local token_cmd="${2:-list}"
+            shift 2 2>/dev/null || shift 1 2>/dev/null || true
+
+            case "$token_cmd" in
+                generate|create|new)
+                    local name="${1:-}"
+                    local scopes=""
+                    local expires=""
+
+                    if [ -z "$name" ]; then
+                        echo -e "${RED}Error: Token name required${NC}"
+                        echo "Usage: loki enterprise token generate <name> [--scopes '*'] [--expires 30]"
+                        exit 1
+                    fi
+
+                    # Validate name is not a flag
+                    if [[ "$name" == -* ]]; then
+                        echo -e "${RED}Error: Token name cannot start with '-'${NC}"
+                        echo "Usage: loki enterprise token generate <name> [--scopes '*'] [--expires 30]"
+                        exit 1
+                    fi
+
+                    # Warn if enterprise auth is not enabled
+                    local auth_enabled="${LOKI_ENTERPRISE_AUTH:-false}"
+                    if [ "$auth_enabled" != "true" ] && [ "$auth_enabled" != "1" ]; then
+                        echo -e "${YELLOW}Warning: LOKI_ENTERPRISE_AUTH is not enabled${NC}"
+                        echo "Tokens can be generated but won't work for API authentication."
+                        echo "Enable with: export LOKI_ENTERPRISE_AUTH=true"
+                        echo ""
+                    fi
+
+                    shift
+
+                    while [[ $# -gt 0 ]]; do
+                        case "$1" in
+                            --scopes|-s)
+                                scopes="${2:-}"
+                                shift 2
+                                ;;
+                            --expires|-e)
+                                expires="${2:-}"
+                                shift 2
+                                ;;
+                            *)
+                                shift
+                                ;;
+                        esac
+                    done
+
+                    python3 -c "
+import json
+import secrets
+import hashlib
+from datetime import datetime, timezone, timedelta
+import os
+
+token_file = '$token_file'
+name = '$name'
+scopes_str = '$scopes'
+expires_str = '$expires'
+
+# Parse scopes
+scopes = scopes_str.split(',') if scopes_str else ['*']
+
+# Parse expiration
+expires_at = None
+if expires_str:
+    days = int(expires_str)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+# Generate token
+raw_token = f'loki_{secrets.token_urlsafe(32)}'
+token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+token_id = token_hash[:12]
+
+# Load tokens
+with open(token_file, 'r') as f:
+    data = json.load(f)
+
+tokens = data.get('tokens', {})
+
+# Check duplicate name
+for existing in tokens.values():
+    if existing.get('name') == name:
+        print(f'Error: Token with name \"{name}\" already exists')
+        exit(1)
+
+# Create token entry
+tokens[token_id] = {
+    'id': token_id,
+    'name': name,
+    'hash': token_hash,
+    'scopes': scopes,
+    'created_at': datetime.now(timezone.utc).isoformat(),
+    'expires_at': expires_at,
+    'last_used': None,
+    'revoked': False,
+}
+
+data['tokens'] = tokens
+with open(token_file, 'w') as f:
+    json.dump(data, f, indent=2)
+
+# Set restrictive permissions
+os.chmod(token_file, 0o600)
+
+print(f'Token created: {name}')
+print(f'ID: {token_id}')
+print(f'Scopes: {scopes}')
+if expires_at:
+    print(f'Expires: {expires_at[:10]}')
+print('')
+print('Token (save this - shown only once):')
+print(f'  {raw_token}')
+" 2>/dev/null
+                    ;;
+
+                list|ls)
+                    local include_revoked="false"
+                    if [ "${1:-}" = "--all" ] || [ "${1:-}" = "--include-revoked" ]; then
+                        include_revoked="true"
+                    fi
+
+                    echo -e "${BOLD}API Tokens${NC}"
+                    if [ "$include_revoked" = "true" ]; then
+                        echo -e "${DIM}(including revoked)${NC}"
+                    fi
+                    echo ""
+
+                    python3 -c "
+import json
+import os
+
+token_file = '$token_file'
+include_revoked = '$include_revoked' == 'true'
+
+with open(token_file, 'r') as f:
+    data = json.load(f)
+
+tokens = data.get('tokens', {})
+if include_revoked:
+    token_list = list(tokens.values())
+else:
+    token_list = [t for t in tokens.values() if not t.get('revoked')]
+
+if not token_list:
+    print('  (no tokens)')
+    if not include_revoked:
+        print('')
+        print('  Use --all to include revoked tokens')
+else:
+    for t in token_list:
+        if t.get('revoked'):
+            status = '[REVOKED]'
+        elif t.get('expires_at'):
+            from datetime import datetime, timezone
+            expires = datetime.fromisoformat(t['expires_at'])
+            if datetime.now(timezone.utc) > expires:
+                status = '[EXPIRED]'
+            else:
+                status = '[OK]'
+        else:
+            status = '[OK]'
+        print(f\"  {status} {t['name']} ({t['id']})\")
+        print(f\"      Scopes: {', '.join(t['scopes'])}\")
+        if t.get('created_at'):
+            print(f\"      Created: {t['created_at'][:10]}\")
+        if t.get('expires_at'):
+            print(f\"      Expires: {t['expires_at'][:10]}\")
+        if t.get('last_used'):
+            print(f\"      Last used: {t['last_used'][:10]}\")
+        print()
+" 2>/dev/null
+                    ;;
+
+                revoke)
+                    local identifier="${1:-}"
+
+                    if [ -z "$identifier" ]; then
+                        echo -e "${RED}Error: Token ID or name required${NC}"
+                        exit 1
+                    fi
+
+                    python3 -c "
+import json
+from datetime import datetime, timezone
+
+token_file = '$token_file'
+identifier = '$identifier'
+
+with open(token_file, 'r') as f:
+    data = json.load(f)
+
+tokens = data.get('tokens', {})
+found_id = None
+
+for tid, token in tokens.items():
+    if tid == identifier or token.get('name') == identifier:
+        found_id = tid
+        break
+
+if found_id:
+    tokens[found_id]['revoked'] = True
+    tokens[found_id]['revoked_at'] = datetime.now(timezone.utc).isoformat()
+    data['tokens'] = tokens
+    with open(token_file, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f'Revoked: {tokens[found_id][\"name\"]}')
+else:
+    print(f'Token not found: {identifier}')
+    exit(1)
+" 2>/dev/null
+                    ;;
+
+                delete)
+                    local identifier="${1:-}"
+
+                    if [ -z "$identifier" ]; then
+                        echo -e "${RED}Error: Token ID or name required${NC}"
+                        exit 1
+                    fi
+
+                    python3 -c "
+import json
+
+token_file = '$token_file'
+identifier = '$identifier'
+
+with open(token_file, 'r') as f:
+    data = json.load(f)
+
+tokens = data.get('tokens', {})
+found_id = None
+found_name = None
+
+for tid, token in tokens.items():
+    if tid == identifier or token.get('name') == identifier:
+        found_id = tid
+        found_name = token.get('name')
+        break
+
+if found_id:
+    del tokens[found_id]
+    data['tokens'] = tokens
+    with open(token_file, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f'Deleted: {found_name}')
+else:
+    print(f'Token not found: {identifier}')
+    exit(1)
+" 2>/dev/null
+                    ;;
+
+                *)
+                    echo -e "${RED}Unknown token command: $token_cmd${NC}"
+                    echo ""
+                    echo "Usage: loki enterprise token <command>"
+                    echo ""
+                    echo "Commands:"
+                    echo "  generate <name>   Create a new API token"
+                    echo "  list              List all active tokens"
+                    echo "  revoke <id>       Revoke a token (keeps record)"
+                    echo "  delete <id>       Permanently delete a token"
+                    echo ""
+                    echo "Options for 'generate':"
+                    echo "  --scopes, -s      Comma-separated scopes (default: *)"
+                    echo "  --expires, -e     Days until expiration (default: never)"
+                    exit 1
+                    ;;
+            esac
+            ;;
+
+        audit)
+            local audit_cmd="${2:-summary}"
+
+            if [ "${LOKI_ENTERPRISE_AUDIT:-}" != "true" ] && [ "${LOKI_ENTERPRISE_AUDIT:-}" != "1" ]; then
+                echo -e "${YELLOW}Audit logging is not enabled${NC}"
+                echo "Enable with: export LOKI_ENTERPRISE_AUDIT=true"
+                exit 1
+            fi
+
+            local audit_dir="${HOME}/.loki/dashboard/audit"
+
+            case "$audit_cmd" in
+                summary)
+                    echo -e "${BOLD}Audit Summary (Last 7 Days)${NC}"
+                    echo ""
+
+                    if [ ! -d "$audit_dir" ]; then
+                        echo "  No audit logs found"
+                        exit 0
+                    fi
+
+                    python3 -c "
+import json
+import os
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
+audit_dir = Path('$audit_dir')
+days = 7
+start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+
+entries = []
+for log_file in sorted(audit_dir.glob('audit-*.jsonl')):
+    if log_file.stem >= f'audit-{start_date}':
+        try:
+            with open(log_file, 'r') as f:
+                for line in f:
+                    try:
+                        entries.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        pass
+        except IOError:
+            pass
+
+total = len(entries)
+success = sum(1 for e in entries if e.get('success', True))
+failed = total - success
+
+print(f'Total events: {total}')
+print(f'Successful: {success}')
+print(f'Failed: {failed}')
+print('')
+
+if failed > 0:
+    print('Recent failures:')
+    failures = [e for e in entries if not e.get('success', True)][-5:]
+    for f in failures:
+        print(f\"  {f.get('timestamp', '')[:19]} {f.get('action')} {f.get('resource_type')}: {f.get('error', 'unknown')}\")
+" 2>/dev/null
+                    ;;
+
+                tail)
+                    echo -e "${BOLD}Recent Audit Events${NC}"
+                    echo ""
+
+                    if [ ! -d "$audit_dir" ]; then
+                        echo "  No audit logs found"
+                        exit 0
+                    fi
+
+                    # Get most recent log file and show last 20 entries
+                    local latest_log
+                    latest_log=$(ls -t "$audit_dir"/audit-*.jsonl 2>/dev/null | head -1)
+
+                    if [ -z "$latest_log" ]; then
+                        echo "  No audit logs found"
+                        exit 0
+                    fi
+
+                    tail -20 "$latest_log" | python3 -c "
+import json
+import sys
+
+for line in sys.stdin:
+    try:
+        e = json.loads(line.strip())
+        status = 'OK' if e.get('success', True) else 'FAIL'
+        print(f\"[{status}] {e.get('timestamp', '')[:19]} {e.get('action')} {e.get('resource_type')} {e.get('resource_id', '')}\")
+    except:
+        pass
+" 2>/dev/null
+                    ;;
+
+                *)
+                    echo -e "${RED}Unknown audit command: $audit_cmd${NC}"
+                    echo ""
+                    echo "Usage: loki enterprise audit <command>"
+                    echo ""
+                    echo "Commands:"
+                    echo "  summary           Show audit summary (last 7 days)"
+                    echo "  tail              Show recent audit events"
+                    exit 1
+                    ;;
+            esac
+            ;;
+
+        --help|-h|help)
+            echo -e "${BOLD}loki enterprise${NC} - Enterprise features (optional)"
+            echo ""
+            echo "Usage: loki enterprise <command>"
+            echo ""
+            echo "Commands:"
+            echo "  status            Show which enterprise features are enabled"
+            echo "  token <cmd>       Manage API tokens (requires LOKI_ENTERPRISE_AUTH=true)"
+            echo "  audit <cmd>       Query audit logs (requires LOKI_ENTERPRISE_AUDIT=true)"
+            echo ""
+            echo "Enable enterprise features:"
+            echo "  export LOKI_ENTERPRISE_AUTH=true    # Token authentication"
+            echo "  export LOKI_ENTERPRISE_AUDIT=true   # Audit logging"
+            echo ""
+            echo "These features are optional and NOT required for community use."
+            ;;
+
+        *)
+            echo -e "${RED}Unknown enterprise command: $subcommand${NC}"
+            echo "Run 'loki enterprise help' for usage."
             exit 1
             ;;
     esac

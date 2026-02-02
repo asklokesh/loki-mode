@@ -1,0 +1,57 @@
+# Docker build exclusions for Loki Dashboard
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node (frontend handled in build stage)
+frontend/node_modules
+frontend/.next
+frontend/.nuxt
+frontend/dist
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Local data (mounted as volume)
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentation (not needed in container)
+*.md
+!requirements.txt
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore

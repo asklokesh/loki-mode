@@ -1,0 +1,47 @@
+# Loki Mode Dashboard - Docker Compose
+#
+# Usage:
+#   cd dashboard
+#   docker compose up -d
+#
+# Enterprise mode:
+#   LOKI_ENTERPRISE_AUTH=true LOKI_ENTERPRISE_AUDIT=true docker compose up -d
+#
+# View logs:
+#   docker compose logs -f
+#
+# Stop:
+#   docker compose down
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: loki-dashboard:latest
+    container_name: loki-dashboard
+    ports:
+      - "${LOKI_DASHBOARD_PORT:-8420}:8420"
+    environment:
+      - LOKI_DASHBOARD_HOST=0.0.0.0
+      - LOKI_DASHBOARD_PORT=8420
+      - LOKI_ENTERPRISE_AUTH=${LOKI_ENTERPRISE_AUTH:-false}
+      - LOKI_ENTERPRISE_AUDIT=${LOKI_ENTERPRISE_AUDIT:-false}
+      - LOKI_AUDIT_MAX_SIZE_MB=${LOKI_AUDIT_MAX_SIZE_MB:-10}
+      - LOKI_AUDIT_MAX_FILES=${LOKI_AUDIT_MAX_FILES:-10}
+    volumes:
+      # Persist data directory
+      - loki-data:/home/appuser/.loki
+      # Optional: Mount host .loki directory for shared access
+      # - ~/.loki:/home/appuser/.loki
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8420/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  loki-data:
+    driver: local
