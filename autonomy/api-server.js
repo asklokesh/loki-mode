@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Loki Mode HTTP API Server (v1.1.0)
+ * Loki Mode HTTP API Server (v1.2.0)
  * Zero npm dependencies - uses only Node.js built-ins
  *
  * Usage:
  *   node autonomy/api-server.js [--port 9898]
+ *   LOKI_API_PORT=9898 node autonomy/api-server.js
  *   loki api start
  *
  * Endpoints:
@@ -28,8 +29,31 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 
+// Parse command line arguments
+function parseArgs() {
+    const args = process.argv.slice(2);
+    let port = null;
+
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--port' || args[i] === '-p') {
+            port = parseInt(args[i + 1]);
+            i++; // Skip the value
+        } else if (args[i].startsWith('--port=')) {
+            port = parseInt(args[i].split('=')[1]);
+        } else if (/^\d+$/.test(args[i])) {
+            // Bare number as port (backwards compatible)
+            port = parseInt(args[i]);
+        }
+    }
+
+    return { port };
+}
+
+const cliArgs = parseArgs();
+
 // Configuration
-const PORT = parseInt(process.env.LOKI_API_PORT || process.argv[3] || '9898');
+const PORT = cliArgs.port || parseInt(process.env.LOKI_API_PORT || '9898');
+const MAX_BODY_SIZE = parseInt(process.env.LOKI_API_MAX_BODY || '1048576'); // 1MB default
 const LOKI_DIR = process.env.LOKI_DIR || path.join(process.cwd(), '.loki');
 const STATE_DIR = path.join(LOKI_DIR, 'state');
 const LOG_DIR = path.join(LOKI_DIR, 'logs');
@@ -163,11 +187,22 @@ function broadcast(event, data) {
     }
 }
 
-// Parse JSON body
+// Parse JSON body with size limit
 function parseBody(req) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         let body = '';
-        req.on('data', chunk => body += chunk);
+        let size = 0;
+
+        req.on('data', chunk => {
+            size += chunk.length;
+            if (size > MAX_BODY_SIZE) {
+                req.destroy();
+                reject(new Error('Request body too large'));
+                return;
+            }
+            body += chunk;
+        });
+
         req.on('end', () => {
             try {
                 resolve(body ? JSON.parse(body) : {});
@@ -175,6 +210,8 @@ function parseBody(req) {
                 resolve({});
             }
         });
+
+        req.on('error', () => resolve({}));
     });
 }
 
@@ -186,8 +223,8 @@ async function handleRequest(req, res) {
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (method === 'OPTIONS') {
         res.writeHead(204);
@@ -232,10 +269,16 @@ async function handleRequest(req, res) {
             }
         }, 2000);
 
-        req.on('close', () => {
+        // Clean up on close, error, or finish
+        const cleanup = () => {
             clearInterval(interval);
             sseClients.delete(res);
-        });
+        };
+
+        req.on('close', cleanup);
+        req.on('error', cleanup);
+        res.on('error', cleanup);
+        res.on('finish', cleanup);
         return;
     }
 
@@ -254,7 +297,12 @@ async function handleRequest(req, res) {
     }
 
     if (method === 'POST' && pathname === '/start') {
-        const body = await parseBody(req);
+        let body;
+        try {
+            body = await parseBody(req);
+        } catch (err) {
+            return json({ error: err.message }, 413);
+        }
         const prd = body.prd || '';
         const provider = body.provider || 'claude';
         const parallel = body.parallel || false;
