@@ -127,6 +127,39 @@ Prompt: "Review the following claims for factual accuracy.
         Flag anything that cannot be verified."
 ```
 
+### Test and Resource Cleanup (CRITICAL)
+
+**Always clean up before completing any task:**
+
+1. **Kill test processes** - No orphaned processes should remain
+   ```bash
+   pkill -f "loki-run-" 2>/dev/null || true
+   pkill -f "test-" 2>/dev/null || true
+   ```
+
+2. **Remove temp files** - Clean /tmp of any test artifacts
+   ```bash
+   rm -rf /tmp/loki-* /tmp/package /tmp/*.tgz 2>/dev/null || true
+   ```
+
+3. **Clean test directories** - Remove any test data created during testing
+   ```bash
+   rm -rf /tmp/test-* /tmp/*-test 2>/dev/null || true
+   ```
+
+4. **Verify cleanup** - Confirm no resources remain
+   ```bash
+   ps -ef | grep -E "(loki|test)" | grep -v grep || echo "Clean"
+   ls /tmp/loki-* /tmp/test-* 2>&1 | grep -v "No such file" || echo "Clean"
+   ```
+
+**This applies to:**
+- Unit tests and integration tests
+- npm pack/install testing
+- Process spawning tests
+- Any file/directory creation for testing
+- Background processes started for verification
+
 ### When Modifying SKILL.md
 - Keep under 500 lines (currently ~190)
 - Reference detailed docs in `references/` instead of inlining
