@@ -64,6 +64,12 @@ references/                 # Detailed documentation (19 files)
   cursor-learnings.md       # Cursor scaling patterns
   prompt-repetition.md      # Haiku prompt optimization
   agents.md                 # Agent dispatch patterns
+events/                     # Unified Event Bus (v5.17.0)
+  bus.py                    # Python event bus
+  bus.ts                    # TypeScript event bus
+  emit.sh                   # Bash helper for emitting events
+docs/                       # Architecture documentation
+  SYNERGY-ROADMAP.md        # 5-pillar tool integration architecture
 autonomy/                   # Runtime and autonomous execution
 benchmarks/                 # SWE-bench and HumanEval benchmarks
 ```
@@ -184,9 +190,9 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.15.0
+- Current: v5.17.0
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
-- MINOR bump for new features (v5.15.0 = Complete Memory System)
+- MINOR bump for new features (v5.17.0 = Unified Event Bus)
 - PATCH bump for fixes (v5.14.1 = peer review fixes)
 
 ### Code Style

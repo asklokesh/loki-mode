@@ -5,8 +5,10 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Executive Summary (v5.5 - v5.16)
+## Executive Summary (v5.5 - v5.17)
 
+- **Unified Event Bus** - Cross-process event propagation between CLI, API, VS Code, MCP with file-based pub/sub
+- **Synergy Roadmap** - 5-pillar architecture for unified tool integration and cross-tool learning
 - **MCP Integration** - Model Context Protocol server with task queue, memory retrieval, and state management tools
 - **Hooks System** - Lifecycle hooks for SessionStart, PreToolUse, PostToolUse, Stop, and SessionEnd events
 - **Complete Memory System** - 3-tier memory with progressive disclosure, vector search, and token economics
@@ -21,6 +23,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HTTP/SSE API Server** - Full REST API matching CLI features with TypeScript client SDK
 - **Docker Sandbox** - Secure isolated execution with seccomp profiles
 - **Docker Deployment** - Production-ready containerization with health checks
+
+---
+
+## [5.17.0] - 2026-02-03
+
+### Added - Unified Event Bus and Synergy Architecture
+
+**Major release: Cross-process event propagation and unified tool integration roadmap.**
+
+#### Unified Event Bus (events/)
+
+File-based pub/sub system for cross-process communication between all Loki Mode components.
+
+**Features:**
+- Cross-language support (Python, TypeScript, Bash)
+- File-based persistence (survives crashes, enables replay)
+- Event filtering by type and timestamp
+- Automatic archival of processed events
+- No external dependencies
+
+**Event Types:**
+- `session` - Session lifecycle (start, stop, pause, resume)
+- `task` - Task lifecycle (claim, complete, fail)
+- `state` - State changes (phase, status)
+- `memory` - Memory operations (store, retrieve)
+- `metric` - Metrics (token usage, timing)
+- `error` - Errors and failures
+- `command` - CLI command execution
+- `user` - User actions (VS Code, dashboard)
+
+**Event Sources:**
+- `cli`, `api`, `vscode`, `mcp`, `skill`, `hook`, `dashboard`, `memory`, `runner`
+
+**Files Added:**
+- `events/__init__.py` - Python package
+- `events/bus.py` - Python event bus implementation
+- `events/bus.ts` - TypeScript event bus implementation
+- `events/emit.sh` - Bash helper for emitting events
+- `tests/test-event-bus.sh` - Event bus test suite (10 tests)
+
+**Usage (Python):**
+```python
+from events import EventBus, LokiEvent, EventType, EventSource
+
+bus = EventBus()
+
+# Emit event
+bus.emit(LokiEvent(
+    type=EventType.SESSION,
+    source=EventSource.CLI,
+    payload={'action': 'start', 'provider': 'claude'}
+))
+
+# Subscribe to events
+for event in bus.subscribe(types=[EventType.SESSION]):
+    print(f"Got: {event.payload}")
+```
+
+**Usage (Bash):**
+```bash
+./events/emit.sh session cli start provider=claude
+./events/emit.sh task runner complete task_id=task-001
+```
+
+#### Synergy Roadmap (docs/SYNERGY-ROADMAP.md)
+
+Comprehensive architecture document for unified tool integration:
+
+**Five Pillars:**
+1. **Unified Event Bus** - Cross-process event propagation (implemented)
+2. **Memory as Central Hub** - All tools query and contribute to memory
+3. **Smart State Synchronization** - Coordinated state with change notifications
+4. **Cross-Tool Learning** - Every interaction improves all tools
+5. **Unified Dashboard** - Same experience everywhere (web, VS Code, CLI)
+
+**Implementation Phases:**
+- Phase 1 (v5.17.0): Event bus foundation
+- Phase 2 (v5.18.0): Memory integration
+- Phase 3 (v5.19.0): Smart state sync
+- Phase 4 (v5.20.0): Cross-tool learning
+- Phase 5 (v5.21.0): Unified dashboard
+
+**Target Metrics:**
+- Cross-tool event latency: <100ms
+- Memory utilization: 100% (all tools)
+- User task completion time: -30%
 
 ---
 

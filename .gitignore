@@ -7,6 +7,13 @@
 node_modules/
 *.log
 *.tgz
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
 
 # Build outputs
 dist/
@@ -14,3 +21,27 @@ dist/
 
 # Local development (not tracked)
 the_app/
+wiki-repo/
+
+# Runtime state (regenerated each session)
+.loki/CONTINUITY.md
+.loki/STATUS.txt
+.loki/*.pid
+.loki/autonomy-state.json
+.loki/dashboard-state.json
+.loki/logs/
+.loki/queue/
+.loki/state/
+.loki/memory/episodic/
+.loki/memory/semantic/
+.loki/memory/skills/
+.loki/memory/vectors/
+.loki/events/pending/
+.loki/events/archive/
+.loki/PAUSE
+.loki/PAUSED.md
+.loki/SKILL.md
+.loki/generated-prd.md
+.loki/competitive-analysis-checklist.md
+.loki/dashboard/
+.loki/skills/

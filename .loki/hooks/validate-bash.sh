@@ -16,7 +16,7 @@ BLOCKED_PATTERNS=(
     "> /dev/sd"
     "mkfs"
     "dd if=/dev/zero"
-    ":(){:|:&};:"
+":\s*\(\s*\)\s*\{.*:.*\|.*:.*&.*\}"
     "chmod -R 777 /"
     "curl.*|.*bash"
     "wget.*|.*sh"
