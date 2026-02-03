@@ -4,6 +4,25 @@ Enhanced memory architecture based on 2025 research (MIRIX, A-Mem, MemGPT, AriGr
 
 ---
 
+## Implementation Status (v5.15.0)
+
+| Feature | Status | Location |
+|---------|--------|----------|
+| Episodic Memory | Implemented | memory/engine.py, memory/schemas.py |
+| Semantic Memory | Implemented | memory/engine.py, memory/schemas.py |
+| Procedural Memory | Implemented | memory/engine.py, memory/schemas.py |
+| Progressive Disclosure | Implemented | memory/layers/ |
+| Token Economics | Implemented | memory/token_economics.py |
+| Vector Search | Implemented (optional) | memory/embeddings.py, memory/vector_index.py |
+| Task-Aware Retrieval | Implemented | memory/retrieval.py |
+| Consolidation Pipeline | Implemented | memory/consolidation.py |
+| Zettelkasten Links | Implemented | memory/consolidation.py |
+| CLI Commands | Implemented | autonomy/loki |
+| API Endpoints | Implemented | api/routes/memory.ts |
+| RARV Integration | Implemented | autonomy/run.sh |
+
+---
+
 ## Core Insight: Memory Over Reasoning
 
 > *"Your Agent's Reasoning Is Fine - Its Memory Isn't"*

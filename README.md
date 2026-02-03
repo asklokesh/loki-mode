@@ -219,7 +219,7 @@ PRD → Research → Architecture → Development → Testing → Deployment →
 | **37 Agent Types** | Engineering, Ops, Business, Data, Product, Growth | [Agent Definitions](references/agent-types.md) |
 | **RARV Cycle** | Reason-Act-Reflect-Verify workflow | [Core Workflow](references/core-workflow.md) |
 | **Quality Gates** | 7-gate review system with anti-sycophancy | [Quality Control](references/quality-control.md) |
-| **Memory System** | Episodic, semantic, procedural memory | [Memory Architecture](references/memory-system.md) |
+| **Memory System (v5.15.0)** | Complete 3-tier memory with progressive disclosure | [Memory Architecture](references/memory-system.md) |
 | **Parallel Workflows** | Git worktree-based parallelism | [Parallel Workflows](skills/parallel-workflows.md) |
 | **GitHub Integration** | Issue import, PR creation, status sync | [GitHub Integration](skills/github-integration.md) |
 | **Distribution** | npm, Homebrew, Docker installation | [Installation Guide](docs/INSTALLATION.md) |
@@ -581,6 +581,47 @@ IMPLEMENT → REVIEW (parallel) → AGGREGATE → FIX → RE-REVIEW → COMPLETE
 ├── dashboard/      # Real-time monitoring dashboard
 └── scripts/        # Helper scripts
 ```
+
+### **Memory System (v5.15.0)**
+
+Complete 3-tier memory architecture with progressive disclosure:
+
+```
+WORKING MEMORY (CONTINUITY.md)
+        |
+        v
+EPISODIC MEMORY (.loki/memory/episodic/)
+        |
+        v (consolidation)
+SEMANTIC MEMORY (.loki/memory/semantic/)
+        |
+        v
+PROCEDURAL MEMORY (.loki/memory/skills/)
+```
+
+**Key Features:**
+- **Progressive Disclosure**: 3-layer loading (index ~100 tokens, timeline ~500 tokens, full details) reduces context usage by 60-80%
+- **Token Economics**: Track discovery vs read tokens, automatic threshold-based optimization
+- **Vector Search**: Optional embedding-based similarity search (sentence-transformers)
+- **Consolidation Pipeline**: Automatic episodic-to-semantic transformation
+- **Task-Aware Retrieval**: Different memory strategies for exploration, implementation, debugging, review, and refactoring
+
+**CLI Commands:**
+```bash
+loki memory index           # View index layer
+loki memory timeline        # View compressed history
+loki memory consolidate     # Run consolidation pipeline
+loki memory economics       # View token usage metrics
+loki memory retrieve "query"  # Test task-aware retrieval
+```
+
+**API Endpoints:**
+- `GET /api/memory` - Memory summary
+- `POST /api/memory/retrieve` - Query memories
+- `POST /api/memory/consolidate` - Trigger consolidation
+- `GET /api/memory/economics` - Token economics
+
+See [references/memory-system.md](references/memory-system.md) for complete documentation.
 
 ---
 

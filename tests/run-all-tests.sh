@@ -54,6 +54,14 @@ run_test "Circuit Breaker Tests" "$SCRIPT_DIR/test-circuit-breaker.sh"
 run_test "Timeout & Stuck Process Tests" "$SCRIPT_DIR/test-agent-timeout.sh"
 run_test "State Recovery Tests" "$SCRIPT_DIR/test-state-recovery.sh"
 run_test "Wrapper Script Tests" "$SCRIPT_DIR/test-wrapper.sh"
+
+# Memory System Tests
+run_test "Memory Engine Tests" "$SCRIPT_DIR/test-memory-engine.sh"
+run_test "Memory Retrieval Tests" "$SCRIPT_DIR/test-memory-retrieval.sh"
+run_test "Memory Layers Tests" "$SCRIPT_DIR/test-memory-layers.sh"
+run_test "Memory CLI Tests" "$SCRIPT_DIR/test-memory-cli.sh"
+
+# Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

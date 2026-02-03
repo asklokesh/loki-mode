@@ -21,6 +21,16 @@ providers/                  # Multi-provider support (v5.0.0)
   codex.sh                  # OpenAI Codex CLI - degraded mode
   gemini.sh                 # Google Gemini CLI - degraded mode
   loader.sh                 # Provider loader utility
+memory/                     # Complete memory system (v5.15.0)
+  engine.py                 # Core memory engine
+  schemas.py                # Pydantic schemas
+  storage.py                # Storage backend
+  retrieval.py              # Task-aware retrieval
+  consolidation.py          # Episodic-to-semantic pipeline
+  token_economics.py        # Token usage tracking
+  embeddings.py             # Vector embeddings (optional)
+  vector_index.py           # Vector search index
+  layers/                   # Progressive disclosure implementation
 skills/                     # On-demand skill modules (v3.0 architecture)
   00-index.md               # Module selection rules and routing
   model-selection.md        # Task tool, parallelization, thinking modes
@@ -87,10 +97,16 @@ LOKI_PROVIDER=codex loki start ./prd.md
 4. Severity-based blocking (Critical/High/Medium = BLOCK)
 5. Test coverage gates (>80% unit, 100% pass)
 
-### Memory System
+### Memory System (v5.15.0 - Complete Implementation)
 - **Episodic**: Specific interaction traces (`.loki/memory/episodic/`)
 - **Semantic**: Generalized patterns (`.loki/memory/semantic/`)
 - **Procedural**: Learned skills (`.loki/memory/skills/`)
+- **Progressive Disclosure**: 3-layer loading (index, timeline, full details)
+- **Token Economics**: Discovery vs read token tracking
+- **Vector Search**: Optional embedding-based similarity (sentence-transformers)
+- **CLI**: `loki memory index|timeline|consolidate|economics|retrieve|episode|pattern|skill|vectors`
+- **API**: REST endpoints at `/api/memory/*`
+- **Implementation**: `memory/` Python package with RARV integration
 
 ### Metrics System (ToolOrchestra-inspired)
 - **Efficiency**: Task cost tracking (`.loki/metrics/efficiency/`)
@@ -168,9 +184,9 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.14.1
+- Current: v5.15.0
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
-- MINOR bump for new features (v5.14.0 = Voice Input Support)
+- MINOR bump for new features (v5.15.0 = Complete Memory System)
 - PATCH bump for fixes (v5.14.1 = peer review fixes)
 
 ### Code Style

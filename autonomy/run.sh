@@ -3760,6 +3760,106 @@ load_learnings_context() {
 }
 
 #===============================================================================
+# Memory System Integration
+#===============================================================================
+
+# Retrieve relevant memories from the new memory system
+retrieve_memory_context() {
+    local goal="$1"
+    local phase="$2"
+    local target_dir="${TARGET_DIR:-.}"
+
+    # Check if memory system is available
+    if [ ! -d "$target_dir/.loki/memory" ] || [ ! -f "$target_dir/.loki/memory/index.json" ]; then
+        return
+    fi
+
+    # Use Python to retrieve relevant context
+    python3 -c "
+import sys
+sys.path.insert(0, '$PROJECT_DIR')
+try:
+    from memory.retrieval import MemoryRetrieval
+    from memory.storage import MemoryStorage
+    import json
+    storage = MemoryStorage('$target_dir/.loki/memory')
+    retriever = MemoryRetrieval(storage)
+    context = {'goal': '''$goal''', 'phase': '$phase'}
+    results = retriever.retrieve_task_aware(context, top_k=3)
+    if results:
+        print('RELEVANT MEMORIES:')
+        for r in results[:3]:
+            summary = r.get('summary', r.get('pattern', ''))[:100]
+            source = r.get('source', 'memory')
+            print(f'- [{source}] {summary}')
+except Exception as e:
+    pass  # Silently fail if memory not available
+" 2>/dev/null
+}
+
+# Store episode trace after task completion
+store_episode_trace() {
+    local task_id="$1"
+    local outcome="$2"
+    local phase="$3"
+    local goal="$4"
+    local duration="$5"
+    local target_dir="${TARGET_DIR:-.}"
+
+    # Only store if memory system exists
+    if [ ! -d "$target_dir/.loki/memory" ]; then
+        return
+    fi
+
+    python3 -c "
+import sys
+sys.path.insert(0, '$PROJECT_DIR')
+try:
+    from memory.engine import MemoryEngine
+    from memory.schemas import EpisodeTrace
+    from datetime import datetime, timezone
+    engine = MemoryEngine('$target_dir/.loki/memory')
+    engine.initialize()
+    trace = EpisodeTrace.create(
+        task_id='$task_id',
+        agent='loki-orchestrator',
+        phase='$phase',
+        goal='''$goal''',
+        outcome='$outcome',
+        duration_seconds=$duration
+    )
+    engine.store_episode(trace)
+except Exception as e:
+    pass  # Silently fail
+" 2>/dev/null
+}
+
+# Run memory consolidation pipeline
+run_memory_consolidation() {
+    local target_dir="${TARGET_DIR:-.}"
+
+    # Only run if memory system exists
+    if [ ! -d "$target_dir/.loki/memory" ]; then
+        return
+    fi
+
+    python3 -c "
+import sys
+sys.path.insert(0, '$PROJECT_DIR')
+try:
+    from memory.consolidation import ConsolidationPipeline
+    from memory.storage import MemoryStorage
+    storage = MemoryStorage('$target_dir/.loki/memory')
+    pipeline = ConsolidationPipeline(storage)
+    result = pipeline.consolidate(since_hours=24)
+    if result.patterns_created > 0:
+        print(f'Memory consolidation: {result.patterns_created} patterns created')
+except Exception as e:
+    pass  # Silently fail
+" 2>/dev/null || true
+}
+
+#===============================================================================
 # Save/Load Wrapper State
 #===============================================================================
 
@@ -3915,8 +4015,8 @@ build_prompt() {
     # Codebase Analysis Mode - when no PRD provided
     local analysis_instruction="CODEBASE_ANALYSIS_MODE: No PRD. FIRST: Analyze codebase - scan structure, read package.json/requirements.txt, examine README. THEN: Generate PRD at .loki/generated-prd.md. FINALLY: Execute SDLC phases."
 
-    # Context Memory Instructions
-    local memory_instruction="CONTEXT MEMORY: Save state to .loki/memory/ledgers/LEDGER-orchestrator.md before complex operations. Create handoffs at .loki/memory/handoffs/ when passing work to subagents. Extract learnings to .loki/memory/learnings/ after completing tasks. Check .loki/rules/ for established patterns. If context feels heavy, create .loki/signals/CONTEXT_CLEAR_REQUESTED and the wrapper will reset context with your ledger preserved."
+    # Context Memory Instructions (integrated with new memory system)
+    local memory_instruction="MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory. If context feels heavy, create .loki/signals/CONTEXT_CLEAR_REQUESTED and the wrapper will reset context with your ledger preserved."
 
     # Proactive Compaction Reminder (every N iterations)
     local compaction_reminder=""
@@ -3938,6 +4038,22 @@ build_prompt() {
         fi
     fi
 
+    # Retrieve relevant memories from new memory system
+    local memory_context=""
+    # Determine goal for memory retrieval
+    local goal_for_memory=""
+    if [ -n "$prd" ]; then
+        goal_for_memory="Execute PRD at $prd"
+    else
+        goal_for_memory="Analyze codebase and generate improvements"
+    fi
+    # Determine current phase
+    local phase_for_memory="iteration-$iteration"
+    memory_context=$(retrieve_memory_context "$goal_for_memory" "$phase_for_memory")
+    if [ -n "$memory_context" ]; then
+        context_injection="$context_injection $memory_context"
+    fi
+
     # Human directive injection (from HUMAN_INPUT.md)
     local human_directive=""
     if [ -n "${LOKI_HUMAN_INPUT:-}" ]; then
@@ -3951,17 +4067,23 @@ build_prompt() {
         queue_tasks="QUEUED_TASKS (PRIORITY): $queue_tasks. Execute these tasks BEFORE finding new improvements."
     fi
 
+    # Build memory context section (only if we have context)
+    local memory_context_section=""
+    if [ -n "$context_injection" ]; then
+        memory_context_section="CONTEXT: $context_injection"
+    fi
+
     if [ $retry -eq 0 ]; then
         if [ -n "$prd" ]; then
-            echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode. $human_directive $queue_tasks $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode. $human_directive $queue_tasks $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     else
         if [ -n "$prd" ]; then
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $context_injection $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $context_injection Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     fi
 }
@@ -4379,6 +4501,11 @@ if __name__ == "__main__":
         # Check for success - ONLY stop on explicit completion promise
         # There's never a "complete" product - always improvements, bugs, features
         if [ $exit_code -eq 0 ]; then
+            # Store episode trace for successful iteration
+            local task_id="iteration-$ITERATION_COUNT"
+            local goal_desc="${prd_path:-codebase-analysis}"
+            store_episode_trace "$task_id" "success" "iteration" "$goal_desc" "$duration"
+
             # Perpetual mode: NEVER stop, always continue
             if [ "$PERPETUAL_MODE" = "true" ]; then
                 log_info "Perpetual mode: Ignoring exit, continuing immediately..."
@@ -4391,6 +4518,9 @@ if __name__ == "__main__":
                 echo ""
                 log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
                 log_info "Explicit completion promise detected in output."
+                # Run memory consolidation on successful completion
+                log_info "Running memory consolidation..."
+                run_memory_consolidation
                 notify_all_complete
                 save_state $retry "completion_promise_fulfilled" 0
                 return 0
@@ -4409,6 +4539,11 @@ if __name__ == "__main__":
         fi
 
         # Only apply retry logic for ERRORS (non-zero exit code)
+        # Store episode trace for failed iteration (useful for learning from failures)
+        local task_id="iteration-$ITERATION_COUNT"
+        local goal_desc="${prd_path:-codebase-analysis}"
+        store_episode_trace "$task_id" "failure" "iteration" "$goal_desc" "$duration"
+
         # Handle retry - check for rate limit first
         local rate_limit_wait=$(detect_rate_limit "$log_file")
         local wait_time

@@ -45,6 +45,20 @@ import {
   livenessCheck,
   detailedStatus,
 } from "./routes/health.ts";
+import {
+  getMemorySummary,
+  getMemoryIndex,
+  getMemoryTimeline,
+  listEpisodes,
+  getEpisode,
+  listPatterns,
+  getPattern,
+  listSkills,
+  getSkill,
+  retrieveMemories,
+  consolidateMemories,
+  getTokenEconomics,
+} from "./routes/memory.ts";
 
 // Server configuration
 interface ServerConfig {
@@ -147,6 +161,48 @@ const routes: Route[] = [
     handler: getEventHistory,
   },
   { method: "GET", pattern: /^\/api\/events\/stats$/, handler: getEventStats },
+
+  // Memory endpoints
+  { method: "GET", pattern: /^\/api\/memory$/, handler: getMemorySummary },
+  { method: "GET", pattern: /^\/api\/memory\/index$/, handler: getMemoryIndex },
+  {
+    method: "GET",
+    pattern: /^\/api\/memory\/timeline$/,
+    handler: getMemoryTimeline,
+  },
+  { method: "GET", pattern: /^\/api\/memory\/episodes$/, handler: listEpisodes },
+  {
+    method: "GET",
+    pattern: /^\/api\/memory\/episodes\/([^/]+)$/,
+    handler: getEpisode,
+  },
+  { method: "GET", pattern: /^\/api\/memory\/patterns$/, handler: listPatterns },
+  {
+    method: "GET",
+    pattern: /^\/api\/memory\/patterns\/([^/]+)$/,
+    handler: getPattern,
+  },
+  { method: "GET", pattern: /^\/api\/memory\/skills$/, handler: listSkills },
+  {
+    method: "GET",
+    pattern: /^\/api\/memory\/skills\/([^/]+)$/,
+    handler: getSkill,
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/memory\/retrieve$/,
+    handler: retrieveMemories,
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/memory\/consolidate$/,
+    handler: consolidateMemories,
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/memory\/economics$/,
+    handler: getTokenEconomics,
+  },
 ];
 
 /**
@@ -230,6 +286,10 @@ function printBanner(config: ServerConfig): void {
 ║    POST /api/sessions/:id/stop   - Stop session               ║
 ║    POST /api/sessions/:id/input  - Inject input               ║
 ║    GET  /api/sessions/:id/tasks  - List tasks                 ║
+║    GET  /api/memory        - Memory summary                   ║
+║    GET  /api/memory/episodes     - List episodes              ║
+║    GET  /api/memory/patterns     - List patterns              ║
+║    POST /api/memory/retrieve     - Query memories             ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
 }

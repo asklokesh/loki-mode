@@ -5,8 +5,9 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Executive Summary (v5.5 - v5.14)
+## Executive Summary (v5.5 - v5.15)
 
+- **Complete Memory System** - 3-tier memory with progressive disclosure, vector search, and token economics
 - **Voice Input Support** - Dictate PRDs using macOS Dictation, Whisper API, or local Whisper
 - **Multi-Channel Notifications** - Real-time Slack, Discord, and webhook alerts for session events
 - **Enterprise Authentication** - Optional token-based API security with SHA256 hashing
@@ -18,6 +19,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HTTP/SSE API Server** - Full REST API matching CLI features with TypeScript client SDK
 - **Docker Sandbox** - Secure isolated execution with seccomp profiles
 - **Docker Deployment** - Production-ready containerization with health checks
+
+---
+
+## [5.15.0] - 2026-02-02
+
+### Added - Complete Memory System Implementation
+
+**Major release: Full implementation of the 3-tier memory system documented in references/memory-system.md.**
+
+#### Memory Engine (memory/)
+- **Episodic Memory**: Store and retrieve task execution traces
+- **Semantic Memory**: Pattern extraction and anti-pattern tracking
+- **Procedural Memory**: Reusable skill templates
+- **Progressive Disclosure**: 3-layer system (index ~100 tokens, timeline ~500 tokens, full details)
+- **Token Economics**: Track discovery vs read tokens, calculate savings
+- **Vector Search**: Optional embedding-based similarity (sentence-transformers)
+- **Consolidation Pipeline**: Automatic episodic-to-semantic transformation
+- **Zettelkasten Linking**: Cross-reference patterns with relations
+
+#### CLI Commands (loki memory)
+- `loki memory index [rebuild]` - View/rebuild index layer
+- `loki memory timeline` - View timeline layer
+- `loki memory consolidate [hours]` - Run consolidation pipeline
+- `loki memory economics` - View token usage metrics
+- `loki memory retrieve <query>` - Test task-aware retrieval
+- `loki memory episode <id>` - View full episode details
+- `loki memory pattern [id]` - List/view semantic patterns
+- `loki memory skill [name]` - List/view procedural skills
+- `loki memory vectors [rebuild]` - Manage vector indices
+
+#### API Endpoints
+- `GET /api/memory` - Memory summary
+- `GET /api/memory/index` - Index layer
+- `GET /api/memory/timeline` - Timeline layer
+- `GET /api/memory/episodes` - List episodes
+- `GET /api/memory/patterns` - List patterns
+- `GET /api/memory/skills` - List skills
+- `POST /api/memory/retrieve` - Query memories
+- `POST /api/memory/consolidate` - Trigger consolidation
+- `GET /api/memory/economics` - Token economics
+
+#### RARV Integration
+- Memory context injected before each task execution
+- Episode traces stored after task completion
+- Automatic consolidation on session completion
+
+#### Files Added
+- `memory/` - Complete Python memory system package
+- `memory/layers/` - Progressive disclosure implementation
+- `api/routes/memory.ts` - Memory API endpoints
+- `api/types/memory.ts` - TypeScript types
+- `tests/test-memory-*.sh` - Comprehensive test suite (77 tests)
 
 ---
 

@@ -2931,12 +2931,219 @@ if total_removed > 0:
 " 2>/dev/null
             ;;
 
+        index)
+            # Show or rebuild the memory index layer
+            if [ "${2:-}" = "rebuild" ]; then
+                python3 -c "
+try:
+    from memory.layers import IndexLayer
+    layer = IndexLayer('.loki/memory')
+    layer.update([])  # Will scan and rebuild
+    print('Index rebuilt')
+except ImportError:
+    print('Error: memory.layers module not found')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            else
+                cat .loki/memory/index.json 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "No index found"
+            fi
+            ;;
+
+        timeline)
+            # Show timeline layer
+            cat .loki/memory/timeline.json 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "No timeline found"
+            ;;
+
+        consolidate)
+            # Run consolidation pipeline
+            local hours="${2:-24}"
+            python3 -c "
+try:
+    from memory.consolidation import ConsolidationPipeline
+    from memory.storage import MemoryStorage
+    storage = MemoryStorage('.loki/memory')
+    pipeline = ConsolidationPipeline(storage)
+    result = pipeline.consolidate(since_hours=$hours)
+    print('Consolidation complete:')
+    print(f'  Patterns created: {result.patterns_created}')
+    print(f'  Patterns merged: {result.patterns_merged}')
+    print(f'  Anti-patterns: {result.anti_patterns_created}')
+    print(f'  Links created: {result.links_created}')
+    print(f'  Episodes processed: {result.episodes_processed}')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            ;;
+
+        economics)
+            # Show token economics
+            if [ -f ".loki/memory/token_economics.json" ]; then
+                cat .loki/memory/token_economics.json | python3 -m json.tool 2>/dev/null || echo "Error parsing token economics JSON"
+            else
+                echo "No token economics data. Run a session first."
+            fi
+            ;;
+
+        retrieve)
+            # Test memory retrieval
+            local query="${2:-}"
+            if [ -z "$query" ]; then
+                echo "Usage: loki memory retrieve <query>"
+                exit 1
+            fi
+            LOKI_QUERY="$query" python3 -c "
+import os
+try:
+    from memory.retrieval import MemoryRetrieval
+    from memory.storage import MemoryStorage
+    query = os.environ.get('LOKI_QUERY', '')
+    storage = MemoryStorage('.loki/memory')
+    retriever = MemoryRetrieval(storage)
+    results = retriever.retrieve_task_aware({'goal': query}, top_k=5)
+    if not results:
+        print('No relevant memories found')
+    else:
+        for i, r in enumerate(results, 1):
+            source = r.get('source', 'unknown')
+            summary = r.get('summary', r.get('pattern', 'No summary'))[:80]
+            score = r.get('score', 0)
+            print(f'{i}. [{source}] {summary}... (score: {score:.2f})')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            ;;
+
+        episode)
+            # Show full episode by ID
+            local id="${2:-}"
+            if [ -z "$id" ]; then
+                echo "Usage: loki memory episode <id>"
+                exit 1
+            fi
+            LOKI_ID="$id" python3 -c "
+import os
+try:
+    from memory.engine import MemoryEngine
+    import json
+    episode_id = os.environ.get('LOKI_ID', '')
+    engine = MemoryEngine('.loki/memory')
+    episode = engine.get_episode(episode_id)
+    if episode:
+        print(json.dumps(episode.to_dict(), indent=2))
+    else:
+        print(f'Episode not found: {episode_id}')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            ;;
+
+        pattern)
+            # Show semantic pattern by ID or list all patterns
+            local id="${2:-}"
+            if [ -z "$id" ]; then
+                # List all patterns
+                python3 -c "
+try:
+    from memory.engine import MemoryEngine
+    engine = MemoryEngine('.loki/memory')
+    patterns = engine.find_patterns()
+    if not patterns:
+        print('No patterns found')
+    else:
+        for p in patterns[:20]:
+            pattern_text = p.pattern[:60] if hasattr(p, 'pattern') else str(p)[:60]
+            confidence = p.confidence if hasattr(p, 'confidence') else 0.0
+            print(f'{p.id}: {pattern_text}... (conf: {confidence:.2f})')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            else
+                LOKI_ID="$id" python3 -c "
+import os
+try:
+    from memory.engine import MemoryEngine
+    import json
+    pattern_id = os.environ.get('LOKI_ID', '')
+    engine = MemoryEngine('.loki/memory')
+    pattern = engine.get_pattern(pattern_id)
+    if pattern:
+        print(json.dumps(pattern.to_dict(), indent=2))
+    else:
+        print(f'Pattern not found: {pattern_id}')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            fi
+            ;;
+
+        skill)
+            # Show procedural skill by name or list all skills
+            local name="${2:-}"
+            if [ -z "$name" ]; then
+                # List all skills
+                if ls -1 .loki/memory/skills/*.json 2>/dev/null | head -1 >/dev/null 2>&1; then
+                    ls -1 .loki/memory/skills/*.json 2>/dev/null | xargs -I{} basename {} .json
+                else
+                    echo "No skills found"
+                fi
+            else
+                if [ -f ".loki/memory/skills/${name}.json" ]; then
+                    cat ".loki/memory/skills/${name}.json" | python3 -m json.tool 2>/dev/null || echo "Error parsing skill JSON"
+                else
+                    echo "Skill not found: $name"
+                fi
+            fi
+            ;;
+
+        vectors)
+            # Manage vector indices
+            if [ "${2:-}" = "rebuild" ]; then
+                python3 -c "
+try:
+    from memory.retrieval import MemoryRetrieval
+    from memory.storage import MemoryStorage
+    storage = MemoryStorage('.loki/memory')
+    retriever = MemoryRetrieval(storage)
+    retriever.build_indices()
+    retriever.save_indices()
+    print('Vector indices rebuilt')
+except ImportError as e:
+    print(f'Error: Required module not found - {e}')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>/dev/null
+            else
+                echo "Vector index stats:"
+                if ls -1 .loki/memory/vectors/*.npz 2>/dev/null | head -1 >/dev/null 2>&1; then
+                    for f in .loki/memory/vectors/*.npz; do
+                        if [ -f "$f" ]; then
+                            count=$(python3 -c "import numpy as np; d=np.load('$f'); print(len(d['ids']))" 2>/dev/null || echo "error")
+                            echo "  $(basename "$f"): $count vectors"
+                        fi
+                    done
+                else
+                    echo "  No vector indices found"
+                fi
+            fi
+            ;;
+
         --help|-h|help)
-            echo -e "${BOLD}loki memory${NC} - Manage cross-project learnings"
+            echo -e "${BOLD}loki memory${NC} - Manage cross-project learnings and memory system"
             echo ""
             echo "Usage: loki memory <command> [args]"
             echo ""
-            echo "Commands:"
+            echo "Learnings Commands:"
             echo "  list              Show summary of all learnings"
             echo "  show [type]       Show entries (patterns|mistakes|successes|all)"
             echo "                    Options: --limit N, --project P"
@@ -2946,6 +3153,17 @@ if total_removed > 0:
             echo "  dedupe            Remove duplicate entries"
             echo "  clear [type]      Clear learnings (all or specific type)"
             echo ""
+            echo "Memory System Commands:"
+            echo "  index [rebuild]   Show or rebuild the memory index layer"
+            echo "  timeline          Show timeline layer with temporal context"
+            echo "  consolidate [h]   Run consolidation pipeline (default: 24 hours)"
+            echo "  economics         Show token economics data"
+            echo "  retrieve <query>  Test memory retrieval for a query"
+            echo "  episode <id>      Show full episode by ID"
+            echo "  pattern [id]      Show pattern by ID or list all patterns"
+            echo "  skill [name]      Show skill by name or list all skills"
+            echo "  vectors [rebuild] Show vector index stats or rebuild indices"
+            echo ""
             echo "Examples:"
             echo "  loki memory list"
             echo "  loki memory show mistakes --limit 10"
@@ -2953,6 +3171,17 @@ if total_removed > 0:
             echo "  loki memory search 'rate limit'"
             echo "  loki memory dedupe"
             echo "  loki memory export backup.json"
+            echo ""
+            echo "  loki memory index"
+            echo "  loki memory index rebuild"
+            echo "  loki memory consolidate 48"
+            echo "  loki memory retrieve 'API rate limiting'"
+            echo "  loki memory episode ep-20260202-abc123"
+            echo "  loki memory pattern"
+            echo "  loki memory pattern pat-api-error-handling"
+            echo "  loki memory skill"
+            echo "  loki memory vectors"
+            echo "  loki memory vectors rebuild"
             ;;
 
         *)
