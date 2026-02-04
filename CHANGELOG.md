@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.20.4] - 2026-02-04
+
+### Fixed - loki issue --start Unbound Variable Error
+
+- Fixed bash unbound variable error when using `loki issue URL --start`
+- Used safe array expansion pattern for empty `start_args` array with `set -u`
+
+---
+
 ## [5.20.3] - 2026-02-04
 
 ### Fixed - Dashboard Server Missing from npm Package

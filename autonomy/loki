@@ -1915,7 +1915,7 @@ EOF
     if [[ "$start_loki" == "true" ]]; then
         echo ""
         echo -e "${GREEN}Starting Loki Mode with generated PRD...${NC}"
-        cmd_start "$output_file" "${start_args[@]}"
+        cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"}
     else
         echo ""
         echo "Next steps:"
