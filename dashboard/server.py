@@ -1007,24 +1007,72 @@ except ImportError as e:
 # =============================================================================
 # Must be configured AFTER all API routes to avoid conflicts
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(STATIC_DIR):
+from fastapi.responses import FileResponse, HTMLResponse
+
+# Find static files in multiple possible locations
+DASHBOARD_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.dirname(DASHBOARD_DIR)
+
+# Possible static file locations (in order of preference)
+STATIC_LOCATIONS = [
+    os.path.join(DASHBOARD_DIR, "static"),           # dashboard/static/ (production)
+    os.path.join(PROJECT_ROOT, "dashboard-ui", "dist"),  # dashboard-ui/dist/ (development)
+]
+
+STATIC_DIR = None
+for loc in STATIC_LOCATIONS:
+    if os.path.isdir(loc):
+        STATIC_DIR = loc
+        logger.info(f"Static files found at: {loc}")
+        break
+
+if STATIC_DIR:
     from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse
 
     # Check if assets directory exists (built frontend)
     ASSETS_DIR = os.path.join(STATIC_DIR, "assets")
     if os.path.isdir(ASSETS_DIR):
         app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
-    # Serve index.html for root
-    @app.get("/", include_in_schema=False)
-    async def serve_index():
-        """Serve the frontend SPA."""
-        index_path = os.path.join(STATIC_DIR, "index.html")
+# Serve index.html or standalone HTML for root
+@app.get("/", include_in_schema=False)
+async def serve_index():
+    """Serve the frontend SPA or standalone HTML."""
+    # Try multiple index file locations
+    index_candidates = []
+    if STATIC_DIR:
+        index_candidates.append(os.path.join(STATIC_DIR, "index.html"))
+        index_candidates.append(os.path.join(STATIC_DIR, "loki-dashboard-standalone.html"))
+
+    # Also check dashboard-ui directly for standalone
+    standalone_path = os.path.join(PROJECT_ROOT, "dashboard-ui", "dist", "loki-dashboard-standalone.html")
+    if standalone_path not in index_candidates:
+        index_candidates.append(standalone_path)
+
+    for index_path in index_candidates:
         if os.path.isfile(index_path):
-            return FileResponse(index_path)
-        raise HTTPException(status_code=404, detail="Frontend not built")
+            return FileResponse(index_path, media_type="text/html")
+
+    # Return helpful error message
+    return HTMLResponse(
+        content="""
+        <html>
+        <head><title>Loki Dashboard</title></head>
+        <body style="font-family: system-ui; padding: 40px; max-width: 600px; margin: 0 auto;">
+            <h1>Dashboard Frontend Not Found</h1>
+            <p>The dashboard API is running, but the frontend files were not found.</p>
+            <p>To fix this, run:</p>
+            <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px;">cd dashboard-ui && npm run build</pre>
+            <p><strong>API Endpoints:</strong></p>
+            <ul>
+                <li><a href="/health">/health</a> - Health check</li>
+                <li><a href="/docs">/docs</a> - API documentation</li>
+            </ul>
+        </body>
+        </html>
+        """,
+        status_code=200
+    )
 
 
 def run_server(host: str = None, port: int = None) -> None:

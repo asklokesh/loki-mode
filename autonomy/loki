@@ -519,13 +519,17 @@ cmd_start() {
 
 # Check if session is running
 is_session_running() {
-    if [ -f "$LOKI_DIR/run.pid" ]; then
-        local pid
-        pid=$(cat "$LOKI_DIR/run.pid" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            return 0
+    # Check both possible PID files (loki.pid from run.sh, run.pid legacy)
+    local pid_files=("$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid")
+    for pid_file in "${pid_files[@]}"; do
+        if [ -f "$pid_file" ]; then
+            local pid
+            pid=$(cat "$pid_file" 2>/dev/null)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
         fi
-    fi
+    done
     return 1
 }
 
@@ -547,6 +551,21 @@ cmd_stop() {
 
     if is_session_running; then
         touch "$LOKI_DIR/STOP"
+
+        # Also kill the background process if running
+        local killed_pid=""
+        for pid_file in "$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid"; do
+            if [ -f "$pid_file" ]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null)
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    kill "$pid" 2>/dev/null || true
+                    killed_pid="$pid"
+                fi
+                rm -f "$pid_file"
+            fi
+        done
+
         # Emit session stop event
         emit_event session cli stop "reason=user_requested"
         # Emit success pattern for clean stop (SYN-018)
@@ -557,7 +576,12 @@ cmd_stop() {
             --action-sequence '["check_session", "send_stop_signal"]' \
             --outcome success \
             --confidence 0.9
-        echo -e "${RED}STOP signal sent. Execution will halt immediately.${NC}"
+
+        if [ -n "$killed_pid" ]; then
+            echo -e "${RED}Stopped Loki Mode (PID: $killed_pid)${NC}"
+        else
+            echo -e "${RED}STOP signal sent. Execution will halt immediately.${NC}"
+        fi
     else
         echo -e "${YELLOW}No active session running.${NC}"
         if [ -f "$LOKI_DIR/STOP" ]; then
