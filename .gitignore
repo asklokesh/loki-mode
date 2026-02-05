@@ -30,6 +30,7 @@ wiki-repo/
 .loki/autonomy-state.json
 .loki/dashboard-state.json
 .loki/logs/
+.loki/metrics/
 .loki/queue/
 .loki/state/
 .loki/memory/
