@@ -4,20 +4,19 @@ Loki Mode v5.0.0 supports three AI providers for autonomous execution.
 
 ## Provider Comparison
 
-> **Note:** The model names for Codex (`gpt-5.2-codex`) and Gemini (`gemini-3-pro-medium`) are placeholder values. Update the provider configuration files (`providers/codex.sh` and `providers/gemini.sh`) with actual model identifiers when official CLI documentation becomes available.
-
 > **CLI Flags Verified:** The autonomous mode flags have been verified against actual CLI help output:
 > - Claude: `--dangerously-skip-permissions` (verified)
-> - Codex: `exec --dangerously-bypass-approvals-and-sandbox` (verified v0.89.0)
-> - Gemini: `--yolo` (verified v0.25.2) - Note: `-p` prompt flag is deprecated, using positional prompts
+> - Codex: `--full-auto` (recommended, v0.98.0) or `exec --dangerously-bypass-approvals-and-sandbox` (legacy)
+> - Gemini: `--approval-mode=yolo` (v0.25.2+) - Note: `-p` prompt flag is deprecated, using positional prompts
 
 | Feature | Claude Code | OpenAI Codex | Gemini CLI |
 |---------|-------------|--------------|------------|
 | **Full Features** | Yes | No (Degraded) | No (Degraded) |
 | **Task Tool (Subagents)** | Yes | No | No |
 | **Parallel Agents** | Yes (10+) | No | No |
-| **MCP Integration** | Yes | No | No |
-| **Context Window** | 200K | 128K | 1M |
+| **MCP Integration** | Yes | Yes (basic) | No |
+| **Context Window** | 200K | 400K | 1M |
+| **Max Output Tokens** | 128K | 32K | 64K |
 | **Model Tiers** | 3 (opus/sonnet/haiku) | 1 (effort param) | 1 (thinking param) |
 | **Skill Directory** | ~/.claude/skills | None | None |
 
@@ -41,7 +40,7 @@ loki start --provider gemini ./prd.md
 - Parallel execution (10+ agents simultaneously)
 - MCP server integration
 - Three distinct models (opus/sonnet/haiku)
-- 200K context window
+- 200K context window, 128K max output tokens
 
 **Invocation:**
 ```bash
@@ -64,12 +63,16 @@ Task(model="haiku", ...)   # Fast tier (parallelize)
 **Limitations:**
 - No Task tool (cannot spawn subagents)
 - No parallel execution (sequential only)
-- No MCP integration
+- MCP support available but not yet integrated with Loki orchestration
 - Single model with effort parameter
-- 128K context window
+- 400K context window
 
 **Invocation:**
 ```bash
+# Recommended (v0.98.0+)
+codex --full-auto "$prompt"
+
+# Legacy (still supported)
 codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
 ```
 
@@ -104,7 +107,7 @@ CODEX_MODEL_REASONING_EFFORT=high codex exec --dangerously-bypass-approvals-and-
 **Invocation:**
 ```bash
 # Note: -p flag is DEPRECATED. Using positional prompt.
-gemini --yolo "$prompt"
+gemini --approval-mode=yolo "$prompt"
 ```
 
 **Model Tiers via Thinking Level (settings.json, not CLI flag):**
@@ -178,7 +181,7 @@ PROVIDER_DEGRADED=false
 |----------------|--------|
 | Full autonomous capability | Claude |
 | Parallel agent execution | Claude |
-| MCP server integration | Claude |
+| MCP server integration | Claude (full) or Codex (basic) |
 | OpenAI ecosystem compatibility | Codex |
 | Largest context window (1M) | Gemini |
 | Sequential-only is acceptable | Codex or Gemini |

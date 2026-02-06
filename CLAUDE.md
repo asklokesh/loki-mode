@@ -190,10 +190,10 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.20.0
+- Current: v5.23.0
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
-- MINOR bump for new features (v5.20.0 = Dashboard Consolidation)
-- PATCH bump for fixes (v5.14.1 = peer review fixes)
+- MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
+- PATCH bump for fixes (v5.22.1 = session.json phantom state)
 
 ### Code Style
 - **CRITICAL: NEVER use emojis** - Not in code, documentation, commit messages, README, or any output
@@ -202,22 +202,75 @@ Follows semantic versioning: MAJOR.MINOR.PATCH
 - Clear, concise comments only when necessary
 - Follow existing patterns in codebase
 
-## Release Workflow
+## Release Workflow (CRITICAL - Follow Every Step)
 
-When releasing a new version, follow these steps in order:
+When releasing a new version, follow ALL steps below. Nothing should be skipped.
 
-### 1. Version Bump
-```bash
-# Bump version (updates package.json)
-npm version patch|minor|major --no-git-tag-version
+### 1. Version Bump - ALL Files
 
-# Update VERSION file
-echo "X.Y.Z" > VERSION
+Update the version string in every file listed below. Search for the old version and replace with the new one.
 
-# Update SKILL.md header and footer version
+**Core version files (MUST update):**
+```
+VERSION                                  # Single line: X.Y.Z
+package.json                             # "version": "X.Y.Z"
+SKILL.md                                 # Header (line ~6) AND footer (last line)
+Dockerfile                               # LABEL version="X.Y.Z"
+Dockerfile.sandbox                       # LABEL version="X.Y.Z"
+vscode-extension/package.json            # "version": "X.Y.Z"
+CLAUDE.md                                # Version Numbering section (Current: vX.Y.Z)
 ```
 
-### 2. Commit and Push (GitHub Actions handles the rest)
+**Module version files (MUST update):**
+```
+dashboard/__init__.py                    # __version__ = "X.Y.Z"
+mcp/__init__.py                          # __version__ = "X.Y.Z"
+```
+
+**Documentation (MUST update):**
+```
+CHANGELOG.md                             # Add new version entry at top
+docs/INSTALLATION.md                     # Version header (line ~5)
+wiki/Home.md                             # Current Version line
+wiki/_Sidebar.md                         # Version line
+wiki/API-Reference.md                    # Example version in responses
+```
+
+**Docker image tags in docs (update on MAJOR/MINOR bumps):**
+```
+README.md                                # Docker example tags (lines ~81, ~380)
+docs/INSTALLATION.md                     # Docker image tags (7+ occurrences)
+docker-compose.yml                       # Version comment (line 1)
+```
+
+### 2. Build Dashboard Frontend
+
+The dashboard frontend MUST be rebuilt before any release. The build script writes directly to both `dashboard-ui/dist/` and `dashboard/static/` -- no manual copy needed.
+
+```bash
+cd dashboard-ui && npm ci && npm run build:all && cd ..
+```
+
+Verify the built file exists and is reasonably sized (>100KB):
+```bash
+ls -la dashboard/static/index.html
+```
+
+**Note:** `npm publish` also runs `prepublishOnly` which triggers this build automatically. The CI workflows build it explicitly as well. The build-standalone.js script writes to both locations in a single step.
+
+### 3. Run Tests
+
+```bash
+# E2E dashboard tests (requires dashboard running on port 57374)
+cd dashboard-ui && npx playwright test && cd ..
+
+# Shell script validation
+bash -n autonomy/run.sh
+bash -n autonomy/loki
+```
+
+### 4. Commit and Push
+
 ```bash
 git add -A
 git commit -m "release: vX.Y.Z - description"
@@ -227,21 +280,47 @@ git push origin main
 **IMPORTANT:** Do NOT manually create tags. The GitHub Actions workflow automatically:
 - Creates the git tag
 - Creates the GitHub Release with artifacts
-- Publishes to npm
-- Builds and pushes Docker image
+- Publishes to npm (includes `dashboard/static/index.html`)
+- Builds and pushes Docker image (includes `dashboard/` with deps)
 - Updates Homebrew tap
+- Publishes VSCode extension (includes dashboard IIFE bundle)
 
-### 3. Verify Release
+### 5. Verify ALL Distribution Channels
+
 ```bash
 # Watch workflow progress
 gh run list --limit 1
 gh run watch <run-id>
 
-# Verify all channels after workflow completes
+# npm - verify dashboard is included
 npm view loki-mode version
+npm pack loki-mode --dry-run 2>&1 | grep dashboard/static
+
+# Docker - verify dashboard works
+docker pull asklokesh/loki-mode:X.Y.Z
+docker run --rm asklokesh/loki-mode:X.Y.Z loki version
+
+# Homebrew
 brew update && brew info loki-mode
+
+# VSCode extension
+# Check marketplace or: code --list-extensions --show-versions | grep loki
+
+# GitHub Release
 gh release view vX.Y.Z
 ```
+
+### Distribution Channel Checklist
+
+Every release MUST include these artifacts across ALL channels:
+
+| Channel | Dashboard API (server.py) | Dashboard Frontend (static/) | Memory System | Skills/References |
+|---------|--------------------------|------------------------------|---------------|-------------------|
+| npm     | `dashboard/*.py`         | `dashboard/static/index.html`| `memory/`     | `skills/`, `references/` |
+| Docker  | `COPY dashboard/`        | Built in Dockerfile or committed | `memory/` | `skills/`, `references/` |
+| Homebrew| Full tarball             | Full tarball                 | Full tarball  | Full tarball |
+| VSCode  | N/A (connects to API)    | `media/loki-dashboard.js` (IIFE bundle) | N/A | N/A |
+| Release | Skill-only zip           | N/A                          | N/A           | `references/` |
 
 ### Credentials (GitHub Secrets)
 All credentials are stored as GitHub repository secrets and used by the workflow:

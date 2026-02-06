@@ -28,9 +28,9 @@ PROVIDER_DISPLAY_NAME="Google Gemini CLI"
 PROVIDER_CLI="gemini"
 
 # CLI Invocation
-# VERIFIED: --yolo flag confirmed in gemini --help (v0.25.2)
-# "Automatically accept all actions (aka YOLO mode)"
-PROVIDER_AUTONOMOUS_FLAG="--yolo"
+# VERIFIED: --approval-mode=yolo is the unified approach (replaces legacy --yolo)
+# Sandbox enabled by default in yolo mode
+PROVIDER_AUTONOMOUS_FLAG="--approval-mode=yolo"
 # NOTE: -p flag is DEPRECATED per gemini --help. Using positional prompt instead.
 PROVIDER_PROMPT_FLAG=""
 PROVIDER_PROMPT_POSITIONAL=true
@@ -99,7 +99,7 @@ provider_version() {
 }
 
 # Invocation function with rate limit fallback
-# Uses --model flag to specify model, --yolo for autonomous mode
+# Uses --model flag to specify model, --approval-mode=yolo for autonomous mode
 # Falls back to flash model if pro hits rate limit
 # Note: < /dev/null prevents Gemini from pausing on stdin
 provider_invoke() {
@@ -109,13 +109,13 @@ provider_invoke() {
     local exit_code
 
     # Try primary model first
-    output=$(gemini --yolo --model "$PROVIDER_MODEL" "$prompt" "$@" < /dev/null 2>&1)
+    output=$(gemini --approval-mode=yolo --model "$PROVIDER_MODEL" "$prompt" "$@" < /dev/null 2>&1)
     exit_code=$?
 
     # Check for rate limit (429) or quota exceeded
     if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
         echo "[loki] Rate limit hit on $PROVIDER_MODEL, falling back to $PROVIDER_MODEL_FALLBACK" >&2
-        gemini --yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
+        gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
         echo "$output"
         return $exit_code
@@ -152,13 +152,13 @@ provider_invoke_with_tier() {
     local exit_code
 
     # Try selected model first
-    output=$(gemini --yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
+    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
     exit_code=$?
 
     # Check for rate limit (429) or quota exceeded - fallback to flash
     if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
         echo "[loki] Rate limit hit on $model, falling back to $PROVIDER_MODEL_FALLBACK" >&2
-        gemini --yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
+        gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
         echo "$output"
         return $exit_code

@@ -1,6 +1,6 @@
 # Multi-Provider Architecture Reference
 
-> **Version:** 5.1.0 | **Status:** Production | **Last Updated:** 2026-01-24
+> **Version:** 5.23.0 | **Status:** Production | **Last Updated:** 2026-02-05
 
 Loki Mode supports three AI CLI providers with a unified abstraction layer. This document provides detailed technical reference for the multi-provider system.
 
@@ -11,7 +11,7 @@ Loki Mode supports three AI CLI providers with a unified abstraction layer. This
 | Provider | CLI | Status | Features |
 |----------|-----|--------|----------|
 | **Claude Code** | `claude` | Full | Subagents, Parallel, Task Tool, MCP |
-| **OpenAI Codex** | `codex` | Degraded | Sequential, Effort Parameter |
+| **OpenAI Codex** | `codex` | Degraded | Sequential, Effort Parameter, MCP (basic) |
 | **Google Gemini** | `gemini` | Degraded | Sequential, Thinking Level |
 
 ---
@@ -51,22 +51,22 @@ PROVIDER_PROMPT_POSITIONAL=false    # true if prompt is positional arg
 PROVIDER_HAS_SUBAGENTS=true    # Can spawn Task tool subagents
 PROVIDER_HAS_PARALLEL=true     # Supports parallel execution
 PROVIDER_HAS_TASK_TOOL=true    # Has Task tool for agent spawning
-PROVIDER_HAS_MCP=true          # Supports MCP server integration
+PROVIDER_HAS_MCP=true          # Supports MCP server integration (Codex also has basic MCP)
 PROVIDER_MAX_PARALLEL=10       # Maximum concurrent agents
 ```
 
 #### Model Configuration
 ```bash
-PROVIDER_MODEL_PLANNING="claude-opus-4-5-20251101"
-PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-5-20251101"
-PROVIDER_MODEL_FAST="claude-haiku-4-5-20251101"
+PROVIDER_MODEL_PLANNING="claude-opus-4-6-20260201"
+PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-5-20250929"
+PROVIDER_MODEL_FAST="claude-haiku-4-5-20251001"
 ```
 
 #### Rate Limiting
 ```bash
 PROVIDER_RATE_LIMIT_RPM=50     # Requests per minute
 PROVIDER_CONTEXT_WINDOW=200000 # Max context tokens
-PROVIDER_MAX_OUTPUT_TOKENS=64000
+PROVIDER_MAX_OUTPUT_TOKENS=128000
 ```
 
 #### Degraded Mode
@@ -271,7 +271,7 @@ Provider Capability Matrix:
   Provider    Features   Parallel   Task Tool   MCP
   ──────────────────────────────────────────────────
   claude      Full       Yes (10)   Yes         Yes
-  codex       Degraded   No         No          No
+  codex       Degraded   No         No          Basic
   gemini      Degraded   No         No          No
 ```
 
@@ -284,8 +284,8 @@ All CLI flags have been verified against actual CLI help output:
 | Provider | Flag | Verified Version | Notes |
 |----------|------|------------------|-------|
 | Claude | `--dangerously-skip-permissions` | v2.1.19 | Autonomous mode |
-| Codex | `exec --dangerously-bypass-approvals-and-sandbox` | v0.89.0 | Requires `exec` subcommand |
-| Gemini | `--yolo` | v0.25.2 | `-p` flag is DEPRECATED |
+| Codex | `--full-auto` | v0.98.0 | Recommended; legacy: `exec --dangerously-bypass-approvals-and-sandbox` |
+| Gemini | `--approval-mode=yolo` | v0.25.2 | `-p` flag is DEPRECATED |
 
 ### Gemini Note
 
@@ -293,7 +293,7 @@ The `-p` prompt flag is deprecated in Gemini CLI v0.25.2. Loki Mode uses positio
 
 ```bash
 # Correct (v5.1.0+)
-gemini --yolo "$prompt"
+gemini --approval-mode=yolo "$prompt"
 
 # Deprecated (do not use)
 gemini --yolo -p "$prompt"

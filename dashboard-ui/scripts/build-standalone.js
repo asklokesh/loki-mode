@@ -31,11 +31,14 @@ const watchMode = args.includes('--watch');
  */
 async function buildStandalone() {
   const distDir = join(__dirname, '..', 'dist');
+  const serverStaticDir = join(__dirname, '..', '..', 'dashboard', 'static');
   const entryPoint = join(__dirname, '..', 'index.js');
 
-  // Ensure dist directory exists
-  if (!existsSync(distDir)) {
-    mkdirSync(distDir, { recursive: true });
+  // Ensure output directories exist
+  for (const dir of [distDir, serverStaticDir]) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
   }
 
   console.log('Building standalone dashboard...');
@@ -58,13 +61,19 @@ async function buildStandalone() {
   // Generate standalone HTML with inlined bundle
   const html = generateStandaloneHTML(bundleCode);
 
-  // Write output
-  const outputPath = join(distDir, 'loki-dashboard-standalone.html');
-  writeFileSync(outputPath, html);
+  // Write to BOTH locations - no manual copy step needed
+  // 1. dist/ - for dashboard-ui npm package exports and VSCode
+  const distPath = join(distDir, 'loki-dashboard-standalone.html');
+  writeFileSync(distPath, html);
+
+  // 2. dashboard/static/ - served directly by the Python API server
+  const serverPath = join(serverStaticDir, 'index.html');
+  writeFileSync(serverPath, html);
 
   console.log(`Built: dist/loki-dashboard-standalone.html (${bundleSize} KB)`);
+  console.log(`Built: dashboard/static/index.html (${bundleSize} KB)`);
 
-  return outputPath;
+  return distPath;
 }
 
 /**

@@ -78,7 +78,7 @@ loki start ./my-prd.md
 ### Option 5: Docker
 
 ```bash
-docker run -v $(pwd):/workspace asklokesh/loki-mode:5.1.1 ./my-prd.md
+docker run -v $(pwd):/workspace asklokesh/loki-mode:5.23.0 ./my-prd.md
 ```
 
 ### Option 6: VS Code Extension
@@ -377,7 +377,7 @@ brew tap asklokesh/tap && brew install loki-mode
 loki-mode-install-skill  # Set up Claude Code integration
 
 # Option C: Docker
-docker pull asklokesh/loki-mode:5.0.0
+docker pull asklokesh/loki-mode:5.23.0
 
 # Option D: Git clone
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode

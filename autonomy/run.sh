@@ -1529,7 +1529,7 @@ spawn_worktree_session() {
                     >> "$log_file" 2>&1
                 ;;
             codex)
-                codex exec --dangerously-bypass-approvals-and-sandbox \
+                codex exec --full-auto \
                     "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1
                 ;;
@@ -1624,7 +1624,7 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 resolution=$(claude --dangerously-skip-permissions -p "$conflict_prompt" --output-format text 2>/dev/null)
                 ;;
             codex)
-                resolution=$(codex exec --dangerously-bypass-approvals-and-sandbox "$conflict_prompt" 2>/dev/null)
+                resolution=$(codex exec --full-auto "$conflict_prompt" 2>/dev/null)
                 ;;
             gemini)
                 # Uses invoke_gemini_capture for rate limit fallback to flash model
@@ -2055,14 +2055,14 @@ invoke_gemini() {
     tmp_output=$(mktemp)
 
     # Try primary model first
-    gemini --yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1 | tee "$tmp_output"
+    gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1 | tee "$tmp_output"
     local exit_code=${PIPESTATUS[0]}
 
     # Check for rate limit in output
     if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_output"; then
         log_warn "Rate limit hit on $model, falling back to $fallback"
         rm -f "$tmp_output"
-        gemini --yolo --model "$fallback" "$prompt" "$@" < /dev/null
+        gemini --approval-mode=yolo --model "$fallback" "$prompt" "$@" < /dev/null
         exit_code=$?
     else
         rm -f "$tmp_output"
@@ -2083,13 +2083,13 @@ invoke_gemini_capture() {
     local output
 
     # Try primary model first
-    output=$(gemini --yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
+    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
     local exit_code=$?
 
     # Check for rate limit in output
     if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
         log_warn "Rate limit hit on $model, falling back to $fallback" >&2
-        output=$(gemini --yolo --model "$fallback" "$prompt" "$@" < /dev/null 2>&1)
+        output=$(gemini --approval-mode=yolo --model "$fallback" "$prompt" "$@" < /dev/null 2>&1)
     fi
 
     echo "$output"
@@ -4661,7 +4661,7 @@ if __name__ == "__main__":
                 # Note: Effort is set via env var, not CLI flag
                 # Uses dynamic tier from RARV phase (tier_param already set above)
                 CODEX_MODEL_REASONING_EFFORT="$tier_param" \
-                codex exec --dangerously-bypass-approvals-and-sandbox \
+                codex exec --full-auto \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"
                 local exit_code=${PIPESTATUS[0]}
                 ;;
@@ -4677,13 +4677,13 @@ if __name__ == "__main__":
                 # Try primary model, fallback on rate limit
                 local tmp_output
                 tmp_output=$(mktemp)
-                gemini --yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log"
+                gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log"
                 local exit_code=${PIPESTATUS[0]}
 
                 if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_output"; then
                     log_warn "Rate limit hit on $model, falling back to $fallback"
                     echo "[loki] Fallback to $fallback due to rate limit" >> "$log_file"
-                    gemini --yolo --model "$fallback" "$prompt" < /dev/null 2>&1 | tee -a "$log_file" "$agent_log"
+                    gemini --approval-mode=yolo --model "$fallback" "$prompt" < /dev/null 2>&1 | tee -a "$log_file" "$agent_log"
                     exit_code=${PIPESTATUS[0]}
                 fi
                 rm -f "$tmp_output"

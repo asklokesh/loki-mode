@@ -96,8 +96,8 @@ These rules are ABSOLUTE. Violating them is a critical failure.
 
 **Default (v5.3.0):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
-| Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex | Gemini |
-|-----------|------|------------------|------------------------|-------|--------|
+| Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
+|-----------|------|------------------|------------------------|------------------|--------|
 | PRD analysis, architecture, system design | **planning** | opus | opus | effort=xhigh | thinking=high |
 | Feature implementation, complex bugs | **development** | opus | sonnet | effort=high | thinking=medium |
 | Code review (always 3 parallel reviewers) | **development** | opus | sonnet | effort=high | thinking=medium |
@@ -106,7 +106,7 @@ These rules are ABSOLUTE. Violating them is a critical failure.
 
 **Parallelization rule (Claude only):** Launch up to 10 agents simultaneously for independent tasks.
 
-**Degraded mode (Codex/Gemini):** No parallel agents or Task tool. Runs RARV cycle sequentially. See `skills/model-selection.md`.
+**Degraded mode (Codex/Gemini):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
 
 **Git worktree parallelism:** For true parallel feature development, use `--parallel` flag with run.sh. See `skills/parallel-workflows.md`.
 
@@ -193,7 +193,7 @@ claude --dangerously-skip-permissions
 
 # With provider selection (supports .md and .json PRDs)
 ./autonomy/run.sh --provider claude ./prd.md   # Default, full features
-./autonomy/run.sh --provider codex ./prd.json  # GPT-5.2 Codex, degraded mode
+./autonomy/run.sh --provider codex ./prd.json  # GPT-5.3 Codex, degraded mode
 ./autonomy/run.sh --provider gemini ./prd.md   # Gemini 3 Pro, degraded mode
 
 # Or via CLI wrapper
@@ -204,8 +204,8 @@ loki start --provider codex ./prd.md
 ```
 
 **Provider capabilities:**
-- **Claude**: Full features (Task tool, parallel agents, MCP, 200K context)
-- **Codex**: Degraded mode (sequential only, no Task tool, 128K context)
+- **Claude**: Opus 4.6, 1M context (beta), 128K output, adaptive thinking, agent teams, full features (Task tool, parallel agents, MCP)
+- **Codex**: GPT-5.3, 400K context, 128K output, MCP support, --full-auto mode, degraded (sequential only, no Task tool)
 - **Gemini**: Degraded mode (sequential only, no Task tool, 1M context)
 
 ---

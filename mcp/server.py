@@ -419,7 +419,7 @@ except ImportError:
 # Initialize FastMCP server
 mcp = FastMCP(
     "loki-mode",
-    version="5.16.0",
+    version="5.23.0",
     description="Loki Mode autonomous agent orchestration"
 )
 

@@ -43,7 +43,7 @@ Basic health check.
 ```json
 {
   "status": "ok",
-  "version": "5.13.1"
+  "version": "5.23.0"
 }
 ```
 
@@ -64,7 +64,7 @@ Get detailed session status.
   "currentTask": "implement-auth",
   "pendingTasks": 5,
   "provider": "claude",
-  "version": "5.13.1",
+  "version": "5.23.0",
   "lokiDir": "/path/to/project/.loki",
   "timestamp": "2026-02-02T12:00:00.000Z"
 }

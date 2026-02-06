@@ -45,13 +45,13 @@ PROVIDER_MAX_PARALLEL=10
 
 # Model Configuration (Abstract Tiers)
 # Default: Haiku disabled for quality. Use --allow-haiku or LOKI_ALLOW_HAIKU=true to enable.
-PROVIDER_MODEL_PLANNING="claude-opus-4-5-20251101"
-PROVIDER_MODEL_DEVELOPMENT="claude-opus-4-5-20251101"  # Opus for dev (was sonnet)
+PROVIDER_MODEL_PLANNING="claude-opus-4-6"
+PROVIDER_MODEL_DEVELOPMENT="claude-opus-4-6"  # Opus for dev (was sonnet)
 if [ "${LOKI_ALLOW_HAIKU:-false}" = "true" ]; then
-    PROVIDER_MODEL_FAST="claude-haiku-4-5-20251101"
-    PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-5-20251101"  # Sonnet for dev when haiku enabled
+    PROVIDER_MODEL_FAST="claude-haiku-4-5-20251001"
+    PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-5-20250929"  # Sonnet for dev when haiku enabled
 else
-    PROVIDER_MODEL_FAST="claude-sonnet-4-5-20251101"  # Sonnet for fast (no haiku)
+    PROVIDER_MODEL_FAST="claude-sonnet-4-5-20250929"  # Sonnet for fast (no haiku)
 fi
 
 # Model Selection (for Task tool)
@@ -63,8 +63,8 @@ else
 fi
 
 # Context and Limits
-PROVIDER_CONTEXT_WINDOW=200000
-PROVIDER_MAX_OUTPUT_TOKENS=64000
+PROVIDER_CONTEXT_WINDOW=200000  # 1M token context available in beta
+PROVIDER_MAX_OUTPUT_TOKENS=128000
 PROVIDER_RATE_LIMIT_RPM=50
 
 # Cost (USD per 1K tokens, approximate)

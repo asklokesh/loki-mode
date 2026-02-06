@@ -99,6 +99,10 @@ jobs:
           cp -r tests release/loki-mode/
           cp -r scripts release/loki-mode/
           cp -r autonomy release/loki-mode/
+          cp -r dashboard release/loki-mode/
+          cp -r memory release/loki-mode/
+          cp -r skills release/loki-mode/
+          cp -r providers release/loki-mode/
 
           cd release
           zip -r loki-mode-claude-code-${{ steps.version.outputs.version }}.zip loki-mode
@@ -157,6 +161,15 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Build dashboard frontend
+        working-directory: dashboard-ui
+        run: |
+          npm ci
+          npm run build:all
+
+      - name: Verify dashboard static exists
+        run: test -f dashboard/static/index.html || (echo "FATAL: dashboard/static/index.html not found after build" && exit 1)
+
       - name: Publish to npm
         run: npm publish --access public
         env:
@@ -169,6 +182,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build dashboard frontend
+        working-directory: dashboard-ui
+        run: |
+          npm ci
+          npm run build:all
+
+      - name: Verify dashboard static exists
+        run: test -f dashboard/static/index.html || (echo "FATAL: dashboard/static/index.html not found after build" && exit 1)
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -217,9 +244,11 @@ jobs:
           echo "Syncing version to $VERSION"
           npm pkg set version="$VERSION"
 
-      - name: Install dashboard-ui dependencies
+      - name: Build dashboard-ui
         working-directory: dashboard-ui
-        run: npm install
+        run: |
+          npm ci
+          npm run build
 
       - name: Install extension dependencies
         working-directory: vscode-extension

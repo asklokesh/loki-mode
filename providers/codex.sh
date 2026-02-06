@@ -29,31 +29,30 @@ PROVIDER_CLI="codex"
 
 # CLI Invocation
 # Note: codex uses positional prompt after "exec" subcommand
-# VERIFIED: exec --dangerously-bypass-approvals-and-sandbox confirmed in codex exec --help (v0.89.0)
-# "Skip all confirmation prompts and execute commands without sandboxing. EXTREMELY DANGEROUS."
-PROVIDER_AUTONOMOUS_FLAG="exec --dangerously-bypass-approvals-and-sandbox"
+# VERIFIED: exec --full-auto confirmed in codex exec --help (v0.98.0)
+# --full-auto: sets --ask-for-approval on-request + --sandbox workspace-write (v0.98.0)
+# Alternative: "exec --dangerously-bypass-approvals-and-sandbox" (legacy, no sandbox)
+PROVIDER_AUTONOMOUS_FLAG="exec --full-auto"
 PROVIDER_PROMPT_FLAG=""
 PROVIDER_PROMPT_POSITIONAL=true
 
 # Skill System
-# Note: Codex CLI does not have a native skills system
-PROVIDER_SKILL_DIR=""
-PROVIDER_SKILL_FORMAT="none"
+PROVIDER_SKILL_DIR="${HOME}/.agents/skills"
+PROVIDER_SKILL_FORMAT="markdown"  # Codex v0.98+ loads skills from ~/.agents/skills
 
 # Capability Flags
 PROVIDER_HAS_SUBAGENTS=false
 PROVIDER_HAS_PARALLEL=false
 PROVIDER_HAS_TASK_TOOL=false
-PROVIDER_HAS_MCP=false
+PROVIDER_HAS_MCP=true
 PROVIDER_MAX_PARALLEL=1
 
 # Model Configuration
 # Codex uses single model with effort parameter
-# NOTE: "gpt-5.2-codex" is a PLACEHOLDER model name. Update this value when
-# official Codex CLI documentation specifies the actual model identifier.
-PROVIDER_MODEL_PLANNING="gpt-5.2-codex"
-PROVIDER_MODEL_DEVELOPMENT="gpt-5.2-codex"
-PROVIDER_MODEL_FAST="gpt-5.2-codex"
+# NOTE: gpt-5.3-codex is the official model name for Codex CLI v0.98+
+PROVIDER_MODEL_PLANNING="gpt-5.3-codex"
+PROVIDER_MODEL_DEVELOPMENT="gpt-5.3-codex"
+PROVIDER_MODEL_FAST="gpt-5.3-codex"
 
 # Effort levels (Codex-specific: maps to reasoning time, not model capability)
 PROVIDER_EFFORT_PLANNING="xhigh"
@@ -65,11 +64,11 @@ PROVIDER_TASK_MODEL_PARAM=""
 PROVIDER_TASK_MODEL_VALUES=()
 
 # Context and Limits
-PROVIDER_CONTEXT_WINDOW=128000
-PROVIDER_MAX_OUTPUT_TOKENS=32000
+PROVIDER_CONTEXT_WINDOW=400000
+PROVIDER_MAX_OUTPUT_TOKENS=128000
 PROVIDER_RATE_LIMIT_RPM=60
 
-# Cost (USD per 1K tokens, approximate for GPT-5.2)
+# Cost (USD per 1K tokens, approximate for GPT-5.3)
 PROVIDER_COST_INPUT_PLANNING=0.010
 PROVIDER_COST_OUTPUT_PLANNING=0.030
 PROVIDER_COST_INPUT_DEV=0.010
@@ -82,8 +81,6 @@ PROVIDER_DEGRADED=true
 PROVIDER_DEGRADED_REASONS=(
     "No Task tool subagent support - cannot spawn parallel agents"
     "Single model with effort parameter - no cheap tier for parallelization"
-    "No native skills system - SKILL.md must be passed via prompt"
-    "No MCP server integration"
 )
 
 # Detection function - check if provider CLI is available
@@ -102,7 +99,7 @@ provider_version() {
 provider_invoke() {
     local prompt="$1"
     shift
-    codex exec --dangerously-bypass-approvals-and-sandbox "$prompt" "$@"
+    codex exec --full-auto "$prompt" "$@"
 }
 
 # Model tier to effort level parameter (Codex uses effort, not separate models)
@@ -126,5 +123,5 @@ provider_invoke_with_tier() {
     shift 2
     local effort
     effort=$(provider_get_tier_param "$tier")
-    CODEX_MODEL_REASONING_EFFORT="$effort" codex exec --dangerously-bypass-approvals-and-sandbox "$prompt" "$@"
+    CODEX_MODEL_REASONING_EFFORT="$effort" codex exec --full-auto "$prompt" "$@"
 }

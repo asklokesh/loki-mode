@@ -95,7 +95,7 @@ Audit logs use JSON Lines format:
   "metadata": {
     "hostname": "dev-machine",
     "pid": 12345,
-    "version": "5.13.1"
+    "version": "5.23.0"
   }
 }
 ```

@@ -13,7 +13,7 @@ Loki Mode supports three AI providers. Claude has full features; Codex and Gemin
 **Degraded mode limitations:**
 - No Task tool (cannot spawn subagents)
 - No parallel execution (sequential RARV cycle only)
-- No MCP server integration
+- No MCP server integration (Codex has MCP support but not yet integrated with Loki)
 - Single model with parameter adjustment (effort/thinking level)
 
 ---
@@ -151,6 +151,31 @@ Task(
 
 **When to use:** Discovery, Architecture, Critical decisions
 **When NOT to use:** Haiku tasks, repetitive work, obvious implementations
+
+### Claude Adaptive Thinking (Effort Parameter)
+
+Claude models support an `effort` parameter that controls reasoning depth without requiring thinking prefixes. This is separate from extended thinking and applies at the API level.
+
+| Effort Level | When to Use | Token Impact |
+|--------------|-------------|--------------|
+| `low` | Simple, well-defined tasks | Minimal reasoning tokens |
+| `medium` | Standard tasks (default) | Balanced reasoning |
+| `high` | Complex multi-step tasks | Extended reasoning |
+| `max` | Critical decisions, architecture | Maximum reasoning depth |
+
+**Note:** The effort parameter and thinking prefixes serve different purposes. Effort controls the model's internal reasoning budget; thinking prefixes guide the structure of the response.
+
+### Codex --full-auto Flag
+
+Codex CLI v0.98.0 supports `--full-auto` as the recommended autonomous mode flag, replacing the verbose `exec --dangerously-bypass-approvals-and-sandbox` invocation:
+
+```bash
+# Recommended (v0.98.0+)
+codex --full-auto "$prompt"
+
+# Legacy (still supported)
+codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
+```
 
 ## Prompt Repetition for Haiku
 

@@ -39,12 +39,13 @@
     "prebuild": "mkdir -p dist",
     "prepublishOnly": "npm run build:all",
     "test": "npm run test:parity",
+    "test:e2e": "npx playwright test",
     "test:visual": "jest --config jest.config.js tests/visual-regression.test.js",
     "test:parity": "node scripts/check-parity.js",
     "test:parity:json": "node scripts/check-parity.js --json",
     "test:parity:markdown": "node scripts/check-parity.js --markdown",
     "test:parity:report": "node scripts/check-parity.js --report parity-report.txt",
-    "test:all": "npm run test:visual && npm run test:parity"
+    "test:all": "npm run test:e2e && npm run test:visual && npm run test:parity"
   },
   "keywords": [
     "loki-mode",
@@ -56,12 +57,12 @@
   "author": "Lokesh",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.58.1",
     "esbuild": "^0.24.0",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
     "jsdom": "^24.0.0"
   },
-  "peerDependencies": {},
   "engines": {
     "node": ">=18.0.0"
   }
