@@ -320,10 +320,10 @@ test.describe('Integration', () => {
     expect(failedRequests).toEqual([]);
   });
 
-  test('all 5 main components render', async ({ page }) => {
+  test('all 6 main components render', async ({ page }) => {
     await waitForDashboard(page);
 
-    for (const tag of ['loki-session-control', 'loki-task-board', 'loki-log-stream', 'loki-memory-browser', 'loki-learning-dashboard']) {
+    for (const tag of ['loki-session-control', 'loki-task-board', 'loki-log-stream', 'loki-memory-browser', 'loki-learning-dashboard', 'loki-council-dashboard']) {
       await expect(page.locator(tag)).toBeVisible({ timeout: 10000 });
     }
   });
@@ -337,5 +337,74 @@ test.describe('Integration', () => {
       await page.waitForTimeout(1000);
       await expect(page.locator('loki-task-board')).toBeVisible();
     }
+  });
+});
+
+// =============================================================================
+// Completion Council
+// =============================================================================
+test.describe('Completion Council', () => {
+  test('GET /api/council/state returns council state', async ({ request }) => {
+    const response = await request.get('/api/council/state');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toHaveProperty('enabled');
+  });
+
+  test('GET /api/council/verdicts returns verdicts', async ({ request }) => {
+    const response = await request.get('/api/council/verdicts');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toHaveProperty('verdicts');
+    expect(data).toHaveProperty('details');
+  });
+
+  test('GET /api/council/convergence returns data points', async ({ request }) => {
+    const response = await request.get('/api/council/convergence');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toHaveProperty('dataPoints');
+    expect(Array.isArray(data.dataPoints)).toBeTruthy();
+  });
+
+  test('GET /api/council/report returns report', async ({ request }) => {
+    const response = await request.get('/api/council/report');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data).toHaveProperty('report');
+  });
+
+  test('POST /api/council/force-review creates signal file', async ({ request }) => {
+    const response = await request.post('/api/council/force-review');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data.success).toBeTruthy();
+  });
+
+  test('GET /api/agents returns agents array', async ({ request }) => {
+    const response = await request.get('/api/agents');
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(Array.isArray(data)).toBeTruthy();
+  });
+
+  test('council dashboard component renders', async ({ page }) => {
+    await waitForDashboard(page);
+    const council = page.locator('loki-council-dashboard');
+    await expect(council).toBeVisible({ timeout: 10000 });
+
+    // Check shadow DOM renders title
+    const title = council.locator('.title');
+    await expect(title).toContainText('Completion Council');
+  });
+
+  test('council dashboard shows tabs', async ({ page }) => {
+    await waitForDashboard(page);
+    const council = page.locator('loki-council-dashboard');
+    await expect(council).toBeVisible({ timeout: 10000 });
+
+    // Check tabs exist
+    const tabs = council.locator('.tab');
+    await expect(tabs).toHaveCount(4);
   });
 });

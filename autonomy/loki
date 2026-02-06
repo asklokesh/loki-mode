@@ -294,6 +294,7 @@ show_help() {
     echo "  import           Import GitHub issues as tasks"
     echo "  config [cmd]     Manage configuration (show|init|edit|path)"
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
+    echo "  council [cmd]    Completion council (status|verdicts|convergence|force-review|report)"
     echo "  reset [target]   Reset session state (all|retries|failed)"
     echo "  version          Show version"
     echo "  help             Show this help"
@@ -2784,6 +2785,9 @@ main() {
         memory)
             cmd_memory "$@"
             ;;
+        council)
+            cmd_council "$@"
+            ;;
         projects)
             cmd_projects "$@"
             ;;
@@ -3763,6 +3767,129 @@ except Exception as e:
         *)
             echo -e "${RED}Unknown memory command: $subcommand${NC}"
             echo "Run 'loki memory help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+# Completion Council management
+cmd_council() {
+    local subcommand="${1:-status}"
+    shift 2>/dev/null || true
+
+    local council_dir=".loki/council"
+
+    case "$subcommand" in
+        status)
+            echo -e "${CYAN}=== Completion Council Status ===${NC}"
+
+            if [ ! -d "$council_dir" ]; then
+                echo -e "${YELLOW}Council not initialized (no active session)${NC}"
+                return 0
+            fi
+
+            if [ -f "$council_dir/state.json" ]; then
+                python3 -c "
+import json
+with open('$council_dir/state.json') as f:
+    state = json.load(f)
+print(f\"Enabled: {state.get('initialized', False)}\")
+print(f\"Total votes: {state.get('total_votes', 0)}\")
+print(f\"Approve votes: {state.get('approve_votes', 0)}\")
+print(f\"Reject votes: {state.get('reject_votes', 0)}\")
+print(f\"Stagnation streak: {state.get('consecutive_no_change', 0)}\")
+print(f\"Done signals: {state.get('done_signals', 0)}\")
+print(f\"Last check: iteration {state.get('last_check_iteration', 'none')}\")
+verdicts = state.get('verdicts', [])
+if verdicts:
+    print(f\"\nRecent verdicts:\")
+    for v in verdicts[-5:]:
+        print(f\"  Iteration {v['iteration']}: {v['result']} ({v['approve']} approve / {v['reject']} reject)\")
+else:
+    print(f\"\nNo verdicts yet\")
+" 2>/dev/null
+            else
+                echo "Council state file not found"
+            fi
+            ;;
+
+        verdicts|log)
+            echo -e "${CYAN}=== Council Decision Log ===${NC}"
+
+            if [ -f "$council_dir/state.json" ]; then
+                python3 -c "
+import json
+with open('$council_dir/state.json') as f:
+    state = json.load(f)
+verdicts = state.get('verdicts', [])
+if not verdicts:
+    print('No decisions recorded yet')
+else:
+    for v in verdicts:
+        result = v.get('result', 'UNKNOWN')
+        color = '\033[32m' if result == 'APPROVED' else '\033[31m'
+        print(f\"{color}{result}\033[0m - Iteration {v['iteration']} ({v.get('timestamp', 'unknown')}) - {v['approve']} approve / {v['reject']} reject\")
+" 2>/dev/null
+            else
+                echo "No council data available"
+            fi
+            ;;
+
+        convergence)
+            echo -e "${CYAN}=== Convergence Tracking ===${NC}"
+
+            if [ -f "$council_dir/convergence.log" ]; then
+                echo "Timestamp | Iteration | Files Changed | No-Change Streak | Done Signals"
+                echo "----------|-----------|---------------|-----------------|-------------"
+                tail -20 "$council_dir/convergence.log" | while IFS='|' read -r ts iter files streak signals; do
+                    printf "%-10s| %-9s | %-13s | %-15s | %s\n" "$ts" "$iter" "$files" "$streak" "$signals"
+                done
+            else
+                echo "No convergence data available"
+            fi
+            ;;
+
+        force-review)
+            echo "Requesting immediate council review..."
+            mkdir -p ".loki/signals"
+            echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > ".loki/signals/COUNCIL_REVIEW_REQUESTED"
+            echo -e "${GREEN}Review requested. Council will convene at next iteration.${NC}"
+            ;;
+
+        report)
+            if [ -f "$council_dir/report.md" ]; then
+                cat "$council_dir/report.md"
+            else
+                echo "No completion report available yet"
+            fi
+            ;;
+
+        config)
+            echo -e "${CYAN}=== Council Configuration ===${NC}"
+            echo "LOKI_COUNCIL_ENABLED=${LOKI_COUNCIL_ENABLED:-true}"
+            echo "LOKI_COUNCIL_SIZE=${LOKI_COUNCIL_SIZE:-3}"
+            echo "LOKI_COUNCIL_THRESHOLD=${LOKI_COUNCIL_THRESHOLD:-2}"
+            echo "LOKI_COUNCIL_CHECK_INTERVAL=${LOKI_COUNCIL_CHECK_INTERVAL:-5}"
+            echo "LOKI_COUNCIL_MIN_ITERATIONS=${LOKI_COUNCIL_MIN_ITERATIONS:-3}"
+            echo "LOKI_COUNCIL_STAGNATION_LIMIT=${LOKI_COUNCIL_STAGNATION_LIMIT:-5}"
+            ;;
+
+        help|--help|-h)
+            echo "Usage: loki council <command>"
+            echo ""
+            echo "Commands:"
+            echo "  status         Show council status (default)"
+            echo "  verdicts       Show decision log (alias: log)"
+            echo "  convergence    Show convergence tracking data"
+            echo "  force-review   Request immediate council review"
+            echo "  report         Show completion report"
+            echo "  config         Show council configuration"
+            echo "  help           Show this help"
+            ;;
+
+        *)
+            echo -e "${RED}Unknown council command: $subcommand${NC}"
+            echo "Run 'loki council help' for usage."
             exit 1
             ;;
     esac

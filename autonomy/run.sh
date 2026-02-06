@@ -57,6 +57,14 @@
 #   LOKI_PERPETUAL_MODE        - Ignore ALL completion signals (default: false)
 #                                Set to 'true' for truly infinite operation
 #
+# Completion Council (v5.25.0) - Multi-agent completion verification:
+#   LOKI_COUNCIL_ENABLED          - Enable completion council (default: true)
+#   LOKI_COUNCIL_SIZE             - Number of council members (default: 3)
+#   LOKI_COUNCIL_THRESHOLD        - Votes needed for completion (default: 2)
+#   LOKI_COUNCIL_CHECK_INTERVAL   - Check every N iterations (default: 5)
+#   LOKI_COUNCIL_MIN_ITERATIONS   - Min iterations before council runs (default: 3)
+#   LOKI_COUNCIL_STAGNATION_LIMIT - Max iterations with no git changes (default: 5)
+#
 # Model Selection:
 #   LOKI_ALLOW_HAIKU           - Enable Haiku model for fast tier (default: false)
 #                                When false: Opus for dev/bugfix, Sonnet for tests/docs
@@ -245,6 +253,12 @@ parse_simple_yaml() {
     set_from_yaml "$file" "completion.promise" "LOKI_COMPLETION_PROMISE"
     set_from_yaml "$file" "completion.max_iterations" "LOKI_MAX_ITERATIONS"
     set_from_yaml "$file" "completion.perpetual_mode" "LOKI_PERPETUAL_MODE"
+    set_from_yaml "$file" "completion.council.enabled" "LOKI_COUNCIL_ENABLED"
+    set_from_yaml "$file" "completion.council.size" "LOKI_COUNCIL_SIZE"
+    set_from_yaml "$file" "completion.council.threshold" "LOKI_COUNCIL_THRESHOLD"
+    set_from_yaml "$file" "completion.council.check_interval" "LOKI_COUNCIL_CHECK_INTERVAL"
+    set_from_yaml "$file" "completion.council.min_iterations" "LOKI_COUNCIL_MIN_ITERATIONS"
+    set_from_yaml "$file" "completion.council.stagnation_limit" "LOKI_COUNCIL_STAGNATION_LIMIT"
 
     # Model
     set_from_yaml "$file" "model.prompt_repetition" "LOKI_PROMPT_REPETITION"
@@ -379,6 +393,12 @@ parse_yaml_with_yq() {
         "completion.promise:LOKI_COMPLETION_PROMISE"
         "completion.max_iterations:LOKI_MAX_ITERATIONS"
         "completion.perpetual_mode:LOKI_PERPETUAL_MODE"
+        "completion.council.enabled:LOKI_COUNCIL_ENABLED"
+        "completion.council.size:LOKI_COUNCIL_SIZE"
+        "completion.council.threshold:LOKI_COUNCIL_THRESHOLD"
+        "completion.council.check_interval:LOKI_COUNCIL_CHECK_INTERVAL"
+        "completion.council.min_iterations:LOKI_COUNCIL_MIN_ITERATIONS"
+        "completion.council.stagnation_limit:LOKI_COUNCIL_STAGNATION_LIMIT"
         "model.prompt_repetition:LOKI_PROMPT_REPETITION"
         "model.confidence_routing:LOKI_CONFIDENCE_ROUTING"
         "model.autonomy_mode:LOKI_AUTONOMY_MODE"
@@ -474,6 +494,14 @@ MAX_ITERATIONS=${LOKI_MAX_ITERATIONS:-1000}
 ITERATION_COUNT=0
 # Perpetual mode: never stop unless max iterations (ignores all completion signals)
 PERPETUAL_MODE=${LOKI_PERPETUAL_MODE:-false}
+
+# Completion Council (v5.25.0) - Multi-agent completion verification
+# Source completion council module
+COUNCIL_SCRIPT="$SCRIPT_DIR/completion-council.sh"
+if [ -f "$COUNCIL_SCRIPT" ]; then
+    # shellcheck source=completion-council.sh
+    source "$COUNCIL_SCRIPT"
+fi
 
 # 2026 Research Enhancements (minimal additions)
 PROMPT_REPETITION=${LOKI_PROMPT_REPETITION:-true}
@@ -2317,6 +2345,12 @@ write_dashboard_state() {
         quality_gates=$(cat ".loki/state/quality-gates.json" 2>/dev/null || echo "$quality_gates")
     fi
 
+    # Get Completion Council state (v5.25.0)
+    local council_state='{"enabled":false}'
+    if [ -f ".loki/council/state.json" ]; then
+        council_state=$(cat ".loki/council/state.json" 2>/dev/null || echo '{"enabled":false}')
+    fi
+
     # Write comprehensive JSON state
     local project_name=$(basename "$(pwd)")
     local project_path=$(pwd)
@@ -2358,7 +2392,8 @@ write_dashboard_state() {
     "semantic": $semantic_count,
     "procedural": $procedural_count
   },
-  "qualityGates": $quality_gates
+  "qualityGates": $quality_gates,
+  "council": $council_state
 }
 EOF
 }
@@ -4349,6 +4384,7 @@ run_autonomous() {
     log_info "Max retries: $MAX_RETRIES"
     log_info "Max iterations: $MAX_ITERATIONS"
     log_info "Completion promise: $COMPLETION_PROMISE"
+    log_info "Completion council: ${COUNCIL_ENABLED:-true} (${COUNCIL_SIZE:-3} members, ${COUNCIL_THRESHOLD:-2}/${COUNCIL_SIZE:-3} majority)"
     log_info "Base wait: ${BASE_WAIT}s"
     log_info "Max wait: ${MAX_WAIT}s"
     log_info "Autonomy mode: $AUTONOMY_MODE"
@@ -4361,6 +4397,11 @@ run_autonomous() {
 
     load_state
     local retry=$RETRY_COUNT
+
+    # Initialize Completion Council (v5.25.0)
+    if type council_init &>/dev/null; then
+        council_init "$prd_path"
+    fi
 
     # Check max iterations before starting
     if check_max_iterations; then
@@ -4721,11 +4762,29 @@ if __name__ == "__main__":
             local goal_desc="${prd_path:-codebase-analysis}"
             store_episode_trace "$task_id" "success" "iteration" "$goal_desc" "$duration"
 
+            # Track iteration for Completion Council convergence detection
+            if type council_track_iteration &>/dev/null; then
+                council_track_iteration "$log_file"
+            fi
+
             # Perpetual mode: NEVER stop, always continue
             if [ "$PERPETUAL_MODE" = "true" ]; then
                 log_info "Perpetual mode: Ignoring exit, continuing immediately..."
                 ((retry++))
                 continue  # Immediately start next iteration, no wait
+            fi
+
+            # Completion Council check (v5.25.0) - multi-agent voting on completion
+            # Runs before completion promise check since council is more comprehensive
+            if type council_should_stop &>/dev/null && council_should_stop; then
+                echo ""
+                log_header "COMPLETION COUNCIL: PROJECT COMPLETE"
+                log_info "Council voted to stop (convergence detected + requirements verified)"
+                log_info "Running memory consolidation..."
+                run_memory_consolidation
+                notify_all_complete
+                save_state $retry "council_approved" 0
+                return 0
             fi
 
             # Only stop if EXPLICIT completion promise text was output
@@ -4744,7 +4803,7 @@ if __name__ == "__main__":
             # Warn if Claude says it's "done" but no explicit promise
             if is_completed; then
                 log_warn "${PROVIDER_DISPLAY_NAME:-Claude} claims completion, but no explicit promise fulfilled."
-                log_warn "Projects are never truly complete - there are always improvements!"
+                log_warn "Council will evaluate at next check interval (every ${COUNCIL_CHECK_INTERVAL:-5} iterations)"
             fi
 
             # SUCCESS exit - continue IMMEDIATELY to next iteration (no wait!)
@@ -4859,6 +4918,17 @@ check_human_intervention() {
         # Security: Reject symlinks
         log_warn "HUMAN_INPUT.md is a symlink - rejected for security"
         rm -f "$loki_dir/HUMAN_INPUT.md"
+    fi
+
+    # Check for council force-review signal (from dashboard)
+    if [ -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED" ]; then
+        log_info "Council force-review requested from dashboard"
+        rm -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED"
+        if type council_vote &>/dev/null && council_vote; then
+            log_header "COMPLETION COUNCIL: FORCE REVIEW - PROJECT COMPLETE"
+            return 2  # Stop
+        fi
+        log_info "Council force-review: voted to continue"
     fi
 
     # Check for STOP file (immediate stop)

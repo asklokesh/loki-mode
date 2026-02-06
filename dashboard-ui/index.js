@@ -70,9 +70,10 @@ export { LokiSessionControl } from './components/loki-session-control.js';
 export { LokiLogStream } from './components/loki-log-stream.js';
 export { LokiMemoryBrowser } from './components/loki-memory-browser.js';
 export { LokiLearningDashboard } from './components/loki-learning-dashboard.js';
+export { LokiCouncilDashboard } from './components/loki-council-dashboard.js';
 
 // Version
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 
 /**
  * Initialize all components with default configuration
@@ -111,6 +112,7 @@ const componentModules = [
   './components/loki-log-stream.js',
   './components/loki-memory-browser.js',
   './components/loki-learning-dashboard.js',
+  './components/loki-council-dashboard.js',
 ];
 
 // Components are registered via customElements.define in their respective files

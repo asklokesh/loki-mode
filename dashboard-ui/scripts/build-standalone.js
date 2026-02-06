@@ -469,6 +469,14 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <loki-learning-dashboard id="learning-dashboard" time-range="7d"></loki-learning-dashboard>
       </section>
+
+      <!-- Completion Council -->
+      <section class="section">
+        <div class="section-header">
+          <h2 class="section-title">Completion Council</h2>
+        </div>
+        <loki-council-dashboard id="council-dashboard"></loki-council-dashboard>
+      </section>
     </main>
   </div>
 
@@ -511,7 +519,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'session-control',
       'log-stream',
       'memory-browser',
-      'learning-dashboard'
+      'learning-dashboard',
+      'council-dashboard'
     ];
     components.forEach(function(id) {
       const el = document.getElementById(id);

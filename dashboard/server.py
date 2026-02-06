@@ -1510,6 +1510,195 @@ async def stop_session():
     return {"success": True, "message": "Stop signal sent"}
 
 
+# =============================================================================
+# Completion Council API (v5.25.0)
+# =============================================================================
+
+@app.get("/api/council/state")
+async def get_council_state():
+    """Get current Completion Council state."""
+    state_file = _LOKI_DIR / "council" / "state.json"
+    if state_file.exists():
+        try:
+            return json.loads(state_file.read_text())
+        except Exception:
+            pass
+    return {"enabled": False, "total_votes": 0, "verdicts": []}
+
+
+@app.get("/api/council/verdicts")
+async def get_council_verdicts(limit: int = 20):
+    """Get council vote history (decision log)."""
+    state_file = _LOKI_DIR / "council" / "state.json"
+    verdicts = []
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text())
+            verdicts = state.get("verdicts", [])
+        except Exception:
+            pass
+
+    # Also read individual vote files for detail
+    votes_dir = _LOKI_DIR / "council" / "votes"
+    detailed_verdicts = []
+    if votes_dir.exists():
+        for vote_dir in sorted(votes_dir.iterdir(), reverse=True):
+            if vote_dir.is_dir():
+                verdict_detail = {"iteration": vote_dir.name}
+                # Read evidence
+                evidence_file = vote_dir / "evidence.md"
+                if evidence_file.exists():
+                    verdict_detail["evidence_preview"] = evidence_file.read_text()[:500]
+                # Read member votes
+                members = []
+                for member_file in sorted(vote_dir.glob("member-*.txt")):
+                    try:
+                        content = member_file.read_text().strip()
+                        members.append({
+                            "member": member_file.stem,
+                            "content": content
+                        })
+                    except Exception:
+                        pass
+                verdict_detail["members"] = members
+                # Read contrarian
+                contrarian_file = vote_dir / "contrarian.txt"
+                if contrarian_file.exists():
+                    verdict_detail["contrarian"] = contrarian_file.read_text().strip()
+                detailed_verdicts.append(verdict_detail)
+                if len(detailed_verdicts) >= limit:
+                    break
+
+    return {"verdicts": verdicts, "details": detailed_verdicts}
+
+
+@app.get("/api/council/convergence")
+async def get_council_convergence():
+    """Get convergence tracking data for visualization."""
+    convergence_file = _LOKI_DIR / "council" / "convergence.log"
+    data_points = []
+    if convergence_file.exists():
+        try:
+            for line in convergence_file.read_text().strip().split("\n"):
+                parts = line.split("|")
+                if len(parts) >= 5:
+                    data_points.append({
+                        "timestamp": parts[0],
+                        "iteration": int(parts[1]),
+                        "files_changed": int(parts[2]),
+                        "no_change_streak": int(parts[3]),
+                        "done_signals": int(parts[4]),
+                    })
+        except Exception:
+            pass
+    return {"dataPoints": data_points}
+
+
+@app.get("/api/council/report")
+async def get_council_report():
+    """Get the final council completion report."""
+    report_file = _LOKI_DIR / "council" / "report.md"
+    if report_file.exists():
+        return {"report": report_file.read_text()}
+    return {"report": None}
+
+
+@app.post("/api/council/force-review")
+async def force_council_review():
+    """Force an immediate council review (writes signal file)."""
+    signal_dir = _LOKI_DIR / "signals"
+    signal_dir.mkdir(parents=True, exist_ok=True)
+    (signal_dir / "COUNCIL_REVIEW_REQUESTED").write_text(
+        datetime.now().isoformat()
+    )
+    return {"success": True, "message": "Council review requested"}
+
+
+# =============================================================================
+# Agent Management API (v5.25.0)
+# =============================================================================
+
+@app.get("/api/agents")
+async def get_agents():
+    """Get all active and recent agents."""
+    agents_file = _LOKI_DIR / "state" / "agents.json"
+    agents = []
+    if agents_file.exists():
+        try:
+            agents = json.loads(agents_file.read_text())
+        except Exception:
+            pass
+
+    # Enrich with process status
+    for agent in agents:
+        pid = agent.get("pid")
+        if pid:
+            try:
+                os.kill(int(pid), 0)  # Check if process exists
+                agent["alive"] = True
+            except (OSError, ValueError):
+                agent["alive"] = False
+        else:
+            agent["alive"] = False
+
+    return agents
+
+
+@app.post("/api/agents/{agent_id}/kill")
+async def kill_agent(agent_id: str):
+    """Kill a specific agent by ID."""
+    agents_file = _LOKI_DIR / "state" / "agents.json"
+    if not agents_file.exists():
+        raise HTTPException(404, "No agents file found")
+
+    try:
+        agents = json.loads(agents_file.read_text())
+    except Exception:
+        raise HTTPException(500, "Failed to read agents file")
+
+    target = None
+    for agent in agents:
+        if agent.get("id") == agent_id or agent.get("name") == agent_id:
+            target = agent
+            break
+
+    if not target:
+        raise HTTPException(404, f"Agent {agent_id} not found")
+
+    pid = target.get("pid")
+    if pid:
+        try:
+            os.kill(int(pid), 15)  # SIGTERM
+            target["status"] = "terminated"
+            agents_file.write_text(json.dumps(agents, indent=2))
+            return {"success": True, "message": f"Agent {agent_id} terminated"}
+        except OSError as e:
+            return {"success": False, "message": f"Failed to kill agent: {e}"}
+    return {"success": False, "message": "Agent has no PID"}
+
+
+@app.post("/api/agents/{agent_id}/pause")
+async def pause_agent(agent_id: str):
+    """Pause a specific agent by writing a pause signal."""
+    signal_dir = _LOKI_DIR / "signals"
+    signal_dir.mkdir(parents=True, exist_ok=True)
+    (signal_dir / f"PAUSE_AGENT_{agent_id}").write_text(
+        datetime.now().isoformat()
+    )
+    return {"success": True, "message": f"Pause signal sent to agent {agent_id}"}
+
+
+@app.post("/api/agents/{agent_id}/resume")
+async def resume_agent(agent_id: str):
+    """Resume a paused agent."""
+    signal_file = _LOKI_DIR / "signals" / f"PAUSE_AGENT_{agent_id}"
+    try:
+        signal_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return {"success": True, "message": f"Resume signal sent to agent {agent_id}"}
+
+
 @app.get("/api/logs")
 async def get_logs(lines: int = 100):
     """Get recent log entries from session log files."""

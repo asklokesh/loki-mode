@@ -285,7 +285,7 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         }
         /* Ensure Web Components fill their container */
         loki-task-board, loki-session-control, loki-log-stream,
-        loki-memory-browser, loki-learning-dashboard {
+        loki-memory-browser, loki-learning-dashboard, loki-council-dashboard {
             display: block;
             width: 100%;
         }
@@ -298,6 +298,7 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         <button class="tab-btn" data-tab="logs">Logs</button>
         <button class="tab-btn" data-tab="memory">Memory</button>
         <button class="tab-btn" data-tab="learning">Learning</button>
+        <button class="tab-btn" data-tab="council">Council</button>
     </div>
 
     <div id="tasks" class="tab-content active">
@@ -314,6 +315,9 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
     </div>
     <div id="learning" class="tab-content">
         <loki-learning-dashboard api-url="${this._apiUrl}" theme="vscode-dark"></loki-learning-dashboard>
+    </div>
+    <div id="council" class="tab-content">
+        <loki-council-dashboard api-url="${this._apiUrl}" theme="vscode-dark"></loki-council-dashboard>
     </div>
 
     <script nonce="${nonce}" src="${dashboardUri}"></script>
@@ -362,6 +366,9 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         });
         document.addEventListener('episode-select', (e) => {
             vscode.postMessage({ type: 'viewEpisodeDetails', episodeId: e.detail?.id });
+        });
+        document.addEventListener('council-action', (e) => {
+            vscode.postMessage({ type: 'showInfo', message: 'Council action: ' + (e.detail?.action || 'unknown') });
         });
 
         // Handle messages from extension
