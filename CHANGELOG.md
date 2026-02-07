@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.27.1] - 2026-02-07
+
+### Fixed
+- Dashboard: Pause/resume/stop buttons now call backend API (were firing DOM events only)
+- Dashboard: Overview section replaced inline JS with proper `loki-overview` web component
+- Dashboard: Log stream polls `/api/logs` as fallback when WebSocket unavailable
+- Dashboard: Overview cards used wrong field names (`data.model` -> `data.provider`, etc.)
+- Backend: Log timestamps parsed from log lines instead of always returning empty string
+- Backend: Learning aggregation endpoint now reads events.jsonl (was a stub)
+- Backend: Agents endpoint falls back to dashboard-state.json when agents.json missing
+- API client: Added `pauseSession()`, `resumeSession()`, `stopSession()`, `getLogs()` methods
+- Verified cross-surface integration: CLI pause + API resume, API pause + CLI resume all work
+
 ## [5.27.0] - 2026-02-07
 
 ### Fixed (57 bugs from comprehensive 10-agent audit with 3-member council review)

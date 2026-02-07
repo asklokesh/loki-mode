@@ -74,7 +74,7 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="5.27.0"
+LABEL version="5.27.1"
 LABEL description="Security-hardened sandbox for Loki Mode multi-agent system"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
 
