@@ -21,12 +21,22 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
 
-// Standard API pricing per million tokens (USD)
-const MODEL_PRICING = {
-  opus:   { input: 15.00,  output: 75.00,  label: 'Opus' },
-  sonnet: { input: 3.00,   output: 15.00,  label: 'Sonnet' },
-  haiku:  { input: 0.25,   output: 1.25,   label: 'Haiku' },
+// Static fallback pricing per million tokens (USD) - updated 2026-02-07
+// At runtime, these are overridden by /api/pricing (which reads .loki/pricing.json)
+const DEFAULT_PRICING = {
+  // Claude (Anthropic)
+  opus:   { input: 5.00,   output: 25.00,  label: 'Opus 4.6',       provider: 'claude' },
+  sonnet: { input: 3.00,   output: 15.00,  label: 'Sonnet 4.5',     provider: 'claude' },
+  haiku:  { input: 1.00,   output: 5.00,   label: 'Haiku 4.5',      provider: 'claude' },
+  // OpenAI Codex
+  'gpt-5.3-codex': { input: 1.50, output: 12.00, label: 'GPT-5.3 Codex', provider: 'codex' },
+  // Google Gemini
+  'gemini-3-pro':  { input: 1.25, output: 10.00, label: 'Gemini 3 Pro',   provider: 'gemini' },
+  'gemini-3-flash': { input: 0.10, output: 0.40, label: 'Gemini 3 Flash', provider: 'gemini' },
 };
+
+// Active pricing - starts with defaults, updated from API
+let MODEL_PRICING = { ...DEFAULT_PRICING };
 
 export class LokiCostDashboard extends LokiElement {
   static get observedAttributes() {
@@ -53,6 +63,7 @@ export class LokiCostDashboard extends LokiElement {
   connectedCallback() {
     super.connectedCallback();
     this._setupApi();
+    this._loadPricing();
     this._loadCost();
     this._startPolling();
   }
@@ -77,6 +88,30 @@ export class LokiCostDashboard extends LokiElement {
   _setupApi() {
     const apiUrl = this.getAttribute('api-url') || window.location.origin;
     this._api = getApiClient({ baseUrl: apiUrl });
+  }
+
+  async _loadPricing() {
+    try {
+      const pricing = await this._api.getPricing();
+      if (pricing && pricing.models) {
+        const updated = {};
+        for (const [key, m] of Object.entries(pricing.models)) {
+          updated[key] = {
+            input: m.input,
+            output: m.output,
+            label: m.label || key,
+            provider: m.provider || 'unknown',
+          };
+        }
+        MODEL_PRICING = updated;
+        this._pricingSource = pricing.source || 'api';
+        this._pricingDate = pricing.updated || '';
+        this._activeProvider = pricing.provider || 'claude';
+        this.render();
+      }
+    } catch {
+      // Keep static defaults
+    }
   }
 
   async _loadCost() {
@@ -233,6 +268,16 @@ export class LokiCostDashboard extends LokiElement {
         </div>
       </div>
     `;
+  }
+
+  _getPricingColorClass(key, model) {
+    // Map model keys to CSS color classes
+    if (key === 'opus' || key.includes('opus')) return 'opus';
+    if (key === 'sonnet' || key.includes('sonnet')) return 'sonnet';
+    if (key === 'haiku' || key.includes('haiku')) return 'haiku';
+    if (model.provider === 'codex') return 'codex';
+    if (model.provider === 'gemini') return 'gemini';
+    return '';
   }
 
   _escapeHTML(str) {
@@ -487,6 +532,15 @@ export class LokiCostDashboard extends LokiElement {
         .pricing-model.opus { color: var(--loki-opus); }
         .pricing-model.sonnet { color: var(--loki-sonnet); }
         .pricing-model.haiku { color: var(--loki-haiku); }
+        .pricing-model.codex { color: var(--loki-blue); }
+        .pricing-model.gemini { color: var(--loki-green); }
+
+        .pricing-meta {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+          margin-left: auto;
+          font-family: 'JetBrains Mono', monospace;
+        }
 
         .pricing-rates {
           font-size: 11px;
@@ -589,11 +643,12 @@ export class LokiCostDashboard extends LokiElement {
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
             <span class="section-title">API Pricing Reference (per 1M tokens)</span>
+            ${this._pricingDate ? `<span class="pricing-meta">Updated: ${this._escapeHTML(this._pricingDate)}</span>` : ''}
           </div>
           <div class="pricing-grid">
             ${Object.entries(MODEL_PRICING).map(([key, m]) => `
             <div class="pricing-item">
-              <div class="pricing-model ${key}">${m.label}</div>
+              <div class="pricing-model ${this._getPricingColorClass(key, m)}">${m.label || key}</div>
               <div class="pricing-rates">In: $${m.input.toFixed(2)} / Out: $${m.output.toFixed(2)}</div>
             </div>`).join('')}
           </div>

@@ -1658,17 +1658,53 @@ async def stop_session():
 # Cost Visibility API
 # =============================================================================
 
-# Standard API pricing per million tokens (USD)
-_MODEL_PRICING = {
-    "opus":   {"input": 15.00, "output": 75.00},
-    "sonnet": {"input": 3.00,  "output": 15.00},
-    "haiku":  {"input": 0.25,  "output": 1.25},
+# Static fallback pricing per million tokens (USD) - updated 2026-02-07
+# At runtime, overridden by .loki/pricing.json if available
+_DEFAULT_PRICING = {
+    # Claude (Anthropic)
+    "opus":   {"input": 5.00, "output": 25.00},
+    "sonnet": {"input": 3.00, "output": 15.00},
+    "haiku":  {"input": 1.00, "output": 5.00},
+    # OpenAI Codex
+    "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
+    # Google Gemini
+    "gemini-3-pro":  {"input": 1.25, "output": 10.00},
+    "gemini-3-flash": {"input": 0.10, "output": 0.40},
 }
+
+# Active pricing - starts with defaults, updated from .loki/pricing.json
+_MODEL_PRICING = dict(_DEFAULT_PRICING)
+
+
+def _load_pricing_from_file() -> dict:
+    """Load pricing from .loki/pricing.json if available."""
+    loki_dir = _get_loki_dir()
+    pricing_file = loki_dir / "pricing.json"
+    if pricing_file.exists():
+        try:
+            data = json.loads(pricing_file.read_text())
+            models = data.get("models", {})
+            if models:
+                return models
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _get_model_pricing() -> dict:
+    """Get current model pricing, preferring .loki/pricing.json over defaults."""
+    file_pricing = _load_pricing_from_file()
+    if file_pricing:
+        merged = dict(_DEFAULT_PRICING)
+        merged.update(file_pricing)
+        return merged
+    return _MODEL_PRICING
 
 
 def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Calculate USD cost for a model's token usage."""
-    pricing = _MODEL_PRICING.get(model.lower(), _MODEL_PRICING.get("sonnet", {}))
+    pricing_table = _get_model_pricing()
+    pricing = pricing_table.get(model.lower(), pricing_table.get("sonnet", {}))
     input_cost = (input_tokens / 1_000_000) * pricing.get("input", 3.00)
     output_cost = (output_tokens / 1_000_000) * pricing.get("output", 15.00)
     return input_cost + output_cost
@@ -1770,6 +1806,72 @@ async def get_cost():
         "budget_limit": budget_limit,
         "budget_used": round(budget_used, 4) if budget_limit is not None else None,
         "budget_remaining": round(budget_remaining, 4) if budget_remaining is not None else None,
+    }
+
+
+# =============================================================================
+# Pricing API
+# =============================================================================
+
+_PROVIDER_LABELS = {
+    "opus": "Opus 4.6",
+    "sonnet": "Sonnet 4.5",
+    "haiku": "Haiku 4.5",
+    "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gemini-3-pro": "Gemini 3 Pro",
+    "gemini-3-flash": "Gemini 3 Flash",
+}
+
+_MODEL_PROVIDERS = {
+    "opus": "claude",
+    "sonnet": "claude",
+    "haiku": "claude",
+    "gpt-5.3-codex": "codex",
+    "gemini-3-pro": "gemini",
+    "gemini-3-flash": "gemini",
+}
+
+
+@app.get("/api/pricing")
+async def get_pricing():
+    """Get current model pricing. Reads from .loki/pricing.json if available, falls back to static defaults."""
+    loki_dir = _get_loki_dir()
+    pricing_file = loki_dir / "pricing.json"
+
+    # Try to read from .loki/pricing.json first
+    if pricing_file.exists():
+        try:
+            data = json.loads(pricing_file.read_text())
+            if data.get("models"):
+                return data
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Determine active provider
+    provider = "claude"
+    provider_file = loki_dir / "state" / "provider"
+    if provider_file.exists():
+        try:
+            provider = provider_file.read_text().strip()
+        except IOError:
+            pass
+
+    # Build response from static defaults
+    pricing_table = _get_model_pricing()
+    models = {}
+    for model_key, rates in pricing_table.items():
+        models[model_key] = {
+            "input": rates["input"],
+            "output": rates["output"],
+            "label": _PROVIDER_LABELS.get(model_key, model_key),
+            "provider": _MODEL_PROVIDERS.get(model_key, "unknown"),
+        }
+
+    return {
+        "provider": provider,
+        "updated": "2026-02-07",
+        "source": "static",
+        "models": models,
     }
 
 

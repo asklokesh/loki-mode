@@ -2079,7 +2079,34 @@ init_loki_dir() {
 EOF
     fi
 
+    # Write pricing.json with provider-specific model rates
+    _write_pricing_json
+
     log_info "Loki directory initialized: .loki/"
+}
+
+# Write .loki/pricing.json based on active provider
+_write_pricing_json() {
+    local provider="${LOKI_PROVIDER:-claude}"
+    local updated
+    updated=$(date -u +%Y-%m-%d)
+
+    cat > ".loki/pricing.json" << PRICING_EOF
+{
+  "provider": "${provider}",
+  "updated": "${updated}",
+  "source": "static",
+  "models": {
+    "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus 4.6",       "provider": "claude"},
+    "sonnet":          {"input": 3.00,  "output": 15.00, "label": "Sonnet 4.5",     "provider": "claude"},
+    "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku 4.5",      "provider": "claude"},
+    "gpt-5.3-codex":   {"input": 1.50,  "output": 12.00, "label": "GPT-5.3 Codex", "provider": "codex"},
+    "gemini-3-pro":    {"input": 1.25,  "output": 10.00, "label": "Gemini 3 Pro",   "provider": "gemini"},
+    "gemini-3-flash":  {"input": 0.10,  "output": 0.40,  "label": "Gemini 3 Flash", "provider": "gemini"}
+  }
+}
+PRICING_EOF
+    log_info "Pricing data written: .loki/pricing.json (provider: ${provider})"
 }
 
 #===============================================================================

@@ -847,6 +847,13 @@ export class LokiApiClient extends EventTarget {
     return this._get('/api/cost');
   }
 
+  /**
+   * Get current model pricing (from .loki/pricing.json or static defaults)
+   */
+  async getPricing() {
+    return this._get('/api/pricing');
+  }
+
   // ============================================
   // Session Control API
   // ============================================
