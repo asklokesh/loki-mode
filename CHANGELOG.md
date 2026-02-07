@@ -5,6 +5,38 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v5.26.0 - Developer Adoption and Community Infrastructure
+
+### Added
+- CONTRIBUTING.md with prerequisites, setup, and test instructions
+- GitHub issue templates (bug report, feature request)
+- Pull request template with checklist
+- CODE_OF_CONDUCT.md
+- CODEOWNERS file
+- Completion Council wiki documentation
+- GSD (get-shit-done) competitive analysis in docs
+- Port documentation (57374 vs 9898) in installation guide
+
+### Fixed
+- postinstall.js backs up existing non-symlink installs instead of silently failing
+- `loki status` shows helpful message when no active session found
+- `jq` dependency guard on all jq-dependent CLI commands
+- python3 missing warning in memory context loader
+- Stale agent count (37 -> 41) across all docs
+- Stale star counts updated across competitive analysis docs
+- Broken reference link (agents.md -> agent-types.md)
+
+### Changed
+- README consolidated from 868 to ~500 lines with badges
+- npm package excludes Dockerfiles, large binaries (3.5MB -> 2.7MB)
+- `npm test` validates shell script syntax instead of being a no-op
+- .gitignore covers all .loki/ runtime artifacts
+- Hooks moved from .loki/hooks/ to autonomy/hooks/
+- Wiki updated with council commands, dashboard design, security hardening
+- Website comparisons section reorganized with GSD
+
+---
+
 ## Executive Summary (v5.5 - v5.20)
 
 - **Security Hardening** - Fixed command injection in hooks, path traversal in MCP server
@@ -4728,7 +4760,7 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
   - Kubernetes (manifests, Helm charts)
 
 - **Reference Documentation**:
-  - `references/agents.md` - Complete agent definitions
+  - `references/agent-types.md` - Complete agent definitions
   - `references/deployment.md` - Cloud deployment guides
   - `references/business-ops.md` - Business operation workflows
 

@@ -2,7 +2,7 @@
 
 Complete installation instructions for all platforms and use cases.
 
-**Version:** v5.25.0
+**Version:** v5.26.0
 
 ---
 
@@ -36,7 +36,7 @@ npm install -g loki-mode
 brew tap asklokesh/tap && brew install loki-mode
 
 # Option C: Docker
-docker pull asklokesh/loki-mode:5.25.0
+docker pull asklokesh/loki-mode:5.26.0
 
 # Option D: Git clone
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
@@ -227,7 +227,7 @@ Run Loki Mode in a container for isolated execution.
 
 ```bash
 # Pull the image
-docker pull asklokesh/loki-mode:5.25.0
+docker pull asklokesh/loki-mode:5.26.0
 
 # Or use docker-compose
 curl -o docker-compose.yml https://raw.githubusercontent.com/asklokesh/loki-mode/main/docker-compose.yml
@@ -237,10 +237,10 @@ curl -o docker-compose.yml https://raw.githubusercontent.com/asklokesh/loki-mode
 
 ```bash
 # Run with a PRD file
-docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:5.25.0 start ./my-prd.md
+docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:5.26.0 start ./my-prd.md
 
 # Interactive mode
-docker run -it -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:5.25.0
+docker run -it -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:5.26.0
 
 # Using docker-compose
 docker-compose run loki start ./my-prd.md
@@ -253,7 +253,7 @@ Pass your configuration via environment variables:
 ```bash
 docker run -e LOKI_MAX_RETRIES=100 -e LOKI_BASE_WAIT=120 \
   -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:5.25.0 start ./my-prd.md
+  asklokesh/loki-mode:5.26.0 start ./my-prd.md
 ```
 
 ### Updating
@@ -369,12 +369,12 @@ Pass the provider as an environment variable:
 # Use Codex with Docker
 docker run -e LOKI_PROVIDER=codex \
   -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:5.25.0 start ./my-prd.md
+  asklokesh/loki-mode:5.26.0 start ./my-prd.md
 
 # Use Gemini with Docker
 docker run -e LOKI_PROVIDER=gemini \
   -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:5.25.0 start ./my-prd.md
+  asklokesh/loki-mode:5.26.0 start ./my-prd.md
 ```
 
 ### Degraded Mode
@@ -439,8 +439,8 @@ curl -o ~/.claude/skills/loki-mode/SKILL.md \
   https://raw.githubusercontent.com/asklokesh/loki-mode/main/SKILL.md
 
 # Download agent definitions
-curl -o ~/.claude/skills/loki-mode/references/agents.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agents.md
+curl -o ~/.claude/skills/loki-mode/references/agent-types.md \
+  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agent-types.md
 
 # Download deployment guides
 curl -o ~/.claude/skills/loki-mode/references/deployment.md \
@@ -706,8 +706,8 @@ ls -la ~/.claude/skills/loki-mode/references/
 # business-ops.md
 
 # If missing, download them:
-curl -o ~/.claude/skills/loki-mode/references/agents.md \
-  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agents.md
+curl -o ~/.claude/skills/loki-mode/references/agent-types.md \
+  https://raw.githubusercontent.com/asklokesh/loki-mode/main/references/agent-types.md
 ```
 
 ---

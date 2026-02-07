@@ -234,7 +234,7 @@ Priority order for context:
 
 ## The 37 Agent Roles
 
-See `references/agents.md` for complete specifications. Summary:
+See `references/agent-types.md` for complete specifications. Summary:
 
 | Swarm | Agent Types | Count |
 |-------|-------------|-------|
