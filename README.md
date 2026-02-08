@@ -6,6 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/loki-mode)](https://www.npmjs.com/package/loki-mode)
 [![GitHub stars](https://img.shields.io/github/stars/asklokesh/loki-mode)](https://github.com/asklokesh/loki-mode)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Loki%20Mode-purple?logo=github)](https://github.com/marketplace/actions/loki-mode-code-review)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-orange)](https://claude.ai)
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Loki Mode](https://img.shields.io/badge/Loki%20Mode-98.78%25%20Pass%401-blueviolet)](benchmarks/results/)
@@ -55,7 +56,45 @@ claude --dangerously-skip-permissions
 # Then say: Loki Mode with PRD at ./my-prd.md
 ```
 
-Also available via **Homebrew**, **Docker**, **VS Code Extension**, and **direct shell script**. See the [Installation Guide](docs/INSTALLATION.md) for all 6 installation methods and detailed instructions.
+### Option 3: GitHub Action
+
+Add automated AI code review to your pull requests:
+
+```yaml
+# .github/workflows/loki-review.yml
+name: Loki Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: asklokesh/loki-mode@v5
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          mode: review          # review, fix, or test
+          provider: claude      # claude, codex, or gemini
+          max_iterations: 3     # higher = more thorough
+          budget_limit: '5.00'  # max cost in USD
+```
+
+**Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `review` | Analyze PR diff, post structured review as PR comment |
+| `fix` | Automatically fix issues found in the codebase |
+| `test` | Run autonomous test generation and validation |
+
+Also available via **Homebrew**, **Docker**, **VS Code Extension**, and **direct shell script**. See the [Installation Guide](docs/INSTALLATION.md) for all 7 installation methods and detailed instructions.
 
 ### Multi-Provider Support (v5.0.0)
 
