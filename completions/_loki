@@ -1,0 +1,100 @@
+#compdef loki
+
+function _loki {
+    local context state state_descr line
+    typeset -A opt_args
+
+    _arguments -C \
+        '1: :_loki_commands' \
+        '*::arg:->args'
+
+    case $state in
+        (args)
+            case $line[1] in
+                start)
+                    _loki_start
+                    ;;
+                council)
+                    _loki_council
+                    ;;
+                provider)
+                    _loki_provider
+                    ;;
+                memory)
+                    _loki_memory
+                    ;;
+                config)
+                    _loki_config
+                    ;;
+                completions)
+                    _arguments '1:shell:(bash zsh)'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+function _loki_commands {
+    local -a commands
+    commands=(
+        'start:Start Loki Mode' 
+        'stop:Stop execution' 
+        'pause:Pause execution' 
+        'resume:Resume execution' 
+        'status:Show status' 
+        'dashboard:Open dashboard' 
+        'import:Import GitHub issues' 
+        'council:Council commands' 
+        'memory:Memory commands' 
+        'provider:Provider commands' 
+        'config:Config commands' 
+        'completions:Output completions' 
+        'help:Show help'
+    )
+    _describe -t commands 'loki command' commands
+}
+
+function _loki_start {
+    _arguments \
+        '--provider[AI provider]:provider name:(claude codex gemini)' \
+        '--parallel[Parallel mode]' \
+        '--background[Background mode]' \
+        '--max-iterations[Max iterations]:number:' \
+        '*:PRD File:_files' 
+        # ^ This line enables file completion for arguments!
+}
+
+function _loki_council {
+    # _values is wrong here; we use _describe for subcommands
+    local -a council_cmds
+    council_cmds=(
+        'status:Council status' 
+        'verdicts:Show verdicts' 
+        'convergence:Check convergence' 
+        'force-review:Force a manual review' 
+        'report:Generate report' 
+        'config:Council configuration' 
+        'help:Council help'
+    )
+    _describe -t council_cmds 'council subcommand' council_cmds
+}
+
+function _loki_provider {
+    local -a cmds
+    cmds=('show' 'set' 'list' 'info' 'help')
+    _describe -t cmds 'provider subcommand' cmds
+}
+
+function _loki_memory {
+    local -a cmds
+    cmds=('list' 'show' 'search' 'stats' 'export' 'dedupe' 'index' 'retrieve' 'episode' 'pattern' 'skill' 'help')
+    _describe -t cmds 'memory subcommand' cmds
+}
+
+function _loki_config {
+    local -a cmds
+    cmds=('show' 'init' 'edit' 'path' 'help')
+    _describe -t cmds 'config subcommand' cmds
+}
+
+_loki "$@"

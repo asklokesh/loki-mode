@@ -20,6 +20,7 @@ Complete installation instructions for all platforms and use cases.
 - [Anthropic API Console](#anthropic-api-console)
 - [Verify Installation](#verify-installation)
 - [Ports](#ports)
+- [Completion](#completion)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -608,6 +609,107 @@ CORS_ALLOWED_ORIGINS="http://localhost:3000,https://my-dashboard.example.com" lo
 
 # Default: localhost only (secure by default)
 ```
+
+---
+
+## Shell Completions
+
+Enable tab completion for the `loki` CLI to support subcommands, flags, and file arguments.
+
+---
+
+## Bash Setup
+
+### Option 1: Permanent Setup (Recommended)
+
+Add the source command to your startup file so completions load every time you open a terminal.
+
+Add this line to your `~/.bashrc` (Linux) or `~/.bash_profile` (macOS):
+
+```bash
+source /path/to/loki/completions/loki.bash
+```
+
+---
+
+### Option 2: Manual Sourcing (Temporary)
+
+If you only want to enable completions for your current terminal session (for example, for testing), run:
+
+```bash
+source completions/loki.bash
+```
+
+---
+
+### Optional: Smoother Bash Experience
+
+By default, Bash requires two **TAB** presses to show the completion menu. To make it instant (similar to Zsh) and cycle through options more easily, add the following lines to your `~/.inputrc` file:
+
+```bash
+# Show menu immediately on first TAB
+set show-all-if-ambiguous on
+
+# Case-insensitive completion (optional)
+set completion-ignore-case on
+```
+
+> **Note:** You will need to restart your terminal for `~/.inputrc` changes to take effect.
+
+---
+
+## Zsh Setup
+
+Zsh completions require the script to be located in a directory listed in your `$fpath`.
+
+### Permanent Setup
+
+Add the `loki` completions directory to your `$fpath` in `~/.zshrc` **before** initializing completions:
+
+```bash
+# 1. Add the completions directory to fpath
+fpath=(/path/to/loki/completions $fpath)
+
+# 2. Initialize completions
+autoload -Uz compinit && compinit
+```
+
+---
+
+## Testing Completions
+
+After installation, restart your shell or source your configuration file, then verify:
+
+### Bash
+
+```bash
+loki <TAB>            # Should immediately list subcommands
+loki start -<TAB>     # Should list flags (--provider, --parallel, etc.)
+```
+
+### Zsh
+
+```bash
+loki <TAB>                # Should show subcommands with descriptions
+loki start --pro<TAB>     # Should autocomplete to --provider
+```
+
+---
+
+## Completion Features
+
+The completion scripts support:
+
+* **Subcommands**
+  `start`, `stop`, `pause`, `resume`, `status`, `dashboard`, `import`, `council`, `memory`, `provider`, `config`, `help`, `completions`
+
+* **Smart Context**
+
+  * `loki start --provider <TAB>` shows only installed providers (`claude`, `codex`, `gemini`).
+  * `loki start <TAB>` defaults to file completion for PRD templates.
+
+* **Nested Commands**
+  Handles specific subcommands for `council`, `memory`, and `config`.
 
 ---
 

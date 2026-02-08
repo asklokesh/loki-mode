@@ -317,6 +317,7 @@ show_help() {
     echo "  voice [cmd]      Voice input for PRD creation (status|listen|dictate|speak|start)"
     echo "  import           Import GitHub issues as tasks"
     echo "  config [cmd]     Manage configuration (show|init|edit|path)"
+    echo "  completions [bash|zsh]  Output shell completion scripts"
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
     echo "  compound [cmd]   Knowledge compounding (list|show|search|run|stats)"
     echo "  council [cmd]    Completion council (status|verdicts|convergence|force-review|report)"
@@ -3592,6 +3593,9 @@ main() {
         version|--version|-v)
             cmd_version
             ;;
+	completions)
+            cmd_completions "$@"
+            ;;
         help|--help|-h)
             show_help
             ;;
@@ -5911,6 +5915,56 @@ for line in sys.stdin:
         *)
             echo -e "${RED}Unknown enterprise command: $subcommand${NC}"
             echo "Run 'loki enterprise help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+# Output shell completion scripts
+cmd_completions() {
+    local shell="${1:-bash}"
+    local skill_dir
+    
+    # Find the skill directory (where autonomy/loki is located)
+    skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local completions_dir="$skill_dir/completions"
+    
+    case "$shell" in
+        bash)
+            if [ -f "$completions_dir/loki.bash" ]; then
+                cat "$completions_dir/loki.bash"
+            else
+                echo -e "${RED}Error: Bash completion script not found at $completions_dir/loki.bash${NC}" >&2
+                exit 1
+            fi
+            ;;
+        zsh)
+            if [ -f "$completions_dir/_loki" ]; then
+                cat "$completions_dir/_loki"
+            else
+                echo -e "${RED}Error: Zsh completion script not found at $completions_dir/_loki${NC}" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            echo -e "${BOLD}Loki Shell Completions${NC}"
+            echo ""
+            echo "Output shell completion scripts for bash or zsh."
+            echo ""
+            echo "Usage: loki completions <shell>"
+            echo ""
+            echo "Shells:"
+            echo "  bash    Bash completion script"
+            echo "  zsh     Zsh completion script"
+            echo ""
+            echo "Installation:"
+            echo ""
+            echo "Bash:"
+            echo "  eval \"\$(loki completions bash)\" >> ~/.bashrc"
+            echo ""
+            echo "Zsh:"
+            echo "  eval \"\$(loki completions zsh)\" >> ~/.zshrc"
+            echo ""
             exit 1
             ;;
     esac
