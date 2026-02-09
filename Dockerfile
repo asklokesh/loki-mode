@@ -5,7 +5,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="5.28.1"
+LABEL version="5.29.0"
 LABEL description="Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI"
 
 # Prevent interactive prompts during install

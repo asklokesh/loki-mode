@@ -506,33 +506,14 @@ cmd_start() {
     local effective_provider="${provider:-${LOKI_PROVIDER:-claude}}"
 
     # Handle sandbox mode - delegate to sandbox.sh
-    # Skip if we're already inside a container (/.dockerenv exists)
-    if [[ "${LOKI_SANDBOX_MODE:-}" == "true" ]] && [[ ! -f /.dockerenv ]]; then
+    # Skip if we're already inside a sandbox (IS_SANDBOX=1 or /.dockerenv exists)
+    if [[ "${LOKI_SANDBOX_MODE:-}" == "true" ]] && [[ "${IS_SANDBOX:-}" != "1" ]] && [[ ! -f /.dockerenv ]]; then
         if [ ! -f "$SANDBOX_SH" ]; then
             echo -e "${RED}Error: sandbox.sh not found at $SANDBOX_SH${NC}"
             exit 1
         fi
 
-        # Check Docker availability
-        if ! command -v docker &> /dev/null; then
-            echo -e "${RED}Error: Docker not found${NC}"
-            echo ""
-            echo "Docker is required for sandbox mode. Install it:"
-            echo "  macOS:  brew install --cask docker"
-            echo "  Linux:  curl -fsSL https://get.docker.com | sh"
-            exit 1
-        fi
-
-        if ! docker info &> /dev/null 2>&1; then
-            echo -e "${RED}Error: Docker daemon not running${NC}"
-            echo ""
-            echo "Start Docker:"
-            echo "  macOS:  Open Docker Desktop app"
-            echo "  Linux:  sudo systemctl start docker"
-            exit 1
-        fi
-
-        echo -e "${GREEN}Starting Loki Mode in Docker sandbox...${NC}"
+        echo -e "${GREEN}Starting Loki Mode in sandbox...${NC}"
         # Load memory context before sandbox start (errors don't block startup)
         load_memory_context "$prd_file" || true
         emit_event session cli start "provider=$effective_provider" "sandbox=true" "prd_path=${prd_file:-}"
@@ -2795,6 +2776,7 @@ broadcast_notification() {
 }
 
 # Sandbox management (delegates to sandbox.sh)
+# sandbox.sh handles detection: Docker Desktop Sandbox > Docker Container > Worktree
 cmd_sandbox() {
     local subcommand="${1:-help}"
     shift || true
@@ -2805,28 +2787,7 @@ cmd_sandbox() {
         exit 1
     fi
 
-    # Check Docker availability
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}Error: Docker not found${NC}"
-        echo ""
-        echo "Docker is required for sandbox mode. Install it:"
-        echo "  macOS:  brew install --cask docker"
-        echo "  Linux:  curl -fsSL https://get.docker.com | sh"
-        echo ""
-        echo "After installation, start Docker Desktop or the Docker daemon."
-        exit 1
-    fi
-
-    if ! docker info &> /dev/null 2>&1; then
-        echo -e "${RED}Error: Docker daemon not running${NC}"
-        echo ""
-        echo "Start Docker:"
-        echo "  macOS:  Open Docker Desktop app"
-        echo "  Linux:  sudo systemctl start docker"
-        exit 1
-    fi
-
-    # Delegate to sandbox.sh
+    # Delegate to sandbox.sh (it handles Docker/worktree detection internally)
     exec "$SANDBOX_SH" "$subcommand" "$@"
 }
 

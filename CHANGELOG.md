@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.29.0] - 2026-02-08
+
+### Added
+- Docker Desktop Sandbox as default isolation mode for `loki sandbox`
+- 3-tier fallback: Docker Desktop microVM > Docker Container > Git Worktree
+- New `--docker-desktop` flag for explicit Docker Desktop Sandbox selection
+- 8 new sandbox functions: start, stop, status, shell, logs, prompt, run for Docker Desktop mode
+- Automatic provider CLI installation inside sandbox (codex/gemini on first use)
+- Environment variable forwarding (API keys, LOKI_* vars) into sandbox
+- GitHub Action published to GitHub Marketplace (code-review category)
+- GitHub Action usage section and Marketplace badge in README
+
+### Changed
+- `loki sandbox` auto-detects Docker Desktop Sandbox as highest priority
+- Simplified `loki` CLI sandbox delegation (removed hard Docker check, sandbox.sh handles detection)
+- Added `IS_SANDBOX=1` guard to prevent double-sandbox when running inside Docker Desktop VM
+
 ## [5.28.1] - 2026-02-08
 
 ### Fixed

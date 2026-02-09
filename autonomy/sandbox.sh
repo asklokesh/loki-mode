@@ -184,6 +184,11 @@ WORKTREE_PREFIX="loki-sandbox"
 WORKTREE_BASE="${LOKI_WORKTREE_BASE:-${TMPDIR:-/tmp}}"
 WORKTREE_STATE_FILE="${PROJECT_DIR}/.loki/sandbox/worktree-state.json"
 
+# Check if Docker Desktop Sandbox is available (microVM-based isolation)
+is_docker_desktop_sandbox_available() {
+    command -v docker &>/dev/null && docker sandbox version &>/dev/null 2>&1
+}
+
 # Check if Docker is available (non-fatal version)
 is_docker_available() {
     command -v docker &>/dev/null && docker info &>/dev/null 2>&1
@@ -195,10 +200,19 @@ is_git_available() {
 }
 
 # Detect which sandbox mode to use
+# Priority: docker-desktop > docker > worktree
 detect_sandbox_mode() {
     local requested="${1:-auto}"
 
     case "$requested" in
+        docker-desktop)
+            if is_docker_desktop_sandbox_available; then
+                echo "docker-desktop"
+            else
+                log_error "Docker Desktop Sandbox not available (requires Docker Desktop 4.58+)"
+                return 1
+            fi
+            ;;
         docker)
             if is_docker_available; then
                 echo "docker"
@@ -216,7 +230,9 @@ detect_sandbox_mode() {
             fi
             ;;
         auto|*)
-            if is_docker_available; then
+            if is_docker_desktop_sandbox_available; then
+                echo "docker-desktop"
+            elif is_docker_available; then
                 echo "docker"
             elif is_git_available; then
                 log_warn "Docker not available - using worktree sandbox (soft isolation)"
@@ -514,7 +530,229 @@ cleanup_worktrees() {
 }
 
 #===============================================================================
-# Container Management
+# Docker Desktop Sandbox (microVM-based isolation via Docker Desktop 4.58+)
+#===============================================================================
+
+# Desktop sandbox name follows same pattern as container name
+DESKTOP_SANDBOX_NAME="$CONTAINER_NAME"
+
+# Install provider CLI inside sandbox if not pre-installed
+_desktop_install_provider_cli() {
+    local sandbox_name="$1" provider="$2"
+    case "$provider" in
+        codex)
+            if ! docker sandbox exec "$sandbox_name" which codex &>/dev/null 2>&1; then
+                log_info "Installing Codex CLI in sandbox (one-time)..."
+                docker sandbox exec "$sandbox_name" npm install -g @openai/codex 2>&1 | tail -1
+            fi
+            ;;
+        gemini)
+            if ! docker sandbox exec "$sandbox_name" which gemini &>/dev/null 2>&1; then
+                log_info "Installing Gemini CLI in sandbox (one-time)..."
+                docker sandbox exec "$sandbox_name" npm install -g @google/gemini-cli 2>&1 | tail -1
+            fi
+            ;;
+        # claude is pre-installed in the sandbox template
+    esac
+}
+
+# Build environment variable args for docker sandbox exec
+_desktop_build_env_args() {
+    DESKTOP_ENV_ARGS=()
+    [[ -n "${ANTHROPIC_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+    [[ -n "${OPENAI_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "OPENAI_API_KEY=$OPENAI_API_KEY")
+    [[ -n "${GOOGLE_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GOOGLE_API_KEY=$GOOGLE_API_KEY")
+    [[ -n "${GITHUB_TOKEN:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GITHUB_TOKEN=$GITHUB_TOKEN")
+    [[ -n "${GH_TOKEN:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GH_TOKEN=$GH_TOKEN")
+    # Forward all LOKI_* env vars
+    local var
+    while IFS= read -r var; do
+        [[ -n "$var" ]] && DESKTOP_ENV_ARGS+=("-e" "$var=${!var}")
+    done < <(compgen -v LOKI_ 2>/dev/null || true)
+}
+
+start_docker_desktop_sandbox() {
+    local prd_path="${1:-}"
+    local provider="${LOKI_PROVIDER:-claude}"
+
+    validate_project_dir || return 1
+    warn_missing_api_keys "$provider"
+
+    # Check if sandbox already exists
+    local sandbox_exists=false
+    if docker sandbox ls 2>/dev/null | grep -q "$DESKTOP_SANDBOX_NAME"; then
+        sandbox_exists=true
+    fi
+
+    if [[ "$sandbox_exists" == "false" ]]; then
+        log_info "Creating Docker Desktop Sandbox (microVM)..."
+        log_info "  Workspace: $PROJECT_DIR"
+        log_info "  Agent:     claude (provider: $provider)"
+        docker sandbox create --name "$DESKTOP_SANDBOX_NAME" claude "$PROJECT_DIR" || {
+            log_error "Failed to create Docker Desktop Sandbox"
+            log_info "Falling back to Docker container sandbox..."
+            start_sandbox "$@"
+            return $?
+        }
+        log_success "Sandbox created: $DESKTOP_SANDBOX_NAME"
+    else
+        log_info "Using existing sandbox: $DESKTOP_SANDBOX_NAME"
+    fi
+
+    # Install provider CLI if needed (codex/gemini not pre-installed)
+    _desktop_install_provider_cli "$DESKTOP_SANDBOX_NAME" "$provider"
+
+    # Build environment variable args
+    _desktop_build_env_args
+
+    # Build loki command
+    local loki_cmd="bash ${PROJECT_DIR}/autonomy/run.sh"
+    if [[ -n "$prd_path" ]]; then
+        local abs_prd
+        abs_prd=$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")
+        loki_cmd="$loki_cmd $abs_prd"
+    fi
+    loki_cmd="LOKI_PROVIDER=$provider LOKI_SANDBOX_MODE=true LOKI_DASHBOARD=false $loki_cmd"
+
+    log_info ""
+    log_info "Starting Loki Mode in Docker Desktop Sandbox..."
+    log_info "  Isolation: microVM (hypervisor-based)"
+    log_info "  Provider:  $provider"
+    log_info "  Sandbox:   $DESKTOP_SANDBOX_NAME"
+    log_info "  Workspace: $PROJECT_DIR (synced at same path)"
+    log_info ""
+    log_info "  Private Docker daemon available inside sandbox"
+    log_info "  Dashboard: run 'loki dashboard' on host (reads synced .loki/ files)"
+    log_info ""
+    log_info "Commands:"
+    log_info "  loki sandbox status     - Check sandbox status"
+    log_info "  loki sandbox shell      - Open shell in sandbox"
+    log_info "  loki sandbox stop       - Stop sandbox"
+    log_info ""
+
+    # Execute loki inside sandbox (use -it only when stdin is a terminal)
+    local tty_args="-i"
+    if [ -t 0 ]; then
+        tty_args="-it"
+    fi
+    docker sandbox exec $tty_args \
+        -w "$PROJECT_DIR" \
+        ${DESKTOP_ENV_ARGS[@]+"${DESKTOP_ENV_ARGS[@]}"} \
+        "$DESKTOP_SANDBOX_NAME" \
+        bash -c "$loki_cmd"
+}
+
+stop_docker_desktop_sandbox() {
+    local remove="${1:-false}"
+
+    if ! docker sandbox ls 2>/dev/null | grep -q "$DESKTOP_SANDBOX_NAME"; then
+        log_error "Sandbox not found: $DESKTOP_SANDBOX_NAME"
+        return 1
+    fi
+
+    # Signal loki to stop gracefully
+    docker sandbox exec "$DESKTOP_SANDBOX_NAME" \
+        bash -c "touch ${PROJECT_DIR}/.loki/STOP 2>/dev/null" 2>/dev/null || true
+
+    log_info "Stopping sandbox: $DESKTOP_SANDBOX_NAME"
+    docker sandbox stop "$DESKTOP_SANDBOX_NAME" 2>/dev/null || true
+
+    if [[ "$remove" == "true" ]]; then
+        log_info "Removing sandbox: $DESKTOP_SANDBOX_NAME"
+        docker sandbox rm "$DESKTOP_SANDBOX_NAME" 2>/dev/null || true
+    fi
+
+    log_success "Sandbox stopped"
+}
+
+docker_desktop_sandbox_status() {
+    local found=false
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "$DESKTOP_SANDBOX_NAME"; then
+            found=true
+            echo "$line"
+        fi
+    done < <(docker sandbox ls 2>/dev/null)
+
+    if [[ "$found" == "false" ]]; then
+        log_info "No Docker Desktop Sandbox found for this project"
+        log_info "Expected name: $DESKTOP_SANDBOX_NAME"
+        return 1
+    fi
+
+    # If sandbox is running, get loki status
+    if docker sandbox ls 2>/dev/null | grep "$DESKTOP_SANDBOX_NAME" | grep -q "running"; then
+        echo ""
+        docker sandbox exec -w "$PROJECT_DIR" "$DESKTOP_SANDBOX_NAME" \
+            bash -c "bash ${PROJECT_DIR}/autonomy/loki status" 2>/dev/null || true
+    fi
+}
+
+docker_desktop_sandbox_shell() {
+    if ! docker sandbox ls 2>/dev/null | grep "$DESKTOP_SANDBOX_NAME" | grep -q "running"; then
+        log_error "Sandbox is not running: $DESKTOP_SANDBOX_NAME"
+        log_info "Start it with: loki sandbox start"
+        return 1
+    fi
+
+    log_info "Opening shell in Docker Desktop Sandbox..."
+    docker sandbox exec -it -w "$PROJECT_DIR" "$DESKTOP_SANDBOX_NAME" bash
+}
+
+docker_desktop_sandbox_logs() {
+    local lines="${1:-100}"
+    if ! docker sandbox ls 2>/dev/null | grep -q "$DESKTOP_SANDBOX_NAME"; then
+        log_error "Sandbox not found: $DESKTOP_SANDBOX_NAME"
+        return 1
+    fi
+
+    docker sandbox exec -w "$PROJECT_DIR" "$DESKTOP_SANDBOX_NAME" \
+        bash -c "cat .loki/logs/*.log 2>/dev/null | tail -${lines}" || \
+        log_warn "No logs found in .loki/logs/"
+}
+
+docker_desktop_sandbox_prompt() {
+    local message="${1:-}"
+    if [[ -z "$message" ]]; then
+        log_error "Usage: loki sandbox prompt <message>"
+        return 1
+    fi
+
+    if ! docker sandbox ls 2>/dev/null | grep "$DESKTOP_SANDBOX_NAME" | grep -q "running"; then
+        log_error "Sandbox is not running"
+        return 1
+    fi
+
+    _desktop_build_env_args
+    docker sandbox exec -w "$PROJECT_DIR" \
+        ${DESKTOP_ENV_ARGS[@]+"${DESKTOP_ENV_ARGS[@]}"} \
+        "$DESKTOP_SANDBOX_NAME" \
+        bash -c "echo '$message' > ${PROJECT_DIR}/.loki/HUMAN_INPUT.md"
+
+    log_success "Prompt sent to sandbox"
+}
+
+docker_desktop_sandbox_run() {
+    local cmd="${*}"
+    if [[ -z "$cmd" ]]; then
+        log_error "Usage: loki sandbox run <command>"
+        return 1
+    fi
+
+    if ! docker sandbox ls 2>/dev/null | grep "$DESKTOP_SANDBOX_NAME" | grep -q "running"; then
+        log_error "Sandbox is not running"
+        return 1
+    fi
+
+    _desktop_build_env_args
+    docker sandbox exec -w "$PROJECT_DIR" \
+        ${DESKTOP_ENV_ARGS[@]+"${DESKTOP_ENV_ARGS[@]}"} \
+        "$DESKTOP_SANDBOX_NAME" \
+        bash -c "$cmd"
+}
+
+#===============================================================================
+# Docker Container Sandbox (standard Docker - fallback from Docker Desktop)
 #===============================================================================
 
 start_sandbox() {
@@ -1121,15 +1359,18 @@ show_help() {
     echo "  expose <port>    Show how to expose additional ports"
     echo ""
     echo "Mode Options:"
-    echo "  --docker         Force Docker sandbox (full isolation)"
+    echo "  --docker-desktop Force Docker Desktop Sandbox (microVM isolation)"
+    echo "  --docker         Force Docker container sandbox (seccomp isolation)"
     echo "  --worktree       Force git worktree sandbox (soft isolation)"
     echo "  --auto           Auto-detect best mode (default)"
     echo ""
-    echo "Sandbox Modes:"
-    echo "  Docker (default) - Full isolation with seccomp, dropped capabilities,"
-    echo "                     resource limits, network control"
-    echo "  Worktree         - Git worktree isolation (fallback if Docker unavailable)"
-    echo "                     Warning: No filesystem/network/process isolation"
+    echo "Sandbox Modes (priority order):"
+    echo "  Docker Desktop   - microVM isolation via 'docker sandbox' (Docker Desktop 4.58+)"
+    echo "    (default)        Hypervisor-based VM, private Docker daemon, pre-installed CLIs"
+    echo "  Docker Container - Container isolation with seccomp, dropped capabilities,"
+    echo "    (fallback)       resource limits, network control (Dockerfile.sandbox)"
+    echo "  Worktree         - Git worktree isolation (last resort if no Docker)"
+    echo "    (last resort)    Warning: No filesystem/network/process isolation"
     echo ""
     echo "Environment Variables:"
     echo "  LOKI_SANDBOX_IMAGE    Docker image (default: loki-mode:sandbox)"
@@ -1150,8 +1391,9 @@ show_help() {
     echo "  - Prompt injection DISABLED by default (enterprise security)"
     echo ""
     echo "Examples:"
-    echo "  loki sandbox start                              # Start (auto-detect mode)"
-    echo "  loki sandbox start --docker ./prd.md           # Force Docker mode"
+    echo "  loki sandbox start                              # Start (auto-detect: Desktop > Docker > Worktree)"
+    echo "  loki sandbox start --docker-desktop ./prd.md   # Force Docker Desktop microVM"
+    echo "  loki sandbox start --docker ./prd.md           # Force Docker container mode"
     echo "  loki sandbox start --worktree                   # Force worktree mode"
     echo "  loki sandbox prompt 'start the app and show URL'  # Send prompt"
     echo "  loki sandbox serve                              # Start dev server"
@@ -1175,6 +1417,7 @@ main() {
     local args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --docker-desktop) mode="docker-desktop"; shift ;;
             --docker) mode="docker"; shift ;;
             --worktree) mode="worktree"; shift ;;
             --auto) mode="auto"; shift ;;
@@ -1185,63 +1428,95 @@ main() {
     # Detect sandbox mode for commands that need it
     local sandbox_mode=""
     case "$command" in
-        start|stop|status|prompt)
+        start|stop|status|prompt|shell|logs|run|serve|test|phase)
             sandbox_mode=$(detect_sandbox_mode "$mode") || exit 1
             ;;
     esac
 
     case "$command" in
         start)
-            if [[ "$sandbox_mode" == "docker" ]]; then
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                start_docker_desktop_sandbox ${args[@]+"${args[@]}"}
+            elif [[ "$sandbox_mode" == "docker" ]]; then
                 start_sandbox ${args[@]+"${args[@]}"}
             else
                 start_worktree_sandbox ${args[@]+"${args[@]}"}
             fi
             ;;
         stop)
-            if [[ "$sandbox_mode" == "docker" ]]; then
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                stop_docker_desktop_sandbox
+            elif [[ "$sandbox_mode" == "docker" ]]; then
                 stop_sandbox
             else
                 stop_worktree_sandbox
             fi
             ;;
         status)
-            if [[ "$sandbox_mode" == "docker" ]]; then
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_status
+            elif [[ "$sandbox_mode" == "docker" ]]; then
                 sandbox_status
             else
                 worktree_sandbox_status
             fi
             ;;
         logs)
-            sandbox_logs ${args[@]+"${args[@]}"}
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_logs ${args[@]+"${args[@]}"}
+            else
+                sandbox_logs ${args[@]+"${args[@]}"}
+            fi
             ;;
         shell)
-            sandbox_shell
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_shell
+            else
+                sandbox_shell
+            fi
             ;;
         build)
             sandbox_build
             ;;
         prompt)
-            if [[ "$sandbox_mode" == "docker" ]]; then
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_prompt ${args[@]+"${args[@]}"}
+            elif [[ "$sandbox_mode" == "docker" ]]; then
                 sandbox_prompt ${args[@]+"${args[@]}"}
             else
                 worktree_sandbox_prompt ${args[@]+"${args[@]}"}
             fi
             ;;
         run)
-            sandbox_run ${args[@]+"${args[@]}"}
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_run ${args[@]+"${args[@]}"}
+            else
+                sandbox_run ${args[@]+"${args[@]}"}
+            fi
             ;;
         cleanup)
             cleanup_worktrees
             ;;
         serve)
-            sandbox_serve ${args[@]+"${args[@]}"}
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_run "npm start 2>/dev/null || python3 -m http.server ${args[0]:-3000}"
+            else
+                sandbox_serve ${args[@]+"${args[@]}"}
+            fi
             ;;
         test)
-            sandbox_test ${args[@]+"${args[@]}"}
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_run "npm test 2>/dev/null || python3 -m pytest 2>/dev/null || echo 'No test runner found'"
+            else
+                sandbox_test ${args[@]+"${args[@]}"}
+            fi
             ;;
         phase)
-            sandbox_phase
+            if [[ "$sandbox_mode" == "docker-desktop" ]]; then
+                docker_desktop_sandbox_run "bash ${PROJECT_DIR}/autonomy/loki status"
+            else
+                sandbox_phase
+            fi
             ;;
         expose)
             sandbox_expose ${args[@]+"${args[@]}"}
