@@ -712,15 +712,28 @@ emit_learning_signal() {
 
 # Track iteration timing for efficiency signals
 ITERATION_START_MS=""
+
+# Get current time in milliseconds (portable: works on macOS BSD date and GNU date)
+_now_ms() {
+    local ms
+    ms=$(date +%s%3N 2>/dev/null)
+    # macOS BSD date doesn't support %N -- outputs literal "N" or "%3N"
+    # Detect non-numeric output and fall back to seconds * 1000
+    case "$ms" in
+        *[!0-9]*) echo $(( $(date +%s) * 1000 )) ;;
+        *)        echo "$ms" ;;
+    esac
+}
+
 record_iteration_start() {
-    ITERATION_START_MS=$(date +%s%3N 2>/dev/null || echo $(($(date +%s) * 1000)))
+    ITERATION_START_MS=$(_now_ms)
 }
 
 # Get iteration duration in milliseconds
 get_iteration_duration_ms() {
     if [ -n "$ITERATION_START_MS" ]; then
         local end_ms
-        end_ms=$(date +%s%3N 2>/dev/null || echo $(($(date +%s) * 1000)))
+        end_ms=$(_now_ms)
         echo $((end_ms - ITERATION_START_MS))
     else
         echo "0"
@@ -2577,7 +2590,7 @@ track_iteration_complete() {
     elif [ "${PROVIDER_NAME:-claude}" = "gemini" ]; then
         model_tier="gemini-3-pro"
     fi
-    local phase="$current_phase"
+    local phase="${LAST_KNOWN_PHASE:-}"
     [ -z "$phase" ] && phase=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', 'unknown'))" 2>/dev/null || echo "unknown")
     cat > ".loki/metrics/efficiency/iteration-${iteration}.json" << EFF_EOF
 {
