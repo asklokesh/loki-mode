@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-# Ensure the project root is importable
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -52,11 +51,9 @@ class TestEstimateTokens:
         assert estimate_tokens(None) == 0
 
     def test_short_string_minimum_one(self):
-        # "ab" has 2 chars -> 2 // 4 = 0, but min 1
         assert estimate_tokens("ab") == 1
 
     def test_exact_multiple(self):
-        # 8 chars -> 8 // 4 = 2
         assert estimate_tokens("abcdefgh") == 2
 
     def test_longer_string(self):
@@ -84,7 +81,6 @@ class TestEstimateMemoryTokens:
         assert result > 0
 
     def test_memory_with_datetime(self):
-        # datetime objects are handled via default=str
         memory = {"timestamp": datetime.now(), "data": "test"}
         result = estimate_memory_tokens(memory)
         assert result > 0
@@ -211,13 +207,11 @@ class TestEvaluateThresholds:
         assert len(actions) == 0
 
     def test_boundary_values_not_triggered(self):
-        # Exact boundary: > 0.15 means 0.15 should NOT trigger
         metrics = {"ratio": 0.15}
         actions = evaluate_thresholds(metrics)
         assert len(actions) == 0
 
     def test_boundary_values_less_than(self):
-        # < 50 means 50 should NOT trigger
         metrics = {"savings_percent": 50}
         actions = evaluate_thresholds(metrics)
         assert len(actions) == 0
@@ -295,7 +289,6 @@ class TestOptimizeContext:
         assert optimize_context(memories, -100) == []
 
     def test_selects_within_budget(self):
-        # Create memories that will fit within budget
         memories = [
             {"id": "m1", "content": "short"},
             {"id": "m2", "content": "also short"},
@@ -304,10 +297,9 @@ class TestOptimizeContext:
         assert len(result) > 0
 
     def test_respects_budget_limit(self):
-        # Create a memory that's larger than budget
-        big_content = "x" * 4000  # ~1000 tokens
+        big_content = "x" * 4000
         memories = [{"id": "m1", "content": big_content}]
-        result = optimize_context(memories, 1)  # 1 token budget
+        result = optimize_context(memories, 1)
         assert len(result) == 0
 
     def test_prefers_higher_scored_memories(self):
@@ -317,11 +309,9 @@ class TestOptimizeContext:
         ]
         result = optimize_context(memories, 100000)
         assert len(result) == 2
-        # Higher scored memory should come first
         assert result[0]["id"] == "m2"
 
     def test_layer_boost(self):
-        # Layer 1 gets 1.1x boost, layer 3 gets 0.9x
         memories = [
             {"id": "layer3", "_layer": 3, "_score": 0.5, "confidence": 0.5},
             {"id": "layer1", "_layer": 1, "_score": 0.5, "confidence": 0.5},
@@ -330,7 +320,6 @@ class TestOptimizeContext:
         assert result[0]["id"] == "layer1"
 
     def test_high_relevance_normalization(self):
-        # Scores > 1.0 should be normalized
         memories = [{"id": "m1", "_score": 15.0}]
         result = optimize_context(memories, 100000)
         assert len(result) == 1
@@ -343,7 +332,6 @@ class TestOptimizeContext:
             {"id": "recent", "last_used": recent, "_score": 0.5},
         ]
         result = optimize_context(memories, 100000)
-        # Recent memory should be preferred
         assert result[0]["id"] == "recent"
 
     def test_timestamp_with_z_suffix(self):
@@ -396,7 +384,6 @@ class TestEstimateFullLoadTokens:
 
     def test_with_memory_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create episodic subdirectory with a JSON file
             episodic = Path(tmpdir) / "episodic"
             episodic.mkdir()
             (episodic / "episode-001.json").write_text(
@@ -421,7 +408,6 @@ class TestEstimateFullLoadTokens:
             (episodic / "readme.txt").write_text("not json")
             (episodic / "data.json").write_text('{"key": "value"}')
             result = estimate_full_load_tokens(tmpdir)
-            # Should only count the json file
             json_tokens = estimate_tokens('{"key": "value"}')
             assert result == json_tokens
 
@@ -494,7 +480,6 @@ class TestTokenEconomicsRecording:
         te = TokenEconomics("s1")
         te.record_read(100, layer=4)
         assert te.metrics["read_tokens"] == 100
-        # Invalid layer should not increment any layer counter
         assert te.metrics["layer1_loads"] == 0
         assert te.metrics["layer2_loads"] == 0
         assert te.metrics["layer3_loads"] == 0
@@ -503,7 +488,6 @@ class TestTokenEconomicsRecording:
         te = TokenEconomics("s1")
         te.record_read(0, layer=1)
         assert te.metrics["read_tokens"] == 0
-        # Layer count still increments even with 0 tokens
         assert te.metrics["layer1_loads"] == 1
 
     def test_record_read_negative_tokens(self):
@@ -551,17 +535,14 @@ class TestTokenEconomicsSavings:
     def test_savings_no_baseline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             te = TokenEconomics("s1", base_path=tmpdir)
-            # No memory files, baseline is 0 -> savings is 100%
             assert te.get_savings_percent() == 100.0
 
     def test_savings_with_baseline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a memory file for baseline
             episodic = Path(tmpdir) / "episodic"
             episodic.mkdir()
             (episodic / "ep.json").write_text(json.dumps({"data": "x" * 400}))
             te = TokenEconomics("s1", base_path=tmpdir)
-            # Use fewer tokens than baseline
             te.record_discovery(10)
             te.record_read(10, layer=1)
             savings = te.get_savings_percent()
@@ -569,12 +550,10 @@ class TestTokenEconomicsSavings:
 
     def test_savings_negative_when_over(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a small baseline
             episodic = Path(tmpdir) / "episodic"
             episodic.mkdir()
             (episodic / "ep.json").write_text('{"a":"b"}')
             te = TokenEconomics("s1", base_path=tmpdir)
-            # Use way more tokens than baseline
             te.record_discovery(100000)
             te.record_read(100000, layer=1)
             savings = te.get_savings_percent()
@@ -587,9 +566,6 @@ class TestTokenEconomicsThresholds:
             te = TokenEconomics("s1", base_path=tmpdir)
             te.record_read(100, layer=1)
             actions = te.check_thresholds()
-            # With no discovery, ratio=0 and savings=100%, nothing should trigger
-            # except savings_percent < 50 will NOT trigger because 100 > 50
-            # layer3_loads=0, discovery_tokens=0
             assert len(actions) == 0
 
     def test_check_thresholds_with_high_ratio(self):
@@ -656,14 +632,12 @@ class TestTokenEconomicsSaveLoad:
 
     def test_load_restores_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Save
             te1 = TokenEconomics("save-test", base_path=tmpdir)
             te1.record_discovery(100)
             te1.record_read(200, layer=2)
             te1.record_cache_hit()
             te1.save()
 
-            # Load into new instance
             te2 = TokenEconomics("placeholder", base_path=tmpdir)
             te2.load()
             assert te2.session_id == "save-test"
@@ -675,7 +649,7 @@ class TestTokenEconomicsSaveLoad:
     def test_load_nonexistent_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             te = TokenEconomics("s1", base_path=tmpdir)
-            te.load()  # Should not raise
+            te.load()
             assert te.session_id == "s1"
             assert te.metrics["discovery_tokens"] == 0
 
@@ -684,7 +658,7 @@ class TestTokenEconomicsSaveLoad:
             filepath = Path(tmpdir) / "token_economics.json"
             filepath.write_text("not valid json{{{")
             te = TokenEconomics("s1", base_path=tmpdir)
-            te.load()  # Should not raise
+            te.load()
             assert te.metrics["discovery_tokens"] == 0
 
     def test_load_preserves_started_at(self):
@@ -695,7 +669,6 @@ class TestTokenEconomicsSaveLoad:
 
             te2 = TokenEconomics("s2", base_path=tmpdir)
             te2.load()
-            # The loaded started_at should match the saved one (to the second)
             assert abs((te2.started_at - original_time).total_seconds()) < 2
 
     def test_roundtrip_preserves_all_metrics(self):
@@ -713,7 +686,7 @@ class TestTokenEconomicsSaveLoad:
             te2 = TokenEconomics("x", base_path=tmpdir)
             te2.load()
             assert te2.metrics["discovery_tokens"] == 11
-            assert te2.metrics["read_tokens"] == 99  # 22+33+44
+            assert te2.metrics["read_tokens"] == 99
             assert te2.metrics["layer1_loads"] == 1
             assert te2.metrics["layer2_loads"] == 1
             assert te2.metrics["layer3_loads"] == 1
@@ -734,7 +707,6 @@ class TestTokenEconomicsReset:
     def test_reset_clears_baseline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             te = TokenEconomics("s1", base_path=tmpdir)
-            # Force baseline computation
             te.get_savings_percent()
             assert te._full_load_baseline is not None
             te.reset()
@@ -743,7 +715,6 @@ class TestTokenEconomicsReset:
     def test_reset_updates_started_at(self):
         te = TokenEconomics("s1")
         original = te.started_at
-        # Small sleep to ensure time difference
         import time
         time.sleep(0.01)
         te.reset()
@@ -786,7 +757,6 @@ class TestEdgeCases:
         assert ratio == 1.0
 
     def test_estimate_tokens_unicode(self):
-        # Unicode characters may have different byte sizes but len() counts chars
         result = estimate_tokens("hello world")
         assert result > 0
 
@@ -801,7 +771,6 @@ class TestEdgeCases:
 
     def test_optimize_context_invalid_timestamp(self):
         memories = [{"id": "m1", "timestamp": "not-a-date"}]
-        # Should not raise, should handle gracefully
         result = optimize_context(memories, 100000)
         assert len(result) == 1
 
@@ -811,5 +780,4 @@ class TestEdgeCases:
             {"id": "used", "usage_count": 10, "_score": 0.5},
         ]
         result = optimize_context(memories, 100000)
-        # Higher usage count should be preferred
         assert result[0]["id"] == "used"
