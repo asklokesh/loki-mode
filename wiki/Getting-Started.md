@@ -36,7 +36,7 @@ docker pull asklokesh/loki-mode
 
 ```bash
 loki --version
-# Output: Loki Mode v5.32.1
+# Output: Loki Mode v5.32.2
 ```
 
 ---

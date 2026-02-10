@@ -1,5 +1,5 @@
 name: 'Loki Mode Code Review'
-description: 'Multi-agent autonomous code review for pull requests using loki-mode'
+description: 'Multi-agent autonomous code review using loki-mode. Supports Claude, Codex, and Gemini providers.'
 author: 'asklokesh'
 
 branding:
@@ -42,10 +42,14 @@ inputs:
     description: 'Skip confirmation prompts (auto-enabled in CI environments)'
     required: false
     default: 'true'
-  install_claude:
-    description: 'Automatically install Claude Code CLI if not present (requires ANTHROPIC_API_KEY)'
+  install_cli:
+    description: 'Automatically install the provider CLI if not present'
     required: false
     default: 'true'
+  install_claude:
+    description: 'Deprecated: use install_cli instead. Kept for backward compatibility.'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -63,35 +67,107 @@ runs:
         npm install -g loki-mode
         echo "Installed version: $(loki version 2>/dev/null || echo 'unknown')"
 
-    - name: Install Claude Code CLI
-      if: inputs.install_claude == 'true' && inputs.provider == 'claude'
+    - name: Install provider CLI
+      if: inputs.install_cli == 'true' || (inputs.install_cli == '' && inputs.install_claude != 'false')
       shell: bash
+      env:
+        ACTION_PROVIDER: ${{ inputs.provider }}
       run: |
         set -eo pipefail
-        if command -v claude &>/dev/null; then
-          echo "Claude Code CLI already installed: $(claude --version 2>/dev/null || echo 'unknown')"
-        else
-          echo "--- Installing Claude Code CLI ---"
-          npm install -g @anthropic-ai/claude-code
-          echo "Installed Claude Code CLI: $(claude --version 2>/dev/null || echo 'unknown')"
-        fi
+        case "$ACTION_PROVIDER" in
+          claude)
+            if command -v claude &>/dev/null; then
+              echo "Claude Code CLI already installed: $(claude --version 2>/dev/null || echo 'unknown')"
+            else
+              echo "--- Installing Claude Code CLI ---"
+              npm install -g @anthropic-ai/claude-code
+              echo "Installed: $(claude --version 2>/dev/null || echo 'unknown')"
+            fi
+            ;;
+          codex)
+            if command -v codex &>/dev/null; then
+              echo "OpenAI Codex CLI already installed: $(codex --version 2>/dev/null || echo 'unknown')"
+            else
+              echo "--- Installing OpenAI Codex CLI ---"
+              npm install -g @openai/codex
+              echo "Installed: $(codex --version 2>/dev/null || echo 'unknown')"
+            fi
+            ;;
+          gemini)
+            if command -v gemini &>/dev/null; then
+              echo "Google Gemini CLI already installed: $(gemini --version 2>/dev/null || echo 'unknown')"
+            else
+              echo "--- Installing Google Gemini CLI ---"
+              npm install -g @google/gemini-cli
+              echo "Installed: $(gemini --version 2>/dev/null || echo 'unknown')"
+            fi
+            ;;
+          *)
+            echo "::error::Unknown provider '$ACTION_PROVIDER'. Supported: claude, codex, gemini"
+            exit 1
+            ;;
+        esac
 
-    - name: Verify API key
-      if: inputs.provider == 'claude'
+    - name: Verify provider credentials
       shell: bash
+      env:
+        ACTION_PROVIDER: ${{ inputs.provider }}
       run: |
-        if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-          echo "::error::ANTHROPIC_API_KEY is not set. Add it as a repository secret and pass it via env: in your workflow."
-          echo ""
-          echo "Example workflow configuration:"
-          echo "  - uses: asklokesh/loki-mode@v5"
-          echo "    with:"
-          echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
-          echo "    env:"
-          echo "      ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}"
-          exit 1
-        fi
-        echo "ANTHROPIC_API_KEY is set"
+        case "$ACTION_PROVIDER" in
+          claude)
+            # Claude supports API key or OAuth token (Max subscription)
+            if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+              echo "ANTHROPIC_API_KEY is set"
+            elif [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+              echo "CLAUDE_CODE_OAUTH_TOKEN is set (Max subscription)"
+            else
+              echo "::error::No Claude credentials found. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN as a repository secret."
+              echo ""
+              echo "Example workflow configuration:"
+              echo "  - uses: asklokesh/loki-mode@v5"
+              echo "    with:"
+              echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
+              echo "      provider: claude"
+              echo "    env:"
+              echo "      ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}"
+              exit 1
+            fi
+            ;;
+          codex)
+            if [ -n "${OPENAI_API_KEY:-}" ]; then
+              echo "OPENAI_API_KEY is set"
+            else
+              echo "::error::OPENAI_API_KEY is not set. Add it as a repository secret and pass it via env: in your workflow."
+              echo ""
+              echo "Example workflow configuration:"
+              echo "  - uses: asklokesh/loki-mode@v5"
+              echo "    with:"
+              echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
+              echo "      provider: codex"
+              echo "    env:"
+              echo "      OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}"
+              exit 1
+            fi
+            ;;
+          gemini)
+            if [ -n "${GOOGLE_API_KEY:-}" ]; then
+              echo "GOOGLE_API_KEY is set"
+            elif [ -n "${GEMINI_API_KEY:-}" ]; then
+              echo "GEMINI_API_KEY is set"
+            else
+              echo "::error::No Gemini credentials found. Set GOOGLE_API_KEY or GEMINI_API_KEY as a repository secret."
+              echo ""
+              echo "Example workflow configuration:"
+              echo "  - uses: asklokesh/loki-mode@v5"
+              echo "    with:"
+              echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
+              echo "      provider: gemini"
+              echo "    env:"
+              echo "      GOOGLE_API_KEY: \${{ secrets.GOOGLE_API_KEY }}"
+              exit 1
+            fi
+            ;;
+        esac
 
     - name: Get PR diff
       id: pr-diff

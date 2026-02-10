@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.32.2] - 2026-02-09
+
+### Changed
+- action.yml: Provider-agnostic CLI installation (supports claude, codex, gemini)
+- action.yml: Provider-aware credential verification (ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY)
+- action.yml: Support Claude Max OAuth token authentication (CLAUDE_CODE_OAUTH_TOKEN)
+- action.yml: New `install_cli` input replaces `install_claude` (backward compatible)
+
 ## [5.32.1] - 2026-02-10
 
 ### Fixed
