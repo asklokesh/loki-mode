@@ -411,7 +411,9 @@
         <div class="sidebar-controls">
           <input type="text" class="api-url-input" id="api-url" placeholder="API URL">
           <button class="api-btn" id="connect-btn">Go</button>
-          <button class="theme-toggle" id="theme-toggle">
+          <button class="theme-toggle" id="theme-toggle" title="Toggle theme (T)">
+            <svg id="theme-icon-sun" width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
             <span id="theme-label">Dark</span>
           </button>
         </div>
@@ -4613,18 +4615,27 @@ document.addEventListener('DOMContentLoaded', function() {
   var themeToggle = document.getElementById('theme-toggle');
   var themeLabel = document.getElementById('theme-label');
 
-  function updateThemeLabel() {
+  var sunIcon = document.getElementById('theme-icon-sun');
+  var moonIcon = document.getElementById('theme-icon-moon');
+
+  function updateThemeUI() {
     var theme = LokiDashboard.UnifiedThemeManager.getTheme();
-    themeLabel.textContent = theme.includes('dark') ? 'Light' : 'Dark';
+    var isDark = theme.includes('dark') || theme === 'high-contrast';
+    themeLabel.textContent = isDark ? 'Light' : 'Dark';
+    if (sunIcon) sunIcon.style.display = isDark ? 'inline' : 'none';
+    if (moonIcon) moonIcon.style.display = isDark ? 'none' : 'inline';
   }
 
   themeToggle.addEventListener('click', function() {
     LokiDashboard.UnifiedThemeManager.toggle();
-    updateThemeLabel();
+    updateThemeUI();
   });
 
-  // Initialize theme label
-  updateThemeLabel();
+  window.addEventListener('loki-theme-change', function() {
+    updateThemeUI();
+  });
+
+  updateThemeUI();
 
   // API URL configuration - auto-detect from current server
   var apiUrlInput = document.getElementById('api-url');
