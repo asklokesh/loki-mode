@@ -426,6 +426,68 @@ Go get coffee. It'll be deployed when you get back.
 
 ---
 
+## Architecture
+
+```mermaid
+graph TB
+    PRD["PRD Document"] --> REASON
+
+    subgraph RARVC["RARV+C Cycle"]
+        direction TB
+        REASON["1. Reason"] --> ACT["2. Act"]
+        ACT --> REFLECT["3. Reflect"]
+        REFLECT --> VERIFY["4. Verify"]
+        VERIFY -->|"pass"| COMPOUND["5. Compound"]
+        VERIFY -->|"fail"| REASON
+        COMPOUND --> REASON
+    end
+
+    subgraph PROVIDERS["Provider Layer"]
+        CLAUDE["Claude Code<br/>(full features)"]
+        CODEX["Codex CLI<br/>(degraded)"]
+        GEMINI["Gemini CLI<br/>(degraded)"]
+    end
+
+    ACT --> PROVIDERS
+
+    subgraph AGENTS["Agent Swarms (41 types)"]
+        ENG["Engineering (8)"]
+        OPS["Operations (8)"]
+        BIZ["Business (8)"]
+        DATA["Data (3)"]
+        PROD["Product (3)"]
+        GROWTH["Growth (4)"]
+        REVIEW["Review (3)"]
+        ORCH["Orchestration (4)"]
+    end
+
+    PROVIDERS --> AGENTS
+
+    subgraph INFRA["Infrastructure"]
+        DASHBOARD["Dashboard<br/>(FastAPI + Web UI)"]
+        MEMORY["Memory System<br/>(Episodic/Semantic/Procedural)"]
+        COUNCIL["Completion Council<br/>(3-member voting)"]
+        QUEUE["Task Queue<br/>(.loki/queue/)"]
+    end
+
+    AGENTS --> QUEUE
+    VERIFY --> COUNCIL
+    REFLECT --> MEMORY
+    COMPOUND --> MEMORY
+    DASHBOARD -.->|"reads"| QUEUE
+    DASHBOARD -.->|"reads"| MEMORY
+```
+
+**Key components:**
+- **RARV+C Cycle** -- Reason, Act, Reflect, Verify, Compound. Every iteration follows this loop. Failed verification triggers retry from Reason.
+- **Provider Layer** -- Claude Code (full parallel agents, Task tool, MCP), Codex CLI and Gemini CLI (sequential, degraded mode).
+- **Agent Swarms** -- 41 specialized agent types across 7 swarms, spawned on demand based on project complexity.
+- **Completion Council** -- 3 members vote on whether the project is done. Anti-sycophancy devil's advocate on unanimous votes.
+- **Memory System** -- Episodic traces, semantic patterns, procedural skills. Progressive disclosure reduces context usage by 60-80%.
+- **Dashboard** -- FastAPI server reading `.loki/` flat files, with real-time web UI for task queue, agents, logs, and council state.
+
+---
+
 ## CLI Commands (v4.1.0)
 
 The `loki` CLI provides easy access to all Loki Mode features:
