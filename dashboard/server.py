@@ -2200,7 +2200,7 @@ except ImportError as e:
 # =============================================================================
 # Must be configured AFTER all API routes to avoid conflicts
 
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 # Find static files in multiple possible locations
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -2239,6 +2239,17 @@ if STATIC_DIR:
     ASSETS_DIR = os.path.join(STATIC_DIR, "assets")
     if os.path.isdir(ASSETS_DIR):
         app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+# Serve favicon.svg from static directory
+@app.get("/favicon.svg", include_in_schema=False)
+async def serve_favicon():
+    """Serve the dashboard favicon."""
+    if STATIC_DIR:
+        favicon_path = os.path.join(STATIC_DIR, "favicon.svg")
+        if os.path.isfile(favicon_path):
+            return FileResponse(favicon_path, media_type="image/svg+xml")
+    return Response(status_code=404)
+
 
 # Serve index.html or standalone HTML for root
 @app.get("/", include_in_schema=False)
