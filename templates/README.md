@@ -27,6 +27,7 @@ claude --dangerously-skip-permissions
 
 | Template | Description | Tech Stack | Est. Time |
 |----------|-------------|------------|-----------|
+| [rest-api-auth.md](rest-api-auth.md) | REST API with JWT auth, registration, login, refresh, rate limiting | Express/FastAPI, PostgreSQL, JWT, bcrypt | 30-45 min |
 | [full-stack-demo.md](full-stack-demo.md) | Bookmark manager with tags, search, and filtering | React, Express, SQLite, TailwindCSS | 30-60 min |
 | [cli-tool.md](cli-tool.md) | File organizer CLI with subcommands, config, watch mode, undo | Node.js, Commander.js, chalk, chokidar | 30-45 min |
 | [discord-bot.md](discord-bot.md) | Moderation bot with slash commands, auto-mod, reaction roles | discord.js, SQLite, node-cron | 45-60 min |
@@ -69,7 +70,7 @@ Every template follows a consistent structure:
 
 **Testing specific agent types:**
 - Frontend agent: `static-landing-page.md`, `chrome-extension.md`
-- Backend agent: `api-only.md`, `discord-bot.md`
+- Backend agent: `api-only.md`, `rest-api-auth.md`, `discord-bot.md`
 - Full-stack agent: `full-stack-demo.md`, `blog-platform.md`
 - DevOps/CLI agent: `cli-tool.md`
 - Mobile agent: `mobile-app.md`
