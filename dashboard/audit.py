@@ -12,6 +12,7 @@ Syslog forwarding (optional):
   LOKI_AUDIT_SYSLOG_PROTO defaults to "udp" (also supports "tcp").
 """
 
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -38,6 +39,11 @@ MAX_LOG_FILES = int(os.environ.get("LOKI_AUDIT_MAX_FILES", "10"))
 _SYSLOG_HOST = os.environ.get("LOKI_AUDIT_SYSLOG_HOST", "").strip()
 _SYSLOG_PORT = int(os.environ.get("LOKI_AUDIT_SYSLOG_PORT", "514"))
 _SYSLOG_PROTO = os.environ.get("LOKI_AUDIT_SYSLOG_PROTO", "udp").lower().strip()
+
+# Integrity chain hashing (tamper-evident logging)
+# Disable with LOKI_AUDIT_NO_INTEGRITY=true
+INTEGRITY_ENABLED = os.environ.get("LOKI_AUDIT_NO_INTEGRITY", "").lower() not in ("true", "1", "yes")
+_last_hash: str = "0" * 64  # Genesis hash
 
 # Actions considered security-relevant (logged at WARNING level in syslog)
 _SECURITY_ACTIONS = frozenset({
@@ -70,6 +76,15 @@ if _SYSLOG_HOST:
 def _ensure_audit_dir() -> None:
     """Ensure the audit directory exists."""
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _compute_chain_hash(entry_json: str, prev_hash: str) -> str:
+    """Compute a SHA-256 chain hash linking this entry to the previous one.
+
+    Each hash depends on the previous entry's hash, creating a tamper-evident
+    chain. If any entry is modified, all subsequent hashes will be invalid.
+    """
+    return hashlib.sha256((prev_hash + entry_json).encode("utf-8")).hexdigest()
 
 
 def _get_current_log_file() -> Path:
@@ -179,6 +194,13 @@ def log_event(
         "error": error,
         "details": details or {},
     }
+
+    # Tamper-evident chain hash
+    global _last_hash
+    if INTEGRITY_ENABLED:
+        entry_json = json.dumps(entry, sort_keys=True, default=str)
+        entry["_integrity_hash"] = _compute_chain_hash(entry_json, _last_hash)
+        _last_hash = entry["_integrity_hash"]
 
     log_file = _get_current_log_file()
     _rotate_logs_if_needed(log_file)
@@ -325,3 +347,67 @@ def get_audit_summary(days: int = 7) -> dict:
 def is_audit_enabled() -> bool:
     """Check if audit logging is enabled (on by default, disable with LOKI_AUDIT_DISABLED=true)."""
     return ENTERPRISE_AUDIT_ENABLED
+
+
+def verify_log_integrity(log_file: str) -> dict:
+    """Verify the integrity chain of a JSONL audit log file.
+
+    Reads each line, recomputes the chain hash from the genesis hash,
+    and compares it to the stored _integrity_hash. If any entry has been
+    tampered with, all subsequent hashes will also fail to match.
+
+    Args:
+        log_file: Path to the JSONL audit log file to verify.
+
+    Returns:
+        A dict with:
+          - valid (bool): True if the entire chain is intact.
+          - entries_checked (int): Number of entries verified.
+          - first_tampered_line (int | None): 1-based line number of the
+            first entry where the hash chain broke, or None if valid.
+    """
+    prev_hash = "0" * 64  # Genesis hash
+    entries_checked = 0
+
+    try:
+        with open(log_file, "r") as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    return {
+                        "valid": False,
+                        "entries_checked": entries_checked,
+                        "first_tampered_line": line_num,
+                    }
+
+                stored_hash = entry.pop("_integrity_hash", None)
+                if stored_hash is None:
+                    # Entry has no integrity hash -- chain is broken
+                    return {
+                        "valid": False,
+                        "entries_checked": entries_checked,
+                        "first_tampered_line": line_num,
+                    }
+
+                entry_json = json.dumps(entry, sort_keys=True, default=str)
+                expected_hash = _compute_chain_hash(entry_json, prev_hash)
+
+                if stored_hash != expected_hash:
+                    return {
+                        "valid": False,
+                        "entries_checked": entries_checked,
+                        "first_tampered_line": line_num,
+                    }
+
+                prev_hash = stored_hash
+                entries_checked += 1
+
+    except FileNotFoundError:
+        return {"valid": True, "entries_checked": 0, "first_tampered_line": None}
+
+    return {"valid": True, "entries_checked": entries_checked, "first_tampered_line": None}

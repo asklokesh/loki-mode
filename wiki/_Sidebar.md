@@ -28,6 +28,7 @@
 - [[Sandbox Mode]]
 - [[Security]]
 - [[Audit Logging]]
+- [[Network Security]]
 
 ### Architecture
 - [[Architecture]]
