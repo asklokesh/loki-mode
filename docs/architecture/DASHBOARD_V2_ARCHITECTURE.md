@@ -20,7 +20,7 @@ This document outlines the architecture for a new enterprise-grade Loki Mode Das
 | Component | Location | Description | Limitations |
 |-----------|----------|-------------|-------------|
 | Static Dashboard | `autonomy/.loki/dashboard/index.html` | Single-file HTML/CSS/JS (~2000 lines) | No persistence, file-polling for updates |
-| Node.js API | `autonomy/api-server.js` | Simple HTTP server (zero deps) | SSE polling, no database, single project |
+| Node.js API (legacy) | `autonomy/api-server.js` | Simple HTTP server (zero deps) - replaced by FastAPI | SSE polling, no database, single project |
 | Deno API | `api/server.ts` | TypeScript HTTP/SSE server | File-based state, no cross-project |
 | State Files | `.loki/dashboard-state.json` | JSON state written by run.sh | 2-second polling, no real-time |
 
@@ -873,8 +873,9 @@ dashboard/
 ### B. Related Files
 
 - Current static dashboard: `/Users/lokesh/git/claudeskill-loki-mode/autonomy/.loki/dashboard/index.html`
-- Current Node.js API: `/Users/lokesh/git/claudeskill-loki-mode/autonomy/api-server.js`
-- Current Deno API: `/Users/lokesh/git/claudeskill-loki-mode/api/server.ts`
+- Production API: `/Users/lokesh/git/claudeskill-loki-mode/dashboard/server.py` (unified FastAPI, port 57374)
+- Legacy Node.js API: `/Users/lokesh/git/claudeskill-loki-mode/autonomy/api-server.js`
+- Legacy Deno API: `/Users/lokesh/git/claudeskill-loki-mode/api/server.ts`
 - OpenAPI spec: `/Users/lokesh/git/claudeskill-loki-mode/api/openapi.yaml`
 - Run script: `/Users/lokesh/git/claudeskill-loki-mode/autonomy/run.sh`
 

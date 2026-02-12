@@ -5,7 +5,7 @@
  * Usage: deno run --allow-all api-examples/deno-api.ts
  */
 
-const PORT = parseInt(Deno.env.get("LOKI_API_PORT") || "9898");
+const PORT = parseInt(Deno.env.get("LOKI_DASHBOARD_PORT") || "57374");
 const HOME = Deno.env.get("HOME") || "/tmp";
 const LOKI_DIR = Deno.env.get("LOKI_DIR") || `${HOME}/.loki`;
 const STATE_DIR = `${LOKI_DIR}/state`;

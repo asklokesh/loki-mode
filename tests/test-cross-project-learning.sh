@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOKI_CLI="${PROJECT_ROOT}/autonomy/loki"
-API_URL="http://localhost:9898"
+API_URL="http://localhost:57374"
 
 # Colors
 RED='\033[0;31m'
@@ -169,7 +169,7 @@ fi
 
 # Test 14: Dashboard API URL config
 echo "Test 14: Dashboard API URL configuration"
-if grep -q 'API_URL.*localhost:9898' "$DASHBOARD_FILE"; then
+if grep -q 'API_URL.*localhost:57374' "$DASHBOARD_FILE"; then
     pass "Dashboard has API URL configured"
 else
     fail "Dashboard missing API URL configuration"

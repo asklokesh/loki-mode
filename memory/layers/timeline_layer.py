@@ -9,7 +9,7 @@ providing temporal context before loading full memories.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -58,7 +58,7 @@ class TimelineLayer:
         """Create an empty timeline structure."""
         return {
             "version": self.VERSION,
-            "last_updated": datetime.utcnow().isoformat() + "Z",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
             "recent_actions": [],
             "key_decisions": [],
             "active_context": {
@@ -76,7 +76,7 @@ class TimelineLayer:
             timeline: Timeline dictionary to save
         """
         self.base_path.mkdir(parents=True, exist_ok=True)
-        timeline["last_updated"] = datetime.utcnow().isoformat() + "Z"
+        timeline["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         with open(self.timeline_path, "w") as f:
             json.dump(timeline, f, indent=2)
@@ -100,7 +100,7 @@ class TimelineLayer:
         timeline = self.load()
 
         action_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "action": action,
             "outcome": outcome,
         }
@@ -132,7 +132,7 @@ class TimelineLayer:
         timeline = self.load()
 
         decision_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "decision": decision,
             "rationale": rationale,
         }

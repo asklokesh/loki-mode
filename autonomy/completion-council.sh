@@ -823,6 +823,7 @@ council_aggregate_votes() {
     _THRESHOLD="$threshold" \
     _VERDICT="$verdict" \
     _VOTES="$votes_json" \
+    _ROUND_FILE="$round_file" \
     python3 -c "
 import json, os
 from datetime import datetime, timezone
@@ -836,7 +837,7 @@ round_data = {
     'verdict': os.environ['_VERDICT'],
     'votes': json.loads(os.environ['_VOTES'])
 }
-with open('$round_file', 'w') as f:
+with open(os.environ['_ROUND_FILE'], 'w') as f:
     json.dump(round_data, f, indent=2)
 " || log_warn "Failed to write round vote file"
 
@@ -926,6 +927,7 @@ council_devils_advocate_review() {
     _ROUND="$round" \
     _ISSUES="$issues_found" \
     _DETAILS="${issue_details:-none}" \
+    _DA_FILE="$da_file" \
     python3 -c "
 import json, os
 from datetime import datetime, timezone
@@ -936,7 +938,7 @@ da_result = {
     'details': os.environ['_DETAILS'],
     'override': int(os.environ['_ISSUES']) > 0
 }
-with open('$da_file', 'w') as f:
+with open(os.environ['_DA_FILE'], 'w') as f:
     json.dump(da_result, f, indent=2)
 " || log_warn "Failed to write devil's advocate result"
 

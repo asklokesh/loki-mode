@@ -783,10 +783,14 @@ class MemoryRetrieval:
                 try:
                     if isinstance(last_used, str):
                         if last_used.endswith("Z"):
-                            last_used = last_used[:-1]
+                            last_used = last_used[:-1] + "+00:00"
                         last_used_dt = datetime.fromisoformat(last_used)
                     else:
                         last_used_dt = last_used
+
+                    # Ensure timezone-aware for comparison
+                    if last_used_dt.tzinfo is None:
+                        last_used_dt = last_used_dt.replace(tzinfo=timezone.utc)
 
                     if since <= last_used_dt <= until:
                         pattern["_source"] = "semantic"
@@ -948,10 +952,14 @@ class MemoryRetrieval:
             try:
                 if isinstance(timestamp, str):
                     if timestamp.endswith("Z"):
-                        timestamp = timestamp[:-1]
+                        timestamp = timestamp[:-1] + "+00:00"
                     item_time = datetime.fromisoformat(timestamp)
                 else:
                     item_time = timestamp
+
+                # Ensure timezone-aware for comparison with UTC now
+                if item_time.tzinfo is None:
+                    item_time = item_time.replace(tzinfo=timezone.utc)
 
                 # Calculate age in days
                 age_days = (now - item_time).days

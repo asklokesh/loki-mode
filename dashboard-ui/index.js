@@ -73,6 +73,7 @@ export { LokiMemoryBrowser } from './components/loki-memory-browser.js';
 export { LokiLearningDashboard } from './components/loki-learning-dashboard.js';
 export { LokiCouncilDashboard } from './components/loki-council-dashboard.js';
 export { LokiCostDashboard } from './components/loki-cost-dashboard.js';
+export { LokiCheckpointViewer } from './components/loki-checkpoint-viewer.js';
 
 // Version
 export const VERSION = '1.3.0';
@@ -117,6 +118,7 @@ const componentModules = [
   './components/loki-learning-dashboard.js',
   './components/loki-council-dashboard.js',
   './components/loki-cost-dashboard.js',
+  './components/loki-checkpoint-viewer.js',
 ];
 
 // Components are registered via customElements.define in their respective files

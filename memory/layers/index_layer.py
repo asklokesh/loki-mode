@@ -11,7 +11,7 @@ loading full memory content.
 
 import json
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -101,7 +101,7 @@ class IndexLayer:
         """Create an empty index structure."""
         return {
             "version": self.VERSION,
-            "last_updated": datetime.utcnow().isoformat() + "Z",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
             "topics": [],
             "total_memories": 0,
             "total_tokens_available": 0,
@@ -115,7 +115,7 @@ class IndexLayer:
             index: Index dictionary to save
         """
         self.base_path.mkdir(parents=True, exist_ok=True)
-        index["last_updated"] = datetime.utcnow().isoformat() + "Z"
+        index["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         with open(self.index_path, "w") as f:
             json.dump(index, f, indent=2)
@@ -145,7 +145,7 @@ class IndexLayer:
 
         index = {
             "version": self.VERSION,
-            "last_updated": datetime.utcnow().isoformat() + "Z",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
             "topics": topics,
             "total_memories": len(topics),
             "total_tokens_available": total_tokens,

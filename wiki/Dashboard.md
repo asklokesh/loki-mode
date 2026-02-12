@@ -111,7 +111,7 @@ loki dashboard start [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--port` | 57374 | Server port |
-| `--host` | localhost | Server host |
+| `--host` | 127.0.0.1 | Server host |
 
 ### `loki dashboard stop`
 
@@ -165,7 +165,7 @@ dashboard:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_DASHBOARD_PORT` | 57374 | Dashboard port |
-| `LOKI_DASHBOARD_HOST` | localhost | Dashboard host |
+| `LOKI_DASHBOARD_HOST` | 127.0.0.1 | Dashboard host |
 
 ---
 
@@ -175,14 +175,17 @@ The dashboard uses the unified HTTP API at port 57374 for data:
 
 ```javascript
 // Dashboard fetches from API
-const status = await fetch('http://localhost:57374/status').then(r => r.json());
-const logs = await fetch('http://localhost:57374/logs?lines=100').then(r => r.json());
+const status = await fetch('http://localhost:57374/api/status').then(r => r.json());
+const logs = await fetch('http://localhost:57374/api/logs?lines=100').then(r => r.json());
 ```
 
-SSE for real-time updates:
+WebSocket for real-time updates:
 ```javascript
-const events = new EventSource('http://localhost:57374/events');
-events.onmessage = (e) => updateUI(JSON.parse(e.data));
+const ws = new WebSocket('ws://localhost:57374/ws');
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  updateUI(msg);
+};
 ```
 
 ---
@@ -205,14 +208,14 @@ loki dashboard start --port 8080
 ### Dashboard Shows No Data
 
 ```bash
-# Verify API server is running
-loki api status
+# Verify dashboard server is running
+loki dashboard status
 
-# Start API server
-loki serve
+# Start dashboard server
+loki dashboard start
 
 # Check status endpoint
-curl http://localhost:57374/status
+curl http://localhost:57374/api/status
 ```
 
 ### Connection Refused

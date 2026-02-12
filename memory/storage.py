@@ -1091,7 +1091,7 @@ class MemoryStorage:
         now = datetime.now(timezone.utc)
 
         # Update access tracking
-        memory["last_accessed"] = now.isoformat() + "Z"
+        memory["last_accessed"] = now.isoformat()
         memory["access_count"] = memory.get("access_count", 0) + 1
 
         # Boost importance (with diminishing returns for high importance)

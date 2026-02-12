@@ -76,7 +76,7 @@ function isConnectionRefusedError(error: unknown): boolean {
  */
 function createConnectionError(): ApiError {
     return createApiError(
-        'Loki Mode API server is not running. Start it with "loki start" or "./autonomy/run.sh" first.',
+        'Loki Mode dashboard server is not running. Start it with "loki start" or "loki dashboard start" first.',
         'CONNECTION_REFUSED'
     );
 }
@@ -289,7 +289,7 @@ export class LokiApiClient {
      * Inject input into the running session
      * @param input - Input string to inject
      * @param targetTask - Optional target task ID
-     * @deprecated The /input endpoint is not yet implemented in api-server.js
+     * @deprecated The /input endpoint is not yet implemented in dashboard/server.py
      * Use file-based input via .loki/HUMAN_INPUT.md instead
      */
     async injectInput(input: string, targetTask?: string): Promise<void> {

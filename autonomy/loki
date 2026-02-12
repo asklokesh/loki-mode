@@ -310,8 +310,8 @@ show_help() {
     echo "  logs             Show recent log output"
     echo "  dashboard [cmd]  Dashboard server (start|stop|status|url|open)"
     echo "  provider [cmd]   Manage AI provider (show|set|list|info)"
-    echo "  serve            Start HTTP API server (alias for api start)"
-    echo "  api [cmd]        HTTP API server (start|stop|status)"
+    echo "  serve            Start dashboard/API server (alias for api start)"
+    echo "  api [cmd]        Dashboard/API server (start|stop|status)"
     echo "  sandbox [cmd]    Docker sandbox (start|stop|status|logs|shell|build)"
     echo "  notify [cmd]     Send notifications (test|slack|discord|webhook|status)"
     echo "  voice [cmd]      Voice input for PRD creation (status|listen|dictate|speak|start)"
@@ -2762,18 +2762,17 @@ cmd_logs() {
     tail -n "$lines" "$log_file"
 }
 
-# API server management
+# API server management (delegates to unified FastAPI dashboard server)
 cmd_api() {
     local subcommand="${1:-help}"
-    local port="${LOKI_API_PORT:-9898}"
-    local pid_file="$LOKI_DIR/api.pid"
-    local api_server="$SKILL_DIR/api/server.js"
+    local port="${LOKI_DASHBOARD_PORT:-57374}"
+    local pid_file="$LOKI_DIR/dashboard/dashboard.pid"
 
     case "$subcommand" in
         start)
-            # Check if Node.js is available
-            if ! command -v node &> /dev/null; then
-                echo -e "${RED}Error: Node.js not found. Install with: brew install node${NC}"
+            # Check if Python is available
+            if ! command -v python3 &> /dev/null; then
+                echo -e "${RED}Error: Python 3 not found. Install with: brew install python3${NC}"
                 exit 1
             fi
 
@@ -2781,19 +2780,19 @@ cmd_api() {
             if [ -f "$pid_file" ]; then
                 local existing_pid=$(cat "$pid_file")
                 if kill -0 "$existing_pid" 2>/dev/null; then
-                    echo -e "${YELLOW}API server already running (PID: $existing_pid)${NC}"
+                    echo -e "${YELLOW}Dashboard server already running (PID: $existing_pid)${NC}"
                     echo "URL: http://localhost:$port"
                     exit 0
                 fi
             fi
 
             # Start server
-            mkdir -p "$LOKI_DIR/logs"
-            nohup node "$api_server" --port "$port" > "$LOKI_DIR/logs/api.log" 2>&1 &
+            mkdir -p "$LOKI_DIR/logs" "$LOKI_DIR/dashboard"
+            LOKI_DIR="$LOKI_DIR" nohup python3 -m uvicorn dashboard.server:app --host 0.0.0.0 --port "$port" > "$LOKI_DIR/logs/api.log" 2>&1 &
             local new_pid=$!
             echo "$new_pid" > "$pid_file"
 
-            echo -e "${GREEN}API server started${NC}"
+            echo -e "${GREEN}Dashboard server started${NC}"
             echo "  PID:  $new_pid"
             echo "  URL:  http://localhost:$port"
             echo "  Logs: $LOKI_DIR/logs/api.log"
@@ -2805,13 +2804,13 @@ cmd_api() {
                 if kill -0 "$pid" 2>/dev/null; then
                     kill "$pid"
                     rm -f "$pid_file"
-                    echo -e "${GREEN}API server stopped${NC}"
+                    echo -e "${GREEN}Dashboard server stopped${NC}"
                 else
                     rm -f "$pid_file"
-                    echo -e "${YELLOW}API server was not running${NC}"
+                    echo -e "${YELLOW}Dashboard server was not running${NC}"
                 fi
             else
-                echo -e "${YELLOW}No API server PID file found${NC}"
+                echo -e "${YELLOW}No dashboard server PID file found${NC}"
             fi
             ;;
 
@@ -2819,7 +2818,7 @@ cmd_api() {
             if [ -f "$pid_file" ]; then
                 local pid=$(cat "$pid_file")
                 if kill -0 "$pid" 2>/dev/null; then
-                    echo -e "${GREEN}API server running${NC}"
+                    echo -e "${GREEN}Dashboard server running${NC}"
                     echo "  PID:  $pid"
                     echo "  URL:  http://localhost:$port"
 
@@ -2827,39 +2826,39 @@ cmd_api() {
                     if command -v curl &> /dev/null; then
                         echo ""
                         echo -e "${CYAN}Status:${NC}"
-                        curl -s "http://localhost:$port/status" 2>/dev/null | jq . 2>/dev/null || true
+                        curl -s "http://localhost:$port/api/status" 2>/dev/null | jq . 2>/dev/null || true
                     fi
                 else
-                    echo -e "${YELLOW}API server not running (stale PID file)${NC}"
+                    echo -e "${YELLOW}Dashboard server not running (stale PID file)${NC}"
                     rm -f "$pid_file"
                 fi
             else
-                echo -e "${YELLOW}API server not running${NC}"
+                echo -e "${YELLOW}Dashboard server not running${NC}"
             fi
             ;;
 
         *)
-            echo -e "${BOLD}Loki Mode API Server${NC}"
+            echo -e "${BOLD}Loki Mode Dashboard/API Server${NC}"
             echo ""
             echo "Usage: loki api <command>"
             echo ""
             echo "Commands:"
-            echo "  start    Start the HTTP API server"
-            echo "  stop     Stop the API server"
-            echo "  status   Check if API server is running"
+            echo "  start    Start the unified FastAPI dashboard server"
+            echo "  stop     Stop the dashboard server"
+            echo "  status   Check if dashboard server is running"
             echo ""
             echo "Environment:"
-            echo "  LOKI_API_PORT  Port to listen on (default: 9898)"
+            echo "  LOKI_DASHBOARD_PORT  Port to listen on (default: 57374)"
             echo ""
             echo "Endpoints:"
-            echo "  GET  /health  - Health check"
-            echo "  GET  /status  - Session status"
-            echo "  GET  /events  - SSE stream"
-            echo "  GET  /logs    - Recent logs"
-            echo "  POST /start   - Start session"
-            echo "  POST /stop    - Stop session"
-            echo "  POST /pause   - Pause session"
-            echo "  POST /resume  - Resume session"
+            echo "  GET  /api/health  - Health check"
+            echo "  GET  /api/status  - Session status"
+            echo "  GET  /api/events  - SSE stream"
+            echo "  GET  /api/logs    - Recent logs"
+            echo "  POST /api/start   - Start session"
+            echo "  POST /api/stop    - Stop session"
+            echo "  POST /api/pause   - Pause session"
+            echo "  POST /api/resume  - Resume session"
             ;;
     esac
 }
@@ -5360,9 +5359,9 @@ cmd_checkpoint() {
             for (( i=start; i<total; i++ )); do
                 local entry="${lines[$i]}"
                 local cp_id=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
-                local cp_ts=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('timestamp',''))" 2>/dev/null)
-                local cp_sha=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('git_sha','')[:8])" 2>/dev/null)
-                local cp_msg=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message','')[:50])" 2>/dev/null)
+                local cp_ts=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('timestamp','') or d.get('ts',''))" 2>/dev/null)
+                local cp_sha=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('git_sha','') or d.get('sha',''))[:8])" 2>/dev/null)
+                local cp_msg=$(echo "$entry" | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('message','') or d.get('task',''))[:50])" 2>/dev/null)
 
                 if [ -n "$cp_id" ]; then
                     printf "  ${GREEN}%-14s${NC} %-20s ${CYAN}%-10s${NC} %s\n" "$cp_id" "$cp_ts" "$cp_sha" "$cp_msg"
@@ -5379,7 +5378,10 @@ cmd_checkpoint() {
             ;;
 
         create)
-            local message="${*:-manual checkpoint}"
+            local raw_message="${*:-manual checkpoint}"
+            # Escape backslashes and double quotes for JSON safety
+            local message
+            message=$(printf '%s' "$raw_message" | sed 's/\\/\\\\/g; s/"/\\"/g' | head -c 200)
 
             echo -e "${BOLD}Creating checkpoint...${NC}"
             echo ""
@@ -5417,23 +5419,39 @@ cmd_checkpoint() {
                 fi
             done
 
-            # Write metadata
+            # Write metadata (use python3 json.dumps for safe serialization)
             local iso_ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-            cat > "$cp_dir/metadata.json" << METADATA_EOF
-{
-    "id": "$cp_id",
-    "timestamp": "$iso_ts",
-    "git_sha": "$git_sha",
-    "git_branch": "$git_branch",
-    "message": "$message",
-    "files_copied": $copied,
+            # Truncate message to 500 chars to prevent abuse
+            local safe_message="${message:0:500}"
+            _CP_ID="$cp_id" _CP_TS="$iso_ts" _CP_SHA="$git_sha" _CP_BRANCH="$git_branch" \
+            _CP_MSG="$safe_message" _CP_FILES="$copied" _CP_DIR="$cp_dir" _CP_INDEX="$index_file" \
+            _CP_CHKDIR="$checkpoints_dir" python3 << 'WRITE_META_EOF'
+import json, os
+metadata = {
+    "id": os.environ["_CP_ID"],
+    "timestamp": os.environ["_CP_TS"],
+    "git_sha": os.environ["_CP_SHA"],
+    "git_branch": os.environ["_CP_BRANCH"],
+    "message": os.environ["_CP_MSG"],
+    "files_copied": int(os.environ["_CP_FILES"]),
     "created_by": "loki checkpoint create"
 }
-METADATA_EOF
-
-            # Append to index
-            mkdir -p "$checkpoints_dir"
-            echo "{\"id\":\"$cp_id\",\"timestamp\":\"$iso_ts\",\"git_sha\":\"$git_sha\",\"git_branch\":\"$git_branch\",\"message\":\"$message\"}" >> "$index_file"
+cp_dir = os.environ["_CP_DIR"]
+os.makedirs(cp_dir, exist_ok=True)
+with open(os.path.join(cp_dir, "metadata.json"), "w") as f:
+    json.dump(metadata, f, indent=4)
+index_file = os.environ["_CP_INDEX"]
+os.makedirs(os.environ["_CP_CHKDIR"], exist_ok=True)
+with open(index_file, "a") as f:
+    index_entry = {
+        "id": metadata["id"],
+        "timestamp": metadata["timestamp"],
+        "git_sha": metadata["git_sha"],
+        "git_branch": metadata["git_branch"],
+        "message": metadata["message"],
+    }
+    f.write(json.dumps(index_entry) + "\n")
+WRITE_META_EOF
 
             echo -e "  Checkpoint: ${GREEN}$cp_id${NC}"
             echo -e "  Git SHA:    ${CYAN}${git_sha:0:8}${NC} ($git_branch)"
@@ -5453,6 +5471,12 @@ METADATA_EOF
                 return 1
             fi
 
+            # Validate checkpoint ID (prevent path traversal)
+            if [[ ! "$cp_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo -e "${RED}Error: Invalid checkpoint ID (must be alphanumeric, hyphens, underscores only)${NC}"
+                return 1
+            fi
+
             local cp_dir="$checkpoints_dir/$cp_id"
             local metadata="$cp_dir/metadata.json"
 
@@ -5465,9 +5489,9 @@ METADATA_EOF
             echo -e "${BOLD}Checkpoint: $cp_id${NC}"
             echo ""
 
-            python3 << SHOW_EOF
+            _CP_METADATA="$metadata" python3 << 'SHOW_EOF'
 import json, os
-with open("$metadata", "r") as f:
+with open(os.environ["_CP_METADATA"], "r") as f:
     d = json.load(f)
 print(f"  ID:         {d.get('id', 'unknown')}")
 print(f"  Timestamp:  {d.get('timestamp', 'unknown')}")
@@ -5503,6 +5527,12 @@ SHOW_EOF
                 return 1
             fi
 
+            # Validate checkpoint ID (prevent path traversal)
+            if [[ ! "$cp_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo -e "${RED}Error: Invalid checkpoint ID (must be alphanumeric, hyphens, underscores only)${NC}"
+                return 1
+            fi
+
             local cp_dir="$checkpoints_dir/$cp_id"
             local metadata="$cp_dir/metadata.json"
 
@@ -5533,7 +5563,7 @@ SHOW_EOF
             echo -e "  Restored: ${GREEN}$restored${NC} state items from $cp_id"
 
             # Show git info for manual code rollback
-            local cp_sha=$(python3 -c "import json; d=json.load(open('$metadata')); print(d.get('git_sha','unknown'))" 2>/dev/null)
+            local cp_sha=$(_CP_METADATA="$metadata" python3 -c "import json, os; d=json.load(open(os.environ['_CP_METADATA'])); print(d.get('git_sha','unknown'))" 2>/dev/null)
             if [ -n "$cp_sha" ] && [ "$cp_sha" != "unknown" ] && [ "$cp_sha" != "not-a-git-repo" ]; then
                 echo ""
                 echo -e "  ${YELLOW}Note:${NC} Session state has been restored, but code is unchanged."

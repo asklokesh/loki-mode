@@ -77,16 +77,16 @@ dashboard:
   port: 57374
 
 #-------------------------------------------------------------------------------
-# API Server Settings
+# API Server Settings (Legacy Node.js API - separate from dashboard)
 #-------------------------------------------------------------------------------
 api:
-  # API server port
-  port: 8420
+  # API server port (legacy Node.js server; dashboard uses LOKI_DASHBOARD_PORT)
+  port: 9898
 
   # API server host (use 0.0.0.0 for external access)
   host: localhost
 
-  # API authentication token (for external access)
+  # API authentication token (for remote access)
   token: ""
 
 #-------------------------------------------------------------------------------
@@ -422,10 +422,10 @@ loki start ./prd.md
 For production deployments, restrict CORS origins:
 
 ```bash
-export CORS_ALLOWED_ORIGINS="https://dashboard.example.com"
+export LOKI_DASHBOARD_CORS="https://dashboard.example.com,http://localhost:57374"
 ```
 
-When not set, defaults to `*` (all origins). See [[Security]] for details.
+When not set, defaults to `http://localhost:57374,http://127.0.0.1:57374` (localhost-only). See [[Security]] for details.
 
 ### Symlink Protection
 

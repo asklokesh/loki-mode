@@ -24,7 +24,7 @@ const VALID_PHASES: Phase[] = [
 ];
 
 /**
- * Valid session state values (includes 'stopping' from api-server.js v1.2.0)
+ * Valid session state values (includes 'stopping' from dashboard server)
  */
 const VALID_SESSION_STATES: SessionState[] = ['running', 'paused', 'stopping', 'stopped', 'completed', 'failed'];
 
@@ -57,7 +57,7 @@ export function isValidSessionState(value: unknown): value is SessionState {
 }
 
 /**
- * Status response shape from /status endpoint (matches api-server.js v1.2.0)
+ * Status response shape from /api/status endpoint (matches dashboard/server.py)
  * Server returns: { state, pid, statusText, currentPhase, currentTask, pendingTasks, provider, version, lokiDir, timestamp }
  */
 export interface StatusApiResponse {
@@ -88,7 +88,7 @@ export function parseStatusResponse(data: unknown): StatusApiResponse {
     const obj = data as Record<string, unknown>;
     const result: StatusApiResponse = {};
 
-    // New format fields (api-server.js v1.2.0)
+    // New format fields (dashboard/server.py)
     if (typeof obj.state === 'string') {
         result.state = obj.state as StatusApiResponse['state'];
         // Derive legacy boolean fields for backward compatibility

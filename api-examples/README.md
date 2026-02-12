@@ -4,26 +4,26 @@ Minimal HTTP API implementations for loki-mode remote control.
 
 ## Recommended: Node.js
 
-The production API server is at `autonomy/api-server.js` (Node.js).
+The production API server is at `dashboard/server.py` (FastAPI/Python).
 
-**Why Node.js?**
-- Pre-installed on most dev machines
-- Zero npm dependencies (built-in http module)
-- Proper SSE support for real-time updates
+**Why FastAPI?**
+- Unified dashboard and API on a single port (57374)
+- Reads directly from `.loki/` flat files
+- SSE support for real-time updates
 - Handles concurrent connections
 - Easy to test and extend
 
 ## Quick Start (Production)
 
 ```bash
-# Start API server
-loki api start
+# Start dashboard/API server
+loki dashboard start
 
 # Check status
-loki api status
+loki dashboard status
 
 # Stop server
-loki api stop
+loki dashboard stop
 ```
 
 ## Comparison Matrix
@@ -73,33 +73,33 @@ All implementations expose the same API:
 
 ```bash
 # Health check
-curl http://localhost:9898/health
+curl http://localhost:57374/health
 
 # Get status
-curl http://localhost:9898/status
+curl http://localhost:57374/status
 
 # Start with provider
 curl -X POST -H "Content-Type: application/json" \
      -d '{"provider":"claude"}' \
-     http://localhost:9898/start
+     http://localhost:57374/start
 
 # Stop
-curl -X POST http://localhost:9898/stop
+curl -X POST http://localhost:57374/stop
 
 # Pause/Resume
-curl -X POST http://localhost:9898/pause
-curl -X POST http://localhost:9898/resume
+curl -X POST http://localhost:57374/pause
+curl -X POST http://localhost:57374/resume
 
 # SSE stream (Node/Deno)
-curl -N http://localhost:9898/events
+curl -N http://localhost:57374/events
 
 # Logs
-curl http://localhost:9898/logs?lines=100
+curl http://localhost:57374/logs?lines=100
 ```
 
 ## Integration with run.sh
 
-The API server calls `./autonomy/run.sh` when `/start` is invoked.
+The dashboard server (`dashboard/server.py`) reads from `.loki/` flat files.
 Session state is tracked in `~/.loki/state/`:
 
 - `session.pid` - Process ID of running session

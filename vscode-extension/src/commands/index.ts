@@ -230,7 +230,7 @@ async function startSession(deps: CommandDependencies): Promise<void> {
         // Show user-friendly error with action button for connection issues
         if (errorCode === 'CONNECTION_REFUSED' || errorMessage.includes('server is not running')) {
             const action = await vscode.window.showErrorMessage(
-                'Loki Mode API server is not running. Start it with "loki start" or "./autonomy/run.sh" first.',
+                'Loki Mode dashboard server is not running. Start it with "loki start" or "loki dashboard start" first.',
                 'Open Terminal',
                 'Copy Command'
             );

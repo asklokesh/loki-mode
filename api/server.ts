@@ -84,8 +84,8 @@ interface ServerConfig {
 }
 
 const defaultConfig: ServerConfig = {
-  port: parseInt(Deno.env.get("LOKI_API_PORT") || "8420", 10),
-  host: Deno.env.get("LOKI_API_HOST") || "localhost",
+  port: parseInt(Deno.env.get("LOKI_DASHBOARD_PORT") || "57374", 10),
+  host: Deno.env.get("LOKI_DASHBOARD_HOST") || "localhost",
   cors: true,
   auth: true,
 };
@@ -365,15 +365,15 @@ Usage:
   deno run --allow-all api/server.ts [options]
 
 Options:
-  --port, -p <port>   Port to listen on (default: 8420)
+  --port, -p <port>   Port to listen on (default: 57374)
   --host, -h <host>   Host to bind to (default: localhost)
   --no-cors           Disable CORS
   --no-auth           Disable authentication
   --help              Show this help message
 
 Environment Variables:
-  LOKI_API_PORT       Port (overridden by --port)
-  LOKI_API_HOST       Host (overridden by --host)
+  LOKI_DASHBOARD_PORT Port (overridden by --port)
+  LOKI_DASHBOARD_HOST Host (overridden by --host)
   LOKI_API_TOKEN      API token for remote access
   LOKI_DIR            Loki installation directory
   LOKI_VERSION        Version string

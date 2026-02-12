@@ -23,7 +23,7 @@ docker run -it -v $(pwd):/workspace asklokesh/loki-mode loki start prd.md
 - **Multi-Provider Support**: Claude Code, OpenAI Codex CLI, Google Gemini CLI
 - **Quality Gates**: 7-gate verification system with automated testing
 - **Context Management**: Persistent memory across sessions
-- **Dashboard API**: Real-time monitoring at localhost:9898
+- **Dashboard API**: Real-time monitoring at localhost:57374
 
 ## Usage
 
@@ -37,8 +37,8 @@ docker run -d -v $(pwd):/workspace asklokesh/loki-mode loki start --bg prd.md
 # Check status
 docker run -it -v $(pwd):/workspace asklokesh/loki-mode loki status
 
-# With API server (dashboard access)
-docker run -it -p 9898:9898 -v $(pwd):/workspace asklokesh/loki-mode loki start --api prd.md
+# With dashboard server access
+docker run -it -p 57374:57374 -v $(pwd):/workspace asklokesh/loki-mode loki start --api prd.md
 ```
 
 ## Environment Variables

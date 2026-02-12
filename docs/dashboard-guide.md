@@ -254,7 +254,7 @@ The dashboard includes several security measures:
 | **XSS protection** | Log stream output is sanitized to prevent cross-site scripting |
 | **Memory leak fix** | Session control properly cleans up resources on disconnect |
 | **Python injection fix** | `completion-council.sh` sanitizes inputs to prevent code injection |
-| **CORS configuration** | Configurable via `CORS_ALLOWED_ORIGINS` environment variable (default: localhost only) |
+| **CORS configuration** | Configurable via `LOKI_DASHBOARD_CORS` environment variable (default: localhost only) |
 
 ---
 

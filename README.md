@@ -304,14 +304,14 @@ Last Updated: 2026-01-04 20:45:32
 
 **Access the dashboard:**
 ```bash
-# Automatically opens when running autonomously
+# Automatically starts when running autonomously
 ./autonomy/run.sh ./docs/requirements.md
 
 # Or open manually
-open .loki/dashboard/index.html
+open http://localhost:57374
 ```
 
-Auto-refreshes every 3 seconds. Works with any modern browser.
+The dashboard at `http://localhost:57374` auto-refreshes via WebSocket. Works with any modern browser.
 
 ---
 
@@ -488,7 +488,7 @@ graph TB
 
 ---
 
-## CLI Commands (v4.1.0)
+## CLI Commands
 
 The `loki` CLI provides easy access to all Loki Mode features:
 
@@ -663,7 +663,7 @@ loki memory retrieve "query"  # Test task-aware retrieval
 ```
 
 **API Endpoints:**
-- `GET /api/memory` - Memory summary
+- `GET /api/memory/summary` - Memory summary
 - `POST /api/memory/retrieve` - Query memories
 - `POST /api/memory/consolidate` - Trigger consolidation
 - `GET /api/memory/economics` - Token economics

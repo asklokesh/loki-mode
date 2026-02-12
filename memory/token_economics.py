@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -180,7 +180,7 @@ def optimize_context(
         List of memories that fit within the token budget, sorted by
         combined score.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     if not memories:
         return []
@@ -189,7 +189,7 @@ def optimize_context(
         return []
 
     scored_memories = []
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     for memory in memories:
         # Calculate importance score (0-1)
@@ -206,10 +206,12 @@ def optimize_context(
             try:
                 if isinstance(timestamp, str):
                     if timestamp.endswith("Z"):
-                        timestamp = timestamp[:-1]
+                        timestamp = timestamp[:-1] + "+00:00"
                     item_time = datetime.fromisoformat(timestamp)
                 else:
                     item_time = timestamp
+                if item_time.tzinfo is None:
+                    item_time = item_time.replace(tzinfo=timezone.utc)
 
                 # Calculate age in days
                 age_days = (now - item_time).days
@@ -445,7 +447,7 @@ class TokenEconomics:
         """
         self.session_id = session_id
         self.base_path = base_path
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(timezone.utc)
 
         self.metrics: Dict[str, int] = {
             "discovery_tokens": 0,
@@ -553,7 +555,7 @@ class TokenEconomics:
         """
         return {
             "session_id": self.session_id,
-            "started_at": self.started_at.isoformat() + "Z",
+            "started_at": self.started_at.isoformat(),
             "metrics": dict(self.metrics),
             "ratio": self.get_ratio(),
             "savings_percent": self.get_savings_percent(),
@@ -594,8 +596,10 @@ class TokenEconomics:
             started_at_str = data.get("started_at", "")
             if started_at_str:
                 if started_at_str.endswith("Z"):
-                    started_at_str = started_at_str[:-1]
+                    started_at_str = started_at_str[:-1] + "+00:00"
                 self.started_at = datetime.fromisoformat(started_at_str)
+                if self.started_at.tzinfo is None:
+                    self.started_at = self.started_at.replace(tzinfo=timezone.utc)
 
             loaded_metrics = data.get("metrics", {})
             for key in self.metrics:
@@ -610,4 +614,4 @@ class TokenEconomics:
         for key in self.metrics:
             self.metrics[key] = 0
         self._full_load_baseline = None
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(timezone.utc)

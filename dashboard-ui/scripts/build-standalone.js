@@ -587,6 +587,10 @@ function generateStandaloneHTML(bundleCode) {
           <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
           Cost
         </button>
+        <button class="nav-link" data-section="checkpoint" id="nav-checkpoint">
+          <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Checkpoints
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -657,6 +661,14 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <loki-cost-dashboard id="cost-dashboard"></loki-cost-dashboard>
       </div>
+
+      <!-- Checkpoints -->
+      <div class="section-page" id="page-checkpoint">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Checkpoints</h2>
+        </div>
+        <loki-checkpoint-viewer id="checkpoint-viewer"></loki-checkpoint-viewer>
+      </div>
     </main>
   </div>
 
@@ -676,6 +688,7 @@ function generateStandaloneHTML(bundleCode) {
         <div class="shortcut-row"><span class="shortcut-desc">Learning</span><span class="shortcut-keys"><kbd class="shortcut-key">5</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Cost</span><span class="shortcut-keys"><kbd class="shortcut-key">7</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
       </div>
       <div class="shortcuts-group">
         <div class="shortcuts-group-title">Session</div>
@@ -744,7 +757,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'memory-browser',
       'learning-dashboard',
       'council-dashboard',
-      'cost-dashboard'
+      'cost-dashboard',
+      'checkpoint-viewer'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);
@@ -832,9 +846,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Keyboard shortcuts: Cmd/Ctrl + 1-7
   document.addEventListener('keydown', function(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '7') {
+    if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '8') {
       e.preventDefault();
-      var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost'];
+      var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost', 'checkpoint'];
       switchSection(sections[parseInt(e.key) - 1]);
     }
   });
@@ -874,11 +888,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Skip if modifier keys are held (let browser defaults work)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-    var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost'];
+    var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost', 'checkpoint'];
 
     switch (e.key) {
-      // Section navigation: 1-7
-      case '1': case '2': case '3': case '4': case '5': case '6': case '7':
+      // Section navigation: 1-8
+      case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8':
         e.preventDefault();
         switchSection(sections[parseInt(e.key) - 1]);
         break;

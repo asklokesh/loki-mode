@@ -33,7 +33,7 @@ brew install deno
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_API_PORT` | `8420` | Server port |
+| `LOKI_DASHBOARD_PORT` | `57374` | Server port |
 | `LOKI_API_HOST` | `localhost` | Server host |
 | `LOKI_API_TOKEN` | none | API token for remote access |
 | `LOKI_DIR` | auto | Loki installation directory |

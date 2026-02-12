@@ -6,11 +6,11 @@ Complete REST API documentation for Loki Mode.
 
 ## Overview
 
-Loki Mode provides an HTTP API server for session management and real-time events.
+Loki Mode provides a unified HTTP API + Dashboard server for session management, task tracking, memory, and real-time events.
 
 | Server | Default Port | Technology | Purpose |
 |--------|--------------|------------|---------|
-| **HTTP API** | 57374 | Python/FastAPI | Session management, events, memory |
+| **Dashboard + API** | 57374 | Python/FastAPI | Session management, dashboard UI, memory, WebSocket |
 
 ---
 
@@ -18,16 +18,18 @@ Loki Mode provides an HTTP API server for session management and real-time event
 
 Start the server:
 ```bash
-loki serve
-# or
-loki api start --port 57374
+loki dashboard start
+# or directly:
+LOKI_DIR=.loki PYTHONPATH=/path/to/loki-mode python3 -m uvicorn dashboard.server:app --host 127.0.0.1 --port 57374
 ```
+
+The server is started automatically when you run `loki start` or `./autonomy/run.sh`.
 
 ### Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `LOKI_DASHBOARD_PORT` | 57374 | API server port |
+| `LOKI_DASHBOARD_PORT` | `57374` | Server port |
 | `LOKI_DASHBOARD_HOST` | `127.0.0.1` | Bind address (localhost-only by default) |
 | `LOKI_DIR` | `.loki` | State directory |
 | `LOKI_DASHBOARD_CORS` | `http://localhost:57374,http://127.0.0.1:57374` | Comma-separated allowed CORS origins |
@@ -44,8 +46,8 @@ Basic health check.
 **Response:**
 ```json
 {
-  "status": "ok",
-  "version": "5.34.0"
+  "status": "healthy",
+  "service": "loki-dashboard"
 }
 ```
 
@@ -53,253 +55,369 @@ Basic health check.
 
 ### Session Status
 
-#### `GET /status`
-Get detailed session status.
+#### `GET /api/status`
+Get detailed session status. Reads from `.loki/` flat files (dashboard-state.json, session.json, loki.pid).
 
 **Response:**
 ```json
 {
-  "state": "running",
-  "pid": 12345,
-  "statusText": "PHASE: development | TASK: implement-auth",
-  "currentPhase": "development",
-  "currentTask": "implement-auth",
-  "pendingTasks": 5,
-  "provider": "claude",
+  "status": "running",
   "version": "5.34.0",
-  "lokiDir": "/path/to/project/.loki",
-  "timestamp": "2026-02-02T12:00:00.000Z"
+  "uptime_seconds": 1234.5,
+  "active_sessions": 1,
+  "running_agents": 3,
+  "pending_tasks": 5,
+  "database_connected": true,
+  "phase": "development",
+  "iteration": 12,
+  "complexity": "standard",
+  "mode": "autonomous",
+  "provider": "claude",
+  "current_task": "implement-auth"
 }
 ```
 
-**State Values:**
-| State | Description |
-|-------|-------------|
-| `stopped` | No session running |
+**Status Values:**
+| Status | Description |
+|--------|-------------|
+| `stopped` | No session running (PID not alive, session.json not running) |
 | `running` | Session actively executing |
 | `paused` | Session paused (PAUSE file exists) |
-| `stopping` | Graceful shutdown in progress |
+| `autonomous` | Running in autonomous mode |
 
 ---
 
 ### Session Control
 
-#### `POST /start`
-Start a new session.
-
-**Request Body:**
-```json
-{
-  "prd": "path/to/prd.md",
-  "provider": "claude",
-  "parallel": false,
-  "background": true
-}
-```
-
-**Fields:**
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `prd` | string | - | Path to PRD file |
-| `provider` | string | `claude` | AI provider (claude, codex, gemini) |
-| `parallel` | boolean | `false` | Enable parallel mode |
-| `background` | boolean | `true` | Run in background |
+#### `POST /api/control/pause`
+Pause the current session by creating a PAUSE file.
 
 **Response:**
 ```json
 {
-  "started": true,
-  "pid": 12345,
-  "provider": "claude",
-  "args": ["--provider", "claude", "--bg", "path/to/prd.md"]
+  "success": true,
+  "message": "Session paused"
 }
 ```
 
-**Error (409 - Session already running):**
-```json
-{
-  "error": "Session already running",
-  "pid": 12345
-}
-```
-
-#### `POST /stop`
-Stop the current session.
+#### `POST /api/control/resume`
+Resume a paused session by removing PAUSE/STOP files.
 
 **Response:**
 ```json
 {
-  "stopped": true
+  "success": true,
+  "message": "Session resumed"
 }
 ```
 
-#### `POST /pause`
-Pause after current task completes.
+#### `POST /api/control/stop`
+Stop the session by creating a STOP file and sending SIGTERM to the Loki process.
 
 **Response:**
 ```json
 {
-  "paused": true
+  "success": true,
+  "message": "Stop signal sent"
 }
 ```
 
-#### `POST /resume`
-Resume a paused session.
-
-**Response:**
-```json
-{
-  "resumed": true
-}
-```
+**Note:** There is no `POST /start` endpoint. Sessions are started via the CLI (`loki start`).
 
 ---
 
 ### Logs
 
-#### `GET /logs`
-Get recent session log lines.
+#### `GET /api/logs`
+Get recent log entries from session log files.
 
 **Query Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `lines` | number | 50 | Number of lines to return |
+| `lines` | number | 100 | Number of lines to return |
 
 **Response:**
 ```json
-{
-  "logs": [
-    "[2026-02-02 12:00:00] Session started",
-    "[2026-02-02 12:00:01] Phase: requirements"
-  ],
-  "total": 150
-}
+[
+  {
+    "message": "Session started",
+    "level": "info",
+    "timestamp": "2026-02-02T12:00:00"
+  },
+  {
+    "message": "Phase: requirements",
+    "level": "info",
+    "timestamp": "2026-02-02T12:00:01"
+  }
+]
 ```
 
 ---
 
-### Server-Sent Events (SSE)
+### WebSocket
 
-#### `GET /events`
-Real-time event stream using Server-Sent Events.
+#### `WS /ws`
+WebSocket endpoint for real-time updates. Supports ping/pong keepalive and channel subscriptions.
 
 **Example:**
 ```javascript
-const events = new EventSource('http://localhost:57374/events');
-events.onmessage = (e) => {
-  const status = JSON.parse(e.data);
-  console.log('State:', status.state);
-  console.log('Phase:', status.currentPhase);
+const ws = new WebSocket('ws://localhost:57374/ws');
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'connected') {
+    console.log('Connected to dashboard');
+  }
 };
+// Keepalive
+setInterval(() => ws.send(JSON.stringify({type: 'ping'})), 25000);
 ```
 
-**Event Data:**
-Sends status updates every 2 seconds containing the full status object (same as `GET /status`).
+**Message Types:**
+| Type | Direction | Description |
+|------|-----------|-------------|
+| `connected` | Server->Client | Initial connection confirmation |
+| `ping` | Client->Server | Keepalive request |
+| `pong` | Server->Client | Keepalive response |
+| `subscribe` | Client->Server | Subscribe to channel |
+| `subscribed` | Server->Client | Subscription confirmation |
+| `task_created` | Server->Client | Broadcast when task created |
+| `task_updated` | Server->Client | Broadcast when task updated |
+| `task_moved` | Server->Client | Broadcast when task moved |
+| `project_created` | Server->Client | Broadcast when project created |
 
 ---
 
-### Memory/Learnings Endpoints
+### Task Endpoints
 
-#### `GET /memory`
-Get summary of cross-project learnings.
+#### `GET /api/tasks`
+List tasks from session state files (dashboard-state.json and queue/ directory).
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `status` | string | - | Filter by status (pending, in_progress, done) |
+
+**Response:**
+```json
+[
+  {
+    "id": "task-001",
+    "title": "implement-auth",
+    "description": "Implement user authentication",
+    "status": "in_progress",
+    "priority": "medium",
+    "type": "task",
+    "position": 0
+  }
+]
+```
+
+---
+
+### Memory Endpoints
+
+#### `GET /api/memory/summary`
+Get memory system summary.
 
 **Response:**
 ```json
 {
-  "patterns": 25,
-  "mistakes": 10,
-  "successes": 15,
-  "location": "/Users/you/.loki/learnings"
+  "episodic": {"count": 10, "latestDate": "2026-02-02T12:00:00Z"},
+  "semantic": {"patterns": 5, "antiPatterns": 2},
+  "procedural": {"skills": 3},
+  "tokenEconomics": {"discoveryTokens": 1000, "readTokens": 500, "savingsPercent": 50}
 }
 ```
 
-#### `GET /memory/{type}`
-Get learnings by type (patterns, mistakes, successes).
-
-**Path Parameters:**
-| Parameter | Values |
-|-----------|--------|
-| `type` | `patterns`, `mistakes`, `successes` |
+#### `GET /api/memory/episodes`
+List episodic memory entries.
 
 **Query Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `limit` | number | 50 | Max entries to return |
-| `offset` | number | 0 | Pagination offset |
+
+#### `GET /api/memory/episodes/{episode_id}`
+Get a specific episodic memory entry.
+
+#### `GET /api/memory/patterns`
+List semantic patterns.
+
+#### `GET /api/memory/patterns/{pattern_id}`
+Get a specific semantic pattern.
+
+#### `GET /api/memory/skills`
+List procedural skills.
+
+#### `GET /api/memory/skills/{skill_id}`
+Get a specific procedural skill.
+
+#### `GET /api/memory/economics`
+Get token usage economics.
 
 **Response:**
 ```json
 {
-  "type": "patterns",
-  "entries": [
-    {
-      "description": "Always run tests before committing",
-      "project": "my-app",
-      "timestamp": "2026-02-01T10:00:00Z"
-    }
-  ],
-  "total": 25,
-  "limit": 50,
-  "offset": 0
+  "discoveryTokens": 1000,
+  "readTokens": 500,
+  "savingsPercent": 50
 }
 ```
 
-#### `GET /memory/search`
-Search across all learnings.
+#### `POST /api/memory/consolidate`
+Trigger memory consolidation (stub - returns current state).
+
+#### `POST /api/memory/retrieve`
+Search memories by query.
+
+#### `GET /api/memory/index`
+Get memory index (Layer 1 - lightweight discovery).
+
+#### `GET /api/memory/timeline`
+Get memory timeline (Layer 2 - progressive disclosure).
+
+---
+
+### Learning/Metrics Endpoints
+
+#### `GET /api/learning/metrics`
+Get learning metrics from events and metrics files.
 
 **Query Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `q` | string | Yes | Search query |
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `timeRange` | string | `7d` | Time range (e.g., `1h`, `24h`, `7d`, `30d`) |
+| `signalType` | string | - | Filter by signal type |
+| `source` | string | - | Filter by source |
+
+#### `GET /api/learning/trends`
+Get learning trend data grouped by hour.
+
+#### `GET /api/learning/signals`
+Get raw learning signals.
+
+#### `GET /api/learning/aggregation`
+Get latest learning aggregation result.
+
+#### `POST /api/learning/aggregate`
+Aggregate learning signals from events.jsonl into structured metrics.
+
+#### `GET /api/learning/preferences`
+Get aggregated user preferences.
+
+#### `GET /api/learning/errors`
+Get aggregated error patterns.
+
+#### `GET /api/learning/success`
+Get aggregated success patterns.
+
+#### `GET /api/learning/tools`
+Get tool efficiency rankings.
+
+---
+
+### Cost Visibility Endpoints
+
+#### `GET /api/cost`
+Get cost visibility data from `.loki/metrics/efficiency/` and budget.json.
 
 **Response:**
 ```json
 {
-  "query": "authentication",
-  "results": [
-    {
-      "type": "patterns",
-      "description": "Use JWT for authentication",
-      "project": "auth-service"
-    }
-  ],
-  "count": 3
+  "total_input_tokens": 50000,
+  "total_output_tokens": 25000,
+  "estimated_cost_usd": 1.25,
+  "by_phase": {},
+  "by_model": {},
+  "budget_limit": null,
+  "budget_used": null,
+  "budget_remaining": null
 }
 ```
 
-#### `GET /memory/stats`
-Get statistics about learnings.
+#### `GET /api/pricing`
+Get current model pricing. Reads from `.loki/pricing.json` if available, falls back to static defaults.
+
+---
+
+### Checkpoint Endpoints
+
+#### `GET /api/checkpoints`
+List recent checkpoints from index.jsonl, most recent first.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | number | 20 | Max checkpoints to return (1-200) |
+
+**Example:**
+```bash
+curl http://localhost:57374/api/checkpoints
+curl "http://localhost:57374/api/checkpoints?limit=5"
+```
 
 **Response:**
 ```json
-{
-  "byCategory": {
-    "patterns": 25,
-    "mistakes": 10,
-    "successes": 15
-  },
-  "byProject": {
-    "my-app": 20,
-    "auth-service": 15,
-    "unknown": 15
+[
+  {
+    "id": "chk-20260212-143022",
+    "created_at": "2026-02-12T14:30:22+00:00",
+    "git_sha": "abc1234f",
+    "message": "before refactor",
+    "files": ["metadata.json", "dashboard-state.json", "session.json"]
   }
-}
+]
 ```
 
-#### `DELETE /memory/{type}`
-Clear learnings of a specific type.
+#### `GET /api/checkpoints/{checkpoint_id}`
+Get detailed metadata for a specific checkpoint.
 
 **Path Parameters:**
-| Parameter | Values |
-|-----------|--------|
-| `type` | `patterns`, `mistakes`, `successes` |
+| Parameter | Description |
+|-----------|-------------|
+| `checkpoint_id` | Checkpoint identifier (alphanumeric, hyphens, underscores only) |
 
-**Response:**
+**Example:**
+```bash
+curl http://localhost:57374/api/checkpoints/chk-20260212-143022
+```
+
+**Response:** Returns the full `metadata.json` content for the checkpoint.
+
+**Errors:**
+- `400` -- Invalid checkpoint_id (contains unsafe characters)
+- `404` -- Checkpoint not found
+
+#### `POST /api/checkpoints`
+Create a new checkpoint capturing current state. Copies dashboard-state.json, session.json, and queue files into a timestamped directory. Enforces 50-checkpoint retention limit (oldest pruned automatically).
+
+**Request Body (optional):**
 ```json
 {
-  "cleared": "patterns"
+  "message": "Before refactoring auth module"
 }
 ```
+
+**Example:**
+```bash
+curl -X POST http://localhost:57374/api/checkpoints
+curl -X POST http://localhost:57374/api/checkpoints \
+  -H "Content-Type: application/json" \
+  -d '{"message": "before deploy"}'
+```
+
+**Response (201 Created):**
+```json
+{
+  "id": "chk-20260212-150105",
+  "created_at": "2026-02-12T15:01:05+00:00",
+  "git_sha": "def5678a",
+  "message": "before deploy",
+  "files": ["metadata.json", "dashboard-state.json", "session.json"]
+}
+```
+
+See [[Checkpoints]] for CLI usage, directory structure, and retention policy.
 
 ---
 
@@ -336,15 +454,15 @@ Get council vote history (decision log).
 **Response:**
 ```json
 {
-  "verdicts": [
+  "verdicts": [],
+  "details": [
     {
-      "iteration": 10,
-      "result": "continue",
-      "votes_complete": 1,
-      "votes_continue": 2
+      "iteration": "10",
+      "evidence_preview": "...",
+      "members": [{"member": "member-1", "content": "..."}],
+      "contrarian": "..."
     }
-  ],
-  "details": []
+  ]
 }
 ```
 
@@ -356,9 +474,11 @@ Get convergence tracking data for visualization. Tracks git diff hashes between 
 {
   "dataPoints": [
     {
+      "timestamp": "2026-02-02T12:00:00",
       "iteration": 5,
-      "hash": "abc123",
-      "changed": true
+      "files_changed": 3,
+      "no_change_streak": 0,
+      "done_signals": 1
     }
   ]
 }
@@ -383,7 +503,7 @@ Force an immediate council review by writing a signal file. The council will eva
 ```json
 {
   "success": true,
-  "message": "Force review signal written"
+  "message": "Council review requested"
 }
 ```
 
@@ -403,8 +523,7 @@ Get all active and recent agents with their status and metadata.
     "status": "running",
     "task": "implement-auth",
     "pid": 12345,
-    "alive": true,
-    "started": "2026-02-02T12:00:00Z"
+    "alive": true
   }
 ]
 ```
@@ -415,13 +534,13 @@ Kill a specific agent by ID. Sends SIGTERM to the agent process.
 **Path Parameters:**
 | Parameter | Description |
 |-----------|-------------|
-| `agent_id` | Agent identifier |
+| `agent_id` | Agent identifier (alphanumeric, hyphens, underscores only) |
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Agent killed"
+  "message": "Agent agent-001 terminated"
 }
 ```
 
@@ -449,12 +568,68 @@ Resume a paused agent by removing the pause signal file.
 
 ---
 
+### Registry Endpoints
+
+#### `GET /api/registry/projects`
+List all registered projects.
+
+#### `POST /api/registry/projects`
+Register a new project.
+
+#### `GET /api/registry/projects/{identifier}`
+Get a registered project by ID, path, or alias.
+
+#### `DELETE /api/registry/projects/{identifier}`
+Remove a project from the registry.
+
+#### `GET /api/registry/projects/{identifier}/health`
+Check the health of a registered project.
+
+#### `POST /api/registry/projects/{identifier}/access`
+Update the last accessed timestamp for a project.
+
+#### `GET /api/registry/discover`
+Discover projects with `.loki` directories.
+
+#### `POST /api/registry/sync`
+Sync the registry with discovered projects.
+
+#### `GET /api/registry/tasks`
+Get tasks from multiple projects for unified view.
+
+#### `GET /api/registry/learnings`
+Get learnings from the global learnings database.
+
+---
+
+### Enterprise Endpoints
+
+#### `GET /api/enterprise/status`
+Check which enterprise features are enabled.
+
+#### `POST /api/enterprise/tokens`
+Generate a new API token (requires `LOKI_ENTERPRISE_AUTH=true`).
+
+#### `GET /api/enterprise/tokens`
+List all API tokens.
+
+#### `DELETE /api/enterprise/tokens/{identifier}`
+Revoke or delete a token.
+
+#### `GET /api/enterprise/audit`
+Query audit logs (requires `LOKI_ENTERPRISE_AUDIT=true`).
+
+#### `GET /api/enterprise/audit/summary`
+Get audit activity summary.
+
+---
+
 ## CORS
 
-CORS is restricted to localhost by default for security (v5.34.0):
+CORS is restricted to localhost by default for security:
 ```
 Access-Control-Allow-Origin: http://localhost:57374, http://127.0.0.1:57374
-Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
+Access-Control-Allow-Methods: *
 Access-Control-Allow-Headers: *
 ```
 
@@ -474,11 +649,11 @@ export LOKI_DASHBOARD_CORS="http://localhost:57374,https://dashboard.example.com
 
 ## Error Responses
 
-All error responses use this format:
+FastAPI returns errors in this format:
 
 ```json
 {
-  "error": "Description of the error"
+  "detail": "Description of the error"
 }
 ```
 
@@ -486,9 +661,11 @@ All error responses use this format:
 | Code | Description |
 |------|-------------|
 | 200 | Success |
-| 400 | Bad request (missing required parameters) |
-| 404 | Endpoint not found |
-| 409 | Conflict (e.g., session already running) |
+| 201 | Created (POST endpoints) |
+| 204 | No Content (DELETE endpoints) |
+| 400 | Bad request (invalid parameters) |
+| 403 | Forbidden (enterprise feature not enabled) |
+| 404 | Resource not found |
 | 500 | Server error |
 
 ---
@@ -502,47 +679,54 @@ All error responses use this format:
 curl http://localhost:57374/health
 
 # Get status
-curl http://localhost:57374/status
+curl http://localhost:57374/api/status
 
-# Start session
-curl -X POST http://localhost:57374/start \
-  -H "Content-Type: application/json" \
-  -d '{"prd": "./prd.md", "provider": "claude"}'
+# Pause session
+curl -X POST http://localhost:57374/api/control/pause
+
+# Resume session
+curl -X POST http://localhost:57374/api/control/resume
 
 # Stop session
-curl -X POST http://localhost:57374/stop
+curl -X POST http://localhost:57374/api/control/stop
 
 # Get logs
-curl "http://localhost:57374/logs?lines=100"
+curl "http://localhost:57374/api/logs?lines=100"
 
-# Search memory
-curl "http://localhost:57374/memory/search?q=authentication"
+# Get tasks
+curl http://localhost:57374/api/tasks
+
+# Get memory summary
+curl http://localhost:57374/api/memory/summary
+
+# Council state
+curl http://localhost:57374/api/council/state
+
+# Get cost data
+curl http://localhost:57374/api/cost
+
+# Create checkpoint
+curl -X POST http://localhost:57374/api/checkpoints \
+  -H "Content-Type: application/json" \
+  -d '{"message": "before refactor"}'
 ```
 
 ### JavaScript
 
 ```javascript
-// Start session
-const response = await fetch('http://localhost:57374/start', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    prd: './my-prd.md',
-    provider: 'claude',
-    parallel: true
-  })
-});
-const result = await response.json();
-console.log('Started with PID:', result.pid);
+// Get status
+const status = await fetch('http://localhost:57374/api/status').then(r => r.json());
+console.log('Status:', status.status, 'Phase:', status.phase);
 
-// SSE for real-time updates
-const events = new EventSource('http://localhost:57374/events');
-events.onmessage = (e) => {
-  const status = JSON.parse(e.data);
-  if (status.state === 'running') {
-    console.log(`Phase: ${status.currentPhase}, Task: ${status.currentTask}`);
-  }
+// WebSocket for real-time updates
+const ws = new WebSocket('ws://localhost:57374/ws');
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  console.log('Event:', msg.type, msg.data);
 };
+
+// Pause session
+await fetch('http://localhost:57374/api/control/pause', { method: 'POST' });
 ```
 
 ### Python
@@ -551,41 +735,43 @@ events.onmessage = (e) => {
 import requests
 
 # Get status
-response = requests.get('http://localhost:57374/status')
+response = requests.get('http://localhost:57374/api/status')
 status = response.json()
-print(f"State: {status['state']}, Phase: {status['currentPhase']}")
+print(f"Status: {status['status']}, Phase: {status['phase']}")
 
-# Start session
-response = requests.post('http://localhost:57374/start', json={
-    'prd': './prd.md',
-    'provider': 'claude'
-})
-result = response.json()
-print(f"Started with PID: {result['pid']}")
+# Get tasks
+response = requests.get('http://localhost:57374/api/tasks')
+tasks = response.json()
+for t in tasks:
+    print(f"[{t['status']}] {t['title']}")
 
-# Search learnings
-response = requests.get('http://localhost:57374/memory/search', params={'q': 'auth'})
-results = response.json()
-for r in results['results']:
-    print(f"[{r['type']}] {r['description']}")
+# Get memory summary
+response = requests.get('http://localhost:57374/api/memory/summary')
+memory = response.json()
+print(f"Episodes: {memory['episodic']['count']}, Patterns: {memory['semantic']['patterns']}")
 ```
 
 ---
 
-## Enterprise Authentication (Planned)
+## Enterprise Authentication
 
-When enterprise authentication is enabled (`LOKI_ENTERPRISE_AUTH=true`), all endpoints will require a Bearer token:
+When enterprise authentication is enabled (`LOKI_ENTERPRISE_AUTH=true`), token management is available:
 
 ```bash
-curl -H "Authorization: Bearer loki_xxx..." http://localhost:57374/status
+# Generate a token
+loki enterprise token generate my-token --scopes "read,write" --expires 30
+
+# Use token in requests
+curl -H "Authorization: Bearer loki_xxx..." http://localhost:57374/api/status
 ```
 
-Token management will be available via the `loki enterprise token` CLI commands.
+See [[Enterprise Features]] for details.
 
 ---
 
 ## See Also
 
+- [[Checkpoints]] - Checkpoint system documentation
 - [[CLI Reference]] - Command-line interface
 - [[Configuration]] - Configuration options
 - [[Enterprise Features]] - Enterprise authentication and audit

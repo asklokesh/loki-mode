@@ -3,7 +3,8 @@
 # shellcheck disable=SC2155  # Declare and assign separately
 # shellcheck disable=SC2329  # Unreachable code in test functions
 #===============================================================================
-# Test suite for Loki Mode API Server
+# Test suite for Loki Mode API Server (legacy Node.js server at api/server.js)
+# Note: The production API is now the unified FastAPI server at dashboard/server.py (port 57374)
 # Usage: ./tests/test-api-server.sh
 #===============================================================================
 
@@ -111,7 +112,7 @@ export LOKI_DIR
 # Start API server
 echo "Starting API server on port $PORT..."
 cd "$PROJECT_DIR"
-LOKI_API_PORT=$PORT node "$API_SERVER" > "$LOKI_DIR/api.log" 2>&1 &
+LOKI_DASHBOARD_PORT=$PORT node "$API_SERVER" > "$LOKI_DIR/api.log" 2>&1 &
 API_PID=$!
 
 # Wait for server to start

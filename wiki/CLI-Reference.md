@@ -40,6 +40,9 @@ loki start [PRD_FILE] [OPTIONS]
 | `--github` | Enable GitHub issue import |
 | `--no-dashboard` | Disable web dashboard |
 | `--sandbox` | Run in Docker sandbox |
+| `--yes, -y` | Skip confirmation prompt |
+| `--budget AMOUNT` | Cost budget limit in USD (e.g., `--budget 5.00`) |
+| `--skip-memory` | Skip memory context loading at startup |
 
 **Examples:**
 ```bash
@@ -109,21 +112,19 @@ loki status
 View session logs.
 
 ```bash
-loki logs [OPTIONS]
+loki logs [LINES]
 ```
 
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--follow, -f` | Follow logs in real-time |
-| `--lines, -n N` | Show last N lines (default: 50) |
+**Arguments:**
+- `LINES` - Number of lines to show (default: 50)
 
 **Examples:**
 ```bash
 loki logs
-loki logs -f
-loki logs -n 100
+loki logs 100
 ```
+
+**Note:** Follow mode (`-f`) is not currently supported. Use `tail -f .loki/logs/session.log` for real-time log following.
 
 ---
 
@@ -603,6 +604,48 @@ loki config edit
 
 ---
 
+## Checkpoint Commands
+
+### `loki checkpoint` (alias: `loki cp`)
+
+Manage session checkpoints (v5.34.0).
+
+```bash
+loki checkpoint [SUBCOMMAND]
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `create [MESSAGE]` | Create a new checkpoint |
+| `list` | List recent checkpoints |
+| `show ID` | Show checkpoint details |
+| `help` | Show checkpoint help |
+
+**Examples:**
+```bash
+loki checkpoint create "before refactoring"
+loki checkpoint list
+loki cp create "stable state"
+```
+
+---
+
+## Doctor Command
+
+### `loki doctor`
+
+Check system dependencies and installation health.
+
+```bash
+loki doctor
+```
+
+Checks for required tools (Node.js, Python 3, jq, git, curl), optional tools (Claude CLI, Codex CLI, Gemini CLI), and recommended tools (bash 4.0+).
+
+---
+
 ## Utility Commands
 
 ### `loki version`
@@ -624,4 +667,12 @@ loki help
 loki --help
 loki -h
 loki [command] --help
+```
+
+### `loki completions`
+
+Install shell tab completions.
+
+```bash
+loki completions
 ```

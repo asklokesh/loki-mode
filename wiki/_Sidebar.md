@@ -20,6 +20,7 @@
 - [[Completion Council]]
 - [[Cross-Project Learning]]
 - [[Knowledge Compounding]]
+- [[Checkpoints]]
 - [[GitHub Integration]]
 
 ### Enterprise

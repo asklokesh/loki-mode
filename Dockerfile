@@ -66,6 +66,7 @@ COPY providers/ ./providers/
 COPY memory/ ./memory/
 COPY events/ ./events/
 COPY dashboard/ ./dashboard/
+COPY mcp/ ./mcp/
 COPY learning/ ./learning/
 COPY templates/ ./templates/
 

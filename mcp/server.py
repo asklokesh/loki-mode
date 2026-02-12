@@ -20,7 +20,7 @@ import os
 import json
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 # Add parent directory to path for imports
@@ -564,7 +564,7 @@ async def loki_memory_store_pattern(
         engine.initialize()
 
         pattern_obj = SemanticPattern(
-            id=f"pattern-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            id=f"pattern-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             pattern=pattern,
             category=category,
             conditions=[],
@@ -683,7 +683,7 @@ async def loki_task_queue_add(
             "priority": priority,
             "phase": phase,
             "status": "pending",
-            "created_at": datetime.utcnow().isoformat() + "Z"
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
 
         queue["tasks"].append(task)
@@ -754,7 +754,7 @@ async def loki_task_queue_update(
                     task["status"] = status
                 if priority:
                     task["priority"] = priority
-                task["updated_at"] = datetime.utcnow().isoformat() + "Z"
+                task["updated_at"] = datetime.now(timezone.utc).isoformat()
 
                 # Save using StateManager if available
                 if manager and STATE_MANAGER_AVAILABLE:
@@ -796,7 +796,7 @@ async def loki_state_get() -> str:
             "initialized": os.path.exists(loki_dir),
             "autonomy_state": None,
             "continuity_exists": os.path.exists(continuity_path),
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         # Use StateManager for autonomy state if available
@@ -867,7 +867,7 @@ async def loki_metrics_efficiency() -> str:
         return json.dumps({
             "total_tool_calls": total_calls,
             "tool_breakdown": tool_counts,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
     except PathTraversalError as e:
         logger.error(f"Path traversal attempt blocked: {e}")

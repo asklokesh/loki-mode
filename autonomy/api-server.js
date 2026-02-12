@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Loki Mode HTTP API Server (v1.2.0)
+ * Loki Mode HTTP API Server (v1.2.0) - LEGACY
+ * NOTE: The production API is now the unified FastAPI server at dashboard/server.py (port 57374)
+ * This file is kept for backward compatibility only.
  * Zero npm dependencies - uses only Node.js built-ins
  *
  * Usage:
- *   node autonomy/api-server.js [--port 9898]
- *   LOKI_API_PORT=9898 node autonomy/api-server.js
+ *   node autonomy/api-server.js [--port 57374]
+ *   LOKI_DASHBOARD_PORT=57374 node autonomy/api-server.js
  *   loki api start
  *
  * Endpoints:
@@ -69,7 +71,7 @@ function parseArgs() {
 const cliArgs = parseArgs();
 
 // Configuration
-const PORT = cliArgs.port || parseInt(process.env.LOKI_API_PORT || '9898');
+const PORT = cliArgs.port || parseInt(process.env.LOKI_DASHBOARD_PORT || '57374');
 const MAX_BODY_SIZE = parseInt(process.env.LOKI_API_MAX_BODY || '1048576'); // 1MB default
 const LOKI_DIR = process.env.LOKI_DIR || path.join(process.cwd(), '.loki');
 const STATE_DIR = path.join(LOKI_DIR, 'state');

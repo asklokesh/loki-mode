@@ -188,7 +188,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-start_time = datetime.now()
+start_time = datetime.now(timezone.utc)
 
 
 @asynccontextmanager
@@ -217,8 +217,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _cors_origins if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # Static file serving is configured at the end of the file (after all API routes)
@@ -236,7 +236,7 @@ async def health_check() -> dict[str, str]:
 async def get_status() -> StatusResponse:
     """Get system status from .loki/ session files."""
     loki_dir = _get_loki_dir()
-    uptime = (datetime.now() - start_time).total_seconds()
+    uptime = (datetime.now(timezone.utc) - start_time).total_seconds()
 
     # Read dashboard-state.json (written by run.sh every 2 seconds)
     state_file = loki_dir / "dashboard-state.json"
@@ -681,7 +681,7 @@ async def update_task(
 
     # Handle status change to completed
     if "status" in update_data and update_data["status"] == TaskStatus.DONE:
-        update_data["completed_at"] = datetime.now()
+        update_data["completed_at"] = datetime.now(timezone.utc)
 
     for field, value in update_data.items():
         setattr(task, field, value)
@@ -748,7 +748,7 @@ async def move_task(
 
     # Set completed_at if moving to completed
     if move.status == TaskStatus.DONE and old_status != TaskStatus.DONE:
-        task.completed_at = datetime.now()
+        task.completed_at = datetime.now(timezone.utc)
     elif move.status != TaskStatus.DONE:
         task.completed_at = None
 
@@ -1135,10 +1135,10 @@ _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 def _sanitize_agent_id(agent_id: str) -> str:
     """Validate agent_id contains only safe characters for file paths."""
-    if not agent_id or ".." in agent_id or not _SAFE_ID_RE.match(agent_id):
+    if not agent_id or len(agent_id) > 128 or ".." in agent_id or not _SAFE_ID_RE.match(agent_id):
         raise HTTPException(
             status_code=400,
-            detail="Invalid agent_id: must contain only alphanumeric characters, hyphens, and underscores",
+            detail="Invalid agent_id: must be 1-128 chars of alphanumeric, hyphens, and underscores",
         )
     return agent_id
 
@@ -1611,7 +1611,7 @@ async def pause_session():
     """Pause the current session by creating PAUSE file."""
     pause_file = _get_loki_dir() / "PAUSE"
     pause_file.parent.mkdir(parents=True, exist_ok=True)
-    pause_file.write_text(datetime.now().isoformat())
+    pause_file.write_text(datetime.now(timezone.utc).isoformat())
     return {"success": True, "message": "Session paused"}
 
 
@@ -1632,7 +1632,7 @@ async def stop_session():
     """Stop the session by creating STOP file and sending SIGTERM."""
     stop_file = _get_loki_dir() / "STOP"
     stop_file.parent.mkdir(parents=True, exist_ok=True)
-    stop_file.write_text(datetime.now().isoformat())
+    stop_file.write_text(datetime.now(timezone.utc).isoformat())
 
     # Try to kill the process
     pid_file = _get_loki_dir() / "loki.pid"
@@ -1979,7 +1979,7 @@ async def force_council_review():
     signal_dir = _get_loki_dir() / "signals"
     signal_dir.mkdir(parents=True, exist_ok=True)
     (signal_dir / "COUNCIL_REVIEW_REQUESTED").write_text(
-        datetime.now().isoformat()
+        datetime.now(timezone.utc).isoformat()
     )
     return {"success": True, "message": "Council review requested"}
 
@@ -1990,15 +1990,15 @@ async def force_council_review():
 
 class CheckpointCreate(BaseModel):
     """Schema for creating a checkpoint."""
-    message: Optional[str] = Field(None, description="Optional description for the checkpoint")
+    message: Optional[str] = Field(None, max_length=500, description="Optional description for the checkpoint")
 
 
 def _sanitize_checkpoint_id(checkpoint_id: str) -> str:
     """Validate checkpoint_id contains only safe characters for file paths."""
-    if not checkpoint_id or ".." in checkpoint_id or not _SAFE_ID_RE.match(checkpoint_id):
+    if not checkpoint_id or len(checkpoint_id) > 128 or ".." in checkpoint_id or not _SAFE_ID_RE.match(checkpoint_id):
         raise HTTPException(
             status_code=400,
-            detail="Invalid checkpoint_id: must contain only alphanumeric characters, hyphens, and underscores",
+            detail="Invalid checkpoint_id: must be 1-128 chars of alphanumeric, hyphens, and underscores",
         )
     return checkpoint_id
 
@@ -2241,7 +2241,7 @@ async def pause_agent(agent_id: str):
     signal_dir = _get_loki_dir() / "signals"
     signal_dir.mkdir(parents=True, exist_ok=True)
     (signal_dir / f"PAUSE_AGENT_{agent_id}").write_text(
-        datetime.now().isoformat()
+        datetime.now(timezone.utc).isoformat()
     )
     return {"success": True, "message": f"Pause signal sent to agent {agent_id}"}
 
@@ -2290,7 +2290,7 @@ async def get_logs(lines: int = 100):
         for log_file in log_files[:1]:
             try:
                 # Use file mtime as fallback timestamp
-                file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime(
+                file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime, tz=timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%S"
                 )
                 content = log_file.read_text()

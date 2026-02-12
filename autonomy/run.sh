@@ -3896,7 +3896,7 @@ create_checkpoint() {
     mkdir -p "$checkpoint_dir"
 
     # Only checkpoint if there are uncommitted changes
-    if ! git diff --quiet 2>/dev/null && ! git diff --cached --quiet 2>/dev/null; then
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
         log_info "No uncommitted changes to checkpoint"
         return 0
     fi
@@ -3924,47 +3924,59 @@ create_checkpoint() {
         fi
     done
 
-    # Write checkpoint metadata
-    local safe_desc
-    safe_desc=$(printf '%s' "$task_desc" | sed 's/\\/\\\\/g; s/"/\\"/g' | head -c 200)
-    cat > "$cp_dir/metadata.json" << CPEOF
-{
-  "id": "${checkpoint_id}",
-  "timestamp": "${timestamp}",
-  "iteration": ${iteration},
-  "task_id": "${task_id}",
-  "task_description": "${safe_desc}",
-  "git_sha": "${git_sha}",
-  "git_branch": "${git_branch}",
-  "provider": "${PROVIDER_NAME:-claude}",
-  "phase": "$(cat .loki/state/orchestrator.json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("currentPhase","unknown"))' 2>/dev/null || echo 'unknown')"
+    # Write checkpoint metadata (use python3 json.dumps for safe serialization)
+    local phase_val
+    phase_val=$(cat .loki/state/orchestrator.json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("currentPhase","unknown"))' 2>/dev/null || echo 'unknown')
+
+    local index_file="${checkpoint_dir}/index.jsonl"
+    _CP_ID="$checkpoint_id" _CP_TS="$timestamp" _CP_ITER="$iteration" \
+    _CP_TASK_ID="$task_id" _CP_DESC="${task_desc:0:200}" _CP_SHA="$git_sha" \
+    _CP_BRANCH="$git_branch" _CP_PROVIDER="${PROVIDER_NAME:-claude}" \
+    _CP_PHASE="$phase_val" _CP_DIR="$cp_dir" _CP_INDEX="$index_file" \
+    python3 << 'CPEOF'
+import json, os
+metadata = {
+    "id": os.environ["_CP_ID"],
+    "timestamp": os.environ["_CP_TS"],
+    "iteration": int(os.environ["_CP_ITER"]),
+    "task_id": os.environ["_CP_TASK_ID"],
+    "task_description": os.environ["_CP_DESC"],
+    "git_sha": os.environ["_CP_SHA"],
+    "git_branch": os.environ["_CP_BRANCH"],
+    "provider": os.environ["_CP_PROVIDER"],
+    "phase": os.environ["_CP_PHASE"],
 }
+with open(os.path.join(os.environ["_CP_DIR"], "metadata.json"), "w") as f:
+    json.dump(metadata, f, indent=2)
+with open(os.environ["_CP_INDEX"], "a") as f:
+    index_entry = {"id": metadata["id"], "ts": metadata["timestamp"],
+                   "iter": metadata["iteration"], "task": metadata["task_description"],
+                   "sha": metadata["git_sha"]}
+    f.write(json.dumps(index_entry) + "\n")
 CPEOF
 
-    # Maintain checkpoint index for fast listing
-    local index_file="${checkpoint_dir}/index.jsonl"
-    printf '{"id":"%s","ts":"%s","iter":%d,"task":"%s","sha":"%s"}\n' \
-        "$checkpoint_id" "$timestamp" "$iteration" "$safe_desc" "$git_sha" \
-        >> "$index_file"
-
     # Retention: keep last 50 checkpoints, prune older
+    # Sort by epoch suffix (field after last hyphen) for correct chronological order
     local cp_count
     cp_count=$(find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null | wc -l | tr -d ' ')
     if [ "$cp_count" -gt 50 ]; then
         local to_remove=$((cp_count - 50))
-        find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null | sort | head -n "$to_remove" | while read -r old_cp; do
-            rm -r "$old_cp" 2>/dev/null || true
+        find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null \
+            | sort -t'-' -k3 -n \
+            | head -n "$to_remove" | while read -r old_cp; do
+            rm -rf "$old_cp" 2>/dev/null || true
         done
-        # Rebuild index from remaining checkpoints
-        : > "$index_file"
-        for remaining in "$checkpoint_dir"/cp-*/metadata.json; do
+        # Rebuild index atomically from remaining checkpoints (sorted by epoch)
+        local tmp_index="${index_file}.tmp.$$"
+        for remaining in $(find "$checkpoint_dir" -maxdepth 2 -name "metadata.json" -path "*/cp-*/*" 2>/dev/null | sort -t'-' -k3 -n); do
             [ -f "$remaining" ] || continue
-            python3 -c "
-import json,sys
-m=json.load(open('$remaining'))
+            _CP_META="$remaining" python3 -c "
+import json,os
+m=json.load(open(os.environ['_CP_META']))
 print(json.dumps({'id':m['id'],'ts':m['timestamp'],'iter':m['iteration'],'task':m.get('task_description',''),'sha':m['git_sha']}))
-" >> "$index_file" 2>/dev/null || true
+" >> "$tmp_index" 2>/dev/null || true
         done
+        mv -f "$tmp_index" "$index_file" 2>/dev/null || true
     fi
 
     log_info "Checkpoint created: ${checkpoint_id} (git: ${git_sha:0:8})"
@@ -3975,6 +3987,13 @@ rollback_to_checkpoint() {
     # Args: $1 = checkpoint_id
     local checkpoint_id="$1"
     local checkpoint_dir=".loki/state/checkpoints"
+
+    # Validate checkpoint ID (prevent path traversal)
+    if [[ ! "$checkpoint_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "Invalid checkpoint ID: must be alphanumeric, hyphens, underscores only"
+        return 1
+    fi
+
     local cp_dir="${checkpoint_dir}/${checkpoint_id}"
 
     if [ ! -d "$cp_dir" ]; then
@@ -3984,7 +4003,7 @@ rollback_to_checkpoint() {
 
     # Read checkpoint metadata
     local git_sha
-    git_sha=$(python3 -c "import json; print(json.load(open('${cp_dir}/metadata.json'))['git_sha'])" 2>/dev/null || echo "")
+    git_sha=$(_CP_META="${cp_dir}/metadata.json" python3 -c "import json, os; print(json.load(open(os.environ['_CP_META']))['git_sha'])" 2>/dev/null || echo "")
 
     log_warn "Rolling back to checkpoint: ${checkpoint_id}"
 
@@ -4000,12 +4019,14 @@ rollback_to_checkpoint() {
         fi
     done
 
-    # Log the rollback
+    # Log the rollback (use python3 for safe JSON serialization)
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    printf '{"event":"rollback","checkpoint":"%s","git_sha":"%s","timestamp":"%s"}\n' \
-        "$checkpoint_id" "$git_sha" "$timestamp" \
-        >> ".loki/events.jsonl" 2>/dev/null || true
+    _RB_CPID="$checkpoint_id" _RB_SHA="$git_sha" _RB_TS="$timestamp" \
+    python3 -c "
+import json,os
+print(json.dumps({'event':'rollback','checkpoint':os.environ['_RB_CPID'],'git_sha':os.environ['_RB_SHA'],'timestamp':os.environ['_RB_TS']}))
+" >> ".loki/events.jsonl" 2>/dev/null || true
 
     log_info "State files restored from checkpoint: ${checkpoint_id}"
 

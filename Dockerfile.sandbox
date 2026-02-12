@@ -101,8 +101,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     # JSON processing (required by loki scripts)
     jq \
-    # Python runtime (for some AI CLI dependencies)
+    # Python runtime (for dashboard and AI CLI dependencies)
     python3-minimal \
+    python3-pip \
     # Process management
     procps \
     # Network utilities for health checks
@@ -164,11 +165,17 @@ COPY --chown=loki:loki skills/ ./skills/
 COPY --chown=loki:loki references/ ./references/
 COPY --chown=loki:loki memory/ ./memory/
 COPY --chown=loki:loki events/ ./events/
+COPY --chown=loki:loki mcp/ ./mcp/
+COPY --chown=loki:loki dashboard/ ./dashboard/
 COPY --chown=loki:loki learning/ ./learning/
 COPY --chown=loki:loki templates/ ./templates/
 
 # Copy docs
 COPY --chown=loki:loki docs/ ./docs/
+
+# Install dashboard Python dependencies
+RUN pip3 install --no-cache-dir --break-system-packages \
+    -r dashboard/requirements.txt
 
 # Make scripts executable
 RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh 2>/dev/null || true \
@@ -211,9 +218,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Security: Switch to non-root user
 USER loki
 
-# Expose ports for dashboard and API
+# Expose port for unified dashboard/API server
 # Security: Ports > 1024 don't require root
-EXPOSE 9898 57374
+EXPOSE 57374
 
 # Security: Set restrictive umask
 # New files will be created with 644 (files) and 755 (directories)

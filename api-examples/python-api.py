@@ -16,7 +16,7 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlparse, parse_qs
 
-PORT = int(os.environ.get('LOKI_API_PORT', 9898))
+PORT = int(os.environ.get('LOKI_DASHBOARD_PORT', 57374))
 LOKI_DIR = Path(os.environ.get('LOKI_DIR', Path.home() / '.loki'))
 STATE_DIR = LOKI_DIR / 'state'
 

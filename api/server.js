@@ -33,7 +33,7 @@ const { EventEmitter } = require('events');
 // Configuration
 //=============================================================================
 
-const DEFAULT_PORT = 9898;
+const DEFAULT_PORT = 57374;
 const DEFAULT_HOST = '127.0.0.1';
 const PROJECT_DIR = process.env.LOKI_PROJECT_DIR || process.cwd();
 

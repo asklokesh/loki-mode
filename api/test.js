@@ -34,7 +34,7 @@ const fs = require('fs');
 // Test Configuration
 //=============================================================================
 
-const PORT = 19898; // Use a different port for testing (9898 + 10000)
+const PORT = 67374; // Use a different port for testing (57374 + 10000)
 const HOST = '127.0.0.1';
 const BASE_URL = `http://${HOST}:${PORT}`;
 const SERVER_PATH = path.join(__dirname, 'server.js');

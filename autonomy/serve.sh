@@ -9,15 +9,15 @@
 #   loki serve [OPTIONS]
 #
 # Options:
-#   --port, -p <port>   Port to listen on (default: 8420)
+#   --port, -p <port>   Port to listen on (default: 57374)
 #   --host, -h <host>   Host to bind to (default: localhost)
 #   --no-cors           Disable CORS
 #   --no-auth           Disable authentication
 #   --help              Show help message
 #
 # Environment Variables:
-#   LOKI_API_PORT       Port (default: 8420)
-#   LOKI_API_HOST       Host (default: localhost)
+#   LOKI_DASHBOARD_PORT Port (default: 57374)
+#   LOKI_DASHBOARD_HOST Host (default: localhost)
 #   LOKI_API_TOKEN      API token for remote access
 #===============================================================================
 
@@ -28,8 +28,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 API_DIR="$PROJECT_DIR/api"
 
 # Default configuration
-PORT="${LOKI_API_PORT:-8420}"
-HOST="${LOKI_API_HOST:-localhost}"
+PORT="${LOKI_DASHBOARD_PORT:-57374}"
+HOST="${LOKI_DASHBOARD_HOST:-localhost}"
 CORS="true"
 AUTH="true"
 
@@ -63,7 +63,7 @@ Usage:
   loki serve [OPTIONS]
 
 Options:
-  --port, -p <port>   Port to listen on (default: 8420)
+  --port, -p <port>   Port to listen on (default: 57374)
   --host <host>       Host to bind to (default: localhost)
   --no-cors           Disable CORS
   --no-auth           Disable authentication
@@ -71,14 +71,14 @@ Options:
   --help              Show this help message
 
 Environment Variables:
-  LOKI_API_PORT       Port (overridden by --port)
-  LOKI_API_HOST       Host (overridden by --host)
+  LOKI_DASHBOARD_PORT Port (overridden by --port)
+  LOKI_DASHBOARD_HOST Host (overridden by --host)
   LOKI_API_TOKEN      API token for remote access
   LOKI_DIR            Loki installation directory
   LOKI_DEBUG          Enable debug output
 
 Examples:
-  # Start with defaults (localhost:8420)
+  # Start with defaults (localhost:57374)
   loki serve
 
   # Custom port
@@ -89,7 +89,7 @@ Examples:
   loki serve --host 0.0.0.0
 
   # Connect from another machine
-  curl -H "Authorization: Bearer \$TOKEN" http://server:8420/health
+  curl -H "Authorization: Bearer \$TOKEN" http://server:57374/health
 
 EOF
 }

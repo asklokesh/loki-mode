@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const PORT = process.env.LOKI_API_PORT || 9898;
+const PORT = process.env.LOKI_DASHBOARD_PORT || 57374;
 const LOKI_DIR = process.env.LOKI_DIR || path.join(process.env.HOME, '.loki');
 const STATE_DIR = path.join(LOKI_DIR, 'state');
 

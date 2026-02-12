@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-PORT="${LOKI_API_PORT:-9898}"
+PORT="${LOKI_DASHBOARD_PORT:-57374}"
 LOKI_DIR="${LOKI_DIR:-$HOME/.loki}"
 FIFO="/tmp/loki-api-$$"
 

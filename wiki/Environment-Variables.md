@@ -21,11 +21,12 @@ Complete reference for all Loki Mode environment variables.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_DASHBOARD` | `true` | Enable web dashboard |
-| `LOKI_DASHBOARD_PORT` | `57374` | Dashboard server port |
-| `LOKI_API_PORT` | `8420` | API server port |
-| `LOKI_API_HOST` | `localhost` | API server host |
-| `LOKI_API_TOKEN` | - | API authentication token |
-| `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+| `LOKI_DASHBOARD_PORT` | `57374` | Dashboard + API server port (FastAPI) |
+| `LOKI_DASHBOARD_HOST` | `127.0.0.1` | Dashboard + API server bind address |
+| `LOKI_DASHBOARD_CORS` | `http://localhost:57374,http://127.0.0.1:57374` | Comma-separated allowed CORS origins |
+| `LOKI_API_PORT` | `9898` | Legacy Node.js API server port (separate from dashboard) |
+| `LOKI_API_HOST` | `localhost` | Legacy API server host |
+| `LOKI_API_TOKEN` | - | API authentication token (for legacy/remote access) |
 
 ---
 

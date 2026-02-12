@@ -600,13 +600,13 @@ loki serve --port 57374
 
 ### CORS Configuration
 
-For remote or cross-origin access to the dashboard, configure allowed origins via the `CORS_ALLOWED_ORIGINS` environment variable:
+For remote or cross-origin access to the dashboard, configure allowed origins via the `LOKI_DASHBOARD_CORS` environment variable:
 
 ```bash
 # Allow specific origins
-CORS_ALLOWED_ORIGINS="http://localhost:3000,https://my-dashboard.example.com" loki dashboard start
+LOKI_DASHBOARD_CORS="http://localhost:3000,https://my-dashboard.example.com" loki dashboard start
 
-# Default: localhost only (secure by default)
+# Default: http://localhost:57374,http://127.0.0.1:57374 (localhost-only, secure by default)
 ```
 
 ---

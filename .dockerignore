@@ -29,6 +29,20 @@ benchmarks/results
 # Blog assets
 blog/
 
+# Source-only directories (not needed in Docker image)
+dashboard-ui/
+tests/
+wiki/
+wiki-repo/
+demo/
+examples/
+api-examples/
+vscode-extension/
+.pytest_cache/
+.claude/
+.github/
+__pycache__
+
 # Development
 *.bak
 *.tmp

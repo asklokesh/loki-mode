@@ -26,17 +26,17 @@ The following security fixes were applied in v5.25.0:
 | **Python Code Injection** | Input validation | Server-side endpoints that accept user input validate against injection patterns before processing |
 | **Memory Leak** | Resource cleanup | Fixed a memory leak in the SSE (Server-Sent Events) endpoint where client disconnections were not properly releasing resources |
 | **Signal Blocking** | Signal handler hardening | Signal handlers (SIGTERM, SIGINT) are now properly configured to prevent signal blocking during critical shutdown operations |
-| **Unrestricted CORS** | Configurable origins | CORS is now configurable via the `CORS_ALLOWED_ORIGINS` environment variable instead of allowing all origins by default in production |
+| **Unrestricted CORS** | Configurable origins | CORS is now configurable via the `LOKI_DASHBOARD_CORS` environment variable. Default is localhost-only (`http://localhost:57374,http://127.0.0.1:57374`) |
 
 ### Configuring CORS
 
-For production deployments, restrict CORS to specific origins:
+For production deployments, configure CORS to allow specific origins:
 
 ```bash
-export CORS_ALLOWED_ORIGINS="https://dashboard.example.com,https://app.example.com"
+export LOKI_DASHBOARD_CORS="https://dashboard.example.com,https://app.example.com"
 ```
 
-When not set, the default is `*` (all origins allowed), which is appropriate for local development only.
+When not set, the default is `http://localhost:57374,http://127.0.0.1:57374` (localhost-only, secure by default).
 
 ---
 

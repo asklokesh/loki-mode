@@ -9,7 +9,7 @@ Uses StateManager for centralized state access with caching.
 import os
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 # Add parent directory to path for state manager import
@@ -109,7 +109,7 @@ def create_task(
         "priority": priority,
         "phase": phase,
         "status": "pending",
-        "created_at": datetime.utcnow().isoformat() + "Z"
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
 
 

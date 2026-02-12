@@ -33,7 +33,7 @@ export type TaskStatus =
     | 'skipped';
 
 /**
- * Session state (matches api-server.js v1.2.0)
+ * Session state (matches dashboard/server.py)
  */
 export type SessionState =
     | 'running'
@@ -95,7 +95,7 @@ export interface ApiResponse {
 }
 
 /**
- * Health check response (matches api-server.js /health endpoint)
+ * Health check response (matches dashboard/server.py /api/health endpoint)
  * Server returns: { status: 'ok', version: '...' }
  */
 export interface HealthResponse {
@@ -150,7 +150,7 @@ export interface ResumeResponse {
 
 /**
  * Input injection response (PLANNED - endpoint not yet implemented)
- * @deprecated The /input endpoint is not yet implemented in api-server.js
+ * @deprecated The /input endpoint is not yet implemented in dashboard/server.py
  */
 export interface InputResponse {
     received: boolean;

@@ -56,7 +56,7 @@ SANDBOX_MEMORY="${LOKI_SANDBOX_MEMORY:-4g}"
 SANDBOX_READONLY="${LOKI_SANDBOX_READONLY:-false}"
 
 # API ports
-API_PORT="${LOKI_API_PORT:-9898}"
+API_PORT="${LOKI_DASHBOARD_PORT:-57374}"
 DASHBOARD_PORT="${LOKI_DASHBOARD_PORT:-57374}"
 
 # Security: Prompt injection disabled by default for enterprise security
@@ -766,12 +766,7 @@ start_sandbox() {
     validate_project_dir || return 1
     ensure_image
 
-    # Check port availability
-    if ! check_port_available "$API_PORT"; then
-        log_error "Port $API_PORT is already in use"
-        log_info "Set LOKI_API_PORT to use a different port"
-        return 1
-    fi
+    # Check port availability (unified dashboard/API port)
     if ! check_port_available "$DASHBOARD_PORT"; then
         log_error "Port $DASHBOARD_PORT is already in use"
         log_info "Set LOKI_DASHBOARD_PORT to use a different port"
@@ -898,8 +893,7 @@ start_sandbox() {
 
     # Expose ports
     docker_args+=(
-        "--publish" "$API_PORT:9898"
-        "--publish" "$DASHBOARD_PORT:57374"
+        "--publish" "$API_PORT:57374"
     )
 
     # Expose additional ports for testing (e.g., LOKI_EXTRA_PORTS="3000:3000,8080:8080")
