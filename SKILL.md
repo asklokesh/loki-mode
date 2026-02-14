@@ -258,7 +258,7 @@ The following features are documented in skill modules but not yet fully automat
 |---------|--------|-------|
 | PRE-ACT goal drift detection | Planned | Agent-level attention check before each action; no automated enforcement yet |
 | CONTINUITY.md working memory | Implemented (v5.35.0) | Auto-managed by run.sh, updated each iteration |
-| GitHub issue import | Planned | Config flags exist (`LOKI_GITHUB_IMPORT`); `gh` CLI integration partial |
+| GitHub integration | Implemented (v5.41.0) | Import, sync-back, PR creation, export. CLI: `loki github`, API: `/api/github/*` |
 | Quality gates 3-reviewer system | Implemented (v5.35.0) | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Benchmarks (HumanEval, SWE-bench) | Infrastructure only | Runner scripts and datasets exist in `benchmarks/`; no published results |
 

@@ -2790,6 +2790,130 @@ async def get_secrets_status():
 
 
 # =============================================================================
+# GitHub Integration API (v5.41.0)
+# =============================================================================
+
+
+@app.get("/api/github/status")
+async def get_github_status(token: Optional[dict] = Depends(auth.get_current_token)):
+    """Get GitHub integration status and configuration."""
+    loki_dir = _get_loki_dir()
+    result: dict[str, Any] = {
+        "import_enabled": os.environ.get("LOKI_GITHUB_IMPORT", "false") == "true",
+        "sync_enabled": os.environ.get("LOKI_GITHUB_SYNC", "false") == "true",
+        "pr_enabled": os.environ.get("LOKI_GITHUB_PR", "false") == "true",
+        "labels_filter": os.environ.get("LOKI_GITHUB_LABELS", ""),
+        "milestone_filter": os.environ.get("LOKI_GITHUB_MILESTONE", ""),
+        "limit": int(os.environ.get("LOKI_GITHUB_LIMIT", "100")),
+        "imported_tasks": 0,
+        "synced_updates": 0,
+        "repo": None,
+    }
+
+    # Count imported GitHub tasks from pending queue
+    pending_file = loki_dir / "queue" / "pending.json"
+    if pending_file.exists():
+        try:
+            data = json.loads(pending_file.read_text())
+            tasks = data.get("tasks", data) if isinstance(data, dict) else data
+            result["imported_tasks"] = sum(1 for t in tasks if t.get("source") == "github")
+        except Exception:
+            pass
+
+    # Count sync log entries
+    sync_log = loki_dir / "github" / "synced.log"
+    if sync_log.exists():
+        try:
+            result["synced_updates"] = sum(1 for _ in sync_log.open())
+        except Exception:
+            pass
+
+    # Detect repo from git
+    try:
+        import subprocess
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(loki_dir.parent) if loki_dir.name == ".loki" else None
+        )
+        if url.returncode == 0:
+            repo = url.stdout.strip()
+            # Parse owner/repo from URL
+            for prefix in ["https://github.com/", "git@github.com:"]:
+                if repo.startswith(prefix):
+                    repo = repo[len(prefix):]
+                    break
+            result["repo"] = repo.removesuffix(".git")
+    except Exception:
+        pass
+
+    return result
+
+
+@app.get("/api/github/tasks")
+async def get_github_tasks(token: Optional[dict] = Depends(auth.get_current_token)):
+    """Get all GitHub-sourced tasks and their sync status."""
+    loki_dir = _get_loki_dir()
+    tasks: list[dict] = []
+
+    # Collect GitHub tasks from all queues
+    for queue_name in ["pending", "in-progress", "completed", "failed"]:
+        queue_file = loki_dir / "queue" / f"{queue_name}.json"
+        if queue_file.exists():
+            try:
+                data = json.loads(queue_file.read_text())
+                items = data.get("tasks", data) if isinstance(data, dict) else data
+                for t in items:
+                    if t.get("source") == "github" or str(t.get("id", "")).startswith("github-"):
+                        t["queue"] = queue_name
+                        tasks.append(t)
+            except Exception:
+                pass
+
+    # Load sync log to annotate sync status
+    synced: set[str] = set()
+    sync_log = loki_dir / "github" / "synced.log"
+    if sync_log.exists():
+        try:
+            synced = set(sync_log.read_text().strip().splitlines())
+        except Exception:
+            pass
+
+    for t in tasks:
+        issue_num = str(t.get("github_issue", ""))
+        if not issue_num:
+            issue_num = str(t.get("id", "")).replace("github-", "")
+        t["synced_statuses"] = [
+            s.split(":")[1] for s in synced if s.startswith(f"{issue_num}:")
+        ]
+
+    return {"tasks": tasks, "total": len(tasks)}
+
+
+@app.get("/api/github/sync-log")
+async def get_github_sync_log(
+    limit: int = Query(default=50, ge=1, le=500),
+    token: Optional[dict] = Depends(auth.get_current_token)
+):
+    """Get the GitHub sync log (status updates sent to issues)."""
+    loki_dir = _get_loki_dir()
+    sync_log = loki_dir / "github" / "synced.log"
+    entries: list[dict] = []
+
+    if sync_log.exists():
+        try:
+            lines = sync_log.read_text().strip().splitlines()
+            for line in lines[-limit:]:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    entries.append({"issue": parts[0], "status": parts[1]})
+        except Exception:
+            pass
+
+    return {"entries": entries, "total": len(entries)}
+
+
+# =============================================================================
 # Process Health / Watchdog API
 # =============================================================================
 

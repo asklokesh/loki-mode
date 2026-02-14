@@ -1273,10 +1273,12 @@ create_github_pr() {
     local pr_body=".loki/reports/pr-body.md"
     mkdir -p "$(dirname "$pr_body")"
 
+    local version
+    version=$(cat "${SCRIPT_DIR%/*}/VERSION" 2>/dev/null || echo "unknown")
     cat > "$pr_body" << EOF
 ## Summary
 
-Automated implementation by Loki Mode v4.1.0
+Automated implementation by Loki Mode v$version ($ITERATION_COUNT iterations, provider: ${PROVIDER_NAME:-claude})
 
 ### Feature: $feature_name
 
@@ -1349,24 +1351,105 @@ sync_github_status() {
         return 1
     fi
 
+    # Track synced issues to avoid duplicate comments
+    mkdir -p .loki/github
+    local sync_log=".loki/github/synced.log"
+    local sync_key="${issue_number}:${status}"
+    if [ -f "$sync_log" ] && grep -qF "$sync_key" "$sync_log" 2>/dev/null; then
+        return 0  # Already synced this status
+    fi
+
     case "$status" in
         "in_progress")
             gh issue comment "$issue_number" --repo "$repo" \
-                --body "Loki Mode: Task in progress - ${message:-implementing solution...}" \
+                --body "**Loki Mode** -- Working on this issue (iteration $ITERATION_COUNT)" \
                 2>/dev/null || true
             ;;
         "completed")
+            local branch
+            branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+            local commit
+            commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
             gh issue comment "$issue_number" --repo "$repo" \
-                --body "Loki Mode: Implementation complete. ${message:-}" \
+                --body "**Loki Mode** -- Implementation complete on \`$branch\` ($commit). ${message:-}" \
                 2>/dev/null || true
             ;;
         "closed")
             gh issue close "$issue_number" --repo "$repo" \
                 --reason "completed" \
-                --comment "Loki Mode: Fixed. ${message:-}" \
+                --comment "**Loki Mode** -- Resolved. ${message:-}" \
                 2>/dev/null || true
             ;;
     esac
+
+    # Record sync to avoid duplicates
+    echo "$sync_key" >> "$sync_log"
+}
+
+# Sync all completed GitHub-sourced tasks back to their issues
+# Called after each iteration and at session end
+sync_github_completed_tasks() {
+    if [ "$GITHUB_SYNC" != "true" ]; then
+        return 0
+    fi
+
+    if ! check_github_cli; then
+        return 0
+    fi
+
+    local completed_file=".loki/queue/completed.json"
+    if [ ! -f "$completed_file" ]; then
+        return 0
+    fi
+
+    # Find GitHub-sourced tasks in completed queue that haven't been synced
+    python3 -c "
+import json, sys
+try:
+    with open('$completed_file') as f:
+        tasks = json.load(f)
+    for t in tasks:
+        tid = t.get('id', '')
+        if tid.startswith('github-'):
+            print(tid)
+except Exception:
+    pass
+" 2>/dev/null | while read -r task_id; do
+        sync_github_status "$task_id" "completed"
+    done
+}
+
+# Sync GitHub-sourced tasks currently in-progress
+sync_github_in_progress_tasks() {
+    if [ "$GITHUB_SYNC" != "true" ]; then
+        return 0
+    fi
+
+    if ! check_github_cli; then
+        return 0
+    fi
+
+    local pending_file=".loki/queue/pending.json"
+    if [ ! -f "$pending_file" ]; then
+        return 0
+    fi
+
+    # Find GitHub-sourced tasks in pending queue (about to be worked on)
+    python3 -c "
+import json
+try:
+    with open('$pending_file') as f:
+        data = json.load(f)
+    tasks = data.get('tasks', data) if isinstance(data, dict) else data
+    for t in tasks:
+        tid = t.get('id', '')
+        if tid.startswith('github-'):
+            print(tid)
+except Exception:
+    pass
+" 2>/dev/null | while read -r task_id; do
+        sync_github_status "$task_id" "in_progress"
+    done
 }
 
 # Export tasks to GitHub issues (reverse sync)
@@ -2803,6 +2886,9 @@ EFF_EOF
 
     # Check notification triggers (v5.40.0)
     check_notification_triggers "$iteration"
+
+    # Sync completed GitHub tasks back to issues (v5.41.0)
+    sync_github_completed_tasks
 
     # Get task from in-progress
     local in_progress_file=".loki/queue/in-progress.json"
@@ -7020,6 +7106,8 @@ main() {
     # Import GitHub issues if enabled (v4.1.0)
     if [ "$GITHUB_IMPORT" = "true" ]; then
         import_github_issues
+        # Notify GitHub that imported issues are being worked on (v5.41.0)
+        sync_github_in_progress_tasks
     fi
 
     # Start web dashboard (if enabled)
@@ -7107,6 +7195,14 @@ main() {
     else
         # Standard mode: single session
         run_autonomous "$PRD_PATH" || result=$?
+    fi
+
+    # Final GitHub sync: sync all completed tasks and create PR (v5.41.0)
+    sync_github_completed_tasks
+    if [ "$GITHUB_PR" = "true" ] && [ "$result" = "0" ]; then
+        local feature_name="${PRD_PATH:-Codebase improvements}"
+        feature_name=$(basename "$feature_name" .md 2>/dev/null || echo "$feature_name")
+        create_github_pr "$feature_name"
     fi
 
     # Extract and save learnings from this session

@@ -1,6 +1,6 @@
-# GitHub Integration (v5.25.0)
+# GitHub Integration (v5.41.0)
 
-**When:** Importing issues from GitHub, creating PRs, syncing task status
+**When:** Importing issues from GitHub, creating PRs, syncing task status back
 
 > **Requires:** `gh` CLI authenticated (`gh auth status`)
 
@@ -10,9 +10,13 @@
 
 | Action | Command | Result |
 |--------|---------|--------|
-| Import issues as tasks | `LOKI_GITHUB_IMPORT=true` | Fetches open issues, creates pending tasks |
+| Import issues as tasks | `loki start --github` or `LOKI_GITHUB_IMPORT=true` | Fetches open issues, creates pending tasks |
 | Create PR on completion | `LOKI_GITHUB_PR=true` | Auto-creates PR with task summaries |
-| Sync status back | `LOKI_GITHUB_SYNC=true` | Comments progress on source issues |
+| Sync status back | `LOKI_GITHUB_SYNC=true` | Comments progress on source issues (deduplicated) |
+| Manual sync | `loki github sync` | Sync completed tasks to GitHub now |
+| Export tasks | `loki github export` | Create GitHub issues from local tasks |
+| Manual PR | `loki github pr "feature name"` | Create PR from current work |
+| Check status | `loki github status` | Show config, sync history, imported count |
 | Import from URL | `LOKI_GITHUB_REPO=owner/repo` | Specify repo if not auto-detected |
 
 ---
@@ -167,13 +171,41 @@ LOKI_GITHUB_IMPORT=true \
 
 ---
 
-## Integration with Dashboard
+## CLI Commands
 
-The dashboard shows GitHub-sourced tasks with:
-- GitHub icon badge
-- Direct link to issue
-- Sync status indicator
-- "Import from GitHub" button (calls `gh issue list`)
+```bash
+# Check GitHub integration status
+loki github status
+
+# Sync completed task statuses back to GitHub issues
+loki github sync
+
+# Export local tasks as new GitHub issues
+loki github export
+
+# Create PR from completed work
+loki github pr "Add user authentication"
+```
+
+---
+
+## Dashboard API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/github/status` | GET | Integration config, repo, sync count |
+| `/api/github/tasks` | GET | All GitHub-sourced tasks with sync status |
+| `/api/github/sync-log` | GET | History of status updates sent to issues |
+
+---
+
+## Sync Behavior
+
+- **On session start** (`LOKI_GITHUB_IMPORT=true`): Imports issues, posts "in_progress" comment
+- **After each iteration** (`LOKI_GITHUB_SYNC=true`): Syncs completed GitHub tasks
+- **On session end** (`LOKI_GITHUB_PR=true`): Final sync + creates PR with `Closes #N` references
+- **Deduplication**: Sync log at `.loki/github/synced.log` prevents duplicate comments
+- **Manual**: `loki github sync` can be run anytime outside a session
 
 ---
 
@@ -215,4 +247,4 @@ gh repo set-default owner/repo
 
 ---
 
-**v5.25.0 | GitHub Integration | ~100 lines**
+**v5.41.0 | GitHub Integration (full sync-back) | ~250 lines**

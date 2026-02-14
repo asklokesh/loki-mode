@@ -14,6 +14,7 @@
 #   loki status           - Show current status
 #   loki dashboard        - Open dashboard in browser
 #   loki import           - Import GitHub issues
+#   loki github [cmd]     - GitHub integration (sync|export|pr|status)
 #   loki help             - Show this help
 #===============================================================================
 
@@ -323,6 +324,7 @@ show_help() {
     echo "  notify [cmd]     Send notifications (test|slack|discord|webhook|status)"
     echo "  voice [cmd]      Voice input for PRD creation (status|listen|dictate|speak|start)"
     echo "  import           Import GitHub issues as tasks"
+    echo "  github [cmd]     GitHub integration (sync|export|pr|status)"
     echo "  config [cmd]     Manage configuration (show|init|edit|path)"
     echo "  completions [bash|zsh]  Output shell completion scripts"
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
@@ -1830,6 +1832,183 @@ cmd_import() {
         echo -e "${YELLOW}Import function not available. Using fallback.${NC}"
         gh issue list --json number,title,url --limit 20
     fi
+}
+
+# GitHub integration management (v5.41.0)
+cmd_github() {
+    local subcmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$subcmd" in
+        sync)
+            # Sync completed tasks back to GitHub issues
+            if [ ! -d "$LOKI_DIR" ]; then
+                echo -e "${RED}No active Loki session found${NC}"
+                exit 1
+            fi
+
+            if ! command -v gh &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not found. Install with: brew install gh${NC}"
+                exit 1
+            fi
+
+            if ! gh auth status &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not authenticated. Run: gh auth login${NC}"
+                exit 1
+            fi
+
+            export LOKI_GITHUB_SYNC=true
+            source "$RUN_SH" 2>/dev/null || true
+
+            echo -e "${GREEN}Syncing completed tasks to GitHub...${NC}"
+            if type sync_github_completed_tasks &>/dev/null; then
+                sync_github_completed_tasks
+                echo -e "${GREEN}Sync complete.${NC}"
+
+                # Show what was synced
+                if [ -f "$LOKI_DIR/github/synced.log" ]; then
+                    local count
+                    count=$(wc -l < "$LOKI_DIR/github/synced.log" | tr -d ' ')
+                    echo -e "${DIM}Total synced status updates: $count${NC}"
+                fi
+            else
+                echo -e "${YELLOW}Sync function not available.${NC}"
+            fi
+            ;;
+
+        export)
+            # Export local tasks as GitHub issues
+            if [ ! -d "$LOKI_DIR" ]; then
+                echo -e "${RED}No active Loki session found${NC}"
+                exit 1
+            fi
+
+            if ! command -v gh &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not found. Install with: brew install gh${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}Exporting local tasks to GitHub issues...${NC}"
+            source "$RUN_SH" 2>/dev/null || true
+            if type export_tasks_to_github &>/dev/null; then
+                export_tasks_to_github
+                echo -e "${GREEN}Export complete.${NC}"
+            else
+                echo -e "${YELLOW}Export function not available.${NC}"
+            fi
+            ;;
+
+        pr)
+            # Create PR from completed work
+            if ! command -v gh &>/dev/null; then
+                echo -e "${RED}Error: gh CLI not found. Install with: brew install gh${NC}"
+                exit 1
+            fi
+
+            local feature_name="${1:-Loki Mode changes}"
+            export LOKI_GITHUB_PR=true
+            source "$RUN_SH" 2>/dev/null || true
+
+            echo -e "${GREEN}Creating pull request: $feature_name${NC}"
+            if type create_github_pr &>/dev/null; then
+                create_github_pr "$feature_name"
+            else
+                echo -e "${YELLOW}PR function not available.${NC}"
+            fi
+            ;;
+
+        status)
+            # Show GitHub integration status
+            echo -e "${BOLD}GitHub Integration Status${NC}"
+            echo ""
+
+            # gh CLI
+            if command -v gh &>/dev/null; then
+                echo -e "  gh CLI:       ${GREEN}installed$(gh --version 2>/dev/null | head -1 | sed 's/gh version /v/')${NC}"
+                if gh auth status &>/dev/null 2>&1; then
+                    echo -e "  Auth:         ${GREEN}authenticated${NC}"
+                else
+                    echo -e "  Auth:         ${RED}not authenticated${NC}"
+                fi
+            else
+                echo -e "  gh CLI:       ${RED}not installed${NC}"
+            fi
+
+            # Repo detection
+            local repo=""
+            repo=$(git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "")
+            if [ -n "$repo" ]; then
+                echo -e "  Repository:   ${GREEN}$repo${NC}"
+            else
+                echo -e "  Repository:   ${YELLOW}not detected${NC}"
+            fi
+
+            # Config flags
+            echo ""
+            echo -e "${BOLD}Configuration${NC}"
+            echo -e "  LOKI_GITHUB_IMPORT:  ${LOKI_GITHUB_IMPORT:-false}"
+            echo -e "  LOKI_GITHUB_SYNC:    ${LOKI_GITHUB_SYNC:-false}"
+            echo -e "  LOKI_GITHUB_PR:      ${LOKI_GITHUB_PR:-false}"
+            echo -e "  LOKI_GITHUB_LABELS:  ${LOKI_GITHUB_LABELS:-(all)}"
+            echo -e "  LOKI_GITHUB_LIMIT:   ${LOKI_GITHUB_LIMIT:-100}"
+
+            # Sync log
+            if [ -f "$LOKI_DIR/github/synced.log" ]; then
+                echo ""
+                echo -e "${BOLD}Sync History${NC}"
+                local total
+                total=$(wc -l < "$LOKI_DIR/github/synced.log" | tr -d ' ')
+                echo -e "  Total synced updates: $total"
+                echo -e "  Recent:"
+                tail -5 "$LOKI_DIR/github/synced.log" | sed 's/^/    /'
+            fi
+
+            # Imported tasks
+            if [ -f "$LOKI_DIR/queue/pending.json" ]; then
+                local gh_tasks
+                gh_tasks=$(python3 -c "
+import json
+try:
+    with open('$LOKI_DIR/queue/pending.json') as f:
+        data = json.load(f)
+    tasks = data.get('tasks', data) if isinstance(data, dict) else data
+    gh = [t for t in tasks if t.get('source') == 'github']
+    print(len(gh))
+except: print(0)
+" 2>/dev/null || echo "0")
+                echo ""
+                echo -e "${BOLD}Imported Issues${NC}"
+                echo -e "  GitHub tasks in queue: $gh_tasks"
+            fi
+            ;;
+
+        help|*)
+            echo -e "${BOLD}loki github${NC} - GitHub integration management"
+            echo ""
+            echo "Commands:"
+            echo "  status       Show GitHub integration status"
+            echo "  sync         Sync completed task status back to GitHub issues"
+            echo "  export       Export local tasks as new GitHub issues"
+            echo "  pr [name]    Create pull request from completed work"
+            echo ""
+            echo "Environment Variables:"
+            echo "  LOKI_GITHUB_IMPORT=true    Import open issues as tasks on start"
+            echo "  LOKI_GITHUB_SYNC=true      Sync status back to issues during session"
+            echo "  LOKI_GITHUB_PR=true        Create PR when session completes successfully"
+            echo "  LOKI_GITHUB_LABELS=bug     Filter issues by label (comma-separated)"
+            echo "  LOKI_GITHUB_MILESTONE=v2   Filter by milestone"
+            echo "  LOKI_GITHUB_ASSIGNEE=me    Filter by assignee"
+            echo "  LOKI_GITHUB_LIMIT=50       Max issues to import (default: 100)"
+            echo "  LOKI_GITHUB_PR_LABEL=loki  Label to add to created PRs"
+            echo ""
+            echo "Examples:"
+            echo "  loki github status"
+            echo "  loki github sync"
+            echo "  loki github export"
+            echo "  loki github pr \"Add user authentication\""
+            echo "  LOKI_GITHUB_SYNC=true loki start --github ./prd.md"
+            ;;
+    esac
 }
 
 # Parse GitHub issue using issue-parser.sh
@@ -4277,6 +4456,9 @@ main() {
             ;;
         import)
             cmd_import
+            ;;
+        github)
+            cmd_github "$@"
             ;;
         issue)
             cmd_issue "$@"
