@@ -117,25 +117,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const navLinks = document.querySelectorAll('.nav-link');
     const sections = document.querySelectorAll('.section');
 
+    function navigateToSection(targetId) {
+        // Update active nav link
+        navLinks.forEach(l => {
+            if (l.getAttribute('href') === '#' + targetId) {
+                l.classList.add('active');
+            } else {
+                l.classList.remove('active');
+            }
+        });
+
+        // Show corresponding section
+        sections.forEach(section => {
+            if (section.id === targetId) {
+                section.classList.add('active');
+            } else {
+                section.classList.remove('active');
+            }
+        });
+    }
+
     navLinks.forEach(link => {
         link.addEventListener('click', (e) => {
             const href = link.getAttribute('href');
             if (href && href.startsWith('#')) {
                 e.preventDefault();
+                navigateToSection(href.slice(1));
+            }
+        });
+    });
 
-                // Update active nav link
-                navLinks.forEach(l => l.classList.remove('active'));
-                link.classList.add('active');
-
-                // Show corresponding section
-                const targetId = href.slice(1);
-                sections.forEach(section => {
-                    if (section.id === targetId) {
-                        section.classList.add('active');
-                    } else {
-                        section.classList.remove('active');
-                    }
-                });
+    // Handle section links outside the nav (banner "Learn more", hero buttons, etc.)
+    document.querySelectorAll('a[href^="#"]:not(.nav-link)').forEach(link => {
+        link.addEventListener('click', (e) => {
+            const href = link.getAttribute('href');
+            const targetId = href.slice(1);
+            const targetSection = document.getElementById(targetId);
+            if (targetSection && targetSection.classList.contains('section')) {
+                e.preventDefault();
+                navigateToSection(targetId);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         });
     });
