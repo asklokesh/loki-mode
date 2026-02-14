@@ -591,6 +591,15 @@ function generateStandaloneHTML(bundleCode) {
           <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           Checkpoints
         </button>
+        <button class="nav-link" data-section="context" id="nav-context">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Context
+        </button>
+        <button class="nav-link" data-section="notifications" id="nav-notifications">
+          <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+          Notifications
+          <span class="notification-badge" id="notif-badge" style="display:none;background:var(--loki-red);color:#fff;font-size:10px;padding:1px 5px;border-radius:8px;margin-left:4px;">0</span>
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -669,6 +678,22 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <loki-checkpoint-viewer id="checkpoint-viewer"></loki-checkpoint-viewer>
       </div>
+
+      <!-- Context Window Tracking -->
+      <div class="section-page" id="page-context">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Context Window</h2>
+        </div>
+        <loki-context-tracker id="context-tracker"></loki-context-tracker>
+      </div>
+
+      <!-- Notifications -->
+      <div class="section-page" id="page-notifications">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Notifications</h2>
+        </div>
+        <loki-notification-center id="notification-center"></loki-notification-center>
+      </div>
     </main>
   </div>
 
@@ -689,6 +714,8 @@ function generateStandaloneHTML(bundleCode) {
         <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Cost</span><span class="shortcut-keys"><kbd class="shortcut-key">7</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Context</span><span class="shortcut-keys"><kbd class="shortcut-key">9</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Notifications</span><span class="shortcut-keys"><kbd class="shortcut-key">0</kbd></span></div>
       </div>
       <div class="shortcuts-group">
         <div class="shortcuts-group-title">Session</div>
@@ -758,7 +785,9 @@ document.addEventListener('DOMContentLoaded', function() {
       'learning-dashboard',
       'council-dashboard',
       'cost-dashboard',
-      'checkpoint-viewer'
+      'checkpoint-viewer',
+      'context-tracker',
+      'notification-center'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);
@@ -846,10 +875,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Keyboard shortcuts: Cmd/Ctrl + 1-7
   document.addEventListener('keydown', function(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '8') {
+    if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
       e.preventDefault();
-      var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost', 'checkpoint'];
-      switchSection(sections[parseInt(e.key) - 1]);
+      var sections = ['overview', 'tasks', 'logs', 'memory', 'learning', 'council', 'cost', 'checkpoint', 'context', 'notifications'];
+      var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
+      if (idx < sections.length) switchSection(sections[idx]);
     }
   });
 

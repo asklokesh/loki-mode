@@ -2174,6 +2174,174 @@ async def force_council_review():
 
 
 # =============================================================================
+# Context Window Tracking API (v5.40.0)
+# =============================================================================
+
+@app.get("/api/context")
+async def get_context():
+    """Get context window tracking data from .loki/context/tracking.json."""
+    loki_dir = _get_loki_dir()
+    tracking_file = loki_dir / "context" / "tracking.json"
+
+    if not tracking_file.exists():
+        return {
+            "session_id": "",
+            "updated_at": "",
+            "current": {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                "total_tokens": 0, "context_window_pct": 0.0,
+                "estimated_cost_usd": 0.0,
+            },
+            "compactions": [],
+            "per_iteration": [],
+            "totals": {
+                "total_input": 0, "total_output": 0,
+                "total_cost_usd": 0.0, "compaction_count": 0,
+                "iterations_tracked": 0,
+            },
+        }
+
+    try:
+        return json.loads(tracking_file.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read context tracking: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read context tracking data")
+
+
+# =============================================================================
+# Notification Trigger API (v5.40.0)
+# =============================================================================
+
+@app.get("/api/notifications")
+async def get_notifications(
+    severity: Optional[str] = Query(None, pattern="^(critical|warning|info)$"),
+    unread_only: bool = Query(False),
+):
+    """Get notification list from .loki/notifications/active.json."""
+    loki_dir = _get_loki_dir()
+    active_file = loki_dir / "notifications" / "active.json"
+
+    if not active_file.exists():
+        return {
+            "notifications": [],
+            "summary": {"total": 0, "unacknowledged": 0, "critical": 0, "warning": 0, "info": 0},
+        }
+
+    try:
+        data = json.loads(active_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {
+            "notifications": [],
+            "summary": {"total": 0, "unacknowledged": 0, "critical": 0, "warning": 0, "info": 0},
+        }
+
+    notifications = data.get("notifications", [])
+
+    # Apply filters
+    if severity:
+        notifications = [n for n in notifications if n.get("severity") == severity]
+    if unread_only:
+        notifications = [n for n in notifications if not n.get("acknowledged", False)]
+
+    return {
+        "notifications": notifications,
+        "summary": data.get("summary", {}),
+    }
+
+
+@app.get("/api/notifications/triggers")
+async def get_notification_triggers():
+    """Get notification trigger configuration from .loki/notifications/triggers.json."""
+    loki_dir = _get_loki_dir()
+    triggers_file = loki_dir / "notifications" / "triggers.json"
+
+    if not triggers_file.exists():
+        return {"triggers": []}
+
+    try:
+        return json.loads(triggers_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {"triggers": []}
+
+
+@app.put("/api/notifications/triggers", dependencies=[Depends(auth.require_scope("control"))])
+async def update_notification_triggers(request: Request):
+    """Update notification trigger configuration."""
+    loki_dir = _get_loki_dir()
+    notif_dir = loki_dir / "notifications"
+    notif_dir.mkdir(parents=True, exist_ok=True)
+    triggers_file = notif_dir / "triggers.json"
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    triggers = body.get("triggers")
+    if not isinstance(triggers, list):
+        raise HTTPException(status_code=400, detail="Body must contain a 'triggers' array")
+
+    # Validate each trigger has required fields
+    for t in triggers:
+        if not isinstance(t, dict) or not t.get("id") or not t.get("type"):
+            raise HTTPException(status_code=400, detail="Each trigger must have 'id' and 'type'")
+
+    tmp_file = triggers_file.with_suffix(".tmp")
+    tmp_file.write_text(json.dumps({"triggers": triggers}, indent=2))
+    tmp_file.rename(triggers_file)
+
+    return {"success": True, "count": len(triggers)}
+
+
+@app.post("/api/notifications/{notification_id}/acknowledge", dependencies=[Depends(auth.require_scope("control"))])
+async def acknowledge_notification(notification_id: str):
+    """Mark a notification as acknowledged."""
+    loki_dir = _get_loki_dir()
+    active_file = loki_dir / "notifications" / "active.json"
+
+    if not active_file.exists():
+        raise HTTPException(status_code=404, detail="No notifications found")
+
+    try:
+        data = json.loads(active_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(status_code=500, detail="Failed to read notifications")
+
+    notifications = data.get("notifications", [])
+    found = False
+    for n in notifications:
+        if n.get("id") == notification_id:
+            n["acknowledged"] = True
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
+
+    # Recalculate summary
+    unacked = sum(1 for n in notifications if not n.get("acknowledged", False))
+    critical = sum(1 for n in notifications if n.get("severity") == "critical" and not n.get("acknowledged"))
+    warning = sum(1 for n in notifications if n.get("severity") == "warning" and not n.get("acknowledged"))
+    info = sum(1 for n in notifications if n.get("severity") == "info" and not n.get("acknowledged"))
+
+    data["notifications"] = notifications
+    data["summary"] = {
+        "total": len(notifications),
+        "unacknowledged": unacked,
+        "critical": critical,
+        "warning": warning,
+        "info": info,
+    }
+
+    tmp_file = active_file.with_suffix(".tmp")
+    tmp_file.write_text(json.dumps(data, indent=2))
+    tmp_file.rename(active_file)
+
+    return {"success": True, "notification_id": notification_id}
+
+
+# =============================================================================
 # Checkpoint API (v5.34.0)
 # =============================================================================
 

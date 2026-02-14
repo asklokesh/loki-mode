@@ -59,6 +59,8 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **Prometheus Metrics** - OpenMetrics /metrics endpoint for monitoring
 - **Branch Protection** - Agent sessions auto-create feature branches with PRs
 - **Log Integrity** - SHA-256 chain-hashed tamper-evident audit entries
+- **Context Window Tracking** - Real-time gauge, timeline, and per-agent breakdown of context usage
+- **Notification Triggers** - Configurable alerts for context thresholds, task failures, budget limits
 
 ---
 
@@ -96,7 +98,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **5.39.1**
+Current Version: **5.40.0**
 
 See [[Changelog]] for detailed release notes.
 

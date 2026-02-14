@@ -13,7 +13,7 @@
 [![HumanEval](https://img.shields.io/badge/HumanEval-98.17%25%20Pass%401-brightgreen)](benchmarks/results/)
 [![SWE-bench](https://img.shields.io/badge/SWE--bench-99.67%25%20Patch%20Gen-brightgreen)](benchmarks/results/)
 
-**Current Version: v5.39.1**
+**Current Version: v5.40.0**
 
 **[Documentation Website](https://asklokesh.github.io/loki-mode/)** | **[Architecture](https://asklokesh.github.io/loki-mode/blog/#architecture)** | **[Research](https://asklokesh.github.io/loki-mode/blog/#research)** | **[Comparisons](https://asklokesh.github.io/loki-mode/blog/#comparisons)**
 

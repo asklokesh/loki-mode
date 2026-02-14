@@ -5,6 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.40.0] - 2026-02-14
+
+### Added
+- Context window tracking: parses Claude session JSONL to track token usage per RARV iteration
+- Context tracker dashboard component with gauge, timeline, and breakdown tabs
+- SVG circular progress ring showing context window usage percentage with color thresholds
+- Per-iteration token timeline with compaction event markers
+- Token breakdown view (input/output/cache_read/cache_creation) with cost per iteration
+- Notification trigger system with 6 built-in triggers (budget, context, sensitive files, quality gates, stagnation, compaction frequency)
+- Notification center dashboard component with feed and trigger management tabs
+- 5 new API endpoints: /api/context, /api/notifications, /api/notifications/triggers (GET+PUT), /api/notifications/{id}/acknowledge
+- Context and notification data included in dashboard-state.json
+- New files: autonomy/context-tracker.py, autonomy/notification-checker.py
+- New components: loki-context-tracker, loki-notification-center
+- Keyboard shortcuts: Cmd+9 (Context), Cmd+0 (Notifications)
+
+### Fixed
+- Docker build failure: UID 1000 conflict with NodeSource-created user (useradd now checks for existing UID)
+
 ## [5.39.1] - 2026-02-13
 
 ### Fixed

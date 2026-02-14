@@ -1,4 +1,4 @@
-# Loki Mode Dashboard v5.39.1
+# Loki Mode Dashboard v5.40.0
 
 A production-ready realtime dashboard for monitoring and managing Loki Mode autonomous operations. Features a dark Vercel/Linear-inspired theme with purple accents, sidebar navigation, and overview cards.
 
@@ -35,7 +35,7 @@ The dashboard automatically syncs with Loki Mode when it's running, polling `das
 The sidebar provides navigation and system status at a glance.
 
 #### Logo & Version
-- Loki Mode branding with current version (v5.39.1)
+- Loki Mode branding with current version (v5.40.0)
 - Version updates automatically from server state
 
 #### Theme Toggle
@@ -244,6 +244,53 @@ loki council report         # Generate report
 
 ---
 
+### 7. Context Window (v5.40.0)
+
+The Context Window panel provides real-time visibility into context window utilization across agents:
+
+#### Gauge View
+- Circular gauge showing current context usage as a percentage
+- Color-coded thresholds: green (<60%), yellow (60-80%), red (>80%)
+- Displays tokens used vs. total capacity
+
+#### Timeline View
+- Historical context usage over time
+- Per-iteration token consumption trend
+- Helps identify context-heavy phases or runaway agents
+
+#### Breakdown View
+- Per-agent context allocation and usage
+- Categorized by content type (code, prompts, memory, tool output)
+- Highlights largest context consumers
+
+**API Endpoints:**
+- `GET /api/context` - Current context window state (per-agent usage, totals, breakdown)
+
+---
+
+### 8. Notifications (v5.40.0)
+
+The Notifications panel provides a feed of system events and configurable trigger management:
+
+#### Feed View
+- Chronological list of notification events
+- Severity levels: info, warning, critical
+- Click to acknowledge and dismiss
+- Auto-generated from context thresholds, task failures, council verdicts, and budget alerts
+
+#### Trigger Management View
+- Configure notification triggers (context threshold, task failure count, budget limit, etc.)
+- Enable/disable individual triggers
+- Set custom thresholds per trigger type
+
+**API Endpoints:**
+- `GET /api/notifications` - List all notifications (supports query filters)
+- `GET /api/notifications/triggers` - Get configured notification triggers
+- `PUT /api/notifications/triggers` - Update notification trigger configuration
+- `POST /api/notifications/{id}/acknowledge` - Acknowledge a specific notification
+
+---
+
 ## Security Hardening (v5.25.0)
 
 The dashboard includes several security measures:
@@ -398,6 +445,7 @@ Useful for:
 
 | Version | Changes |
 |---------|---------|
+| v5.40.0 | Context Window tracking panel (gauge, timeline, breakdown), Notification Triggers panel (feed, trigger management) |
 | v5.39.0 | Prometheus /metrics endpoint, branch protection, agent audit trail, log integrity, OpenClaw bridge |
 | v5.37.0 | TLS/HTTPS, OIDC/SSO, RBAC roles, WebSocket auth, syslog forwarding, budget controls |
 | v5.36.0 | Auth wiring on destructive endpoints, rate limiting, salted hashing, non-root Docker |

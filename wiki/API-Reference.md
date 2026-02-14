@@ -697,6 +697,133 @@ curl http://localhost:57374/metrics
 
 ---
 
+### Context Window Endpoints (v5.40.0)
+
+#### `GET /api/context`
+Get current context window state including per-agent usage, totals, and content-type breakdown.
+
+**Response:**
+```json
+{
+  "total_capacity": 200000,
+  "total_used": 87500,
+  "usage_percent": 43.75,
+  "agents": [
+    {
+      "id": "orchestrator",
+      "tokens_used": 42000,
+      "capacity": 200000,
+      "usage_percent": 21.0
+    }
+  ],
+  "breakdown": {
+    "code": 35000,
+    "prompts": 20000,
+    "memory": 15000,
+    "tool_output": 17500
+  }
+}
+```
+
+---
+
+### Notification Endpoints (v5.40.0)
+
+#### `GET /api/notifications`
+List all notifications, newest first.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `severity` | string | - | Filter by severity (info, warning, critical) |
+| `acknowledged` | boolean | - | Filter by acknowledgment status |
+| `limit` | number | 50 | Max notifications to return |
+
+**Response:**
+```json
+[
+  {
+    "id": "notif-001",
+    "severity": "warning",
+    "message": "Context usage exceeded 80% for agent backend-agent",
+    "trigger": "context_threshold",
+    "timestamp": "2026-02-13T10:30:00Z",
+    "acknowledged": false
+  }
+]
+```
+
+#### `GET /api/notifications/triggers`
+Get configured notification triggers.
+
+**Response:**
+```json
+{
+  "triggers": [
+    {
+      "id": "context_threshold",
+      "enabled": true,
+      "threshold": 80,
+      "description": "Alert when context window usage exceeds threshold percent"
+    },
+    {
+      "id": "task_failure",
+      "enabled": true,
+      "threshold": 3,
+      "description": "Alert after N consecutive task failures"
+    },
+    {
+      "id": "budget_limit",
+      "enabled": false,
+      "threshold": 90,
+      "description": "Alert when budget usage exceeds threshold percent"
+    }
+  ]
+}
+```
+
+#### `PUT /api/notifications/triggers`
+Update notification trigger configuration.
+
+**Request Body:**
+```json
+{
+  "triggers": [
+    {
+      "id": "context_threshold",
+      "enabled": true,
+      "threshold": 75
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Triggers updated"
+}
+```
+
+#### `POST /api/notifications/{id}/acknowledge`
+Acknowledge a specific notification.
+
+**Path Parameters:**
+| Parameter | Description |
+|-----------|-------------|
+| `id` | Notification identifier |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification notif-001 acknowledged"
+}
+```
+
+---
+
 ### Budget Endpoints (v5.37.0)
 
 #### `GET /api/budget`
@@ -848,6 +975,18 @@ curl http://localhost:57374/api/cost
 curl -X POST http://localhost:57374/api/checkpoints \
   -H "Content-Type: application/json" \
   -d '{"message": "before refactor"}'
+
+# Context window state
+curl http://localhost:57374/api/context
+
+# Notifications
+curl http://localhost:57374/api/notifications
+
+# Notification triggers
+curl http://localhost:57374/api/notifications/triggers
+
+# Acknowledge a notification
+curl -X POST http://localhost:57374/api/notifications/notif-001/acknowledge
 
 # Prometheus metrics
 curl http://localhost:57374/metrics

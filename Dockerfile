@@ -5,7 +5,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="5.39.1"
+LABEL version="5.40.0"
 LABEL description="Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI"
 
 # Prevent interactive prompts during install
@@ -56,7 +56,14 @@ RUN npm install -g npm@latest \
     && npm cache clean --force
 
 # Security: Create non-root user (UID 1000 for host volume mount compatibility)
-RUN useradd -m -s /bin/bash -u 1000 loki
+# NodeSource may create a user with UID 1000, so check first and rename/reuse if needed
+RUN if id -u 1000 >/dev/null 2>&1; then \
+      existing_user=$(getent passwd 1000 | cut -d: -f1); \
+      usermod -l loki -d /home/loki -m "$existing_user" 2>/dev/null || true; \
+      groupmod -n loki "$(id -gn 1000)" 2>/dev/null || true; \
+    else \
+      useradd -m -s /bin/bash -u 1000 loki; \
+    fi
 
 # Create app directory
 WORKDIR /opt/loki-mode

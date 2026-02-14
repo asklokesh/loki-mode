@@ -71,6 +71,8 @@ events/                     # Unified Event Bus (v5.17.0)
 docs/                       # Architecture documentation
   SYNERGY-ROADMAP.md        # 5-pillar tool integration architecture
 autonomy/                   # Runtime and autonomous execution
+  context-tracker.py        # Context window usage tracking
+  notification-checker.py   # Notification trigger evaluation
 templates/                  # 12 PRD templates (saas, cli, discord-bot, etc.)
 benchmarks/                 # SWE-bench and HumanEval benchmarks
 ```
@@ -192,7 +194,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.39.1
+- Current: v5.40.0
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

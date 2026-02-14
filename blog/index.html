@@ -20,7 +20,7 @@
             </div>
             <div class="nav-brand">
                 <h1>Loki Mode</h1>
-                <span class="version" id="app-version">v5.39.1</span>
+                <span class="version" id="app-version">v5.40.0</span>
             </div>
         </div>
         <div class="header-right">
@@ -33,8 +33,8 @@
 
     <!-- Announcement Banner (auto-updated from GitHub Releases API) -->
     <div class="announcement-banner" id="announcement-banner">
-        <strong id="banner-version">NEW in v5.39.1:</strong>
-        <span id="banner-text">Prometheus metrics, branch protection, agent audit trail, log integrity, TLS/HTTPS, OIDC/SSO, RBAC roles</span>
+        <strong id="banner-version">NEW in v5.40.0:</strong>
+        <span id="banner-text">Context window tracking, notification triggers, provider-agnostic monitoring, Docker UID fix</span>
         <a href="#architecture">Learn more</a>
     </div>
 
@@ -96,6 +96,16 @@
             </div>
 
             <div class="features">
+                <div class="feature-card" style="border: 2px solid #d97757;">
+                    <h3>Context Window Tracking</h3>
+                    <p>Real-time gauge, timeline, and per-iteration breakdown of token usage. Compaction detection. Provider-agnostic (Claude, Codex, Gemini).</p>
+                    <span class="feature-badge" style="background: #d97757; color: white;">v5.40.0 NEW</span>
+                </div>
+                <div class="feature-card" style="border: 2px solid #d97757;">
+                    <h3>Notification Triggers</h3>
+                    <p>6 configurable triggers: budget threshold, context limits, sensitive file access, quality gate failures, stagnation, compaction frequency.</p>
+                    <span class="feature-badge" style="background: #d97757; color: white;">v5.40.0 NEW</span>
+                </div>
                 <div class="feature-card" style="border: 2px solid #d97757;">
                     <h3>Prometheus Metrics</h3>
                     <p>OpenMetrics /metrics endpoint with 9 metrics: session status, iterations, tasks, agents, cost, events, uptime. Grafana-ready.</p>
@@ -601,6 +611,12 @@ loki start ./prd.md</code></pre>
                 <p>Latest updates, tutorials, and insights</p>
             </div>
             <div class="docs-grid">
+                <div class="blog-card" data-post="../CHANGELOG.md">
+                    <div class="blog-date">February 2026</div>
+                    <h3>v5.40.0: Context Window Tracking, Notification Triggers</h3>
+                    <p>Real-time context gauge, per-iteration timeline, provider-agnostic monitoring (Claude/Codex/Gemini), 6 configurable notification triggers, Docker UID fix.</p>
+                    <span class="blog-tag">Release</span>
+                </div>
                 <div class="blog-card" data-post="../CHANGELOG.md">
                     <div class="blog-date">February 2026</div>
                     <h3>v5.39.0: Prometheus Metrics, Branch Protection, Audit Trail</h3>

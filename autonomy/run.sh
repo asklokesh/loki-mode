@@ -2531,6 +2531,24 @@ write_dashboard_state() {
         budget_json=$(cat ".loki/metrics/budget.json" 2>/dev/null || echo "null")
     fi
 
+    # Get context window tracking state (v5.40.0)
+    local context_state="null"
+    if [ -f ".loki/context/tracking.json" ]; then
+        context_state=$(cat ".loki/context/tracking.json" 2>/dev/null || echo "null")
+    fi
+
+    # Get notification summary (v5.40.0)
+    local notification_summary='{"total":0,"unacknowledged":0,"critical":0,"warning":0,"info":0}'
+    if [ -f ".loki/notifications/active.json" ]; then
+        notification_summary=$(python3 -c "
+import json,sys
+try:
+    data=json.load(open('.loki/notifications/active.json'))
+    print(json.dumps(data.get('summary',{'total':0,'unacknowledged':0})))
+except: print('{\"total\":0,\"unacknowledged\":0}')
+" 2>/dev/null || echo '{"total":0,"unacknowledged":0}')
+    fi
+
     # Write comprehensive JSON state (atomic via temp file + mv)
     local project_name=$(basename "$(pwd)")
     local project_path=$(pwd)
@@ -2583,10 +2601,38 @@ write_dashboard_state() {
   },
   "qualityGates": $quality_gates,
   "council": $council_state,
-  "budget": $budget_json
+  "budget": $budget_json,
+  "context": $context_state,
+  "notifications": $notification_summary
 }
 EOF
     mv "$_tmp_state" "$output_file"
+}
+
+#===============================================================================
+# Context Window Tracking (v5.40.0)
+#===============================================================================
+
+# Track context window usage (provider-agnostic)
+track_context_usage() {
+    local iteration="$1"
+    mkdir -p .loki/context
+    local provider_arg="${LOKI_PROVIDER:-claude}"
+    local window_arg="${LOKI_CONTEXT_WINDOW_SIZE:-0}"
+    python3 "${SCRIPT_DIR}/context-tracker.py" \
+        --iteration "$iteration" \
+        --loki-dir ".loki" \
+        --provider "$provider_arg" \
+        --window-size "$window_arg" 2>/dev/null || true
+}
+
+# Check notification triggers against current state
+check_notification_triggers() {
+    local iteration="$1"
+    mkdir -p .loki/notifications
+    python3 "${SCRIPT_DIR}/notification-checker.py" \
+        --iteration "$iteration" \
+        --loki-dir ".loki" 2>/dev/null || true
 }
 
 #===============================================================================
@@ -2732,6 +2778,12 @@ track_iteration_complete() {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EFF_EOF
+
+    # Track context window usage (v5.40.0)
+    track_context_usage "$iteration"
+
+    # Check notification triggers (v5.40.0)
+    check_notification_triggers "$iteration"
 
     # Get task from in-progress
     local in_progress_file=".loki/queue/in-progress.json"

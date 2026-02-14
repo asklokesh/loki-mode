@@ -97,6 +97,31 @@ Council monitoring with four tabs:
 
 The council uses a 3-member voting system with 2/3 majority required for completion decisions. When all members vote unanimously, an anti-sycophancy devil's advocate review is triggered to confirm the decision.
 
+### Context Window (v5.40.0)
+
+Real-time context window monitoring with three tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **Gauge** | SVG circular progress showing context usage percentage. Green (<60%), yellow (60-80%), red (>80%). Stats: total tokens, cost, compaction count. |
+| **Timeline** | Per-iteration bar chart of token usage. Compaction events shown as dashed separators. |
+| **Breakdown** | Per-iteration input/output/cache stacked bars with cost breakdown. |
+
+Provider-agnostic: works with Claude (session JSONL parsing), Codex, and Gemini (direct token reporting).
+
+Keyboard shortcut: `Cmd+9`
+
+### Notification Center (v5.40.0)
+
+Dashboard-integrated notification system with two tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **Feed** | Chronological notification list with severity dots (red/yellow/blue), timestamps, messages, and acknowledge buttons. |
+| **Triggers** | 6 configurable triggers with enable/disable toggles: budget threshold, context limits, sensitive file access, quality gate failures, stagnation detection, compaction frequency. |
+
+Keyboard shortcut: `Cmd+0`
+
 ### Prometheus Metrics
 
 The dashboard exposes a `/metrics` endpoint compatible with Prometheus, Grafana, and other monitoring systems. 9 metrics are available covering session status, iterations, tasks, agents, cost, events, and uptime.

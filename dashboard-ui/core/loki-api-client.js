@@ -855,6 +855,57 @@ export class LokiApiClient extends EventTarget {
   }
 
   // ============================================
+  // Context Window Tracking API (v5.40.0)
+  // ============================================
+
+  /**
+   * Get context window tracking data
+   */
+  async getContext() {
+    return this._get('/api/context');
+  }
+
+  // ============================================
+  // Notification Trigger API (v5.40.0)
+  // ============================================
+
+  /**
+   * Get notification list
+   * @param {string} [severity] - Filter by severity (critical, warning, info)
+   * @param {boolean} [unreadOnly] - Only show unread notifications
+   */
+  async getNotifications(severity, unreadOnly) {
+    const params = new URLSearchParams();
+    if (severity) params.set('severity', severity);
+    if (unreadOnly) params.set('unread_only', 'true');
+    const query = params.toString();
+    return this._get('/api/notifications' + (query ? '?' + query : ''));
+  }
+
+  /**
+   * Get notification trigger configuration
+   */
+  async getNotificationTriggers() {
+    return this._get('/api/notifications/triggers');
+  }
+
+  /**
+   * Update notification trigger configuration
+   * @param {Array} triggers - Array of trigger objects
+   */
+  async updateNotificationTriggers(triggers) {
+    return this._put('/api/notifications/triggers', { triggers });
+  }
+
+  /**
+   * Acknowledge a notification
+   * @param {string} id - Notification ID
+   */
+  async acknowledgeNotification(id) {
+    return this._post('/api/notifications/' + encodeURIComponent(id) + '/acknowledge', {});
+  }
+
+  // ============================================
   // Session Control API
   // ============================================
 

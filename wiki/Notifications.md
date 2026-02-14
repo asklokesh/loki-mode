@@ -1,6 +1,6 @@
 # Notifications
 
-Multi-channel notification system for Slack, Discord, and custom webhooks.
+Multi-channel notification system for Slack, Discord, custom webhooks, and dashboard triggers.
 
 ---
 
@@ -11,6 +11,58 @@ Loki Mode sends real-time notifications for:
 - Task completion
 - Errors and warnings
 - Milestones
+
+---
+
+## Dashboard Notification Triggers (v5.40.0)
+
+In addition to external webhooks, Loki Mode includes a built-in notification trigger system that monitors autonomous sessions and generates alerts visible in the dashboard.
+
+### Default Triggers
+
+| Trigger ID | Type | Severity | Description |
+|------------|------|----------|-------------|
+| `budget-80pct` | Budget threshold | Warning | Fires when budget usage exceeds 80% |
+| `context-90pct` | Context threshold | Critical | Fires when context window exceeds 90% |
+| `sensitive-file` | File access | Critical | Fires when .env, .pem, .key, credentials, or secret files are accessed |
+| `quality-gate-fail` | Quality gate | Warning | Fires when a quality gate check fails |
+| `stuck-iteration` | Stagnation | Warning | Fires after 3+ consecutive no-progress iterations |
+| `compaction-freq` | Compaction frequency | Warning | Fires when 3+ context compactions occur per hour |
+
+### Configuration
+
+Triggers are stored in `.loki/notifications/triggers.json` and can be managed via the dashboard UI or API.
+
+```bash
+# View triggers
+curl http://localhost:57374/api/notifications/triggers
+
+# Update triggers
+curl -X PUT http://localhost:57374/api/notifications/triggers \
+  -H "Content-Type: application/json" \
+  -d '{"triggers": [{"id": "budget-80pct", "enabled": false}]}'
+
+# View active notifications
+curl http://localhost:57374/api/notifications
+
+# Acknowledge a notification
+curl -X POST http://localhost:57374/api/notifications/notif-001/acknowledge
+```
+
+### Dashboard UI
+
+The Notifications section in the dashboard (keyboard shortcut: Cmd+0) has two tabs:
+
+- **Feed**: Chronological list of notifications with severity indicators (red=critical, yellow=warning, blue=info), timestamps, and acknowledge buttons
+- **Triggers**: Enable/disable toggles and threshold configuration for each trigger type
+
+### Provider Support
+
+Notification triggers work with all providers (Claude, Codex, Gemini). The trigger evaluation reads from `.loki/` flat files which are provider-agnostic.
+
+---
+
+## External Channels
 
 All notifications are:
 - **Non-blocking** - Run in background
