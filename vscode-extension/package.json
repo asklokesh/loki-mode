@@ -2,7 +2,7 @@
   "name": "loki-mode",
   "displayName": "Loki Mode",
   "description": "Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI",
-  "version": "5.42.0",
+  "version": "5.42.1",
   "publisher": "asklokesh",
   "license": "MIT",
   "repository": {

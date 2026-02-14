@@ -259,14 +259,57 @@ manager = ConnectionManager()
 start_time = datetime.now(timezone.utc)
 
 
+async def _orphan_watchdog():
+    """Background task that shuts down dashboard if the parent session dies.
+
+    When the session process is killed (SIGKILL), the cleanup trap never runs
+    and the dashboard is left orphaned. This watchdog checks the session PID
+    every 30 seconds and initiates shutdown if the session is gone.
+    """
+    loki_dir = _get_loki_dir()
+    pid_file = loki_dir / "loki.pid"
+    # Wait 60s before first check to let session fully start
+    await asyncio.sleep(60)
+    while True:
+        try:
+            if pid_file.exists():
+                pid = int(pid_file.read_text().strip())
+                try:
+                    os.kill(pid, 0)  # Check if process exists
+                except OSError:
+                    # Session PID is dead -- we're orphaned
+                    logger.warning(
+                        "Session PID %d is gone. Dashboard shutting down to avoid orphan.", pid
+                    )
+                    # Clean up our own PID file
+                    dash_pid = loki_dir / "dashboard" / "dashboard.pid"
+                    dash_pid.unlink(missing_ok=True)
+                    # Give a moment for any in-flight requests
+                    await asyncio.sleep(2)
+                    os._exit(0)
+            # If PID file doesn't exist and we've been running >2 min, also shut down
+            elif time.time() - _dashboard_start_time > 120:
+                logger.warning("No session PID file found. Dashboard shutting down.")
+                os._exit(0)
+        except (ValueError, OSError):
+            pass
+        await asyncio.sleep(30)
+
+
+_dashboard_start_time = time.time()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     await init_db()
     _telemetry.send_telemetry("dashboard_start")
+    # Start orphan watchdog
+    watchdog_task = asyncio.create_task(_orphan_watchdog())
     yield
     # Shutdown
+    watchdog_task.cancel()
     await close_db()
 
 
