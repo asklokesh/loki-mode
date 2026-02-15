@@ -153,7 +153,7 @@ jobs:
         run: |
           echo "Release v${{ steps.version.outputs.version }} already exists. Skipping."
 
-  update-website:
+  notify-slack:
     needs: release
     if: needs.release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
@@ -169,22 +169,82 @@ jobs:
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="Release v$VERSION"
           fi
-          # Escape for JSON
-          CHANGELOG_JSON=$(echo "$CHANGELOG" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-          echo "changelog=$CHANGELOG_JSON" >> $GITHUB_OUTPUT
+          # Truncate to 2000 chars for Slack block limit
+          CHANGELOG=$(echo "$CHANGELOG" | head -c 2000)
+          echo "changelog<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
 
-      - name: Dispatch to autonomi-website
+      - name: Post to Slack
         env:
-          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           VERSION="v${{ needs.release.outputs.version }}"
-          CHANGELOG=${{ steps.changelog.outputs.changelog }}
-          gh api repos/asklokesh/autonomi-website/dispatches \
-            -X POST \
-            -f event_type=loki-mode-release \
-            -f "client_payload[version]=${VERSION}" \
-            -f "client_payload[changelog]=${CHANGELOG}"
-          echo "Dispatched website update for ${VERSION}"
+          RELEASE_URL="https://github.com/asklokesh/loki-mode/releases/tag/${VERSION}"
+
+          # Build Slack Block Kit message
+          cat > /tmp/slack-payload.json << 'PAYLOAD_EOF'
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Loki Mode VERSION_PLACEHOLDER Released"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*<RELEASE_URL_PLACEHOLDER|View Release on GitHub>*"
+                }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "CHANGELOG_PLACEHOLDER"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": ":robot_face: *Ready for website update.* Reply in this thread:\n>`@Claude update the autonomi.dev blog for Loki Mode VERSION_PLACEHOLDER. Read the changelog from https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md for VERSION_PLACEHOLDER, then update src/data/blog-posts.ts in https://github.com/asklokesh/autonomi-website with a new blog post entry. Also update the FALLBACK version in src/hooks/useLatestVersion.ts. No emojis. Commit and push.`"
+                }
+              }
+            ]
+          }
+          PAYLOAD_EOF
+
+          # Replace placeholders using python for JSON safety
+          python3 -c "
+          import json, sys
+          with open('/tmp/slack-payload.json') as f:
+              payload = f.read()
+          version = '${VERSION}'
+          release_url = '${RELEASE_URL}'
+          changelog = '''${{ steps.changelog.outputs.changelog }}'''
+          # Escape for JSON/mrkdwn
+          changelog_safe = changelog.replace('\"', '\\'').replace('\\n', '\n').strip()
+          if len(changelog_safe) > 1500:
+              changelog_safe = changelog_safe[:1500] + '...'
+          payload = payload.replace('VERSION_PLACEHOLDER', version)
+          payload = payload.replace('RELEASE_URL_PLACEHOLDER', release_url)
+          payload = payload.replace('CHANGELOG_PLACEHOLDER', changelog_safe)
+          with open('/tmp/slack-payload.json', 'w') as f:
+              f.write(payload)
+          "
+
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            -d @/tmp/slack-payload.json
+
+          echo "Slack notification sent for ${VERSION}"
 
   publish-npm:
     needs: release
