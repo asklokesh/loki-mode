@@ -11,27 +11,27 @@
 }
 
 :root {
-    /* Anthropic Official Colors */
-    --color-dark: #141413;
-    --color-light: #faf9f5;
-    --color-mid-gray: #b0aea5;
-    --color-light-gray: #e8e6dc;
-    --color-orange: #d97757;
-    --color-blue: #6a9bcc;
-    --color-green: #788c5d;
-    --color-claude: #da7756;
+    /* Design System Colors */
+    --color-dark: #18181B;
+    --color-light: #FFFFFF;
+    --color-mid-gray: #6B7280;
+    --color-light-gray: #F3F4F6;
+    --color-indigo: #5B4EEA;
+    --color-lavender: #A5B4FC;
+    --color-mint: #6EE7B7;
+    --color-pink: #F4A3C8;
 
     /* Semantic Colors */
     --bg-primary: var(--color-light);
     --bg-secondary: var(--color-light-gray);
     --bg-card: #ffffff;
     --text-primary: var(--color-dark);
-    --text-secondary: #3a3a38;
+    --text-secondary: #374151;
     --text-muted: var(--color-mid-gray);
-    --accent-primary: var(--color-orange);
-    --accent-secondary: var(--color-blue);
-    --accent-tertiary: var(--color-green);
-    --border-color: #d8d6cc;
+    --accent-primary: var(--color-indigo);
+    --accent-secondary: var(--color-lavender);
+    --accent-tertiary: var(--color-mint);
+    --border-color: #E5E7EB;
 }
 
 body {
@@ -99,7 +99,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Announcement Banner */
 .announcement-banner {
-    background: linear-gradient(135deg, #d97757 0%, #c56647 100%);
+    background: linear-gradient(135deg, #5B4EEA 0%, #7C3AED 100%);
     color: white;
     text-align: center;
     padding: 0.6rem 1rem;
@@ -162,7 +162,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .version {
-    background: linear-gradient(135deg, var(--color-orange), var(--color-claude));
+    background: linear-gradient(135deg, var(--color-indigo), #7C3AED);
     color: white;
     padding: 0.35rem 0.85rem;
     border-radius: 1.5rem;
@@ -196,12 +196,12 @@ h1, h2, h3, h4, h5, h6 {
 
 .nav-link:hover {
     color: var(--accent-primary);
-    background-color: rgba(217, 119, 87, 0.05);
+    background-color: rgba(91, 78, 234, 0.05);
 }
 
 .nav-link.active {
     color: var(--accent-primary);
-    background-color: rgba(217, 119, 87, 0.1);
+    background-color: rgba(91, 78, 234, 0.1);
     border-left-color: var(--accent-primary);
     font-weight: 600;
 }
@@ -333,14 +333,14 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--color-orange), var(--color-claude));
+    background: linear-gradient(135deg, var(--color-indigo), #7C3AED);
     color: white;
     border: none;
 }
 
 .btn-primary:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(217, 119, 87, 0.35);
+    box-shadow: 0 8px 24px rgba(91, 78, 234, 0.35);
 }
 
 .btn-secondary {
@@ -380,7 +380,7 @@ h1, h2, h3, h4, h5, h6 {
     left: 0;
     width: 100%;
     height: 4px;
-    background: linear-gradient(90deg, var(--color-orange), var(--color-blue), var(--color-green));
+    background: linear-gradient(90deg, var(--color-indigo), var(--color-mint), var(--color-lavender));
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -410,7 +410,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .feature-badge {
     display: inline-block;
-    background: linear-gradient(135deg, var(--color-orange), var(--color-claude));
+    background: linear-gradient(135deg, var(--color-indigo), #7C3AED);
     color: white;
     padding: 0.4rem 0.9rem;
     border-radius: 1.5rem;
@@ -504,7 +504,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .doc-card:hover {
-    background-color: rgba(217, 119, 87, 0.05);
+    background-color: rgba(91, 78, 234, 0.05);
 }
 
 .doc-card:hover::after {
@@ -1085,11 +1085,11 @@ html {
 
 /* Selection color */
 ::selection {
-    background-color: var(--color-orange);
+    background-color: var(--color-indigo);
     color: white;
 }
 
 ::-moz-selection {
-    background-color: var(--color-orange);
+    background-color: var(--color-indigo);
     color: white;
 }

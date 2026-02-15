@@ -224,7 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load markdown function
     async function loadMarkdown(path, container) {
         try {
-            container.innerHTML = '<p style="text-align: center; color: #8b5cf6;">Loading...</p>';
+            container.innerHTML = '<p style="text-align: center; color: #5B4EEA;">Loading...</p>';
             const response = await fetch(path);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
