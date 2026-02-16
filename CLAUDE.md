@@ -338,7 +338,11 @@ All credentials are stored as GitHub repository secrets and used by the workflow
 - `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`: Docker Hub credentials
 - `HOMEBREW_TAP_TOKEN`: PAT for homebrew-tap updates
 - `SLACK_WEBHOOK_URL`: Slack webhook for release notifications
-- `AUTONOMI_WEBSITE_TOKEN`: PAT with repo scope for autonomi-website issue creation
+- `AUTONOMI_WEBSITE_TOKEN`: PAT for autonomi-website issue creation
+  - Required scopes: `repo` (full) OR fine-grained token with `issues: write` permission
+  - Target repository: asklokesh/autonomi-website
+  - Used by: trigger-website-update job in release workflow
+  - Validates: Duplicate issue detection prevents multiple triggers for same version
 
 ## Testing
 
