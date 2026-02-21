@@ -9,6 +9,12 @@
  */
 
 /**
+ * Allowed provider values. The workflow_dispatch REST API can supply any
+ * string even when the YAML declares a choice type, so we validate here.
+ */
+var ALLOWED_PROVIDERS = ['claude', 'codex', 'gemini'];
+
+/**
  * Label-to-configuration mapping.
  * GitHub labels on issues/PRs can control Loki Mode behavior.
  */
@@ -160,7 +166,10 @@ function parseScheduleEvent(payload) {
  */
 function parseWorkflowDispatchEvent(payload, inputs) {
   const prdContent = (inputs || {}).prd_content || '';
-  const provider = (inputs || {}).provider || 'claude';
+  // Validate provider against the allowed set to prevent shell metacharacter injection.
+  // The GitHub UI enforces the choice constraint but the REST API does not.
+  var rawProvider = (inputs || {}).provider || 'claude';
+  var provider = ALLOWED_PROVIDERS.indexOf(rawProvider) !== -1 ? rawProvider : 'claude';
   const dryRun = (inputs || {}).dry_run === true || (inputs || {}).dry_run === 'true';
 
   return {
@@ -208,8 +217,11 @@ function extractPrdFromBody(body) {
     return codeMatch[1].trim();
   }
 
-  // Try PRD section header
-  var sectionMatch = body.match(/^##\s+PRD\s*\n([\s\S]*?)(?=\n##\s|$)/im);
+  // Try PRD section header.
+  // Do NOT use the /m flag here: with /m, the $ anchor matches end-of-line instead
+  // of end-of-string, causing the regex to stop at the first blank line inside the
+  // section rather than at the next ## heading or the real end of the document.
+  var sectionMatch = body.match(/(?:^|\n)##\s+PRD\s*\n([\s\S]*?)(?=\n##\s|\s*$)/i);
   if (sectionMatch) {
     return sectionMatch[1].trim();
   }
@@ -251,4 +263,5 @@ module.exports = {
   extractPrdFromBody: extractPrdFromBody,
   mapLabelsToConfig: mapLabelsToConfig,
   LABEL_CONFIG_MAP: LABEL_CONFIG_MAP,
+  ALLOWED_PROVIDERS: ALLOWED_PROVIDERS,
 };

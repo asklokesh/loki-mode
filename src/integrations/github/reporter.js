@@ -249,7 +249,50 @@ function renderExecutionSummary(report, options) {
 }
 
 /**
+ * Escape a string value before inserting it into a markdown context.
+ * Strips characters that can break markdown structure in inline positions:
+ * backticks, square brackets, parentheses, and bare newlines in
+ * single-line fields. For multi-line fields (summary, gates details)
+ * only bracket/paren pairs that could create unintended links are escaped.
+ *
+ * @param {string} value - Raw user-controlled string
+ * @param {boolean} [multiline] - Allow newlines (default false)
+ * @returns {string} Escaped string safe for markdown inline use
+ */
+function escapeMarkdown(value, multiline) {
+  if (typeof value !== 'string') {
+    return String(value);
+  }
+  // Replace characters that have structural meaning in markdown
+  var escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+  if (!multiline) {
+    // Collapse newlines to a space for single-line fields
+    escaped = escaped.replace(/[\r\n]+/g, ' ');
+  }
+  return escaped;
+}
+
+/**
+ * Validate a URL is safe to use as a markdown link target.
+ * Only https:// URLs are allowed to prevent javascript: and data: injection.
+ *
+ * @param {string} url - URL to validate
+ * @returns {boolean}
+ */
+function isSafeUrl(url) {
+  return typeof url === 'string' && /^https:\/\//i.test(url);
+}
+
+/**
  * Apply template variables to a markdown template string.
+ * Uses a single-pass global regex replace to prevent infinite loops when
+ * a replacement value itself contains a placeholder key.
  *
  * @param {string} template - Template with {{variable}} placeholders
  * @param {Object} report - Report data
@@ -259,44 +302,53 @@ function renderExecutionSummary(report, options) {
 function applyTemplate(template, report, options) {
   var statusLabel = options.status === 'success' ? 'PASS' : 'FAIL';
 
-  // Build quality gates table rows
+  // Build quality gates table rows - escape user-controlled gate name and details
   var gatesRows = '';
   if (Array.isArray(report.qualityGates) && report.qualityGates.length > 0) {
     gatesRows = report.qualityGates.map(function (gate) {
       var gateStatus = gate.passed ? 'PASS' : 'FAIL';
-      return '| ' + (gate.name || 'Unknown') + ' | ' + gateStatus + ' | ' + (gate.details || '-') + ' |';
+      return '| ' + escapeMarkdown(gate.name || 'Unknown') + ' | ' + gateStatus + ' | ' + escapeMarkdown(gate.details || '-') + ' |';
     }).join('\n');
   } else {
     gatesRows = '| No quality gate data available | - | - |';
   }
 
-  var deploymentLine = report.deploymentUrl
-    ? '[View Deployment](' + report.deploymentUrl + ')'
-    : 'N/A';
+  // Only render deployment URL as a link when it is a safe https:// URL
+  var deploymentLine;
+  if (report.deploymentUrl && isSafeUrl(report.deploymentUrl)) {
+    deploymentLine = '[View Deployment](' + report.deploymentUrl + ')';
+  } else if (report.deploymentUrl) {
+    // URL exists but is not safe - render as plain escaped text
+    deploymentLine = escapeMarkdown(report.deploymentUrl);
+  } else {
+    deploymentLine = 'N/A';
+  }
 
-  var runUrl = options.serverUrl + '/' + options.repository + '/actions/runs/' + options.runId;
+  var runUrl = (options.serverUrl || '') + '/' + (options.repository || '') + '/actions/runs/' + (options.runId || '');
 
   var replacements = {
     '{{STATUS}}': statusLabel,
-    '{{EXECUTION_ID}}': options.executionId || 'unknown',
+    '{{EXECUTION_ID}}': escapeMarkdown(options.executionId || 'unknown'),
     '{{TASKS_COMPLETED}}': String(report.tasksCompleted),
     '{{TASKS_FAILED}}': String(report.tasksFailed),
     '{{TOTAL_TASKS}}': String(report.totalTasks),
-    '{{DURATION}}': report.duration || 'unknown',
+    '{{DURATION}}': escapeMarkdown(report.duration || 'unknown'),
     '{{QUALITY_GATES_TABLE}}': gatesRows,
     '{{DEPLOYMENT_URL}}': deploymentLine,
     '{{RUN_URL}}': runUrl,
-    '{{SUMMARY}}': report.summary || 'No summary available.',
-    '{{REPOSITORY}}': options.repository || '',
-    '{{SHA}}': (options.sha || '').substring(0, 7),
+    '{{SUMMARY}}': escapeMarkdown(report.summary || 'No summary available.', true),
+    '{{REPOSITORY}}': escapeMarkdown(options.repository || ''),
+    '{{SHA}}': escapeMarkdown((options.sha || '').substring(0, 7)),
   };
 
-  var result = template;
-  Object.keys(replacements).forEach(function (key) {
-    // Replace all occurrences
-    while (result.indexOf(key) !== -1) {
-      result = result.replace(key, replacements[key]);
-    }
+  // Single-pass replacement: build one regex that matches any placeholder key
+  // and resolves it from the replacements map. This prevents infinite loops
+  // when a replacement value itself contains a placeholder key (e.g. {{STATUS}}
+  // inside a summary string), which the old while-loop approach would re-expand.
+  var result = template.replace(/\{\{[A-Z_]+\}\}/g, function (key) {
+    return Object.prototype.hasOwnProperty.call(replacements, key)
+      ? replacements[key]
+      : key;
   });
 
   return result;
@@ -425,5 +477,9 @@ module.exports = {
   renderQualityReport: renderQualityReport,
   renderExecutionSummary: renderExecutionSummary,
   applyTemplate: applyTemplate,
-  githubApiRequest: githubApiRequest,
+  // githubApiRequest is intentionally not exported - it is an internal
+  // implementation detail and exporting it broadens the attack surface
+  // by allowing external callers to make authenticated API requests.
+  escapeMarkdown: escapeMarkdown,
+  isSafeUrl: isSafeUrl,
 };

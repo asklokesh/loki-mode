@@ -45,13 +45,14 @@
     "dashboard/static/",
     "dashboard/requirements.txt",
     "mcp/",
-    "completions/"
+    "completions/",
+    "src/"
   ],
   "scripts": {
     "postinstall": "node bin/postinstall.js",
     "prepack": "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; true",
     "prepublishOnly": "cd dashboard-ui && npm ci && npm run build:all",
-    "test": "bash -n autonomy/run.sh && bash -n autonomy/loki && bash -n autonomy/completion-council.sh && bash -n autonomy/app-runner.sh && bash -n autonomy/prd-checklist.sh && bash -n autonomy/playwright-verify.sh && echo 'All syntax checks passed'",
+    "test": "bash -n autonomy/run.sh && bash -n autonomy/loki && bash -n autonomy/completion-council.sh && bash -n autonomy/app-runner.sh && bash -n autonomy/prd-checklist.sh && bash -n autonomy/playwright-verify.sh && node --test 'tests/integrations/github/*.test.js' && echo 'All checks passed'",
     "test:visual": "node --experimental-vm-modules node_modules/jest/bin/jest.js dashboard-ui/tests/visual-regression.test.js",
     "test:parity": "node --experimental-vm-modules dashboard-ui/scripts/check-parity.js",
     "test:parity:json": "node --experimental-vm-modules dashboard-ui/scripts/check-parity.js --json",

@@ -38,20 +38,20 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  statuses: write
+  contents: read
 
 jobs:
   loki-run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # For issue triggers, only run when the label is "loki-mode"
+    # For PR review triggers, only run when the PR has a "loki-mode" label
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'issues' && github.event.label.name == 'loki-mode') ||
-      github.event_name == 'pull_request_review'
+      (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'loki-mode'))
 
     outputs:
       execution_id: ${{ steps.execute.outputs.execution_id }}
@@ -104,28 +104,44 @@ jobs:
           fs.appendFileSync(outputFile, 'source_type=' + (context.sourceType || '') + '\n');
           "
 
+      - name: Verify actor trust for fork PRs
+        if: >-
+          github.event_name == 'pull_request_review' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          # Reject execution when the PR originates from a fork
+          # to prevent untrusted code from running with write permissions
+          echo "Skipping execution: pull_request_review from a fork repository is not trusted."
+          echo "PR author: ${{ github.event.pull_request.user.login }}"
+          echo "Fork source: ${{ github.event.pull_request.head.repo.full_name }}"
+          exit 1
+
       - name: Execute Loki Mode
         id: execute
         if: steps.context.outputs.dry_run != 'true'
         env:
           LOKI_PROVIDER: ${{ steps.context.outputs.provider }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRD_CONTENT: ${{ steps.context.outputs.prd }}
         run: |
           EXECUTION_ID="loki-$(date +%s)"
           echo "execution_id=${EXECUTION_ID}" >> $GITHUB_OUTPUT
 
-          # Write PRD content to temp file
+          # Write PRD content to temp file via env variable (prevents shell injection)
           PRD_FILE=$(mktemp /tmp/loki-prd-XXXXXX.md)
-          echo '${{ steps.context.outputs.prd }}' > "$PRD_FILE"
+          printf '%s' "$PRD_CONTENT" > "$PRD_FILE"
 
-          # Execute Loki Mode
-          loki start --provider "$LOKI_PROVIDER" "$PRD_FILE" 2>&1 | tee /tmp/loki-output.log || true
+          # Execute Loki Mode - capture exit code via PIPESTATUS (not grep on output)
+          set +e
+          loki start --provider "$LOKI_PROVIDER" "$PRD_FILE" 2>&1 | tee /tmp/loki-output.log
+          LOKI_EXIT=${PIPESTATUS[0]}
+          set -e
 
-          # Determine status from output
-          if grep -q "ERROR\|FAILED\|FATAL" /tmp/loki-output.log; then
-            echo "status=failure" >> $GITHUB_OUTPUT
-          else
+          # Determine status from loki exit code (reliable signal)
+          if [ "$LOKI_EXIT" -eq 0 ]; then
             echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
           fi
 
           echo "report_path=.loki/reports" >> $GITHUB_OUTPUT
@@ -147,6 +163,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: loki-run
     if: always() && needs.loki-run.result != 'skipped'
+    permissions:
+      issues: write
+      pull-requests: write
+      statuses: write
 
     steps:
       - name: Checkout repository
