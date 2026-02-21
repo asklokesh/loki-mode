@@ -108,12 +108,15 @@ jobs:
         if: >-
           github.event_name == 'pull_request_review' &&
           github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          FORK_SOURCE: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           # Reject execution when the PR originates from a fork
           # to prevent untrusted code from running with write permissions
           echo "Skipping execution: pull_request_review from a fork repository is not trusted."
-          echo "PR author: ${{ github.event.pull_request.user.login }}"
-          echo "Fork source: ${{ github.event.pull_request.head.repo.full_name }}"
+          printf 'PR author: %s\n' "$PR_AUTHOR"
+          printf 'Fork source: %s\n' "$FORK_SOURCE"
           exit 1
 
       - name: Execute Loki Mode
