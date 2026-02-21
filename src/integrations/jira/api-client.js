@@ -48,8 +48,11 @@ class JiraApiClient {
   }
 
   getEpicChildren(epicKey) {
-    var escaped = String(epicKey).replace(/"/g, '\\"');
-    return this.searchIssues('"Epic Link" = "' + escaped + '" ORDER BY rank ASC');
+    var key = String(epicKey);
+    if (!/^[A-Z][A-Z0-9_]+-\d+$/.test(key)) {
+      return Promise.reject(new Error('Invalid epic key format: ' + key));
+    }
+    return this.searchIssues('"Epic Link" = "' + key + '" ORDER BY rank ASC');
   }
 
   createIssue(fields) {
