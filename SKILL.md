@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v5.49.3
+# Loki Mode v5.49.4
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -263,4 +263,4 @@ The following features are documented in skill modules but not yet fully automat
 | Quality gates 3-reviewer system | Implemented (v5.35.0) | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Benchmarks (HumanEval, SWE-bench) | Infrastructure only | Runner scripts and datasets exist in `benchmarks/`; no published results |
 
-**v5.49.3 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v5.49.4 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

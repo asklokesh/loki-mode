@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v5.49.3
+**Version:** v5.49.4
 
 ---
 
@@ -34,36 +34,95 @@ The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installa
 
 ## Table of Contents
 
-- [Quick Install (Recommended)](#quick-install-recommended)
+- [npm (Recommended)](#npm-recommended)
+- [Homebrew](#homebrew)
+- [Quick Start](#quick-start)
+- [Verify Installation](#verify-installation)
+- [Other Methods](#other-methods)
 - [VS Code Extension](#vs-code-extension)
-- [Alternative Methods](#alternative-methods)
 - [Sandbox Mode](#sandbox-mode)
 - [Multi-Provider Support](#multi-provider-support)
 - [Claude Code (CLI)](#claude-code-cli)
 - [Claude.ai (Web)](#claudeai-web)
 - [Anthropic API Console](#anthropic-api-console)
-- [Verify Installation](#verify-installation)
 - [Ports](#ports)
 - [Shell Completions](#shell-completions)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## Quick Install (Recommended)
+## npm (Recommended)
 
 ```bash
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+npm install -g loki-mode
 ```
 
-That's it. Claude Code auto-discovers skills in `~/.claude/skills/`.
+Installs the `loki` CLI and automatically sets up the skill for Claude Code, Codex CLI, and Gemini CLI via the postinstall script.
 
-**Update:** `cd ~/.claude/skills/loki-mode && git pull`
+**Prerequisites:** Node.js 16+
 
-Skip to [Verify Installation](#verify-installation) to confirm it's working.
+**What it does:**
+- Installs the `loki` CLI binary to your PATH
+- Creates skill symlinks at `~/.claude/skills/loki-mode`, `~/.codex/skills/loki-mode`, and `~/.gemini/skills/loki-mode`
+- Each provider auto-discovers skills in its respective directory
 
-### Alternative Installation Methods
+**Opt out of anonymous install telemetry:**
+```bash
+LOKI_TELEMETRY_DISABLED=true npm install -g loki-mode
+# Or set DO_NOT_TRACK=1
+```
 
-Also available via npm, Homebrew, Docker, VS Code Extension, and GitHub Action. Each has trade-offs -- see [docs/alternative-installations.md](alternative-installations.md) for details, limitations, and current status of each method.
+**Update:** `npm update -g loki-mode`
+
+**Uninstall:** `npm uninstall -g loki-mode`
+
+---
+
+## Homebrew
+
+```bash
+brew tap asklokesh/tap && brew install loki-mode
+```
+
+Installs the `loki` CLI. To also install the skill for interactive use with all providers:
+
+```bash
+loki setup-skill
+```
+
+**Update:** `brew upgrade loki-mode`
+
+**Uninstall:** `brew uninstall loki-mode`
+
+---
+
+## Quick Start
+
+```bash
+# CLI mode (works with any provider)
+loki start ./prd.md
+loki start ./prd.md --provider codex
+loki start ./prd.md --provider gemini
+
+# Interactive mode (inside your coding agent)
+claude --dangerously-skip-permissions
+# Then say: "Loki Mode with PRD at ./my-prd.md"
+```
+
+---
+
+## Verify Installation
+
+```bash
+loki --version    # Should print the current version
+loki doctor       # Check skill symlinks, providers, and system prerequisites
+```
+
+---
+
+## Other Methods
+
+Git clone, Docker, GitHub Action, and VS Code Extension are also available. See [alternative-installations.md](alternative-installations.md) for details and trade-offs.
 
 ---
 
@@ -136,45 +195,6 @@ loki serve
 The extension will automatically connect when it detects the server is running at `localhost:57374`.
 
 **Troubleshooting:** If you see "API server is not running" errors, make sure you started the server first using one of the commands above.
-
----
-
-## Alternative Methods
-
-The following installation methods are available but each has limitations. Git clone (above) is the recommended primary method.
-
-For full details, troubleshooting, and current status of each method, see [alternative-installations.md](alternative-installations.md).
-
-### npm
-
-**Status:** Published to npm registry. Verify current version: `npm view loki-mode version`
-
-```bash
-npm install -g loki-mode
-```
-
-Requires Node.js 16+. Provides the `loki` CLI and auto-installs the skill to `~/.claude/skills/loki-mode`.
-
-### Homebrew
-
-**Status:** Available via tap. Verify formula: `brew info asklokesh/tap/loki-mode`
-
-```bash
-brew tap asklokesh/tap && brew install loki-mode
-# Manual symlink required for Claude Code:
-ln -sf "$(brew --prefix)/opt/loki-mode/libexec" ~/.claude/skills/loki-mode
-```
-
-### Docker
-
-**Status:** Published to Docker Hub.
-
-```bash
-docker pull asklokesh/loki-mode:latest
-docker run -v $(pwd):/workspace -w /workspace asklokesh/loki-mode:latest start ./my-prd.md
-```
-
-**Limitation:** Docker cannot run Claude Code interactively (Claude Code is a terminal-based CLI requiring TTY access). Docker is suitable for CI/CD pipelines, API-only modes, and sandbox execution -- not for the primary interactive workflow.
 
 ---
 

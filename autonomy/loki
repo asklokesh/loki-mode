@@ -340,7 +340,8 @@ show_help() {
     echo "  dogfood          Show self-development statistics"
     echo "  secrets [cmd]    API key status and validation (status|validate)"
     echo "  reset [target]   Reset session state (all|retries|failed)"
-    echo "  doctor [--json]  Check system prerequisites"
+    echo "  doctor [--json]  Check system prerequisites and skill symlinks"
+    echo "  setup-skill      Create skill symlinks for all providers"
     echo "  watchdog [cmd]   Process health monitoring (status|help)"
     echo "  version          Show version"
     echo "  help             Show this help"
@@ -2860,6 +2861,69 @@ cmd_config_path() {
     echo "Create a config file with: loki config init"
 }
 
+# Set up skill symlinks for all providers
+cmd_setup_skill() {
+    echo -e "${BOLD}Loki Mode Skill Setup${NC}"
+    echo ""
+
+    local skill_targets=(
+        "$HOME/.claude/skills/loki-mode:Claude Code"
+        "$HOME/.codex/skills/loki-mode:Codex CLI"
+        "$HOME/.gemini/skills/loki-mode:Gemini CLI"
+    )
+
+    local created=0
+    local skipped=0
+    local failed=0
+
+    for entry in "${skill_targets[@]}"; do
+        local target_dir="${entry%%:*}"
+        local target_name="${entry#*:}"
+        local parent_dir
+        parent_dir=$(dirname "$target_dir")
+        local short_path="${target_dir/#$HOME/\~}"
+
+        # Already exists and valid
+        if [ -f "$target_dir/SKILL.md" ]; then
+            echo -e "  ${GREEN}OK${NC}    $target_name  ${DIM}($short_path)${NC}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Remove broken symlink
+        if [ -L "$target_dir" ]; then
+            rm -f "$target_dir"
+        fi
+
+        # Create parent directory
+        if [ ! -d "$parent_dir" ]; then
+            mkdir -p "$parent_dir" 2>/dev/null || true
+        fi
+
+        # Create symlink to skill dir
+        if ln -sf "$SKILL_DIR" "$target_dir" 2>/dev/null; then
+            echo -e "  ${GREEN}NEW${NC}   $target_name  ${DIM}($short_path)${NC}"
+            created=$((created + 1))
+        else
+            echo -e "  ${RED}FAIL${NC}  $target_name  ${DIM}($short_path)${NC}"
+            failed=$((failed + 1))
+        fi
+    done
+
+    echo ""
+    if [ "$created" -gt 0 ]; then
+        echo -e "${GREEN}Created $created new skill symlink(s).${NC}"
+    fi
+    if [ "$skipped" -gt 0 ]; then
+        echo -e "${DIM}$skipped already installed.${NC}"
+    fi
+    if [ "$failed" -gt 0 ]; then
+        echo -e "${RED}$failed failed (check permissions).${NC}"
+        return 1
+    fi
+    return 0
+}
+
 # Check system prerequisites
 cmd_doctor() {
     local json_output=false
@@ -2999,6 +3063,29 @@ cmd_doctor() {
     doctor_check "Claude CLI"          claude   optional
     doctor_check "Codex CLI"           codex    optional
     doctor_check "Gemini CLI"          gemini   optional
+    echo ""
+
+    echo -e "${CYAN}Skills:${NC}"
+    local skill_dirs=(
+        "$HOME/.claude/skills/loki-mode:Claude Code"
+        "$HOME/.codex/skills/loki-mode:Codex CLI"
+        "$HOME/.gemini/skills/loki-mode:Gemini CLI"
+    )
+    for entry in "${skill_dirs[@]}"; do
+        local sdir="${entry%%:*}"
+        local sname="${entry#*:}"
+        local short_path="${sdir/$HOME/~}"
+        if [ -f "$sdir/SKILL.md" ]; then
+            echo -e "  ${GREEN}PASS${NC}  $sname  ${DIM}$short_path${NC}"
+            pass_count=$((pass_count + 1))
+        elif [ -L "$sdir" ]; then
+            echo -e "  ${RED}FAIL${NC}  $sname  ${DIM}(broken symlink at $short_path)${NC}"
+            fail_count=$((fail_count + 1))
+        else
+            echo -e "  ${YELLOW}WARN${NC}  $sname  ${DIM}(not found - run 'loki setup-skill')${NC}"
+            warn_count=$((warn_count + 1))
+        fi
+    done
     echo ""
 
     echo -e "${CYAN}System:${NC}"
@@ -4678,6 +4765,9 @@ main() {
             ;;
         doctor)
             cmd_doctor "$@"
+            ;;
+        setup-skill)
+            cmd_setup_skill "$@"
             ;;
         watchdog)
             cmd_watchdog "$@"

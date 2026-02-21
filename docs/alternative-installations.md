@@ -1,70 +1,54 @@
 # Alternative Installation Methods
 
-The primary installation method is git clone (see [README](../README.md#installation)). These alternatives serve specific use cases.
+The recommended installation is via npm or Homebrew (see [README](../README.md#installation)). These alternatives serve specific use cases.
 
 ---
 
-## npm (Secondary)
+## Git Clone (Manual)
 
-**Status**: Working. Version tracks releases automatically.
-
-```bash
-npm install -g loki-mode
-```
-
-**Limitation**: Installs to `node_modules`, not `~/.claude/skills/`. To use as a Claude Code skill, you must symlink:
+Best for: contributors, development, or environments without npm/brew.
 
 ```bash
-npm install -g loki-mode
-ln -sf "$(npm root -g)/loki-mode" ~/.claude/skills/loki-mode
-```
-
-**Best for**: CI/CD pipelines, programmatic access via `loki` CLI.
-
----
-
-## Homebrew (Secondary)
-
-**Status**: Working. Tap and formula exist, version current.
-
-```bash
-brew tap asklokesh/tap
-brew install loki-mode
-```
-
-**Limitation**: Installs the `loki` CLI binary only. Does NOT install the Claude Code skill. To use with Claude Code, also run:
-
-```bash
+# Clone to Claude Code skills directory
 git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+
+# Optionally symlink for other providers:
+ln -sf ~/.claude/skills/loki-mode ~/.codex/skills/loki-mode
+ln -sf ~/.claude/skills/loki-mode ~/.gemini/skills/loki-mode
+
+# Optionally add CLI to PATH:
+ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
 ```
 
-**Best for**: Users who want the `loki` CLI wrapper for autonomous mode (`loki start`, `loki stop`, `loki cleanup`).
+**Update:** `cd ~/.claude/skills/loki-mode && git pull`
+
+**Limitation:** Does not install the `loki` CLI to PATH automatically. You must symlink or add to PATH manually.
 
 ---
 
-## Docker (Secondary)
+## Docker
 
-**Status**: Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `5.49.1`).
+**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `5.49.4`).
 
 ```bash
 docker pull asklokesh/loki-mode:latest
 ```
 
-**Limitation**: Claude Code is an interactive CLI that requires API keys and terminal access. Running it inside a Docker container is not the standard workflow. Docker is useful for:
+**Limitation:** Claude Code is an interactive CLI that requires API keys and terminal access. Running it inside a Docker container is not the standard workflow. Docker is useful for:
 
 - CI/CD sandbox execution (running `loki` in isolated environments)
 - Testing Loki Mode without modifying your local system
 - Air-gapped environments with pre-built images
 
-**Not recommended for**: Interactive Claude Code sessions. Use the git clone method instead.
+**Not recommended for:** Interactive Claude Code sessions. Use npm or Homebrew instead.
 
 See [DOCKER_README.md](../DOCKER_README.md) for Docker-specific usage instructions.
 
 ---
 
-## GitHub Action (Secondary)
+## GitHub Action
 
-**Status**: Working. Adds automated AI code review to pull requests.
+**Status:** Working. Adds automated AI code review to pull requests.
 
 ```yaml
 # .github/workflows/loki-review.yml
@@ -114,27 +98,27 @@ jobs:
 | `fix` | Automatically fix issues found in the codebase |
 | `test` | Run autonomous test generation and validation |
 
-**Best for**: Automated PR review and CI/CD integration.
+**Best for:** Automated PR review and CI/CD integration.
 
 ---
 
-## GitHub Release Download (Secondary)
+## GitHub Release Download
 
-**Status**: Working. Release assets available for each version.
+**Status:** Working. Release assets available for each version.
 
 ```bash
 # Download and extract to skills directory
-curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v5.49.1.tar.gz | tar xz
-mv loki-mode-5.49.1 ~/.claude/skills/loki-mode
+curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v5.49.4.tar.gz | tar xz
+mv loki-mode-5.49.4 ~/.claude/skills/loki-mode
 ```
 
-**Best for**: Offline or air-gapped environments, pinned version deployments.
+**Best for:** Offline or air-gapped environments, pinned version deployments.
 
 ---
 
-## VS Code Extension (Secondary)
+## VS Code Extension
 
-**Status**: Available on VS Code Marketplace.
+**Status:** Available on VS Code Marketplace.
 
 Search for "Loki Mode" in VS Code Extensions, or:
 
@@ -142,4 +126,4 @@ Search for "Loki Mode" in VS Code Extensions, or:
 code --install-extension asklokesh.loki-mode
 ```
 
-**Best for**: VS Code users who want dashboard integration within their editor.
+**Best for:** VS Code users who want dashboard integration within their editor.

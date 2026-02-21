@@ -9,7 +9,6 @@ const path = require('path');
 const os = require('os');
 
 const homeDir = os.homedir();
-const skillDir = path.join(homeDir, '.claude', 'skills', 'loki-mode');
 const packageDir = path.join(__dirname, '..');
 
 const version = (() => {
@@ -21,73 +20,79 @@ console.log('');
 console.log(`Loki Mode v${version} installed!`);
 console.log('');
 
-// Try to create skill symlink
-try {
-  const skillParent = path.dirname(skillDir);
+// Multi-provider skill targets
+const skillTargets = [
+  { dir: path.join(homeDir, '.claude', 'skills', 'loki-mode'), name: 'Claude Code' },
+  { dir: path.join(homeDir, '.codex', 'skills', 'loki-mode'), name: 'Codex CLI' },
+  { dir: path.join(homeDir, '.gemini', 'skills', 'loki-mode'), name: 'Gemini CLI' },
+];
 
-  if (!fs.existsSync(skillParent)) {
-    fs.mkdirSync(skillParent, { recursive: true });
-  }
+const results = [];
 
-  // Remove existing symlink/directory
-  if (fs.existsSync(skillDir)) {
-    const stats = fs.lstatSync(skillDir);
-    if (stats.isSymbolicLink()) {
-      fs.unlinkSync(skillDir);
-    } else {
-      // Existing real directory (not a symlink) - back it up and replace
-      const backupDir = skillDir + '.backup.' + Date.now();
-      console.log(`[WARNING] Existing non-symlink installation found at ${skillDir}`);
-      console.log(`  Active version: ${skillDir}`);
-      console.log(`  npm version:    ${packageDir}`);
-      console.log('');
-      console.log(`Backing up existing installation to: ${backupDir}`);
-      try {
-        fs.renameSync(skillDir, backupDir);
-        console.log('Backup complete. Creating symlink to npm installation.');
-        console.log('');
-        console.log(`To restore the old installation later:`);
-        console.log(`  rm "${skillDir}" && mv "${backupDir}" "${skillDir}"`);
-        console.log('');
-      } catch (backupErr) {
-        console.log(`Could not back up existing installation: ${backupErr.message}`);
-        console.log('');
-        console.log('To fix manually, remove the existing directory and reinstall:');
-        console.log(`  rm -rf "${skillDir}"`);
-        console.log('  npm install -g loki-mode');
-        console.log('');
+for (const target of skillTargets) {
+  try {
+    const skillParent = path.dirname(target.dir);
+
+    if (!fs.existsSync(skillParent)) {
+      fs.mkdirSync(skillParent, { recursive: true });
+    }
+
+    // Remove existing symlink/directory
+    if (fs.existsSync(target.dir)) {
+      const stats = fs.lstatSync(target.dir);
+      if (stats.isSymbolicLink()) {
+        fs.unlinkSync(target.dir);
+      } else {
+        // Existing real directory (not a symlink) - back it up and replace
+        const backupDir = target.dir + '.backup.' + Date.now();
+        console.log(`[WARNING] Existing non-symlink installation found at ${target.dir}`);
+        console.log(`  Backing up to: ${backupDir}`);
+        try {
+          fs.renameSync(target.dir, backupDir);
+        } catch (backupErr) {
+          console.log(`  Could not back up: ${backupErr.message}`);
+          results.push({ name: target.name, path: target.dir, ok: false });
+          continue;
+        }
       }
     }
-  }
 
-  // Create symlink
-  if (!fs.existsSync(skillDir)) {
-    fs.symlinkSync(packageDir, skillDir);
-    console.log(`Skill installed to: ${skillDir}`);
+    // Create symlink
+    if (!fs.existsSync(target.dir)) {
+      fs.symlinkSync(packageDir, target.dir);
+    }
+    results.push({ name: target.name, path: target.dir, ok: true });
+  } catch (err) {
+    results.push({ name: target.name, path: target.dir, ok: false, error: err.message });
   }
-} catch (err) {
-  console.log(`Could not auto-install skill: ${err.message}`);
+}
+
+// Print summary
+console.log('Skills installed:');
+for (const r of results) {
+  const icon = r.ok ? 'OK' : 'SKIP';
+  const shortPath = r.path.replace(homeDir, '~');
+  if (r.ok) {
+    console.log(`  [${icon}] ${r.name.padEnd(12)} (${shortPath})`);
+  } else {
+    console.log(`  [${icon}] ${r.name.padEnd(12)} (${shortPath}) - ${r.error || 'backup failed'}`);
+  }
+}
+
+if (results.some(r => !r.ok)) {
   console.log('');
-  console.log('Manual installation:');
-  console.log(`  ln -sf "${packageDir}" "${skillDir}"`);
+  console.log('To fix missing symlinks:');
+  console.log(`  loki setup-skill`);
 }
 
 console.log('');
-console.log('Usage:');
-console.log('  loki start [PRD]              - Start with Claude (default)');
-console.log('  loki start --provider codex   - Start with OpenAI Codex');
-console.log('  loki start --provider gemini  - Start with Google Gemini');
-console.log('  loki status                   - Check status');
-console.log('  loki --help                   - Show all commands');
-console.log('');
-console.log('Providers:');
-console.log('  claude  - Full features (parallel agents, Task tool, MCP)');
-console.log('  codex   - Degraded mode (sequential only)');
-console.log('  gemini  - Degraded mode (sequential only)');
-console.log('');
-console.log('Or in Claude Code:');
-console.log('  claude --dangerously-skip-permissions');
-console.log('  Then say: "Loki Mode"');
+console.log('CLI commands:');
+console.log('  loki start ./prd.md              Start with Claude (default)');
+console.log('  loki start --provider codex      Start with OpenAI Codex');
+console.log('  loki start --provider gemini     Start with Google Gemini');
+console.log('  loki status                      Check status');
+console.log('  loki doctor                      Verify installation');
+console.log('  loki --help                      Show all commands');
 console.log('');
 
 // Anonymous install telemetry (fire-and-forget, silent)
@@ -113,6 +118,7 @@ try {
         version: version,
         channel: 'npm',
         node_version: process.version,
+        providers_installed: results.filter(r => r.ok).map(r => r.name).join(','),
       },
     });
     const req = https.request({

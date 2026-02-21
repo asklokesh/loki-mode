@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.49.4] - 2026-02-21
+
+### Added
+- `loki setup-skill` command: creates skill symlinks for all 3 providers (Claude, Codex, Gemini)
+- `loki doctor` now checks skill symlinks for all 3 provider directories
+- Multi-provider postinstall: `bin/postinstall.js` creates symlinks at `~/.claude/skills/`, `~/.codex/skills/`, and `~/.gemini/skills/`
+
+### Changed
+- README installation restructured: npm first, Homebrew second, Quick Start shows all 3 providers
+- Git clone moved from primary README install to `docs/alternative-installations.md`
+- `docs/INSTALLATION.md` restructured to lead with npm/Homebrew
+- `docs/alternative-installations.md` updated: git clone with multi-provider symlink instructions
+- Postinstall output shows per-provider skill status summary
+- Version bumped to v5.49.4 across all version files
+
 ## [5.49.3] - 2026-02-21
 
 ### Added

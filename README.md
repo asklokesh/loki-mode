@@ -11,7 +11,7 @@
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Infrastructure%20Ready-blue)](benchmarks/)
 
-**Current Version: v5.49.3**
+**Current Version: v5.49.4**
 
 **[Autonomi](https://www.autonomi.dev/)** | **[Documentation](https://www.autonomi.dev/docs)** | **[GitHub](https://github.com/asklokesh/loki-mode)**
 
@@ -41,56 +41,67 @@
 
 ## Installation
 
+### npm (Recommended)
+
 ```bash
-git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
+npm install -g loki-mode
 ```
 
-That's it. Claude Code auto-discovers skills in `~/.claude/skills/`.
+Installs the `loki` CLI and automatically sets up the skill for Claude Code, Codex CLI, and Gemini CLI.
 
-### Use It
+### Homebrew
 
 ```bash
+brew tap asklokesh/tap && brew install loki-mode
+```
+
+Installs the `loki` CLI. To also install the skill for interactive use:
+
+```bash
+loki setup-skill
+```
+
+### Quick Start
+
+```bash
+# CLI mode (works with any provider)
+loki start ./prd.md
+loki start ./prd.md --provider codex
+loki start ./prd.md --provider gemini
+
+# Interactive mode (inside your coding agent)
 claude --dangerously-skip-permissions
 # Then say: "Loki Mode with PRD at ./my-prd.md"
+
+# Or in Codex CLI:
+codex
+# Then say: "Use Loki Mode with PRD at ./my-prd.md"
+
+# Or in Gemini CLI:
+gemini
+# Then say: "Use Loki Mode with PRD at ./my-prd.md"
 ```
+
+### Verify Installation
+
+```bash
+loki --version    # Should print 5.49.4
+loki doctor       # Check skill symlinks and provider availability
+```
+
+### Other Methods
+
+Git clone, Docker, GitHub Action, and VS Code Extension are also available. See [docs/alternative-installations.md](docs/alternative-installations.md).
 
 ### Update
 
 ```bash
-cd ~/.claude/skills/loki-mode && git pull
+npm update -g loki-mode    # npm
+brew upgrade loki-mode     # Homebrew
 ```
-
-### Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| `SKILL.md` not found | Verify: `ls ~/.claude/skills/loki-mode/SKILL.md` |
-| Claude doesn't recognize "Loki Mode" | Restart Claude Code after cloning |
-| Permission denied on clone | Check SSH keys or use HTTPS URL above |
-
-### Other Installation Methods
-
-Also available via **npm**, **Homebrew**, **Docker**, **GitHub Action**, and **VS Code Extension**. See [docs/alternative-installations.md](docs/alternative-installations.md) for details and limitations of each method.
 
 ### Multi-Provider Support (v5.0.0)
 
-Loki Mode supports three AI providers:
-
-```bash
-# Claude Code (default - full features)
-loki start --provider claude ./my-prd.md
-
-# OpenAI Codex CLI (degraded mode)
-loki start --provider codex ./my-prd.md
-
-# Google Gemini CLI (degraded mode)
-loki start --provider gemini ./my-prd.md
-
-# Or via environment variable
-LOKI_PROVIDER=codex loki start ./my-prd.md
-```
-
-**Provider Comparison:**
 | Provider | Features | Parallel Agents | Task Tool |
 |----------|----------|-----------------|-----------|
 | Claude | Full | Yes (10+) | Yes |
