@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.49.2] - 2026-02-21
+
+### Added
+- Dashboard honest process states: `_resolve_process_state()` returns 6 states (RUNNING, STALE, COMPLETED, FAILED, CRASHED, UNKNOWN) instead of simple "alive"/"dead"
+- Dashboard `/api/health/processes` now includes timestamps: `started`, `last_heartbeat`, `heartbeat_age_seconds`, `duration_seconds`, `checked_at`
+- Dashboard PID registry uses file mtime as heartbeat fallback when no explicit heartbeat field
+- Frontend `STATUS_CONFIG`: added stale (yellow), completed (muted), failed (red), unknown (muted) states
+- Gate #8 enhancement: internal vs external mock classification with ratio threshold (Pattern 6)
+- Gate #9 enhancement: assertion value mutation detection via `git diff` -- detects commits that change assertion expected values alongside implementation code (`--commit HASH` flag)
+- README "Current Limitations" section: honest table covering 9 areas (code gen, deployment, testing, business ops, multi-provider, memory, security, dashboard, benchmarks)
+- `docs/alternative-installations.md`: honest documentation of all secondary install methods with status labels and limitations
+
+### Changed
+- Quality gate count updated from 7 to 9 across all documentation (README, CLAUDE.md, DOCKER_README.md, CONSTITUTION.md, skills/00-index.md, quality-gates.md, artifacts.md, cursor-comparison.md, COMPARISON.md, COMPETITIVE-ANALYSIS.md)
+- `references/core-workflow.md`: "ZERO human intervention" replaced with "minimal human intervention"
+- Version bumped to v5.49.2 across all version files
+
 ## [5.49.1] - 2026-02-21
 
 ### Added
