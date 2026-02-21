@@ -9,6 +9,7 @@ class SSEStream extends EventEmitter {
   /**
    * @param {object} [opts]
    * @param {object} [opts.res] - HTTP response object to write to
+   * @param {number} [opts.maxBufferSize] - Max buffered events before dropping oldest (default 1000)
    */
   constructor(opts) {
     super();
@@ -16,6 +17,7 @@ class SSEStream extends EventEmitter {
     this._res = opts.res || null;
     this._closed = false;
     this._buffer = [];
+    this._maxBufferSize = opts.maxBufferSize || 1000;
   }
 
   /**
@@ -104,6 +106,9 @@ class SSEStream extends EventEmitter {
       this._writeRaw(msg);
     } else {
       this._buffer.push(msg);
+      while (this._buffer.length > this._maxBufferSize) {
+        this._buffer.shift();
+      }
     }
   }
 

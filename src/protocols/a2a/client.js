@@ -13,11 +13,13 @@ class A2AClient {
    * @param {object} [opts]
    * @param {string} [opts.authToken] - Bearer token for authentication
    * @param {number} [opts.timeoutMs] - Request timeout in ms (default 30000)
+   * @param {number} [opts.maxResponseSize] - Max response body size in bytes (default 10MB)
    */
   constructor(opts) {
     opts = opts || {};
     this._authToken = opts.authToken || null;
     this._timeoutMs = opts.timeoutMs || 30000;
+    this._maxResponseSize = opts.maxResponseSize || 10 * 1024 * 1024;
   }
 
   /**
@@ -115,9 +117,19 @@ class A2AClient {
         headers: headers,
         timeout: self._timeoutMs,
       };
+      var maxSize = self._maxResponseSize;
       var req = mod.request(opts, function (res) {
         var chunks = [];
-        res.on('data', function (c) { chunks.push(c); });
+        var totalSize = 0;
+        res.on('data', function (c) {
+          totalSize += c.length;
+          if (totalSize > maxSize) {
+            req.destroy();
+            reject(new Error('Response exceeded maxResponseSize (' + maxSize + ' bytes)'));
+            return;
+          }
+          chunks.push(c);
+        });
         res.on('end', function () {
           var raw = Buffer.concat(chunks).toString();
           if (res.statusCode >= 400) {

@@ -16,12 +16,19 @@ var VALID_TRANSITIONS = {
 
 /**
  * A2A Task Manager - manages task lifecycle per A2A spec.
+ *
+ * Note: Authentication and authorization are the integrator's responsibility.
+ * This module provides the A2A protocol primitives (task lifecycle, state
+ * management, event emission) but does not include an auth layer. Integrators
+ * should add middleware or guards at the transport/HTTP layer before invoking
+ * TaskManager methods.
  */
 class TaskManager extends EventEmitter {
   /**
    * @param {object} [opts]
    * @param {number} [opts.maxTasks] - Maximum concurrent tasks
    * @param {number} [opts.expiryMs] - Task expiry in ms
+   * @param {number} [opts.maxInputSize] - Max combined input+metadata size in bytes (default 1MB)
    */
   constructor(opts) {
     super();
@@ -29,6 +36,7 @@ class TaskManager extends EventEmitter {
     this._tasks = new Map();
     this._maxTasks = opts.maxTasks || MAX_TASKS;
     this._expiryMs = opts.expiryMs || DEFAULT_EXPIRY_MS;
+    this._maxInputSize = opts.maxInputSize || 1 * 1024 * 1024;
   }
 
   /**
@@ -42,6 +50,12 @@ class TaskManager extends EventEmitter {
   createTask(params) {
     if (!params || !params.skill) {
       throw new Error('Task requires a skill parameter');
+    }
+    var inputStr = params.input ? JSON.stringify(params.input) : '';
+    var metaStr = params.metadata ? JSON.stringify(params.metadata) : '';
+    var combinedSize = Buffer.byteLength(inputStr) + Buffer.byteLength(metaStr);
+    if (combinedSize > this._maxInputSize) {
+      throw new Error('Input size (' + combinedSize + ' bytes) exceeds maxInputSize (' + this._maxInputSize + ' bytes)');
     }
     this._pruneExpired();
     if (this._tasks.size >= this._maxTasks) {
