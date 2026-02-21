@@ -473,60 +473,8 @@ Go get coffee. It'll be deployed when you get back.
 
 ## Architecture
 
-```mermaid
-graph TB
-    PRD["PRD Document"] --> REASON
+<img width="6961" height="6302" alt="architecture" src="https://github.com/user-attachments/assets/d9954dd2-5cb6-4b1c-8cd2-67f68141dffa" />
 
-    subgraph RARVC["RARV+C Cycle"]
-        direction TB
-        REASON["1. Reason"] --> ACT["2. Act"]
-        ACT --> REFLECT["3. Reflect"]
-        REFLECT --> VERIFY["4. Verify"]
-        VERIFY -->|"pass"| COMPOUND["5. Compound"]
-        VERIFY -->|"fail"| REASON
-        COMPOUND --> REASON
-    end
-
-    subgraph PROVIDERS["Provider Layer"]
-        CLAUDE["Claude Code<br/>(full features)"]
-        CODEX["Codex CLI<br/>(degraded)"]
-        GEMINI["Gemini CLI<br/>(degraded)"]
-    end
-
-    ACT --> PROVIDERS
-
-    subgraph AGENTS["Agent Swarms (41 types)"]
-        ENG["Engineering (8)"]
-        OPS["Operations (8)"]
-        BIZ["Business (8)"]
-        DATA["Data (3)"]
-        PROD["Product (3)"]
-        GROWTH["Growth (4)"]
-        REVIEW["Review (3)"]
-        ORCH["Orchestration (4)"]
-    end
-
-    PROVIDERS --> AGENTS
-
-    subgraph INFRA["Infrastructure"]
-        DASHBOARD["Dashboard<br/>(FastAPI + Web UI)<br/>TLS/HTTPS, OIDC, RBAC"]
-        MEMORY["Memory System<br/>(Episodic/Semantic/Procedural)"]
-        COUNCIL["Completion Council<br/>(3-member voting)"]
-        QUEUE["Task Queue<br/>(.loki/queue/)"]
-        METRICS["Metrics Export<br/>(Prometheus/OpenMetrics)"]
-        AUDIT["Audit Trail<br/>(SHA-256 integrity chain)"]
-    end
-
-    AGENTS --> QUEUE
-    VERIFY --> COUNCIL
-    REFLECT --> MEMORY
-    COMPOUND --> MEMORY
-    AGENTS --> AUDIT
-    DASHBOARD -.->|"reads"| QUEUE
-    DASHBOARD -.->|"reads"| MEMORY
-    DASHBOARD -.->|"reads"| AUDIT
-    DASHBOARD -.->|"exposes"| METRICS
-```
 
 **Key components:**
 - **RARV+C Cycle** -- Reason, Act, Reflect, Verify, Compound. Every iteration follows this loop. Failed verification triggers retry from Reason.
