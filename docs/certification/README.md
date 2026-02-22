@@ -77,4 +77,4 @@ This certification program is **free and open source**, released under the same 
 
 ## Version
 
-This certification is based on **Loki Mode v5.51.0**. Content may be updated as new versions are released.
+This certification is based on **Loki Mode v5.52.0**. Content may be updated as new versions are released.

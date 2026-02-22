@@ -5,6 +5,43 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.52.0] - 2026-02-21
+
+### Added - Infrastructure Deployment (P2-1, P2-2, P2-3)
+- Helm chart: controlplane + worker deployments, HPA, PVC, PDB, RBAC, NetworkPolicy, Ingress
+- Production and HA value overlays with pod anti-affinity and topology spread
+- Docker Compose production stack with optional OTEL Collector and Jaeger profiles
+- Terraform modules: AWS (EKS/S3/IRSA/ALB), Azure (AKS/Blob/Managed Identity), GCP (GKE/GCS/Workload Identity)
+- Cloud deployment examples for all 3 providers with tfvars templates
+
+### Added - Adaptive Agent Composition (P2-4)
+- PRD classifier: rule-based keyword matching across 7 feature categories, 4 complexity tiers
+- Swarm composer: feature-driven agent team assembly from registry, priority-based cap
+- Mid-project adjuster: quality signal monitoring with 4 decision rules (gate failures, coverage, review rate, trimming)
+- Agent performance tracker: running averages, trend computation, atomic JSON persistence
+
+### Added - Plugin Architecture (P2-5)
+- YAML/JSON plugin schemas for 4 types: agent, quality gate, integration, MCP tool
+- Schema validator with security checks (shell injection, template injection, HTTPS enforcement)
+- Plugin loader with zero-dependency YAML parser, file discovery, hot-reload via fs.watch
+- Gate plugin: subprocess execution with timeout, exit code pass/fail mapping
+- MCP plugin: POSIX single-quote parameter escaping, tool definition generation
+- Integration plugin: template rendering with JSON-safe escaping, webhook dispatch
+
+### Added - Certification Program (P2-6)
+- 5 training modules: core concepts, enterprise features, advanced patterns, production deployment, troubleshooting
+- Each module includes lesson, quiz, and hands-on lab
+- 3 sample PRDs (todo app, SaaS dashboard, microservices platform) for lab exercises
+- 50-question certification exam with balanced answer distribution
+
+### Security
+- Helm: PodDisruptionBudget for zero-downtime upgrades, automountServiceAccountToken disabled by default
+- Helm: scoped ALB controller IAM policy (replaces ElasticLoadBalancingFullAccess)
+- Plugins: shell injection regex catches redirection operators and newlines
+- Plugins: MCP parameter sanitization uses POSIX single-quote escaping instead of character stripping
+- Plugins: hot-reload validates new config before unregistering old (fail-safe)
+- Plugins: IntegrationPlugin JSON-escapes template values to prevent payload corruption
+
 ## [5.51.0] - 2026-02-22
 
 ### Added - Enterprise Wiring (P0.5)

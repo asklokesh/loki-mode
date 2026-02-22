@@ -11,7 +11,7 @@
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Infrastructure%20Ready-blue)](benchmarks/)
 
-**Current Version: v5.51.0**
+**Current Version: v5.52.0**
 
 **[Autonomi](https://www.autonomi.dev/)** | **[Documentation](https://www.autonomi.dev/docs)** | **[GitHub](https://github.com/asklokesh/loki-mode)**
 
@@ -85,7 +85,7 @@ gemini
 ### Verify Installation
 
 ```bash
-loki --version    # Should print 5.51.0
+loki --version    # Should print 5.52.0
 loki doctor       # Check skill symlinks and provider availability
 ```
 

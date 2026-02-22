@@ -28,7 +28,7 @@ ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
 
 ## Docker
 
-**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `5.51.0`).
+**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `5.52.0`).
 
 ```bash
 docker pull asklokesh/loki-mode:latest
@@ -108,8 +108,8 @@ jobs:
 
 ```bash
 # Download and extract to skills directory
-curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v5.51.0.tar.gz | tar xz
-mv loki-mode-5.51.0 ~/.claude/skills/loki-mode
+curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v5.52.0.tar.gz | tar xz
+mv loki-mode-5.52.0 ~/.claude/skills/loki-mode
 ```
 
 **Best for:** Offline or air-gapped environments, pinned version deployments.

@@ -20,7 +20,7 @@ The Docker image is based on Ubuntu 24.04 and includes Node.js 20 LTS, Python 3,
 
 ```bash
 # Pull the image
-docker pull asklokesh/loki-mode:5.51.0
+docker pull asklokesh/loki-mode:5.52.0
 
 # Run interactively with workspace mounted
 docker run -it -v $(pwd):/workspace asklokesh/loki-mode:latest
