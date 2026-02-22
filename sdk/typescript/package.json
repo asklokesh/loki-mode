@@ -1,0 +1,20 @@
+{
+  "name": "@autonomi/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript/Node.js SDK for the Autonomi Control Plane API",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "node --test tests/client.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "keywords": [
+    "autonomi",
+    "loki-mode",
+    "sdk",
+    "api-client"
+  ]
+}
