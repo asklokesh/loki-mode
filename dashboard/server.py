@@ -354,6 +354,10 @@ app.add_middleware(
 
 # Static file serving is configured at the end of the file (after all API routes)
 
+# Mount V2 API router
+from .api_v2 import router as api_v2_router
+app.include_router(api_v2_router)
+
 
 # Health endpoint
 @app.get("/health")
