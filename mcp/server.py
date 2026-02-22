@@ -980,6 +980,236 @@ async def get_pending_tasks() -> str:
 
 
 # ============================================================
+# ENTERPRISE TOOLS (P0-1)
+# ============================================================
+
+@mcp.tool()
+async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
+    """
+    Start a new Loki Mode project from a PRD.
+
+    Args:
+        prd_content: Inline PRD content (takes priority over prd_path)
+        prd_path: Path to a PRD file on disk
+
+    Returns:
+        JSON with project initialization status
+    """
+    _emit_tool_event_async('loki_start_project', 'start', parameters={'prd_path': prd_path})
+    try:
+        content = prd_content
+        if not content and prd_path:
+            resolved = safe_path_join('.', prd_path)
+            if os.path.exists(resolved):
+                with safe_open(resolved, 'r') as f:
+                    content = f.read()
+            else:
+                return json.dumps({"error": f"PRD file not found: {prd_path}"})
+
+        if not content:
+            return json.dumps({"error": "No PRD content or path provided"})
+
+        # Initialize project state
+        os.makedirs('.loki/state', exist_ok=True)
+        project = {
+            "status": "initialized",
+            "prd_length": len(content),
+            "prd_path": prd_path or "inline",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        state_path = safe_path_join('.loki', 'state', 'project.json')
+        with safe_open(state_path, 'w') as f:
+            json.dump(project, f, indent=2)
+
+        _emit_tool_event_async('loki_start_project', 'complete', result_status='success')
+        return json.dumps({"success": True, **project})
+    except PathTraversalError as e:
+        return json.dumps({"error": f"Access denied: {e}"})
+    except Exception as e:
+        logger.error(f"Start project failed: {e}")
+        _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_project_status() -> str:
+    """
+    Get the current project status including RARV cycle state, agent activity, and task progress.
+
+    Returns:
+        JSON with project status, phase, iteration, agents, and task counts
+    """
+    _emit_tool_event_async('loki_project_status', 'start', parameters={})
+    try:
+        status = {}
+
+        # Read orchestrator state
+        orch_path = safe_path_join('.loki', 'state', 'orchestrator.json')
+        if os.path.exists(orch_path):
+            with safe_open(orch_path, 'r') as f:
+                status["orchestrator"] = json.load(f)
+
+        # Read project state
+        proj_path = safe_path_join('.loki', 'state', 'project.json')
+        if os.path.exists(proj_path):
+            with safe_open(proj_path, 'r') as f:
+                status["project"] = json.load(f)
+
+        # Read task queue summary
+        queue_path = safe_path_join('.loki', 'state', 'task-queue.json')
+        if os.path.exists(queue_path):
+            with safe_open(queue_path, 'r') as f:
+                queue = json.load(f)
+                tasks = queue.get("tasks", [])
+                status["tasks"] = {
+                    "total": len(tasks),
+                    "pending": sum(1 for t in tasks if t.get("status") == "pending"),
+                    "in_progress": sum(1 for t in tasks if t.get("status") == "in-progress"),
+                    "completed": sum(1 for t in tasks if t.get("status") == "completed"),
+                }
+
+        if not status:
+            status = {"status": "no_project", "message": "No active project found"}
+
+        _emit_tool_event_async('loki_project_status', 'complete', result_status='success')
+        return json.dumps(status, default=str)
+    except PathTraversalError:
+        return json.dumps({"error": "Access denied"})
+    except Exception as e:
+        logger.error(f"Project status failed: {e}")
+        _emit_tool_event_async('loki_project_status', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_agent_metrics() -> str:
+    """
+    Get agent metrics including token usage, task completion rates, and timing.
+
+    Returns:
+        JSON with per-agent metrics and aggregates
+    """
+    _emit_tool_event_async('loki_agent_metrics', 'start', parameters={})
+    try:
+        metrics = {"agents": [], "aggregate": {}}
+
+        # Read efficiency metrics
+        metrics_dir = safe_path_join('.loki', 'metrics', 'efficiency')
+        if os.path.isdir(metrics_dir):
+            for fname in os.listdir(metrics_dir):
+                if fname.endswith('.json'):
+                    fpath = os.path.join(metrics_dir, fname)
+                    with open(fpath, 'r') as f:
+                        metrics["agents"].append(json.load(f))
+
+        # Read token economics
+        econ_path = safe_path_join('.loki', 'metrics', 'token-economics.json')
+        if os.path.exists(econ_path):
+            with safe_open(econ_path, 'r') as f:
+                metrics["token_economics"] = json.load(f)
+
+        metrics["agent_count"] = len(metrics["agents"])
+        _emit_tool_event_async('loki_agent_metrics', 'complete', result_status='success')
+        return json.dumps(metrics, default=str)
+    except PathTraversalError:
+        return json.dumps({"error": "Access denied"})
+    except Exception as e:
+        logger.error(f"Agent metrics failed: {e}")
+        _emit_tool_event_async('loki_agent_metrics', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
+    """
+    List available checkpoints or restore project state from a specific checkpoint.
+
+    Args:
+        checkpoint_id: ID of checkpoint to restore (empty = list all)
+
+    Returns:
+        JSON with available checkpoints or restoration result
+    """
+    _emit_tool_event_async('loki_checkpoint_restore', 'start', parameters={'checkpoint_id': checkpoint_id})
+    try:
+        cp_dir = safe_path_join('.loki', 'state', 'checkpoints')
+        if not os.path.isdir(cp_dir):
+            return json.dumps({"checkpoints": [], "message": "No checkpoints directory"})
+
+        checkpoints = []
+        for fname in sorted(os.listdir(cp_dir)):
+            if fname.endswith('.json'):
+                fpath = os.path.join(cp_dir, fname)
+                with open(fpath, 'r') as f:
+                    cp = json.load(f)
+                    cp["id"] = fname.replace('.json', '')
+                    checkpoints.append(cp)
+
+        if not checkpoint_id:
+            _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='success')
+            return json.dumps({"checkpoints": checkpoints, "count": len(checkpoints)})
+
+        # Find and restore specific checkpoint
+        target = next((c for c in checkpoints if c["id"] == checkpoint_id), None)
+        if not target:
+            return json.dumps({"error": f"Checkpoint not found: {checkpoint_id}"})
+
+        # Write checkpoint state as current state
+        state_path = safe_path_join('.loki', 'state', 'orchestrator.json')
+        with safe_open(state_path, 'w') as f:
+            json.dump(target, f, indent=2)
+
+        _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='success')
+        return json.dumps({"restored": True, "checkpoint_id": checkpoint_id})
+    except PathTraversalError:
+        return json.dumps({"error": "Access denied"})
+    except Exception as e:
+        logger.error(f"Checkpoint restore failed: {e}")
+        _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_quality_report() -> str:
+    """
+    Get quality gate results including blind review scores, council verdicts, and test coverage.
+
+    Returns:
+        JSON with quality gate status, review results, and coverage metrics
+    """
+    _emit_tool_event_async('loki_quality_report', 'start', parameters={})
+    try:
+        report = {"gates": [], "council": None, "coverage": None}
+
+        # Read quality gate results
+        gates_path = safe_path_join('.loki', 'state', 'quality-gates.json')
+        if os.path.exists(gates_path):
+            with safe_open(gates_path, 'r') as f:
+                report["gates"] = json.load(f)
+
+        # Read council results
+        council_path = safe_path_join('.loki', 'state', 'council-results.json')
+        if os.path.exists(council_path):
+            with safe_open(council_path, 'r') as f:
+                report["council"] = json.load(f)
+
+        # Read coverage
+        coverage_path = safe_path_join('.loki', 'metrics', 'coverage.json')
+        if os.path.exists(coverage_path):
+            with safe_open(coverage_path, 'r') as f:
+                report["coverage"] = json.load(f)
+
+        _emit_tool_event_async('loki_quality_report', 'complete', result_status='success')
+        return json.dumps(report, default=str)
+    except PathTraversalError:
+        return json.dumps({"error": "Access denied"})
+    except Exception as e:
+        logger.error(f"Quality report failed: {e}")
+        _emit_tool_event_async('loki_quality_report', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================
 # PROMPTS - Pre-built prompt templates
 # ============================================================
 
