@@ -46,7 +46,7 @@ fi
 # Test 2: Wrapper script has correct shebang
 log_test "Wrapper script has correct shebang"
 SHEBANG=$(head -1 "$WRAPPER_SCRIPT")
-if [ "$SHEBANG" = "#!/bin/bash" ]; then
+if [ "$SHEBANG" = "#!/bin/bash" ] || [ "$SHEBANG" = "#!/usr/bin/env bash" ]; then
     log_pass "Correct shebang"
 else
     log_fail "Incorrect shebang: $SHEBANG"

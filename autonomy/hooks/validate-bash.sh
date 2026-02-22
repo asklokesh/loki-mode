@@ -39,6 +39,9 @@ BLOCKED_PATTERNS=(
     "rm .*\.loki/session\.lock"
     "> \.loki/council/"
     "> \.loki/config\.yaml"
+    # Fork bomb patterns
+    ":\(\)\{.*\|.*&"
+    ":\(\) *\{.*\|.*&"
 )
 
 # Safe path patterns that override blocked pattern matches
@@ -59,7 +62,7 @@ for pattern in "${BLOCKED_PATTERNS[@]}"; do
             fi
         done
         "$is_safe" && continue
-        printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: potentially dangerous command pattern detected"}}'
+        printf '%s' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Blocked: potentially dangerous command pattern detected"}}'
         exit 2
     fi
 done
@@ -71,6 +74,6 @@ printf '%s' "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"command\":$(ech
 echo >> "$LOG_DIR/bash-audit.jsonl"
 
 # Allow command
-printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+printf '%s' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
 
 exit 0
