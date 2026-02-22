@@ -83,17 +83,8 @@ The system classifies your PRD complexity, assembles an agent team, and runs RAR
 
 ## Architecture
 
-```mermaid
-graph LR
-    A[PRD] --> B[Classifier]
-    B --> C["Agent Team<br/>41 types, 8 swarms"]
-    C --> D[RARV Cycle]
-    D --> E["Quality Gates<br/>9 automated checks"]
-    E -->|Pass| F[Output]
-    E -->|Fail| D
-    D <--> G["Memory System<br/>3-tier + Knowledge Graph"]
-    D <--> H["Enterprise Layer<br/>OTEL - Policy - Audit"]
-```
+<img width="5989" height="2875" alt="image" src="https://github.com/user-attachments/assets/c9798120-9587-4847-8e8d-8f421f984dfc" />
+
 
 *Fallback: PRD -> Classifier -> Agent Team (41 types, 8 swarms) -> RARV Cycle <-> Memory System -> Quality Gates (pass/fail loop) -> Output*
 
