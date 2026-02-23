@@ -1,15 +1,36 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "autonomi"
 version = "0.1.0"
-description = "Python SDK for Loki Mode Control Plane API"
+description = "Python SDK for the Loki Mode Control Plane API"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 dependencies = []
+authors = [
+    { name = "Loki Mode Contributors" },
+]
+keywords = ["autonomi", "loki-mode", "agents", "sdk", "control-plane"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/asklokesh/loki-mode"
+Repository = "https://github.com/asklokesh/loki-mode"
+Issues = "https://github.com/asklokesh/loki-mode/issues"
+Documentation = "https://www.autonomi.dev/"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
