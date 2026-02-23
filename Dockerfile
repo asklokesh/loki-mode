@@ -5,7 +5,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="5.52.2"
+LABEL version="5.52.3"
 LABEL description="Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI"
 LABEL url="https://www.autonomi.dev/"
 
