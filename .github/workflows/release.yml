@@ -278,6 +278,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Sync version from VERSION file
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          echo "Syncing Python SDK version to $VERSION"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" sdk/python/pyproject.toml
+
       - name: Build Python SDK
         working-directory: sdk/python
         run: |
@@ -306,6 +312,12 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Sync version from VERSION file
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          echo "Syncing TypeScript SDK version to $VERSION"
+          npm --prefix sdk/typescript pkg set version="$VERSION"
 
       - name: Build TypeScript SDK
         working-directory: sdk/typescript
