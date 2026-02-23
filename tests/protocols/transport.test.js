@@ -214,7 +214,7 @@ describe('SSETransport', () => {
 
   it('should respond to health check', async () => {
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp/health',
       method: 'GET'
@@ -232,7 +232,7 @@ describe('SSETransport', () => {
       id: 1
     });
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'POST',
@@ -253,7 +253,7 @@ describe('SSETransport', () => {
       id: 2
     });
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'POST',
@@ -278,7 +278,7 @@ describe('SSETransport', () => {
       id: 3
     });
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'POST',
@@ -294,7 +294,7 @@ describe('SSETransport', () => {
 
   it('should return 400 for invalid JSON', async () => {
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'POST',
@@ -309,7 +309,7 @@ describe('SSETransport', () => {
 
   it('should return 404 for unknown paths', async () => {
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/unknown',
       method: 'GET'
@@ -319,7 +319,7 @@ describe('SSETransport', () => {
 
   it('should handle CORS preflight', async () => {
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'OPTIONS'
@@ -342,7 +342,7 @@ describe('SSETransport', () => {
     let errorCode = null;
     try {
       const res = await httpRequest({
-        hostname: 'localhost',
+        hostname: '127.0.0.1',
         port: port,
         path: '/mcp',
         method: 'POST',
@@ -367,7 +367,7 @@ describe('SSETransport', () => {
       { jsonrpc: '2.0', method: 'ping', id: 11 }
     ]);
     const res = await httpRequest({
-      hostname: 'localhost',
+      hostname: '127.0.0.1',
       port: port,
       path: '/mcp',
       method: 'POST',
@@ -382,7 +382,7 @@ describe('SSETransport', () => {
   it('should establish SSE connection', async () => {
     return new Promise((resolve, reject) => {
       const req = http.get({
-        hostname: 'localhost',
+        hostname: '127.0.0.1',
         port: port,
         path: '/mcp/events'
       }, (res) => {

@@ -117,6 +117,10 @@ function cleanupTmpDir() {
   } catch (_) {}
 }
 
+// Keep event loop alive so the Node test runner doesn't cancel pending tests
+// when all MCPClient/CircuitBreaker timers are .unref()'d.
+var keepAlive = setInterval(function() {}, 30000);
+
 describe('MCPClientManager', function() {
   beforeEach(function() { createMockServerScript(); activeManagers = []; });
   afterEach(async function() { await forceCleanupManagers(); removeMockServerScript(); cleanupTmpDir(); });
@@ -327,3 +331,6 @@ describe('MCPClientManager', function() {
     });
   });
 });
+
+// Clear the keep-alive interval after all tests complete
+test.after(function() { clearInterval(keepAlive); });
