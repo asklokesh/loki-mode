@@ -25,7 +25,7 @@
 | 7 | Dashboard /openapi.json | WORKS | OpenAPI spec served correctly |
 | 8 | API v2 /tenants | WORKS | Endpoint responds (unblocked by dashboard fix) |
 | 9 | API v2 /runs | WORKS | Endpoint responds (unblocked by dashboard fix) |
-| 10 | A2A Agent Card | WORKS | Route exists and responds (unblocked by dashboard fix) |
+| 10 | A2A Agent Card | WORKS | **Corrected 2026-02-22**: Originally marked WORKS assuming dashboard fix unblocked it. Smoke test revealed 404 -- route was never implemented. Route added to `dashboard/server.py`, verified: returns full agent card JSON with name, version, capabilities (41 agents, 8 swarms, 9 quality gates), protocols (a2a, mcp), endpoints, enterprise flags. |
 | 11 | WebSocket | WORKS | WebSocket endpoint functional (unblocked by dashboard fix) |
 | 12 | MCP server import | KNOWN_LIMITATION | `mcp/server.py` has 15 registered tools. The local `mcp/` package intentionally shadows the pip `mcp` SDK namespace. `mcp/__init__.py` now gracefully handles the case where the pip SDK is not installed (catches SystemExit, warns instead of crashing). The server uses `importlib.util` to load FastMCP directly from site-packages, bypassing the namespace conflict. Requires `pip install mcp` for full server functionality. |
 | 13 | MCP enterprise tools exist | WORKS | **Fixed in v5.52.1**: Added 5 enterprise tools to `mcp/server.py`: `loki_start_project`, `loki_project_status`, `loki_agent_metrics`, `loki_checkpoint_restore`, `loki_quality_report`. Now 15 tools total. |
@@ -97,6 +97,18 @@
 3. **Align plugin schema phases with RARV** -- Add REASON/ACT/REFLECT/VERIFY to quality gate phase enum.
 4. **Fix class name documentation** -- Update CHANGELOG/docs to use actual exported names.
 5. **ShellCheck style warnings** -- 16 shellcheck warnings across scripts (non-blocking, style only).
+
+---
+
+## Audit Integrity Notes
+
+### Correction: Item #10 (A2A Agent Card)
+Previously marked WORKS after v5.52.1 dashboard fix. Smoke test on 2026-02-22
+revealed /.well-known/agent.json returned 404. The dashboard fix (secrets.py
+rename) unblocked the server but did not create the A2A route. Route implemented
+and verified in dashboard/server.py. This correction demonstrates the audit
+process working as intended: claims tested, false positives caught, corrections
+transparent.
 
 ---
 

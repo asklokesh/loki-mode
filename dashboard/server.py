@@ -366,6 +366,55 @@ async def health_check() -> dict[str, str]:
     return {"status": "healthy", "service": "loki-dashboard"}
 
 
+# A2A Agent Card - advertises agent capabilities per the A2A spec
+@app.get("/.well-known/agent.json", include_in_schema=False)
+async def agent_card() -> dict:
+    """A2A Agent Card served at /.well-known/agent.json."""
+    return {
+        "name": "Loki Mode",
+        "version": _version,
+        "description": "Multi-agent autonomous system by Autonomi. Takes PRD to fully deployed product with minimal human intervention.",
+        "url": "https://www.autonomi.dev/",
+        "capabilities": {
+            "agents": 41,
+            "swarms": 8,
+            "quality_gates": 9,
+            "providers": ["claude", "codex", "gemini"],
+            "streaming": True,
+            "pushNotifications": False,
+            "stateTransitionHistory": True,
+        },
+        "skills": [
+            {"id": "prd-to-product", "name": "PRD to Product", "description": "Takes a PRD and builds a fully deployed product"},
+            {"id": "code-review", "name": "Code Review", "description": "Multi-reviewer parallel code review with anti-sycophancy"},
+            {"id": "testing", "name": "Testing", "description": "Comprehensive test generation and execution"},
+            {"id": "deployment", "name": "Deployment", "description": "Production deployment with verification"},
+        ],
+        "protocols": {
+            "a2a": "0.1",
+            "mcp": "1.0",
+        },
+        "endpoints": {
+            "health": "/health",
+            "status": "/api/status",
+            "openapi": "/openapi.json",
+            "metrics": "/metrics",
+            "websocket": "/ws",
+        },
+        "enterprise": {
+            "multi_tenant": True,
+            "rbac": True,
+            "audit_log": True,
+            "sso": False,
+        },
+        "authentication": {
+            "schemes": ["bearer", "api-key"],
+        },
+        "defaultInputModes": ["text/plain", "application/json"],
+        "defaultOutputModes": ["text/plain", "application/json"],
+    }
+
+
 # Status endpoint - reads from .loki/ flat files (primary) + DB (fallback)
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:
