@@ -70,6 +70,7 @@ function removeMockServerScript() {
 }
 
 var tmpDir;
+var activeManagers = [];
 
 // Create temp config dir inside cwd so configDir validation passes.
 function createTmpConfig(content) {
@@ -84,6 +85,27 @@ function createTmpConfig(content) {
   return tmpDir;
 }
 
+function trackManager(manager) {
+  activeManagers.push(manager);
+  return manager;
+}
+
+// Force-kill all child processes from tracked managers to prevent lingering handles
+async function forceCleanupManagers() {
+  for (var i = 0; i < activeManagers.length; i++) {
+    var m = activeManagers[i];
+    try {
+      for (var client of m._clients.values()) {
+        if (client._process) {
+          try { client._process.kill('SIGKILL'); } catch (_) {}
+        }
+      }
+      await m.shutdown();
+    } catch (_) {}
+  }
+  activeManagers = [];
+}
+
 function cleanupTmpDir() {
   if (tmpDir) {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
@@ -96,8 +118,8 @@ function cleanupTmpDir() {
 }
 
 describe('MCPClientManager', function() {
-  beforeEach(function() { createMockServerScript(); });
-  afterEach(async function() { removeMockServerScript(); cleanupTmpDir(); });
+  beforeEach(function() { createMockServerScript(); activeManagers = []; });
+  afterEach(async function() { await forceCleanupManagers(); removeMockServerScript(); cleanupTmpDir(); });
 
   describe('configDir validation', function() {
     it('rejects configDir pointing outside project root', function() {
@@ -131,7 +153,7 @@ describe('MCPClientManager', function() {
   describe('no config = no-op', function() {
     it('returns empty tools when no config exists', async function() {
       var nonExistentDir = path.join(process.cwd(), '.loki-no-config-' + Date.now());
-      var manager = new MCPClientManager({ configDir: nonExistentDir });
+      var manager = trackManager(new MCPClientManager({ configDir: nonExistentDir }));
       var tools = await manager.discoverTools();
       assert.deepEqual(tools, []);
       assert.equal(manager.initialized, true);
@@ -141,7 +163,7 @@ describe('MCPClientManager', function() {
 
     it('returns empty tools when config has no mcp_servers', async function() {
       var dir = createTmpConfig({ other_key: 'value' });
-      var manager = new MCPClientManager({ configDir: dir });
+      var manager = trackManager(new MCPClientManager({ configDir: dir }));
       var tools = await manager.discoverTools();
       assert.deepEqual(tools, []);
       await manager.shutdown();
@@ -149,7 +171,7 @@ describe('MCPClientManager', function() {
 
     it('returns empty tools when mcp_servers is empty', async function() {
       var dir = createTmpConfig({ mcp_servers: [] });
-      var manager = new MCPClientManager({ configDir: dir });
+      var manager = trackManager(new MCPClientManager({ configDir: dir }));
       var tools = await manager.discoverTools();
       assert.deepEqual(tools, []);
       await manager.shutdown();
@@ -159,7 +181,7 @@ describe('MCPClientManager', function() {
   describe('JSON config', function() {
     it('connects to a single server and discovers tools', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       var tools = await manager.discoverTools();
       assert.equal(manager.initialized, true);
       assert.equal(manager.serverCount, 1);
@@ -172,7 +194,7 @@ describe('MCPClientManager', function() {
 
     it('routes tool calls to correct server', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       var result = await manager.callTool('ping', {});
       assert.ok(result.content);
@@ -182,7 +204,7 @@ describe('MCPClientManager', function() {
 
     it('throws for unknown tool', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       await assert.rejects(function() { return manager.callTool('nonexistent', {}); }, /No server found for tool/);
       await manager.shutdown();
@@ -194,7 +216,7 @@ describe('MCPClientManager', function() {
       var yaml = 'mcp_servers:\n  - name: beta\n    command: node\n    args: ["' +
         MOCK_SERVER_SCRIPT.replace(/\\/g, '\\\\') + '"]\n';
       var dir = createTmpConfig(yaml);
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       var tools = await manager.discoverTools();
       assert.equal(manager.serverCount, 1);
       assert.ok(tools.length > 0);
@@ -205,7 +227,7 @@ describe('MCPClientManager', function() {
   describe('getToolsByServer', function() {
     it('returns tools for a specific server', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       var tools = manager.getToolsByServer('alpha');
       assert.equal(tools.length, 2);
@@ -218,7 +240,7 @@ describe('MCPClientManager', function() {
   describe('getAllTools', function() {
     it('returns all tools across servers', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       var tools = manager.getAllTools();
       assert.equal(tools.length, 2);
@@ -229,7 +251,7 @@ describe('MCPClientManager', function() {
   describe('circuit breaker integration', function() {
     it('reports server state', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       assert.equal(manager.getServerState('alpha'), 'CLOSED');
       assert.equal(manager.getServerState('nonexistent'), null);
@@ -238,7 +260,7 @@ describe('MCPClientManager', function() {
 
     it('handles server connection failure gracefully', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'broken', command: 'node', args: ['-e', 'process.exit(1)'] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 2000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 2000 }));
       await manager.discoverTools();
       assert.equal(manager.initialized, true);
       assert.equal(manager.serverCount, 1);
@@ -249,7 +271,7 @@ describe('MCPClientManager', function() {
   describe('discoverTools idempotency', function() {
     it('second call returns already-discovered tools without re-connecting', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       var tools1 = await manager.discoverTools();
       var clientBefore = manager._clients.get('alpha');
       var tools2 = await manager.discoverTools();
@@ -265,7 +287,7 @@ describe('MCPClientManager', function() {
     it('ignores __proto__ keys in top-level YAML', async function() {
       var yaml = '__proto__:\n  polluted: true\nmcp_servers:\n';
       var dir = createTmpConfig(yaml);
-      var manager = new MCPClientManager({ configDir: dir });
+      var manager = trackManager(new MCPClientManager({ configDir: dir }));
       var tools = await manager.discoverTools();
       assert.deepEqual(tools, []);
       assert.equal(({}).polluted, undefined);
@@ -276,7 +298,7 @@ describe('MCPClientManager', function() {
       var yaml = 'mcp_servers:\n  - __proto__: injected\n    name: safe\n    command: node\n    args: ["' +
         MOCK_SERVER_SCRIPT.replace(/\\/g, '\\\\') + '"]\n';
       var dir = createTmpConfig(yaml);
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       var tools = await manager.discoverTools();
       assert.ok(tools.length > 0, 'Expected tools from safe server');
       assert.equal(({}).injected, undefined);
@@ -286,7 +308,7 @@ describe('MCPClientManager', function() {
     it('ignores constructor and prototype keys', async function() {
       var yaml = 'constructor:\n  polluted: yes\nprototype:\n  bad: true\nmcp_servers:\n';
       var dir = createTmpConfig(yaml);
-      var manager = new MCPClientManager({ configDir: dir });
+      var manager = trackManager(new MCPClientManager({ configDir: dir }));
       var tools = await manager.discoverTools();
       assert.deepEqual(tools, []);
       await manager.shutdown();
@@ -296,7 +318,7 @@ describe('MCPClientManager', function() {
   describe('shutdown', function() {
     it('cleans up all clients and breakers', async function() {
       var dir = createTmpConfig({ mcp_servers: [{ name: 'alpha', command: 'node', args: [MOCK_SERVER_SCRIPT] }] });
-      var manager = new MCPClientManager({ configDir: dir, timeout: 5000 });
+      var manager = trackManager(new MCPClientManager({ configDir: dir, timeout: 5000 }));
       await manager.discoverTools();
       assert.equal(manager.serverCount, 1);
       await manager.shutdown();
