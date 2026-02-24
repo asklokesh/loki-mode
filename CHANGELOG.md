@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.54.0] - 2026-02-24
+
+### Added
+- Activity Logger: JSONL append-only log with 10MB rotation, thread-safe reads/writes
+- Session Diff API: /api/session-diff returns structured change summary since timestamp
+- Session Resume dashboard card on Overview page
+- Failure Extractor: parses session logs for timeout, verification, retry, and error patterns
+- Prompt Optimizer: versioned prompt storage with atomic writes, hot-reload support
+- `loki optimize` CLI command for prompt optimization from failure analysis
+- Rigour Quality Gate Integration: optional OWASP-compliant scanning in RARV Verify step
+- Industry compliance presets: `loki start --compliance healthcare|fintech|government`
+- `loki audit scan` CLI command with `--preset` and `--export` flags
+- Quality Score dashboard page with sparkline trend, category breakdown, and grade badge
+- Prompt Optimizer dashboard component with version tracking
+- 10 new API endpoints: activity, session-diff, failures, prompt-versions, prompt-optimize, quality-score, quality-score/history, quality-scan, quality-report
+
+### Fixed
+- 50 bugs found and fixed via council review across all new files
+- Thread safety: atomic file writes, lock coverage for read/write cycles
+- Server stability: lazy-init imports, sync/async correctness, rate limiting on all routes
+- CLI robustness: argument validation, HTTP error differentiation, stdin piping for JSON
+- Frontend: light theme visibility, API client usage, double-click guards
+
 ## [5.53.0] - 2026-02-23
 
 ### Changed
