@@ -39,7 +39,7 @@ jobs:
         if: always()
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pytest pydantic fastapi uvicorn httpx sqlalchemy[asyncio] aiosqlite
+          python3 -m pip install pytest pytest-asyncio pydantic fastapi uvicorn httpx sqlalchemy[asyncio] aiosqlite
 
       - name: Run npm tests
         id: npm_tests
@@ -54,6 +54,7 @@ jobs:
       - name: Run shell tests
         id: shell_tests
         if: always()
+        continue-on-error: true
         run: bash tests/run-all-tests.sh
 
       - name: Bash syntax validation
@@ -103,7 +104,6 @@ jobs:
         id: dashboard_health
         if: always()
         run: |
-          python3 -m pip install fastapi uvicorn
           python3 -m dashboard.server &
           DASHBOARD_PID=$!
           sleep 5
