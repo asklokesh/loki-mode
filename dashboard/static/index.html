@@ -5053,7 +5053,7 @@ var LokiDashboard=(()=>{var rt=Object.defineProperty;var $t=Object.getOwnPropert
         </div>
         <div class="status-row">
           <span class="status-label">Uptime</span>
-          <span class="status-value">${this._formatUptime(t.started_at)}</span>
+          <span class="status-value">${t.status==="running"||t.status==="stale"?this._formatUptime(t.started_at):"--"}</span>
         </div>
         ${t.status==="crashed"&&t.error?`
           <div class="status-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--loki-border, #e4e4e7);">

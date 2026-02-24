@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.56.1] - 2026-02-24
+
+### Fixed
+- App Runner: port detection broken on macOS BSD sed, replaced with grep/cut pipeline
+- App Runner: docker compose up -d PID tracking fundamentally broken, added container-aware health checks
+- App Runner: port field in detection.json/state.json could contain raw YAML garbage, added numeric validation
+- Dashboard: uptime showed stale values when app status was stopped/failed
+
 ## [5.56.0] - 2026-02-24
 
 ### Added

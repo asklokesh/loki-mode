@@ -413,7 +413,7 @@ export class LokiAppStatus extends LokiElement {
         </div>
         <div class="status-row">
           <span class="status-label">Uptime</span>
-          <span class="status-value">${this._formatUptime(st.started_at)}</span>
+          <span class="status-value">${st.status === 'running' || st.status === 'stale' ? this._formatUptime(st.started_at) : '--'}</span>
         </div>
         ${st.status === 'crashed' && st.error ? `
           <div class="status-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--loki-border, #e4e4e7);">

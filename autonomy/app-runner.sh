@@ -87,7 +87,7 @@ _write_app_state() {
     "main_pid": ${_APP_RUNNER_PID:-0},
     "process_group": "-${_APP_RUNNER_PID:-0}",
     "method": "${method_escaped}",
-    "port": ${_APP_RUNNER_PORT:-0},
+    "port": $(echo "${_APP_RUNNER_PORT:-0}" | grep -oE '^[0-9]+$' || echo 0),
     "url": "${url_escaped}",
     "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "restart_count": ${_APP_RUNNER_RESTART_COUNT},
@@ -143,7 +143,7 @@ _detect_port() {
                 compose_file="${TARGET_DIR:-.}/compose.yml"
             fi
             local port
-            port=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+"?' "$compose_file" 2>/dev/null | head -1 | sed 's/.*"\?\([0-9]*\):[0-9]*"\?.*/\1/')
+            port=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+"?' "$compose_file" 2>/dev/null | head -1 | grep -oE '[0-9]+:[0-9]+' | head -1 | cut -d: -f1)
             _APP_RUNNER_PORT="${port:-8080}"
             ;;
         *docker\ build*)
@@ -373,7 +373,7 @@ _write_detection() {
 {
     "type": "${type_escaped}",
     "command": "${command_escaped}",
-    "port": ${_APP_RUNNER_PORT:-0},
+    "port": $(echo "${_APP_RUNNER_PORT:-0}" | grep -oE '^[0-9]+$' || echo 0),
     "is_docker": ${_APP_RUNNER_IS_DOCKER},
     "detected_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
@@ -447,7 +447,21 @@ app_runner_start() {
     sleep 2
 
     # Verify process started
-    if kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
+        # Docker compose -d exits immediately; check containers instead of PID
+        local running_containers
+        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps -q 2>/dev/null; } | wc -l | tr -d ' ')
+        if [ "${running_containers:-0}" -gt 0 ]; then
+            _write_app_state "running"
+            log_info "App Runner: docker compose started ($running_containers container(s) running)"
+            return 0
+        else
+            log_error "App Runner: docker compose containers failed to start"
+            _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
+            _write_app_state "failed"
+            return 1
+        fi
+    elif kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
         _write_app_state "running"
         log_info "App Runner: application started (PID: $_APP_RUNNER_PID)"
         return 0
@@ -538,7 +552,21 @@ app_runner_health_check() {
         return 1
     fi
 
-    # Check PID is alive
+    # Docker compose: check containers instead of PID (docker compose up -d exits immediately)
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
+        local running_containers
+        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps -q 2>/dev/null; } | wc -l | tr -d ' ')
+        if [ "${running_containers:-0}" -gt 0 ]; then
+            _write_health "true"
+            _write_app_state "running"
+            return 0
+        else
+            _write_health "false"
+            return 1
+        fi
+    fi
+
+    # Check PID is alive (non-docker-compose methods)
     if ! kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
         _write_health "false"
         return 1
