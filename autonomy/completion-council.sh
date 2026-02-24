@@ -148,7 +148,8 @@ council_track_iteration() {
     fi
 
     # Store convergence data point
-    local timestamp=$(date +%s)
+    local timestamp
+    timestamp=$(date +%s)
     local files_changed
     files_changed=$(git diff --name-only HEAD 2>/dev/null | wc -l | tr -d ' ')
 

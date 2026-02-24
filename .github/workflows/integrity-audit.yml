@@ -36,10 +36,11 @@ jobs:
         run: npm install
 
       - name: Install Python dependencies
+        id: install_python
         if: always()
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pytest pytest-asyncio pydantic fastapi uvicorn httpx sqlalchemy[asyncio] aiosqlite
+          python3 -m pip install -r requirements-test.txt
 
       - name: Run npm tests
         id: npm_tests
@@ -48,7 +49,7 @@ jobs:
 
       - name: Run pytest
         id: pytest
-        if: always()
+        if: always() && steps.install_python.outcome == 'success'
         run: python3 -m pytest
 
       - name: Run shell tests

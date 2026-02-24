@@ -25,7 +25,7 @@ setup() {
     mkdir -p "$TEST_DIR/.loki/hooks" "$TEST_DIR/.loki/state" "$TEST_DIR/.claude"
     cp -r "$PROJECT_ROOT/autonomy/hooks/"*.sh "$TEST_DIR/.loki/hooks/" 2>/dev/null || true
     chmod +x "$TEST_DIR/.loki/hooks/"*.sh 2>/dev/null || true
-    cd "$TEST_DIR"
+    cd "$TEST_DIR" || exit 1
 }
 
 # Test 1: session-init.sh exists and is executable

@@ -41,7 +41,7 @@ _loki_detect_channel() {
 loki_telemetry() {
     _loki_telemetry_enabled || return 0
     local event="$1"; shift
-    local distinct_id props_json
+    local distinct_id
     distinct_id=$(_loki_telemetry_id 2>/dev/null) || return 0
     local version
     version=$(cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/VERSION" 2>/dev/null || cat "${SCRIPT_DIR:-${SKILL_DIR:-}}/../VERSION" 2>/dev/null || echo "unknown")

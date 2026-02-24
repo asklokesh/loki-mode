@@ -23,7 +23,7 @@ fail() { ((TESTS_FAILED++)); echo "[FAIL] $1"; }
 # Setup
 setup() {
     mkdir -p "$TEST_DIR/.loki/state" "$TEST_DIR/.loki/memory" "$TEST_DIR/.loki/metrics"
-    cd "$TEST_DIR"
+    cd "$TEST_DIR" || exit 1
 }
 
 # Test 1: MCP module imports

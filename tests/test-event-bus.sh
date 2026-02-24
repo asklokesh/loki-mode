@@ -25,7 +25,7 @@ fail() { ((TESTS_FAILED++)); echo "[FAIL] $1"; }
 setup() {
     mkdir -p "$TEST_DIR/.loki/events/pending"
     mkdir -p "$TEST_DIR/.loki/events/archive"
-    cd "$TEST_DIR"
+    cd "$TEST_DIR" || exit 1
 }
 
 # Test 1: Python module imports
@@ -125,7 +125,11 @@ test_bash_emit() {
     log_test "Bash emit script works"
     chmod +x "$PROJECT_ROOT/events/emit.sh"
     EVENT_ID=$("$PROJECT_ROOT/events/emit.sh" session cli start provider=claude 2>/dev/null)
-    if [ -n "$EVENT_ID" ] && [ -f "$LOKI_DIR/events/pending/"*"$EVENT_ID.json" ]; then
+    local event_file_found=false
+    for f in "$LOKI_DIR/events/pending/"*"$EVENT_ID.json"; do
+        if [ -f "$f" ]; then event_file_found=true; break; fi
+    done
+    if [ -n "$EVENT_ID" ] && [ "$event_file_found" = true ]; then
         pass "Bash emit script"
     else
         fail "Bash emit script failed (EVENT_ID=$EVENT_ID)"

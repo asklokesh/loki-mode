@@ -16,7 +16,6 @@ if [ ! -f "$GATE_FILE" ]; then
 fi
 
 # Run quality gate checks
-GATES_PASSED=true
 GATE_RESULTS=()
 
 # Check for uncommitted changes warning

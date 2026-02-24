@@ -12,7 +12,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOKI_DIR="${LOKI_DIR:-.loki}"
 
 # Colors (only if terminal supports them)

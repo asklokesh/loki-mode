@@ -250,7 +250,8 @@ create_worktree_sandbox() {
     local prd_path="${1:-}"
     local provider="${LOKI_PROVIDER:-claude}"
 
-    local timestamp=$(date +%Y%m%d-%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d-%H%M%S)
     local sandbox_name="${WORKTREE_PREFIX}-${timestamp}"
     local sandbox_branch="${WORKTREE_PREFIX}-${timestamp}"
     local sandbox_path="${WORKTREE_BASE}/${sandbox_name}"
@@ -274,7 +275,8 @@ create_worktree_sandbox() {
 
     # Check for existing sandbox
     if [[ -f "$WORKTREE_STATE_FILE" ]]; then
-        local existing_path=$(jq -r '.sandbox_path // empty' "$WORKTREE_STATE_FILE" 2>/dev/null)
+        local existing_path
+        existing_path=$(jq -r '.sandbox_path // empty' "$WORKTREE_STATE_FILE" 2>/dev/null)
         if [[ -n "$existing_path" ]] && [[ -d "$existing_path" ]]; then
             log_warn "Existing sandbox found: $existing_path"
             log_info "Use 'loki sandbox stop' to stop it first."
@@ -341,7 +343,8 @@ start_worktree_sandbox() {
         create_worktree_sandbox "$prd_path" || return 1
     fi
 
-    local sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
+    local sandbox_path
+    sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
 
     if [[ ! -d "$sandbox_path" ]]; then
         log_error "Sandbox path does not exist: $sandbox_path"
@@ -388,8 +391,10 @@ stop_worktree_sandbox() {
         return 0
     fi
 
-    local sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
-    local sandbox_branch=$(jq -r '.sandbox_branch' "$WORKTREE_STATE_FILE")
+    local sandbox_path
+    sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
+    local sandbox_branch
+    sandbox_branch=$(jq -r '.sandbox_branch' "$WORKTREE_STATE_FILE")
 
     log_info "Stopping worktree sandbox..."
 
@@ -427,9 +432,12 @@ worktree_sandbox_status() {
         return 0
     fi
 
-    local sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
-    local sandbox_branch=$(jq -r '.sandbox_branch' "$WORKTREE_STATE_FILE")
-    local created_at=$(jq -r '.created_at' "$WORKTREE_STATE_FILE")
+    local sandbox_path
+    sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
+    local sandbox_branch
+    sandbox_branch=$(jq -r '.sandbox_branch' "$WORKTREE_STATE_FILE")
+    local created_at
+    created_at=$(jq -r '.created_at' "$WORKTREE_STATE_FILE")
 
     echo ""
     echo -e "${BOLD}Worktree Sandbox Status${NC}"
@@ -440,7 +448,8 @@ worktree_sandbox_status() {
     echo -e "  Created: $created_at"
 
     if [[ -d "$sandbox_path" ]]; then
-        local disk_usage=$(du -sh "$sandbox_path" 2>/dev/null | cut -f1)
+        local disk_usage
+        disk_usage=$(du -sh "$sandbox_path" 2>/dev/null | cut -f1)
         echo -e "  Disk:    $disk_usage"
 
         if [[ -f "$sandbox_path/.loki/STOP" ]]; then
@@ -482,7 +491,8 @@ worktree_sandbox_prompt() {
         return 1
     fi
 
-    local sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
+    local sandbox_path
+    sandbox_path=$(jq -r '.sandbox_path' "$WORKTREE_STATE_FILE")
 
     if [[ ! -d "$sandbox_path" ]]; then
         log_error "Sandbox path does not exist"
@@ -516,7 +526,8 @@ cleanup_worktrees() {
     git worktree prune 2>/dev/null || true
 
     # Clean up orphaned branches
-    local branches=$(git branch --list "${WORKTREE_PREFIX}*" 2>/dev/null)
+    local branches
+    branches=$(git branch --list "${WORKTREE_PREFIX}*" 2>/dev/null)
     while IFS= read -r branch; do
         branch=$(echo "$branch" | tr -d '* ')
         if [[ -n "$branch" ]]; then
@@ -642,6 +653,7 @@ start_docker_desktop_sandbox() {
         bash -c "$loki_cmd"
 }
 
+# shellcheck disable=SC2120
 stop_docker_desktop_sandbox() {
     local remove="${1:-false}"
 
@@ -1071,8 +1083,10 @@ sandbox_serve() {
 
     if docker exec "$CONTAINER_NAME" test -f /workspace/package.json; then
         # Check for common dev server scripts
-        local has_dev=$(docker exec "$CONTAINER_NAME" jq -r '.scripts.dev // empty' /workspace/package.json 2>/dev/null)
-        local has_start=$(docker exec "$CONTAINER_NAME" jq -r '.scripts.start // empty' /workspace/package.json 2>/dev/null)
+        local has_dev
+        has_dev=$(docker exec "$CONTAINER_NAME" jq -r '.scripts.dev // empty' /workspace/package.json 2>/dev/null)
+        local has_start
+        has_start=$(docker exec "$CONTAINER_NAME" jq -r '.scripts.start // empty' /workspace/package.json 2>/dev/null)
 
         if [[ -n "$has_dev" ]]; then
             serve_cmd="npm run dev"
@@ -1184,7 +1198,8 @@ sandbox_phase() {
     fi
 
     # Get current phase from orchestrator state
-    local phase=$(docker exec "$CONTAINER_NAME" bash -c \
+    local phase
+    phase=$(docker exec "$CONTAINER_NAME" bash -c \
         "python3 -c \"import json; print(json.load(open('/workspace/.loki/state/orchestrator.json')).get('currentPhase', 'UNKNOWN'))\" 2>/dev/null" \
         || echo "UNKNOWN")
 

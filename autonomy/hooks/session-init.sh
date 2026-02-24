@@ -19,9 +19,9 @@ fi
 mkdir -p "$CWD/.loki/state" "$CWD/.loki/memory" "$CWD/.loki/logs"
 
 # Load memory context using environment variables (safe from injection)
-MEMORY_CONTEXT=""
 if [ -f "$CWD/.loki/memory/index.json" ]; then
-    MEMORY_CONTEXT=$(LOKI_CWD="$CWD" LOKI_MEMORY_PATH="$CWD/.loki/memory" python3 -c '
+    # Memory context is loaded for side effects (engine initialization)
+    LOKI_CWD="$CWD" LOKI_MEMORY_PATH="$CWD/.loki/memory" python3 -c '
 import json
 import os
 import sys
@@ -37,7 +37,7 @@ try:
     print(json.dumps({"memories_loaded": stats}))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
-' 2>/dev/null || echo '{}')
+' 2>/dev/null || true
 fi
 
 # Escape special characters in SESSION_ID for JSON output
