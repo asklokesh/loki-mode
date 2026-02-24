@@ -621,6 +621,10 @@ function generateStandaloneHTML(bundleCode) {
           <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
           Council
         </button>
+        <button class="nav-link" data-section="quality" id="nav-quality">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          Quality
+        </button>
         <button class="nav-link" data-section="cost" id="nav-cost">
           <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
           Cost
@@ -659,6 +663,7 @@ function generateStandaloneHTML(bundleCode) {
       <!-- Overview + Tasks (combined) -->
       <div class="section-page active" id="page-overview">
         <loki-overview id="overview"></loki-overview>
+        <loki-session-diff id="session-diff"></loki-session-diff>
         <div style="margin-top: 28px;">
           <div class="section-page-header">
             <h2 class="section-page-title">Tasks</h2>
@@ -712,6 +717,17 @@ function generateStandaloneHTML(bundleCode) {
         <loki-council-dashboard id="council-dashboard"></loki-council-dashboard>
       </div>
 
+      <!-- Quality -->
+      <div class="section-page" id="page-quality">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Quality</h2>
+        </div>
+        <div style="display: grid; gap: 24px;">
+          <loki-quality-score id="quality-score"></loki-quality-score>
+          <loki-prompt-optimizer id="prompt-optimizer"></loki-prompt-optimizer>
+        </div>
+      </div>
+
       <!-- Cost Dashboard -->
       <div class="section-page" id="page-cost">
         <div class="section-page-header">
@@ -760,10 +776,11 @@ function generateStandaloneHTML(bundleCode) {
         <div class="shortcut-row"><span class="shortcut-desc">PRD Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">App Runner</span><span class="shortcut-keys"><kbd class="shortcut-key">4</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">5</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Cost</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">7</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Context</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Notifications</span><span class="shortcut-keys"><kbd class="shortcut-key">9</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Quality</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Cost</span><span class="shortcut-keys"><kbd class="shortcut-key">7</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Context</span><span class="shortcut-keys"><kbd class="shortcut-key">9</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Notifications</span><span class="shortcut-keys"><kbd class="shortcut-key">0</kbd></span></div>
       </div>
       <div class="shortcuts-group">
         <div class="shortcuts-group-title">Session</div>
@@ -837,7 +854,10 @@ document.addEventListener('DOMContentLoaded', function() {
       'cost-dashboard',
       'checkpoint-viewer',
       'context-tracker',
-      'notification-center'
+      'notification-center',
+      'session-diff',
+      'prompt-optimizer',
+      'quality-score'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);
@@ -921,7 +941,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('keydown', function(e) {
     if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
       e.preventDefault();
-      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'cost', 'checkpoint', 'context', 'notifications'];
+      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications'];
       var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
       if (idx < sections.length) switchSection(sections[idx]);
     }

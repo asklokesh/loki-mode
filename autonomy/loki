@@ -409,7 +409,8 @@ show_help() {
     echo "  council [cmd]    Completion council (status|verdicts|convergence|force-review|report)"
     echo "  checkpoint|cp    Save/restore session checkpoints"
     echo "  projects         Multi-project registry management"
-    echo "  audit            Agent action audit log"
+    echo "  audit [cmd]      Agent audit log and quality scanning (log|scan)"
+    echo "  optimize         Optimize prompts based on session history"
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
     echo "  metrics          Prometheus/OpenMetrics metrics from dashboard"
     echo "  dogfood          Show self-development statistics"
@@ -431,6 +432,7 @@ show_help() {
     echo "  --no-dashboard   Disable web dashboard"
     echo "  --sandbox        Run in Docker sandbox for isolation"
     echo "  --skip-memory    Skip loading memory context at startup"
+    echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
     echo ""
     echo "Options for 'issue':"
@@ -484,6 +486,7 @@ cmd_start() {
                 echo "  --no-dashboard        Disable web dashboard"
                 echo "  --sandbox             Run in Docker sandbox"
                 echo "  --skip-memory         Skip loading memory context at startup"
+                echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Cost budget limit (auto-pause when exceeded)"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
                 echo ""
@@ -548,6 +551,22 @@ cmd_start() {
                 ;;
             --skip-memory)
                 export LOKI_SKIP_MEMORY=true
+                shift
+                ;;
+            --compliance)
+                if [[ -n "${2:-}" ]]; then
+                    export LOKI_COMPLIANCE_PRESET="$2"
+                    echo -e "${CYAN}Compliance mode: $2${NC}"
+                    shift 2
+                else
+                    echo -e "${RED}--compliance requires a preset name (default, healthcare, fintech, government)${NC}"
+                    exit 1
+                fi
+                ;;
+            --compliance=*)
+                local compliance_val="${1#*=}"
+                export LOKI_COMPLIANCE_PRESET="$compliance_val"
+                echo -e "${CYAN}Compliance mode: $compliance_val${NC}"
                 shift
                 ;;
             --yes|-y)
@@ -4688,6 +4707,108 @@ except Exception:
     esac
 }
 
+# Prompt optimization via dashboard API
+cmd_optimize() {
+    local sessions=10
+    local dry_run=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sessions) if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --sessions requires a value${NC}"; exit 1; fi; sessions="$2"; shift 2 ;;
+            --sessions=*) sessions="${1#*=}"; shift ;;
+            --dry-run) dry_run="true"; shift ;;
+            --help|-h)
+                echo -e "${BOLD}loki optimize${NC} - Optimize prompts based on session history"
+                echo ""
+                echo "Usage: loki optimize [options]"
+                echo ""
+                echo "Analyzes recent session failures and proposes prompt improvements."
+                echo "Requires the dashboard API to be running (loki serve)."
+                echo ""
+                echo "Options:"
+                echo "  --sessions N   Number of recent sessions to analyze (default: 10)"
+                echo "  --dry-run      Show proposed changes without applying"
+                echo ""
+                echo "Examples:"
+                echo "  loki optimize                  # Optimize using last 10 sessions"
+                echo "  loki optimize --sessions 20    # Analyze last 20 sessions"
+                echo "  loki optimize --dry-run        # Preview changes only"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki optimize --help' for usage."
+                exit 1
+                ;;
+        esac
+    done
+
+    local port="${LOKI_DASHBOARD_PORT:-57374}"
+    local host="127.0.0.1"
+    local dry_run_param="false"
+    if [ -n "$dry_run" ]; then
+        dry_run_param="true"
+    fi
+    local url="http://${host}:${port}/api/prompt-optimize?sessions=${sessions}&dry_run=${dry_run_param}"
+
+    echo -e "${BOLD}Analyzing sessions for prompt optimization...${NC}"
+    echo -e "${DIM}Sessions: $sessions | Dry run: ${dry_run_param}${NC}"
+    echo ""
+
+    local response http_code
+    response=$(curl -s -w "\n%{http_code}" -X POST "$url" 2>/dev/null) || true
+    http_code=$(echo "$response" | tail -1)
+    response=$(echo "$response" | sed '$d')
+    if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
+        echo -e "${RED}Error: Could not connect to dashboard API at http://${host}:${port}${NC}"
+        echo "Make sure the dashboard is running: loki serve"
+        exit 1
+    fi
+    if [ "$http_code" -ge 400 ] 2>/dev/null; then
+        echo -e "${RED}Error: Dashboard API returned HTTP $http_code${NC}"
+        [ -n "$response" ] && echo "$response"
+        exit 1
+    fi
+
+    if ! command -v python3 &>/dev/null; then
+        echo "$response" | jq . 2>/dev/null || echo "$response"
+    else
+        echo "$response" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read())
+
+failures = data.get('failures_analyzed', 0)
+changes = data.get('changes', [])
+version = data.get('version', None)
+
+print(f'Failures analyzed: {failures}')
+print(f'Changes proposed:  {len(changes)}')
+print('---')
+
+for i, change in enumerate(changes, 1):
+    prompt = change.get('prompt', '?')
+    rationale = change.get('rationale', 'No rationale provided')
+    old = change.get('old_value', '')
+    new = change.get('new_value', '')
+    print(f'')
+    print(f'  {i}. {prompt}')
+    print(f'     Rationale: {rationale}')
+    if old:
+        print(f'     Old: {old[:80]}...' if len(old) > 80 else f'     Old: {old}')
+    if new:
+        print(f'     New: {new[:80]}...' if len(new) > 80 else f'     New: {new}')
+
+if version is not None:
+    print(f'')
+    print(f'Prompts optimized to version {version}')
+elif not changes:
+    print(f'')
+    print('No optimization changes proposed.')
+print()
+" 2>/dev/null || echo "$response"
+    fi
+}
+
 # Main command dispatcher
 main() {
     if [ $# -eq 0 ]; then
@@ -4803,6 +4924,9 @@ main() {
         audit)
             cmd_audit "$@"
             ;;
+        optimize)
+            cmd_optimize "$@"
+            ;;
         metrics)
             cmd_metrics "$@"
             ;;
@@ -4826,7 +4950,7 @@ main() {
     esac
 }
 
-# Agent action audit log
+# Agent action audit log and quality scanning
 cmd_audit() {
     local subcommand="${1:-help}"
     local audit_file="$LOKI_DIR/logs/agent-audit.jsonl"
@@ -4885,15 +5009,137 @@ print(f'  {\"TOTAL\":25s} {sum(counts.values())}')
                 echo "  python3 required for count summary"
             fi
             ;;
-        --help|-h|help)
-            echo -e "${BOLD}loki audit${NC} - Agent action audit log"
+        scan)
+            shift
+            local preset="default"
+            local do_export=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --preset) if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --preset requires a value${NC}"; exit 1; fi; preset="$2"; shift 2 ;;
+                    --preset=*) preset="${1#*=}"; shift ;;
+                    --export) do_export="true"; shift ;;
+                    --help|-h)
+                        echo -e "${BOLD}loki audit scan${NC} - Run quality scan"
+                        echo ""
+                        echo "Usage: loki audit scan [options]"
+                        echo ""
+                        echo "Options:"
+                        echo "  --preset NAME   Compliance preset (default|healthcare|fintech|government)"
+                        echo "  --export        Save report to .loki/quality/report-{date}.json"
+                        echo ""
+                        exit 0
+                        ;;
+                    *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
+                esac
+            done
+
+            case "$preset" in
+                default|healthcare|fintech|government) ;;
+                *) echo -e "${RED}Error: Invalid preset '$preset'. Must be one of: default, healthcare, fintech, government${NC}"; exit 1 ;;
+            esac
+
+            local port="${LOKI_DASHBOARD_PORT:-57374}"
+            local host="127.0.0.1"
+            local url="http://${host}:${port}/api/quality-scan?preset=${preset}"
+
+            echo -e "${BOLD}Running quality scan...${NC} (preset: $preset)"
             echo ""
-            echo "Usage: loki audit <subcommand>"
+
+            local response http_code
+            response=$(curl -s -w "\n%{http_code}" -X POST "$url" 2>/dev/null) || true
+            http_code=$(echo "$response" | tail -1)
+            response=$(echo "$response" | sed '$d')
+            if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
+                echo -e "${RED}Error: Could not connect to dashboard API at http://${host}:${port}${NC}"
+                echo "Make sure the dashboard is running: loki serve"
+                exit 1
+            fi
+            if [ "$http_code" -ge 400 ] 2>/dev/null; then
+                echo -e "${RED}Error: Dashboard API returned HTTP $http_code${NC}"
+                [ -n "$response" ] && echo "$response"
+                exit 1
+            fi
+
+            if ! command -v python3 &>/dev/null; then
+                echo "$response" | jq . 2>/dev/null || echo "$response"
+            else
+                echo "$response" | python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read())
+
+score = data.get('score', 0)
+grade = data.get('grade', '?')
+print(f'Quality Score: {score}/100  Grade: {grade}')
+print('---')
+
+# Category scores
+categories = data.get('categories', {})
+if categories:
+    print()
+    print('Category Scores:')
+    for cat, cat_score in sorted(categories.items()):
+        print(f'  {cat:20s} {cat_score}/100')
+
+# Findings by severity
+findings = data.get('findings', [])
+if findings:
+    print()
+    print('Findings:')
+    for f in findings:
+        sev = f.get('severity', 'info')
+        msg = f.get('message', '')
+        cat = f.get('category', '')
+        if sev == 'critical':
+            print(f'  \033[0;31m[CRITICAL]\033[0m {cat}: {msg}')
+        elif sev == 'major':
+            print(f'  \033[1;33m[MAJOR]\033[0m    {cat}: {msg}')
+        else:
+            print(f'  [MINOR]    {cat}: {msg}')
+print()
+" 2>/dev/null || echo "$response"
+            fi
+
+            # Export report if requested
+            if [ -n "$do_export" ]; then
+                local report_dir="$LOKI_DIR/quality"
+                mkdir -p "$report_dir"
+                local date_str
+                date_str=$(date +%Y-%m-%d)
+                local report_file="$report_dir/report-${date_str}.json"
+
+                local report_url="http://${host}:${port}/api/quality-report?format=json"
+                local report_data
+                report_data=$(curl -sf "$report_url" 2>/dev/null) || true
+                if [ -n "$report_data" ]; then
+                    echo "$report_data" > "$report_file"
+                    echo -e "${GREEN}Report exported to $report_file${NC}"
+                else
+                    # Fall back to scan response
+                    echo "$response" > "$report_file"
+                    echo -e "${GREEN}Report exported to $report_file${NC}"
+                fi
+            fi
+            ;;
+        --preset|--export)
+            # Handle flags passed directly to 'loki audit' (shortcut for 'loki audit scan')
+            cmd_audit scan "$@"
+            return
+            ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki audit${NC} - Agent audit log and quality scanning"
+            echo ""
+            echo "Usage: loki audit <subcommand> [options]"
             echo ""
             echo "Subcommands:"
             echo "  log [N]     Show last N audit log entries (default: 50)"
             echo "  count       Count actions by type"
+            echo "  scan        Run quality scan against dashboard API"
             echo "  help        Show this help"
+            echo ""
+            echo "Quality Scan Options (loki audit scan):"
+            echo "  --preset NAME   Compliance preset (default|healthcare|fintech|government)"
+            echo "  --export        Save report to .loki/quality/report-{date}.json"
             echo ""
             echo "The agent audit log records actions taken during Loki sessions,"
             echo "including CLI invocations, git commits, and session lifecycle events."

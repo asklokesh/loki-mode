@@ -49,6 +49,7 @@ from . import audit
 from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
 from .control import atomic_write_json
+from .activity_logger import get_activity_logger
 
 try:
     from . import __version__ as _version
@@ -3844,6 +3845,72 @@ async def get_playwright_screenshot():
 
 
 # =============================================================================
+# Failure Analysis & Prompt Optimization (v5.54.0)
+# =============================================================================
+
+_failure_extractor = None
+_prompt_optimizer = None
+
+
+def _get_failure_extractor():
+    """Lazy-initialise the shared FailureExtractor instance."""
+    global _failure_extractor
+    if _failure_extractor is None:
+        from .failure_extractor import FailureExtractor
+        _failure_extractor = FailureExtractor()
+    return _failure_extractor
+
+
+def _get_prompt_optimizer():
+    """Lazy-initialise the shared PromptOptimizer instance."""
+    global _prompt_optimizer
+    if _prompt_optimizer is None:
+        from .prompt_optimizer import PromptOptimizer
+        _prompt_optimizer = PromptOptimizer()
+    return _prompt_optimizer
+
+
+@app.get("/api/failures")
+def get_failures(sessions: int = 10):
+    """Get failure patterns from recent sessions."""
+    if sessions < 1 or sessions > 1000:
+        raise HTTPException(status_code=400, detail="sessions must be between 1 and 1000")
+    if not _read_limiter.check("failures"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        return _get_failure_extractor().extract(sessions=sessions)
+    except Exception as exc:
+        logger.error("Failure extraction error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to extract failure patterns")
+
+
+@app.get("/api/prompt-versions")
+def get_prompt_versions():
+    """Get current prompt optimization status."""
+    if not _read_limiter.check("prompt_versions"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        return _get_prompt_optimizer().get_current_version()
+    except Exception as exc:
+        logger.error("Prompt version read error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read prompt versions")
+
+
+@app.post("/api/prompt-optimize", dependencies=[Depends(auth.require_scope("control"))])
+def optimize_prompts(sessions: int = 10, dry_run: bool = True):
+    """Run prompt optimization from failure analysis."""
+    if sessions < 1 or sessions > 1000:
+        raise HTTPException(status_code=400, detail="sessions must be between 1 and 1000")
+    if not _control_limiter.check("prompt_optimize"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        return _get_prompt_optimizer().optimize(sessions=sessions, dry_run=dry_run)
+    except Exception as exc:
+        logger.error("Prompt optimization error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to run prompt optimization")
+
+
+# =============================================================================
 # Static File Serving (Production/Docker)
 # =============================================================================
 # Must be configured AFTER all API routes to avoid conflicts
@@ -3887,6 +3954,65 @@ if STATIC_DIR:
     ASSETS_DIR = os.path.join(STATIC_DIR, "assets")
     if os.path.isdir(ASSETS_DIR):
         app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+# ---------------------------------------------------------------------------
+# Activity Logger & Session Diff
+# ---------------------------------------------------------------------------
+
+@app.get("/api/activity")
+def get_activity(since: Optional[str] = None, limit: int = Query(default=100, ge=1, le=1000)):
+    """Get activity log entries, optionally filtered by timestamp."""
+    if not _read_limiter.check("activity"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        activity_logger = get_activity_logger()
+        if since:
+            entries = activity_logger.query_since(since)
+        else:
+            # Return all entries from the current log file, up to limit
+            entries = activity_logger.query_since("1970-01-01T00:00:00+00:00")
+        return entries[-limit:]
+    except Exception as exc:
+        logger.error("Activity read error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read activity log")
+
+
+@app.get("/api/session-diff")
+def get_session_diff(since: Optional[str] = None):
+    """Get structured session diff since timestamp. Defaults to last 24h."""
+    if not _read_limiter.check("session-diff"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        activity_logger = get_activity_logger()
+        return activity_logger.get_session_diff(since_timestamp=since)
+    except Exception as exc:
+        logger.error("Session diff error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to compute session diff")
+
+
+@app.post("/api/activity", dependencies=[Depends(auth.require_scope("control"))])
+async def log_activity(entry: dict):
+    """Log an activity entry (for internal use by agents)."""
+    if not _control_limiter.check("activity-write"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Validate required fields
+    required = {"entity_type", "entity_id", "action"}
+    missing = required - set(entry.keys())
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(sorted(missing))}")
+
+    activity_logger = get_activity_logger()
+    result = activity_logger.log(
+        entity_type=entry["entity_type"],
+        entity_id=entry["entity_id"],
+        action=entry["action"],
+        old_value=entry.get("old_value"),
+        new_value=entry.get("new_value"),
+        session_id=entry.get("session_id"),
+    )
+    return result
+
 
 # Serve favicon.svg from static directory
 @app.get("/favicon.svg", include_in_schema=False)
@@ -3938,6 +4064,89 @@ async def serve_index():
         """,
         status_code=200
     )
+
+
+# =============================================================================
+# Rigour Quality Gate Endpoints
+# =============================================================================
+
+_rigour: Optional["RigourIntegration"] = None
+
+
+def _get_rigour() -> "RigourIntegration":
+    """Lazy-initialise the shared RigourIntegration instance."""
+    global _rigour
+    if _rigour is None:
+        from .rigour_integration import RigourIntegration
+
+        data_dir = os.environ.get("LOKI_DATA_DIR", os.path.expanduser("~/.loki"))
+        _rigour = RigourIntegration(data_dir=data_dir)
+    return _rigour
+
+
+@app.get("/api/quality-score")
+def get_quality_score():
+    """Get current quality score from the most recent Rigour scan."""
+    if not _read_limiter.check("quality-score"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        rigour = _get_rigour()
+        return rigour.get_score()
+    except Exception as exc:
+        logger.error("Quality score read error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read quality score")
+
+
+@app.get("/api/quality-score/history")
+def get_quality_score_history(limit: int = Query(50, ge=1, le=500)):
+    """Get quality score trend over time."""
+    if not _read_limiter.check("quality-history"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        rigour = _get_rigour()
+        return rigour.get_score_history(limit=limit)
+    except Exception as exc:
+        logger.error("Quality history read error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to read quality history")
+
+
+@app.post("/api/quality-scan", dependencies=[Depends(auth.require_scope("control"))])
+async def run_quality_scan(preset: str = Query("default")):
+    """Run a Rigour quality scan.
+
+    Preset must be one of: default, healthcare, fintech, government.
+    """
+    _valid_presets = ("default", "healthcare", "fintech", "government")
+    if preset not in _valid_presets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid preset: {preset}. Must be one of {_valid_presets}",
+        )
+    if not _control_limiter.check("quality-scan"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    rigour = _get_rigour()
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, rigour.scan, ".", preset)
+    return result
+
+
+@app.get("/api/quality-report")
+def get_quality_report(fmt: str = Query("json", alias="format")):
+    """Get an exportable quality audit report."""
+    if not _read_limiter.check("quality-report"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        rigour = _get_rigour()
+        report_str = rigour.export_report(fmt=fmt)
+        if fmt == "json":
+            try:
+                return json.loads(report_str)
+            except json.JSONDecodeError:
+                return PlainTextResponse(report_str)
+        return PlainTextResponse(report_str)
+    except Exception as exc:
+        logger.error("Quality report error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to generate quality report")
 
 
 def run_server(host: str = None, port: int = None) -> None:

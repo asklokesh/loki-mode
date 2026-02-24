@@ -78,6 +78,9 @@ export { LokiCostDashboard } from './components/loki-cost-dashboard.js';
 export { LokiCheckpointViewer } from './components/loki-checkpoint-viewer.js';
 export { LokiContextTracker } from './components/loki-context-tracker.js';
 export { LokiNotificationCenter } from './components/loki-notification-center.js';
+export { LokiSessionDiff } from './components/loki-session-diff.js';
+export { LokiPromptOptimizer } from './components/loki-prompt-optimizer.js';
+export { LokiQualityScore } from './components/loki-quality-score.js';
 
 // Version
 export const VERSION = '1.3.0';
@@ -127,6 +130,9 @@ const componentModules = [
   './components/loki-checkpoint-viewer.js',
   './components/loki-context-tracker.js',
   './components/loki-notification-center.js',
+  './components/loki-session-diff.js',
+  './components/loki-prompt-optimizer.js',
+  './components/loki-quality-score.js',
 ];
 
 // Components are registered via customElements.define in their respective files
