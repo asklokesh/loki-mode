@@ -1010,7 +1010,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Skip if modifier keys are held (let browser defaults work)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration'];
+    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration', 'analytics'];
 
     switch (e.key) {
       // Section navigation: 1-9, 0

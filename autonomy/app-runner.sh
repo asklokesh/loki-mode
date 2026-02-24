@@ -42,6 +42,7 @@ _APP_RUNNER_PORT=""
 _APP_RUNNER_PID=""
 _APP_RUNNER_URL=""
 _APP_RUNNER_IS_DOCKER=false
+_APP_RUNNER_HAS_SETSID=false
 _APP_RUNNER_CRASH_COUNT=0
 _APP_RUNNER_RESTART_COUNT=0
 _GIT_DIFF_HASH=""
@@ -91,8 +92,8 @@ _write_app_state() {
     "url": "${url_escaped}",
     "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "restart_count": ${_APP_RUNNER_RESTART_COUNT},
-    "status": "${1:-unknown}",
-    "last_health": $(cat "$_APP_RUNNER_DIR/health.json" 2>/dev/null || echo '{"ok": false}'),
+    "status": "$(_json_escape "${1:-unknown}")",
+    "last_health": $(cat "$_APP_RUNNER_DIR/health.json" 2>/dev/null | grep -E '^\s*\{.*\}\s*$' || echo '{"ok": false}'),
     "crash_count": ${_APP_RUNNER_CRASH_COUNT}
 }
 APPSTATE_EOF
@@ -143,7 +144,7 @@ _detect_port() {
                 compose_file="${TARGET_DIR:-.}/compose.yml"
             fi
             local port
-            port=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+"?' "$compose_file" 2>/dev/null | head -1 | grep -oE '[0-9]+:[0-9]+' | head -1 | cut -d: -f1)
+            port=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+"?' "$compose_file" 2>/dev/null | head -1 | grep -oE '[0-9]+:[0-9]+' | tail -1 | cut -d: -f1)
             _APP_RUNNER_PORT="${port:-8080}"
             ;;
         *docker\ build*)
@@ -206,6 +207,7 @@ app_runner_init() {
     _app_runner_dir
     local dir="${TARGET_DIR:-.}"
     _APP_RUNNER_METHOD=""
+    _APP_RUNNER_IS_DOCKER=false
 
     # User command override (validated for safety)
     if [ -n "${LOKI_APP_COMMAND:-}" ]; then
@@ -427,8 +429,10 @@ app_runner_start() {
 
     # Start the process in a new process group
     if command -v setsid >/dev/null 2>&1; then
+        _APP_RUNNER_HAS_SETSID=true
         (cd "$dir" && setsid bash -c "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
     else
+        _APP_RUNNER_HAS_SETSID=false
         (cd "$dir" && bash -c "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
     fi
     _APP_RUNNER_PID=$!
@@ -450,7 +454,7 @@ app_runner_start() {
     if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
         # Docker compose -d exits immediately; check containers instead of PID
         local running_containers
-        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps -q 2>/dev/null; } | wc -l | tr -d ' ')
+        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps 2>/dev/null | grep -ciE 'running|up'; } | wc -l | tr -d ' ')
         if [ "${running_containers:-0}" -gt 0 ]; then
             _write_app_state "running"
             log_info "App Runner: docker compose started ($running_containers container(s) running)"
@@ -496,8 +500,13 @@ app_runner_stop() {
         fi
     fi
 
-    # Send SIGTERM to process group
-    kill -TERM "-$_APP_RUNNER_PID" 2>/dev/null || kill -TERM "$_APP_RUNNER_PID" 2>/dev/null || true
+    # Send SIGTERM to process and children
+    if [ "$_APP_RUNNER_HAS_SETSID" = true ]; then
+        kill -TERM "-$_APP_RUNNER_PID" 2>/dev/null || kill -TERM "$_APP_RUNNER_PID" 2>/dev/null || true
+    else
+        pkill -TERM -P "$_APP_RUNNER_PID" 2>/dev/null || true
+        kill -TERM "$_APP_RUNNER_PID" 2>/dev/null || true
+    fi
 
     # Wait up to 5 seconds for graceful shutdown
     local waited=0
@@ -512,7 +521,12 @@ app_runner_stop() {
     # Force kill if still running
     if kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
         log_warn "App Runner: process did not stop gracefully, sending SIGKILL"
-        kill -KILL "-$_APP_RUNNER_PID" 2>/dev/null || kill -KILL "$_APP_RUNNER_PID" 2>/dev/null || true
+        if [ "$_APP_RUNNER_HAS_SETSID" = true ]; then
+            kill -KILL "-$_APP_RUNNER_PID" 2>/dev/null || kill -KILL "$_APP_RUNNER_PID" 2>/dev/null || true
+        else
+            pkill -KILL -P "$_APP_RUNNER_PID" 2>/dev/null || true
+            kill -KILL "$_APP_RUNNER_PID" 2>/dev/null || true
+        fi
     fi
 
     # Unregister from central PID registry
@@ -555,7 +569,7 @@ app_runner_health_check() {
     # Docker compose: check containers instead of PID (docker compose up -d exits immediately)
     if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
         local running_containers
-        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps -q 2>/dev/null; } | wc -l | tr -d ' ')
+        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps 2>/dev/null | grep -ciE 'running|up'; } | wc -l | tr -d ' ')
         if [ "${running_containers:-0}" -gt 0 ]; then
             _write_health "true"
             _write_app_state "running"

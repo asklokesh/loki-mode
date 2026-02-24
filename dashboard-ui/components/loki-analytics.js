@@ -47,6 +47,7 @@ export class LokiAnalytics extends LokiElement {
     this._trends = [];
     this._toolTimeRange = '7d';
     this._connected = false;
+    this._loading = false;
   }
 
   connectedCallback() {
@@ -76,33 +77,46 @@ export class LokiAnalytics extends LokiElement {
 
   async _fetchActivity() {
     const baseUrl = this._api.baseUrl || window.location.origin;
-    const resp = await fetch(`${baseUrl}/api/activity?limit=1000`);
-    if (!resp.ok) throw new Error(`Activity API ${resp.status}`);
-    return resp.json();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const resp = await fetch(`${baseUrl}/api/activity?limit=1000`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) throw new Error(`Activity API ${resp.status}`);
+      return resp.json();
+    } catch (e) {
+      clearTimeout(timeout);
+      throw e;
+    }
   }
 
   async _loadData() {
-    if (!this.isConnected) return;
+    if (!this.isConnected || this._loading) return;
+    this._loading = true;
 
-    const results = await Promise.allSettled([
-      this._fetchActivity(),
-      this._api.getToolEfficiency(50),
-      this._api.getCost(),
-      this._api.getContext(),
-      this._api.getLearningTrends({ timeRange: this._toolTimeRange }),
-    ]);
+    try {
+      const results = await Promise.allSettled([
+        this._fetchActivity(),
+        this._api.getToolEfficiency(50),
+        this._api.getCost(),
+        this._api.getContext(),
+        this._api.getLearningTrends({ timeRange: this._toolTimeRange }),
+      ]);
 
-    if (results[0].status === 'fulfilled') this._activity = results[0].value || [];
-    if (results[1].status === 'fulfilled') this._tools = results[1].value || [];
-    if (results[2].status === 'fulfilled') this._cost = results[2].value || {};
-    if (results[3].status === 'fulfilled') this._context = results[3].value || {};
-    if (results[4].status === 'fulfilled') {
-      const trendsRaw = results[4].value || {};
-      this._trends = Array.isArray(trendsRaw) ? trendsRaw : (trendsRaw.dataPoints || []);
+      if (results[0].status === 'fulfilled') this._activity = results[0].value || [];
+      if (results[1].status === 'fulfilled') this._tools = results[1].value || [];
+      if (results[2].status === 'fulfilled') this._cost = results[2].value || {};
+      if (results[3].status === 'fulfilled') this._context = results[3].value || {};
+      if (results[4].status === 'fulfilled') {
+        const trendsRaw = results[4].value || {};
+        this._trends = Array.isArray(trendsRaw) ? trendsRaw : (trendsRaw.dataPoints || []);
+      }
+
+      this._connected = results.some(r => r.status === 'fulfilled');
+      this.render();
+    } finally {
+      this._loading = false;
     }
-
-    this._connected = results.some(r => r.status === 'fulfilled');
-    this.render();
   }
 
   _startPolling() {
@@ -137,7 +151,7 @@ export class LokiAnalytics extends LokiElement {
       if (!ts) continue;
       const d = new Date(ts);
       if (isNaN(d.getTime())) continue;
-      const key = d.toISOString().slice(0, 10);
+      const key = this._localDateKey(d);
       counts[key] = (counts[key] || 0) + 1;
     }
 
@@ -153,7 +167,7 @@ export class LokiAnalytics extends LokiElement {
     const current = new Date(startDate);
     let maxCount = 0;
     while (current <= endDate) {
-      const key = current.toISOString().slice(0, 10);
+      const key = this._localDateKey(current);
       const count = counts[key] || 0;
       if (count > maxCount) maxCount = count;
       cells.push({ date: key, count, day: current.getDay() });
@@ -180,7 +194,7 @@ export class LokiAnalytics extends LokiElement {
     // Compute month label positions (place at the week containing month's first day)
     const monthPositions = [];
     let lastMonth = -1;
-    let weekCol = 0;
+    let weekCol = -1;
     for (let i = 0; i < cells.length; i++) {
       if (cells[i].day === 0) weekCol++;
       const month = new Date(cells[i].date).getMonth();
@@ -248,17 +262,6 @@ export class LokiAnalytics extends LokiElement {
       return '<div class="empty-state">No tool usage data available</div>';
     }
 
-    const filterHTML = `
-      <div class="tool-filter">
-        <select class="tool-time-select" id="tool-time-range">
-          <option value="1h" ${this._toolTimeRange === '1h' ? 'selected' : ''}>Last hour</option>
-          <option value="24h" ${this._toolTimeRange === '24h' ? 'selected' : ''}>Last 24h</option>
-          <option value="7d" ${this._toolTimeRange === '7d' ? 'selected' : ''}>Last 7 days</option>
-          <option value="30d" ${this._toolTimeRange === '30d' ? 'selected' : ''}>Last 30 days</option>
-        </select>
-      </div>
-    `;
-
     const barsHTML = tools.map(([name, count]) => {
       const pct = maxCount > 0 ? (count / maxCount) * 100 : 0;
       return `
@@ -272,7 +275,7 @@ export class LokiAnalytics extends LokiElement {
       `;
     }).join('');
 
-    return filterHTML + '<div class="tool-bars">' + barsHTML + '</div>';
+    return '<div class="tool-bars">' + barsHTML + '</div>';
   }
 
   // --- Velocity computation ---
@@ -295,7 +298,7 @@ export class LokiAnalytics extends LokiElement {
       if (timestamps.length >= 2) {
         const spanHours = (timestamps[timestamps.length - 1] - timestamps[0]) / 3600000;
         if (spanHours > 0) {
-          iterPerHour = timestamps.length / spanHours;
+          iterPerHour = Math.max(timestamps.length - 1, 1) / spanHours;
         }
       }
     }
@@ -336,7 +339,19 @@ export class LokiAnalytics extends LokiElement {
         }).join('')
       : '<div class="empty-state" style="padding: 12px">No trend data</div>';
 
+    const trendFilterHTML = `
+      <div class="tool-filter">
+        <select class="tool-time-select" id="tool-time-range">
+          <option value="1h" ${this._toolTimeRange === '1h' ? 'selected' : ''}>Trend: Last hour</option>
+          <option value="24h" ${this._toolTimeRange === '24h' ? 'selected' : ''}>Trend: Last 24h</option>
+          <option value="7d" ${this._toolTimeRange === '7d' ? 'selected' : ''}>Trend: Last 7 days</option>
+          <option value="30d" ${this._toolTimeRange === '30d' ? 'selected' : ''}>Trend: Last 30 days</option>
+        </select>
+      </div>
+    `;
+
     return `
+      ${trendFilterHTML}
       <div class="velocity-cards">
         <div class="velocity-card">
           <div class="velocity-label">Iterations / Hour</div>
@@ -441,6 +456,10 @@ export class LokiAnalytics extends LokiElement {
   _esc(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+  }
+
+  _localDateKey(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   _handleTabClick(e) {
@@ -768,7 +787,7 @@ export class LokiAnalytics extends LokiElement {
 
         .provider-card:hover {
           transform: translateY(-2px);
-          box-shadow: var(--loki-glass-shadow);
+          box-shadow: var(--loki-glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.15));
         }
 
         .provider-accent {
