@@ -23,7 +23,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -31,7 +30,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install npm dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install Python dependencies
         run: |
@@ -40,29 +39,36 @@ jobs:
 
       - name: Run npm tests
         id: npm_tests
+        if: always()
         run: npm test
 
       - name: Run pytest
         id: pytest
+        if: always()
         run: python3 -m pytest
 
       - name: Run shell tests
         id: shell_tests
+        if: always()
         run: bash tests/run-all-tests.sh
 
       - name: Bash syntax validation
         id: bash_syntax
+        if: always()
         run: bash -n autonomy/run.sh && bash -n autonomy/loki
 
       - name: Setup Helm
+        if: always()
         uses: azure/setup-helm@v4
 
       - name: Helm lint
         id: helm_lint
+        if: always()
         run: helm lint deploy/helm/loki-mode
 
       - name: Node module import checks
         id: node_imports
+        if: always()
         run: |
           echo "-- Checking Node module imports --"
           node -e "require('./src/protocols/mcp-client')"
@@ -78,6 +84,7 @@ jobs:
 
       - name: Python module import checks
         id: python_imports
+        if: always()
         run: |
           echo "-- Checking Python module imports --"
           PYTHONPATH=sdk/python:$PYTHONPATH python3 -c "from memory.knowledge_graph import OrganizationKnowledgeGraph"
@@ -90,6 +97,7 @@ jobs:
 
       - name: Dashboard health check
         id: dashboard_health
+        if: always()
         run: |
           python3 -m pip install fastapi uvicorn
           python3 -m dashboard.server &
