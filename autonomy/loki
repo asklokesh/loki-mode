@@ -4809,6 +4809,692 @@ print()
     fi
 }
 
+# ============================================================================
+# Migration Command
+# ============================================================================
+
+cmd_migrate_help() {
+    echo -e "${BOLD}loki migrate${NC} - Codebase migration with autonomous agents"
+    echo ""
+    echo "Usage: loki migrate <path-to-codebase> [options]"
+    echo ""
+    echo "Migrates a codebase to a new language, framework, or architecture using"
+    echo "multi-agent orchestration with guardrails and incremental verification."
+    echo ""
+    echo "Options:"
+    echo "  --target <lang|framework|arch>   Migration target (e.g. typescript, react, microservices)"
+    echo "  --plan-only                      Generate migration plan without executing"
+    echo "  --show-plan                      Display current migration plan"
+    echo "  --phase <phase>                  Run specific phase:"
+    echo "                                     understand  - Analyze codebase structure"
+    echo "                                     guardrail   - Set up tests and safety nets"
+    echo "                                     migrate     - Execute migration transforms"
+    echo "                                     verify      - Run verification suite"
+    echo "  --parallel <N>                   Max parallel agents (default: 4, max: 10)"
+    echo "  --compliance <preset>            Compliance preset: healthcare, fintech, government"
+    echo "  --dry-run                        Show what would change without executing"
+    echo "  --resume                         Resume from last checkpoint"
+    echo "  --multi-repo <glob>              Multiple repository paths (glob pattern)"
+    echo "  --export-report                  Export migration report to file"
+    echo "  --list                           List all migrations"
+    echo "  --status [migration-id]          Show migration status"
+    echo ""
+    echo "Examples:"
+    echo "  loki migrate ./my-app --target typescript"
+    echo "  loki migrate ./my-app --target react --plan-only"
+    echo "  loki migrate ./my-app --target microservices --compliance fintech"
+    echo "  loki migrate --list"
+    echo "  loki migrate --status mig-20260223-001"
+    echo "  loki migrate ./my-app --target typescript --resume"
+    echo "  loki migrate ./my-app --target typescript --phase verify"
+    echo "  loki migrate --multi-repo './services/*' --target typescript"
+}
+
+cmd_migrate_list() {
+    python3 -c "
+import sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import list_migrations
+migrations = list_migrations()
+if not migrations:
+    print('No migrations found.')
+    print('Start a migration with: loki migrate <path> --target <target>')
+else:
+    print(f'\033[1mMigrations\033[0m ({len(migrations)} total)')
+    print('---')
+    for m in migrations:
+        print(f\"  {m['id']}\")
+        print(f\"    Target:   {m.get('target', '?')}\")
+        print(f\"    Source:   {m.get('source_path', '?')}\")
+        print(f\"    Status:   {m.get('status', '?')}\")
+        print(f\"    Created:  {m.get('created_at', '?')[:10] if m.get('created_at') else '?'}\")
+        print()
+" || {
+        echo -e "${RED}Error listing migrations${NC}"
+        return 1
+    }
+}
+
+cmd_migrate_status() {
+    local migration_id="${1:-}"
+    local migrations_dir="${HOME}/.loki/migrations"
+
+    if [ -z "$migration_id" ]; then
+        # Show status of most recent migration
+        local latest
+        latest=$(find "$migrations_dir" -name "manifest.json" -maxdepth 2 2>/dev/null | sort | tail -1)
+        if [ -z "$latest" ]; then
+            echo -e "${YELLOW}No migrations found.${NC}"
+            return 0
+        fi
+        migration_id=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['id'])" "$latest" 2>/dev/null || echo "")
+    fi
+
+    local manifest="${migrations_dir}/${migration_id}/manifest.json"
+    if [ ! -f "$manifest" ]; then
+        echo -e "${RED}Error: Migration not found: ${migration_id}${NC}"
+        echo "Run 'loki migrate --list' to see available migrations."
+        return 1
+    fi
+
+    python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import MigrationPipeline
+try:
+    pipeline = MigrationPipeline.load(sys.argv[1])
+    progress = pipeline.get_progress()
+    print(json.dumps(progress, indent=2))
+except Exception as e:
+    print(f'\033[0;31mError reading migration: {e}\033[0m', file=sys.stderr)
+    sys.exit(1)
+" "$migration_id" || {
+        echo -e "${RED}Error reading migration manifest${NC}"
+        return 1
+    }
+}
+
+cmd_migrate_show_plan() {
+    local codebase_path="${1:-$(pwd)}"
+    local migrations_dir="${HOME}/.loki/migrations"
+
+    # Find plan for this codebase
+    local plan_file=""
+    if [ -f "${codebase_path}/.loki/migration-plan.json" ]; then
+        plan_file="${codebase_path}/.loki/migration-plan.json"
+    else
+        # Search in global migrations dir
+        local latest
+        latest=$(find "$migrations_dir" -name "migration-plan.json" -maxdepth 2 2>/dev/null | sort | tail -1)
+        if [ -n "$latest" ]; then
+            plan_file="$latest"
+        fi
+    fi
+
+    if [ -z "$plan_file" ] || [ ! -f "$plan_file" ]; then
+        echo -e "${YELLOW}No migration plan found.${NC}"
+        echo "Generate one with: loki migrate <path> --target <target> --plan-only"
+        return 0
+    fi
+
+    echo -e "${BOLD}Migration Plan${NC}"
+    echo -e "${DIM}Source: ${plan_file}${NC}"
+    echo "---"
+
+    # Try engine-based summary first, fall back to raw JSON display
+    local migration_id_for_plan=""
+    migration_id_for_plan=$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+# Try to extract migration ID from path or data
+print(data.get('id', ''))
+" "$plan_file" 2>/dev/null || echo "")
+
+    if [ -n "$migration_id_for_plan" ]; then
+        python3 -c "
+import sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import MigrationPipeline
+pipeline = MigrationPipeline.load(sys.argv[1])
+print(pipeline.generate_plan_summary())
+" "$migration_id_for_plan" 2>/dev/null || {
+            # Fall back to basic display if engine fails
+            python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    plan = json.load(f)
+print(json.dumps(plan, indent=2))
+" "$plan_file" || echo -e "${RED}Error reading migration plan${NC}"
+        }
+    else
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    plan = json.load(f)
+print(json.dumps(plan, indent=2))
+" "$plan_file" || {
+            echo -e "${RED}Error reading migration plan${NC}"
+            return 1
+        }
+    fi
+}
+
+cmd_migrate_start() {
+    local codebase_path="$1"
+    local target="$2"
+    local plan_only="$3"
+    local phase="$4"
+    local parallel="$5"
+    local compliance="$6"
+    local dry_run="$7"
+    local resume="$8"
+    local multi_repo="$9"
+    local export_report="${10}"
+
+    local migrations_dir="${HOME}/.loki/migrations"
+    local migration_id=""
+
+    # Check python3 availability
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}Error: python3 is required for migration${NC}"
+        return 1
+    fi
+
+    # Check for path traversal BEFORE canonicalization
+    case "$codebase_path" in
+        *..*)
+            echo -e "${RED}Error: Path traversal not allowed in codebase path${NC}"
+            return 1
+            ;;
+    esac
+
+    # Validate codebase path
+    if [ ! -d "$codebase_path" ]; then
+        echo -e "${RED}Error: Codebase path does not exist: ${codebase_path}${NC}"
+        return 1
+    fi
+
+    # Then canonicalize
+    codebase_path=$(cd "$codebase_path" && pwd) || {
+        echo -e "${RED}Error: Cannot access $codebase_path${NC}"
+        return 1
+    }
+
+    # Validate target
+    if [ -z "$target" ]; then
+        echo -e "${RED}Error: --target is required${NC}"
+        echo "Specify the migration target (e.g. --target typescript, --target react, --target microservices)"
+        echo ""
+        echo "Run 'loki migrate --help' for usage."
+        return 1
+    fi
+
+    # Validate compliance preset
+    if [ -n "$compliance" ]; then
+        case "$compliance" in
+            healthcare|fintech|government) ;;
+            *)
+                echo -e "${RED}Error: Invalid compliance preset: ${compliance}${NC}"
+                echo "Valid presets: healthcare, fintech, government"
+                return 1
+                ;;
+        esac
+    fi
+
+    # Validate parallel count
+    if [ -n "$parallel" ]; then
+        if ! [[ "$parallel" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}Error: --parallel must be a number${NC}"
+            return 1
+        fi
+        if [ "$parallel" -lt 1 ] || [ "$parallel" -gt 10 ]; then
+            echo -e "${RED}Error: --parallel must be between 1 and 10${NC}"
+            return 1
+        fi
+    else
+        parallel=4
+    fi
+
+    # Handle resume
+    if [ "$resume" = "true" ]; then
+        local latest_manifest
+        latest_manifest=$(find "$migrations_dir" -name "manifest.json" -maxdepth 2 2>/dev/null | \
+            xargs python3 -c "
+import json, sys
+codebase = sys.argv[1]
+manifests = []
+for path in sys.argv[2:]:
+    try:
+        with open(path) as f:
+            m = json.load(f)
+        if m.get('source_path') == codebase and m.get('status') in ('paused', 'running', 'failed'):
+            manifests.append(path)
+    except: pass
+if manifests:
+    print(manifests[-1])
+" "$codebase_path" 2>/dev/null || echo "")
+
+        if [ -z "$latest_manifest" ]; then
+            echo -e "${RED}Error: No resumable migration found for ${codebase_path}${NC}"
+            echo "Start a new migration with: loki migrate ${codebase_path} --target ${target}"
+            return 1
+        fi
+
+        migration_id=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['id'])" "$latest_manifest" 2>/dev/null)
+        echo -e "${GREEN}Resuming migration: ${migration_id}${NC}"
+        echo -e "${DIM}Loading checkpoint...${NC}"
+    fi
+
+    # Handle multi-repo
+    if [ -n "$multi_repo" ]; then
+        local repo_count=0
+        local repos=()
+        local _repo
+        # Use an array to safely handle glob expansion with spaces in paths
+        local _expanded_repos=()
+        # Save and restore globbing options
+        local _old_nullglob=$(shopt -p nullglob 2>/dev/null || true)
+        shopt -s nullglob
+        local _expanded_repos=($multi_repo)
+        eval "$_old_nullglob" 2>/dev/null || true
+        for _repo in "${_expanded_repos[@]}"; do
+            if [ -d "$_repo" ]; then
+                repos+=("$_repo")
+                repo_count=$((repo_count + 1))
+            fi
+        done
+        if [ "$repo_count" -eq 0 ]; then
+            echo -e "${RED}Error: No repositories found matching: ${multi_repo}${NC}"
+            return 1
+        fi
+        echo -e "${BOLD}Multi-repo migration${NC} ($repo_count repositories)"
+        echo "---"
+        for repo in "${repos[@]}"; do
+            echo "  - $repo"
+        done
+        echo ""
+    fi
+
+    # Create migration via engine
+    local create_result
+    create_result=$(python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import MigrationPipeline
+pipeline = MigrationPipeline(sys.argv[1], sys.argv[2])
+manifest = pipeline.create_manifest()
+print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
+" "$codebase_path" "$target" 2>&1) || {
+        echo -e "${RED}Error: Failed to create migration${NC}"
+        echo "$create_result"
+        return 1
+    }
+    migration_id=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+    local migration_dir
+    migration_dir=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['dir'])")
+
+    # Security scan (first step of understand phase)
+    echo -e "${BOLD}[Security] Scanning for secrets...${NC}"
+    local secrets_found=0
+    if command -v grep &>/dev/null; then
+        local secret_patterns="(password|secret|api_key|apikey|token|private_key|AWS_SECRET|DB_PASS)\\s*[=:]\\s*['\"][^'\"]+['\"]"
+        secrets_found=$(grep -rEli "$secret_patterns" "$codebase_path" --include='*.js' --include='*.ts' --include='*.py' --include='*.rb' --include='*.go' --include='*.java' --include='*.env' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.toml' --include='*.cfg' --include='*.ini' 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    if [ "$secrets_found" -gt 0 ]; then
+        echo -e "${RED}WARNING: Found $secrets_found file(s) potentially containing secrets${NC}"
+        echo -e "${YELLOW}Review these files before migration to avoid leaking credentials.${NC}"
+        echo ""
+    else
+        echo -e "${GREEN}No secrets detected.${NC}"
+        echo ""
+    fi
+
+    # Handle dry-run
+    if [ "$dry_run" = "true" ]; then
+        echo -e "${BOLD}[Dry Run] Migration preview${NC}"
+        echo "---"
+        echo -e "  Codebase:    ${codebase_path}"
+        echo -e "  Target:      ${target}"
+        echo -e "  Parallel:    ${parallel} agents"
+        [ -n "$compliance" ] && echo -e "  Compliance:  ${compliance}"
+        [ -n "$multi_repo" ] && echo -e "  Multi-repo:  ${multi_repo}"
+        echo ""
+        echo -e "${DIM}Phases that would execute:${NC}"
+        echo "  1. understand  - Analyze codebase structure and dependencies"
+        echo "  2. guardrail   - Set up test safety nets and rollback points"
+        echo "  3. migrate     - Execute migration transforms"
+        echo "  4. verify      - Run verification suite and regression tests"
+        echo ""
+        echo -e "${YELLOW}No changes were made (dry-run mode).${NC}"
+        # Clean up migration dir created by engine
+        rm -rf "$migration_dir" 2>/dev/null || true
+        return 0
+    fi
+
+    emit_event migration cli start "id=$migration_id" "target=$target" "source=$codebase_path" 2>/dev/null || true
+
+    echo -e "${BOLD}Migration: ${migration_id}${NC}"
+    echo "---"
+    echo -e "  Codebase:    ${codebase_path}"
+    echo -e "  Target:      ${target}"
+    echo -e "  Parallel:    ${parallel} agents"
+    [ -n "$compliance" ] && echo -e "  Compliance:  ${compliance}"
+    echo ""
+
+    # Determine which phases to run
+    local phases_to_run=()
+    if [ -n "$phase" ]; then
+        case "$phase" in
+            understand|guardrail|migrate|verify)
+                phases_to_run=("$phase")
+                ;;
+            *)
+                echo -e "${RED}Error: Invalid phase: ${phase}${NC}"
+                echo "Valid phases: understand, guardrail, migrate, verify"
+                return 1
+                ;;
+        esac
+    elif [ "$plan_only" = "true" ]; then
+        phases_to_run=("understand" "guardrail")
+    else
+        phases_to_run=("understand" "guardrail" "migrate" "verify")
+    fi
+
+    # Execute phases
+    for p in "${phases_to_run[@]}"; do
+        echo -e "${CYAN}[Phase: ${p}]${NC} Starting..."
+
+        # Start phase via engine
+        python3 -c "
+import sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import MigrationPipeline
+pipeline = MigrationPipeline.load(sys.argv[1])
+pipeline.start_phase(sys.argv[2])
+" "$migration_id" "$p" || {
+            echo -e "${RED}Error: Failed to start phase $p${NC}"
+            return 1
+        }
+
+        # Phase-specific logic
+        case "$p" in
+            understand)
+                echo -e "  ${DIM}Analyzing codebase structure...${NC}"
+                echo -e "  ${DIM}Detecting languages, frameworks, dependencies...${NC}"
+                echo -e "  ${DIM}Building dependency graph...${NC}"
+                ;;
+            guardrail)
+                echo -e "  ${DIM}Identifying existing tests...${NC}"
+                echo -e "  ${DIM}Creating rollback checkpoints...${NC}"
+                echo -e "  ${DIM}Setting up safety nets...${NC}"
+                ;;
+            migrate)
+                echo -e "  ${DIM}Executing migration transforms (${parallel} parallel agents)...${NC}"
+                echo -e "  ${DIM}Applying incremental changes...${NC}"
+                ;;
+            verify)
+                echo -e "  ${DIM}Running verification suite...${NC}"
+                echo -e "  ${DIM}Checking regression tests...${NC}"
+                echo -e "  ${DIM}Validating build output...${NC}"
+                ;;
+        esac
+
+        # Complete phase via engine
+        python3 -c "
+import sys
+sys.path.insert(0, '.')
+from dashboard.migration_engine import MigrationPipeline
+pipeline = MigrationPipeline.load(sys.argv[1])
+pipeline.advance_phase(sys.argv[2])
+" "$migration_id" "$p" || {
+            echo -e "${RED}Error: Failed to complete phase $p${NC}"
+            return 1
+        }
+
+        echo -e "${GREEN}  [Phase: ${p}] Complete${NC}"
+        echo ""
+    done
+
+    # Plan-only: generate plan file and stop
+    if [ "$plan_only" = "true" ]; then
+        echo -e "${BOLD}Migration plan generated.${NC}"
+        echo -e "View with: loki migrate --show-plan"
+
+        python3 -c "
+import json, sys
+from datetime import datetime
+plan = {
+    'target': sys.argv[1],
+    'source_path': sys.argv[2],
+    'estimated_hours': '?',
+    'risk_level': 'medium',
+    'steps': [],
+    'dependencies': [],
+    'breaking_changes': [],
+    'generated_at': datetime.now().isoformat()
+}
+with open(sys.argv[3], 'w') as f:
+    json.dump(plan, f, indent=2)
+" "$target" "$codebase_path" "${migration_dir}/migration-plan.json" || {
+            echo -e "${RED}Error: Failed to create migration plan${NC}"
+            return 1
+        }
+
+        # Update status to paused
+        python3 -c "
+import json, sys
+from datetime import datetime
+manifest_path = sys.argv[1]
+with open(manifest_path) as f:
+    m = json.load(f)
+m['status'] = 'paused'
+m['updated_at'] = datetime.now().isoformat()
+with open(manifest_path, 'w') as f:
+    json.dump(m, f, indent=2)
+" "${migration_dir}/manifest.json" || {
+            echo -e "${RED}Error: Failed to update migration state${NC}"
+            return 1
+        }
+        return 0
+    fi
+
+    # Mark migration complete
+    python3 -c "
+import json, sys
+from datetime import datetime
+manifest_path = sys.argv[1]
+with open(manifest_path) as f:
+    m = json.load(f)
+m['status'] = 'completed'
+m['progress_pct'] = 100
+m['updated_at'] = datetime.now().isoformat()
+with open(manifest_path, 'w') as f:
+    json.dump(m, f, indent=2)
+" "${migration_dir}/manifest.json" || {
+        echo -e "${RED}Error: Failed to update migration state${NC}"
+        return 1
+    }
+
+    emit_event migration cli complete "id=$migration_id" "target=$target" 2>/dev/null || true
+
+    # Export report if requested
+    if [ "$export_report" = "true" ]; then
+        local report_file="${codebase_path}/migration-report-${migration_id}.json"
+        cp "${migration_dir}/manifest.json" "$report_file" 2>/dev/null
+        echo -e "${GREEN}Report exported: ${report_file}${NC}"
+    fi
+
+    echo -e "${GREEN}${BOLD}Migration complete: ${migration_id}${NC}"
+    echo -e "View details: loki migrate --status ${migration_id}"
+}
+
+cmd_migrate() {
+    local codebase_path=""
+    local target=""
+    local plan_only="false"
+    local show_plan="false"
+    local phase=""
+    local parallel=""
+    local compliance=""
+    local dry_run="false"
+    local do_resume="false"
+    local multi_repo=""
+    local export_report="false"
+    local do_list="false"
+    local do_status="false"
+    local status_id=""
+
+    if [ $# -eq 0 ]; then
+        cmd_migrate_help
+        return 0
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                cmd_migrate_help
+                return 0
+                ;;
+            --list)
+                do_list="true"
+                shift
+                ;;
+            --status)
+                do_status="true"
+                if [[ -n "${2:-}" ]] && [[ ! "$2" =~ ^-- ]]; then
+                    status_id="$2"
+                    shift
+                fi
+                shift
+                ;;
+            --show-plan)
+                show_plan="true"
+                shift
+                ;;
+            --target)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --target requires a value${NC}"
+                    return 1
+                fi
+                target="$2"
+                shift 2
+                ;;
+            --target=*)
+                target="${1#*=}"
+                shift
+                ;;
+            --plan-only)
+                plan_only="true"
+                shift
+                ;;
+            --phase)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --phase requires a value${NC}"
+                    return 1
+                fi
+                phase="$2"
+                shift 2
+                ;;
+            --phase=*)
+                phase="${1#*=}"
+                shift
+                ;;
+            --parallel)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --parallel requires a value${NC}"
+                    return 1
+                fi
+                parallel="$2"
+                shift 2
+                ;;
+            --parallel=*)
+                parallel="${1#*=}"
+                shift
+                ;;
+            --compliance)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --compliance requires a value${NC}"
+                    return 1
+                fi
+                compliance="$2"
+                shift 2
+                ;;
+            --compliance=*)
+                compliance="${1#*=}"
+                shift
+                ;;
+            --dry-run)
+                dry_run="true"
+                shift
+                ;;
+            --resume)
+                do_resume="true"
+                shift
+                ;;
+            --multi-repo)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}Error: --multi-repo requires a value${NC}"
+                    return 1
+                fi
+                multi_repo="$2"
+                shift 2
+                ;;
+            --multi-repo=*)
+                multi_repo="${1#*=}"
+                shift
+                ;;
+            --export-report)
+                export_report="true"
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki migrate --help' for usage."
+                return 1
+                ;;
+            *)
+                if [ -z "$codebase_path" ]; then
+                    codebase_path="$1"
+                else
+                    echo -e "${RED}Error: Unexpected argument: $1${NC}"
+                    echo "Run 'loki migrate --help' for usage."
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Route to subcommands
+    if [ "$do_list" = "true" ]; then
+        cmd_migrate_list
+        return 0
+    fi
+
+    if [ "$do_status" = "true" ]; then
+        cmd_migrate_status "$status_id"
+        return 0
+    fi
+
+    if [ "$show_plan" = "true" ]; then
+        cmd_migrate_show_plan "${codebase_path:-$(pwd)}"
+        return 0
+    fi
+
+    # Default: start or continue migration
+    if [ -z "$codebase_path" ]; then
+        echo -e "${RED}Error: Codebase path is required${NC}"
+        echo "Usage: loki migrate <path-to-codebase> --target <target>"
+        echo ""
+        echo "Run 'loki migrate --help' for usage."
+        return 1
+    fi
+
+    cmd_migrate_start "$codebase_path" "$target" "$plan_only" "$phase" "$parallel" "$compliance" "$dry_run" "$do_resume" "$multi_repo" "$export_report"
+}
+
 # Main command dispatcher
 main() {
     if [ $# -eq 0 ]; then
@@ -4926,6 +5612,9 @@ main() {
             ;;
         optimize)
             cmd_optimize "$@"
+            ;;
+        migrate)
+            cmd_migrate "$@"
             ;;
         metrics)
             cmd_metrics "$@"

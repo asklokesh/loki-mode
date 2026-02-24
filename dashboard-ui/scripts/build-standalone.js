@@ -642,6 +642,10 @@ function generateStandaloneHTML(bundleCode) {
           Notifications
           <span class="notification-badge" id="notif-badge" style="display:none;background:var(--loki-red);color:#fff;font-size:10px;padding:1px 5px;border-radius:8px;margin-left:4px;">0</span>
         </button>
+        <button class="nav-link" data-section="migration" id="nav-migration">
+          <svg viewBox="0 0 24 24"><path d="M4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 4h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M17 10v4h-4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 14v-4h4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          Migration
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -759,6 +763,14 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <loki-notification-center id="notification-center"></loki-notification-center>
       </div>
+
+      <!-- Migration -->
+      <div class="section-page" id="page-migration">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Migration</h2>
+        </div>
+        <loki-migration-dashboard id="migration-dashboard"></loki-migration-dashboard>
+      </div>
     </main>
   </div>
 
@@ -781,6 +793,7 @@ function generateStandaloneHTML(bundleCode) {
         <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Context</span><span class="shortcut-keys"><kbd class="shortcut-key">9</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Notifications</span><span class="shortcut-keys"><kbd class="shortcut-key">0</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Migration</span><span class="shortcut-keys"><kbd class="shortcut-key">m</kbd></span></div>
       </div>
       <div class="shortcuts-group">
         <div class="shortcuts-group-title">Session</div>
@@ -857,7 +870,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'notification-center',
       'session-diff',
       'prompt-optimizer',
-      'quality-score'
+      'quality-score',
+      'migration-dashboard'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);
@@ -941,7 +955,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('keydown', function(e) {
     if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
       e.preventDefault();
-      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications'];
+      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration'];
       var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
       if (idx < sections.length) switchSection(sections[idx]);
     }
@@ -982,7 +996,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Skip if modifier keys are held (let browser defaults work)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'cost', 'checkpoint', 'context', 'notifications'];
+    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration'];
 
     switch (e.key) {
       // Section navigation: 1-9, 0
@@ -993,6 +1007,12 @@ document.addEventListener('DOMContentLoaded', function() {
       case '0':
         e.preventDefault();
         switchSection(sections[9]);
+        break;
+
+      // Migration page
+      case 'm':
+        e.preventDefault();
+        switchSection('migration');
         break;
 
       // Help overlay

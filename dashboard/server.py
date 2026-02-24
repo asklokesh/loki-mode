@@ -10,6 +10,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from dataclasses import asdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path as _Path
@@ -4147,6 +4148,224 @@ def get_quality_report(fmt: str = Query("json", alias="format")):
     except Exception as exc:
         logger.error("Quality report error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to generate quality report")
+
+
+# =============================================================================
+# Migration Engine Endpoints
+# =============================================================================
+
+_migration_imports = None
+
+_MIGRATION_ID_RE = re.compile(r'^mig_\d{8}_\d{6}_[a-zA-Z0-9_-]+$')
+
+
+def _validate_migration_id(migration_id: str):
+    """Validate migration_id format to prevent path traversal."""
+    if not _MIGRATION_ID_RE.match(migration_id):
+        raise HTTPException(status_code=400, detail="Invalid migration ID format")
+
+
+def _get_migration_imports():
+    """Lazy-import migration_engine module. Returns (MigrationPipeline, list_migrations) or False."""
+    global _migration_imports
+    if _migration_imports is None:
+        try:
+            from dashboard.migration_engine import MigrationPipeline, list_migrations
+            _migration_imports = (MigrationPipeline, list_migrations)
+        except ImportError:
+            _migration_imports = False
+    return _migration_imports
+
+
+@app.get("/api/migration/list", dependencies=[Depends(auth.require_scope("read"))])
+def list_migrations_endpoint():
+    """List all migrations."""
+    if not _read_limiter.check("migration-list"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    try:
+        return list_migrations()
+    except Exception as exc:
+        logger.error("Migration list error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to list migrations")
+
+
+@app.post("/api/migration/start", dependencies=[Depends(auth.require_scope("control"))])
+def start_migration(request_body: dict):
+    """Start a new migration.
+
+    Body: {"codebase_path": str, "target": str, "options": dict}
+    """
+    if not _control_limiter.check("migration-start"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    codebase_path = request_body.get("codebase_path")
+    target = request_body.get("target")
+    options = request_body.get("options", {})
+    if not codebase_path or not target:
+        raise HTTPException(status_code=400, detail="codebase_path and target are required")
+    # Check raw input for traversal BEFORE resolving
+    if '..' in codebase_path:
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    codebase_path = os.path.realpath(codebase_path)
+    if not os.path.isdir(codebase_path):
+        raise HTTPException(status_code=400, detail=f"codebase_path does not exist: {codebase_path}")
+    try:
+        pipeline = MigrationPipeline(codebase_path=codebase_path, target=target, options=options)
+        manifest = pipeline.create_manifest()
+        return asdict(manifest)
+    except Exception as exc:
+        logger.error("Migration start error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to start migration")
+
+
+@app.get("/api/migration/{migration_id}/status", dependencies=[Depends(auth.require_scope("read"))])
+def get_migration_status(migration_id: str):
+    """Get migration status and progress."""
+    _validate_migration_id(migration_id)
+    if not _read_limiter.check("migration-status"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+        return pipeline.get_progress()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration not found: {migration_id}")
+    except Exception as exc:
+        logger.error("Migration status error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to get migration status")
+
+
+@app.get("/api/migration/{migration_id}/plan", dependencies=[Depends(auth.require_scope("read"))])
+def get_migration_plan(migration_id: str):
+    """Get migration plan content."""
+    _validate_migration_id(migration_id)
+    if not _read_limiter.check("migration-plan"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+        plan = pipeline.load_plan()
+        return asdict(plan) if hasattr(plan, '__dataclass_fields__') else plan
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration plan not found for: {migration_id}")
+    except Exception as exc:
+        logger.error("Migration plan error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to get migration plan")
+
+
+@app.get("/api/migration/{migration_id}/features", dependencies=[Depends(auth.require_scope("read"))])
+def get_migration_features(migration_id: str):
+    """Get migration feature list."""
+    _validate_migration_id(migration_id)
+    if not _read_limiter.check("migration-features"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+        features = pipeline.load_features()
+        return [asdict(f) for f in features]
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration features not found for: {migration_id}")
+    except Exception as exc:
+        logger.error("Migration features error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to get migration features")
+
+
+@app.get("/api/migration/{migration_id}/seams", dependencies=[Depends(auth.require_scope("read"))])
+def get_migration_seams(migration_id: str):
+    """Get detected seams for migration."""
+    _validate_migration_id(migration_id)
+    if not _read_limiter.check("migration-seams"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+        seams = pipeline.load_seams()
+        return [asdict(s) for s in seams]
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration seams not found for: {migration_id}")
+    except Exception as exc:
+        logger.error("Migration seams error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to get migration seams")
+
+
+@app.post("/api/migration/{migration_id}/advance", dependencies=[Depends(auth.require_scope("control"))])
+def advance_migration(migration_id: str, request_body: dict):
+    """Advance migration to the next phase.
+
+    Body: {"from_phase": str, "to_phase": str}
+    """
+    _validate_migration_id(migration_id)
+    if not _control_limiter.check("migration-advance"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    from_phase = request_body.get("from_phase")
+    to_phase = request_body.get("to_phase")
+    if not from_phase or not to_phase:
+        raise HTTPException(status_code=400, detail="from_phase and to_phase are required")
+    # Load pipeline and check phase gate before the try/except to let
+    # HTTPException and FileNotFoundError propagate naturally.
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration not found: {migration_id}")
+    passed, reason = pipeline.check_phase_gate(from_phase, to_phase)
+    if not passed:
+        raise HTTPException(status_code=409, detail=reason)
+    try:
+        result = pipeline.advance_phase(from_phase)
+        return asdict(result) if hasattr(result, '__dataclass_fields__') else result
+    except Exception as exc:
+        logger.error("Migration advance error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to advance migration")
+
+
+@app.post("/api/migration/{migration_id}/start-phase", dependencies=[Depends(auth.require_scope("control"))])
+def start_migration_phase(migration_id: str, request_body: dict):
+    """Start a migration phase (transition from pending to in_progress)."""
+    _validate_migration_id(migration_id)
+    if not _control_limiter.check("migration-start-phase"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    imports = _get_migration_imports()
+    if not imports:
+        raise HTTPException(status_code=503, detail="Migration engine not available")
+    MigrationPipeline, list_migrations = imports
+    phase = request_body.get("phase")
+    if not phase:
+        raise HTTPException(status_code=400, detail="phase is required")
+    try:
+        pipeline = MigrationPipeline.load(migration_id)
+        pipeline.start_phase(phase)
+        return {"status": "started", "phase": phase}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Migration not found: {migration_id}")
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        logger.error("Start phase error: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to start phase")
 
 
 def run_server(host: str = None, port: int = None) -> None:
