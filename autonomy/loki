@@ -5254,7 +5254,7 @@ Read ${migration_dir}/docs/analysis.md and ${migration_dir}/seams.json for conte
 
 Tasks:
 1. Identify existing tests and create characterization tests that capture current behavior
-2. Write ${migration_dir}/features.json as a JSON array of objects with fields: id, name, description, test_command (shell command to verify), passes (boolean, set to true for existing passing behavior)
+2. Write ${migration_dir}/features.json as a JSON array of objects with fields: id (string, e.g. 'F01'), category (string, e.g. 'core'), description (string), characterization_test (string, shell command to verify), passes (boolean, set to true for existing passing behavior), risk (string: 'low'/'medium'/'high')
 3. Create a git checkpoint: cd ${codebase_path} && git stash || true
 
 All features in features.json must have passes: true for the gate to pass."

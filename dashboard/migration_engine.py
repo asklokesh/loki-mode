@@ -14,7 +14,7 @@ import re
 import subprocess
 import tempfile
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -353,7 +353,12 @@ class MigrationPipeline:
             features_path = self.migration_dir / "features.json"
             try:
                 data = json.loads(features_path.read_text(encoding="utf-8"))
-                features = [Feature(**f) for f in data]
+                # Handle both flat list and {"features": [...]} wrapper
+                if isinstance(data, dict):
+                    data = data.get("features", [])
+                # Filter to known Feature fields to tolerate extra keys
+                _feature_fields = {f.name for f in fields(Feature)}
+                features = [Feature(**{k: v for k, v in f.items() if k in _feature_fields}) for f in data]
             except FileNotFoundError:
                 return False, "Phase gate failed: features.json not found"
             except (json.JSONDecodeError, TypeError) as exc:
@@ -501,7 +506,12 @@ class MigrationPipeline:
         with self._lock:
             try:
                 data = json.loads(features_path.read_text(encoding="utf-8"))
-                return [Feature(**f) for f in data]
+                # Handle both flat list and {"features": [...]} wrapper
+                if isinstance(data, dict):
+                    data = data.get("features", [])
+                # Filter to known Feature fields to tolerate extra keys
+                _feature_fields = {f.name for f in fields(Feature)}
+                return [Feature(**{k: v for k, v in f.items() if k in _feature_fields}) for f in data]
             except FileNotFoundError:
                 logger.warning("Features file not found: %s", features_path)
                 raise
