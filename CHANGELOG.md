@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.58.0] - 2026-02-25
+
+### Added
+- Per-iteration checkpoints: state snapshots after every successful and failed iteration
+- Session checkpoint count logged at session end
+- Codebase Knowledge Graph: peer-reviewed architecture reference in CLAUDE.md and memory
+- Dashboard crash handler with silent auto-restart (max 3 attempts per session)
+- PAUSE auto-clear notification in perpetual mode
+
+### Fixed
+- Autonomous pause bug: perpetual mode no longer pauses and waits for Enter on dashboard crash
+- Checkpoint mode defers pause to next checkpoint boundary instead of blocking immediately
+- Double-Ctrl+C escape now works correctly in perpetual/checkpoint modes (INTERRUPT_COUNT preserved)
+- Child process signals (dashboard exit) no longer trigger interrupt handler
+
 ## [5.57.1] - 2026-02-25
 
 ### Fixed

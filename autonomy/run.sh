@@ -5556,6 +5556,76 @@ stop_dashboard() {
     fi
 }
 
+# Handle dashboard crash: restart silently without triggering pause handler
+# This prevents a killed dashboard from being misinterpreted as a user interrupt
+handle_dashboard_crash() {
+    if [[ "${ENABLE_DASHBOARD:-true}" != "true" ]]; then
+        return 0
+    fi
+
+    local dashboard_pid_file=".loki/dashboard/dashboard.pid"
+    if [[ ! -f "$dashboard_pid_file" ]]; then
+        return 0
+    fi
+
+    local dpid
+    dpid=$(cat "$dashboard_pid_file" 2>/dev/null)
+    if [[ -z "$dpid" ]]; then
+        return 0
+    fi
+
+    # Dashboard is still alive, nothing to do
+    if kill -0 "$dpid" 2>/dev/null; then
+        return 0
+    fi
+
+    # Dashboard is dead -- restart it silently (with throttle)
+    DASHBOARD_RESTART_COUNT=${DASHBOARD_RESTART_COUNT:-0}
+    local max_restarts=${DASHBOARD_MAX_RESTARTS:-3}
+
+    if [ "$DASHBOARD_RESTART_COUNT" -ge "$max_restarts" ]; then
+        log_warn "Dashboard restart limit reached ($max_restarts) - disabling dashboard for this session"
+        ENABLE_DASHBOARD=false
+        return 1
+    fi
+
+    DASHBOARD_RESTART_COUNT=$((DASHBOARD_RESTART_COUNT + 1))
+    log_info "Dashboard process $dpid exited, restarting silently (attempt $DASHBOARD_RESTART_COUNT/$max_restarts)..."
+    emit_event_json "dashboard_crash" \
+        "pid=$dpid" \
+        "action=auto_restart" \
+        "attempt=$DASHBOARD_RESTART_COUNT" \
+        "autonomy_mode=$AUTONOMY_MODE"
+    DASHBOARD_PID=""
+    rm -f "$dashboard_pid_file"
+    start_dashboard
+    return 0
+}
+
+# Check if a signal was caused by a child process dying (e.g., dashboard)
+# rather than an actual user interrupt. Returns 0 if it was a child crash
+# (handled silently), 1 if it was a real interrupt.
+is_child_process_signal() {
+    # If dashboard PID is set and dashboard is now dead, this signal
+    # was likely caused by the dashboard process exiting
+    if [ -n "$DASHBOARD_PID" ] && ! kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        handle_dashboard_crash
+        return 0
+    fi
+
+    # Check PID file as fallback
+    if [ -f ".loki/dashboard/dashboard.pid" ]; then
+        local dpid
+        dpid=$(cat ".loki/dashboard/dashboard.pid" 2>/dev/null)
+        if [ -n "$dpid" ] && ! kill -0 "$dpid" 2>/dev/null; then
+            handle_dashboard_crash
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 #===============================================================================
 # Calculate Exponential Backoff
 #===============================================================================
@@ -7171,6 +7241,9 @@ if __name__ == "__main__":
         # Update session continuity file for next iteration / agent handoff
         update_continuity
 
+        # Checkpoint after each iteration (v5.57.0)
+        create_checkpoint "iteration-${ITERATION_COUNT} complete" "iteration-${ITERATION_COUNT}"
+
         # Code review gate (v5.35.0)
         if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
             run_code_review || log_warn "Code review found issues - check .loki/quality/reviews/"
@@ -7240,6 +7313,9 @@ if __name__ == "__main__":
         local goal_desc="${prd_path:-codebase-analysis}"
         store_episode_trace "$task_id" "failure" "iteration" "$goal_desc" "$duration"
 
+        # Checkpoint failed iteration state (v5.57.0)
+        create_checkpoint "iteration-${ITERATION_COUNT} failed (exit=$exit_code)" "iteration-${ITERATION_COUNT}-fail"
+
         # Handle retry - check for rate limit first
         local rate_limit_wait=$(detect_rate_limit "$log_file")
         local wait_time
@@ -7299,6 +7375,15 @@ check_human_intervention() {
     # handle_pause returns 1 if STOP was requested during the pause, so we must
     # propagate that as return 2 (stop) instead of always returning 1 (continue).
     if [ -f "$loki_dir/PAUSE" ]; then
+        # In perpetual mode: auto-clear PAUSE files and continue without waiting
+        if [ "$AUTONOMY_MODE" = "perpetual" ] || [ "$PERPETUAL_MODE" = "true" ]; then
+            log_warn "PAUSE file detected but autonomy mode is perpetual - auto-clearing"
+            notify_intervention_needed "PAUSE file auto-cleared in perpetual mode" 2>/dev/null || true
+            rm -f "$loki_dir/PAUSE" "$loki_dir/PAUSED.md"
+            # Restart dashboard if it crashed (likely cause of the PAUSE)
+            handle_dashboard_crash
+            return 0
+        fi
         log_warn "PAUSE file detected - pausing execution"
         notify_intervention_needed "Execution paused via PAUSE file"
         handle_pause
@@ -7309,6 +7394,26 @@ check_human_intervention() {
             return 2
         fi
         return 1
+    fi
+
+    # Check for PAUSE_AT_CHECKPOINT (checkpoint mode deferred pause)
+    if [ -f "$loki_dir/PAUSE_AT_CHECKPOINT" ]; then
+        if [ "$AUTONOMY_MODE" = "checkpoint" ]; then
+            log_warn "Checkpoint pause requested - pausing now"
+            rm -f "$loki_dir/PAUSE_AT_CHECKPOINT"
+            notify_intervention_needed "Execution paused at checkpoint"
+            touch "$loki_dir/PAUSE"
+            handle_pause
+            local pause_result=$?
+            rm -f "$loki_dir/PAUSE"
+            if [ "$pause_result" -eq 1 ]; then
+                return 2
+            fi
+            return 1
+        else
+            # Clean up stale checkpoint pause file
+            rm -f "$loki_dir/PAUSE_AT_CHECKPOINT"
+        fi
     fi
 
     # Check for HUMAN_INPUT.md (prompt injection)
@@ -7516,7 +7621,46 @@ except (json.JSONDecodeError, OSError): pass
     # Re-enable signals for pause mode
     trap cleanup INT TERM
 
-    # First Ctrl+C - pause and show options
+    # Check if this signal was caused by a child process dying (e.g., dashboard)
+    # rather than an actual user interrupt. In that case, handle silently.
+    if is_child_process_signal; then
+        log_info "Child process exit detected, handled silently"
+        INTERRUPT_COUNT=0
+        return
+    fi
+
+    # In perpetual/autonomous mode: NEVER pause, NEVER wait for input
+    # Log the interrupt but continue the iteration loop immediately
+    if [ "$AUTONOMY_MODE" = "perpetual" ] || [ "$PERPETUAL_MODE" = "true" ]; then
+        INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
+        INTERRUPT_LAST_TIME=$current_time
+        echo ""
+        log_warn "Interrupt received in perpetual mode - ignoring (not pausing)"
+        log_info "To stop: touch .loki/STOP or press Ctrl+C twice within 2 seconds"
+        echo ""
+        # Check and restart dashboard if it died
+        handle_dashboard_crash
+        # Do NOT reset INTERRUPT_COUNT -- let it accumulate so double-Ctrl+C escape works
+        return
+    fi
+
+    # In checkpoint mode: only pause at explicit checkpoint boundaries, not on
+    # random signals. A signal during normal execution is treated as noise.
+    if [ "$AUTONOMY_MODE" = "checkpoint" ]; then
+        INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
+        INTERRUPT_LAST_TIME=$current_time
+        echo ""
+        log_warn "Interrupt received in checkpoint mode - will pause at next checkpoint"
+        log_info "To stop immediately: press Ctrl+C again within 2 seconds"
+        echo ""
+        # Mark that a pause was requested for the next checkpoint
+        touch "${TARGET_DIR:-.}/.loki/PAUSE_AT_CHECKPOINT"
+        handle_dashboard_crash
+        # Do NOT reset INTERRUPT_COUNT -- let it accumulate so double-Ctrl+C escape works
+        return
+    fi
+
+    # Supervised mode (or unrecognized): original behavior - pause and show options
     INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
     INTERRUPT_LAST_TIME=$current_time
 
@@ -7936,6 +8080,10 @@ main() {
 
     # Compound learnings into structured solution files (v5.30.0)
     compound_session_to_solutions
+
+    # Log checkpoint count before final checkpoint (v5.57.0)
+    local cp_count=$(find .loki/state/checkpoints -maxdepth 1 -type d -name "cp-*" 2>/dev/null | wc -l | tr -d ' ')
+    log_info "Session checkpoints: ${cp_count}"
 
     # Create session-end checkpoint (v5.34.0)
     create_checkpoint "session end (iterations=$ITERATION_COUNT)" "session-end"

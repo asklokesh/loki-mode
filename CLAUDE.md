@@ -121,6 +121,49 @@ LOKI_PROVIDER=codex loki start ./prd.md
 - **Efficiency**: Task cost tracking (`.loki/metrics/efficiency/`)
 - **Rewards**: Outcome/efficiency/preference signals (`.loki/metrics/rewards/`)
 
+## Codebase Knowledge Graph (Quick Reference)
+
+### Top-Level File Map
+
+| File | Lines | Role |
+|---|---|---|
+| `autonomy/loki` | 8,916 | CLI (37 commands, dispatch at line 5627) |
+| `autonomy/run.sh` | 8,164 | Orchestration engine (RARV loop) |
+| `autonomy/completion-council.sh` | 1,372 | Completion detection (council voting) |
+| `dashboard/server.py` | 4,396 | FastAPI (100+ endpoints, WebSocket) |
+| `memory/retrieval.py` | 1,561 | Task-aware memory retrieval |
+| `memory/storage.py` | 1,384 | File-based memory backend |
+| `memory/engine.py` | 1,235 | Memory orchestrator |
+| `memory/consolidation.py` | 948 | Episodic-to-semantic pipeline |
+| `mcp/server.py` | 1,272 | MCP server (13 tools) |
+| `providers/loader.sh` | 184 | Provider loader |
+
+### Key Function Lookup
+
+| Function | Location | Purpose |
+|---|---|---|
+| `cmd_start()` | `loki:467` | Start autonomous execution |
+| `main()` (CLI) | `loki:5616` | CLI dispatch |
+| `main()` (runner) | `run.sh:7673` | Runner entry point |
+| `run_autonomous()` | `run.sh:6699` | Main iteration loop |
+| `build_prompt()` | `run.sh:6523` | Prompt construction |
+| `save_state()` | `run.sh:6411` | Persist state |
+| `council_should_stop()` | `completion-council.sh:1252` | Completion decision |
+| `run_code_review()` | `run.sh:4807` | 3-reviewer code review |
+| `create_checkpoint()` | `run.sh:5220` | Snapshot state |
+| `store_episode_trace()` | `run.sh:6325` | Memory storage bridge |
+| `check_human_intervention()` | `run.sh:7359` | PAUSE/STOP/INPUT signals |
+| `detect_complexity()` | `run.sh:1139` | Auto-detect project complexity |
+| `get_rarv_tier()` | `run.sh:1268` | Map iteration to model tier |
+| `check_budget_limit()` | `run.sh:5829` | Budget circuit breaker |
+| `is_rate_limited()` | `run.sh:5644` | Rate limit detection |
+
+### Critical Data Flow
+
+A PRD enters via `loki start` (line 467), which execs `run.sh`. The `run_autonomous()` loop (line 6699) builds prompts via `build_prompt()` (line 6523) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at completion-council.sh:1252), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+
+See `memory/CODEBASE-KNOWLEDGE-GRAPH.md` for complete reference.
+
 ## Development Guidelines
 
 ### Feedback Loop Requirement (CRITICAL)
@@ -194,7 +237,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v5.57.1
+- Current: v5.58.0
 - MAJOR bump for architecture changes (v5.0.0 = multi-provider support)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
