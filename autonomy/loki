@@ -5238,7 +5238,7 @@ Tasks:
 1. Analyze the full codebase structure (languages, frameworks, dependencies, architecture)
 2. Create the docs directory: mkdir -p ${migration_dir}/docs
 3. Write analysis documentation to ${migration_dir}/docs/analysis.md
-3. Identify migration seams (logical boundaries for incremental migration) and write them to ${migration_dir}/seams.json as a JSON array of objects with fields: id, name, description, files (array of file paths), dependencies (array of seam ids), priority (high/medium/low)
+3. Identify migration seams (logical boundaries for incremental migration) and write them to ${migration_dir}/seams.json as a JSON array of objects with fields: id (string, e.g. 'seam-01'), name (string), description (string), type (string: 'module'/'api'/'config'/'adapter'), files (array of file paths), dependencies (array of seam ids), priority (string: 'high'/'medium'/'low')
 
 You MUST create both files. The migration cannot proceed without them.
 Write the analysis doc first, then the seams.json."
@@ -5269,7 +5269,7 @@ Migration dir: ${migration_dir}
 Read ${migration_dir}/docs/analysis.md, ${migration_dir}/seams.json, and ${migration_dir}/features.json for context.
 
 Tasks:
-1. Create a migration plan and write it to ${migration_dir}/migration-plan.json with fields: target, source_path, steps (array of objects with: id, name, description, status set to 'completed' after you do the step)
+1. Create a migration plan and write it to ${migration_dir}/migration-plan.json as a JSON object with fields: version (integer, default 1), strategy (string: 'incremental' or 'big_bang'), steps (array of objects with: id (string), description (string), type (string: 'refactor'/'rewrite'/'config'/'test'), status (string, set to 'completed' after you do the step))
 2. Execute the actual code migration transforms in ${codebase_path} -- convert code from the current framework/language to ${target}
 3. Update each step status to 'completed' as you finish it
 4. Work incrementally seam by seam from ${migration_dir}/seams.json

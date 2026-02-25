@@ -38,8 +38,8 @@ class Feature:
     """Individual feature tracked during migration."""
 
     id: str
-    category: str
-    description: str
+    category: str = ""
+    description: str = ""
     verification_steps: list[str] = field(default_factory=list)
     passes: bool = False
     characterization_test: str = ""
@@ -52,8 +52,8 @@ class MigrationStep:
     """Single step in a migration plan."""
 
     id: str
-    description: str
-    type: str  # e.g. "refactor", "rewrite", "config", "test"
+    description: str = ""
+    type: str = ""  # e.g. "refactor", "rewrite", "config", "test"
     files: list[str] = field(default_factory=list)
     tests_required: list[str] = field(default_factory=list)
     estimated_tokens: int = 0
@@ -81,9 +81,14 @@ class SeamInfo:
     """Detected seam (boundary/interface) in the codebase."""
 
     id: str
-    type: str  # e.g. "api", "module", "database", "config"
-    location: str
-    description: str
+    description: str = ""
+    type: str = ""  # e.g. "api", "module", "database", "config"
+    location: str = ""
+    name: str = ""
+    priority: str = "medium"
+    files: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    complexity: str = ""
     confidence: float = 0.0
     suggested_interface: str = ""
 
@@ -377,9 +382,11 @@ class MigrationPipeline:
             try:
                 data = json.loads(plan_path.read_text(encoding="utf-8"))
                 steps_data = data.get("steps", [])
-                plan_data = {k: v for k, v in data.items() if k != "steps"}
+                _plan_fields = {f.name for f in fields(MigrationPlan)}
+                _step_fields = {f.name for f in fields(MigrationStep)}
+                plan_data = {k: v for k, v in data.items() if k in _plan_fields and k != "steps"}
                 plan = MigrationPlan(**plan_data)
-                plan.steps = [MigrationStep(**s) for s in steps_data]
+                plan.steps = [MigrationStep(**{k: v for k, v in s.items() if k in _step_fields}) for s in steps_data]
             except FileNotFoundError:
                 return False, "Phase gate failed: migration-plan.json not found"
             except (json.JSONDecodeError, TypeError) as exc:
@@ -538,9 +545,12 @@ class MigrationPipeline:
             try:
                 data = json.loads(plan_path.read_text(encoding="utf-8"))
                 # Reconstruct nested MigrationStep objects
-                steps_data = data.pop("steps", [])
-                plan = MigrationPlan(**data)
-                plan.steps = [MigrationStep(**s) for s in steps_data]
+                steps_data = data.get("steps", [])
+                _plan_fields = {f.name for f in fields(MigrationPlan)}
+                _step_fields = {f.name for f in fields(MigrationStep)}
+                plan_data = {k: v for k, v in data.items() if k in _plan_fields and k != "steps"}
+                plan = MigrationPlan(**plan_data)
+                plan.steps = [MigrationStep(**{k: v for k, v in s.items() if k in _step_fields}) for s in steps_data]
                 return plan
             except FileNotFoundError:
                 logger.warning("Plan file not found: %s", plan_path)
@@ -565,7 +575,11 @@ class MigrationPipeline:
         with self._lock:
             try:
                 data = json.loads(seams_path.read_text(encoding="utf-8"))
-                return [SeamInfo(**s) for s in data]
+                # Handle both flat list and {"seams": [...]} wrapper
+                if isinstance(data, dict):
+                    data = data.get("seams", [])
+                _seam_fields = {f.name for f in fields(SeamInfo)}
+                return [SeamInfo(**{k: v for k, v in s.items() if k in _seam_fields}) for s in data]
             except FileNotFoundError:
                 logger.warning("Seams file not found: %s", seams_path)
                 raise
