@@ -1215,6 +1215,158 @@ async def loki_quality_report() -> str:
 
 
 # ============================================================
+# CODE SEARCH - ChromaDB-backed semantic code search
+# ============================================================
+
+# ChromaDB connection (lazy-initialized)
+_chroma_client = None
+_chroma_collection = None
+
+CHROMA_HOST = os.environ.get("LOKI_CHROMA_HOST", "localhost")
+CHROMA_PORT = int(os.environ.get("LOKI_CHROMA_PORT", "8100"))
+CHROMA_COLLECTION = os.environ.get("LOKI_CHROMA_COLLECTION", "loki-codebase")
+
+
+def _get_chroma_collection():
+    """Get or create ChromaDB collection (lazy connection)."""
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is not None:
+        return _chroma_collection
+    try:
+        import chromadb
+        _chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=int(CHROMA_PORT))
+        _chroma_collection = _chroma_client.get_collection(name=CHROMA_COLLECTION)
+        return _chroma_collection
+    except Exception as e:
+        logger.warning(f"ChromaDB not available: {e}")
+        return None
+
+
+@mcp.tool()
+async def loki_code_search(
+    query: str,
+    n_results: int = 10,
+    language: Optional[str] = None,
+    file_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+) -> str:
+    """Search the loki-mode codebase semantically.
+
+    Finds functions, classes, and code sections by meaning, not just keywords.
+    Returns file paths, line numbers, and code snippets ranked by relevance.
+
+    Args:
+        query: Natural language search query (e.g., "rate limit detection",
+               "model selection for RARV tier", "how does the council vote")
+        n_results: Number of results to return (default 10, max 30)
+        language: Filter by language: "shell", "python", "markdown" (optional)
+        file_filter: Filter by file path substring (e.g., "autonomy/", "dashboard/") (optional)
+        type_filter: Filter by chunk type: "function", "class", "header", "section", "file" (optional)
+    """
+    _emit_tool_event_async('loki_code_search', 'start', query=query)
+
+    collection = _get_chroma_collection()
+    if collection is None:
+        return json.dumps({
+            "error": "ChromaDB not available. Start it with: docker start loki-chroma",
+            "hint": "Re-index with: python3.12 tools/index-codebase.py --reset"
+        })
+
+    n_results = min(max(1, n_results), 30)
+
+    # Build where filter
+    where_clauses = []
+    if language:
+        where_clauses.append({"language": language})
+    if type_filter:
+        where_clauses.append({"type": type_filter})
+
+    where = None
+    if len(where_clauses) == 1:
+        where = where_clauses[0]
+    elif len(where_clauses) > 1:
+        where = {"$and": where_clauses}
+
+    try:
+        results = collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        # Format results
+        output = []
+        for i in range(len(results["ids"][0])):
+            meta = results["metadatas"][0][i]
+            doc = results["documents"][0][i]
+            dist = results["distances"][0][i]
+
+            # Apply file_filter post-query (ChromaDB where doesn't support substring match)
+            if file_filter and file_filter not in meta.get("file", ""):
+                continue
+
+            # Truncate document for response
+            preview = doc[:500] + "..." if len(doc) > 500 else doc
+
+            output.append({
+                "file": meta.get("file", ""),
+                "line": meta.get("line", 0),
+                "name": meta.get("name", ""),
+                "type": meta.get("type", ""),
+                "language": meta.get("language", ""),
+                "relevance": round(1 - dist, 4),  # Convert distance to similarity
+                "preview": preview,
+            })
+
+        _emit_tool_event_async('loki_code_search', 'complete',
+                               result_status='success', result_count=len(output))
+        return json.dumps({"query": query, "results": output, "total": len(output)})
+
+    except Exception as e:
+        logger.error(f"Code search failed: {e}")
+        _emit_tool_event_async('loki_code_search', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_code_search_stats() -> str:
+    """Get statistics about the code search index.
+
+    Shows total chunks, files indexed, breakdown by language and type.
+    Useful for verifying the index is up to date.
+    """
+    collection = _get_chroma_collection()
+    if collection is None:
+        return json.dumps({"error": "ChromaDB not available"})
+
+    try:
+        count = collection.count()
+        results = collection.get(limit=count, include=["metadatas"])
+
+        langs = {}
+        types = {}
+        files = set()
+        for meta in results["metadatas"]:
+            lang = meta.get("language", "unknown")
+            typ = meta.get("type", "unknown")
+            langs[lang] = langs.get(lang, 0) + 1
+            types[typ] = types.get(typ, 0) + 1
+            files.add(meta.get("file", ""))
+
+        return json.dumps({
+            "total_chunks": count,
+            "unique_files": len(files),
+            "by_language": langs,
+            "by_type": types,
+            "reindex_command": "python3.12 tools/index-codebase.py --reset",
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================
 # PROMPTS - Pre-built prompt templates
 # ============================================================
 
