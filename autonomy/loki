@@ -4839,6 +4839,8 @@ cmd_migrate_help() {
     echo "  --resume                         Resume from last checkpoint"
     echo "  --multi-repo <glob>              Multiple repository paths (glob pattern)"
     echo "  --export-report                  Export migration report to file"
+    echo "  --no-dashboard                   Disable web dashboard during migration"
+    echo "  --no-docs                        Skip migration_docs/ generation"
     echo "  --list                           List all migrations"
     echo "  --status [migration-id]          Show migration status"
     echo ""
@@ -4994,6 +4996,8 @@ cmd_migrate_start() {
     local resume="$8"
     local multi_repo="$9"
     local export_report="${10}"
+    local no_dashboard="${11:-false}"
+    local no_docs="${12:-false}"
 
     local migrations_dir="${HOME}/.loki/migrations"
     local migration_id=""
@@ -5118,9 +5122,18 @@ if manifests:
         echo ""
     fi
 
-    # Create migration via engine
-    local create_result
-    create_result=$(PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
+    local migration_dir
+    if [ -n "$migration_id" ]; then
+        # Resume: load existing migration directory
+        migration_dir="${migrations_dir}/${migration_id}"
+        if [ ! -d "$migration_dir" ]; then
+            echo -e "${RED}Error: Migration directory not found: ${migration_dir}${NC}"
+            return 1
+        fi
+    else
+        # Create new migration via engine
+        local create_result
+        create_result=$(PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import json, sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
@@ -5128,13 +5141,13 @@ pipeline = MigrationPipeline(sys.argv[1], sys.argv[2])
 manifest = pipeline.create_manifest()
 print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
 " "$codebase_path" "$target" 2>&1) || {
-        echo -e "${RED}Error: Failed to create migration${NC}"
-        echo "$create_result"
-        return 1
-    }
-    migration_id=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
-    local migration_dir
-    migration_dir=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['dir'])")
+            echo -e "${RED}Error: Failed to create migration${NC}"
+            echo "$create_result"
+            return 1
+        }
+        migration_id=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+        migration_dir=$(echo "$create_result" | python3 -c "import json,sys; print(json.load(sys.stdin)['dir'])")
+    fi
 
     # Security scan (first step of understand phase)
     echo -e "${BOLD}[Security] Scanning for secrets...${NC}"
@@ -5190,6 +5203,79 @@ print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
     [ -n "$compliance" ] && echo -e "  Compliance:  ${compliance}"
     echo ""
 
+    # Dashboard cleanup trap for error paths
+    local migrate_dashboard_pid=""
+    _migrate_cleanup_dashboard() {
+        if [ -n "$migrate_dashboard_pid" ]; then
+            kill "$migrate_dashboard_pid" 2>/dev/null || true
+            wait "$migrate_dashboard_pid" 2>/dev/null || true
+            rm -f "${codebase_path}/.loki/dashboard/dashboard.pid" 2>/dev/null || true
+        fi
+    }
+    trap '_migrate_cleanup_dashboard' RETURN
+
+    # Start dashboard for migration monitoring (unless --no-dashboard)
+    if [ "$no_dashboard" != "true" ]; then
+        local dashboard_port="${LOKI_DASHBOARD_PORT:-57374}"
+        local skill_dir="${SKILL_DIR:-.}"
+        local dashboard_venv="$HOME/.loki/dashboard-venv"
+        local python_cmd="python3"
+        local url_scheme="http"
+
+        # Use venv python if available
+        if [ -x "${dashboard_venv}/bin/python3" ]; then
+            python_cmd="${dashboard_venv}/bin/python3"
+        fi
+
+        # Check if dashboard deps are available
+        if "$python_cmd" -c "import fastapi" 2>/dev/null; then
+            # Find available port (increment until a free port is found)
+            local port_attempts=0
+            while lsof -i :"$dashboard_port" &>/dev/null && [ $port_attempts -lt 10 ]; do
+                dashboard_port=$((dashboard_port + 1))
+                port_attempts=$((port_attempts + 1))
+            done
+
+            if [ $port_attempts -lt 10 ]; then
+                # Determine TLS
+                if [ -n "${LOKI_TLS_CERT:-}" ] && [ -n "${LOKI_TLS_KEY:-}" ]; then
+                    url_scheme="https"
+                fi
+
+                if ! mkdir -p "${codebase_path}/.loki/dashboard/logs" 2>/dev/null; then
+                    echo -e "  ${YELLOW}Dashboard skipped (cannot create log directory)${NC}"
+                else
+                    local log_file="${codebase_path}/.loki/dashboard/logs/dashboard.log"
+
+                    LOKI_DASHBOARD_PORT="$dashboard_port" \
+                    LOKI_DASHBOARD_HOST="127.0.0.1" \
+                    LOKI_PROJECT_PATH="$codebase_path" \
+                    LOKI_SKILL_DIR="$skill_dir" \
+                    LOKI_TLS_CERT="${LOKI_TLS_CERT:-}" \
+                    LOKI_TLS_KEY="${LOKI_TLS_KEY:-}" \
+                    PYTHONPATH="$skill_dir" \
+                        nohup "$python_cmd" -m dashboard.server > "$log_file" 2>&1 &
+                    migrate_dashboard_pid=$!
+
+                    echo "$migrate_dashboard_pid" > "${codebase_path}/.loki/dashboard/dashboard.pid"
+
+                    sleep 2
+                    if kill -0 "$migrate_dashboard_pid" 2>/dev/null; then
+                        echo -e "  Dashboard:   ${CYAN}${url_scheme}://127.0.0.1:${dashboard_port}/${NC}"
+                        if [[ "$OSTYPE" == "darwin"* ]]; then
+                            open "${url_scheme}://127.0.0.1:${dashboard_port}/" 2>/dev/null || true
+                        fi
+                        echo ""
+                    else
+                        echo -e "  ${YELLOW}Dashboard failed to start (check logs)${NC}"
+                        migrate_dashboard_pid=""
+                        echo ""
+                    fi
+                fi
+            fi
+        fi
+    fi
+
     # Determine which phases to run
     local phases_to_run=()
     if [ -n "$phase" ]; then
@@ -5238,7 +5324,7 @@ Tasks:
 1. Analyze the full codebase structure (languages, frameworks, dependencies, architecture)
 2. Create the docs directory: mkdir -p ${migration_dir}/docs
 3. Write analysis documentation to ${migration_dir}/docs/analysis.md
-3. Identify migration seams (logical boundaries for incremental migration) and write them to ${migration_dir}/seams.json as a JSON array of objects with fields: id (string, e.g. 'seam-01'), name (string), description (string), type (string: 'module'/'api'/'config'/'adapter'), files (array of file paths), dependencies (array of seam ids), priority (string: 'high'/'medium'/'low')
+4. Identify migration seams (logical boundaries for incremental migration) and write them to ${migration_dir}/seams.json as a JSON array of objects with fields: id (string, e.g. 'seam-01'), name (string), description (string), type (string: 'module'/'api'/'config'/'adapter'), files (array of file paths), dependencies (array of seam ids), priority (string: 'high'/'medium'/'low')
 
 You MUST create both files. The migration cannot proceed without them.
 Write the analysis doc first, then the seams.json."
@@ -5383,6 +5469,119 @@ pipeline.advance_phase(sys.argv[2])
         echo ""
     done
 
+    # Generate migration_docs/ in the codebase (unless --no-docs or --plan-only)
+    if [ "$plan_only" != "true" ] && [ "$no_docs" != "true" ]; then
+        echo -e "${CYAN}[Phase: document]${NC} Generating migration documentation..."
+
+        local doc_prompt="You are generating comprehensive migration documentation for a completed codebase migration.
+
+Target: ${target}
+Codebase: ${codebase_path}
+Migration dir: ${migration_dir}
+
+Read the following files for context:
+- ${migration_dir}/docs/analysis.md (original codebase analysis)
+- ${migration_dir}/docs/verification-report.md (verification results)
+- ${migration_dir}/features.json (feature tracking)
+- ${migration_dir}/seams.json (migration boundaries)
+- ${migration_dir}/migration-plan.json (migration steps)
+
+Create a directory called migration_docs/ in the codebase root (${codebase_path}/migration_docs/) with the following files:
+
+1. **README.md** - Executive summary of the migration:
+   - What the codebase was before (source language/framework/architecture)
+   - What it is now (target: ${target})
+   - High-level summary of changes made
+   - Link to other docs in migration_docs/
+
+2. **USAGE.md** - How to use the migrated codebase:
+   - Getting started / quick start
+   - Key commands and workflows
+   - Configuration options
+   - Environment variables
+
+3. **INSTALLATION.md** - Installation and setup:
+   - Prerequisites and dependencies
+   - Step-by-step installation
+   - Build instructions
+   - Development environment setup
+
+4. **TESTING.md** - Testing the migrated codebase:
+   - How to run tests
+   - Test coverage status
+   - Known test gaps
+   - How to add new tests
+
+5. **WHAT-CHANGED.md** - Detailed migration changelog:
+   - Files added, modified, and removed
+   - Architecture changes
+   - API changes (if any)
+   - Configuration changes
+   - Dependency changes
+
+6. **WHAT-WORKS.md** - Current status:
+   - Features confirmed working (from verification)
+   - Features that need manual testing
+   - Known limitations
+
+7. **WHAT-PENDING.md** - Remaining work:
+   - Items flagged during verification
+   - Manual steps required
+   - Recommended follow-up tasks
+   - Security items to address
+
+8. **DEPLOYMENT.md** - Deployment guide (if applicable):
+   - How to deploy the migrated application
+   - CI/CD considerations
+   - Infrastructure changes needed
+   - Rollback instructions
+
+IMPORTANT RULES:
+- Only document what is TRUE and VERIFIED - never fabricate features or capabilities
+- Reference actual files and test results from the migration artifacts
+- If something was not tested or verified, say so explicitly
+- Mark uncertain items with 'NEEDS VERIFICATION' tags
+- Do NOT use emojis anywhere in the documentation"
+
+        local doc_exit=0
+        local provider_name="${LOKI_PROVIDER:-claude}"
+        case "$provider_name" in
+            claude)
+                (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1) | \
+                    while IFS= read -r line; do
+                        if echo "$line" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    if d.get('type') == 'assistant':
+        for item in d.get('message', {}).get('content', []):
+            if item.get('type') == 'text':
+                print(item.get('text', ''), end='')
+except Exception: pass
+" 2>/dev/null; then
+                            true
+                        fi
+                    done
+                doc_exit=${PIPESTATUS[0]}
+                ;;
+            codex)
+                (cd "$codebase_path" && codex exec --full-auto "$doc_prompt" 2>&1) || doc_exit=$?
+                ;;
+            gemini)
+                (cd "$codebase_path" && gemini --approval-mode=yolo "$doc_prompt" 2>&1) || doc_exit=$?
+                ;;
+        esac
+
+        if [ "$doc_exit" -eq 0 ] && [ -d "${codebase_path}/migration_docs" ]; then
+            local doc_count
+            doc_count=$(find "${codebase_path}/migration_docs" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+            echo -e "${GREEN}  [Phase: document] Complete (${doc_count} docs generated)${NC}"
+        else
+            echo -e "${YELLOW}  [Phase: document] Warning: Documentation may be incomplete${NC}"
+        fi
+        echo ""
+    fi
+
     # Plan-only: generate plan file and stop
     if [ "$plan_only" = "true" ]; then
         echo -e "${BOLD}Migration plan generated.${NC}"
@@ -5471,6 +5670,8 @@ cmd_migrate() {
     local do_list="false"
     local do_status="false"
     local status_id=""
+    local no_dashboard="false"
+    local no_docs="false"
 
     if [ $# -eq 0 ]; then
         cmd_migrate_help
@@ -5575,6 +5776,14 @@ cmd_migrate() {
                 export_report="true"
                 shift
                 ;;
+            --no-dashboard)
+                no_dashboard="true"
+                shift
+                ;;
+            --no-docs)
+                no_docs="true"
+                shift
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 echo "Run 'loki migrate --help' for usage."
@@ -5618,7 +5827,7 @@ cmd_migrate() {
         return 1
     fi
 
-    cmd_migrate_start "$codebase_path" "$target" "$plan_only" "$phase" "$parallel" "$compliance" "$dry_run" "$do_resume" "$multi_repo" "$export_report"
+    cmd_migrate_start "$codebase_path" "$target" "$plan_only" "$phase" "$parallel" "$compliance" "$dry_run" "$do_resume" "$multi_repo" "$export_report" "$no_dashboard" "$no_docs"
 }
 
 # Main command dispatcher

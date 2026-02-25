@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.59.0] - 2026-02-25
+
+### Added
+- Migrate: dashboard auto-launches during migration with real-time progress monitoring
+- Migrate: new `--no-dashboard` flag to disable dashboard during migration
+- Migrate: post-migration `migration_docs/` generation with 8 comprehensive documentation files
+- Migrate: new `--no-docs` flag to skip documentation generation
+- Migrate: seam statistics (high/medium/low breakdown) now returned by `get_progress()` API
+
+### Fixed
+- Migrate: `--resume` no longer creates a new migration, correctly loads existing migration directory
+- Migrate: dashboard PID cleanup via RETURN trap prevents orphaned processes on error paths
+- Migrate: port-finding loop no longer kills unrelated Python processes on occupied ports
+- Migrate: `get_progress()` no longer reports "completed" when only some phases are done
+- Migrate: `list_migrations()` correctly handles "failed" phase status
+- Migrate: `source` and `target` fields now return flat strings instead of dicts (fixes `[object Object]` in UI)
+- Migrate: `start_phase()` now allows restarting completed/failed phases for `--resume --phase` use case
+- Migrate: `advance_phase()` defensively initializes missing phase keys in manifest
+- Migrate: `check_phase_gate()` refactored to single implementation (eliminates duplicate logic drift)
+- Migrate: `_atomic_write()` uses `os.replace()` instead of `os.rename()` for cross-filesystem safety
+- Migrate: added `status`, `progress_pct`, `updated_at`, `source_path` fields to MigrationManifest dataclass
+- Migrate: fixed duplicate step number in understand phase prompt
+- Migrate: dashboard log directory creation checks for write permission before launch
+
 ## [5.58.2] - 2026-02-25
 
 ### Fixed

@@ -126,6 +126,10 @@ class MigrationManifest:
     feature_list_path: str = ""
     migration_plan_path: str = ""
     checkpoints: list[str] = field(default_factory=list)
+    status: str = "pending"
+    progress_pct: int = 0
+    updated_at: str = ""
+    source_path: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +153,7 @@ def _atomic_write(path: Path, content: str) -> None:
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.rename(tmp_path, str(path))
+        os.replace(tmp_path, str(path))
     except OSError as exc:
         logger.error("Failed to write %s: %s", path, exc)
         # Clean up temp file on failure
@@ -312,20 +316,23 @@ class MigrationPipeline:
         return phase_data.get("status", "pending")
 
     def start_phase(self, phase: str) -> None:
-        """Start a phase (transition from pending to in_progress). Idempotent if already in_progress."""
+        """Start a phase (transition to in_progress).
+
+        Idempotent if already in_progress. Also allows restarting completed or
+        failed phases (e.g., when using --resume --phase <phase>).
+        """
         if phase not in PHASE_ORDER:
             raise ValueError(f"Unknown phase: {phase}")
         with self._lock:
             manifest = self._load_manifest_unlocked()
-            current_status = manifest.phases[phase]["status"]
+            if phase not in manifest.phases:
+                manifest.phases[phase] = {"status": "pending", "started_at": "", "completed_at": ""}
+            current_status = manifest.phases[phase].get("status", "pending")
             if current_status == "in_progress":
                 return  # Already started, idempotent
-            if current_status != "pending":
-                raise RuntimeError(
-                    f"Cannot start phase '{phase}': status is '{current_status}', expected 'pending'"
-                )
             manifest.phases[phase]["status"] = "in_progress"
             manifest.phases[phase]["started_at"] = datetime.now(timezone.utc).isoformat()
+            manifest.phases[phase]["completed_at"] = ""
             self._save_manifest_unlocked(manifest)
 
     def _check_phase_gate_unlocked(self, from_phase: str, to_phase: str) -> tuple[bool, str]:
@@ -402,55 +409,13 @@ class MigrationPipeline:
     def check_phase_gate(self, from_phase: str, to_phase: str) -> tuple[bool, str]:
         """Validate whether transition from from_phase to to_phase is allowed.
 
+        Thread-safe wrapper that delegates to _check_phase_gate_unlocked under lock.
+
         Returns:
             Tuple of (allowed, reason). If allowed is False, reason explains why.
         """
-        if from_phase not in PHASE_ORDER or to_phase not in PHASE_ORDER:
-            return False, f"Unknown phase: {from_phase} or {to_phase}"
-
-        from_idx = PHASE_ORDER.index(from_phase)
-        to_idx = PHASE_ORDER.index(to_phase)
-        if to_idx != from_idx + 1:
-            return False, f"Cannot jump from {from_phase} to {to_phase}"
-
-        # Gate: understand -> guardrail
-        if from_phase == "understand" and to_phase == "guardrail":
-            docs_dir = self.migration_dir / "docs"
-            has_docs = any(docs_dir.iterdir()) if docs_dir.exists() else False
-            if not has_docs:
-                return False, "Phase gate failed: no documentation generated in docs/"
-            seams_path = self.migration_dir / "seams.json"
-            if not seams_path.exists():
-                return False, "Phase gate failed: seams.json does not exist"
-            return True, "Gate passed: docs generated and seams.json exists"
-
-        # Gate: guardrail -> migrate
-        if from_phase == "guardrail" and to_phase == "migrate":
-            try:
-                features = self.load_features()
-            except FileNotFoundError:
-                return False, "Phase gate failed: features.json not found"
-            if not features:
-                return False, "No features defined"
-            failing = [f for f in features if not f.passes]
-            if failing:
-                ids = ", ".join(f.id for f in failing[:5])
-                return False, f"Phase gate failed: {len(failing)} characterization tests not passing ({ids})"
-            return True, "Gate passed: all characterization tests pass"
-
-        # Gate: migrate -> verify
-        if from_phase == "migrate" and to_phase == "verify":
-            try:
-                plan = self.load_plan()
-            except FileNotFoundError:
-                return False, "Phase gate failed: migration-plan.json not found"
-            incomplete = [s for s in plan.steps if s.status != "completed"]
-            if incomplete:
-                ids = ", ".join(s.id for s in incomplete[:5])
-                return False, f"Phase gate failed: {len(incomplete)} steps not completed ({ids})"
-            return True, "Gate passed: all migration steps completed"
-
-        return True, "Gate passed"
+        with self._lock:
+            return self._check_phase_gate_unlocked(from_phase, to_phase)
 
     def advance_phase(self, phase: str) -> PhaseResult:
         """Mark the current phase as complete and start the next one.
@@ -492,6 +457,8 @@ class MigrationPipeline:
 
             # Start next phase if there is one
             if next_phase is not None:
+                if next_phase not in manifest.phases:
+                    manifest.phases[next_phase] = {"status": "pending", "started_at": "", "completed_at": ""}
                 manifest.phases[next_phase]["status"] = "in_progress"
                 manifest.phases[next_phase]["started_at"] = now
 
@@ -705,7 +672,7 @@ class MigrationPipeline:
             if status == "completed":
                 current_phase = phase
                 completed_phases.append(phase)
-                overall_status = "completed"
+                overall_status = "in_progress"  # partial completion
 
         # Feature stats
         features_total = 0
@@ -754,19 +721,47 @@ class MigrationPipeline:
                 except (FileNotFoundError, json.JSONDecodeError):
                     last_checkpoint_data = {"tag": last_tag, "step_id": "", "timestamp": ""}
 
+        # Check if all phases are completed
+        if len(completed_phases) == len(PHASE_ORDER):
+            overall_status = "completed"
+
+        # Seam stats
+        seams_data: Optional[dict[str, Any]] = None
+        try:
+            seams = self.load_seams()
+            seams_high = sum(1 for s in seams if getattr(s, "priority", "medium") == "high")
+            seams_medium = sum(1 for s in seams if getattr(s, "priority", "medium") == "medium")
+            seams_low = sum(1 for s in seams if getattr(s, "priority", "medium") == "low")
+            seams_data = {"total": len(seams), "high": seams_high, "medium": seams_medium, "low": seams_low}
+        except (FileNotFoundError, json.JSONDecodeError, TypeError):
+            pass
+
+        # Flatten source/target to strings for UI consumption
+        source_path = ""
+        target_name = ""
+        if isinstance(manifest.source_info, dict):
+            source_path = manifest.source_info.get("path", "")
+        elif isinstance(manifest.source_info, str):
+            source_path = manifest.source_info
+        if isinstance(manifest.target_info, dict):
+            target_name = manifest.target_info.get("target", "")
+        elif isinstance(manifest.target_info, str):
+            target_name = manifest.target_info
+
         return {
             "migration_id": self.migration_id,
             "status": overall_status,
             "current_phase": current_phase,
             "phases": manifest.phases,
             "completed_phases": completed_phases,
-            "source": manifest.source_info,
-            "target": manifest.target_info,
+            "source": source_path,
+            "target": target_name,
             "current_step": current_step,
             "features": {"passing": features_passing, "total": features_total},
             "steps": {"current": current_step_index, "completed": steps_completed, "total": steps_total},
             "last_checkpoint": last_checkpoint_data,
             "checkpoints_count": len(manifest.checkpoints),
+            "seams": seams_data,
         }
 
     def generate_plan_summary(self) -> str:
@@ -893,21 +888,34 @@ def list_migrations() -> list[dict[str, Any]]:
             # Determine overall status from phases (clean string, no parenthesized phase)
             phases = data.get("phases", {})
             status = "pending"
+            all_completed = True
             for phase in PHASE_ORDER:
                 phase_status = phases.get(phase, {}).get("status", "pending")
+                if phase_status == "failed":
+                    status = "failed"
+                    all_completed = False
+                    break
                 if phase_status == "in_progress":
                     status = "in_progress"
+                    all_completed = False
                     break
                 if phase_status == "completed":
-                    status = "completed"
+                    status = "in_progress"  # partial completion
+                else:
+                    all_completed = False
+            if all_completed:
+                status = "completed"
 
             source_info = data.get("source_info", {})
+            source_path = source_info.get("path", "") if isinstance(source_info, dict) else str(source_info)
+            target_info = data.get("target_info", {})
+            target_name = target_info.get("target", "") if isinstance(target_info, dict) else str(target_info)
             results.append({
                 "id": data.get("id", entry.name),
                 "created_at": data.get("created_at", ""),
-                "source": source_info,
-                "source_path": source_info.get("path", ""),
-                "target": data.get("target_info", {}).get("target", ""),
+                "source": source_path,
+                "source_path": source_path,
+                "target": target_name,
                 "status": status,
             })
         except (json.JSONDecodeError, OSError) as exc:
