@@ -5,6 +5,48 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] - 2026-02-25
+
+### BREAKING
+- `loki issue` is now deprecated in favor of `loki run` (still works with deprecation warning)
+- Blind validation enabled by default in completion council (validators no longer see iteration/convergence context)
+
+### Added
+- `loki run <issue>` - New primary entry point for issue-driven engineering
+  - Supports GitHub, GitLab, Jira, and Azure DevOps issues
+  - Auto-detects issue provider from URL/reference format
+  - Generates PRD and starts execution in one command
+- Dynamic model resolution via `resolve_model_for_tier()` in all providers
+  - Capability aliases: "best", "balanced", "cheap" map to planning/development/fast
+  - `LOKI_MAX_TIER` config caps model cost (e.g., maxTier=sonnet prevents opus usage)
+- Issue provider abstraction (`autonomy/issue-providers.sh`)
+  - GitHub (gh CLI), GitLab (glab CLI), Jira (REST API), Azure DevOps (az CLI)
+  - Normalized JSON output across all providers
+- `loki watch [interval]` - Live TUI session monitor with real-time status
+- `loki export <format>` - Export session data in json, markdown, csv, or timeline formats
+- `loki config set/get` - Programmatic configuration management
+  - Settable keys: maxTier, model.*, provider, issue.provider, blind_validation, adversarial_testing, spawn_timeout, spawn_retries, notify.*, budget
+  - JSON config store at `.loki/config/settings.json`
+- Adversarial testing for Standard+ complexity tiers (`run_adversarial_testing()` in run.sh)
+  - Spawns adversarial agent that tries to break the implementation
+  - Blocks on critical attack vectors; configurable via `LOKI_ADVERSARIAL_TESTING`
+- Provider spawn timeout with retry logic (`invoke_with_timeout()` in run.sh)
+  - Default: 120s timeout, 2 retries
+  - Configurable via `LOKI_SPAWN_TIMEOUT` and `LOKI_SPAWN_RETRIES`
+- Knowledge graph integration in run.sh
+  - `enrich_from_knowledge_graph()` adds cross-project patterns to prompt context
+  - `store_to_knowledge_graph()` saves patterns after successful iterations
+- CANNOT_VALIDATE vote option in completion council
+  - Validators can explicitly signal insufficient evidence
+  - Treated as REJECT (conservative default)
+- 64-test v6 feature test suite (`tests/test-v6-features.sh`)
+
+### Changed
+- `get_provider_tier_param()` now delegates to `resolve_model_for_tier()` when available
+- Completion council evidence strips convergence data in blind mode (prevents bias)
+- Help text updated with v6.0.0 commands and examples
+- Config show now displays v6.0.0 settings (maxTier, blind_validation, adversarial_testing, etc.)
+
 ## [5.59.0] - 2026-02-25
 
 ### Added

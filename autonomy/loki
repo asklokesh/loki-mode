@@ -382,11 +382,14 @@ show_help() {
     echo "Usage: loki <command> [options]"
     echo ""
     echo "Commands:"
+    echo "  run <issue>      Issue-driven engineering (v6.0.0) - GitHub/GitLab/Jira/Azure DevOps"
     echo "  start [PRD]      Start Loki Mode (optionally with PRD file)"
     echo "  quick \"task\"     Quick single-task mode (lightweight, 3 iterations max)"
     echo "  demo             Run interactive demo (~60s simulated session)"
     echo "  init             Build a PRD interactively or from templates"
-    echo "  issue <url|num>  Generate PRD from GitHub issue and optionally start"
+    echo "  issue <url|num>  [DEPRECATED] Use 'loki run' instead"
+    echo "  watch [sec]      Live TUI session monitor (v6.0.0)"
+    echo "  export <format>  Export session data: json|markdown|csv|timeline (v6.0.0)"
     echo "  stop             Stop execution immediately"
     echo "  cleanup          Kill orphaned processes from crashed sessions"
     echo "  pause            Pause after current session"
@@ -402,7 +405,7 @@ show_help() {
     echo "  voice [cmd]      Voice input for PRD creation (status|listen|dictate|speak|start)"
     echo "  import           Import GitHub issues as tasks"
     echo "  github [cmd]     GitHub integration (sync|export|pr|status)"
-    echo "  config [cmd]     Manage configuration (show|init|edit|path)"
+    echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
     echo "  completions [bash|zsh]  Output shell completion scripts"
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
     echo "  compound [cmd]   Knowledge compounding (list|show|search|run|stats)"
@@ -436,14 +439,18 @@ show_help() {
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
     echo ""
-    echo "Options for 'issue':"
-    echo "  --repo OWNER/REPO  Specify repository (default: auto-detect)"
-    echo "  --number NUM       Specify issue number (alternative to URL)"
-    echo "  --start            Start Loki Mode with generated PRD"
-    echo "  --dry-run          Preview generated PRD without saving"
-    echo "  --output FILE      Save PRD to custom path (default: .loki/prd-issue-N.md)"
+    echo "Options for 'run' (v6.0.0):"
+    echo "  --dry-run          Preview generated PRD without starting"
+    echo "  --no-start         Generate PRD but don't start execution"
+    echo "  --output FILE      Save PRD to custom path"
+    echo "  --provider NAME    AI provider: claude (default), codex, gemini"
+    echo "  --parallel         Enable parallel mode with git worktrees"
+    echo "  --budget USD       Set cost budget limit"
     echo ""
     echo "Examples:"
+    echo "  loki run 123                  # GitHub issue from current repo"
+    echo "  loki run PROJ-456             # Jira issue"
+    echo "  loki run owner/repo#789       # GitHub with specific repo"
     echo "  loki demo                     # Run 60-second interactive demo"
     echo "  loki init                     # Build a PRD interactively"
     echo "  loki init -t saas-starter     # Start from a template"
@@ -451,13 +458,11 @@ show_help() {
     echo "  loki start ./prd.md           # Start with PRD file"
     echo "  loki start --bg               # Start in background"
     echo "  loki start --parallel         # Start in parallel mode"
-    echo "  loki pause                    # Pause execution"
+    echo "  loki watch                    # Live session monitor"
+    echo "  loki export json              # Export session data"
+    echo "  loki config set maxTier sonnet  # Cap model cost"
     echo "  loki status                   # Check current status"
-    echo "  loki issue 123                # Generate PRD from issue #123"
-    echo "  loki issue 123 --start        # Generate PRD and start Loki Mode"
-    echo "  loki issue https://github.com/owner/repo/issues/123  # From URL"
     echo "  loki remote                   # Start remote session (phone/browser)"
-    echo "  loki remote ./prd.md          # Remote session with PRD context"
     echo ""
     echo "Environment Variables:"
     echo "  See: $RUN_SH (header comments)"
@@ -2267,6 +2272,10 @@ cmd_issue_parse() {
                 ;;
             --output=*)
                 output_file="${1#*=}"
+                if [[ "$output_file" == *".."* ]]; then
+                    echo -e "${RED}Error: Output path must not contain '..'${NC}"
+                    exit 1
+                fi
                 shift
                 ;;
             --quiet|-q)
@@ -2417,8 +2426,240 @@ cmd_issue_view() {
     echo -e "  ${CYAN}loki issue $issue_ref --start${NC}              # Generate PRD and start"
 }
 
-# Generate PRD from GitHub issue
+#===============================================================================
+# loki run - Issue-driven engineering (v6.0.0)
+# Primary entry point for issue-to-implementation workflow.
+# Supports GitHub, GitLab, Jira, and Azure DevOps issues.
+#===============================================================================
+
+cmd_run() {
+    require_jq
+
+    local issue_ref=""
+    local dry_run=false
+    local output_file=""
+    local start_args=()
+    local no_start=false
+    local provider_override=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki run${NC} - Issue-driven engineering (v6.0.0)"
+                echo ""
+                echo "Usage: loki run <issue-ref> [options]"
+                echo "       loki run <url-or-key> [options]"
+                echo ""
+                echo "Takes an issue from any supported tracker, generates a PRD,"
+                echo "and starts Loki Mode to implement it autonomously."
+                echo ""
+                echo "Issue Reference Formats:"
+                echo "  GitHub:       123, #123, owner/repo#123, https://github.com/..."
+                echo "  GitLab:       https://gitlab.com/owner/repo/-/issues/42"
+                echo "  Jira:         PROJ-123, https://org.atlassian.net/browse/PROJ-123"
+                echo "  Azure DevOps: https://dev.azure.com/org/project/_workitems/edit/456"
+                echo ""
+                echo "Options:"
+                echo "  --dry-run          Preview generated PRD without starting"
+                echo "  --no-start         Generate PRD but don't start execution"
+                echo "  --output FILE      Save PRD to custom path"
+                echo "  --provider NAME    AI provider: claude (default), codex, gemini"
+                echo "  --parallel         Enable parallel mode with git worktrees"
+                echo "  --bg, --background Run in background mode"
+                echo "  --simple           Force simple complexity tier"
+                echo "  --complex          Force complex complexity tier"
+                echo "  --no-dashboard     Disable web dashboard"
+                echo "  --sandbox          Run in Docker sandbox"
+                echo "  --budget USD       Set cost budget limit"
+                echo ""
+                echo "Environment Variables:"
+                echo "  JIRA_API_TOKEN     Jira API token (for Jira issues)"
+                echo "  JIRA_URL           Jira base URL (for Jira issues)"
+                echo "  JIRA_EMAIL         Jira user email (for Jira Cloud auth)"
+                echo ""
+                echo "Examples:"
+                echo "  loki run 123                             # GitHub issue from current repo"
+                echo "  loki run owner/repo#456                  # GitHub issue from specific repo"
+                echo "  loki run PROJ-789                        # Jira issue"
+                echo "  loki run https://gitlab.com/o/r/-/issues/42  # GitLab issue"
+                echo "  loki run 123 --dry-run                   # Preview PRD"
+                echo "  loki run 123 --parallel --provider codex # Parallel mode with Codex"
+                exit 0
+                ;;
+            --dry-run)
+                dry_run=true
+                shift
+                ;;
+            --no-start)
+                no_start=true
+                shift
+                ;;
+            --output)
+                if [[ -n "${2:-}" ]]; then
+                    output_file="$2"
+                    if [[ "$output_file" == *".."* ]]; then
+                        echo -e "${RED}Error: Output path must not contain '..'${NC}"
+                        exit 1
+                    fi
+                    shift 2
+                else
+                    echo -e "${RED}--output requires a file path${NC}"
+                    exit 1
+                fi
+                ;;
+            --output=*)
+                output_file="${1#*=}"
+                if [[ "$output_file" == *".."* ]]; then
+                    echo -e "${RED}Error: Output path must not contain '..'${NC}"
+                    exit 1
+                fi
+                shift
+                ;;
+            --provider)
+                if [[ -n "${2:-}" ]]; then
+                    provider_override="$2"
+                    start_args+=("--provider" "$2")
+                    shift 2
+                else
+                    echo -e "${RED}--provider requires a value${NC}"
+                    exit 1
+                fi
+                ;;
+            --provider=*)
+                provider_override="${1#*=}"
+                start_args+=("--provider" "$provider_override")
+                shift
+                ;;
+            --parallel|--bg|--background|--simple|--complex|--no-dashboard|--sandbox)
+                start_args+=("$1")
+                shift
+                ;;
+            --budget)
+                if [[ -n "${2:-}" ]]; then
+                    start_args+=("--budget" "$2")
+                    shift 2
+                else
+                    echo -e "${RED}--budget requires a USD amount${NC}"
+                    exit 1
+                fi
+                ;;
+            --budget=*)
+                start_args+=("--budget" "${1#*=}")
+                shift
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki run --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [[ -z "$issue_ref" ]]; then
+                    issue_ref="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$issue_ref" ]]; then
+        echo -e "${RED}Error: Issue reference required${NC}"
+        echo ""
+        echo "Usage: loki run <issue-ref> [options]"
+        echo ""
+        echo "Examples:"
+        echo "  loki run 123                    # GitHub issue"
+        echo "  loki run PROJ-456               # Jira issue"
+        echo "  loki run owner/repo#789         # GitHub with specific repo"
+        echo ""
+        echo "Run 'loki run --help' for full usage."
+        exit 1
+    fi
+
+    # Source issue provider abstraction
+    local issue_providers_script="$SKILL_DIR/autonomy/issue-providers.sh"
+    if [[ ! -f "$issue_providers_script" ]]; then
+        echo -e "${RED}Error: issue-providers.sh not found at $issue_providers_script${NC}"
+        exit 1
+    fi
+    source "$issue_providers_script"
+
+    # Detect provider
+    local issue_provider
+    issue_provider=$(detect_issue_provider "$issue_ref")
+    echo -e "${CYAN}Issue provider:${NC} ${issue_provider}"
+
+    # Fetch the issue
+    echo -e "${CYAN}Fetching issue...${NC}"
+    local issue_json
+    issue_json=$(fetch_issue "$issue_ref") || {
+        echo -e "${RED}Failed to fetch issue${NC}"
+        exit 1
+    }
+
+    # Extract fields for display
+    local title number url
+    title=$(echo "$issue_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('title',''))")
+    number=$(echo "$issue_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('number',''))")
+    url=$(echo "$issue_json" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('url',''))")
+
+    echo -e "${GREEN}Issue #$number:${NC} $title"
+    if [[ -n "$url" ]]; then
+        echo -e "${DIM}$url${NC}"
+    fi
+    echo ""
+
+    # Generate PRD
+    local prd_content
+    prd_content=$(echo "$issue_json" | generate_prd_from_issue)
+
+    # Handle dry-run
+    if [[ "$dry_run" == "true" ]]; then
+        echo -e "${BOLD}Generated PRD Preview:${NC}"
+        echo "------------------------------------------------------------------------"
+        echo "$prd_content"
+        echo "------------------------------------------------------------------------"
+        echo ""
+        echo -e "${DIM}(dry-run mode - PRD not saved)${NC}"
+        exit 0
+    fi
+
+    # Determine output file
+    if [[ -z "$output_file" ]]; then
+        mkdir -p "$LOKI_DIR"
+        # Use provider-specific naming
+        case "$issue_provider" in
+            github|gitlab) output_file="$LOKI_DIR/prd-issue-$number.md" ;;
+            jira)          output_file="$LOKI_DIR/prd-$number.md" ;;
+            azure_devops)  output_file="$LOKI_DIR/prd-ado-$number.md" ;;
+            *)             output_file="$LOKI_DIR/prd-issue-$number.md" ;;
+        esac
+    fi
+
+    # Write PRD file
+    echo "$prd_content" > "$output_file"
+    echo -e "${GREEN}PRD generated:${NC} $output_file"
+
+    # Start Loki Mode unless --no-start
+    if [[ "$no_start" == "true" ]]; then
+        echo ""
+        echo "Next steps:"
+        echo -e "  ${CYAN}loki start $output_file${NC}    # Start with generated PRD"
+        echo -e "  ${CYAN}cat $output_file${NC}            # View PRD"
+    else
+        echo ""
+        echo -e "${GREEN}Starting Loki Mode with generated PRD...${NC}"
+        cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"}
+    fi
+}
+
+# Generate PRD from GitHub issue (DEPRECATED in v6.0.0 - use 'loki run' instead)
 cmd_issue() {
+    # v6.0.0: Show deprecation notice
+    echo -e "${YELLOW}[DEPRECATED] 'loki issue' is deprecated in v6.0.0. Use 'loki run' instead.${NC}" >&2
+    echo -e "${YELLOW}  'loki run' supports GitHub, GitLab, Jira, and Azure DevOps issues.${NC}" >&2
+    echo "" >&2
+
     require_jq
 
     local issue_ref=""
@@ -2551,6 +2792,10 @@ cmd_issue() {
             --output)
                 if [[ -n "${2:-}" ]]; then
                     output_file="$2"
+                    if [[ "$output_file" == *".."* ]]; then
+                        echo -e "${RED}Error: Output path must not contain '..'${NC}"
+                        exit 1
+                    fi
                     shift 2
                 else
                     echo -e "${RED}--output requires a file path${NC}"
@@ -2559,6 +2804,10 @@ cmd_issue() {
                 ;;
             --output=*)
                 output_file="${1#*=}"
+                if [[ "$output_file" == *".."* ]]; then
+                    echo -e "${RED}Error: Output path must not contain '..'${NC}"
+                    exit 1
+                fi
                 shift
                 ;;
             # Pass through options to start command
@@ -2743,8 +2992,407 @@ EOF
 }
 
 # Show configuration
+#===============================================================================
+# loki watch - Live TUI session monitor (v6.0.0)
+#===============================================================================
+
+cmd_watch() {
+    local interval="${1:-2}"
+
+    # Handle --help
+    if [[ "$interval" == "--help" || "$interval" == "-h" ]]; then
+        # fall through to help block
+        :
+    elif ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo -e "${RED}Invalid interval: $interval (expected positive number)${NC}"
+        return 1
+    elif [[ "$interval" =~ ^0+(\.0+)?$ ]]; then
+        echo -e "${RED}Invalid interval: $interval (must be greater than 0)${NC}"
+        return 1
+    fi
+    if [[ "$interval" == "--help" || "$interval" == "-h" ]]; then
+        echo -e "${BOLD}loki watch${NC} - Live session monitor (v6.0.0)"
+        echo ""
+        echo "Usage: loki watch [interval]"
+        echo ""
+        echo "Options:"
+        echo "  interval    Refresh interval in seconds (default: 2)"
+        echo ""
+        echo "Displays:"
+        echo "  - Current iteration and RARV phase"
+        echo "  - Provider and model tier"
+        echo "  - Task queue status"
+        echo "  - Recent log lines"
+        echo "  - Cost tracking"
+        echo ""
+        echo "Press Ctrl+C to exit."
+        exit 0
+    fi
+
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${RED}No active session found.${NC}"
+        echo "Start a session with: loki start <prd>"
+        exit 1
+    fi
+
+    echo -e "${BOLD}Loki Mode Watch${NC} (refresh: ${interval}s, Ctrl+C to exit)"
+    echo ""
+
+    trap 'echo ""; echo "Watch stopped."; return 0' INT TERM
+
+    while true; do
+        clear
+        echo -e "${BOLD}Loki Mode Watch${NC} $(date '+%H:%M:%S') (refresh: ${interval}s)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # Session status
+        if [ -f "$LOKI_DIR/PAUSE" ]; then
+            echo -e "Status: ${YELLOW}PAUSED${NC}"
+        elif [ -f "$LOKI_DIR/STOP" ]; then
+            echo -e "Status: ${RED}STOPPED${NC}"
+        elif [ -f "$LOKI_DIR/loki.pid" ] && kill -0 "$(cat "$LOKI_DIR/loki.pid" 2>/dev/null)" 2>/dev/null; then
+            echo -e "Status: ${GREEN}RUNNING${NC}"
+        else
+            echo -e "Status: ${DIM}IDLE${NC}"
+        fi
+
+        # Iteration and phase
+        if [ -f "$LOKI_DIR/state/iteration" ]; then
+            local iter
+            iter=$(cat "$LOKI_DIR/state/iteration" 2>/dev/null || echo "?")
+            echo -e "Iteration: $iter"
+        fi
+
+        # Provider info
+        local prov="${LOKI_PROVIDER:-claude}"
+        if [ -f "$LOKI_DIR/state/provider" ]; then
+            prov=$(cat "$LOKI_DIR/state/provider" 2>/dev/null || echo "$prov")
+        fi
+        echo -e "Provider: $prov"
+
+        # Queue status
+        echo ""
+        echo -e "${CYAN}Task Queue:${NC}"
+        for queue in pending in-progress completed failed; do
+            local queue_file="$LOKI_DIR/queue/${queue}.json"
+            if [ -f "$queue_file" ]; then
+                local count
+                count=$(_QUEUE_FILE="$queue_file" python3 -c "import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "0")
+                echo "  $queue: $count"
+            fi
+        done
+
+        # Cost tracking
+        if [ -f "$LOKI_DIR/state/cost-tracker.json" ]; then
+            echo ""
+            echo -e "${CYAN}Cost:${NC}"
+            _LOKI_COST_FILE="$LOKI_DIR/state/cost-tracker.json" python3 -c "
+import json, os
+with open(os.environ['_LOKI_COST_FILE']) as f:
+    data = json.load(f)
+total = data.get('total_cost_usd', 0)
+budget = data.get('budget_limit', 0)
+print(f'  Total: \${total:.4f}')
+if budget > 0:
+    print(f'  Budget: \${budget:.2f} ({total/budget*100:.1f}% used)')
+" 2>/dev/null || true
+        fi
+
+        # Recent log
+        echo ""
+        echo -e "${CYAN}Recent Activity:${NC}"
+        local log_file="$LOKI_DIR/logs/loki-run.log"
+        if [ -f "$log_file" ]; then
+            tail -5 "$log_file" 2>/dev/null | sed 's/^/  /'
+        else
+            echo "  (no log file)"
+        fi
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        sleep "$interval"
+    done
+}
+
+#===============================================================================
+# loki export - Export session data (v6.0.0)
+#===============================================================================
+
+cmd_export() {
+    local format="${1:---help}"
+    local output_path="${2:-}"
+
+    case "$format" in
+        --help|-h)
+            echo -e "${BOLD}loki export${NC} - Export session data (v6.0.0)"
+            echo ""
+            echo "Usage: loki export <format> [output-path]"
+            echo ""
+            echo "Formats:"
+            echo "  json       Full session state as JSON"
+            echo "  markdown   Human-readable session summary"
+            echo "  csv        Task queue as CSV"
+            echo "  timeline   Iteration timeline as JSON"
+            echo ""
+            echo "Examples:"
+            echo "  loki export json                         # Print to stdout"
+            echo "  loki export json session-export.json     # Save to file"
+            echo "  loki export markdown                     # Readable summary"
+            echo "  loki export csv tasks.csv                # Task queue CSV"
+            echo "  loki export timeline                     # Iteration timeline"
+            exit 0
+            ;;
+        json)
+            _export_json "$output_path"
+            ;;
+        markdown|md)
+            _export_markdown "$output_path"
+            ;;
+        csv)
+            _export_csv "$output_path"
+            ;;
+        timeline)
+            _export_timeline "$output_path"
+            ;;
+        *)
+            echo -e "${RED}Unknown format: $format${NC}"
+            echo "Supported: json, markdown, csv, timeline"
+            exit 1
+            ;;
+    esac
+}
+
+_export_json() {
+    local output="$1"
+
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${RED}No active session found.${NC}"
+        exit 1
+    fi
+
+    local json_output
+    json_output=$(python3 << 'EXPORT_JSON'
+import json, os, glob
+from datetime import datetime
+
+loki_dir = os.environ.get("LOKI_DIR", ".loki")
+export = {
+    "exported_at": datetime.utcnow().isoformat() + "Z",
+    "version": "6.0.0",
+    "session": {},
+    "queue": {},
+    "quality": {},
+    "config": {}
+}
+
+# Session state
+for state_file in glob.glob(os.path.join(loki_dir, "state", "*")):
+    name = os.path.basename(state_file)
+    try:
+        with open(state_file) as f:
+            content = f.read().strip()
+        try:
+            export["session"][name] = json.loads(content)
+        except json.JSONDecodeError:
+            export["session"][name] = content
+    except:
+        pass
+
+# Queue
+for queue in ["pending", "in-progress", "completed", "failed"]:
+    qf = os.path.join(loki_dir, "queue", f"{queue}.json")
+    if os.path.exists(qf):
+        try:
+            with open(qf) as f:
+                export["queue"][queue] = json.load(f)
+        except:
+            pass
+
+# Quality reviews (latest 5)
+reviews_dir = os.path.join(loki_dir, "quality", "reviews")
+if os.path.isdir(reviews_dir):
+    reviews = sorted(os.listdir(reviews_dir), reverse=True)[:5]
+    export["quality"]["recent_reviews"] = reviews
+
+# Config
+cfg = os.path.join(loki_dir, "config", "settings.json")
+if os.path.exists(cfg):
+    try:
+        with open(cfg) as f:
+            export["config"] = json.load(f)
+    except:
+        pass
+
+print(json.dumps(export, indent=2, default=str))
+EXPORT_JSON
+    )
+
+    if [ -n "$output" ]; then
+        # Reject path traversal
+        if [[ "$output" == *".."* ]]; then
+            echo -e "${RED}Error: Output path must not contain '..'${NC}"
+            return 1
+        fi
+        echo "$json_output" > "$output"
+        echo -e "${GREEN}Exported to $output${NC}"
+    else
+        echo "$json_output"
+    fi
+}
+
+_export_markdown() {
+    local output="$1"
+
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${RED}No active session found.${NC}"
+        exit 1
+    fi
+
+    local md_output
+    md_output=$(cat << MDEOF
+# Loki Mode Session Export
+
+**Exported:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+**Directory:** $(pwd)
+
+## Status
+
+$(cat "$LOKI_DIR/STATUS.txt" 2>/dev/null || echo "No status file")
+
+## Recent Commits
+
+$(git log --oneline -10 2>/dev/null || echo "No git history")
+
+## Task Queue Summary
+
+$(for q in pending in-progress completed failed; do
+    f="$LOKI_DIR/queue/${q}.json"
+    if [ -f "$f" ]; then
+        count=$(_QUEUE_FILE="$f" python3 -c "import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "0")
+        echo "- **$q:** $count tasks"
+    fi
+done)
+MDEOF
+    )
+
+    if [ -n "$output" ]; then
+        if [[ "$output" == *".."* ]]; then
+            echo -e "${RED}Error: Output path must not contain '..'${NC}"
+            return 1
+        fi
+        echo "$md_output" > "$output"
+        echo -e "${GREEN}Exported to $output${NC}"
+    else
+        echo "$md_output"
+    fi
+}
+
+_export_csv() {
+    local output="$1"
+
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${RED}No active session found.${NC}"
+        exit 1
+    fi
+
+    local csv_output
+    csv_output=$(python3 << 'EXPORT_CSV'
+import json, os, csv, io
+
+loki_dir = os.environ.get("LOKI_DIR", ".loki")
+writer_buf = io.StringIO()
+writer = csv.writer(writer_buf)
+writer.writerow(["status", "id", "title", "created_at"])
+
+for queue in ["pending", "in-progress", "completed", "failed"]:
+    qf = os.path.join(loki_dir, "queue", f"{queue}.json")
+    if os.path.exists(qf):
+        try:
+            with open(qf) as f:
+                tasks = json.load(f)
+            for t in tasks:
+                writer.writerow([
+                    queue,
+                    t.get("id", ""),
+                    t.get("title", t.get("task", "")),
+                    t.get("created_at", "")
+                ])
+        except:
+            pass
+
+print(writer_buf.getvalue())
+EXPORT_CSV
+    )
+
+    if [ -n "$output" ]; then
+        if [[ "$output" == *".."* ]]; then
+            echo -e "${RED}Error: Output path must not contain '..'${NC}"
+            return 1
+        fi
+        echo "$csv_output" > "$output"
+        echo -e "${GREEN}Exported to $output${NC}"
+    else
+        echo "$csv_output"
+    fi
+}
+
+_export_timeline() {
+    local output="$1"
+
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${RED}No active session found.${NC}"
+        exit 1
+    fi
+
+    local timeline_output
+    timeline_output=$(python3 << 'EXPORT_TIMELINE'
+import json, os, glob
+
+loki_dir = os.environ.get("LOKI_DIR", ".loki")
+timeline = []
+
+# Collect iteration logs
+log_dir = os.path.join(loki_dir, "logs")
+if os.path.isdir(log_dir):
+    for f in sorted(glob.glob(os.path.join(log_dir, "iteration-*.json"))):
+        try:
+            with open(f) as fh:
+                timeline.append(json.load(fh))
+        except:
+            pass
+
+# Collect council verdicts
+council_dir = os.path.join(loki_dir, "council")
+if os.path.isdir(council_dir):
+    for f in sorted(glob.glob(os.path.join(council_dir, "votes", "iteration-*", "aggregate.json"))):
+        try:
+            with open(f) as fh:
+                data = json.load(fh)
+                data["_type"] = "council_vote"
+                timeline.append(data)
+        except:
+            pass
+
+print(json.dumps(timeline, indent=2, default=str))
+EXPORT_TIMELINE
+    )
+
+    if [ -n "$output" ]; then
+        if [[ "$output" == *".."* ]]; then
+            echo -e "${RED}Error: Output path must not contain '..'${NC}"
+            return 1
+        fi
+        echo "$timeline_output" > "$output"
+        echo -e "${GREEN}Exported to $output${NC}"
+    else
+        echo "$timeline_output"
+    fi
+}
+
 cmd_config() {
     local subcommand="${1:-show}"
+    shift 2>/dev/null || true
 
     case "$subcommand" in
         show)
@@ -2759,15 +3407,188 @@ cmd_config() {
         path)
             cmd_config_path
             ;;
+        set)
+            cmd_config_set "$@"
+            ;;
+        get)
+            cmd_config_get "$@"
+            ;;
         *)
-            echo -e "${YELLOW}Usage: loki config [show|init|edit|path]${NC}"
+            echo -e "${YELLOW}Usage: loki config [show|init|edit|path|set|get]${NC}"
             echo ""
-            echo "  show   Show current configuration (default)"
-            echo "  init   Create a config file from template"
-            echo "  edit   Open config file in editor"
-            echo "  path   Show config file paths"
+            echo "  show           Show current configuration (default)"
+            echo "  init           Create a config file from template"
+            echo "  edit           Open config file in editor"
+            echo "  path           Show config file paths"
+            echo "  set KEY VALUE  Set a configuration value"
+            echo "  get KEY        Get a configuration value"
+            echo ""
+            echo "Settable keys (v6.0.0):"
+            echo "  maxTier              Cost ceiling: opus, sonnet, haiku (default: opus)"
+            echo "  model.planning       Model for planning tier"
+            echo "  model.development    Model for development tier"
+            echo "  model.fast           Model for fast tier"
+            echo "  provider             Default AI provider: claude, codex, gemini"
+            echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
+            echo "  blind_validation     Blind validation mode: true, false (default: true)"
+            echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
+            echo "  spawn_timeout        Provider spawn timeout in seconds (default: 120)"
+            echo "  spawn_retries        Provider spawn retry count (default: 2)"
+            echo "  notify.slack         Slack webhook URL"
+            echo "  notify.discord       Discord webhook URL"
+            echo "  budget               Cost budget limit in USD"
             ;;
     esac
+}
+
+# v6.0.0: Set a configuration value
+cmd_config_set() {
+    local key="${1:-}"
+    local value="${2:-}"
+
+    if [[ -z "$key" || -z "$value" ]]; then
+        echo -e "${RED}Usage: loki config set <key> <value>${NC}"
+        echo "Run 'loki config' for list of settable keys."
+        return 1
+    fi
+
+    # Ensure config directory exists
+    mkdir -p "$LOKI_DIR/config"
+    local config_store="$LOKI_DIR/config/settings.json"
+
+    # Initialize if not exists
+    if [ ! -f "$config_store" ]; then
+        echo '{}' > "$config_store"
+    fi
+
+    # Validate known keys and values
+    case "$key" in
+        maxTier)
+            case "$value" in
+                opus|sonnet|haiku) ;;
+                *) echo -e "${RED}Invalid maxTier: $value (expected: opus, sonnet, haiku)${NC}"; return 1 ;;
+            esac
+            ;;
+        provider)
+            case "$value" in
+                claude|codex|gemini) ;;
+                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, gemini)${NC}"; return 1 ;;
+            esac
+            ;;
+        issue.provider)
+            case "$value" in
+                github|gitlab|jira|azure_devops) ;;
+                *) echo -e "${RED}Invalid issue.provider: $value${NC}"; return 1 ;;
+            esac
+            ;;
+        blind_validation|adversarial_testing)
+            case "$value" in
+                true|false) ;;
+                *) echo -e "${RED}Invalid $key: $value (expected: true, false)${NC}"; return 1 ;;
+            esac
+            ;;
+        spawn_timeout|spawn_retries)
+            if ! echo "$value" | grep -qE '^[0-9]+$'; then
+                echo -e "${RED}Invalid $key: $value (expected: integer)${NC}"; return 1
+            fi
+            ;;
+        budget)
+            if ! echo "$value" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+                echo -e "${RED}Invalid budget: $value (expected: numeric USD amount)${NC}"; return 1
+            fi
+            ;;
+        model.planning|model.development|model.fast)
+            # Validate model names: alphanumeric, dots, hyphens, underscores only
+            if ! echo "$value" | grep -qE '^[a-zA-Z0-9._-]+$'; then
+                echo -e "${RED}Invalid model name: $value (only alphanumeric, dots, hyphens, underscores)${NC}"; return 1
+            fi
+            ;;
+        notify.slack|notify.discord)
+            # Validate webhook URLs: must be https
+            if ! echo "$value" | grep -qiE '^https://'; then
+                echo -e "${RED}Invalid webhook URL: must start with https://${NC}"; return 1
+            fi
+            ;;
+        *)
+            echo -e "${YELLOW}Warning: Unknown key '$key' - storing anyway${NC}"
+            ;;
+    esac
+
+    # Update JSON config via python (use inline env vars to avoid leaking into environment)
+    LOKI_CFG_FILE="$config_store" LOKI_CFG_KEY="$key" LOKI_CFG_VALUE="$value" \
+    python3 << 'SET_CONFIG'
+import json, os
+cfg_file = os.environ["LOKI_CFG_FILE"]
+key = os.environ["LOKI_CFG_KEY"]
+value = os.environ["LOKI_CFG_VALUE"]
+
+with open(cfg_file) as f:
+    config = json.load(f)
+
+# Handle dotted keys (model.planning -> {"model": {"planning": value}})
+parts = key.split(".")
+current = config
+for part in parts[:-1]:
+    if part not in current or not isinstance(current[part], dict):
+        current[part] = {}
+    current = current[part]
+current[parts[-1]] = value
+
+with open(cfg_file, "w") as f:
+    json.dump(config, f, indent=2)
+SET_CONFIG
+
+    echo -e "${GREEN}Set $key = $value${NC}"
+
+    # Also set env var for immediate effect in current session
+    case "$key" in
+        maxTier)          export LOKI_MAX_TIER="$value" ;;
+        provider)         export LOKI_PROVIDER="$value" ;;
+        blind_validation) export LOKI_BLIND_VALIDATION="$value" ;;
+        adversarial_testing) export LOKI_ADVERSARIAL_TESTING="$value" ;;
+        spawn_timeout)    export LOKI_SPAWN_TIMEOUT="$value" ;;
+        spawn_retries)    export LOKI_SPAWN_RETRIES="$value" ;;
+        budget)           export LOKI_BUDGET_LIMIT="$value" ;;
+    esac
+}
+
+# v6.0.0: Get a configuration value
+cmd_config_get() {
+    local key="${1:-}"
+
+    if [[ -z "$key" ]]; then
+        echo -e "${RED}Usage: loki config get <key>${NC}"
+        return 1
+    fi
+
+    local config_store="$LOKI_DIR/config/settings.json"
+    if [ ! -f "$config_store" ]; then
+        echo -e "${YELLOW}No config found (using defaults)${NC}"
+        return 0
+    fi
+
+    export LOKI_CFG_FILE="$config_store"
+    export LOKI_CFG_KEY="$key"
+    python3 << 'GET_CONFIG'
+import json, os
+cfg_file = os.environ["LOKI_CFG_FILE"]
+key = os.environ["LOKI_CFG_KEY"]
+
+with open(cfg_file) as f:
+    config = json.load(f)
+
+parts = key.split(".")
+current = config
+for part in parts:
+    if isinstance(current, dict) and part in current:
+        current = current[part]
+    else:
+        print("")
+        exit(0)
+
+print(current if not isinstance(current, dict) else json.dumps(current, indent=2))
+GET_CONFIG
+    unset LOKI_CFG_FILE LOKI_CFG_KEY
 }
 
 cmd_config_show() {
@@ -2825,7 +3646,17 @@ cmd_config_show() {
     echo "  max_iterations:   ${LOKI_MAX_ITERATIONS:-1000}"
     echo "  autonomy_mode:    ${LOKI_AUTONOMY_MODE:-perpetual}"
     echo ""
+    echo "v6.0.0 Settings:"
+    echo "  maxTier:              ${LOKI_MAX_TIER:-(unlimited)}"
+    echo "  blind_validation:     ${LOKI_BLIND_VALIDATION:-true}"
+    echo "  adversarial_testing:  ${LOKI_ADVERSARIAL_TESTING:-true}"
+    echo "  spawn_timeout:        ${LOKI_SPAWN_TIMEOUT:-120}s"
+    echo "  spawn_retries:        ${LOKI_SPAWN_RETRIES:-2}"
+    echo "  issue_provider:       ${LOKI_ISSUE_PROVIDER:-(auto-detect)}"
+    echo "  budget:               ${LOKI_BUDGET_LIMIT:-(no limit)}"
+    echo ""
     echo -e "Run ${CYAN}loki config path${NC} to see all config file locations"
+    echo -e "Run ${CYAN}loki config set <key> <value>${NC} to change a setting"
 }
 
 cmd_config_init() {
@@ -5843,6 +6674,9 @@ main() {
     loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
 
     case "$command" in
+        run)
+            cmd_run "$@"
+            ;;
         start)
             cmd_start "$@"
             ;;
@@ -5896,6 +6730,12 @@ main() {
             ;;
         issue)
             cmd_issue "$@"
+            ;;
+        watch)
+            cmd_watch "$@"
+            ;;
+        export)
+            cmd_export "$@"
             ;;
         config)
             cmd_config "$@"

@@ -139,6 +139,48 @@ provider_get_tier_param() {
     esac
 }
 
+# Dynamic model resolution (v6.0.0)
+# Resolves a capability tier to a concrete model name at runtime.
+# Respects LOKI_MAX_TIER to cap cost.
+resolve_model_for_tier() {
+    local tier="$1"
+
+    # Handle capability aliases
+    case "$tier" in
+        best)    tier="planning" ;;
+        balanced) tier="development" ;;
+        cheap)   tier="fast" ;;
+    esac
+
+    local max_tier="${LOKI_MAX_TIER:-}"
+    local model=""
+
+    case "$tier" in
+        planning)    model="$PROVIDER_MODEL_PLANNING" ;;
+        development) model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+        fast)        model="$PROVIDER_MODEL_FAST" ;;
+        *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+    esac
+
+    # Apply maxTier ceiling
+    if [ -n "$max_tier" ]; then
+        case "$max_tier" in
+            haiku|flash)
+                model="$PROVIDER_MODEL_FAST"
+                ;;
+            sonnet|pro)
+                # Cap planning to development (pro)
+                if [ "$tier" = "planning" ]; then
+                    model="$PROVIDER_MODEL_DEVELOPMENT"
+                fi
+                ;;
+            opus)  ;; # No cap
+        esac
+    fi
+
+    echo "$model"
+}
+
 # Tier-aware invocation with rate limit fallback
 # Uses --model flag to specify model
 # Falls back to flash model if pro hits rate limit
@@ -148,9 +190,8 @@ provider_invoke_with_tier() {
     local prompt="$2"
     shift 2
 
-    # Select model based on tier
-    local model="$PROVIDER_MODEL"
-    [[ "$tier" == "fast" ]] && model="$PROVIDER_MODEL_FAST"
+    local model
+    model=$(resolve_model_for_tier "$tier")
 
     echo "[loki] Using tier: $tier, model: $model" >&2
 

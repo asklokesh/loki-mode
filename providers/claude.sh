@@ -121,12 +121,62 @@ provider_get_tier_param() {
     fi
 }
 
+# Dynamic model resolution (v6.0.0)
+# Resolves a capability tier to a concrete model name at runtime.
+# Respects LOKI_MAX_TIER to cap cost (e.g., maxTier=sonnet prevents opus usage).
+# Capability aliases: "best" -> planning tier, "fast" -> fast tier, "balanced" -> development tier
+resolve_model_for_tier() {
+    local tier="$1"
+
+    # Handle capability aliases
+    case "$tier" in
+        best)    tier="planning" ;;
+        balanced) tier="development" ;;
+        cheap)   tier="fast" ;;
+    esac
+
+    local max_tier="${LOKI_MAX_TIER:-}"
+    local model=""
+
+    # Resolve tier to model
+    case "$tier" in
+        planning)    model="$PROVIDER_MODEL_PLANNING" ;;
+        development) model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+        fast)        model="$PROVIDER_MODEL_FAST" ;;
+        *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+    esac
+
+    # Apply maxTier ceiling if set
+    if [ -n "$max_tier" ]; then
+        case "$max_tier" in
+            haiku)
+                # Cap everything to haiku/fast
+                model="$PROVIDER_MODEL_FAST"
+                ;;
+            sonnet)
+                # Cap planning to development
+                if [ "$tier" = "planning" ]; then
+                    model="$PROVIDER_MODEL_DEVELOPMENT"
+                fi
+                ;;
+            opus)
+                # No cap needed, opus is max
+                ;;
+        esac
+    fi
+
+    echo "$model"
+}
+
 # Tier-aware invocation (Claude supports model selection via --model flag)
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
     shift 2
     local model
-    model=$(provider_get_tier_param "$tier")
-    claude --dangerously-skip-permissions --model "$model" -p "$prompt" "$@"
+    model=$(resolve_model_for_tier "$tier")
+    # Extract short name for Task tool (opus/sonnet/haiku)
+    local short_model
+    short_model=$(echo "$model" | sed 's/claude-\([a-z]*\).*/\1/')
+    claude --dangerously-skip-permissions --model "$short_model" -p "$prompt" "$@"
 }

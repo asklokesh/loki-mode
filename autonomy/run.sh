@@ -177,9 +177,9 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Solution: Copy ourselves to /tmp and run from there. The original can be safely edited.
 #===============================================================================
 if [[ -z "${LOKI_RUNNING_FROM_TEMP:-}" ]] && [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    TEMP_SCRIPT="/tmp/loki-run-$$.sh"
+    TEMP_SCRIPT=$(mktemp /tmp/loki-run-XXXXXX.sh)
     cp "${BASH_SOURCE[0]}" "$TEMP_SCRIPT"
-    chmod +x "$TEMP_SCRIPT"
+    chmod 700 "$TEMP_SCRIPT"
     export LOKI_RUNNING_FROM_TEMP=1
     export LOKI_ORIGINAL_SCRIPT_DIR="$SCRIPT_DIR"
     export LOKI_ORIGINAL_PROJECT_DIR="$PROJECT_DIR"
@@ -470,6 +470,47 @@ parse_yaml_with_yq() {
 
 # Load config file before setting defaults
 load_config_file
+
+# Load JSON settings from loki config set (v6.0.0)
+_load_json_settings() {
+    local settings_file="${TARGET_DIR:-.}/.loki/config/settings.json"
+    [ -f "$settings_file" ] || return 0
+    eval "$(_LOKI_SETTINGS_FILE="$settings_file" python3 -c "
+import json, sys, os, shlex
+
+def get_nested(d, key):
+    \"\"\"Resolve dotted keys through nested dicts (model.planning -> data['model']['planning'])\"\"\"
+    parts = key.split('.')
+    cur = d
+    for p in parts:
+        if isinstance(cur, dict):
+            cur = cur.get(p)
+        else:
+            return None
+    return cur
+
+try:
+    with open(os.environ['_LOKI_SETTINGS_FILE']) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+mapping = {
+    'maxTier': 'LOKI_MAX_TIER',
+    'model.planning': 'LOKI_MODEL_PLANNING',
+    'model.development': 'LOKI_MODEL_DEVELOPMENT',
+    'model.fast': 'LOKI_MODEL_FAST',
+    'notify.slack': 'LOKI_SLACK_WEBHOOK',
+    'notify.discord': 'LOKI_DISCORD_WEBHOOK',
+}
+for key, env_var in mapping.items():
+    # Try nested dict lookup first, then flat key, then underscore variant
+    val = get_nested(data, key) or data.get(key) or data.get(key.replace('.', '_'))
+    if val and isinstance(val, str):
+        safe_val = shlex.quote(val)
+        print(f'[ -z \"\${{{env_var}:-}}\" ] && export {env_var}={safe_val}')
+" 2>/dev/null)" 2>/dev/null || true
+}
+_LOKI_SETTINGS_FILE="${TARGET_DIR:-.}/.loki/config/settings.json" _load_json_settings
 
 # Configuration
 MAX_RETRIES=${LOKI_MAX_RETRIES:-50}
@@ -1305,10 +1346,25 @@ get_rarv_phase_name() {
 }
 
 # Get provider-specific tier parameter based on current tier
-# Uses provider config variables for the tier mapping
+# v6.0.0: Delegates to resolve_model_for_tier() if available (dynamic resolution).
+# Falls back to static mapping for backward compatibility.
 get_provider_tier_param() {
     local tier="${1:-$CURRENT_TIER}"
 
+    # v6.0.0: Use dynamic resolution if provider has resolve_model_for_tier
+    if type resolve_model_for_tier &>/dev/null; then
+        local resolved
+        resolved=$(resolve_model_for_tier "$tier")
+        # For Claude, extract short name (opus/sonnet/haiku) from full model ID
+        if [ "${PROVIDER_NAME:-claude}" = "claude" ]; then
+            echo "$resolved" | sed 's/claude-\([a-z]*\).*/\1/'
+        else
+            echo "$resolved"
+        fi
+        return
+    fi
+
+    # Legacy fallback: static tier mapping
     case "${PROVIDER_NAME:-claude}" in
         claude)
             case "$tier" in
@@ -1338,6 +1394,57 @@ get_provider_tier_param() {
             echo "development"
             ;;
     esac
+}
+
+#===============================================================================
+# Provider Spawn Timeout (v6.0.0)
+# Wraps provider invocation with timeout + retries.
+# Default: 120s timeout, 2 retries.
+#===============================================================================
+
+PROVIDER_SPAWN_TIMEOUT=${LOKI_SPAWN_TIMEOUT:-120}
+PROVIDER_SPAWN_RETRIES=${LOKI_SPAWN_RETRIES:-2}
+
+# Invoke a command with timeout and retry logic
+# Usage: invoke_with_timeout <timeout_seconds> <retries> <command...>
+invoke_with_timeout() {
+    local timeout="$1"
+    local max_retries="$2"
+    shift 2
+
+    local attempt=0
+    while [ $attempt -le $max_retries ]; do
+        if [ $attempt -gt 0 ]; then
+            log_warn "Provider spawn retry $attempt/$max_retries..."
+        fi
+
+        local exit_code=0
+        # Use timeout command if available (GNU coreutils or macOS)
+        if command -v timeout &>/dev/null; then
+            timeout "$timeout" "$@"
+            exit_code=$?
+        elif command -v gtimeout &>/dev/null; then
+            gtimeout "$timeout" "$@"
+            exit_code=$?
+        else
+            # Fallback: no timeout wrapper, run directly
+            log_warn "timeout/gtimeout not available - running without timeout enforcement"
+            "$@"
+            exit_code=$?
+        fi
+
+        # Exit code 124 = timeout
+        if [ $exit_code -eq 124 ]; then
+            log_warn "Provider spawn timed out after ${timeout}s (attempt $((attempt+1))/$((max_retries+1)))"
+            ((attempt++))
+            continue
+        fi
+
+        return $exit_code
+    done
+
+    log_error "Provider spawn failed after $((max_retries+1)) attempts (timeout=${timeout}s)"
+    return 124
 }
 
 #===============================================================================
@@ -5125,6 +5232,141 @@ AGG_SCRIPT
     return 0
 }
 
+#===============================================================================
+# Adversarial Testing (v6.0.0) - For Standard+ complexity tiers
+# Spawns an adversarial agent that tries to break the implementation.
+# Only runs when complexity >= standard (6+ agents).
+#===============================================================================
+
+run_adversarial_testing() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local adversarial_dir="$loki_dir/quality/adversarial"
+    local test_id
+    test_id="adversarial-$(date -u +%Y%m%dT%H%M%SZ)-${ITERATION_COUNT:-0}"
+    mkdir -p "$adversarial_dir/$test_id"
+
+    # Only run for Standard+ complexity
+    local complexity="${LOKI_COMPLEXITY:-auto}"
+    if [ "$complexity" = "simple" ]; then
+        log_debug "Adversarial testing skipped: simple complexity tier"
+        return 0
+    fi
+
+    # Check if adversarial testing is disabled
+    if [ "${LOKI_ADVERSARIAL_TESTING:-true}" = "false" ]; then
+        log_debug "Adversarial testing disabled via LOKI_ADVERSARIAL_TESTING=false"
+        return 0
+    fi
+
+    log_header "ADVERSARIAL TESTING: $test_id"
+
+    # Get diff for adversarial analysis
+    local diff_content
+    diff_content=$(git -C "${TARGET_DIR:-.}" diff HEAD~1 2>/dev/null || git -C "${TARGET_DIR:-.}" diff --cached 2>/dev/null || echo "")
+    if [ -z "$diff_content" ]; then
+        log_info "Adversarial testing: No diff to test, skipping"
+        return 0
+    fi
+
+    local changed_files
+    changed_files=$(git -C "${TARGET_DIR:-.}" diff --name-only HEAD~1 2>/dev/null || git -C "${TARGET_DIR:-.}" diff --name-only --cached 2>/dev/null || echo "")
+
+    # Write analysis files
+    local diff_file="$adversarial_dir/$test_id/diff.txt"
+    local files_file="$adversarial_dir/$test_id/files.txt"
+    echo "$diff_content" > "$diff_file"
+    echo "$changed_files" > "$files_file"
+
+    # Build adversarial prompt
+    local adversarial_prompt="You are an ADVERSARIAL TESTER. Your goal is to BREAK the implementation.
+
+CHANGED FILES:
+$(cat "$files_file")
+
+DIFF:
+$(head -500 "$diff_file")
+
+YOUR MISSION:
+1. Find edge cases that will cause crashes or incorrect behavior
+2. Identify inputs that bypass validation
+3. Find race conditions or concurrency issues
+4. Discover security vulnerabilities (injection, auth bypass, SSRF)
+5. Find resource exhaustion vectors (unbounded loops, memory leaks)
+6. Identify error handling gaps (missing try/catch, unchecked returns)
+
+OUTPUT FORMAT (STRICT):
+ATTACK_VECTORS:
+- [severity] [category] description | reproduction steps
+  Severity: Critical, High, Medium, Low
+  Category: crash, security, correctness, performance, resource
+
+SUGGESTED_TESTS:
+- Test description that would catch this issue
+
+OVERALL_RISK: HIGH or MEDIUM or LOW"
+
+    local result_file="$adversarial_dir/$test_id/result.txt"
+
+    # Run adversarial agent
+    log_info "Spawning adversarial agent..."
+    case "${PROVIDER_NAME:-claude}" in
+        claude)
+            if command -v claude &>/dev/null; then
+                claude --dangerously-skip-permissions -p "$adversarial_prompt" \
+                    --output-format text > "$result_file" 2>/dev/null || true
+            fi
+            ;;
+        codex)
+            if command -v codex &>/dev/null; then
+                codex exec --full-auto "$adversarial_prompt" \
+                    > "$result_file" 2>/dev/null || true
+            fi
+            ;;
+        gemini)
+            if command -v gemini &>/dev/null; then
+                invoke_gemini_capture "$adversarial_prompt" \
+                    > "$result_file" 2>/dev/null || true
+            fi
+            ;;
+        *)
+            echo "ATTACK_VECTORS: None (unknown provider)" > "$result_file"
+            echo "OVERALL_RISK: LOW" >> "$result_file"
+            ;;
+    esac
+
+    if [ ! -s "$result_file" ]; then
+        log_warn "Adversarial agent produced no output"
+        return 0
+    fi
+
+    # Parse risk level
+    local risk_level
+    risk_level=$(grep -i "OVERALL_RISK:" "$result_file" | head -1 | sed 's/.*OVERALL_RISK:[[:space:]]*//' | awk '{print toupper($1)}')
+
+    # Count critical/high attack vectors
+    local critical_count high_count
+    critical_count=$(grep -ci "\[critical\]" "$result_file" 2>/dev/null || echo "0")
+    high_count=$(grep -ci "\[high\]" "$result_file" 2>/dev/null || echo "0")
+
+    log_info "Adversarial testing complete: risk=$risk_level, critical=$critical_count, high=$high_count"
+
+    emit_event_json "adversarial_test_complete" \
+        "test_id=$test_id" \
+        "risk_level=${risk_level:-UNKNOWN}" \
+        "critical_count=$critical_count" \
+        "high_count=$high_count" \
+        "iteration=$ITERATION_COUNT"
+
+    # Block on critical findings
+    if [ "$critical_count" -gt 0 ]; then
+        log_error "ADVERSARIAL TEST BLOCKED: $critical_count critical attack vectors found"
+        log_error "Details: $adversarial_dir/$test_id/result.txt"
+        return 1
+    fi
+
+    return 0
+}
+
 load_solutions_context() {
     # Load relevant structured solutions for the current task context
     local context="$1"
@@ -6441,6 +6683,81 @@ try:
         print(f'Memory consolidation: {result.patterns_created} patterns created')
 except Exception as e:
     pass  # Silently fail
+PYEOF
+}
+
+#===============================================================================
+# Knowledge Graph Integration (v6.0.0)
+# Enrich prompts with cross-project patterns and store new learnings.
+#===============================================================================
+
+# Enrich prompt context with relevant cross-project patterns
+enrich_from_knowledge_graph() {
+    local context="$1"
+    local max_patterns="${2:-5}"
+
+    _LOKI_KG_CONTEXT="$context" _LOKI_KG_MAX="$max_patterns" \
+    _LOKI_PROJECT_DIR="$PROJECT_DIR" \
+    python3 << 'PYEOF' 2>/dev/null || echo ""
+import sys
+import os
+import json
+
+project_dir = os.environ.get('_LOKI_PROJECT_DIR', '')
+context = os.environ.get('_LOKI_KG_CONTEXT', '')
+max_results = int(os.environ.get('_LOKI_KG_MAX', '5'))
+
+if not project_dir:
+    sys.exit(0)
+sys.path.insert(0, project_dir)
+try:
+    from memory.knowledge_graph import OrganizationKnowledgeGraph
+    kg = OrganizationKnowledgeGraph()
+    patterns = kg.query_patterns(context, max_results=max_results)
+    if patterns:
+        output = "\n## Cross-Project Knowledge (from knowledge graph)\n"
+        for p in patterns:
+            name = p.get('name', p.get('pattern', 'unnamed'))
+            category = p.get('category', '')
+            desc = p.get('description', '')
+            output += f"- **{name}** ({category}): {desc}\n"
+        print(output)
+except Exception:
+    pass
+PYEOF
+}
+
+# Store new patterns to the knowledge graph after successful iterations
+store_to_knowledge_graph() {
+    local target_dir="${TARGET_DIR:-.}"
+
+    _LOKI_PROJECT_DIR="$PROJECT_DIR" _LOKI_TARGET_DIR="$target_dir" \
+    python3 << 'PYEOF' 2>/dev/null || true
+import sys
+import os
+
+project_dir = os.environ.get('_LOKI_PROJECT_DIR', '')
+target_dir = os.environ.get('_LOKI_TARGET_DIR', '.')
+
+sys.path.insert(0, project_dir)
+try:
+    from memory.knowledge_graph import OrganizationKnowledgeGraph
+    from pathlib import Path
+
+    kg = OrganizationKnowledgeGraph()
+    project_dirs = [Path(target_dir)]
+
+    # Extract and store patterns
+    patterns = kg.extract_patterns(project_dirs)
+    if patterns:
+        patterns = kg.deduplicate_patterns(patterns)
+        kg.save_patterns(patterns)
+
+    # Rebuild graph
+    kg.build_graph(project_dirs)
+    kg.save_graph()
+except Exception:
+    pass
 PYEOF
 }
 

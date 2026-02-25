@@ -113,15 +113,50 @@ provider_get_tier_param() {
     esac
 }
 
+# Dynamic model resolution (v6.0.0)
+# Resolves a capability tier to a concrete effort level at runtime.
+# Codex uses a single model with effort parameter, so maxTier maps to effort cap.
+resolve_model_for_tier() {
+    local tier="$1"
+
+    # Handle capability aliases
+    case "$tier" in
+        best)    tier="planning" ;;
+        balanced) tier="development" ;;
+        cheap)   tier="fast" ;;
+    esac
+
+    local max_tier="${LOKI_MAX_TIER:-}"
+    local effort=""
+
+    case "$tier" in
+        planning)    effort="$PROVIDER_EFFORT_PLANNING" ;;
+        development) effort="$PROVIDER_EFFORT_DEVELOPMENT" ;;
+        fast)        effort="$PROVIDER_EFFORT_FAST" ;;
+        *)           effort="$PROVIDER_EFFORT_DEVELOPMENT" ;;
+    esac
+
+    # Apply maxTier ceiling (maps to effort levels)
+    if [ -n "$max_tier" ]; then
+        case "$max_tier" in
+            haiku|low)   effort="low" ;;
+            sonnet|high)
+                if [ "$effort" = "xhigh" ]; then effort="high"; fi
+                ;;
+            opus|xhigh)  ;; # No cap
+        esac
+    fi
+
+    echo "$effort"
+}
+
 # Tier-aware invocation
-# Note: Codex CLI does not support effort CLI flags
-# Effort must be configured via environment: CODEX_MODEL_REASONING_EFFORT
-# This function sets the env var before invocation
+# Codex CLI uses CODEX_MODEL_REASONING_EFFORT env var for effort control
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
     shift 2
     local effort
-    effort=$(provider_get_tier_param "$tier")
+    effort=$(resolve_model_for_tier "$tier")
     CODEX_MODEL_REASONING_EFFORT="$effort" codex exec --full-auto "$prompt" "$@"
 }

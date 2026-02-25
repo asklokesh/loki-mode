@@ -259,7 +259,14 @@ council_vote() {
         verdict=$(council_member_review "$member" "$role" "$evidence_file" "$vote_dir")
 
         local vote_result
-        vote_result=$(echo "$verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT)" | grep -oE "APPROVE|REJECT" | head -1)
+        vote_result=$(echo "$verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT|CANNOT_VALIDATE)" | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" | head -1)
+
+        # v6.0.0: Handle CANNOT_VALIDATE - validator lacks enough context to decide
+        if [ "$vote_result" = "CANNOT_VALIDATE" ]; then
+            log_warn "  Member $member ($role): CANNOT_VALIDATE - insufficient evidence"
+            # CANNOT_VALIDATE counts as REJECT (conservative default)
+            vote_result="REJECT"
+        fi
 
         # Extract severity-categorized issues (v5.49.0 error budget)
         local member_issues=""
@@ -320,9 +327,9 @@ council_vote() {
         local contrarian_verdict
         contrarian_verdict=$(council_devils_advocate "$evidence_file" "$vote_dir")
         local contrarian_vote
-        contrarian_vote=$(echo "$contrarian_verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT)" | grep -oE "APPROVE|REJECT" | head -1)
+        contrarian_vote=$(echo "$contrarian_verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT|CANNOT_VALIDATE)" | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" | head -1)
 
-        if [ "$contrarian_vote" = "REJECT" ]; then
+        if [ "$contrarian_vote" = "REJECT" ] || [ "$contrarian_vote" = "CANNOT_VALIDATE" ]; then
             log_warn "Anti-sycophancy: Devil's advocate REJECTED unanimous approval"
             log_warn "Overriding to require one more iteration for verification"
             approve_count=$((approve_count - 1))
@@ -661,6 +668,21 @@ council_member_review() {
     local evidence
     evidence=$(cat "$evidence_file" 2>/dev/null || echo "No evidence available")
 
+    # v6.0.0: Blind validation (default ON) - strip worker iteration context
+    # Validators see only: PRD, git state, test results, build artifacts
+    # They do NOT see: iteration count, convergence signals, agent done signals
+    local blind_mode="${LOKI_BLIND_VALIDATION:-true}"
+    if [ "$blind_mode" = "true" ]; then
+        # Strip convergence/iteration context that could bias validators
+        # Uses awk for macOS/BSD compatibility (sed range syntax differs between GNU/BSD)
+        evidence=$(echo "$evidence" | awk '
+            /^## Convergence Data/ { skip=1; next }
+            /^## / && skip { skip=0 }
+            !skip { print }
+        ')
+        log_debug "Blind validation: stripped convergence context for member $member_id"
+    fi
+
     local verdict=""
     local role_instruction=""
     case "$role" in
@@ -700,13 +722,14 @@ ${severity_instruction}
 INSTRUCTIONS:
 1. Review the evidence carefully
 2. Determine if the project meets completion criteria
-3. Output EXACTLY one line starting with VOTE:APPROVE or VOTE:REJECT
+3. Output EXACTLY one line starting with VOTE:APPROVE, VOTE:REJECT, or VOTE:CANNOT_VALIDATE
 4. Output EXACTLY one line starting with REASON: explaining your decision
 5. If issues found, output lines starting with ISSUES: SEVERITY:description
 6. Be honest - do not approve incomplete work
+7. If you lack sufficient evidence to make a determination, vote CANNOT_VALIDATE
 
 Output format:
-VOTE:APPROVE or VOTE:REJECT
+VOTE:APPROVE or VOTE:REJECT or VOTE:CANNOT_VALIDATE
 REASON: your reasoning here
 ISSUES: CRITICAL:description (optional, one per line per issue)"
 
@@ -716,12 +739,13 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
     case "${PROVIDER_NAME:-claude}" in
         claude)
             if command -v claude &>/dev/null; then
-                verdict=$(echo "$prompt" | claude --model haiku -p 2>/dev/null | tail -5)
+                local council_model="${PROVIDER_MODEL_FAST:-haiku}"
+                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -5)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec -q "$prompt" 2>/dev/null | tail -5)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -5)
             fi
             ;;
         gemini)
@@ -792,12 +816,13 @@ REASON: your reasoning"
     case "${PROVIDER_NAME:-claude}" in
         claude)
             if command -v claude &>/dev/null; then
-                verdict=$(echo "$prompt" | claude --model haiku -p 2>/dev/null | tail -5)
+                local council_model="${PROVIDER_MODEL_FAST:-haiku}"
+                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -5)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec -q "$prompt" 2>/dev/null | tail -5)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -5)
             fi
             ;;
         gemini)
