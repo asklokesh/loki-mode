@@ -665,14 +665,16 @@ class MigrationPipeline:
         completed_phases: list[str] = []
         for phase in PHASE_ORDER:
             status = manifest.phases.get(phase, {}).get("status", "pending")
-            if status == "in_progress":
+            if status == "completed":
+                completed_phases.append(phase)
+                current_phase = phase
+                overall_status = "in_progress"  # partial completion
+            elif status == "in_progress":
                 current_phase = phase
                 overall_status = "in_progress"
-                break
-            if status == "completed":
+            elif status == "failed":
                 current_phase = phase
-                completed_phases.append(phase)
-                overall_status = "in_progress"  # partial completion
+                overall_status = "failed"
 
         # Feature stats
         features_total = 0
