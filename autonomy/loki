@@ -419,6 +419,7 @@ show_help() {
     echo "  doctor [--json]  Check system prerequisites and skill symlinks"
     echo "  setup-skill      Create skill symlinks for all providers"
     echo "  watchdog [cmd]   Process health monitoring (status|help)"
+    echo "  remote [PRD]     Start remote session (connect from phone/browser, Claude Pro/Max)"
     echo "  version          Show version"
     echo "  help             Show this help"
     echo ""
@@ -455,6 +456,8 @@ show_help() {
     echo "  loki issue 123                # Generate PRD from issue #123"
     echo "  loki issue 123 --start        # Generate PRD and start Loki Mode"
     echo "  loki issue https://github.com/owner/repo/issues/123  # From URL"
+    echo "  loki remote                   # Start remote session (phone/browser)"
+    echo "  loki remote ./prd.md          # Remote session with PRD context"
     echo ""
     echo "Environment Variables:"
     echo "  See: $RUN_SH (header comments)"
@@ -5627,6 +5630,9 @@ main() {
         syslog)
             cmd_syslog "$@"
             ;;
+        remote|rc)
+            cmd_remote "$@"
+            ;;
         version|--version|-v)
             cmd_version
             ;;
@@ -8481,6 +8487,146 @@ for line in sys.stdin:
             exit 1
             ;;
     esac
+}
+
+# Remote Control - start a remote-controllable Claude session
+cmd_remote() {
+    local rc_flags=()
+    local prd_file=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki remote${NC} - Start a remote-controllable Claude Code session"
+                echo ""
+                echo "Usage: loki remote [PRD] [options]"
+                echo ""
+                echo "Starts a Claude Code Remote Control session with Loki Mode skill"
+                echo "pre-loaded. Connect from your phone, tablet, or any browser via"
+                echo "claude.ai/code or the Claude mobile app."
+                echo ""
+                echo "Arguments:"
+                echo "  PRD                   Path to PRD file (optional)"
+                echo ""
+                echo "Options:"
+                echo "  --verbose             Show detailed connection and session logs"
+                echo "  --sandbox             Enable sandboxing for filesystem/network isolation"
+                echo "  --no-sandbox          Disable sandboxing (default)"
+                echo ""
+                echo "Requirements:"
+                echo "  - Claude Code CLI installed"
+                echo "  - Anthropic Pro or Max plan (API keys not supported)"
+                echo "  - Signed in via 'claude' then '/login'"
+                echo ""
+                echo "Examples:"
+                echo "  loki remote                    # Start remote session"
+                echo "  loki remote ./prd.md           # Remote session with PRD context"
+                echo "  loki remote --verbose          # Verbose connection logging"
+                echo ""
+                echo "Once connected from your device, say:"
+                echo "  \"Loki Mode\"                    # Start autonomous mode"
+                echo "  \"Loki Mode with PRD at path\"   # Start with specific PRD"
+                exit 0
+                ;;
+            --verbose)
+                rc_flags+=("--verbose")
+                shift
+                ;;
+            --sandbox)
+                rc_flags+=("--sandbox")
+                shift
+                ;;
+            --no-sandbox)
+                rc_flags+=("--no-sandbox")
+                shift
+                ;;
+            --provider|--provider=*)
+                echo -e "${RED}Error: Remote Control only supports the Claude provider${NC}"
+                echo "The --provider flag is not available for 'loki remote'."
+                exit 1
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki remote --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [ -z "$prd_file" ]; then
+                    prd_file="$1"
+                else
+                    echo -e "${RED}Error: Unexpected argument: $1${NC}"
+                    echo "Run 'loki remote --help' for usage."
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate Claude CLI is available
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${RED}Error: Claude Code CLI not found${NC}"
+        echo "Install: https://docs.anthropic.com/en/docs/claude-code"
+        exit 1
+    fi
+
+    # Remote control is Claude-only
+    local provider="${LOKI_PROVIDER:-claude}"
+    if [ "$provider" != "claude" ]; then
+        echo -e "${RED}Error: Remote Control is only available with Claude provider${NC}"
+        echo "Current provider: $provider"
+        echo "Remote Control requires Claude Code with a Pro or Max plan."
+        exit 1
+    fi
+
+    # Ensure skill symlink exists so SKILL.md is available in the session
+    local skill_link="$HOME/.claude/skills/loki-mode"
+    if [ ! -f "$skill_link/SKILL.md" ] && [ -n "$SKILL_DIR" ]; then
+        mkdir -p "$HOME/.claude/skills" 2>/dev/null || true
+        ln -sf "$SKILL_DIR" "$skill_link" 2>/dev/null || true
+    fi
+
+    # Resolve PRD to absolute path
+    local prd_abs=""
+    if [ -n "$prd_file" ]; then
+        if [ ! -f "$prd_file" ]; then
+            echo -e "${RED}Error: PRD file not found: $prd_file${NC}"
+            exit 1
+        fi
+        prd_abs="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
+    fi
+
+    # Start dashboard in background if enabled
+    if [ "${LOKI_DASHBOARD:-true}" = "true" ]; then
+        cmd_api start >/dev/null 2>&1 &
+    fi
+
+    local version=$(get_version)
+    echo -e "${BOLD}Loki Mode v$version - Remote Control${NC}"
+    echo ""
+    echo -e "${CYAN}Starting Claude Code Remote Control session...${NC}"
+    echo -e "${DIM}Connect from phone, tablet, or browser via claude.ai/code${NC}"
+    echo -e "${DIM}Press spacebar in the terminal to show QR code for mobile${NC}"
+    echo ""
+    if [ -n "$prd_abs" ]; then
+        echo -e "${GREEN}PRD loaded:${NC} $prd_abs"
+        echo ""
+        echo -e "Once connected, say:"
+        echo -e "  ${BOLD}Loki Mode with PRD at $prd_abs${NC}"
+    else
+        echo -e "Once connected, say:"
+        echo -e "  ${BOLD}Loki Mode${NC}"
+    fi
+    echo ""
+
+    # Track session start
+    record_session_start
+
+    # Emit event
+    emit_event session cli remote_start "prd=${prd_abs:-none}"
+
+    # Hand off to claude remote-control
+    exec claude remote-control ${rc_flags[@]+"${rc_flags[@]}"}
 }
 
 # Syslog/SIEM integration management

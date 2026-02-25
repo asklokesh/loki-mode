@@ -201,6 +201,7 @@ docker run -it \
 | `council <cmd>` | Completion council status |
 | `config <cmd>` | Configuration: show, init, edit, path |
 | `sandbox <cmd>` | Docker sandbox: start, stop, status, logs, shell |
+| `remote [PRD]` | Start remote session (connect from phone/browser, Claude Pro/Max) |
 | `cleanup` | Kill orphaned processes |
 | `version` | Show version |
 | `help` | Show help |
