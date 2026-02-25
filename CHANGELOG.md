@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.58.2] - 2026-02-25
+
+### Fixed
+- Migrate: all dataclass constructors now filter unknown JSON keys (Feature, MigrationPlan, MigrationStep, SeamInfo)
+- Migrate: handle wrapped JSON formats (e.g. {"features": [...]}, {"seams": [...]})
+- Migrate: made Feature.category, MigrationStep.description/type, and SeamInfo fields optional with defaults
+- Migrate: expanded SeamInfo to accept agent-produced fields (name, priority, files, dependencies, complexity)
+- Migrate: updated seams.json and migration-plan.json prompts to match dataclass field names
+- Migrate: aligned features.json prompt schema with Feature dataclass (category, characterization_test vs name, test_command)
+
 ## [5.58.1] - 2026-02-24
 
 ### Fixed
