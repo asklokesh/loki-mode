@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.57.1] - 2026-02-25
+
+### Fixed
+- Migrate: PYTHONPATH not set for Python module resolution across working directories
+- Migrate: `start_phase()` crash when phase already in_progress (now idempotent)
+- Migrate: Phase stubs replaced with real Claude/Codex/Gemini invocation logic
+- Migrate: Phase gate artifact validation before advancing (prevents silent failures)
+- Migrate: Fixed bare `except: pass` to `except Exception: pass` in stream-json parser
+- Migrate: PYTHONPATH fallback uses `.` instead of undefined `$SCRIPT_DIR`
+
 ## [5.57.0] - 2026-02-24
 
 ### Added
