@@ -5,6 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.56.2] - 2026-02-24
+
+### Fixed
+- Analytics: CSS shadow fallback for undefined --loki-glass-shadow variable
+- Analytics: race condition guard (_loading flag) on concurrent _loadData() calls
+- Analytics: time range filter scoped to Velocity tab only (was misleading on Tools tab)
+- Analytics: iterPerHour formula corrected to (N-1)/span for accurate rate calculation
+- Analytics: heatmap uses local timezone dates instead of UTC (fixes day-shift for non-UTC users)
+- Analytics: heatmap month label column alignment (weekCol off-by-one)
+- Analytics: _fetchActivity() timeout via AbortController (prevents indefinite hangs)
+- App Runner: host-bound port parsing for 127.0.0.1:port:port format
+- App Runner: macOS process cleanup via pkill fallback (setsid unavailable)
+- App Runner: IS_DOCKER flag reset on re-init prevents stale Docker detection
+- App Runner: docker compose fallback filters running containers only
+- App Runner: health.json validation before embedding in state.json
+- App Runner: status parameter JSON-escaped in _write_app_state
+- Build: analytics added to bare-key keyboard shortcut sections array
+
+### Improved
+- Docker Hub documentation rewritten with accurate defaults and complete reference
+
 ## [5.56.1] - 2026-02-24
 
 ### Fixed
