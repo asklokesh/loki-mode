@@ -307,12 +307,14 @@ class MigrationPipeline:
         return phase_data.get("status", "pending")
 
     def start_phase(self, phase: str) -> None:
-        """Start a phase (transition from pending to in_progress)."""
+        """Start a phase (transition from pending to in_progress). Idempotent if already in_progress."""
         if phase not in PHASE_ORDER:
             raise ValueError(f"Unknown phase: {phase}")
         with self._lock:
             manifest = self._load_manifest_unlocked()
             current_status = manifest.phases[phase]["status"]
+            if current_status == "in_progress":
+                return  # Already started, idempotent
             if current_status != "pending":
                 raise RuntimeError(
                     f"Cannot start phase '{phase}': status is '{current_status}', expected 'pending'"

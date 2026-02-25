@@ -4854,7 +4854,7 @@ cmd_migrate_help() {
 }
 
 cmd_migrate_list() {
-    python3 -c "
+    PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import list_migrations
@@ -4900,7 +4900,7 @@ cmd_migrate_status() {
         return 1
     fi
 
-    python3 -c "
+    PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import json, sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
@@ -4955,7 +4955,7 @@ print(data.get('id', ''))
 " "$plan_file" 2>/dev/null || echo "")
 
     if [ -n "$migration_id_for_plan" ]; then
-        python3 -c "
+        PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
@@ -5121,7 +5121,7 @@ if manifests:
 
     # Create migration via engine
     local create_result
-    create_result=$(python3 -c "
+    create_result=$(PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import json, sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
@@ -5215,7 +5215,7 @@ print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
         echo -e "${CYAN}[Phase: ${p}]${NC} Starting..."
 
         # Start phase via engine
-        python3 -c "
+        PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
@@ -5226,31 +5226,140 @@ pipeline.start_phase(sys.argv[2])
             return 1
         }
 
-        # Phase-specific logic
+        # Phase-specific logic -- invoke Claude to do real work
+        local phase_prompt=""
         case "$p" in
             understand)
                 echo -e "  ${DIM}Analyzing codebase structure...${NC}"
-                echo -e "  ${DIM}Detecting languages, frameworks, dependencies...${NC}"
-                echo -e "  ${DIM}Building dependency graph...${NC}"
+                phase_prompt="You are performing the UNDERSTAND phase of a codebase migration.
+Target: ${target}
+Codebase: ${codebase_path}
+
+Tasks:
+1. Analyze the full codebase structure (languages, frameworks, dependencies, architecture)
+2. Create the docs directory: mkdir -p ${migration_dir}/docs
+3. Write analysis documentation to ${migration_dir}/docs/analysis.md
+3. Identify migration seams (logical boundaries for incremental migration) and write them to ${migration_dir}/seams.json as a JSON array of objects with fields: id, name, description, files (array of file paths), dependencies (array of seam ids), priority (high/medium/low)
+
+You MUST create both files. The migration cannot proceed without them.
+Write the analysis doc first, then the seams.json."
                 ;;
             guardrail)
-                echo -e "  ${DIM}Identifying existing tests...${NC}"
-                echo -e "  ${DIM}Creating rollback checkpoints...${NC}"
-                echo -e "  ${DIM}Setting up safety nets...${NC}"
+                echo -e "  ${DIM}Setting up safety nets and characterization tests...${NC}"
+                phase_prompt="You are performing the GUARDRAIL phase of a codebase migration.
+Target: ${target}
+Codebase: ${codebase_path}
+Migration dir: ${migration_dir}
+
+Read ${migration_dir}/docs/analysis.md and ${migration_dir}/seams.json for context.
+
+Tasks:
+1. Identify existing tests and create characterization tests that capture current behavior
+2. Write ${migration_dir}/features.json as a JSON array of objects with fields: id, name, description, test_command (shell command to verify), passes (boolean, set to true for existing passing behavior)
+3. Create a git checkpoint: cd ${codebase_path} && git stash || true
+
+All features in features.json must have passes: true for the gate to pass."
                 ;;
             migrate)
-                echo -e "  ${DIM}Executing migration transforms (${parallel} parallel agents)...${NC}"
-                echo -e "  ${DIM}Applying incremental changes...${NC}"
+                echo -e "  ${DIM}Executing migration transforms...${NC}"
+                phase_prompt="You are performing the MIGRATE phase of a codebase migration.
+Target: ${target}
+Codebase: ${codebase_path}
+Migration dir: ${migration_dir}
+
+Read ${migration_dir}/docs/analysis.md, ${migration_dir}/seams.json, and ${migration_dir}/features.json for context.
+
+Tasks:
+1. Create a migration plan and write it to ${migration_dir}/migration-plan.json with fields: target, source_path, steps (array of objects with: id, name, description, status set to 'completed' after you do the step)
+2. Execute the actual code migration transforms in ${codebase_path} -- convert code from the current framework/language to ${target}
+3. Update each step status to 'completed' as you finish it
+4. Work incrementally seam by seam from ${migration_dir}/seams.json
+
+All steps must have status: completed for the gate to pass."
                 ;;
             verify)
                 echo -e "  ${DIM}Running verification suite...${NC}"
-                echo -e "  ${DIM}Checking regression tests...${NC}"
-                echo -e "  ${DIM}Validating build output...${NC}"
+                phase_prompt="You are performing the VERIFY phase of a codebase migration.
+Target: ${target}
+Codebase: ${codebase_path}
+Migration dir: ${migration_dir}
+
+Tasks:
+1. Run syntax validation on all migrated files
+2. Run any test commands from ${migration_dir}/features.json to verify behavior is preserved
+3. Check for common migration issues (missing imports, broken references, etc.)
+4. Write a verification report to ${migration_dir}/docs/verification-report.md
+5. Summarize what was migrated, what works, and any remaining issues"
                 ;;
         esac
 
+        # Invoke Claude to execute the phase
+        local phase_exit=0
+        if [ -n "$phase_prompt" ]; then
+            local provider_name="${LOKI_PROVIDER:-claude}"
+            case "$provider_name" in
+                claude)
+                    (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1) | \
+                        while IFS= read -r line; do
+                            # Extract text from stream-json
+                            if echo "$line" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    if d.get('type') == 'assistant':
+        for item in d.get('message', {}).get('content', []):
+            if item.get('type') == 'text':
+                print(item.get('text', ''), end='')
+except Exception: pass
+" 2>/dev/null; then
+                                true
+                            fi
+                        done
+                    phase_exit=${PIPESTATUS[0]}
+                    ;;
+                codex)
+                    (cd "$codebase_path" && codex exec --full-auto "$phase_prompt" 2>&1) || phase_exit=$?
+                    ;;
+                gemini)
+                    (cd "$codebase_path" && gemini --approval-mode=yolo "$phase_prompt" 2>&1) || phase_exit=$?
+                    ;;
+            esac
+        fi
+
+        # Verify phase gate artifacts exist before advancing
+        local gate_ok=true
+        case "$p" in
+            understand)
+                if [ ! -f "${migration_dir}/docs/analysis.md" ] || [ ! -f "${migration_dir}/seams.json" ]; then
+                    echo -e "${RED}Error: Phase 'understand' did not produce required artifacts${NC}"
+                    echo -e "${DIM}  Expected: docs/analysis.md, seams.json${NC}"
+                    gate_ok=false
+                fi
+                ;;
+            guardrail)
+                if [ ! -f "${migration_dir}/features.json" ]; then
+                    echo -e "${RED}Error: Phase 'guardrail' did not produce required artifacts${NC}"
+                    echo -e "${DIM}  Expected: features.json${NC}"
+                    gate_ok=false
+                fi
+                ;;
+            migrate)
+                if [ ! -f "${migration_dir}/migration-plan.json" ]; then
+                    echo -e "${RED}Error: Phase 'migrate' did not produce required artifacts${NC}"
+                    echo -e "${DIM}  Expected: migration-plan.json${NC}"
+                    gate_ok=false
+                fi
+                ;;
+        esac
+
+        if [ "$gate_ok" != "true" ]; then
+            echo -e "${YELLOW}Phase '$p' artifacts missing. Migration halted.${NC}"
+            echo -e "${DIM}Re-run with: loki migrate <path> --target ${target} --phase ${p} --resume${NC}"
+            return 1
+        fi
+
         # Complete phase via engine
-        python3 -c "
+        PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
 import sys
 sys.path.insert(0, '.')
 from dashboard.migration_engine import MigrationPipeline
