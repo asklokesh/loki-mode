@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.58.1] - 2026-02-24
+
+### Fixed
+- XSS: escape HTML in dashboard event log, memory browser, task board, and session control
+- Signal handler: timestamp-based detection to distinguish Ctrl+C from dashboard crash
+- Budget limit: perpetual mode PAUSE auto-clear now respects BUDGET_EXCEEDED signals
+- Completion council: severity threshold off-by-one and threshold_reached persistence fix
+- Council check interval: guard against zero/negative values (division by zero)
+- Memory retrieval: copy dicts before adding _score/_source to prevent state mutation
+- Memory schemas: centralized UTC datetime helpers to prevent double-suffix timestamps
+- Memory consolidation: deduplicate episodes per error type, fix variable shadowing
+- Memory engine: proper ErrorFix deserialization from dict
+- Memory namespace: file locking for concurrent registry access
+- Memory vector_index: lazy numpy import to avoid hard crash when unavailable
+- Memory storage: corrected return type annotations (dict, not object)
+- MCP server: thread-safe tool call timing, monotonic task IDs, safe_path_join
+- MCP server: fix in-progress vs in_progress status string mismatch
+- Dashboard migration engine: JSON decode error handling, safe dict in gate validation
+- Dashboard control: atomic write for session status, bounded log line count
+- Loki CLI: array-based uvicorn args (fixes TLS cert path quoting)
+- Loki CLI: improved path traversal check, find -exec replacing xargs
+- Loki CLI: unknown provider fallthrough with error message
+- Gemini provider: separate stderr capture to avoid polluting stdout
+- App runner: handle IP-bound port formats in Docker Compose detection
+- PRD checklist: adjusted failing count to exclude waived items
+- WebSocket reconnect: exponential backoff with max 20 attempts
+- Event bus (TypeScript): file-based locking for concurrent writes
+- CLAUDE.md: updated line numbers, SKILL.md count, KG path
+
 ## [5.58.0] - 2026-02-25
 
 ### Added

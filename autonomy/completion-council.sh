@@ -41,6 +41,10 @@ COUNCIL_ENABLED=${LOKI_COUNCIL_ENABLED:-true}
 COUNCIL_SIZE=${LOKI_COUNCIL_SIZE:-3}
 COUNCIL_THRESHOLD=${LOKI_COUNCIL_THRESHOLD:-2}
 COUNCIL_CHECK_INTERVAL=${LOKI_COUNCIL_CHECK_INTERVAL:-5}
+# Guard against zero/negative interval (division by zero in modulo)
+if [ "$COUNCIL_CHECK_INTERVAL" -le 0 ] 2>/dev/null; then
+    COUNCIL_CHECK_INTERVAL=5
+fi
 COUNCIL_MIN_ITERATIONS=${LOKI_COUNCIL_MIN_ITERATIONS:-3}
 COUNCIL_CONVERGENCE_WINDOW=${LOKI_COUNCIL_CONVERGENCE_WINDOW:-3}
 COUNCIL_STAGNATION_LIMIT=${LOKI_COUNCIL_STAGNATION_LIMIT:-5}
@@ -271,14 +275,16 @@ council_vote() {
             while IFS= read -r issue_line; do
                 local issue_severity
                 issue_severity=$(echo "$issue_line" | grep -oE "(CRITICAL|HIGH|MEDIUM|LOW)" | head -1 | tr '[:upper:]' '[:lower:]')
+                # Reset per issue line so previous iterations don't poison the check
+                threshold_reached=false
                 # Check if this severity meets or exceeds the threshold
                 for sev in $severity_order; do
-                    if [ "$sev" = "$COUNCIL_SEVERITY_THRESHOLD" ]; then
-                        threshold_reached=true
-                    fi
                     if [ "$sev" = "$issue_severity" ] && [ "$threshold_reached" = "false" ]; then
                         has_blocking_issue=true
                         break
+                    fi
+                    if [ "$sev" = "$COUNCIL_SEVERITY_THRESHOLD" ]; then
+                        threshold_reached=true
                     fi
                 done
             done <<< "$member_issues"

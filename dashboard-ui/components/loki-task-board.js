@@ -470,7 +470,7 @@ export class LokiTaskBoard extends LokiElement {
     if (this._loading) {
       content = '<div class="loading">Loading tasks...</div>';
     } else if (this._error && this._tasks.length === 0) {
-      content = `<div class="error">Error: ${this._error}</div>`;
+      content = `<div class="error">Error: ${this._escapeHtml(this._error)}</div>`;
     } else {
       const readonly = this.hasAttribute('readonly');
 

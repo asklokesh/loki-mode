@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from .schemas import (
     ActionEntry,
     ErrorEntry,
+    ErrorFix,
     EpisodeTrace,
     Link,
     ProceduralSkill,
@@ -939,13 +940,18 @@ class MemoryEngine:
 
     def _dict_to_skill(self, data: Dict[str, Any]) -> ProceduralSkill:
         """Convert dictionary to ProceduralSkill."""
+        raw_errors = data.get("common_errors", [])
+        common_errors = [
+            ErrorFix.from_dict(e) if isinstance(e, dict) else e
+            for e in raw_errors
+        ]
         return ProceduralSkill(
             id=data.get("id", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
             prerequisites=data.get("prerequisites", []),
             steps=data.get("steps", []),
-            common_errors=data.get("common_errors", []),
+            common_errors=common_errors,
             exit_criteria=data.get("exit_criteria", []),
         )
 

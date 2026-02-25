@@ -540,11 +540,14 @@ class ConsolidationPipeline:
         if not failed_episodes:
             return []
 
-        # Group failures by error type
+        # Group failures by error type (use set to avoid duplicate episodes)
         error_groups: Dict[str, List[EpisodeTrace]] = defaultdict(list)
+        seen_episodes: Dict[str, set] = defaultdict(set)
         for episode in failed_episodes:
-            for error in episode.errors_encountered:
-                error_groups[error.error_type].append(episode)
+            for err_entry in episode.errors_encountered:
+                if episode.id not in seen_episodes[err_entry.error_type]:
+                    error_groups[err_entry.error_type].append(episode)
+                    seen_episodes[err_entry.error_type].add(episode.id)
 
         anti_patterns = []
 
@@ -564,9 +567,9 @@ class ConsolidationPipeline:
                     )
 
                 # Collect resolutions
-                for error in episode.errors_encountered:
-                    if error.error_type == error_type and error.resolution:
-                        resolutions.append(error.resolution)
+                for err_entry in episode.errors_encountered:
+                    if err_entry.error_type == error_type and err_entry.resolution:
+                        resolutions.append(err_entry.resolution)
 
             # Create anti-pattern
             incorrect_approach = self._summarize_actions(pre_error_actions)

@@ -17,6 +17,35 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 
+def _to_utc_isoformat(dt: datetime) -> str:
+    """Convert datetime to UTC ISO 8601 string with Z suffix.
+
+    Handles both timezone-aware and timezone-naive datetimes,
+    and avoids double-suffixing if already has timezone info.
+    """
+    iso = dt.isoformat()
+    # If already has timezone offset like +00:00, replace with Z
+    if iso.endswith("+00:00"):
+        return iso[:-6] + "Z"
+    # If no timezone info, append Z (assumed UTC)
+    if not iso.endswith("Z") and "+" not in iso and iso.count("-") <= 2:
+        return iso + "Z"
+    return iso
+
+
+def _parse_utc_datetime(s: str) -> datetime:
+    """Parse an ISO 8601 string into a timezone-aware UTC datetime.
+
+    Handles trailing 'Z', '+00:00', and naive strings (assumed UTC).
+    """
+    if s.endswith("Z"):
+        s = s[:-1]
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # -----------------------------------------------------------------------------
 # Supporting Types
 # -----------------------------------------------------------------------------
@@ -311,7 +340,7 @@ class EpisodeTrace:
         result = {
             "id": self.id,
             "task_id": self.task_id,
-            "timestamp": self.timestamp.isoformat() + "Z",
+            "timestamp": _to_utc_isoformat(self.timestamp),
             "duration_seconds": self.duration_seconds,
             "agent": self.agent,
             "context": {
@@ -331,7 +360,7 @@ class EpisodeTrace:
             "access_count": self.access_count,
         }
         if self.last_accessed:
-            result["last_accessed"] = self.last_accessed.isoformat() + "Z"
+            result["last_accessed"] = _to_utc_isoformat(self.last_accessed)
         return result
 
     @classmethod
@@ -339,24 +368,25 @@ class EpisodeTrace:
         """Create from dictionary."""
         context = data.get("context", {})
         timestamp_str = data.get("timestamp", "")
-        if isinstance(timestamp_str, str):
-            # Handle ISO format with Z suffix
-            if timestamp_str.endswith("Z"):
-                timestamp_str = timestamp_str[:-1]
-            timestamp = datetime.fromisoformat(timestamp_str)
-        else:
+        if isinstance(timestamp_str, str) and timestamp_str:
+            timestamp = _parse_utc_datetime(timestamp_str)
+        elif isinstance(timestamp_str, datetime):
             timestamp = timestamp_str
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = datetime.now(timezone.utc)
 
         # Parse last_accessed datetime
         last_accessed = None
         last_accessed_str = data.get("last_accessed")
         if last_accessed_str:
             if isinstance(last_accessed_str, str):
-                if last_accessed_str.endswith("Z"):
-                    last_accessed_str = last_accessed_str[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_str)
+                last_accessed = _parse_utc_datetime(last_accessed_str)
             else:
                 last_accessed = last_accessed_str
+                if hasattr(last_accessed, 'tzinfo') and last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
 
         return cls(
             id=data.get("id", ""),
@@ -506,9 +536,9 @@ class SemanticPattern:
             "access_count": self.access_count,
         }
         if self.last_used:
-            result["last_used"] = self.last_used.isoformat() + "Z"
+            result["last_used"] = _to_utc_isoformat(self.last_used)
         if self.last_accessed:
-            result["last_accessed"] = self.last_accessed.isoformat() + "Z"
+            result["last_accessed"] = _to_utc_isoformat(self.last_accessed)
         return result
 
     @classmethod
@@ -518,17 +548,21 @@ class SemanticPattern:
         if data.get("last_used"):
             last_used_str = data["last_used"]
             if isinstance(last_used_str, str):
-                if last_used_str.endswith("Z"):
-                    last_used_str = last_used_str[:-1]
-                last_used = datetime.fromisoformat(last_used_str)
+                last_used = _parse_utc_datetime(last_used_str)
+            elif isinstance(last_used_str, datetime):
+                last_used = last_used_str
+                if last_used.tzinfo is None:
+                    last_used = last_used.replace(tzinfo=timezone.utc)
 
         last_accessed = None
         if data.get("last_accessed"):
             last_accessed_str = data["last_accessed"]
             if isinstance(last_accessed_str, str):
-                if last_accessed_str.endswith("Z"):
-                    last_accessed_str = last_accessed_str[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_str)
+                last_accessed = _parse_utc_datetime(last_accessed_str)
+            elif isinstance(last_accessed_str, datetime):
+                last_accessed = last_accessed_str
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
 
         return cls(
             id=data.get("id", ""),
@@ -661,7 +695,7 @@ class ProceduralSkill:
         if self.example_usage:
             result["example_usage"] = self.example_usage
         if self.last_accessed:
-            result["last_accessed"] = self.last_accessed.isoformat() + "Z"
+            result["last_accessed"] = _to_utc_isoformat(self.last_accessed)
         return result
 
     @classmethod
@@ -671,9 +705,11 @@ class ProceduralSkill:
         if data.get("last_accessed"):
             last_accessed_str = data["last_accessed"]
             if isinstance(last_accessed_str, str):
-                if last_accessed_str.endswith("Z"):
-                    last_accessed_str = last_accessed_str[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_str)
+                last_accessed = _parse_utc_datetime(last_accessed_str)
+            elif isinstance(last_accessed_str, datetime):
+                last_accessed = last_accessed_str
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
 
         return cls(
             id=data.get("id", ""),

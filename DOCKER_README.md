@@ -35,7 +35,7 @@ docker run -it \
 | Base | Ubuntu 24.04 |
 | User | `loki` (UID 1000, non-root) |
 | Workdir | `/workspace` |
-| Entrypoint | `loki` |
+| CMD | `loki help` |
 | Exposed Port | `57374` (Dashboard/API) |
 | Node.js | 20 LTS |
 | Python | 3.x (for dashboard server) |

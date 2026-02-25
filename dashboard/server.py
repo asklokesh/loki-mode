@@ -55,7 +55,7 @@ from .activity_logger import get_activity_logger
 try:
     from . import __version__ as _version
 except ImportError:
-    _version = "5.39.0"
+    _version = "5.58.1"
 
 # ---------------------------------------------------------------------------
 # TLS Configuration (optional - disabled by default)

@@ -202,7 +202,8 @@ try:
         if failing_items:
             detail = ' FAILING: ' + ', '.join(failing_items[:5])
         waived_str = f', {waived_count} waived' if waived_count > 0 else ''
-        print(f'{verified}/{total} verified, {failing} failing{waived_str}, {pending} pending.{detail}')
+        adjusted_failing = max(0, failing - waived_count)
+        print(f'{verified}/{total} verified, {adjusted_failing} failing{waived_str}, {pending} pending.{detail}')
 except Exception:
     print('', file=sys.stderr)
 " 2>/dev/null || echo ""

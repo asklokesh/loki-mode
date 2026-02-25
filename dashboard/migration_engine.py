@@ -356,6 +356,8 @@ class MigrationPipeline:
                 features = [Feature(**f) for f in data]
             except FileNotFoundError:
                 return False, "Phase gate failed: features.json not found"
+            except (json.JSONDecodeError, TypeError) as exc:
+                return False, f"Phase gate failed: features.json is invalid: {exc}"
             if not features:
                 return False, "No features defined"
             failing = [f for f in features if not f.passes]
@@ -369,11 +371,14 @@ class MigrationPipeline:
             plan_path = self.migration_dir / "migration-plan.json"
             try:
                 data = json.loads(plan_path.read_text(encoding="utf-8"))
-                steps_data = data.pop("steps", [])
-                plan = MigrationPlan(**data)
+                steps_data = data.get("steps", [])
+                plan_data = {k: v for k, v in data.items() if k != "steps"}
+                plan = MigrationPlan(**plan_data)
                 plan.steps = [MigrationStep(**s) for s in steps_data]
             except FileNotFoundError:
                 return False, "Phase gate failed: migration-plan.json not found"
+            except (json.JSONDecodeError, TypeError) as exc:
+                return False, f"Phase gate failed: migration-plan.json is invalid: {exc}"
             incomplete = [s for s in plan.steps if s.status != "completed"]
             if incomplete:
                 ids = ", ".join(s.id for s in incomplete[:5])

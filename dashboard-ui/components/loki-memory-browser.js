@@ -924,7 +924,7 @@ export class LokiMemoryBrowser extends LokiElement {
     if (this._loading) {
       content = '<div class="loading">Loading memory data...</div>';
     } else if (this._error) {
-      content = `<div class="error-state">Error: ${this._error}</div>`;
+      content = `<div class="error-state">Error: ${this._escapeHtml(this._error)}</div>`;
     } else {
       let tabContent;
       switch (this._activeTab) {

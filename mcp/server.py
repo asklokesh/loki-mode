@@ -248,6 +248,7 @@ logger = logging.getLogger('loki-mcp')
 
 # Track tool call start times for duration calculation (per-tool stack)
 _tool_call_start_times: Dict[str, List[float]] = {}
+_tool_call_times_lock = threading.Lock()
 
 
 def _emit_tool_event_async(tool_name: str, action: str, **kwargs) -> None:
@@ -261,15 +262,17 @@ def _emit_tool_event_async(tool_name: str, action: str, **kwargs) -> None:
     """
     import time
 
-    # Track timing for learning signals using a per-tool-name stack
+    # Track timing for learning signals using a per-tool-name stack (thread-safe)
     if action == 'start':
-        _tool_call_start_times.setdefault(tool_name, []).append(time.time())
+        with _tool_call_times_lock:
+            _tool_call_start_times.setdefault(tool_name, []).append(time.time())
     elif action == 'complete':
         # Pop the most recent start time for this tool
         start_time = None
-        times = _tool_call_start_times.get(tool_name)
-        if times:
-            start_time = times.pop()
+        with _tool_call_times_lock:
+            times = _tool_call_start_times.get(tool_name)
+            if times:
+                start_time = times.pop()
         if start_time:
             execution_time_ms = int((time.time() - start_time) * 1000)
             _emit_learning_signal_async(
@@ -674,8 +677,10 @@ async def loki_task_queue_add(
             else:
                 queue = {"tasks": [], "version": "1.0"}
 
-        # Create new task
-        task_id = f"task-{len(queue['tasks']) + 1:04d}"
+        # Create new task with monotonic counter to avoid ID collisions after deletions
+        next_id = queue.get("_next_id", len(queue['tasks']) + 1)
+        task_id = f"task-{next_id:04d}"
+        queue["_next_id"] = next_id + 1
         task = {
             "id": task_id,
             "title": title,
@@ -1064,7 +1069,7 @@ async def loki_project_status() -> str:
                 status["tasks"] = {
                     "total": len(tasks),
                     "pending": sum(1 for t in tasks if t.get("status") == "pending"),
-                    "in_progress": sum(1 for t in tasks if t.get("status") == "in-progress"),
+                    "in_progress": sum(1 for t in tasks if t.get("status") == "in_progress"),
                     "completed": sum(1 for t in tasks if t.get("status") == "completed"),
                 }
 
@@ -1098,8 +1103,8 @@ async def loki_agent_metrics() -> str:
         if os.path.isdir(metrics_dir):
             for fname in os.listdir(metrics_dir):
                 if fname.endswith('.json'):
-                    fpath = os.path.join(metrics_dir, fname)
-                    with open(fpath, 'r') as f:
+                    fpath = safe_path_join('.loki', 'metrics', 'efficiency', fname)
+                    with safe_open(fpath, 'r') as f:
                         metrics["agents"].append(json.load(f))
 
         # Read token economics
@@ -1139,8 +1144,8 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
         checkpoints = []
         for fname in sorted(os.listdir(cp_dir)):
             if fname.endswith('.json'):
-                fpath = os.path.join(cp_dir, fname)
-                with open(fpath, 'r') as f:
+                fpath = safe_path_join('.loki', 'state', 'checkpoints', fname)
+                with safe_open(fpath, 'r') as f:
                     cp = json.load(f)
                     cp["id"] = fname.replace('.json', '')
                     checkpoints.append(cp)

@@ -110,16 +110,20 @@ provider_invoke() {
     local output
     local exit_code
 
-    # Try primary model first
-    output=$(gemini --approval-mode=yolo --model "$PROVIDER_MODEL" "$prompt" "$@" < /dev/null 2>&1)
+    # Try primary model first - capture stderr separately to avoid polluting output
+    local stderr_file
+    stderr_file=$(mktemp)
+    output=$(gemini --approval-mode=yolo --model "$PROVIDER_MODEL" "$prompt" "$@" < /dev/null 2>"$stderr_file")
     exit_code=$?
 
-    # Check for rate limit (429) or quota exceeded
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
+    # Check for rate limit (429) or quota exceeded (check stderr for error indicators)
+    if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$stderr_file" 2>/dev/null; then
+        rm -f "$stderr_file"
         echo "[loki] Rate limit hit on $PROVIDER_MODEL, falling back to $PROVIDER_MODEL_FALLBACK" >&2
         gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
         echo "$output"
+        rm -f "$stderr_file"
         return $exit_code
     fi
 }
@@ -153,16 +157,20 @@ provider_invoke_with_tier() {
     local output
     local exit_code
 
-    # Try selected model first
-    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
+    # Try selected model first - capture stderr separately to avoid polluting output
+    local stderr_file
+    stderr_file=$(mktemp)
+    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>"$stderr_file")
     exit_code=$?
 
     # Check for rate limit (429) or quota exceeded - fallback to flash
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
+    if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$stderr_file" 2>/dev/null; then
+        rm -f "$stderr_file"
         echo "[loki] Rate limit hit on $model, falling back to $PROVIDER_MODEL_FALLBACK" >&2
         gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
         echo "$output"
+        rm -f "$stderr_file"
         return $exit_code
     fi
 }

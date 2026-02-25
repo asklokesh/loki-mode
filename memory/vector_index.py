@@ -7,12 +7,18 @@ No FAISS dependency required - uses pure numpy for cosine similarity.
 This module provides efficient vector storage and retrieval for the
 memory system's embedding-based search capabilities.
 """
+from __future__ import annotations
 
 import json
 import os
 from typing import Callable, Dict, List, Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None  # type: ignore
+    NUMPY_AVAILABLE = False
 
 
 class VectorIndex:

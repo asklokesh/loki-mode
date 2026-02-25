@@ -1379,9 +1379,10 @@ class MemoryRetrieval:
                 score += sum(0.5 for kw in keywords if kw in phase)
 
                 if score > 0:
-                    data["_score"] = score
-                    data["_source"] = "episodic"
-                    results.append(data)
+                    data_copy = dict(data)
+                    data_copy["_score"] = score
+                    data_copy["_source"] = "episodic"
+                    results.append(data_copy)
 
         return results
 
@@ -1407,9 +1408,10 @@ class MemoryRetrieval:
             score *= confidence
 
             if score > 0:
-                pattern["_score"] = score
-                pattern["_source"] = "semantic"
-                results.append(pattern)
+                pattern_copy = dict(pattern)
+                pattern_copy["_score"] = score
+                pattern_copy["_source"] = "semantic"
+                results.append(pattern_copy)
 
         return results
 
@@ -1435,9 +1437,10 @@ class MemoryRetrieval:
             score += sum(0.5 for kw in keywords if kw in steps_text)
 
             if score > 0:
-                data["_score"] = score
-                data["_source"] = "skills"
-                results.append(data)
+                data_copy = dict(data)
+                data_copy["_score"] = score
+                data_copy["_source"] = "skills"
+                results.append(data_copy)
 
         return results
 
@@ -1459,9 +1462,10 @@ class MemoryRetrieval:
             score += sum(1 for kw in keywords if kw in prevention)
 
             if score > 0:
-                anti["_score"] = score
-                anti["_source"] = "anti_patterns"
-                results.append(anti)
+                anti_copy = dict(anti)
+                anti_copy["_score"] = score
+                anti_copy["_source"] = "anti_patterns"
+                results.append(anti_copy)
 
         return results
 

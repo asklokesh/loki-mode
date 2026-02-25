@@ -100,9 +100,11 @@ def create_task(
 ) -> Dict[str, Any]:
     """Create a new task dictionary."""
     queue = load_task_queue()
-    task_id = f"task-{len(queue['tasks']) + 1:04d}"
+    next_id = queue.get("_next_id", len(queue['tasks']) + 1)
+    task_id = f"task-{next_id:04d}"
+    queue["_next_id"] = next_id + 1
 
-    return {
+    task = {
         "id": task_id,
         "title": title,
         "description": description,
@@ -111,6 +113,11 @@ def create_task(
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat()
     }
+
+    # Persist _next_id so it survives across calls
+    save_task_queue(queue)
+
+    return task
 
 
 def filter_tasks_by_status(tasks: List[Dict], status: str) -> List[Dict]:

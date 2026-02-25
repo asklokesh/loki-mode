@@ -220,7 +220,7 @@ jobs:
                       'type': 'section',
                       'text': {
                           'type': 'mrkdwn',
-                          'text': f':robot_face: *Ready for website update.* Reply in this thread:\\n>\`@Claude update the autonomi.dev blog for Loki Mode {version}. Read the changelog from https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md for {version}, then update src/data/blog-posts.ts in https://github.com/asklokesh/autonomi-website with a new blog post entry. Also update the FALLBACK version in src/hooks/useLatestVersion.ts. No emojis. Commit and push.\`'
+                          'text': f'*Ready for website update.* Reply in this thread:\\n>\`@Claude update the autonomi.dev blog for Loki Mode {version}. Read the changelog from https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md for {version}, then update src/data/blog-posts.ts in https://github.com/asklokesh/autonomi-website with a new blog post entry. Also update the FALLBACK version in src/hooks/useLatestVersion.ts. No emojis. Commit and push.\`'
                       }
                   }
               ]

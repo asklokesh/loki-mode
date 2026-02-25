@@ -503,6 +503,8 @@ LAST_WATCHDOG_CHECK=0
 
 STATUS_MONITOR_PID=""
 DASHBOARD_PID=""
+DASHBOARD_LAST_ALIVE=0
+_DASHBOARD_RESTARTING=false
 RESOURCE_MONITOR_PID=""
 
 # SDLC Phase Controls (all enabled by default)
@@ -5521,6 +5523,7 @@ start_dashboard() {
     sleep 2
 
     if kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        DASHBOARD_LAST_ALIVE=$(date +%s)
         log_info "Dashboard started (PID: $DASHBOARD_PID)"
         log_info "Dashboard: ${CYAN}${url_scheme}://127.0.0.1:$DASHBOARD_PORT/${NC}"
 
@@ -5559,11 +5562,16 @@ stop_dashboard() {
 # Handle dashboard crash: restart silently without triggering pause handler
 # This prevents a killed dashboard from being misinterpreted as a user interrupt
 handle_dashboard_crash() {
+    # Reentrancy guard: prevent recursive restarts from signal handlers
+    if [[ "$_DASHBOARD_RESTARTING" == "true" ]]; then
+        return 0
+    fi
+
     if [[ "${ENABLE_DASHBOARD:-true}" != "true" ]]; then
         return 0
     fi
 
-    local dashboard_pid_file=".loki/dashboard/dashboard.pid"
+    local dashboard_pid_file="${TARGET_DIR:-.}/.loki/dashboard/dashboard.pid"
     if [[ ! -f "$dashboard_pid_file" ]]; then
         return 0
     fi
@@ -5598,7 +5606,9 @@ handle_dashboard_crash() {
         "autonomy_mode=$AUTONOMY_MODE"
     DASHBOARD_PID=""
     rm -f "$dashboard_pid_file"
+    _DASHBOARD_RESTARTING=true
     start_dashboard
+    _DASHBOARD_RESTARTING=false
     return 0
 }
 
@@ -5606,17 +5616,31 @@ handle_dashboard_crash() {
 # rather than an actual user interrupt. Returns 0 if it was a child crash
 # (handled silently), 1 if it was a real interrupt.
 is_child_process_signal() {
-    # If dashboard PID is set and dashboard is now dead, this signal
-    # was likely caused by the dashboard process exiting
+    local dashboard_pid_file="${TARGET_DIR:-.}/.loki/dashboard/dashboard.pid"
+    local now
+    now=$(date +%s)
+
+    # If dashboard PID is set and dashboard is now dead, check timing to
+    # distinguish a real Ctrl+C (which kills both parent and child in the
+    # same process group) from an independent child crash.
     if [ -n "$DASHBOARD_PID" ] && ! kill -0 "$DASHBOARD_PID" 2>/dev/null; then
+        local time_since_alive=$((now - DASHBOARD_LAST_ALIVE))
+        if [ "$DASHBOARD_LAST_ALIVE" -gt 0 ] && [ "$time_since_alive" -lt 2 ]; then
+            # Dashboard was alive very recently -- it likely died from the same
+            # SIGINT that we just received (process group signal). Treat as real
+            # user interrupt, but still restart the dashboard in the background.
+            handle_dashboard_crash
+            return 1
+        fi
+        # Dashboard has been dead for a while -- this is an independent crash
         handle_dashboard_crash
         return 0
     fi
 
     # Check PID file as fallback
-    if [ -f ".loki/dashboard/dashboard.pid" ]; then
+    if [ -f "$dashboard_pid_file" ]; then
         local dpid
-        dpid=$(cat ".loki/dashboard/dashboard.pid" 2>/dev/null)
+        dpid=$(cat "$dashboard_pid_file" 2>/dev/null)
         if [ -n "$dpid" ] && ! kill -0 "$dpid" 2>/dev/null; then
             handle_dashboard_crash
             return 0
@@ -5937,7 +5961,7 @@ watchdog_check() {
     [[ "$WATCHDOG_ENABLED" != "true" ]] && return 0
 
     # Check dashboard health
-    local dashboard_pid_file=".loki/dashboard/dashboard.pid"
+    local dashboard_pid_file="${TARGET_DIR:-.}/.loki/dashboard/dashboard.pid"
     if [[ -f "$dashboard_pid_file" ]]; then
         local dpid
         dpid=$(cat "$dashboard_pid_file" 2>/dev/null)
@@ -5951,8 +5975,13 @@ watchdog_check() {
             # Auto-restart dashboard if it was previously running
             if [[ "${ENABLE_DASHBOARD:-true}" == "true" ]]; then
                 log_info "WATCHDOG: Restarting dashboard..."
+                DASHBOARD_PID=""
+                rm -f "$dashboard_pid_file"
                 start_dashboard
             fi
+        else
+            # Dashboard is alive -- update last-alive timestamp
+            DASHBOARD_LAST_ALIVE=$(date +%s)
         fi
     fi
 
@@ -7376,7 +7405,20 @@ check_human_intervention() {
     # propagate that as return 2 (stop) instead of always returning 1 (continue).
     if [ -f "$loki_dir/PAUSE" ]; then
         # In perpetual mode: auto-clear PAUSE files and continue without waiting
+        # EXCEPT when PAUSE was created by budget limit enforcement
         if [ "$AUTONOMY_MODE" = "perpetual" ] || [ "$PERPETUAL_MODE" = "true" ]; then
+            if [ -f "$loki_dir/signals/BUDGET_EXCEEDED" ]; then
+                log_warn "PAUSE file created by budget limit - NOT auto-clearing in perpetual mode"
+                log_warn "Budget limit reached. Remove .loki/signals/BUDGET_EXCEEDED and .loki/PAUSE to continue."
+                notify_intervention_needed "Budget limit reached - execution paused" 2>/dev/null || true
+                handle_pause
+                local pause_result=$?
+                rm -f "$loki_dir/PAUSE"
+                if [ "$pause_result" -eq 1 ]; then
+                    return 2
+                fi
+                return 1
+            fi
             log_warn "PAUSE file detected but autonomy mode is perpetual - auto-clearing"
             notify_intervention_needed "PAUSE file auto-cleared in perpetual mode" 2>/dev/null || true
             rm -f "$loki_dir/PAUSE" "$loki_dir/PAUSED.md"
@@ -7625,7 +7667,7 @@ except (json.JSONDecodeError, OSError): pass
     # rather than an actual user interrupt. In that case, handle silently.
     if is_child_process_signal; then
         log_info "Child process exit detected, handled silently"
-        INTERRUPT_COUNT=0
+        # Do NOT reset INTERRUPT_COUNT -- preserves double-Ctrl+C escape capability
         return
     fi
 

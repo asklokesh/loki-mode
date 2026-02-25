@@ -15,14 +15,16 @@ Based on competitor analysis (claude-mem project isolation patterns).
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import subprocess
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Generator, List, Optional, Set
 
 
 # Default namespace when none can be detected
@@ -65,7 +67,12 @@ class NamespaceInfo:
             "metadata": self.metadata,
         }
         if self.created_at:
-            result["created_at"] = self.created_at.isoformat() + "Z"
+            iso = self.created_at.isoformat()
+            if iso.endswith("+00:00"):
+                iso = iso[:-6] + "Z"
+            elif not iso.endswith("Z"):
+                iso = iso + "Z"
+            result["created_at"] = iso
         return result
 
     @classmethod
@@ -127,21 +134,44 @@ class NamespaceManager:
             with open(registry_path, "w") as f:
                 json.dump(initial_registry, f, indent=2)
 
+    @contextmanager
+    def _file_lock(self, path: Path, exclusive: bool = True) -> Generator[None, None, None]:
+        """Acquire a file lock for safe concurrent access."""
+        lock_path = Path(str(path) + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        lock_file = None
+        try:
+            lock_file = open(lock_path, "w")
+            lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            fcntl.flock(lock_file.fileno(), lock_type)
+            yield
+        finally:
+            if lock_file is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+                try:
+                    os.remove(lock_path)
+                except OSError:
+                    pass
+
     def _load_registry(self) -> Dict[str, Any]:
-        """Load the namespace registry."""
+        """Load the namespace registry with shared file lock."""
         registry_path = self.base_path / self.REGISTRY_FILE
         if not registry_path.exists():
             return {"version": "1.0.0", "namespaces": {}}
 
-        with open(registry_path, "r") as f:
-            return json.load(f)
+        with self._file_lock(registry_path, exclusive=False):
+            with open(registry_path, "r") as f:
+                return json.load(f)
 
     def _save_registry(self, registry: Dict[str, Any]) -> None:
-        """Save the namespace registry."""
+        """Save the namespace registry with exclusive file lock."""
         registry_path = self.base_path / self.REGISTRY_FILE
         self.base_path.mkdir(parents=True, exist_ok=True)
-        with open(registry_path, "w") as f:
-            json.dump(registry, f, indent=2)
+        with self._file_lock(registry_path, exclusive=True):
+            with open(registry_path, "w") as f:
+                json.dump(registry, f, indent=2)
 
     # -------------------------------------------------------------------------
     # Auto-Detection

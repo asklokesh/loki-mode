@@ -1,4 +1,4 @@
-# Loki Mode Docker Compose (v5.52.0)
+# Loki Mode Docker Compose (v5.58.0)
 # Usage: docker-compose run loki start
 # Note: version key removed - deprecated in Docker Compose v2+
 

@@ -303,17 +303,20 @@ class MemoryStorage:
 
         return episode_id
 
-    def load_episode(self, episode_id: str) -> Optional[EpisodeTrace]:
+    def load_episode(self, episode_id: str) -> Optional[dict]:
         """
         Load an episode trace by ID.
 
         Searches across all date directories.
 
+        Note: Returns a raw dict, not an EpisodeTrace object.
+        Callers should convert via EpisodeTrace.from_dict() if needed.
+
         Args:
             episode_id: The episode ID to load
 
         Returns:
-            EpisodeTrace object or None if not found
+            dict or None if not found
         """
         episodic_dir = self.base_path / "episodic"
         if not episodic_dir.exists():
@@ -494,15 +497,18 @@ class MemoryStorage:
 
         return pattern_id
 
-    def load_pattern(self, pattern_id: str) -> Optional[SemanticPattern]:
+    def load_pattern(self, pattern_id: str) -> Optional[dict]:
         """
         Load a semantic pattern by ID.
+
+        Note: Returns a raw dict, not a SemanticPattern object.
+        Callers should convert via SemanticPattern.from_dict() if needed.
 
         Args:
             pattern_id: The pattern ID to load
 
         Returns:
-            SemanticPattern object or None if not found
+            dict or None if not found
         """
         patterns_path = self.base_path / "semantic" / "patterns.json"
         patterns_file = self._load_json(patterns_path)
@@ -646,15 +652,18 @@ class MemoryStorage:
 
         return skill_id
 
-    def load_skill(self, skill_id: str) -> Optional[ProceduralSkill]:
+    def load_skill(self, skill_id: str) -> Optional[dict]:
         """
         Load a procedural skill by ID.
+
+        Note: Returns a raw dict, not a ProceduralSkill object.
+        Callers should convert via ProceduralSkill.from_dict() if needed.
 
         Args:
             skill_id: The skill ID to load
 
         Returns:
-            ProceduralSkill object or None if not found
+            dict or None if not found
         """
         skills_dir = self.base_path / "skills"
         if not skills_dir.exists():

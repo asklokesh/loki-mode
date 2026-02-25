@@ -614,14 +614,20 @@
         const eventLog = document.getElementById('event-log');
         const logStream = document.getElementById('log-stream');
 
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
+        }
+
         function logEvent(type, data) {
             const time = new Date().toLocaleTimeString();
             const entry = document.createElement('div');
             entry.className = 'event-log-entry';
             entry.innerHTML = `
-                <span class="event-log-time">${time}</span>
-                <span class="event-log-type">${type}</span>
-                <span class="event-log-data">${typeof data === 'object' ? JSON.stringify(data) : data}</span>
+                <span class="event-log-time">${escapeHtml(time)}</span>
+                <span class="event-log-type">${escapeHtml(type)}</span>
+                <span class="event-log-data">${escapeHtml(typeof data === 'object' ? JSON.stringify(data) : data)}</span>
             `;
             eventLog.appendChild(entry);
             eventLog.scrollTop = eventLog.scrollHeight;

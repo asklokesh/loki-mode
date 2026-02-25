@@ -70,6 +70,49 @@ function getTimestamp(): string {
 }
 
 /**
+ * Write a file with an exclusive lockfile to prevent concurrent corruption.
+ * Creates a .lock file, writes data, then removes the lock.
+ */
+function writeFileWithLock(filepath: string, data: string): void {
+  const lockfile = filepath + ".lock";
+  let fd: number | null = null;
+  try {
+    // Acquire lock by creating lockfile exclusively (fails if already exists)
+    fd = fs.openSync(lockfile, "wx");
+    fs.closeSync(fd);
+    fd = null;
+    // Write the actual data
+    fs.writeFileSync(filepath, data);
+  } catch (e: unknown) {
+    // If lock acquisition failed (file exists), retry once after brief delay
+    if (e instanceof Error && "code" in e && (e as NodeJS.ErrnoException).code === "EEXIST") {
+      // Another process holds the lock; wait briefly and retry
+      const start = Date.now();
+      while (fs.existsSync(lockfile) && Date.now() - start < 1000) {
+        // Busy-wait up to 1 second
+      }
+      try {
+        fd = fs.openSync(lockfile, "wx");
+        fs.closeSync(fd);
+        fd = null;
+        fs.writeFileSync(filepath, data);
+      } catch {
+        // Fall back to unlocked write
+        fs.writeFileSync(filepath, data);
+      }
+    } else {
+      throw e;
+    }
+  } finally {
+    try {
+      fs.unlinkSync(lockfile);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
  * File-based Event Bus
  */
 export class EventBus {
@@ -132,7 +175,7 @@ export class EventBus {
     }
 
     try {
-      fs.writeFileSync(
+      writeFileWithLock(
         this.processedFile,
         JSON.stringify({ ids: Array.from(this.processedIds) })
       );
@@ -158,7 +201,7 @@ export class EventBus {
     const filepath = path.join(this.pendingDir, filename);
 
     try {
-      fs.writeFileSync(filepath, JSON.stringify(fullEvent, null, 2));
+      writeFileWithLock(filepath, JSON.stringify(fullEvent, null, 2));
     } catch (e) {
       throw new Error(`Failed to emit event: ${e}`);
     }

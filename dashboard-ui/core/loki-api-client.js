@@ -90,6 +90,8 @@ export class LokiApiClient extends EventTarget {
     this._connected = false;
     this._pollInterval = null;
     this._reconnectTimeout = null;
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 20;
     this._cache = new Map();
     this._cacheTimeout = 5000; // 5 seconds cache
     this._vscodeApi = null;
@@ -326,6 +328,7 @@ export class LokiApiClient extends EventTarget {
 
         this._ws.onopen = () => {
           this._connected = true;
+          this._reconnectAttempts = 0;
           this._emit(ApiEvents.CONNECTED);
           resolve();
         };
@@ -401,13 +404,24 @@ export class LokiApiClient extends EventTarget {
    */
   _scheduleReconnect() {
     if (this._reconnectTimeout) return;
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      console.warn('WebSocket max reconnect attempts reached, giving up');
+      this._emit(ApiEvents.ERROR, { error: 'Max reconnect attempts reached' });
+      return;
+    }
+
+    const delay = Math.min(
+      this.config.retryDelay * Math.pow(2, this._reconnectAttempts),
+      30000
+    );
+    this._reconnectAttempts++;
 
     this._reconnectTimeout = setTimeout(() => {
       this._reconnectTimeout = null;
       this.connect().catch(() => {
         // Will retry on next schedule
       });
-    }, this.config.retryDelay);
+    }, delay);
   }
 
   /**

@@ -144,7 +144,8 @@ _detect_port() {
                 compose_file="${TARGET_DIR:-.}/compose.yml"
             fi
             local port
-            port=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+"?' "$compose_file" 2>/dev/null | head -1 | grep -oE '[0-9]+:[0-9]+' | tail -1 | cut -d: -f1)
+            # Handle both simple (HOST:CONTAINER) and IP-bound (IP:HOST:CONTAINER) port formats
+            port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}')
             _APP_RUNNER_PORT="${port:-8080}"
             ;;
         *docker\ build*)

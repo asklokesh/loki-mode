@@ -259,7 +259,7 @@ def get_status() -> StatusResponse:
                         age_hours = (datetime.now(timezone.utc) - start_time_parsed).total_seconds() / 3600
                         if age_hours > 6:
                             session_data["status"] = "stopped"
-                            session_file.write_text(json.dumps(session_data))
+                            atomic_write_json(session_file, session_data, use_lock=True)
                         else:
                             running = True
                     except (ValueError, TypeError):
@@ -589,8 +589,9 @@ async def get_logs(lines: int = 50):
     Get recent log lines from the session log.
 
     Args:
-        lines: Number of lines to return (default 50)
+        lines: Number of lines to return (default 50, max 10000)
     """
+    lines = min(max(lines, 1), 10000)
     log_file = LOG_DIR / "session.log"
 
     if not log_file.exists():

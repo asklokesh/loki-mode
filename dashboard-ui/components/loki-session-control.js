@@ -164,6 +164,12 @@ export class LokiSessionControl extends LokiElement {
     return `${secs}s`;
   }
 
+  _escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = String(str ?? '');
+    return div.innerHTML;
+  }
+
   _getStatusClass() {
     switch (this._status.mode) {
       case 'running':
@@ -467,17 +473,17 @@ export class LokiSessionControl extends LokiElement {
 
         <div class="status-row">
           <span class="status-label">Phase</span>
-          <span class="status-value">${this._status.phase || '--'}</span>
+          <span class="status-value">${this._escapeHtml(this._status.phase || '--')}</span>
         </div>
 
         <div class="status-row">
           <span class="status-label">Complexity</span>
-          <span class="status-value">${String(this._status.complexity || '--').toUpperCase()}</span>
+          <span class="status-value">${this._escapeHtml(String(this._status.complexity || '--').toUpperCase())}</span>
         </div>
 
         <div class="status-row">
           <span class="status-label">Iteration</span>
-          <span class="status-value">${this._status.iteration || '--'}</span>
+          <span class="status-value">${this._escapeHtml(this._status.iteration || '--')}</span>
         </div>
 
         <div class="status-row">

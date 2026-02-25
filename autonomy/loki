@@ -3424,11 +3424,11 @@ cmd_api() {
             # Start server
             mkdir -p "$LOKI_DIR/logs" "$LOKI_DIR/dashboard"
             local host="${LOKI_DASHBOARD_HOST:-127.0.0.1}"
-            local uvicorn_args="--host $host --port $port"
+            local uvicorn_args=("--host" "$host" "--port" "$port")
             if [ -n "${LOKI_TLS_CERT:-}" ] && [ -n "${LOKI_TLS_KEY:-}" ]; then
-                uvicorn_args="$uvicorn_args --ssl-certfile ${LOKI_TLS_CERT} --ssl-keyfile ${LOKI_TLS_KEY}"
+                uvicorn_args+=("--ssl-certfile" "${LOKI_TLS_CERT}" "--ssl-keyfile" "${LOKI_TLS_KEY}")
             fi
-            LOKI_DIR="$LOKI_DIR" PYTHONPATH="$SKILL_DIR" nohup "$api_python" -m uvicorn dashboard.server:app $uvicorn_args > "$LOKI_DIR/logs/api.log" 2>&1 &
+            LOKI_DIR="$LOKI_DIR" PYTHONPATH="$SKILL_DIR" nohup "$api_python" -m uvicorn dashboard.server:app "${uvicorn_args[@]}" > "$LOKI_DIR/logs/api.log" 2>&1 &
             local new_pid=$!
             echo "$new_pid" > "$pid_file"
 
@@ -5006,7 +5006,7 @@ cmd_migrate_start() {
 
     # Check for path traversal BEFORE canonicalization
     case "$codebase_path" in
-        *..*)
+        ../*|*/../*|*/..|--)
             echo -e "${RED}Error: Path traversal not allowed in codebase path${NC}"
             return 1
             ;;
@@ -5062,8 +5062,7 @@ cmd_migrate_start() {
     # Handle resume
     if [ "$resume" = "true" ]; then
         local latest_manifest
-        latest_manifest=$(find "$migrations_dir" -name "manifest.json" -maxdepth 2 2>/dev/null | \
-            xargs python3 -c "
+        latest_manifest=$(find "$migrations_dir" -name "manifest.json" -maxdepth 2 -exec python3 -c "
 import json, sys
 codebase = sys.argv[1]
 manifests = []
@@ -5076,7 +5075,7 @@ for path in sys.argv[2:]:
     except: pass
 if manifests:
     print(manifests[-1])
-" "$codebase_path" 2>/dev/null || echo "")
+" "$codebase_path" {} + 2>/dev/null || echo "")
 
         if [ -z "$latest_manifest" ]; then
             echo -e "${RED}Error: No resumable migration found for ${codebase_path}${NC}"
@@ -5323,7 +5322,17 @@ except Exception: pass
                 gemini)
                     (cd "$codebase_path" && gemini --approval-mode=yolo "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
+                *)
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, gemini${NC}"
+                    phase_exit=1
+                    ;;
             esac
+        fi
+
+        # Check provider exit code before proceeding
+        if [ "$phase_exit" -ne 0 ]; then
+            echo -e "${RED}Error: Provider exited with code $phase_exit during phase $p${NC}"
+            # Don't advance phase -- gate check will catch missing artifacts
         fi
 
         # Verify phase gate artifacts exist before advancing
