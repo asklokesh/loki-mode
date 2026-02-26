@@ -5,6 +5,52 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.0] - 2026-02-26
+
+### Added
+
+#### Track A: Migration Engine V2 Hardening
+- **Deterministic migration hooks engine** (`autonomy/hooks/migration-hooks.sh`)
+  - `hook_post_file_edit`: runs tests after every file change, blocks and rolls back on failure
+  - `hook_post_step`: validates step completion claims mechanically
+  - `hook_pre_phase_gate`: blocks phase transitions if requirements not met
+  - `hook_on_agent_stop`: prevents premature victory if features still failing
+  - Hooks are shell scripts. Agent cannot override them.
+  - YAML config via `.loki/migration-hooks.yaml` (safe read/declare, no eval)
+- **JSON schema validation** for migration artifacts (`schemas/`)
+  - Structural fallback when jsonschema library not installed
+  - Validates features.json, migration-plan.json, seams.json, manifest.json
+  - Catches: missing fields, duplicate IDs, out-of-range values, dangling refs
+- **MIGRATION.md index file** (OpenAI AGENTS.md pattern adapted for migrations)
+- **progress.md context window bridging** (Anthropic long-running agent pattern)
+- **Test fixture**: `tests/fixtures/legacy-checkout-app/`
+  - 4 known edge-case behaviors for characterization testing
+  - Sparse test coverage (realistic legacy codebase scenario)
+- **14 migration engine tests** (`tests/test-migration-v2.sh`)
+
+#### Track B: Platform Infrastructure
+- **Cluster lifecycle hooks** (`ClusterLifecycleHooks` in swarm/patterns.py)
+  - 5 hook points: pre_run, post_validation, on_rejection, on_completion, on_failure
+  - Shell command and Python callable support
+  - Configurable per cluster template via `hooks` key
+  - LOKI_CLUSTER_* env vars passed to shell hooks
+- **Dynamic agent spawning** (`SwarmCoordinator.spawn_agent/despawn_agent`)
+  - Topology validation before spawn
+  - Hard cap enforcement (max_agents, default 20)
+  - Only dynamically spawned agents can be despawned
+- **SQLite queryable state layer** (`state/sqlite_backend.py`)
+  - Secondary mirror of file-based state (file state remains authoritative)
+  - events, messages, checkpoints tables with indexes
+  - Wildcard topic queries (GLOB matching)
+  - File permissions set to 0o600
+- **`loki state` CLI** for debugging and inspection
+  - `loki state db` - print SQLite database path
+  - `loki state query events/messages/checkpoints` with filters
+- **Crash recovery with named cluster IDs**
+  - `loki cluster run <name> --cluster-id <id> --resume`
+  - State checkpointed to SQLite for recovery
+- **14 platform infrastructure tests** (`tests/test-platform-infra.sh`)
+
 ## [6.2.1] - 2026-02-26
 
 ### Fixed

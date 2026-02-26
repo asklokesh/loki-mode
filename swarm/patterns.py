@@ -703,6 +703,71 @@ class EmergencePattern(SwarmPattern):
         )
 
 
+class ClusterLifecycleHooks:
+    """Lifecycle hooks for cluster workflow execution.
+
+    Hooks are shell scripts or Python callables invoked at fixed points:
+    - pre_run: before cluster execution begins
+    - post_validation: after topology validation passes
+    - on_rejection: when a validator rejects agent output
+    - on_completion: when cluster workflow finishes successfully
+    - on_failure: when cluster workflow fails
+    """
+
+    HOOK_POINTS = ["pre_run", "post_validation", "on_rejection", "on_completion", "on_failure"]
+
+    def __init__(self, hooks_config: dict = None):
+        self._hooks: dict[str, list] = {point: [] for point in self.HOOK_POINTS}
+        if hooks_config:
+            self._load_config(hooks_config)
+
+    def _load_config(self, config: dict) -> None:
+        for point in self.HOOK_POINTS:
+            hook_entries = config.get(point, [])
+            if isinstance(hook_entries, str):
+                hook_entries = [hook_entries]
+            for entry in hook_entries:
+                self._hooks[point].append(entry)
+
+    def register(self, point: str, handler) -> None:
+        """Register a hook handler for a lifecycle point."""
+        if point not in self.HOOK_POINTS:
+            raise ValueError(f"Invalid hook point: {point}. Must be one of {self.HOOK_POINTS}")
+        self._hooks[point].append(handler)
+
+    def fire(self, point: str, context: dict = None) -> list[dict]:
+        """Execute all hooks for a lifecycle point.
+
+        Returns list of results: [{"hook": str, "success": bool, "output": str}]
+        """
+        import os
+        import subprocess
+
+        results = []
+        for hook in self._hooks.get(point, []):
+            result = {"hook": str(hook), "success": False, "output": ""}
+            try:
+                if callable(hook):
+                    output = hook(context or {})
+                    result["success"] = True
+                    result["output"] = str(output) if output else ""
+                elif isinstance(hook, str):
+                    env = dict(os.environ)
+                    if context:
+                        for k, v in context.items():
+                            env[f"LOKI_CLUSTER_{k.upper()}"] = str(v)
+                    proc = subprocess.run(
+                        hook, shell=True, capture_output=True, text=True,
+                        timeout=30, env=env
+                    )
+                    result["success"] = proc.returncode == 0
+                    result["output"] = proc.stdout or proc.stderr
+            except Exception as e:
+                result["output"] = str(e)
+            results.append(result)
+        return results
+
+
 class TopologyValidator:
     """Validates cluster/workflow topologies for common configuration errors.
 

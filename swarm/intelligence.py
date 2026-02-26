@@ -77,6 +77,7 @@ class SwarmConfig:
     emergence_confidence_threshold: float = 0.6
     heartbeat_timeout_seconds: int = 300
     retry_count: int = 3
+    max_agents: int = 20
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -91,6 +92,7 @@ class SwarmConfig:
             "emergence_confidence_threshold": self.emergence_confidence_threshold,
             "heartbeat_timeout_seconds": self.heartbeat_timeout_seconds,
             "retry_count": self.retry_count,
+            "max_agents": self.max_agents,
         }
 
     @classmethod
@@ -107,6 +109,7 @@ class SwarmConfig:
             emergence_confidence_threshold=data.get("emergence_confidence_threshold", 0.6),
             heartbeat_timeout_seconds=data.get("heartbeat_timeout_seconds", 300),
             retry_count=data.get("retry_count", 3),
+            max_agents=data.get("max_agents", 20),
         )
 
 
@@ -706,6 +709,93 @@ class SwarmCoordinator:
         # This is a placeholder for more sophisticated combination logic
         # In production, this would use LLM-based synthesis
         return None
+
+    # -------------------------------------------------------------------------
+    # Dynamic Agent Spawning
+    # -------------------------------------------------------------------------
+
+    def spawn_agent(self, agent_config: dict, reason: str = "") -> str:
+        """Dynamically add an agent to the running swarm.
+
+        Args:
+            agent_config: Agent definition (type, role, subscribes, publishes)
+            reason: Why this agent was spawned (logged for audit)
+
+        Returns:
+            Agent ID of the spawned agent
+
+        Raises:
+            ValueError: If agent config is invalid or breaks topology
+            RuntimeError: If max agents exceeded
+        """
+        from .patterns import TopologyValidator
+
+        current_count = len(self.registry.list_all())
+        max_agents = getattr(self.config, "max_agents", 20)
+        if current_count >= max_agents:
+            raise RuntimeError(
+                f"Cannot spawn: max agents ({max_agents}) reached"
+            )
+
+        agent_type = agent_config.get("type", "unknown")
+        agent_id = f"dynamic_{agent_type}_{current_count}"
+        agent_config["id"] = agent_id
+        agent_config["spawned_dynamically"] = True
+        agent_config["spawn_reason"] = reason
+        agent_config["spawned_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+
+        # Validate topology if agent has pub/sub topics
+        if agent_config.get("publishes") or agent_config.get("subscribes"):
+            existing_agents = []
+            for agent in self.registry.list_all():
+                existing_agents.append({
+                    "id": agent.id,
+                    "publishes": agent.metadata.get("publishes", []) if agent.metadata else [],
+                    "subscribes": agent.metadata.get("subscribes", []) if agent.metadata else [],
+                })
+            existing_agents.append({
+                "id": agent_id,
+                "publishes": agent_config.get("publishes", []),
+                "subscribes": agent_config.get("subscribes", []),
+            })
+            errors = TopologyValidator.validate({"agents": existing_agents})
+            if errors:
+                raise ValueError(f"Spawning would break topology: {errors}")
+
+        # Register the agent
+        if agent_type in AGENT_TYPES:
+            registered = self.registry.register(agent_type, metadata={
+                **agent_config,
+                "spawned_dynamically": True,
+                "spawn_reason": reason,
+            })
+            agent_id = registered.id
+        else:
+            # For unknown types, store in metadata
+            agent_config["_unregistered"] = True
+
+        self._emit_event("agent_spawned", {
+            "agent_id": agent_id,
+            "type": agent_type,
+            "reason": reason,
+            "dynamic": True,
+        })
+        return agent_id
+
+    def despawn_agent(self, agent_id: str) -> bool:
+        """Remove a dynamically spawned agent.
+
+        Only agents with spawned_dynamically=True can be removed.
+        """
+        agent = self.registry.get(agent_id)
+        if not agent:
+            return False
+        if not (agent.metadata or {}).get("spawned_dynamically"):
+            raise ValueError(f"Cannot despawn non-dynamic agent: {agent_id}")
+
+        self.registry.deregister(agent_id)
+        self._emit_event("agent_despawned", {"agent_id": agent_id})
+        return True
 
     # -------------------------------------------------------------------------
     # Coordination

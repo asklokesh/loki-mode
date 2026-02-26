@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomi.dev/loki-mode/schemas/migration-plan.schema.json",
+  "title": "Loki Migration Plan",
+  "description": "Validates migration-plan.json produced by the migration engine guardrail phase.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "description": "Schema version of the migration plan."
+    },
+    "strategy": {
+      "type": "string",
+      "default": "incremental",
+      "description": "Migration strategy (e.g. incremental, big-bang)."
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Constraints that must be respected during migration."
+    },
+    "steps": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/MigrationStep" },
+      "default": [],
+      "description": "Ordered list of migration steps."
+    },
+    "rollback_strategy": {
+      "type": "string",
+      "default": "checkpoint",
+      "description": "Strategy for rolling back on failure."
+    },
+    "exit_criteria": {
+      "type": "object",
+      "default": {},
+      "description": "Conditions that must be met for the migration to be considered complete."
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "MigrationStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the step."
+        },
+        "description": {
+          "type": "string",
+          "default": "",
+          "description": "Human-readable description of the step."
+        },
+        "type": {
+          "type": "string",
+          "default": "",
+          "description": "Step type (e.g. refactor, rewrite, config, test)."
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Files affected by this step."
+        },
+        "tests_required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Tests that must pass after this step."
+        },
+        "estimated_tokens": {
+          "type": "integer",
+          "default": 0,
+          "description": "Estimated token cost for executing this step."
+        },
+        "risk": {
+          "type": "string",
+          "default": "low",
+          "description": "Risk level of this step."
+        },
+        "rollback_point": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether a checkpoint should be created before this step."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "IDs of steps that must complete before this one."
+        },
+        "assigned_agent": {
+          "type": "string",
+          "default": "",
+          "description": "Agent assigned to execute this step."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "failed"],
+          "default": "pending",
+          "description": "Current execution status of the step."
+        }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  }
+}

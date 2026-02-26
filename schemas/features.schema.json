@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomi.dev/loki-mode/schemas/features.schema.json",
+  "title": "Loki Migration Features",
+  "description": "Validates features.json produced by the migration engine understand phase.",
+  "oneOf": [
+    {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Feature" }
+    },
+    {
+      "type": "object",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Feature" }
+        }
+      },
+      "required": ["features"],
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "Feature": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the feature."
+        },
+        "category": {
+          "type": "string",
+          "default": "",
+          "description": "Feature category grouping."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the feature."
+        },
+        "verification_steps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Steps to verify the feature works after migration."
+        },
+        "passes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the feature currently passes verification."
+        },
+        "characterization_test": {
+          "type": "string",
+          "default": "",
+          "description": "Path or name of the characterization test for this feature."
+        },
+        "risk": {
+          "type": "string",
+          "default": "low",
+          "description": "Risk level associated with migrating this feature."
+        },
+        "notes": {
+          "type": "string",
+          "default": "",
+          "description": "Additional notes about the feature."
+        }
+      },
+      "required": ["id", "description", "passes"],
+      "additionalProperties": false
+    }
+  }
+}

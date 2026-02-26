@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomi.dev/loki-mode/schemas/manifest.schema.json",
+  "title": "Loki Migration Manifest",
+  "description": "Validates manifest.json that tracks overall migration state.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "default": "",
+      "description": "Unique migration identifier."
+    },
+    "created_at": {
+      "type": "string",
+      "default": "",
+      "description": "ISO 8601 timestamp of when the migration was created."
+    },
+    "source_info": {
+      "type": "object",
+      "default": {},
+      "description": "Information about the source codebase (language, framework, etc.)."
+    },
+    "target_info": {
+      "type": "object",
+      "default": {},
+      "description": "Information about the target codebase or migration target."
+    },
+    "phases": {
+      "type": "object",
+      "default": {},
+      "description": "Phase results keyed by phase name (understand, guardrail, migrate, verify).",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Phase result data."
+      }
+    },
+    "feature_list_path": {
+      "type": "string",
+      "default": "",
+      "description": "Path to the features.json file."
+    },
+    "migration_plan_path": {
+      "type": "string",
+      "default": "",
+      "description": "Path to the migration-plan.json file."
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "List of checkpoint identifiers created during migration."
+    },
+    "status": {
+      "type": "string",
+      "default": "pending",
+      "description": "Current overall migration status."
+    },
+    "progress_pct": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Overall migration progress percentage (0-100)."
+    },
+    "updated_at": {
+      "type": "string",
+      "default": "",
+      "description": "ISO 8601 timestamp of the last update."
+    },
+    "source_path": {
+      "type": "string",
+      "default": "",
+      "description": "Absolute path to the source codebase."
+    }
+  },
+  "additionalProperties": false
+}

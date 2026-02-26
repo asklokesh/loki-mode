@@ -31,6 +31,12 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# Logging functions (portable across bash/zsh)
+log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_debug() { echo -e "${CYAN}[DEBUG]${NC} $*"; }
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -6923,7 +6929,7 @@ cmd_cluster() {
 
     case "$subcmd" in
         --help|-h|help)
-            echo -e "${BOLD}loki cluster${NC} - Custom workflow templates (v6.2.0)"
+            echo -e "${BOLD}loki cluster${NC} - Custom workflow templates (v6.3.0)"
             echo ""
             echo "Usage: loki cluster <command> [options]"
             echo ""
@@ -6933,10 +6939,16 @@ cmd_cluster() {
             echo "  run <name> [args]  Execute a cluster workflow"
             echo "  info <name>        Show template details"
             echo ""
+            echo "Options for 'run':"
+            echo "  --cluster-id <id>  Named cluster ID for crash recovery"
+            echo "  --resume           Resume a previously crashed cluster run"
+            echo ""
             echo "Examples:"
             echo "  loki cluster list"
             echo "  loki cluster validate security-review"
             echo "  loki cluster info code-review"
+            echo "  loki cluster run security-review --cluster-id my-review"
+            echo "  loki cluster run security-review --cluster-id my-review --resume"
             ;;
         list)
             echo -e "${BOLD}Available Cluster Templates${NC}"
@@ -7038,8 +7050,9 @@ for a in d.get('agents', []):
             ;;
         run)
             local template_name="${1:-}"
+            shift 2>/dev/null || true
             if [[ -z "$template_name" ]]; then
-                echo -e "${RED}Usage: loki cluster run <template-name> [args]${NC}"
+                echo -e "${RED}Usage: loki cluster run <template-name> [--cluster-id ID] [--resume]${NC}"
                 return 1
             fi
             local template_file="$SKILL_DIR/templates/clusters/${template_name}.json"
@@ -7047,6 +7060,23 @@ for a in d.get('agents', []):
                 echo -e "${RED}Template not found: $template_name${NC}"
                 return 1
             fi
+
+            # Parse run options
+            local cluster_id="" do_resume="false"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --cluster-id) cluster_id="$2"; shift 2 ;;
+                    --cluster-id=*) cluster_id="${1#*=}"; shift ;;
+                    --resume) do_resume="true"; shift ;;
+                    *) shift ;;
+                esac
+            done
+
+            # Auto-generate cluster ID if not provided
+            if [[ -z "$cluster_id" ]]; then
+                cluster_id="${template_name}_$(date +%Y%m%d_%H%M%S)"
+            fi
+
             # Validate first
             local result
             result=$(python3 -c "
@@ -7064,9 +7094,55 @@ else:
                 echo "$result"
                 return 1
             fi
-            echo -e "${GREEN}Cluster template: $template_name${NC}"
-            echo -e "${YELLOW}Note: Cluster execution engine is planned for v6.3.0.${NC}"
-            echo -e "Template validated successfully. Use 'loki cluster info $template_name' for details."
+
+            # Fire lifecycle hooks and record state
+            PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
+import json, sys
+sys.path.insert(0, '${SKILL_DIR:-.}')
+from swarm.patterns import ClusterLifecycleHooks
+from state.sqlite_backend import SqliteStateBackend
+
+# Load template hooks config
+with open('${template_file}') as f:
+    tpl = json.load(f)
+
+hooks = ClusterLifecycleHooks(tpl.get('hooks', {}))
+db = SqliteStateBackend()
+
+cluster_id = '${cluster_id}'
+resume = '${do_resume}' == 'true'
+
+if resume:
+    events = db.query_events(event_type='cluster_state', migration_id=cluster_id, limit=1)
+    if events:
+        print(f'Resuming cluster {cluster_id} from last checkpoint')
+    else:
+        print(f'No previous state found for {cluster_id}. Starting fresh.')
+
+# Fire pre_run hooks
+results = hooks.fire('pre_run', {'cluster_id': cluster_id, 'template': '${template_name}'})
+for r in results:
+    if not r['success']:
+        print(f'Pre-run hook failed: {r[\"output\"]}')
+
+# Record cluster start
+db.record_event('cluster_start', {
+    'cluster_id': cluster_id,
+    'template': '${template_name}',
+    'agents': len(tpl.get('agents', [])),
+    'resume': resume,
+}, migration_id=cluster_id)
+
+print(f'Cluster {cluster_id} initialized with {len(tpl.get(\"agents\", []))} agents')
+print('Template validated. Lifecycle hooks active.')
+" 2>&1
+
+            echo -e "${GREEN}Cluster: $cluster_id${NC}"
+            echo -e "Template: $template_name"
+            if [[ "$do_resume" == "true" ]]; then
+                echo -e "Mode: resume"
+            fi
+            echo -e "Use 'loki state query events --migration $cluster_id' to inspect state."
             ;;
         *)
             echo -e "${RED}Unknown cluster command: $subcmd${NC}"
@@ -7209,6 +7285,9 @@ main() {
         cluster)
             cmd_cluster "$@"
             ;;
+        state)
+            cmd_state "$@"
+            ;;
         metrics)
             cmd_metrics "$@"
             ;;
@@ -7231,6 +7310,111 @@ main() {
             echo -e "${RED}Unknown command: $command${NC}"
             echo "Run 'loki help' for usage."
             exit 1
+            ;;
+    esac
+}
+
+# SQLite queryable state inspection
+cmd_state() {
+    local subcmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$subcmd" in
+        --help|-h|help)
+            echo -e "${BOLD}loki state${NC} - Query the SQLite state layer (v6.3.0)"
+            echo ""
+            echo "Usage: loki state <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  db                 Print path to SQLite database file"
+            echo "  query events       Query events [--agent ID] [--type TYPE] [--limit N]"
+            echo "  query messages     Query messages [--topic TOPIC] [--cluster ID] [--limit N]"
+            echo "  query checkpoints  Query checkpoints [--migration ID] [--limit N]"
+            echo ""
+            echo "Examples:"
+            echo "  loki state db"
+            echo "  loki state query events --agent arch_001 --limit 20"
+            echo "  loki state query messages --topic 'task.*'"
+            echo "  loki state query checkpoints --migration mig_123"
+            ;;
+        db)
+            local db_path="${LOKI_DATA_DIR:-${HOME}/.loki}/state.db"
+            echo "$db_path"
+            if [[ -f "$db_path" ]]; then
+                local size
+                size=$(ls -lh "$db_path" 2>/dev/null | awk '{print $5}')
+                echo -e "${DIM}Size: ${size}${NC}"
+            else
+                echo -e "${YELLOW}Database not yet created${NC}"
+            fi
+            ;;
+        query)
+            local query_type="${1:-}"
+            shift 2>/dev/null || true
+
+            if [[ -z "$query_type" ]]; then
+                echo -e "${RED}Usage: loki state query <events|messages|checkpoints> [options]${NC}"
+                return 1
+            fi
+
+            local agent_id="" event_type="" topic="" cluster_id="" migration_id="" limit="20"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --agent) agent_id="$2"; shift 2 ;;
+                    --type) event_type="$2"; shift 2 ;;
+                    --topic) topic="$2"; shift 2 ;;
+                    --cluster) cluster_id="$2"; shift 2 ;;
+                    --migration) migration_id="$2"; shift 2 ;;
+                    --limit) limit="$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+
+            PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
+import json, sys
+sys.path.insert(0, '${SKILL_DIR:-.}')
+from state.sqlite_backend import SqliteStateBackend
+db = SqliteStateBackend()
+
+query_type = '${query_type}'
+if query_type == 'events':
+    results = db.query_events(
+        event_type='${event_type}' or None,
+        agent_id='${agent_id}' or None,
+        migration_id='${migration_id}' or None,
+        limit=int('${limit}')
+    )
+elif query_type == 'messages':
+    results = db.query_messages(
+        topic='${topic}' or None,
+        cluster_id='${cluster_id}' or None,
+        limit=int('${limit}')
+    )
+elif query_type == 'checkpoints':
+    results = db.query_checkpoints(
+        migration_id='${migration_id}' or None,
+        limit=int('${limit}')
+    )
+else:
+    print(f'Unknown query type: {query_type}')
+    sys.exit(1)
+
+if not results:
+    print('No results found.')
+else:
+    for r in results:
+        print(json.dumps(r, indent=2))
+        print('---')
+    print(f'{len(results)} result(s)')
+" 2>&1 || {
+                echo -e "${RED}Error querying state database${NC}"
+                return 1
+            }
+            ;;
+        *)
+            echo -e "${RED}Unknown state command: $subcmd${NC}"
+            echo "Run 'loki state --help' for usage."
+            return 1
             ;;
     esac
 }

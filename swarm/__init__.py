@@ -42,6 +42,7 @@ from .patterns import (
     ConsensusPattern,
     DelegationPattern,
     EmergencePattern,
+    ClusterLifecycleHooks,
 )
 
 from .bft import (
@@ -84,6 +85,7 @@ __all__ = [
     "ConsensusPattern",
     "DelegationPattern",
     "EmergencePattern",
+    "ClusterLifecycleHooks",
     # Byzantine Fault Tolerance
     "ByzantineFaultTolerance",
     "BFTConfig",
