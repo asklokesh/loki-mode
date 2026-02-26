@@ -2,11 +2,11 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v6.2.0
+**Version:** v6.2.1
 
 ---
 
-## What's New in v6.2.0
+## What's New in v6.2.1
 
 ### Dual-Mode Architecture (v6.0.0)
 - `loki run` command for direct autonomous execution

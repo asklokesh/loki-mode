@@ -5,6 +5,37 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.1] - 2026-02-26
+
+### Fixed
+- **CRITICAL**: Remove `eval echo` command injection on user-supplied `--mount` paths in sandbox.sh
+- **CRITICAL**: Fix `PROJECT_DIR` injection into inline Python string in sandbox.sh
+- Restrict SSH Docker preset to `known_hosts` only (was mounting entire `~/.ssh` with private keys)
+- Add thread safety (`threading.Lock`) to `PubSubMessageBus` for concurrent agent use
+- Fix `--ship -d` combination silently skipping PR creation and auto-merge
+- Fix `gh issue close` running unconditionally even when PR merge fails
+- Fix ChromaDB stale connection cached permanently with no reconnection
+- Add deduplication to BMAD task queue to prevent duplicates on crash-restart
+- Replace `head -c` JSON truncation with valid-JSON-boundary truncation for BMAD tasks
+- Fix `PubSubMessageBus` double delivery when publishing to wildcard topic patterns
+- Fix subscription ID collisions after unsubscribe + resubscribe cycles
+- Fix `inputDocuments` string values joined char-by-char instead of as single item
+- Fix PRD analyzer feature count including all bullets globally (not just feature section)
+- Remove duplicate `Non-Functional Requirements` heading pattern inflating deployment + security scores
+- Fix BMAD error message showing empty path after failed directory resolution
+- Fix PRD generated twice in detach mode (wasted LLM call)
+- Fix `cluster run` conflating Python import errors with template validation failures
+- Remove redundant `sys.path.insert` in cluster validate
+- Add `branch_name` guard for detach mode without explicit `--worktree`
+- Add wildcard env var logging when passing `TF_VAR_*` into Docker containers
+- Fix word splitting on Docker mount paths containing spaces
+- Remove stderr suppression in `populate_bmad_queue` for better error visibility
+- Update README.md version from v5.52.4 to current
+- Update docker-compose.yml version comment to v6.2.1
+- Update INSTALLATION.md "What's New" section from v5.49.1 to v6.2.x
+- Correct `parse_frontmatter()` docstring to say flow-style lists only (not block)
+- Remove redundant `int()` on CHROMA_PORT in MCP server
+
 ## [6.2.0] - 2026-02-25
 
 ### Added
