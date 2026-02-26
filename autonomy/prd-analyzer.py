@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRD Quality Analyzer for Loki Mode v5.44.0
+"""PRD Quality Analyzer for Loki Mode v6.1.0
 
 Analyzes PRD structure and completeness using regex-based heuristics.
 Writes observations to .loki/prd-observations.md with quality score,
@@ -10,6 +10,7 @@ Stdlib only - no pip dependencies required.
 Usage:
     python3 prd-analyzer.py path/to/prd.md --output .loki/prd-observations.md
     python3 prd-analyzer.py path/to/prd.md --output .loki/prd-observations.md --interactive
+    python3 prd-analyzer.py path/to/prd.md --architecture path/to/architecture.md
 """
 
 import argparse
@@ -28,10 +29,13 @@ DIMENSIONS = {
         "weight": 1.5,
         "heading_patterns": [
             r"(?i)#+\s.*(?:feature|requirement|scope|functional|capability)",
+            r"(?i)^##\s+Functional\s+Requirements",
+            r"(?i)^##\s+Product\s+Scope",
         ],
         "content_patterns": [
             r"^\s*[-*]\s+\S",
             r"^\s*\d+\.\s+\S",
+            r"(?i)^FR\d+:",
         ],
         "description": "Numbered or bulleted list of features/requirements",
     },
@@ -55,6 +59,7 @@ DIMENSIONS = {
         "weight": 1.0,
         "heading_patterns": [
             r"(?i)#+\s.*(?:user\s+(?:stor|flow|journey)|persona|use\s+case)",
+            r"(?i)^##\s+User\s+Journeys",
         ],
         "content_patterns": [
             r"(?i)\bas\s+a\s+\w+",
@@ -68,11 +73,13 @@ DIMENSIONS = {
         "weight": 1.0,
         "heading_patterns": [
             r"(?i)#+\s.*(?:acceptance|criteria|definition\s+of\s+done|done\s+when)",
+            r"(?i)^##\s+Success\s+Criteria",
         ],
         "content_patterns": [
             r"^\s*-\s*\[\s*[xX ]?\s*\]",
             r"(?i)\bgiven\b.*\bwhen\b.*\bthen\b",
             r"(?i)\bmust\s+(?:be|have|support|handle)\b",
+            r"(?i)^\s*\*\*Given\*\*",
         ],
         "description": "Measurable completion criteria or checklists",
     },
@@ -107,6 +114,7 @@ DIMENSIONS = {
         "weight": 0.75,
         "heading_patterns": [
             r"(?i)#+\s.*(?:deploy|hosting|infra|ci.?cd|environment)",
+            r"(?i)^##\s+Non-Functional\s+Requirements",
         ],
         "content_patterns": [
             r"(?i)\b(?:deploy|hosting|ci.?cd|pipeline|staging|production)\b",
@@ -131,6 +139,7 @@ DIMENSIONS = {
         "weight": 1.0,
         "heading_patterns": [
             r"(?i)#+\s.*(?:security|auth|permission|access\s+control)",
+            r"(?i)^##\s+Non-Functional\s+Requirements",
         ],
         "content_patterns": [
             r"(?i)\b(?:auth(?:entication|orization)?|oauth|jwt|token)\b",
@@ -153,8 +162,9 @@ SCOPE_THRESHOLDS = [
 class PrdAnalyzer:
     """Analyzes PRD quality and completeness."""
 
-    def __init__(self, prd_path):
+    def __init__(self, prd_path, architecture_path=None):
         self.prd_path = Path(prd_path)
+        self.architecture_path = Path(architecture_path) if architecture_path else None
         self.content = ""
         self.lines = []
         self.results = {}
@@ -163,13 +173,20 @@ class PrdAnalyzer:
         self.score = 0.0
 
     def load(self):
-        """Load and validate the PRD file."""
+        """Load and validate the PRD file, optionally appending architecture doc."""
         if not self.prd_path.exists():
             raise FileNotFoundError(f"PRD file not found: {self.prd_path}")
         self.content = self.prd_path.read_text(encoding="utf-8", errors="replace")
         if not self.content.strip():
             raise ValueError(f"PRD file is empty: {self.prd_path}")
         self.lines = self.content.splitlines()
+        # Append architecture document lines for pattern matching
+        if self.architecture_path:
+            if not self.architecture_path.exists():
+                raise FileNotFoundError(f"Architecture file not found: {self.architecture_path}")
+            arch_content = self.architecture_path.read_text(encoding="utf-8", errors="replace")
+            if arch_content.strip():
+                self.lines.extend(arch_content.splitlines())
 
     def analyze(self):
         """Run all analysis dimensions and compute score."""
@@ -421,6 +438,11 @@ def main():
         help="Output path for observations (default: .loki/prd-observations.md)",
     )
     parser.add_argument(
+        "--architecture",
+        metavar="PATH",
+        help="Optional architecture document to include in analysis",
+    )
+    parser.add_argument(
         "--interactive",
         action="store_true",
         help="Ask clarifying questions for missing dimensions",
@@ -428,7 +450,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        analyzer = PrdAnalyzer(args.prd_path)
+        analyzer = PrdAnalyzer(args.prd_path, architecture_path=args.architecture)
         analyzer.analyze()
         observations = analyzer.generate_observations()
 

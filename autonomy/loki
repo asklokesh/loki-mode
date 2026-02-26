@@ -438,6 +438,7 @@ show_help() {
     echo "  --skip-memory    Skip loading memory context at startup"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
+    echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo ""
     echo "Options for 'run' (v6.0.0):"
     echo "  --dry-run          Preview generated PRD without starting"
@@ -473,6 +474,7 @@ cmd_start() {
     local args=()
     local prd_file=""
     local provider=""
+    local bmad_project_path=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -496,6 +498,7 @@ cmd_start() {
                 echo "  --skip-memory         Skip loading memory context at startup"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Cost budget limit (auto-pause when exceeded)"
+                echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
                 echo ""
                 echo "Environment Variables:"
@@ -510,6 +513,7 @@ cmd_start() {
                 echo "  loki start ./prd.md             # Start with PRD file"
                 echo "  loki start ./prd.md --parallel  # Parallel mode with worktrees"
                 echo "  loki start --provider codex     # Use OpenAI Codex CLI"
+                echo "  loki start --bmad-project ./my-project  # Start from BMAD artifacts"
                 echo "  loki start --yes                # Skip confirmation prompt"
                 echo "  LOKI_PRD_FILE=./prd.md loki start  # PRD via env var"
                 exit 0
@@ -581,6 +585,19 @@ cmd_start() {
                 export LOKI_AUTO_CONFIRM=true
                 shift
                 ;;
+            --bmad-project)
+                if [[ -n "${2:-}" ]]; then
+                    bmad_project_path="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--bmad-project requires a path to a BMAD project directory${NC}"
+                    exit 1
+                fi
+                ;;
+            --bmad-project=*)
+                bmad_project_path="${1#*=}"
+                shift
+                ;;
             --budget)
                 if [[ -n "${2:-}" ]]; then
                     if ! echo "$2" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
@@ -617,6 +634,67 @@ cmd_start() {
     # Support LOKI_PRD_FILE environment variable as fallback
     if [ -z "$prd_file" ] && [ -n "${LOKI_PRD_FILE:-}" ]; then
         prd_file="$LOKI_PRD_FILE"
+    fi
+
+    # BMAD project validation and adapter execution
+    if [[ -n "$bmad_project_path" ]]; then
+        # Resolve to absolute path
+        if [[ ! "$bmad_project_path" = /* ]]; then
+            bmad_project_path="$(cd "$bmad_project_path" 2>/dev/null && pwd)" || {
+                echo -e "${RED}Error: BMAD project path does not exist: $bmad_project_path${NC}"
+                exit 1
+            }
+        fi
+
+        # Validate path is a directory
+        if [[ ! -d "$bmad_project_path" ]]; then
+            echo -e "${RED}Error: BMAD project path is not a directory: $bmad_project_path${NC}"
+            exit 1
+        fi
+
+        # Check for BMAD artifacts (_bmad-output/ or common BMAD markers)
+        if [[ ! -d "$bmad_project_path/_bmad-output" ]]; then
+            echo -e "${YELLOW}Warning: No _bmad-output/ directory found in $bmad_project_path${NC}"
+            echo "Expected a BMAD Method project with _bmad-output/ artifacts."
+            echo -e "Continue anyway? [y/N] \\c"
+            local _auto="${LOKI_AUTO_CONFIRM:-${CI:-false}}"
+            if [[ "$_auto" == "true" ]]; then
+                echo "y (auto-confirmed)"
+            else
+                read -r _bmad_confirm
+                if [[ ! "$_bmad_confirm" =~ ^[Yy] ]]; then
+                    echo "Aborted."
+                    exit 0
+                fi
+            fi
+        fi
+
+        # Export for run.sh to access
+        export BMAD_PROJECT_PATH="$bmad_project_path"
+
+        # Ensure .loki directory exists for adapter output
+        mkdir -p "$LOKI_DIR"
+
+        # Run the BMAD adapter to normalize artifacts
+        echo -e "${CYAN}Running BMAD adapter...${NC}"
+        local adapter_script="${SCRIPT_DIR:-$(dirname "$0")}/bmad-adapter.py"
+        if [[ ! -f "$adapter_script" ]]; then
+            echo -e "${RED}Error: BMAD adapter not found at $adapter_script${NC}"
+            echo "Please ensure autonomy/bmad-adapter.py exists."
+            exit 1
+        fi
+
+        if ! python3 "$adapter_script" "$bmad_project_path" --output-dir "$LOKI_DIR" --validate; then
+            echo -e "${RED}Error: BMAD adapter failed. Check the project artifacts.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}BMAD artifacts normalized successfully.${NC}"
+
+        # If no explicit PRD was provided, use the normalized BMAD PRD
+        if [[ -z "$prd_file" ]] && [[ -f "$LOKI_DIR/bmad-prd-normalized.md" ]]; then
+            prd_file="$LOKI_DIR/bmad-prd-normalized.md"
+            echo -e "${CYAN}Using normalized BMAD PRD: $prd_file${NC}"
+        fi
     fi
 
     if [ -n "$prd_file" ]; then

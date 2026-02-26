@@ -5,6 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] - 2026-02-25
+
+### Added
+- BMAD Method integration for structured requirements pipeline
+  - `autonomy/bmad-adapter.py` -- discovers and normalizes BMAD output artifacts (PRD, architecture, epics)
+  - `--bmad-project <path>` flag for `loki start` -- loads BMAD artifacts as structured input
+  - Enhanced `prd-analyzer.py` with BMAD-specific heading/content patterns and `--architecture` flag
+  - BMAD artifact chain validation (FR coverage, workflow completeness, missing artifact detection)
+  - BMAD context injection into `build_prompt()` (architecture decisions, epic/story tasks)
+  - Automatic task queue population from BMAD epic/story breakdown
+- BMAD integration test suite (`tests/test-bmad-integration.sh` -- 25 tests)
+- Test fixtures for complete, incomplete, and non-BMAD projects (`tests/fixtures/bmad*/`)
+- Architecture documentation: validation report, epic breakdown, council analysis, adversarial review
+
+### Security
+- Path traversal protection for BMAD config.json outputDir
+- Atomic file writes in BMAD adapter (tempfile + os.replace pattern)
+- Safe file reading with size limits (10MB) and encoding safety (errors="replace")
+- Size-limited BMAD context injection in build_prompt() (prevents context window overflow)
+- Fixed inline Python injection risk in test scripts (use sys.argv instead of string interpolation)
+
 ## [6.0.0] - 2026-02-25
 
 ### BREAKING

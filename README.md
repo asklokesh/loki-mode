@@ -73,6 +73,26 @@ The system classifies your PRD complexity, assembles an agent team, and runs RAR
 
 ---
 
+## BMAD Method Integration
+
+Loki Mode integrates with the [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD), a structured AI-driven agile methodology. If your project uses BMAD for requirements elicitation (product briefs, PRDs, architecture documents, epic/story breakdowns), Loki Mode can consume those artifacts directly:
+
+```bash
+# Start from BMAD project artifacts
+loki start --bmad-project ./my-project
+
+# BMAD artifacts are discovered automatically from _bmad-output/
+# PRD is analyzed with BMAD-aware scoring dimensions
+# Architecture decisions are injected as execution context
+# Epics/stories are loaded into the task queue
+```
+
+The adapter handles BMAD's frontmatter conventions, FR-format functional requirements, Given/When/Then acceptance criteria, and artifact chain validation. Non-BMAD projects are completely unaffected -- the integration is additive and opt-in via the `--bmad-project` flag.
+
+See [BMAD Integration Validation](docs/architecture/bmad-integration-validation.md) for the compatibility analysis.
+
+---
+
 ## Presentation
 
 ![Loki Mode Presentation](docs/loki-mode-presentation.gif)

@@ -7034,19 +7034,161 @@ except: pass
 " 2>/dev/null || true)
     fi
 
+    # BMAD context injection (if available)
+    local bmad_context=""
+    if [[ -f ".loki/bmad-metadata.json" ]]; then
+        local bmad_arch=""
+        if [[ -f ".loki/bmad-architecture-summary.md" ]]; then
+            bmad_arch=$(head -c 16000 ".loki/bmad-architecture-summary.md")
+        fi
+        local bmad_tasks=""
+        if [[ -f ".loki/bmad-tasks.json" ]]; then
+            bmad_tasks=$(head -c 32000 ".loki/bmad-tasks.json")
+        fi
+        local bmad_validation=""
+        if [[ -f ".loki/bmad-validation.md" ]]; then
+            bmad_validation=$(head -c 8000 ".loki/bmad-validation.md")
+        fi
+        bmad_context="BMAD_CONTEXT: This project uses BMAD Method structured artifacts. Architecture decisions and epic/story breakdown are provided below."
+        if [[ -n "$bmad_arch" ]]; then
+            bmad_context="$bmad_context ARCHITECTURE DECISIONS: $bmad_arch"
+        fi
+        if [[ -n "$bmad_tasks" ]]; then
+            bmad_context="$bmad_context EPIC/STORY TASKS (from BMAD): $bmad_tasks"
+        fi
+        if [[ -n "$bmad_validation" ]]; then
+            bmad_context="$bmad_context ARTIFACT VALIDATION: $bmad_validation"
+        fi
+    fi
+
     if [ $retry -eq 0 ]; then
         if [ -n "$prd" ]; then
-            echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode. $human_directive $queue_tasks $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     else
         if [ -n "$prd" ]; then
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         else
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
         fi
     fi
+}
+
+#===============================================================================
+# BMAD Task Queue Population
+#===============================================================================
+
+# Populate the task queue from BMAD epic/story artifacts
+# Only runs once -- skips if queue was already populated from BMAD
+populate_bmad_queue() {
+    # Skip if no BMAD tasks file
+    if [[ ! -f ".loki/bmad-tasks.json" ]]; then
+        return 0
+    fi
+
+    # Skip if already populated (marker file)
+    if [[ -f ".loki/queue/.bmad-populated" ]]; then
+        log_info "BMAD queue already populated, skipping"
+        return 0
+    fi
+
+    log_step "Populating task queue from BMAD stories..."
+
+    # Ensure queue directory exists
+    mkdir -p ".loki/queue"
+
+    # Read BMAD tasks and create queue entries
+    python3 << 'BMAD_QUEUE_EOF' 2>/dev/null
+import json
+import os
+import sys
+
+bmad_tasks_path = ".loki/bmad-tasks.json"
+pending_path = ".loki/queue/pending.json"
+
+try:
+    with open(bmad_tasks_path, "r") as f:
+        bmad_data = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError) as e:
+    print(f"Warning: Could not read BMAD tasks: {e}", file=sys.stderr)
+    sys.exit(0)
+
+# Extract stories from BMAD structure
+# Supports both flat list and nested epic/story format
+stories = []
+if isinstance(bmad_data, list):
+    stories = bmad_data
+elif isinstance(bmad_data, dict):
+    # Handle {"epics": [...]} or {"tasks": [...]} formats
+    for key in ("epics", "tasks", "stories"):
+        if key in bmad_data:
+            items = bmad_data[key]
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and "stories" in item:
+                        # Epic with nested stories
+                        epic_name = item.get("title", item.get("name", ""))
+                        for story in item["stories"]:
+                            if isinstance(story, dict):
+                                story.setdefault("epic", epic_name)
+                                stories.append(story)
+                    else:
+                        stories.append(item)
+            break
+
+if not stories:
+    print("No BMAD stories found to queue", file=sys.stderr)
+    sys.exit(0)
+
+# Load existing pending tasks (if any)
+existing = []
+if os.path.exists(pending_path):
+    try:
+        with open(pending_path, "r") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                existing = data
+            elif isinstance(data, dict) and "tasks" in data:
+                existing = data["tasks"]
+    except (json.JSONDecodeError, FileNotFoundError):
+        existing = []
+
+# Convert BMAD stories to queue task format
+for i, story in enumerate(stories):
+    if not isinstance(story, dict):
+        continue
+    task = {
+        "id": f"bmad-{i+1}",
+        "title": story.get("title", story.get("name", f"BMAD Story {i+1}")),
+        "description": story.get("description", story.get("action", "")),
+        "priority": story.get("priority", "medium"),
+        "source": "bmad",
+    }
+    epic = story.get("epic", "")
+    if epic:
+        task["epic"] = epic
+    acceptance = story.get("acceptance_criteria", story.get("criteria", []))
+    if acceptance:
+        task["acceptance_criteria"] = acceptance
+    existing.append(task)
+
+# Write updated pending queue
+with open(pending_path, "w") as f:
+    json.dump(existing, f, indent=2)
+
+print(f"Added {len(stories)} BMAD stories to task queue")
+BMAD_QUEUE_EOF
+
+    if [[ $? -ne 0 ]]; then
+        log_warn "Failed to populate BMAD queue (python3 error)"
+        return 0
+    fi
+
+    # Mark as populated so we don't re-add on restart
+    touch ".loki/queue/.bmad-populated"
+    log_info "BMAD queue population complete"
 }
 
 #===============================================================================
@@ -7129,6 +7271,9 @@ run_autonomous() {
             checklist_init "$prd_path"
         fi
     fi
+
+    # Populate task queue from BMAD artifacts (if present, runs once)
+    populate_bmad_queue
 
     # Check max iterations before starting
     if check_max_iterations; then
