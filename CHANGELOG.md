@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.1] - 2026-02-26
+
+### Fixed
+- Rebuild dashboard frontend (missed in v6.3.0 release workflow)
+- Ran Opus feedback loop to verify all 17 v6.3.0 feature claims (all verified)
+- Ran Playwright E2E tests (9 passed)
+
 ## [6.3.0] - 2026-02-26
 
 ### Added
