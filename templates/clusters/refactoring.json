@@ -1,0 +1,29 @@
+{
+    "name": "Refactoring",
+    "description": "Structured refactoring with test preservation and review",
+    "version": "1.0.0",
+    "topology": "pipeline",
+    "agents": [
+        {
+            "id": "analyzer",
+            "type": "review-code",
+            "role": "Analyze code for refactoring opportunities",
+            "subscribes": ["task.start"],
+            "publishes": ["analysis.complete"]
+        },
+        {
+            "id": "refactorer",
+            "type": "eng-backend",
+            "role": "Apply refactoring changes with test preservation",
+            "subscribes": ["analysis.complete"],
+            "publishes": ["refactor.complete"]
+        },
+        {
+            "id": "verifier",
+            "type": "eng-qa",
+            "role": "Verify all tests pass and behavior is preserved",
+            "subscribes": ["refactor.complete"],
+            "publishes": ["task.complete"]
+        }
+    ]
+}

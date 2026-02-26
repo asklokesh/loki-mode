@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.0] - 2026-02-25
+
+### Added
+- Progressive Isolation flags for `loki run`: `--worktree`, `--pr`, `--ship`, `--detach` with cascade logic
+- Docker credential mount presets (9 presets: gh, git, ssh, aws, azure, kube, terraform, gcloud, npm)
+- `resolve_docker_mounts()` function with env var passthrough and wildcard support
+- `--mount` and `--no-mounts` flags for `loki sandbox`
+- `PubSubMessageBus` class with wildcard topic matching for custom agent topologies
+- `TopologyValidator` class with 5 validation checks (orphans, dead publishers, self-loops, missing start/terminal)
+- 4 cluster workflow templates: security-review, code-review, performance-audit, refactoring
+- `loki cluster` CLI command with list, validate, info, and run subcommands
+
 ## [6.1.0] - 2026-02-25
 
 ### Added

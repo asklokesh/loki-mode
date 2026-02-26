@@ -701,3 +701,88 @@ class EmergencePattern(SwarmPattern):
             supporting_observations=obs_texts,
             category=category,
         )
+
+
+class TopologyValidator:
+    """Validates cluster/workflow topologies for common configuration errors.
+
+    Checks for:
+    - Orphan subscribers (subscribing to topic nobody publishes)
+    - Dead publishers (publishing to topic nobody subscribes)
+    - Missing terminal agent (nobody publishes task.complete)
+    - Missing start agent (nobody subscribes to task.start)
+    - Self-loops (agent subscribes to its own publish topic)
+    """
+
+    SYSTEM_PUBLISH_TOPICS = {"task.start"}  # Published by the system
+    SYSTEM_SUBSCRIBE_TOPICS = {"task.complete"}  # Consumed by the system
+
+    @staticmethod
+    def validate(cluster_config: Dict[str, Any]) -> List[str]:
+        """Validate a cluster topology. Returns list of errors (empty = valid)."""
+        errors: List[str] = []
+        agents = cluster_config.get("agents", [])
+
+        if not agents:
+            errors.append("Cluster has no agents defined.")
+            return errors
+
+        all_publishes: set = set()
+        all_subscribes: set = set()
+        agent_ids: set = set()
+
+        for agent in agents:
+            agent_id = agent.get("id", "unknown")
+            if agent_id in agent_ids:
+                errors.append(f"Duplicate agent ID: '{agent_id}'")
+            agent_ids.add(agent_id)
+
+            for topic in agent.get("publishes", []):
+                all_publishes.add(topic)
+            for topic in agent.get("subscribes", []):
+                all_subscribes.add(topic)
+
+        # Check 1: Orphan subscribers (topics subscribed but not published by any agent or system)
+        orphan_subs = all_subscribes - all_publishes - TopologyValidator.SYSTEM_PUBLISH_TOPICS
+        if orphan_subs:
+            errors.append(f"Topics subscribed but never published: {sorted(orphan_subs)}")
+
+        # Check 2: Dead publishers (topics published but not subscribed by any agent or system)
+        dead_pubs = all_publishes - all_subscribes - TopologyValidator.SYSTEM_SUBSCRIBE_TOPICS
+        if dead_pubs:
+            errors.append(f"Topics published but nobody subscribes: {sorted(dead_pubs)}")
+
+        # Check 3: No terminal agent
+        if "task.complete" not in all_publishes:
+            errors.append("No agent publishes 'task.complete'. Workflow may never finish.")
+
+        # Check 4: No start agent
+        if "task.start" not in all_subscribes:
+            errors.append("No agent subscribes to 'task.start'. Workflow cannot begin.")
+
+        # Check 5: Self-loops
+        for agent in agents:
+            pubs = set(agent.get("publishes", []))
+            subs = set(agent.get("subscribes", []))
+            overlap = pubs & subs
+            if overlap:
+                errors.append(
+                    f"Agent '{agent.get('id', 'unknown')}' subscribes to its own topic: {sorted(overlap)}"
+                )
+
+        return errors
+
+    @staticmethod
+    def validate_file(path: str) -> List[str]:
+        """Validate a cluster template JSON file."""
+        import json
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            return TopologyValidator.validate(config)
+        except json.JSONDecodeError as e:
+            return [f"Invalid JSON: {e}"]
+        except FileNotFoundError:
+            return [f"File not found: {path}"]
+        except Exception as e:
+            return [f"Error reading file: {e}"]

@@ -1,0 +1,36 @@
+{
+    "name": "Code Review",
+    "description": "Multi-reviewer code review with conflict resolution",
+    "version": "1.0.0",
+    "topology": "fan-out-fan-in",
+    "agents": [
+        {
+            "id": "reviewer-arch",
+            "type": "review-code",
+            "role": "Review architecture and design patterns",
+            "subscribes": ["task.start"],
+            "publishes": ["review.architecture"]
+        },
+        {
+            "id": "reviewer-security",
+            "type": "review-security",
+            "role": "Review security implications",
+            "subscribes": ["task.start"],
+            "publishes": ["review.security"]
+        },
+        {
+            "id": "reviewer-tests",
+            "type": "eng-qa",
+            "role": "Review test coverage and quality",
+            "subscribes": ["task.start"],
+            "publishes": ["review.tests"]
+        },
+        {
+            "id": "resolver",
+            "type": "review-code",
+            "role": "Synthesize all review findings and resolve conflicts",
+            "subscribes": ["review.architecture", "review.security", "review.tests"],
+            "publishes": ["task.complete"]
+        }
+    ]
+}

@@ -63,6 +63,34 @@ DASHBOARD_PORT="${LOKI_DASHBOARD_PORT:-57374}"
 PROMPT_INJECTION_ENABLED="${LOKI_PROMPT_INJECTION:-false}"
 
 #===============================================================================
+# Docker Credential Mount Presets
+#===============================================================================
+
+# Preset definitions: "host_path:container_path:mode"
+# Container runs as user 'loki' (UID 1000), so mount to /home/loki/
+declare -A DOCKER_MOUNT_PRESETS
+DOCKER_MOUNT_PRESETS=(
+    [gh]="$HOME/.config/gh:/home/loki/.config/gh:ro"
+    [git]="$HOME/.gitconfig:/home/loki/.gitconfig:ro"
+    [ssh]="$HOME/.ssh:/home/loki/.ssh:ro"
+    [aws]="$HOME/.aws:/home/loki/.aws:ro"
+    [azure]="$HOME/.azure:/home/loki/.azure:ro"
+    [kube]="$HOME/.kube:/home/loki/.kube:ro"
+    [terraform]="$HOME/.terraform.d:/home/loki/.terraform.d:ro"
+    [gcloud]="$HOME/.config/gcloud:/home/loki/.config/gcloud:ro"
+    [npm]="$HOME/.npmrc:/home/loki/.npmrc:ro"
+)
+
+# Environment variables auto-passed per preset (comma-separated)
+declare -A DOCKER_ENV_PRESETS
+DOCKER_ENV_PRESETS=(
+    [aws]="AWS_REGION,AWS_PROFILE,AWS_DEFAULT_REGION"
+    [azure]="AZURE_SUBSCRIPTION_ID,AZURE_TENANT_ID"
+    [gcloud]="GOOGLE_PROJECT,GOOGLE_REGION,GCLOUD_PROJECT"
+    [terraform]="TF_VAR_*"
+)
+
+#===============================================================================
 # Utility Functions
 #===============================================================================
 
@@ -767,9 +795,129 @@ docker_desktop_sandbox_run() {
 # Docker Container Sandbox (standard Docker - fallback from Docker Desktop)
 #===============================================================================
 
+# Resolve Docker credential mount presets
+# Reads from: .loki/config/settings.json dockerMounts, LOKI_DOCKER_MOUNTS env var
+# Returns: string of -v and -e flags for docker run
+resolve_docker_mounts() {
+    local mount_args=""
+
+    # Read configured presets (JSON array of strings)
+    local presets_json=""
+    if [[ -f "${PROJECT_DIR}/.loki/config/settings.json" ]]; then
+        presets_json=$(python3 -c "
+import json, sys
+try:
+    with open('${PROJECT_DIR}/.loki/config/settings.json') as f:
+        print(json.dumps(json.load(f).get('dockerMounts', [])))
+except: print('[]')
+" 2>/dev/null || echo "[]")
+    fi
+
+    # Override with env var if set
+    if [[ -n "${LOKI_DOCKER_MOUNTS:-}" ]]; then
+        presets_json="$LOKI_DOCKER_MOUNTS"
+    fi
+
+    # Parse and resolve
+    if [[ "$presets_json" != "[]" ]] && [[ "$presets_json" != "" ]]; then
+        local preset_names
+        preset_names=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    if isinstance(data, list):
+        for item in data:
+            print(item)
+except: pass
+" "$presets_json" 2>/dev/null || echo "")
+
+        local name
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+
+            local preset_value="${DOCKER_MOUNT_PRESETS[$name]:-}"
+            if [[ -z "$preset_value" ]]; then
+                log_warn "Unknown Docker mount preset: $name"
+                continue
+            fi
+
+            IFS=':' read -ra parts <<< "$preset_value"
+            local host_path="${parts[0]}"
+            local container_path="${parts[1]}"
+            local mode="${parts[2]:-ro}"
+
+            # Expand ~ and $HOME
+            host_path=$(eval echo "$host_path" 2>/dev/null || echo "$host_path")
+
+            # Only mount if host path exists
+            if [[ -e "$host_path" ]]; then
+                mount_args="$mount_args -v ${host_path}:${container_path}:${mode}"
+                log_info "  Mount preset [$name]: $host_path -> $container_path ($mode)"
+            fi
+
+            # Add associated env vars
+            local env_list="${DOCKER_ENV_PRESETS[$name]:-}"
+            if [[ -n "$env_list" ]]; then
+                IFS=',' read -ra env_names <<< "$env_list"
+                local env_name
+                for env_name in "${env_names[@]}"; do
+                    if [[ "$env_name" == *"*" ]]; then
+                        # Wildcard: pass all matching env vars
+                        local prefix="${env_name%\*}"
+                        while IFS='=' read -r key val; do
+                            [[ "$key" == "$prefix"* ]] && [[ -n "$val" ]] && \
+                                mount_args="$mount_args -e $key"
+                        done < <(env)
+                    elif [[ -n "${!env_name:-}" ]]; then
+                        mount_args="$mount_args -e $env_name"
+                    fi
+                done
+            fi
+        done <<< "$preset_names"
+    fi
+
+    echo "$mount_args"
+}
+
 start_sandbox() {
-    local prd_path="${1:-}"
+    # Parse arguments: extract flags before positional args
+    local prd_path=""
     local provider="${LOKI_PROVIDER:-claude}"
+    local no_mounts=false
+    local -a custom_mounts=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --mount)
+                if [[ -n "${2:-}" ]]; then
+                    custom_mounts+=("$2")
+                    shift 2
+                else
+                    log_error "--mount requires HOST:CONTAINER:MODE argument"
+                    return 1
+                fi
+                ;;
+            --no-mounts)
+                no_mounts=true
+                shift
+                ;;
+            --provider)
+                if [[ -n "${2:-}" ]]; then
+                    provider="$2"
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
+            *)
+                # First non-flag argument is the PRD path
+                if [[ -z "$prd_path" ]]; then
+                    prd_path="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
 
     # Set up signal handler to cleanup on Ctrl+C
     trap cleanup_container INT TERM
@@ -886,6 +1034,38 @@ start_sandbox() {
     if [[ -d "$HOME/.config/gh" ]]; then
         docker_args+=("--volume" "$HOME/.config/gh:/home/loki/.config/gh:ro")
     fi
+
+    # Apply Docker credential mount presets (additive on top of defaults above)
+    if [[ "$no_mounts" != "true" ]] && [[ "${LOKI_NO_DOCKER_MOUNTS:-}" != "true" ]]; then
+        local preset_mounts
+        preset_mounts=$(resolve_docker_mounts)
+        if [[ -n "$preset_mounts" ]]; then
+            # shellcheck disable=SC2206
+            docker_args+=($preset_mounts)
+        fi
+    fi
+
+    # Apply custom --mount arguments
+    local custom_mount
+    for custom_mount in "${custom_mounts[@]+"${custom_mounts[@]}"}"; do
+        if [[ -n "$custom_mount" ]]; then
+            IFS=':' read -ra mount_parts <<< "$custom_mount"
+            local c_host="${mount_parts[0]:-}"
+            local c_container="${mount_parts[1]:-}"
+            local c_mode="${mount_parts[2]:-ro}"
+            if [[ -n "$c_host" ]] && [[ -n "$c_container" ]]; then
+                c_host=$(eval echo "$c_host" 2>/dev/null || echo "$c_host")
+                if [[ -e "$c_host" ]]; then
+                    docker_args+=("--volume" "${c_host}:${c_container}:${c_mode}")
+                    log_info "  Custom mount: $c_host -> $c_container ($c_mode)"
+                else
+                    log_warn "Custom mount source does not exist: $c_host"
+                fi
+            else
+                log_warn "Invalid mount format: $custom_mount (expected HOST:CONTAINER[:MODE])"
+            fi
+        fi
+    done
 
     # Pass API keys as environment variables (more secure than mounting files)
     if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then

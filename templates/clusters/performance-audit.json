@@ -1,0 +1,29 @@
+{
+    "name": "Performance Audit",
+    "description": "Performance analysis with profiling and optimization recommendations",
+    "version": "1.0.0",
+    "topology": "fan-out-fan-in",
+    "agents": [
+        {
+            "id": "profiler",
+            "type": "eng-perf",
+            "role": "Profile application and identify bottlenecks",
+            "subscribes": ["task.start"],
+            "publishes": ["profile.results"]
+        },
+        {
+            "id": "db-analyzer",
+            "type": "eng-database",
+            "role": "Analyze database queries and index usage",
+            "subscribes": ["task.start"],
+            "publishes": ["db.analysis"]
+        },
+        {
+            "id": "optimizer",
+            "type": "eng-perf",
+            "role": "Generate optimization recommendations from all analyses",
+            "subscribes": ["profile.results", "db.analysis"],
+            "publishes": ["task.complete"]
+        }
+    ]
+}

@@ -448,6 +448,12 @@ show_help() {
     echo "  --parallel         Enable parallel mode with git worktrees"
     echo "  --budget USD       Set cost budget limit"
     echo ""
+    echo "Progressive Isolation (for 'run'):"
+    echo "  --worktree, -w     Git worktree isolation (separate branch)"
+    echo "  --pr               Auto-create PR after completion (implies --worktree)"
+    echo "  --ship             Auto-merge after PR (implies --pr)"
+    echo "  --detach, -d       Run in background (implies --worktree)"
+    echo ""
     echo "Examples:"
     echo "  loki run 123                  # GitHub issue from current repo"
     echo "  loki run PROJ-456             # Jira issue"
@@ -2519,6 +2525,10 @@ cmd_run() {
     local start_args=()
     local no_start=false
     local provider_override=""
+    local use_worktree=false
+    local create_pr=false
+    local auto_merge=false
+    local run_detached=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2551,6 +2561,14 @@ cmd_run() {
                 echo "  --sandbox          Run in Docker sandbox"
                 echo "  --budget USD       Set cost budget limit"
                 echo ""
+                echo "Progressive Isolation:"
+                echo "  --worktree, -w     Git worktree isolation (separate branch)"
+                echo "  --pr               Worktree + auto-create PR (implies --worktree)"
+                echo "  --ship             Worktree + PR + auto-merge (implies --pr)"
+                echo "  --detach, -d       Run in background (implies --worktree)"
+                echo ""
+                echo "  Cascade: --ship implies --pr implies --worktree"
+                echo ""
                 echo "Environment Variables:"
                 echo "  JIRA_API_TOKEN     Jira API token (for Jira issues)"
                 echo "  JIRA_URL           Jira base URL (for Jira issues)"
@@ -2563,6 +2581,10 @@ cmd_run() {
                 echo "  loki run https://gitlab.com/o/r/-/issues/42  # GitLab issue"
                 echo "  loki run 123 --dry-run                   # Preview PRD"
                 echo "  loki run 123 --parallel --provider codex # Parallel mode with Codex"
+                echo "  loki run 123 --worktree                  # Isolated branch"
+                echo "  loki run 123 --pr                        # Auto-create PR"
+                echo "  loki run 123 --ship                      # Full automation: PR + merge"
+                echo "  loki run 123 --ship -d                   # Background, full automation"
                 exit 0
                 ;;
             --dry-run)
@@ -2626,6 +2648,30 @@ cmd_run() {
                 start_args+=("--budget" "${1#*=}")
                 shift
                 ;;
+            --worktree|-w)
+                start_args+=("--parallel")
+                use_worktree=true
+                shift
+                ;;
+            --pr)
+                use_worktree=true
+                create_pr=true
+                start_args+=("--parallel")
+                shift
+                ;;
+            --ship)
+                use_worktree=true
+                create_pr=true
+                auto_merge=true
+                start_args+=("--parallel")
+                shift
+                ;;
+            --detach|-d)
+                use_worktree=true
+                run_detached=true
+                start_args+=("--parallel")
+                shift
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 echo "Run 'loki run --help' for usage."
@@ -2687,9 +2733,45 @@ cmd_run() {
     fi
     echo ""
 
+    # Progressive isolation: set up worktree branch naming
+    if $use_worktree; then
+        local branch_name="issue/${issue_provider}-${number:-$(date +%s)}"
+        log_info "Progressive isolation: branch $branch_name"
+        export LOKI_PARALLEL_MODE=true
+        export LOKI_WORKTREE_BRANCH="$branch_name"
+    fi
+
     # Generate PRD
     local prd_content
     prd_content=$(echo "$issue_json" | generate_prd_from_issue)
+
+    # Detached mode: fork to background
+    if $run_detached; then
+        local log_file="$LOKI_DIR/logs/run-${number:-$(date +%s)}.log"
+        mkdir -p "$(dirname "$log_file")"
+        echo -e "${GREEN}Running detached. Logs: $log_file${NC}"
+        echo -e "Check status: ${CYAN}loki status${NC}"
+
+        # Write PRD first so background process can use it
+        mkdir -p "$LOKI_DIR"
+        local prd_content_detach
+        prd_content_detach=$(echo "$issue_json" | generate_prd_from_issue)
+        local detach_prd="$LOKI_DIR/prd-issue-${number}.md"
+        echo "$prd_content_detach" > "$detach_prd"
+
+        nohup bash -c "
+            cd $(pwd)
+            export LOKI_DETACHED=true
+            export LOKI_PARALLEL_MODE=true
+            export LOKI_WORKTREE_BRANCH=\"$branch_name\"
+            $(command -v loki || echo "$0") start \"$detach_prd\" --parallel ${start_args[*]+"${start_args[*]}"}
+        " > "$log_file" 2>&1 &
+
+        local bg_pid=$!
+        echo "$bg_pid" > "$LOKI_DIR/run-${number:-detached}.pid"
+        echo "Background PID: $bg_pid"
+        return 0
+    fi
 
     # Handle dry-run
     if [[ "$dry_run" == "true" ]]; then
@@ -2728,6 +2810,75 @@ cmd_run() {
         echo ""
         echo -e "${GREEN}Starting Loki Mode with generated PRD...${NC}"
         cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"}
+
+        # Progressive isolation: create PR
+        if $create_pr; then
+            echo ""
+            echo -e "${GREEN}Creating pull request...${NC}"
+            local pr_title="${title:-Implementation for issue ${issue_ref}}"
+            local pr_body="Implemented by Loki Mode (autonomous agent)
+
+Issue: ${issue_ref}
+Provider: ${issue_provider}
+
+## Changes
+$(git log --oneline "main..HEAD" 2>/dev/null || echo "See diff")"
+
+            case "${issue_provider:-github}" in
+                github)
+                    if command -v gh &>/dev/null; then
+                        local branch_current
+                        branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+                        if [[ -n "$branch_current" && "$branch_current" != "main" && "$branch_current" != "master" ]]; then
+                            git push origin "$branch_current" 2>/dev/null || true
+                            gh pr create --title "$pr_title" --body "$pr_body" --head "$branch_current" 2>/dev/null && \
+                                echo -e "${GREEN}PR created${NC}" || \
+                                echo -e "${YELLOW}PR creation failed${NC}"
+                        fi
+                    fi
+                    ;;
+                gitlab)
+                    if command -v glab &>/dev/null; then
+                        local branch_current
+                        branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+                        if [[ -n "$branch_current" && "$branch_current" != "main" && "$branch_current" != "master" ]]; then
+                            git push origin "$branch_current" 2>/dev/null || true
+                            glab mr create --title "$pr_title" --description "$pr_body" --source-branch "$branch_current" 2>/dev/null && \
+                                echo -e "${GREEN}MR created${NC}" || \
+                                echo -e "${YELLOW}MR creation failed${NC}"
+                        fi
+                    fi
+                    ;;
+                *)
+                    echo -e "${YELLOW}PR creation not supported for provider: $issue_provider${NC}"
+                    ;;
+            esac
+        fi
+
+        # Progressive isolation: auto-merge
+        if $auto_merge; then
+            echo -e "${GREEN}Auto-merging...${NC}"
+            case "${issue_provider:-github}" in
+                github)
+                    local branch_current
+                    branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+                    gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null && \
+                        echo -e "${GREEN}PR merged and branch deleted${NC}" || \
+                        echo -e "${YELLOW}Auto-merge failed. PR remains open.${NC}"
+                    if [[ -n "${number:-}" ]]; then
+                        gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
+                    fi
+                    ;;
+                gitlab)
+                    glab mr merge --squash --remove-source-branch 2>/dev/null && \
+                        echo -e "${GREEN}MR merged and branch deleted${NC}" || \
+                        echo -e "${YELLOW}Auto-merge failed. MR remains open.${NC}"
+                    ;;
+                *)
+                    echo -e "${YELLOW}Auto-merge not supported for provider: $issue_provider${NC}"
+                    ;;
+            esac
+        fi
     fi
 }
 
@@ -6739,6 +6890,167 @@ cmd_migrate() {
     cmd_migrate_start "$codebase_path" "$target" "$plan_only" "$phase" "$parallel" "$compliance" "$dry_run" "$do_resume" "$multi_repo" "$export_report" "$no_dashboard" "$no_docs"
 }
 
+#===============================================================================
+# loki cluster - Custom workflow templates (v6.2.0)
+#===============================================================================
+
+cmd_cluster() {
+    local subcmd="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "$subcmd" in
+        --help|-h|help)
+            echo -e "${BOLD}loki cluster${NC} - Custom workflow templates (v6.2.0)"
+            echo ""
+            echo "Usage: loki cluster <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  list               List available workflow templates"
+            echo "  validate <name>    Validate a cluster template"
+            echo "  run <name> [args]  Execute a cluster workflow"
+            echo "  info <name>        Show template details"
+            echo ""
+            echo "Examples:"
+            echo "  loki cluster list"
+            echo "  loki cluster validate security-review"
+            echo "  loki cluster info code-review"
+            ;;
+        list)
+            echo -e "${BOLD}Available Cluster Templates${NC}"
+            echo ""
+            local template_dir="$SKILL_DIR/templates/clusters"
+            if [[ ! -d "$template_dir" ]]; then
+                echo "No templates found at $template_dir"
+                return 1
+            fi
+            for f in "$template_dir"/*.json; do
+                [[ ! -f "$f" ]] && continue
+                local name
+                name=$(basename "$f" .json)
+                local desc
+                desc=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    print(d.get('description', 'No description'))
+except: print('Error reading template')
+" "$f" 2>/dev/null || echo "")
+                local agent_count
+                agent_count=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    print(len(d.get('agents', [])))
+except: print('?')
+" "$f" 2>/dev/null || echo "?")
+                printf "  %-20s %s agents  %s\n" "$name" "$agent_count" "$desc"
+            done
+            ;;
+        validate)
+            local template_name="${1:-}"
+            if [[ -z "$template_name" ]]; then
+                echo -e "${RED}Usage: loki cluster validate <template-name>${NC}"
+                return 1
+            fi
+            local template_file="$SKILL_DIR/templates/clusters/${template_name}.json"
+            if [[ ! -f "$template_file" ]]; then
+                echo -e "${RED}Template not found: $template_name${NC}"
+                echo "Run 'loki cluster list' to see available templates."
+                return 1
+            fi
+            echo -e "${CYAN}Validating: $template_name${NC}"
+            local errors
+            errors=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$(dirname "$SKILL_DIR/swarm/")')
+sys.path.insert(0, '$SKILL_DIR')
+from swarm.patterns import TopologyValidator
+errors = TopologyValidator.validate_file(sys.argv[1])
+if errors:
+    for e in errors:
+        print(f'ERROR: {e}')
+else:
+    print('VALID')
+" "$template_file" 2>&1)
+            if echo "$errors" | grep -q "^VALID$"; then
+                echo -e "${GREEN}Template is valid${NC}"
+                return 0
+            else
+                echo -e "${RED}Validation errors:${NC}"
+                echo "$errors"
+                return 1
+            fi
+            ;;
+        info)
+            local template_name="${1:-}"
+            if [[ -z "$template_name" ]]; then
+                echo -e "${RED}Usage: loki cluster info <template-name>${NC}"
+                return 1
+            fi
+            local template_file="$SKILL_DIR/templates/clusters/${template_name}.json"
+            if [[ ! -f "$template_file" ]]; then
+                echo -e "${RED}Template not found: $template_name${NC}"
+                return 1
+            fi
+            python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+print(f\"Name:        {d.get('name', 'unknown')}\")
+print(f\"Description: {d.get('description', 'none')}\")
+print(f\"Version:     {d.get('version', 'unknown')}\")
+print(f\"Topology:    {d.get('topology', 'unknown')}\")
+print(f\"Agents:      {len(d.get('agents', []))}\")
+print()
+for a in d.get('agents', []):
+    subs = ', '.join(a.get('subscribes', []))
+    pubs = ', '.join(a.get('publishes', []))
+    print(f\"  [{a['id']}] ({a.get('type', '?')})\")
+    print(f\"    Role: {a.get('role', '?')}\")
+    print(f\"    Subscribes: {subs}\")
+    print(f\"    Publishes:  {pubs}\")
+    print()
+" "$template_file"
+            ;;
+        run)
+            local template_name="${1:-}"
+            if [[ -z "$template_name" ]]; then
+                echo -e "${RED}Usage: loki cluster run <template-name> [args]${NC}"
+                return 1
+            fi
+            local template_file="$SKILL_DIR/templates/clusters/${template_name}.json"
+            if [[ ! -f "$template_file" ]]; then
+                echo -e "${RED}Template not found: $template_name${NC}"
+                return 1
+            fi
+            # Validate first
+            local errors
+            errors=$(python3 -c "
+import json, sys
+sys.path.insert(0, '$SKILL_DIR')
+from swarm.patterns import TopologyValidator
+errors = TopologyValidator.validate_file(sys.argv[1])
+for e in errors: print(e)
+" "$template_file" 2>&1)
+            if [[ -n "$errors" ]]; then
+                echo -e "${RED}Template validation failed:${NC}"
+                echo "$errors"
+                return 1
+            fi
+            echo -e "${GREEN}Cluster template: $template_name${NC}"
+            echo -e "${YELLOW}Note: Cluster execution engine is planned for v6.3.0.${NC}"
+            echo -e "Template validated successfully. Use 'loki cluster info $template_name' for details."
+            ;;
+        *)
+            echo -e "${RED}Unknown cluster command: $subcmd${NC}"
+            echo "Run 'loki cluster --help' for usage."
+            return 1
+            ;;
+    esac
+}
+
 # Main command dispatcher
 main() {
     if [ $# -eq 0 ]; then
@@ -6868,6 +7180,9 @@ main() {
             ;;
         migrate)
             cmd_migrate "$@"
+            ;;
+        cluster)
+            cmd_cluster "$@"
             ;;
         metrics)
             cmd_metrics "$@"

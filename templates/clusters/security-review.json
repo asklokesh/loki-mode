@@ -1,0 +1,36 @@
+{
+    "name": "Security Review",
+    "description": "Multi-agent security audit with adversarial testing",
+    "version": "1.0.0",
+    "topology": "pipeline",
+    "agents": [
+        {
+            "id": "scanner",
+            "type": "ops-security",
+            "role": "Run SAST/dependency scanning on codebase",
+            "subscribes": ["task.start"],
+            "publishes": ["scan.results"]
+        },
+        {
+            "id": "reviewer",
+            "type": "review-security",
+            "role": "Review findings from scanner, assess severity",
+            "subscribes": ["scan.results"],
+            "publishes": ["review.findings"]
+        },
+        {
+            "id": "adversarial",
+            "type": "review-security",
+            "role": "Attempt to exploit discovered vulnerabilities",
+            "subscribes": ["review.findings"],
+            "publishes": ["exploit.results"]
+        },
+        {
+            "id": "reporter",
+            "type": "prod-techwriter",
+            "role": "Compile security report from all findings",
+            "subscribes": ["scan.results", "review.findings", "exploit.results"],
+            "publishes": ["task.complete"]
+        }
+    ]
+}
