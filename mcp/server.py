@@ -1231,10 +1231,15 @@ def _get_chroma_collection():
     """Get or create ChromaDB collection (lazy connection)."""
     global _chroma_client, _chroma_collection
     if _chroma_collection is not None:
-        return _chroma_collection
+        try:
+            _chroma_client.heartbeat()
+            return _chroma_collection
+        except Exception:
+            _chroma_client = None
+            _chroma_collection = None
     try:
         import chromadb
-        _chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=int(CHROMA_PORT))
+        _chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
         _chroma_collection = _chroma_client.get_collection(name=CHROMA_COLLECTION)
         return _chroma_collection
     except Exception as e:

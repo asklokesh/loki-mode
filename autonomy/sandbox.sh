@@ -70,9 +70,10 @@ PROMPT_INJECTION_ENABLED="${LOKI_PROMPT_INJECTION:-false}"
 # Container runs as user 'loki' (UID 1000), so mount to /home/loki/
 declare -A DOCKER_MOUNT_PRESETS
 DOCKER_MOUNT_PRESETS=(
+    # Note: gh and git are also hardcoded in start_sandbox() defaults
     [gh]="$HOME/.config/gh:/home/loki/.config/gh:ro"
     [git]="$HOME/.gitconfig:/home/loki/.gitconfig:ro"
-    [ssh]="$HOME/.ssh:/home/loki/.ssh:ro"
+    [ssh]="$HOME/.ssh/known_hosts:/home/loki/.ssh/known_hosts:ro"
     [aws]="$HOME/.aws:/home/loki/.aws:ro"
     [azure]="$HOME/.azure:/home/loki/.azure:ro"
     [kube]="$HOME/.kube:/home/loki/.kube:ro"
@@ -799,7 +800,7 @@ docker_desktop_sandbox_run() {
 # Reads from: .loki/config/settings.json dockerMounts, LOKI_DOCKER_MOUNTS env var
 # Returns: string of -v and -e flags for docker run
 resolve_docker_mounts() {
-    local mount_args=""
+    RESOLVED_MOUNTS=()
 
     # Read configured presets (JSON array of strings)
     local presets_json=""
@@ -807,10 +808,10 @@ resolve_docker_mounts() {
         presets_json=$(python3 -c "
 import json, sys
 try:
-    with open('${PROJECT_DIR}/.loki/config/settings.json') as f:
+    with open(sys.argv[1] + '/.loki/config/settings.json') as f:
         print(json.dumps(json.load(f).get('dockerMounts', [])))
 except: print('[]')
-" 2>/dev/null || echo "[]")
+" "${PROJECT_DIR}" 2>/dev/null || echo "[]")
     fi
 
     # Override with env var if set
@@ -846,12 +847,16 @@ except: pass
             local container_path="${parts[1]}"
             local mode="${parts[2]:-ro}"
 
-            # Expand ~ and $HOME
-            host_path=$(eval echo "$host_path" 2>/dev/null || echo "$host_path")
+            # Safe tilde expansion (no eval)
+            if [[ "$host_path" == "~/"* ]]; then
+                host_path="$HOME/${host_path#\~/}"
+            elif [[ "$host_path" == "~" ]]; then
+                host_path="$HOME"
+            fi
 
             # Only mount if host path exists
             if [[ -e "$host_path" ]]; then
-                mount_args="$mount_args -v ${host_path}:${container_path}:${mode}"
+                RESOLVED_MOUNTS+=("-v" "${host_path}:${container_path}:${mode}")
                 log_info "  Mount preset [$name]: $host_path -> $container_path ($mode)"
             fi
 
@@ -865,18 +870,18 @@ except: pass
                         # Wildcard: pass all matching env vars
                         local prefix="${env_name%\*}"
                         while IFS='=' read -r key val; do
-                            [[ "$key" == "$prefix"* ]] && [[ -n "$val" ]] && \
-                                mount_args="$mount_args -e $key"
+                            [[ "$key" == "$prefix"* ]] && [[ -n "$val" ]] && {
+                                RESOLVED_MOUNTS+=("-e" "$key")
+                                log_info "    Env wildcard [$name]: passing $key"
+                            }
                         done < <(env)
                     elif [[ -n "${!env_name:-}" ]]; then
-                        mount_args="$mount_args -e $env_name"
+                        RESOLVED_MOUNTS+=("-e" "$env_name")
                     fi
                 done
             fi
         done <<< "$preset_names"
     fi
-
-    echo "$mount_args"
 }
 
 start_sandbox() {
@@ -1037,11 +1042,9 @@ start_sandbox() {
 
     # Apply Docker credential mount presets (additive on top of defaults above)
     if [[ "$no_mounts" != "true" ]] && [[ "${LOKI_NO_DOCKER_MOUNTS:-}" != "true" ]]; then
-        local preset_mounts
-        preset_mounts=$(resolve_docker_mounts)
-        if [[ -n "$preset_mounts" ]]; then
-            # shellcheck disable=SC2206
-            docker_args+=($preset_mounts)
+        resolve_docker_mounts
+        if [[ ${#RESOLVED_MOUNTS[@]} -gt 0 ]]; then
+            docker_args+=("${RESOLVED_MOUNTS[@]}")
         fi
     fi
 
@@ -1054,7 +1057,12 @@ start_sandbox() {
             local c_container="${mount_parts[1]:-}"
             local c_mode="${mount_parts[2]:-ro}"
             if [[ -n "$c_host" ]] && [[ -n "$c_container" ]]; then
-                c_host=$(eval echo "$c_host" 2>/dev/null || echo "$c_host")
+                # Safe tilde expansion (no eval)
+                if [[ "$c_host" == "~/"* ]]; then
+                    c_host="$HOME/${c_host#\~/}"
+                elif [[ "$c_host" == "~" ]]; then
+                    c_host="$HOME"
+                fi
                 if [[ -e "$c_host" ]]; then
                     docker_args+=("--volume" "${c_host}:${c_container}:${c_mode}")
                     log_info "  Custom mount: $c_host -> $c_container ($c_mode)"

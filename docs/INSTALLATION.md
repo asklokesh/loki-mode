@@ -6,29 +6,24 @@ The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installa
 
 ---
 
-## What's New in v5.49.1
+## What's New in v6.2.0
 
-### Enterprise Security (v5.36.0-v5.37.1)
-- TLS/HTTPS support for dashboard connections
-- OIDC/SSO authentication (Google, Azure AD, Okta)
-- RBAC roles (admin, operator, viewer, auditor)
-- WebSocket authentication for real-time connections
-- Syslog forwarding for SIEM integration
-- Non-root Docker with SETUID/SETGID removed
-- Salted token hashing and rate limiting
+### Dual-Mode Architecture (v6.0.0)
+- `loki run` command for direct autonomous execution
+- Dual-mode: skill mode (inside Claude Code) and standalone mode
+- Dynamic model resolution across all providers
+- Multi-provider issue fixes and stability improvements
 
-### Monitoring & Observability (v5.38.0)
-- Prometheus/OpenMetrics `/metrics` endpoint with 9 metrics
-- `loki metrics` CLI command
-- Agent action audit trail at `.loki/logs/agent-audit.jsonl`
-- `loki audit` CLI with log/count subcommands
-- SHA-256 chain-hashed tamper-evident audit entries
+### ChromaDB Semantic Code Search (v6.1.0)
+- Semantic code search via ChromaDB vector database
+- MCP integration with `loki_code_search` and `loki_code_search_stats` tools
+- Automatic codebase indexing with `tools/index-codebase.py`
 
-### Workflow Protection (v5.38.0)
-- Branch protection: agent sessions auto-create feature branches
-- PR creation via `gh` on session completion
-- OpenClaw bridge foundation for external integrations
-- Network security documentation (Docker/Kubernetes)
+### Memory System (v5.15.0+)
+- Episodic, semantic, and procedural memory layers
+- Progressive disclosure with 3-layer loading
+- Token economics tracking for discovery vs read tokens
+- Optional vector search with sentence-transformers
 
 ---
 

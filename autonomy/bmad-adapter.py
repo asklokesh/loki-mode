@@ -80,7 +80,7 @@ def parse_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
     """Extract YAML frontmatter from a markdown document.
 
     Returns (metadata_dict, body_without_frontmatter).
-    Handles simple YAML: scalars, lists (flow and block), quoted strings.
+    Handles simple YAML: scalars, lists (flow-style only; block-style not supported), quoted strings.
     Does NOT require PyYAML -- uses regex-based extraction.
     """
     stripped = text.lstrip()
@@ -514,9 +514,10 @@ def validate_chain(
             "message": "PRD frontmatter has no inputDocuments -- cannot verify product-brief linkage.",
         })
     else:
+        docs = input_docs if isinstance(input_docs, list) else [input_docs] if input_docs else []
         findings.append({
             "level": "info",
-            "message": f"PRD references input documents: {', '.join(input_docs)}",
+            "message": f"PRD references input documents: {', '.join(docs)}",
         })
 
     # 2. Missing artifacts

@@ -114,7 +114,6 @@ DIMENSIONS = {
         "weight": 0.75,
         "heading_patterns": [
             r"(?i)#+\s.*(?:deploy|hosting|infra|ci.?cd|environment)",
-            r"(?i)^##\s+Non-Functional\s+Requirements",
         ],
         "content_patterns": [
             r"(?i)\b(?:deploy|hosting|ci.?cd|pipeline|staging|production)\b",
@@ -259,8 +258,9 @@ class PrdAnalyzer:
             if in_feature_section and re.match(r"^\s*#+\s", line):
                 in_feature_section = False
                 continue
-            if re.match(r"^\s*[-*]\s+\S", line) or re.match(r"^\s*\d+\.\s+\S", line):
-                count += 1
+            if in_feature_section:
+                if re.match(r"^\s*[-*]\s+\S", line) or re.match(r"^\s*\d+\.\s+\S", line):
+                    count += 1
 
         self.feature_count = count
         for threshold, label in SCOPE_THRESHOLDS:

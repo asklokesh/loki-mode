@@ -11,6 +11,7 @@ This module defines the message format and types for swarm communication:
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -578,61 +579,69 @@ class PubSubMessageBus:
         self._subscribers: Dict[str, List[Dict[str, Any]]] = {}
         self._message_log: List[Dict[str, Any]] = []
         self._dead_letter: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
+        self._sub_counter: int = 0
 
     def subscribe(self, topic: str, handler) -> str:
         """Subscribe to a topic. Returns subscription ID."""
-        if topic not in self._subscribers:
-            self._subscribers[topic] = []
-        sub_id = f"sub_{len(self._message_log)}_{topic}_{len(self._subscribers[topic])}"
-        self._subscribers[topic].append({"id": sub_id, "handler": handler})
-        return sub_id
+        with self._lock:
+            if topic not in self._subscribers:
+                self._subscribers[topic] = []
+            self._sub_counter += 1
+            sub_id = f"sub_{self._sub_counter}_{topic}"
+            self._subscribers[topic].append({"id": sub_id, "handler": handler})
+            return sub_id
 
     def unsubscribe(self, sub_id: str) -> bool:
         """Remove a subscription by ID."""
-        for topic in self._subscribers:
-            original_len = len(self._subscribers[topic])
-            self._subscribers[topic] = [s for s in self._subscribers[topic] if s["id"] != sub_id]
-            if len(self._subscribers[topic]) != original_len:
-                return True
-        return False
+        with self._lock:
+            for topic in self._subscribers:
+                original_len = len(self._subscribers[topic])
+                self._subscribers[topic] = [s for s in self._subscribers[topic] if s["id"] != sub_id]
+                if len(self._subscribers[topic]) != original_len:
+                    return True
+            return False
 
     def publish(self, topic: str, message: Dict[str, Any], sender: str = "") -> int:
         """Publish a message to a topic. Returns number of deliveries."""
-        envelope = {
-            "topic": topic,
-            "message": message,
-            "sender": sender,
-            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-            "delivered_to": [],
-        }
-        self._message_log.append(envelope)
+        with self._lock:
+            envelope = {
+                "topic": topic,
+                "message": message,
+                "sender": sender,
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "delivered_to": [],
+            }
+            self._message_log.append(envelope)
 
-        delivered = 0
-        matched_subs = []
+            delivered = 0
+            matched_subs = []
 
-        # Collect exact match subscribers
-        for sub in self._subscribers.get(topic, []):
-            matched_subs.append(sub)
+            # Collect exact match subscribers
+            for sub in self._subscribers.get(topic, []):
+                matched_subs.append(sub)
 
-        # Collect wildcard subscribers
-        for pattern, subs in self._subscribers.items():
-            if "*" in pattern and self._matches_wildcard(pattern, topic):
-                matched_subs.extend(subs)
+            # Collect wildcard subscribers
+            for pattern, subs in self._subscribers.items():
+                if pattern == topic:
+                    continue  # already collected via exact match
+                if "*" in pattern and self._matches_wildcard(pattern, topic):
+                    matched_subs.extend(subs)
 
-        # Deliver to all matched subscribers
-        for sub in matched_subs:
-            try:
-                sub["handler"](message, topic, sender)
-                envelope["delivered_to"].append(sub["id"])
-                delivered += 1
-            except Exception as e:
-                self._dead_letter.append({
-                    **envelope,
-                    "error": str(e),
-                    "subscriber": sub["id"],
-                })
+            # Deliver to all matched subscribers
+            for sub in matched_subs:
+                try:
+                    sub["handler"](message, topic, sender)
+                    envelope["delivered_to"].append(sub["id"])
+                    delivered += 1
+                except Exception as e:
+                    self._dead_letter.append({
+                        **envelope,
+                        "error": str(e),
+                        "subscriber": sub["id"],
+                    })
 
-        return delivered
+            return delivered
 
     @staticmethod
     def _matches_wildcard(pattern: str, topic: str) -> bool:
@@ -653,9 +662,10 @@ class PubSubMessageBus:
 
     def clear(self) -> None:
         """Clear all subscriptions and message history."""
-        self._subscribers.clear()
-        self._message_log.clear()
-        self._dead_letter.clear()
+        with self._lock:
+            self._subscribers.clear()
+            self._message_log.clear()
+            self._dead_letter.clear()
 
     @property
     def subscriber_count(self) -> int:

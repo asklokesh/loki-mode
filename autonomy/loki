@@ -646,8 +646,9 @@ cmd_start() {
     if [[ -n "$bmad_project_path" ]]; then
         # Resolve to absolute path
         if [[ ! "$bmad_project_path" = /* ]]; then
+            local original_bmad_path="$bmad_project_path"
             bmad_project_path="$(cd "$bmad_project_path" 2>/dev/null && pwd)" || {
-                echo -e "${RED}Error: BMAD project path does not exist: $bmad_project_path${NC}"
+                echo -e "${RED}Error: BMAD project path does not exist: $original_bmad_path${NC}"
                 exit 1
             }
         fi
@@ -2754,10 +2755,12 @@ cmd_run() {
 
         # Write PRD first so background process can use it
         mkdir -p "$LOKI_DIR"
-        local prd_content_detach
-        prd_content_detach=$(echo "$issue_json" | generate_prd_from_issue)
         local detach_prd="$LOKI_DIR/prd-issue-${number}.md"
-        echo "$prd_content_detach" > "$detach_prd"
+        echo "$prd_content" > "$detach_prd"
+
+        if [[ -z "${branch_name:-}" ]]; then
+            branch_name="issue/detach-$(date +%s)"
+        fi
 
         nohup bash -c "
             cd $(pwd)
@@ -2765,6 +2768,24 @@ cmd_run() {
             export LOKI_PARALLEL_MODE=true
             export LOKI_WORKTREE_BRANCH=\"$branch_name\"
             $(command -v loki || echo "$0") start \"$detach_prd\" --parallel ${start_args[*]+"${start_args[*]}"}
+
+            # Post-completion: create PR if requested
+            if [[ \"$create_pr\" == \"true\" ]]; then
+                branch_current=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"\")
+                if [[ -n \"\$branch_current\" && \"\$branch_current\" != \"main\" && \"\$branch_current\" != \"master\" ]]; then
+                    git push origin \"\$branch_current\" 2>/dev/null || true
+                    gh pr create --title \"${title:-Implementation for issue ${issue_ref}}\" --body \"Implemented by Loki Mode\" --head \"\$branch_current\" 2>/dev/null || true
+                fi
+            fi
+            # Post-completion: auto-merge if requested
+            if [[ \"$auto_merge\" == \"true\" ]]; then
+                branch_current=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"\")
+                if gh pr merge \"\$branch_current\" --squash --delete-branch 2>/dev/null; then
+                    if [[ -n \"${number:-}\" ]]; then
+                        gh issue close \"$number\" --comment \"Resolved by Loki Mode\" 2>/dev/null || true
+                    fi
+                fi
+            fi
         " > "$log_file" 2>&1 &
 
         local bg_pid=$!
@@ -2862,11 +2883,13 @@ $(git log --oneline "main..HEAD" 2>/dev/null || echo "See diff")"
                 github)
                     local branch_current
                     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-                    gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null && \
-                        echo -e "${GREEN}PR merged and branch deleted${NC}" || \
+                    if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
+                        echo -e "${GREEN}PR merged and branch deleted${NC}"
+                        if [[ -n "${number:-}" ]]; then
+                            gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
+                        fi
+                    else
                         echo -e "${YELLOW}Auto-merge failed. PR remains open.${NC}"
-                    if [[ -n "${number:-}" ]]; then
-                        gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
                     fi
                     ;;
                 gitlab)
@@ -6964,7 +6987,6 @@ except: print('?')
             local errors
             errors=$(python3 -c "
 import json, sys
-sys.path.insert(0, '$(dirname "$SKILL_DIR/swarm/")')
 sys.path.insert(0, '$SKILL_DIR')
 from swarm.patterns import TopologyValidator
 errors = TopologyValidator.validate_file(sys.argv[1])
@@ -7026,17 +7048,20 @@ for a in d.get('agents', []):
                 return 1
             fi
             # Validate first
-            local errors
-            errors=$(python3 -c "
+            local result
+            result=$(python3 -c "
 import json, sys
 sys.path.insert(0, '$SKILL_DIR')
 from swarm.patterns import TopologyValidator
 errors = TopologyValidator.validate_file(sys.argv[1])
-for e in errors: print(e)
+if errors:
+    for e in errors: print(f'ERROR: {e}')
+else:
+    print('VALID')
 " "$template_file" 2>&1)
-            if [[ -n "$errors" ]]; then
+            if ! echo "$result" | grep -q "^VALID$"; then
                 echo -e "${RED}Template validation failed:${NC}"
-                echo "$errors"
+                echo "$result"
                 return 1
             fi
             echo -e "${GREEN}Cluster template: $template_name${NC}"

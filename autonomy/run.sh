@@ -7043,7 +7043,19 @@ except: pass
         fi
         local bmad_tasks=""
         if [[ -f ".loki/bmad-tasks.json" ]]; then
-            bmad_tasks=$(head -c 32000 ".loki/bmad-tasks.json")
+            bmad_tasks=$(python3 -c "
+import json, sys
+try:
+    with open('.loki/bmad-tasks.json') as f:
+        data = json.load(f)
+    out = json.dumps(data, indent=None)
+    if len(out) > 32000 and isinstance(data, list):
+        while len(json.dumps(data, indent=None)) > 32000 and data:
+            data.pop()
+        out = json.dumps(data, indent=None)
+    print(out[:32000])
+except: pass
+" 2>/dev/null)
         fi
         local bmad_validation=""
         if [[ -f ".loki/bmad-validation.md" ]]; then
@@ -7100,7 +7112,7 @@ populate_bmad_queue() {
     mkdir -p ".loki/queue"
 
     # Read BMAD tasks and create queue entries
-    python3 << 'BMAD_QUEUE_EOF' 2>/dev/null
+    python3 << 'BMAD_QUEUE_EOF'
 import json
 import os
 import sys
@@ -7155,12 +7167,16 @@ if os.path.exists(pending_path):
     except (json.JSONDecodeError, FileNotFoundError):
         existing = []
 
-# Convert BMAD stories to queue task format
+# Convert BMAD stories to queue task format (with deduplication)
+existing_ids = {t.get("id") for t in existing if isinstance(t, dict)}
 for i, story in enumerate(stories):
     if not isinstance(story, dict):
         continue
+    task_id = f"bmad-{i+1}"
+    if task_id in existing_ids:
+        continue
     task = {
-        "id": f"bmad-{i+1}",
+        "id": task_id,
         "title": story.get("title", story.get("name", f"BMAD Story {i+1}")),
         "description": story.get("description", story.get("action", "")),
         "priority": story.get("priority", "medium"),
