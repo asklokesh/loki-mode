@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rebuild dashboard frontend (missed in v6.3.0 release workflow)
 - Ran Opus feedback loop to verify all 17 v6.3.0 feature claims (all verified)
 - Ran Playwright E2E tests (9 passed)
+- Add conftest.py to legacy-checkout-app fixture to exclude from root pytest collection
 
 ## [6.3.0] - 2026-02-26
 
