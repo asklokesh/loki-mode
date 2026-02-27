@@ -806,8 +806,35 @@ cmd_start() {
 }
 
 # Check if session is running
+# Usage: is_session_running [session_id]
+# Without args: returns true if ANY session (global or per-session) is running
+# With session_id: returns true only if that specific session is running
 is_session_running() {
-    # Check both possible PID files (loki.pid from run.sh, run.pid legacy)
+    local target_session="${1:-}"
+
+    if [ -n "$target_session" ]; then
+        # Check specific session
+        local session_pid_file="$LOKI_DIR/sessions/$target_session/loki.pid"
+        if [ -f "$session_pid_file" ]; then
+            local pid
+            pid=$(cat "$session_pid_file" 2>/dev/null)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+        fi
+        # Also check legacy per-run PID file (run-<number>.pid)
+        local run_pid_file="$LOKI_DIR/run-${target_session}.pid"
+        if [ -f "$run_pid_file" ]; then
+            local pid
+            pid=$(cat "$run_pid_file" 2>/dev/null)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+        fi
+        return 1
+    fi
+
+    # Check global PID files (loki.pid from run.sh, run.pid legacy)
     local pid_files=("$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid")
     for pid_file in "${pid_files[@]}"; do
         if [ -f "$pid_file" ]; then
@@ -818,15 +845,151 @@ is_session_running() {
             fi
         fi
     done
+
+    # Check per-session PIDs
+    if [ -d "$LOKI_DIR/sessions" ]; then
+        for session_dir in "$LOKI_DIR/sessions"/*/; do
+            [ -d "$session_dir" ] || continue
+            local pid_file="${session_dir}loki.pid"
+            if [ -f "$pid_file" ]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null)
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    return 0
+                fi
+            fi
+        done
+    fi
     return 1
 }
 
-# Stop execution immediately
+# List all running session IDs
+list_running_sessions() {
+    local sessions=()
+    # Check global session
+    if [ -f "$LOKI_DIR/loki.pid" ]; then
+        local pid
+        pid=$(cat "$LOKI_DIR/loki.pid" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            sessions+=("global:$pid")
+        fi
+    fi
+    # Check per-session PIDs
+    if [ -d "$LOKI_DIR/sessions" ]; then
+        for session_dir in "$LOKI_DIR/sessions"/*/; do
+            [ -d "$session_dir" ] || continue
+            local sid pid_file pid
+            sid=$(basename "$session_dir")
+            pid_file="${session_dir}loki.pid"
+            if [ -f "$pid_file" ]; then
+                pid=$(cat "$pid_file" 2>/dev/null)
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    sessions+=("$sid:$pid")
+                fi
+            fi
+        done
+    fi
+    # Check legacy run-*.pid files
+    for run_pid_file in "$LOKI_DIR"/run-*.pid; do
+        [ -f "$run_pid_file" ] || continue
+        local sid pid
+        sid=$(basename "$run_pid_file" .pid)
+        sid="${sid#run-}"
+        pid=$(cat "$run_pid_file" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            # Avoid duplicates (if also in sessions/)
+            local dup=false
+            for s in "${sessions[@]}"; do
+                if [[ "$s" == "$sid:"* ]]; then dup=true; break; fi
+            done
+            if ! $dup; then
+                sessions+=("$sid:$pid")
+            fi
+        fi
+    done
+    printf '%s\n' "${sessions[@]}"
+}
+
+# Kill a PID with SIGTERM, wait, then SIGKILL if needed
+_kill_pid() {
+    local pid="$1"
+    pkill -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+        pkill -9 -P "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+}
+
+# Stop a specific session by its session ID
+_stop_session_by_id() {
+    local sid="$1"
+    local session_dir="$LOKI_DIR/sessions/$sid"
+    local pid_file="$session_dir/loki.pid"
+
+    if [ -f "$pid_file" ]; then
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            _kill_pid "$pid"
+            echo -e "${RED}Stopped session $sid (PID: $pid)${NC}"
+        fi
+        rm -f "$pid_file"
+    fi
+
+    # Also check legacy run-<id>.pid
+    local run_pid_file="$LOKI_DIR/run-${sid}.pid"
+    if [ -f "$run_pid_file" ]; then
+        local pid
+        pid=$(cat "$run_pid_file" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            _kill_pid "$pid"
+        fi
+        rm -f "$run_pid_file"
+    fi
+
+    # Clean up session lock file
+    rm -f "$session_dir/session.lock" 2>/dev/null
+}
+
+# Stop a specific session or all sessions
+# Usage: loki stop [session_id]
+# Without args: stops all running sessions
+# With session_id: stops only that specific session
 cmd_stop() {
+    local target_session=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki stop${NC} - Stop running sessions (v6.4.0)"
+                echo ""
+                echo "Usage: loki stop [session-id]"
+                echo ""
+                echo "  loki stop          Stop all running sessions"
+                echo "  loki stop 52       Stop only session #52"
+                echo "  loki stop 54       Stop only session #54"
+                echo ""
+                echo "Use 'loki status' to see all running sessions."
+                exit 0
+                ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki stop --help' for usage."
+                exit 1
+                ;;
+            *)
+                target_session="$1"
+                shift
+                ;;
+        esac
+    done
+
     if [ ! -d "$LOKI_DIR" ]; then
         echo -e "${YELLOW}No .loki directory found.${NC}"
         echo "No active session to stop."
-        # Emit error pattern for stop without session (SYN-018)
         emit_learning_signal error_pattern \
             --source cli \
             --action "cmd_stop" \
@@ -837,28 +1000,54 @@ cmd_stop() {
         exit 0
     fi
 
+    # Stop a specific session by ID
+    if [ -n "$target_session" ]; then
+        if is_session_running "$target_session"; then
+            _stop_session_by_id "$target_session"
+        else
+            echo -e "${YELLOW}Session '$target_session' is not running.${NC}"
+        fi
+        return 0
+    fi
+
+    # No session ID given -- stop all running sessions
     if is_session_running; then
+        # Stop per-session PIDs first
+        if [ -d "$LOKI_DIR/sessions" ]; then
+            for session_dir in "$LOKI_DIR/sessions"/*/; do
+                [ -d "$session_dir" ] || continue
+                local sid
+                sid=$(basename "$session_dir")
+                if is_session_running "$sid"; then
+                    _stop_session_by_id "$sid"
+                fi
+            done
+        fi
+        # Stop legacy run-*.pid sessions
+        for run_pid_file in "$LOKI_DIR"/run-*.pid; do
+            [ -f "$run_pid_file" ] || continue
+            local pid
+            pid=$(cat "$run_pid_file" 2>/dev/null)
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                _kill_pid "$pid"
+                local sid
+                sid=$(basename "$run_pid_file" .pid)
+                echo -e "${RED}Stopped session ${sid#run-} (PID: $pid)${NC}"
+            fi
+            rm -f "$run_pid_file"
+        done
+
+        # Stop global session
         touch "$LOKI_DIR/STOP"
 
-        # Kill the background process and all its children
         local killed_pid=""
         for pid_file in "$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid"; do
             if [ -f "$pid_file" ]; then
                 local pid
                 pid=$(cat "$pid_file" 2>/dev/null)
                 if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                    # Kill all child processes first (SIGTERM)
-                    pkill -P "$pid" 2>/dev/null || true
-                    # Then kill the parent (SIGTERM)
-                    kill "$pid" 2>/dev/null || true
+                    _kill_pid "$pid"
                     killed_pid="$pid"
-
-                    # Wait briefly, then SIGKILL if still alive
-                    sleep 1
-                    if kill -0 "$pid" 2>/dev/null; then
-                        pkill -9 -P "$pid" 2>/dev/null || true
-                        kill -9 "$pid" 2>/dev/null || true
-                    fi
                 fi
                 rm -f "$pid_file"
             fi
@@ -871,7 +1060,6 @@ cmd_stop() {
 
         # Mark session.json as stopped (skill-invoked sessions)
         if [ -f "$LOKI_DIR/session.json" ]; then
-            # Use python for reliable JSON update, fall back to overwrite
             python3 -c "
 import json, sys, os
 try:
@@ -1161,6 +1349,29 @@ cmd_status() {
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
     echo -e "${DIM}  Switch with: loki provider set <claude|codex|gemini>${NC}"
     echo ""
+
+    # Show running sessions (v6.4.0 - concurrent session support)
+    local running_sessions=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && running_sessions+=("$line")
+    done < <(list_running_sessions 2>/dev/null)
+
+    if [ ${#running_sessions[@]} -gt 1 ]; then
+        echo -e "${GREEN}Active Sessions: ${#running_sessions[@]}${NC}"
+        for entry in "${running_sessions[@]}"; do
+            local sid="${entry%%:*}"
+            local spid="${entry#*:}"
+            if [ "$sid" = "global" ]; then
+                echo -e "  ${CYAN}[global]${NC} PID $spid"
+            else
+                echo -e "  ${CYAN}[#$sid]${NC} PID $spid"
+            fi
+        done
+        echo ""
+        echo -e "${DIM}  Stop specific: loki stop <session-id>${NC}"
+        echo -e "${DIM}  Stop all:      loki stop${NC}"
+        echo ""
+    fi
 
     # Check for signals first (more prominent)
     if [ -f "$LOKI_DIR/PAUSE" ]; then
@@ -2740,6 +2951,12 @@ cmd_run() {
     fi
     echo ""
 
+    # Per-session locking (v6.4.0): export session ID so run.sh uses
+    # per-session PID/lock files instead of the global lock. This allows
+    # multiple concurrent `loki run` sessions (e.g., loki run 52 -d && loki run 54 -d).
+    local session_id="${number:-$(date +%s)}"
+    export LOKI_SESSION_ID="$session_id"
+
     # Progressive isolation: set up worktree branch naming
     if $use_worktree; then
         local branch_name="issue/${issue_provider}-${number:-$(date +%s)}"
@@ -2772,6 +2989,7 @@ cmd_run() {
             cd $(pwd)
             export LOKI_DETACHED=true
             export LOKI_PARALLEL_MODE=true
+            export LOKI_SESSION_ID=\"$session_id\"
             export LOKI_WORKTREE_BRANCH=\"$branch_name\"
             $(command -v loki || echo "$0") start \"$detach_prd\" --parallel ${start_args[*]+"${start_args[*]}"}
 
@@ -7181,7 +7399,7 @@ main() {
             cmd_init "$@"
             ;;
         stop)
-            cmd_stop
+            cmd_stop "$@"
             ;;
         cleanup)
             cmd_cleanup "$@"

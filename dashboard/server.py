@@ -203,6 +203,14 @@ class TaskResponse(BaseModel):
         from_attributes = True
 
 
+class SessionInfo(BaseModel):
+    """Info about a single running session."""
+    session_id: str
+    pid: int
+    status: str = "running"
+    log_file: str = ""
+
+
 class StatusResponse(BaseModel):
     """Schema for system status response."""
     status: str
@@ -219,6 +227,8 @@ class StatusResponse(BaseModel):
     mode: str = ""
     provider: str = "claude"
     current_task: str = ""
+    # Concurrent sessions (v6.4.0)
+    sessions: list[SessionInfo] = []
 
 
 # WebSocket connection manager
@@ -521,11 +531,73 @@ async def get_status() -> StatusResponse:
         except Exception:
             pass
 
+    # Discover all running sessions (v6.4.0 - concurrent session support)
+    active_session_list: list[SessionInfo] = []
+
+    # Global session
+    if running:
+        active_session_list.append(SessionInfo(
+            session_id="global",
+            pid=int(pid_str) if pid_str else 0,
+            status=status,
+        ))
+
+    # Per-session PIDs under .loki/sessions/<id>/
+    sessions_dir = loki_dir / "sessions"
+    if sessions_dir.is_dir():
+        for session_path in sessions_dir.iterdir():
+            if not session_path.is_dir():
+                continue
+            sid = session_path.name
+            spid_file = session_path / "loki.pid"
+            if spid_file.exists():
+                try:
+                    spid_str = spid_file.read_text().strip()
+                    spid = int(spid_str)
+                    os.kill(spid, 0)
+                    # Find log file if available
+                    log_path = ""
+                    log_candidate = loki_dir / "logs" / f"run-{sid}.log"
+                    if log_candidate.exists():
+                        log_path = str(log_candidate)
+                    active_session_list.append(SessionInfo(
+                        session_id=sid,
+                        pid=spid,
+                        status="running",
+                        log_file=log_path,
+                    ))
+                except (ValueError, OSError, ProcessLookupError):
+                    pass
+
+    # Legacy run-*.pid files
+    for rpf in loki_dir.glob("run-*.pid"):
+        sid = rpf.stem.removeprefix("run-")
+        # Skip if already found in sessions/
+        if any(s.session_id == sid for s in active_session_list):
+            continue
+        try:
+            rpid = int(rpf.read_text().strip())
+            os.kill(rpid, 0)
+            log_path = ""
+            log_candidate = loki_dir / "logs" / f"run-{sid}.log"
+            if log_candidate.exists():
+                log_path = str(log_candidate)
+            active_session_list.append(SessionInfo(
+                session_id=sid,
+                pid=rpid,
+                status="running",
+                log_file=log_path,
+            ))
+        except (ValueError, OSError, ProcessLookupError):
+            pass
+
+    total_active = len(active_session_list)
+
     return StatusResponse(
         status=status,
         version=version,
         uptime_seconds=uptime,
-        active_sessions=1 if running else 0,
+        active_sessions=total_active,
         running_agents=running_agents,
         pending_tasks=pending_tasks,
         database_connected=True,
@@ -535,6 +607,7 @@ async def get_status() -> StatusResponse:
         mode=mode,
         provider=provider,
         current_task=current_task,
+        sessions=active_session_list,
     )
 
 

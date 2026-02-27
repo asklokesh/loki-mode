@@ -2642,31 +2642,50 @@ init_loki_dir() {
     # Clean up stale control files ONLY if no other session is running
     # Deleting these while another session is active would destroy its signals
     # Use flock if available to avoid TOCTOU race
-    local lock_file=".loki/session.lock"
-    local can_cleanup=false
+    #
+    # Per-session locking (v6.4.0): When LOKI_SESSION_ID is set, only clean up
+    # that session's files. Global control files (PAUSE/STOP) are only cleaned
+    # when NO sessions are active.
+    local lock_file can_cleanup=false
 
-    if command -v flock >/dev/null 2>&1 && [ -f "$lock_file" ]; then
-        # Try non-blocking lock - if we get it, no other session is running
-        {
-            if flock -n 201 2>/dev/null; then
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        # Per-session: check only this session's lock
+        lock_file=".loki/sessions/${LOKI_SESSION_ID}/session.lock"
+        local session_pid_file=".loki/sessions/${LOKI_SESSION_ID}/loki.pid"
+        if command -v flock >/dev/null 2>&1 && [ -f "$lock_file" ]; then
+            { if flock -n 201 2>/dev/null; then can_cleanup=true; fi } 201>"$lock_file"
+        else
+            local existing_pid=""
+            if [ -f "$session_pid_file" ]; then
+                existing_pid=$(cat "$session_pid_file" 2>/dev/null)
+            fi
+            if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
                 can_cleanup=true
             fi
-        } 201>"$lock_file"
+        fi
+        if [ "$can_cleanup" = "true" ]; then
+            rm -f "$session_pid_file" 2>/dev/null
+            rm -f "$lock_file" 2>/dev/null
+        fi
     else
-        # Fallback: check PID file
-        local existing_pid=""
-        if [ -f ".loki/loki.pid" ]; then
-            existing_pid=$(cat ".loki/loki.pid" 2>/dev/null)
+        # Global: original behavior
+        lock_file=".loki/session.lock"
+        if command -v flock >/dev/null 2>&1 && [ -f "$lock_file" ]; then
+            { if flock -n 201 2>/dev/null; then can_cleanup=true; fi } 201>"$lock_file"
+        else
+            local existing_pid=""
+            if [ -f ".loki/loki.pid" ]; then
+                existing_pid=$(cat ".loki/loki.pid" 2>/dev/null)
+            fi
+            if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
+                can_cleanup=true
+            fi
         fi
-        if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
-            can_cleanup=true
+        if [ "$can_cleanup" = "true" ]; then
+            rm -f .loki/PAUSE .loki/STOP .loki/HUMAN_INPUT.md 2>/dev/null
+            rm -f .loki/loki.pid 2>/dev/null
+            rm -f .loki/session.lock 2>/dev/null
         fi
-    fi
-
-    if [ "$can_cleanup" = "true" ]; then
-        rm -f .loki/PAUSE .loki/STOP .loki/HUMAN_INPUT.md 2>/dev/null
-        rm -f .loki/loki.pid 2>/dev/null
-        rm -f .loki/session.lock 2>/dev/null
     fi
 
     mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts}
@@ -8093,6 +8112,10 @@ cleanup() {
         stop_status_monitor
         kill_all_registered
         rm -f "$loki_dir/loki.pid" 2>/dev/null
+        # Clean up per-session PID file if running with session ID
+        if [ -n "${LOKI_SESSION_ID:-}" ]; then
+            rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
+        fi
         if [ -f "$loki_dir/session.json" ]; then
             _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
 import json, os
@@ -8121,6 +8144,10 @@ except (json.JSONDecodeError, OSError): pass
         stop_status_monitor
         kill_all_registered
         rm -f .loki/loki.pid .loki/PAUSE 2>/dev/null
+        # Clean up per-session PID file if running with session ID
+        if [ -n "${LOKI_SESSION_ID:-}" ]; then
+            rm -f ".loki/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
+        fi
         # Mark session.json as stopped
         if [ -f ".loki/session.json" ]; then
             python3 -c "
@@ -8325,7 +8352,13 @@ main() {
         mkdir -p .loki/logs
 
         local log_file=".loki/logs/background-$(date +%Y%m%d-%H%M%S).log"
-        local pid_file=".loki/loki.pid"
+        local pid_file
+        if [ -n "${LOKI_SESSION_ID:-}" ]; then
+            mkdir -p ".loki/sessions/${LOKI_SESSION_ID}"
+            pid_file=".loki/sessions/${LOKI_SESSION_ID}/loki.pid"
+        else
+            pid_file=".loki/loki.pid"
+        fi
         local project_path=$(pwd)
         local project_name=$(basename "$project_path")
 
@@ -8419,12 +8452,22 @@ main() {
     # Initialize session continuity file with empty template
     update_continuity
 
-    # Session lock: prevent concurrent sessions on same repo
-    # Use flock for atomic locking to prevent TOCTOU race conditions
-    local pid_file=".loki/loki.pid"
-    local lock_file=".loki/session.lock"
+    # Session lock: prevent concurrent sessions
+    # Per-session locking (v6.4.0): LOKI_SESSION_ID enables multiple concurrent
+    # sessions (e.g., loki run 52 -d && loki run 54 -d). Each session gets its
+    # own PID/lock files under .loki/sessions/<id>/.
+    # Without LOKI_SESSION_ID, the global .loki/loki.pid lock is used (single session).
+    local pid_file lock_file
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        mkdir -p ".loki/sessions/${LOKI_SESSION_ID}"
+        pid_file=".loki/sessions/${LOKI_SESSION_ID}/loki.pid"
+        lock_file=".loki/sessions/${LOKI_SESSION_ID}/session.lock"
+    else
+        pid_file=".loki/loki.pid"
+        lock_file=".loki/session.lock"
+    fi
 
-    # Try to acquire exclusive lock with flock (if available)
+    # Use flock for atomic locking to prevent TOCTOU race conditions
     if command -v flock >/dev/null 2>&1; then
         # Create lock file
         touch "$lock_file"
@@ -8435,8 +8478,13 @@ main() {
 
         # Try to acquire exclusive lock (non-blocking)
         if ! flock -n 200 2>/dev/null; then
-            log_error "Another Loki session is already running (locked)"
-            log_error "Stop it first with: loki stop"
+            if [ -n "${LOKI_SESSION_ID:-}" ]; then
+                log_error "Session '${LOKI_SESSION_ID}' is already running (locked)"
+                log_error "Stop it first with: loki stop ${LOKI_SESSION_ID}"
+            else
+                log_error "Another Loki session is already running (locked)"
+                log_error "Stop it first with: loki stop"
+            fi
             exit 1
         fi
 
@@ -8446,8 +8494,13 @@ main() {
             existing_pid=$(cat "$pid_file" 2>/dev/null)
             # Skip if it's our own PID or parent PID (background mode writes PID before child starts)
             if [ -n "$existing_pid" ] && [ "$existing_pid" != "$$" ] && [ "$existing_pid" != "$PPID" ] && kill -0 "$existing_pid" 2>/dev/null; then
-                log_error "Another Loki session is already running (PID: $existing_pid)"
-                log_error "Stop it first with: loki stop"
+                if [ -n "${LOKI_SESSION_ID:-}" ]; then
+                    log_error "Session '${LOKI_SESSION_ID}' is already running (PID: $existing_pid)"
+                    log_error "Stop it first with: loki stop ${LOKI_SESSION_ID}"
+                else
+                    log_error "Another Loki session is already running (PID: $existing_pid)"
+                    log_error "Stop it first with: loki stop"
+                fi
                 exit 1
             fi
         fi
@@ -8459,8 +8512,13 @@ main() {
             existing_pid=$(cat "$pid_file" 2>/dev/null)
             # Skip if it's our own PID or parent PID (background mode writes PID before child starts)
             if [ -n "$existing_pid" ] && [ "$existing_pid" != "$$" ] && [ "$existing_pid" != "$PPID" ] && kill -0 "$existing_pid" 2>/dev/null; then
-                log_error "Another Loki session is already running (PID: $existing_pid)"
-                log_error "Stop it first with: loki stop"
+                if [ -n "${LOKI_SESSION_ID:-}" ]; then
+                    log_error "Session '${LOKI_SESSION_ID}' is already running (PID: $existing_pid)"
+                    log_error "Stop it first with: loki stop ${LOKI_SESSION_ID}"
+                else
+                    log_error "Another Loki session is already running (PID: $existing_pid)"
+                    log_error "Stop it first with: loki stop"
+                fi
                 exit 1
             fi
         fi
@@ -8468,6 +8526,10 @@ main() {
 
     # Write PID file for ALL modes (foreground + background)
     echo "$$" > "$pid_file"
+    # Store session ID in state for dashboard/status visibility
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        echo "${LOKI_SESSION_ID}" > ".loki/sessions/${LOKI_SESSION_ID}/session_id"
+    fi
 
     # Initialize PID registry and clean up orphans from previous sessions
     init_pid_registry
@@ -8675,6 +8737,10 @@ main() {
     stop_dashboard
     stop_status_monitor
     rm -f .loki/loki.pid 2>/dev/null
+    # Clean up per-session PID file if running with session ID
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        rm -f ".loki/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
+    fi
     # Mark session.json as stopped
     if [ -f ".loki/session.json" ]; then
         python3 -c "
