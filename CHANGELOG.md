@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.0] - 2026-02-27
+
+### Added
+- **Concurrent sessions** - Multiple `loki run` commands can execute in parallel
+  - Per-session PID/lock files under `.loki/sessions/<issue-id>/`
+  - `loki run 52 --ship -d` and `loki run 54 --ship -d` no longer block each other
+  - `LOKI_SESSION_ID` environment variable propagated through detached mode
+- **`loki stop <session-id>`** - Stop a specific session without affecting others
+  - `loki stop 52` stops only session #52
+  - `loki stop` (no args) stops all running sessions
+  - `loki stop --help` for usage
+- **`loki status` shows all active sessions** - Displays count, session IDs, and PIDs when multiple sessions are running
+- **`list_running_sessions()` helper** - Enumerates global, per-session, and legacy PID files
+- **Dashboard concurrent session support** - `GET /api/status` returns `sessions` array with `SessionInfo` objects (session_id, pid, status, log_file)
+- **`SessionInfo` model** in dashboard for per-session metadata
+- **18 concurrent session tests** (`tests/test-concurrent-sessions.sh`)
+
+### Changed
+- `run.sh` session lock is now session-scoped when `LOKI_SESSION_ID` is set
+- `init_loki_dir()` cleanup is session-aware (only cleans own session's stale files)
+- All 3 cleanup paths (STOP signal, double Ctrl+C, normal exit) clean per-session PID
+- Background mode writes PID to session-scoped file
+- `_kill_pid()` and `_stop_session_by_id()` extracted as reusable helpers
+
 ## [6.3.1] - 2026-02-26
 
 ### Fixed
