@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.6.1] - 2026-03-01
+
+### Fixed
+- Degraded providers (aider/codex/gemini) now get simplified prompts that small models can process
+- Completion council integer expression error from grep -c output handling
+- Aider stdin blocking risk (added < /dev/null to invocation helpers)
+
 ## [6.6.0] - 2026-03-01
 
 ### Added

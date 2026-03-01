@@ -141,7 +141,11 @@ council_track_iteration() {
         # Check last 200 lines for completion-like language
         local done_indicators
         done_indicators=$(tail -200 "$log_file" 2>/dev/null | grep -ciE \
-            "(all tests pass|all requirements met|implementation complete|feature complete|task complete|project complete|all tasks done|everything is working)" 2>/dev/null || echo "0")
+            "(all tests pass|all requirements met|implementation complete|feature complete|task complete|project complete|all tasks done|everything is working)" 2>/dev/null) || true
+        done_indicators="${done_indicators:-0}"
+        # Ensure we have a clean integer (strip any whitespace/newlines)
+        done_indicators=$(echo "$done_indicators" | tr -dc '0-9')
+        done_indicators="${done_indicators:-0}"
 
         if [ "$done_indicators" -gt 0 ]; then
             ((COUNCIL_DONE_SIGNALS++))

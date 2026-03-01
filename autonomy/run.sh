@@ -2911,8 +2911,9 @@ invoke_aider() {
     local model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
     local extra_flags="${LOKI_AIDER_FLAGS:-}"
     # shellcheck disable=SC2086
+    # < /dev/null prevents aider from blocking on stdin in non-interactive mode
     aider --message "$prompt" --yes-always --no-auto-commits \
-          --model "$model" $extra_flags "$@" 2>&1
+          --model "$model" $extra_flags "$@" < /dev/null 2>&1
 }
 
 # Invoke Aider and capture output (for variable assignment)
@@ -2924,7 +2925,7 @@ invoke_aider_capture() {
     local extra_flags="${LOKI_AIDER_FLAGS:-}"
     # shellcheck disable=SC2086
     aider --message "$prompt" --yes-always --no-auto-commits \
-          --model "$model" $extra_flags "$@" 2>&1
+          --model "$model" $extra_flags "$@" < /dev/null 2>&1
 }
 
 #===============================================================================
@@ -7215,17 +7216,40 @@ except: pass
         fi
     fi
 
-    if [ $retry -eq 0 ]; then
-        if [ -n "$prd" ]; then
-            echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+    # Degraded providers with small models need simplified prompts
+    # Full RARV/SDLC instructions overwhelm models < 30B parameters
+    if [ "${PROVIDER_DEGRADED:-false}" = "true" ]; then
+        local prd_content=""
+        if [ -n "$prd" ] && [ -f "$prd" ]; then
+            prd_content=$(head -c 4000 "$prd")
+        fi
+
+        if [ $retry -eq 0 ]; then
+            if [ -n "$prd" ]; then
+                echo "You are a coding assistant. Read and implement the requirements from the PRD below. Write working code, run tests if possible, and commit changes. ${human_directive:+Priority: $human_directive} ${queue_tasks:+Tasks: $queue_tasks} PRD contents: $prd_content"
+            else
+                echo "You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes. ${human_directive:+Priority: $human_directive} ${queue_tasks:+Tasks: $queue_tasks}"
+            fi
         else
-            echo "Loki Mode. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            if [ -n "$prd" ]; then
+                echo "You are a coding assistant. Continue working on iteration $iteration. Review what exists, implement remaining PRD requirements, fix any issues, add tests. ${human_directive:+Priority: $human_directive} ${queue_tasks:+Tasks: $queue_tasks} PRD contents: $prd_content"
+            else
+                echo "You are a coding assistant. Continue working on iteration $iteration. Review what exists, improve code, fix bugs, add tests. ${human_directive:+Priority: $human_directive} ${queue_tasks:+Tasks: $queue_tasks}"
+            fi
         fi
     else
-        if [ -n "$prd" ]; then
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+        if [ $retry -eq 0 ]; then
+            if [ -n "$prd" ]; then
+                echo "Loki Mode with PRD at $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            else
+                echo "Loki Mode. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            fi
         else
-            echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            if [ -n "$prd" ]; then
+                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            else
+                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $queue_tasks $bmad_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+            fi
         fi
     fi
 }
