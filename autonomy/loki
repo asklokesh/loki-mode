@@ -1356,7 +1356,7 @@ cmd_status() {
         [ -n "$line" ] && running_sessions+=("$line")
     done < <(list_running_sessions 2>/dev/null)
 
-    if [ ${#running_sessions[@]} -gt 1 ]; then
+    if [ ${#running_sessions[@]} -gt 0 ]; then
         echo -e "${GREEN}Active Sessions: ${#running_sessions[@]}${NC}"
         for entry in "${running_sessions[@]}"; do
             local sid="${entry%%:*}"
@@ -2092,7 +2092,7 @@ cmd_dashboard_stop() {
         local wait_count=0
         while kill -0 "$pid" 2>/dev/null && [ $wait_count -lt 10 ]; do
             sleep 0.5
-            ((wait_count++))
+            wait_count=$((wait_count + 1))
         done
 
         # Force kill if still running
@@ -2874,20 +2874,17 @@ cmd_run() {
             --pr)
                 use_worktree=true
                 create_pr=true
-                start_args+=("--parallel")
                 shift
                 ;;
             --ship)
                 use_worktree=true
                 create_pr=true
                 auto_merge=true
-                start_args+=("--parallel")
                 shift
                 ;;
             --detach|-d)
                 use_worktree=true
                 run_detached=true
-                start_args+=("--parallel")
                 shift
                 ;;
             -*)
@@ -2903,6 +2900,11 @@ cmd_run() {
                 ;;
         esac
     done
+
+    # Add --parallel once if worktree mode is enabled (not per-flag)
+    if $use_worktree; then
+        start_args+=("--parallel")
+    fi
 
     if [[ -z "$issue_ref" ]]; then
         echo -e "${RED}Error: Issue reference required${NC}"
@@ -2971,6 +2973,13 @@ cmd_run() {
 
     # Detached mode: fork to background
     if $run_detached; then
+        # Guard: prevent launching duplicate session
+        if is_session_running "$session_id"; then
+            echo -e "${RED}Error: Session '$session_id' is already running.${NC}"
+            echo -e "Stop it first with: ${CYAN}loki stop $session_id${NC}"
+            exit 1
+        fi
+
         local log_file="$LOKI_DIR/logs/run-${number:-$(date +%s)}.log"
         mkdir -p "$(dirname "$log_file")"
         echo -e "${GREEN}Running detached. Logs: $log_file${NC}"
@@ -2985,32 +2994,51 @@ cmd_run() {
             branch_name="issue/detach-$(date +%s)"
         fi
 
-        nohup bash -c "
-            cd $(pwd)
-            export LOKI_DETACHED=true
-            export LOKI_PARALLEL_MODE=true
-            export LOKI_SESSION_ID=\"$session_id\"
-            export LOKI_WORKTREE_BRANCH=\"$branch_name\"
-            $(command -v loki || echo "$0") start \"$detach_prd\" --parallel ${start_args[*]+"${start_args[*]}"}
+        # Write a temp script to avoid shell injection via variable interpolation
+        local run_script="$LOKI_DIR/scripts/run-${number:-detached}.sh"
+        mkdir -p "$LOKI_DIR/scripts"
+        local loki_cmd
+        loki_cmd="$(command -v loki || echo "$0")"
+        cat > "$run_script" << 'INNER_SCRIPT_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$LOKI_RUN_DIR"
+export LOKI_DETACHED=true
+export LOKI_PARALLEL_MODE=true
+"$LOKI_CMD" start "$LOKI_PRD_PATH" ${LOKI_START_ARGS:-}
 
-            # Post-completion: create PR if requested
-            if [[ \"$create_pr\" == \"true\" ]]; then
-                branch_current=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"\")
-                if [[ -n \"\$branch_current\" && \"\$branch_current\" != \"main\" && \"\$branch_current\" != \"master\" ]]; then
-                    git push origin \"\$branch_current\" 2>/dev/null || true
-                    gh pr create --title \"${title:-Implementation for issue ${issue_ref}}\" --body \"Implemented by Loki Mode\" --head \"\$branch_current\" 2>/dev/null || true
-                fi
-            fi
-            # Post-completion: auto-merge if requested
-            if [[ \"$auto_merge\" == \"true\" ]]; then
-                branch_current=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo \"\")
-                if gh pr merge \"\$branch_current\" --squash --delete-branch 2>/dev/null; then
-                    if [[ -n \"${number:-}\" ]]; then
-                        gh issue close \"$number\" --comment \"Resolved by Loki Mode\" 2>/dev/null || true
-                    fi
-                fi
-            fi
-        " > "$log_file" 2>&1 &
+# Post-completion: create PR if requested
+if [[ "$LOKI_CREATE_PR" == "true" ]]; then
+    branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ -n "$branch_current" && "$branch_current" != "main" && "$branch_current" != "master" ]]; then
+        git push origin "$branch_current" 2>/dev/null || true
+        gh pr create --title "$LOKI_PR_TITLE" --body "Implemented by Loki Mode" --head "$branch_current" 2>/dev/null || true
+    fi
+fi
+# Post-completion: auto-merge if requested
+if [[ "$LOKI_AUTO_MERGE" == "true" ]]; then
+    branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
+        if [[ -n "${LOKI_ISSUE_NUMBER:-}" ]]; then
+            gh issue close "$LOKI_ISSUE_NUMBER" --comment "Resolved by Loki Mode" 2>/dev/null || true
+        fi
+    fi
+fi
+INNER_SCRIPT_EOF
+        chmod +x "$run_script"
+
+        # Pass all variables safely via environment
+        LOKI_RUN_DIR="$(pwd)" \
+        LOKI_CMD="$loki_cmd" \
+        LOKI_SESSION_ID="$session_id" \
+        LOKI_WORKTREE_BRANCH="$branch_name" \
+        LOKI_PRD_PATH="$detach_prd" \
+        LOKI_START_ARGS="${start_args[*]+"${start_args[*]}"}" \
+        LOKI_CREATE_PR="$create_pr" \
+        LOKI_AUTO_MERGE="$auto_merge" \
+        LOKI_PR_TITLE="${title:-Implementation for issue ${issue_ref}}" \
+        LOKI_ISSUE_NUMBER="${number:-}" \
+        nohup bash "$run_script" > "$log_file" 2>&1 &
 
         local bg_pid=$!
         echo "$bg_pid" > "$LOKI_DIR/run-${number:-detached}.pid"
@@ -4946,7 +4974,7 @@ cmd_notify_test() {
             echo -n "  Slack...    "
             if send_slack_notification "$message" "Test"; then
                 echo -e "${GREEN}OK${NC}"
-                ((channels_notified++))
+                channels_notified=$((channels_notified + 1))
             else
                 echo -e "${RED}FAILED${NC}"
             fi
@@ -4959,7 +4987,7 @@ cmd_notify_test() {
             echo -n "  Discord...  "
             if send_discord_notification "$message" "Test"; then
                 echo -e "${GREEN}OK${NC}"
-                ((channels_notified++))
+                channels_notified=$((channels_notified + 1))
             else
                 echo -e "${RED}FAILED${NC}"
             fi
@@ -4972,7 +5000,7 @@ cmd_notify_test() {
             echo -n "  Webhook...  "
             if send_webhook_notification "$message" "Test"; then
                 echo -e "${GREEN}OK${NC}"
-                ((channels_notified++))
+                channels_notified=$((channels_notified + 1))
             else
                 echo -e "${RED}FAILED${NC}"
             fi
@@ -6691,7 +6719,7 @@ Tasks:
             local provider_name="${LOKI_PROVIDER:-claude}"
             case "$provider_name" in
                 claude)
-                    (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1) | \
+                    { (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1) | \
                         while IFS= read -r line; do
                             # Extract text from stream-json
                             if echo "$line" | python3 -c "
@@ -6706,8 +6734,7 @@ except Exception: pass
 " 2>/dev/null; then
                                 true
                             fi
-                        done
-                    phase_exit=${PIPESTATUS[0]}
+                        done; } && phase_exit=0 || phase_exit=$?
                     ;;
                 codex)
                     (cd "$codebase_path" && codex exec --full-auto "$phase_prompt" 2>&1) || phase_exit=$?
@@ -6854,7 +6881,7 @@ IMPORTANT RULES:
         local provider_name="${LOKI_PROVIDER:-claude}"
         case "$provider_name" in
             claude)
-                (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1) | \
+                { (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1) | \
                     while IFS= read -r line; do
                         if echo "$line" | python3 -c "
 import sys, json
@@ -6868,8 +6895,7 @@ except Exception: pass
 " 2>/dev/null; then
                             true
                         fi
-                    done
-                doc_exit=${PIPESTATUS[0]}
+                    done; } && doc_exit=0 || doc_exit=$?
                 ;;
             codex)
                 (cd "$codebase_path" && codex exec --full-auto "$doc_prompt" 2>&1) || doc_exit=$?

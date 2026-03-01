@@ -9,7 +9,7 @@
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Autonomi](https://img.shields.io/badge/Autonomi-autonomi.dev-5B4EEA)](https://www.autonomi.dev/)
 
-**Current Version: v6.2.1**
+**Current Version: v6.5.0**
 
 ---
 

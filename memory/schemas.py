@@ -20,9 +20,13 @@ from typing import Optional, List, Dict, Any
 def _to_utc_isoformat(dt: datetime) -> str:
     """Convert datetime to UTC ISO 8601 string with Z suffix.
 
-    Handles both timezone-aware and timezone-naive datetimes,
-    and avoids double-suffixing if already has timezone info.
+    Handles both timezone-aware and timezone-naive datetimes.
+    If dt has a non-UTC timezone, converts to UTC first.
     """
+    # If timezone-aware and not UTC, convert to UTC
+    if dt.tzinfo is not None and dt.utcoffset() != timezone.utc.utcoffset(None):
+        dt = dt.astimezone(timezone.utc)
+
     iso = dt.isoformat()
     # If already has timezone offset like +00:00, replace with Z
     if iso.endswith("+00:00"):

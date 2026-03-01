@@ -52,17 +52,30 @@ loki_telemetry() {
     os_name=$(uname -s 2>/dev/null || echo "unknown")
     arch=$(uname -m 2>/dev/null || echo "unknown")
 
-    # Build properties from remaining args (key=value pairs)
-    local extra_props=""
+    # Build JSON payload safely using Python to prevent injection
+    local extra_args=""
     for arg in "$@"; do
-        local key="${arg%%=*}"
-        local val="${arg#*=}"
-        extra_props="${extra_props},\"${key}\":\"${val}\""
+        extra_args="${extra_args}${extra_args:+ }${arg}"
     done
 
     local payload
-    payload=$(printf '{"api_key":"%s","event":"%s","distinct_id":"%s","properties":{"os":"%s","arch":"%s","version":"%s","channel":"%s"%s}}' \
-        "$LOKI_POSTHOG_KEY" "$event" "$distinct_id" "$os_name" "$arch" "$version" "$channel" "$extra_props")
+    payload=$(python3 -c "
+import json, sys
+props = {'os': sys.argv[1], 'arch': sys.argv[2], 'version': sys.argv[3], 'channel': sys.argv[4]}
+for arg in sys.argv[5:]:
+    if '=' in arg:
+        k, v = arg.split('=', 1)
+        props[k] = v
+print(json.dumps({'api_key': '$LOKI_POSTHOG_KEY', 'event': sys.argv[5] if len(sys.argv) > 5 else '', 'distinct_id': '$distinct_id', 'properties': props}))
+" "$os_name" "$arch" "$version" "$channel" $extra_args 2>/dev/null) || return 0
+    # Re-inject event and distinct_id properly
+    payload=$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+d['event'] = sys.argv[2]
+d['distinct_id'] = sys.argv[3]
+print(json.dumps(d))
+" "$payload" "$event" "$distinct_id" 2>/dev/null) || return 0
 
     (curl -sS --max-time 3 -X POST "${LOKI_POSTHOG_HOST}/capture/" \
         -H "Content-Type: application/json" \

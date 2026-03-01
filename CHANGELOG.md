@@ -5,6 +5,45 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.5.0] - 2026-02-28
+
+### Security Fixes
+- **CRITICAL: Command injection in swarm hooks** - `swarm/patterns.py` used `shell=True` with untrusted hook strings; replaced with `shlex.split()` + `shell=False`
+- **HIGH: Shell injection via issue title** - `loki run` nohup detached mode interpolated `$title` inside `bash -c` string; replaced with temp script file + environment variables
+- **HIGH: Path traversal in dashboard** - `get_episode`/`get_skill` endpoints lacked path validation; added `realpath()` + prefix check
+- **CRITICAL: bash 3.2 incompatibility** - `declare -A` in `sandbox.sh` and `declare -g` in `migration-hooks.sh` required bash 4+; replaced with function lookups and `printf -v`
+
+### Fixed
+- **Duplicate session launch** - `loki run 52 -d` called twice now detects and rejects if session already running
+- **Status display threshold** - `loki status` now shows session info when 1+ sessions are running (was >1)
+- **Triple --parallel flag** - `loki run --ship -d` no longer passes `--parallel` three times
+- **PIPESTATUS capture** - Both `autonomy/loki` and `autonomy/run.sh` now correctly capture pipeline exit codes under `set -e`
+- **Hardcoded .loki/ paths** - `run.sh` double-interrupt handler and `main()` cleanup now use `$TARGET_DIR`
+- **Migration verify gate** - No longer passes when `migration-plan.json` is missing (was `-1 > 0 = false`)
+- **Migration hook guard** - `hook_on_agent_stop` now blocks when `LOKI_FEATURES_PATH` is unset
+- **Memory deserialization** - `_dict_to_episode/pattern/skill` now preserves `importance`, `last_accessed`, `access_count` fields
+- **Memory chunk_fixed** - No longer infinite loops when `overlap >= max_size`
+- **Memory embed_batch** - No longer returns all zeros when caching disabled
+- **Memory storage** - `_load_json` no longer crashes on corrupted JSON files
+- **Token economics ratio** - `get_ratio()` returns sentinel 999.99 (not 0.0) when reads=0 with discoveries>0
+- **UTC conversion** - `_to_utc_isoformat` now actually converts non-UTC timezone-aware datetimes
+- **MCP server** - `loki_start_project` PRD path validation no longer rejects valid paths
+- **MCP server** - `MemoryEngine` no longer receives string as `storage` parameter
+- **MCP server** - Pattern IDs now include UUID suffix to prevent sub-second collisions
+- **Swarm scoring** - `_score_candidate` load_factor uses diminishing returns (never reaches zero)
+- **Swarm voting** - `VotingPattern` no longer reports `unanimous=True` with zero votes
+- **Message bus** - `PubSubMessageBus.publish` releases lock before invoking handlers (prevents deadlock)
+- **Dashboard** - `get_status()` handles corrupted PID files without ValueError
+- **Dashboard** - `update_progress()` preserves `## Session:` prefix when truncating to 50 entries
+- **Dashboard** - Unbounded limit parameters capped at 1000 across 9 endpoints
+- **JSON escaping** - `events/emit.sh` now escapes newlines instead of deleting them
+- **Telemetry** - Payload built with Python `json.dumps()` instead of string interpolation
+- **Arithmetic** - `((channels_notified++))` replaced with `$((... + 1))` to avoid `set -e` crash
+
+### Changed
+- **Documentation accuracy** - Updated all 15 function line numbers, 10 file line counts, command count (74), tool count (15), reference count (20), template count (13) in CLAUDE.md
+- **Version sync** - README.md and docker-compose.yml updated from stale v6.2.1
+
 ## [6.4.0] - 2026-02-27
 
 ### Added

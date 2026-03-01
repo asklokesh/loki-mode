@@ -604,17 +604,18 @@ class PubSubMessageBus:
 
     def publish(self, topic: str, message: Dict[str, Any], sender: str = "") -> int:
         """Publish a message to a topic. Returns number of deliveries."""
+        envelope = {
+            "topic": topic,
+            "message": message,
+            "sender": sender,
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+            "delivered_to": [],
+        }
+
+        # Collect subscribers under lock, but invoke handlers outside to avoid deadlock
         with self._lock:
-            envelope = {
-                "topic": topic,
-                "message": message,
-                "sender": sender,
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                "delivered_to": [],
-            }
             self._message_log.append(envelope)
 
-            delivered = 0
             matched_subs = []
 
             # Collect exact match subscribers
@@ -628,20 +629,23 @@ class PubSubMessageBus:
                 if "*" in pattern and self._matches_wildcard(pattern, topic):
                     matched_subs.extend(subs)
 
-            # Deliver to all matched subscribers
-            for sub in matched_subs:
-                try:
-                    sub["handler"](message, topic, sender)
+        # Deliver outside lock so handlers can publish without deadlocking
+        delivered = 0
+        for sub in matched_subs:
+            try:
+                sub["handler"](message, topic, sender)
+                with self._lock:
                     envelope["delivered_to"].append(sub["id"])
-                    delivered += 1
-                except Exception as e:
+                delivered += 1
+            except Exception as e:
+                with self._lock:
                     self._dead_letter.append({
                         **envelope,
                         "error": str(e),
                         "subscriber": sub["id"],
                     })
 
-            return delivered
+        return delivered
 
     @staticmethod
     def _matches_wildcard(pattern: str, topic: str) -> bool:

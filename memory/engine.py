@@ -881,6 +881,21 @@ class MemoryEngine:
             for e in errors_raw
         ]
 
+        # Parse last_accessed datetime
+        last_accessed = None
+        last_accessed_raw = data.get("last_accessed")
+        if last_accessed_raw:
+            if isinstance(last_accessed_raw, str):
+                if last_accessed_raw.endswith("Z"):
+                    last_accessed_raw = last_accessed_raw[:-1]
+                last_accessed = datetime.fromisoformat(last_accessed_raw)
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+            elif isinstance(last_accessed_raw, datetime):
+                last_accessed = last_accessed_raw
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+
         return EpisodeTrace(
             id=data.get("id", ""),
             task_id=data.get("task_id", ""),
@@ -897,6 +912,9 @@ class MemoryEngine:
             tokens_used=data.get("tokens_used", 0),
             files_read=data.get("files_read", context.get("files_involved", [])),
             files_modified=data.get("files_modified", []),
+            importance=data.get("importance", 0.5),
+            last_accessed=last_accessed,
+            access_count=data.get("access_count", 0),
         )
 
     def _dict_to_pattern(self, data: Dict[str, Any]) -> SemanticPattern:
@@ -924,6 +942,21 @@ class MemoryEngine:
             for link in links_raw
         ]
 
+        # Parse last_accessed datetime
+        last_accessed = None
+        last_accessed_raw = data.get("last_accessed")
+        if last_accessed_raw:
+            if isinstance(last_accessed_raw, str):
+                if last_accessed_raw.endswith("Z"):
+                    last_accessed_raw = last_accessed_raw[:-1]
+                last_accessed = datetime.fromisoformat(last_accessed_raw)
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+            elif isinstance(last_accessed_raw, datetime):
+                last_accessed = last_accessed_raw
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+
         return SemanticPattern(
             id=data.get("id", ""),
             pattern=data.get("pattern", ""),
@@ -936,6 +969,9 @@ class MemoryEngine:
             usage_count=data.get("usage_count", 0),
             last_used=last_used,
             links=links,
+            importance=data.get("importance", 0.5),
+            last_accessed=last_accessed,
+            access_count=data.get("access_count", 0),
         )
 
     def _dict_to_skill(self, data: Dict[str, Any]) -> ProceduralSkill:
@@ -945,6 +981,22 @@ class MemoryEngine:
             ErrorFix.from_dict(e) if isinstance(e, dict) else e
             for e in raw_errors
         ]
+
+        # Parse last_accessed datetime
+        last_accessed = None
+        last_accessed_raw = data.get("last_accessed")
+        if last_accessed_raw:
+            if isinstance(last_accessed_raw, str):
+                if last_accessed_raw.endswith("Z"):
+                    last_accessed_raw = last_accessed_raw[:-1]
+                last_accessed = datetime.fromisoformat(last_accessed_raw)
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+            elif isinstance(last_accessed_raw, datetime):
+                last_accessed = last_accessed_raw
+                if last_accessed.tzinfo is None:
+                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+
         return ProceduralSkill(
             id=data.get("id", ""),
             name=data.get("name", ""),
@@ -953,6 +1005,10 @@ class MemoryEngine:
             steps=data.get("steps", []),
             common_errors=common_errors,
             exit_criteria=data.get("exit_criteria", []),
+            example_usage=data.get("example_usage"),
+            importance=data.get("importance", 0.5),
+            last_accessed=last_accessed,
+            access_count=data.get("access_count", 0),
         )
 
     def _skill_to_markdown(self, skill: Dict[str, Any]) -> str:

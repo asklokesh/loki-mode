@@ -233,7 +233,7 @@ class MemoryStorage:
             path: Path to JSON file
 
         Returns:
-            Parsed JSON as dictionary, or None if file doesn't exist
+            Parsed JSON as dictionary, or None if file doesn't exist or is corrupted
         """
         path = Path(path)
         if not path.exists():
@@ -241,7 +241,10 @@ class MemoryStorage:
 
         with self._file_lock(path, exclusive=False):
             with open(path, "r") as f:
-                return json.load(f)
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return None
 
     def _generate_id(self, prefix: str) -> str:
         """

@@ -7434,12 +7434,13 @@ run_autonomous() {
         audit_agent_action "cli_invoke" "Starting iteration $ITERATION_COUNT" "provider=${PROVIDER_NAME:-claude},tier=$CURRENT_TIER"
 
         # Provider-specific invocation with dynamic tier selection
+        local exit_code=0
         case "${PROVIDER_NAME:-claude}" in
             claude)
                 # Claude: Full features with stream-json output and agent tracking
                 # Uses dynamic tier for model selection based on RARV phase
                 # Pass tier to Python via environment for dashboard display
-                LOKI_CURRENT_MODEL="$tier_param" \
+                { LOKI_CURRENT_MODEL="$tier_param" \
                 claude --dangerously-skip-permissions --model "$tier_param" -p "$prompt" \
             --output-format stream-json --verbose 2>&1 | \
             tee -a "$log_file" "$agent_log" | \
@@ -7647,7 +7648,7 @@ if __name__ == "__main__":
     except BrokenPipeError:
         sys.exit(0)
 '
-                local exit_code=${PIPESTATUS[0]}
+                } && exit_code=0 || exit_code=$?
                 ;;
 
             codex)
@@ -7655,10 +7656,10 @@ if __name__ == "__main__":
                 # Uses positional prompt after exec subcommand
                 # Note: Effort is set via env var, not CLI flag
                 # Uses dynamic tier from RARV phase (tier_param already set above)
-                CODEX_MODEL_REASONING_EFFORT="$tier_param" \
+                { CODEX_MODEL_REASONING_EFFORT="$tier_param" \
                 codex exec --full-auto \
-                    "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"
-                local exit_code=${PIPESTATUS[0]}
+                    "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                } && exit_code=0 || exit_code=$?
                 ;;
 
             gemini)
@@ -7672,8 +7673,8 @@ if __name__ == "__main__":
                 # Try primary model, fallback on rate limit
                 local tmp_output
                 tmp_output=$(mktemp)
-                gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log"
-                local exit_code=${PIPESTATUS[0]}
+                { gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log"; \
+                } && exit_code=0 || exit_code=$?
 
                 if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_output"; then
                     log_warn "Rate limit hit on $model, falling back to $fallback"
@@ -8143,17 +8144,18 @@ except (json.JSONDecodeError, OSError): pass
         stop_dashboard
         stop_status_monitor
         kill_all_registered
-        rm -f .loki/loki.pid .loki/PAUSE 2>/dev/null
+        rm -f "$loki_dir/loki.pid" "$loki_dir/PAUSE" 2>/dev/null
         # Clean up per-session PID file if running with session ID
         if [ -n "${LOKI_SESSION_ID:-}" ]; then
-            rm -f ".loki/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
+            rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
         fi
         # Mark session.json as stopped
-        if [ -f ".loki/session.json" ]; then
-            python3 -c "
-import json
+        if [ -f "$loki_dir/session.json" ]; then
+            _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
+import json, os
+sf = os.environ['_LOKI_SESSION_FILE']
 try:
-    with open('.loki/session.json', 'r+') as f:
+    with open(sf, 'r+') as f:
         d = json.load(f); d['status'] = 'stopped'
         f.seek(0); f.truncate(); json.dump(d, f)
 except (json.JSONDecodeError, OSError): pass
@@ -8736,17 +8738,19 @@ main() {
     fi
     stop_dashboard
     stop_status_monitor
-    rm -f .loki/loki.pid 2>/dev/null
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    rm -f "$loki_dir/loki.pid" 2>/dev/null
     # Clean up per-session PID file if running with session ID
     if [ -n "${LOKI_SESSION_ID:-}" ]; then
-        rm -f ".loki/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
+        rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
     fi
     # Mark session.json as stopped
-    if [ -f ".loki/session.json" ]; then
-        python3 -c "
-import json
+    if [ -f "$loki_dir/session.json" ]; then
+        _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
+import json, os
+sf = os.environ['_LOKI_SESSION_FILE']
 try:
-    with open('.loki/session.json', 'r+') as f:
+    with open(sf, 'r+') as f:
         d = json.load(f); d['status'] = 'stopped'
         f.seek(0); f.truncate(); json.dump(d, f)
 except (json.JSONDecodeError, OSError): pass

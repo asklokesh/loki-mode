@@ -52,7 +52,7 @@ load_migration_hook_config() {
         # Parse YAML config safely using read/declare instead of eval
         while IFS='=' read -r key val; do
             case "$key" in
-                HOOK_*) declare -g "$key=$val" ;;
+                HOOK_*) printf -v "$key" '%s' "$val" ;;
             esac
         done < <(python3 -c "
 import sys
@@ -224,7 +224,7 @@ try:
     print(len([s for s in steps if s.get('status') != 'completed']))
 except: print(-1)
 " 2>/dev/null || echo -1)
-            [[ "$pending" -gt 0 ]] && echo "GATE_BLOCKED: ${pending} steps still pending" && return 1
+            [[ "$pending" -ne 0 ]] && echo "GATE_BLOCKED: ${pending} steps still pending (or plan missing)" && return 1
             ;;
     esac
 
@@ -236,6 +236,10 @@ hook_on_agent_stop() {
     local features_path="${LOKI_FEATURES_PATH:-}"
 
     [[ "$HOOK_ON_AGENT_STOP_ENABLED" != "true" ]] && return 0
+    if [[ -z "$features_path" ]]; then
+        echo "HOOK_BLOCKED: LOKI_FEATURES_PATH not set. Cannot verify features."
+        return 1
+    fi
     [[ ! -f "$features_path" ]] && return 0
 
     local failing

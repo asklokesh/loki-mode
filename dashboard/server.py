@@ -536,9 +536,13 @@ async def get_status() -> StatusResponse:
 
     # Global session
     if running:
+        try:
+            _global_pid = int(pid_str) if pid_str else 0
+        except (ValueError, TypeError):
+            _global_pid = 0
         active_session_list.append(SessionInfo(
             session_id="global",
-            pid=int(pid_str) if pid_str else 0,
+            pid=_global_pid,
             status=status,
         ))
 
@@ -1441,7 +1445,7 @@ async def query_audit_logs(
     action: Optional[str] = None,
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=1000),
     offset: int = 0,
 ):
     """
@@ -1561,7 +1565,7 @@ async def get_memory_summary():
 
 
 @app.get("/api/memory/episodes")
-async def list_episodes(limit: int = 50):
+async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
     """List episodic memory entries."""
     ep_dir = _get_loki_dir() / "memory" / "episodic"
     episodes = []
@@ -1578,11 +1582,15 @@ async def list_episodes(limit: int = 50):
 @app.get("/api/memory/episodes/{episode_id}")
 async def get_episode(episode_id: str):
     """Get a specific episodic memory entry."""
-    ep_dir = _get_loki_dir() / "memory" / "episodic"
+    loki_dir = _get_loki_dir()
+    ep_dir = loki_dir / "memory" / "episodic"
     if not ep_dir.exists():
         raise HTTPException(status_code=404, detail="Episode not found")
     # Try direct filename match
     for f in ep_dir.glob("*.json"):
+        resolved = os.path.realpath(f)
+        if not resolved.startswith(os.path.realpath(str(loki_dir))):
+            raise HTTPException(status_code=403, detail="Access denied")
         try:
             data = json.loads(f.read_text())
             if data.get("id") == episode_id or f.stem == episode_id:
@@ -1633,10 +1641,14 @@ async def list_skills():
 @app.get("/api/memory/skills/{skill_id}")
 async def get_skill(skill_id: str):
     """Get a specific procedural skill."""
-    skills_dir = _get_loki_dir() / "memory" / "skills"
+    loki_dir = _get_loki_dir()
+    skills_dir = loki_dir / "memory" / "skills"
     if not skills_dir.exists():
         raise HTTPException(status_code=404, detail="Skill not found")
     for f in skills_dir.glob("*.json"):
+        resolved = os.path.realpath(f)
+        if not resolved.startswith(os.path.realpath(str(loki_dir))):
+            raise HTTPException(status_code=403, detail="Access denied")
         try:
             data = json.loads(f.read_text())
             if data.get("id") == skill_id or f.stem == skill_id:
@@ -1706,6 +1718,7 @@ def _read_learning_signals(signal_type: Optional[str] = None, limit: int = 50) -
     (learning/emitter.py). Each file contains a single signal object with fields:
     id, type, source, action, timestamp, confidence, outcome, data, context.
     """
+    limit = min(limit, 1000)
     signals_dir = _get_loki_dir() / "learning" / "signals"
     if not signals_dir.exists() or not signals_dir.is_dir():
         return []
@@ -1825,7 +1838,7 @@ async def get_learning_signals(
     timeRange: str = "7d",
     signalType: Optional[str] = None,
     source: Optional[str] = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=1000),
     offset: int = 0,
 ):
     """Get raw learning signals from both events.jsonl and learning signals directory."""
@@ -2030,7 +2043,7 @@ async def trigger_aggregation():
 
 
 @app.get("/api/learning/preferences")
-async def get_learning_preferences(limit: int = 50):
+async def get_learning_preferences(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated user preferences from events and learning signals directory."""
     events = _read_events("30d")
     prefs = [e for e in events if e.get("type") == "user_preference"]
@@ -2042,7 +2055,7 @@ async def get_learning_preferences(limit: int = 50):
 
 
 @app.get("/api/learning/errors")
-async def get_learning_errors(limit: int = 50):
+async def get_learning_errors(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated error patterns from events and learning signals directory."""
     events = _read_events("30d")
     errors = [e for e in events if e.get("type") == "error_pattern"]
@@ -2054,7 +2067,7 @@ async def get_learning_errors(limit: int = 50):
 
 
 @app.get("/api/learning/success")
-async def get_learning_success(limit: int = 50):
+async def get_learning_success(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated success patterns from events and learning signals directory."""
     events = _read_events("30d")
     successes = [e for e in events if e.get("type") == "success_pattern"]
@@ -2066,7 +2079,7 @@ async def get_learning_success(limit: int = 50):
 
 
 @app.get("/api/learning/tools")
-async def get_tool_efficiency(limit: int = 50):
+async def get_tool_efficiency(limit: int = Query(default=50, ge=1, le=1000)):
     """Get tool efficiency rankings from events and learning signals directory."""
     events = _read_events("30d")
     tools = [e for e in events if e.get("type") == "tool_efficiency"]
@@ -2505,7 +2518,7 @@ async def get_council_state():
 
 
 @app.get("/api/council/verdicts")
-async def get_council_verdicts(limit: int = 20):
+async def get_council_verdicts(limit: int = Query(default=20, ge=1, le=1000)):
     """Get council vote history (decision log)."""
     state_file = _get_loki_dir() / "council" / "state.json"
     verdicts = []

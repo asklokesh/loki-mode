@@ -68,28 +68,32 @@ PROMPT_INJECTION_ENABLED="${LOKI_PROMPT_INJECTION:-false}"
 
 # Preset definitions: "host_path:container_path:mode"
 # Container runs as user 'loki' (UID 1000), so mount to /home/loki/
-declare -A DOCKER_MOUNT_PRESETS
-DOCKER_MOUNT_PRESETS=(
-    # Note: gh and git are also hardcoded in start_sandbox() defaults
-    [gh]="$HOME/.config/gh:/home/loki/.config/gh:ro"
-    [git]="$HOME/.gitconfig:/home/loki/.gitconfig:ro"
-    [ssh]="$HOME/.ssh/known_hosts:/home/loki/.ssh/known_hosts:ro"
-    [aws]="$HOME/.aws:/home/loki/.aws:ro"
-    [azure]="$HOME/.azure:/home/loki/.azure:ro"
-    [kube]="$HOME/.kube:/home/loki/.kube:ro"
-    [terraform]="$HOME/.terraform.d:/home/loki/.terraform.d:ro"
-    [gcloud]="$HOME/.config/gcloud:/home/loki/.config/gcloud:ro"
-    [npm]="$HOME/.npmrc:/home/loki/.npmrc:ro"
-)
+# Uses functions instead of declare -A for bash 3.2 compatibility (macOS default)
+_get_mount_preset() {
+    case "$1" in
+        gh)        echo "$HOME/.config/gh:/home/loki/.config/gh:ro" ;;
+        git)       echo "$HOME/.gitconfig:/home/loki/.gitconfig:ro" ;;
+        ssh)       echo "$HOME/.ssh/known_hosts:/home/loki/.ssh/known_hosts:ro" ;;
+        aws)       echo "$HOME/.aws:/home/loki/.aws:ro" ;;
+        azure)     echo "$HOME/.azure:/home/loki/.azure:ro" ;;
+        kube)      echo "$HOME/.kube:/home/loki/.kube:ro" ;;
+        terraform) echo "$HOME/.terraform.d:/home/loki/.terraform.d:ro" ;;
+        gcloud)    echo "$HOME/.config/gcloud:/home/loki/.config/gcloud:ro" ;;
+        npm)       echo "$HOME/.npmrc:/home/loki/.npmrc:ro" ;;
+        *)         echo "" ;;
+    esac
+}
 
 # Environment variables auto-passed per preset (comma-separated)
-declare -A DOCKER_ENV_PRESETS
-DOCKER_ENV_PRESETS=(
-    [aws]="AWS_REGION,AWS_PROFILE,AWS_DEFAULT_REGION"
-    [azure]="AZURE_SUBSCRIPTION_ID,AZURE_TENANT_ID"
-    [gcloud]="GOOGLE_PROJECT,GOOGLE_REGION,GCLOUD_PROJECT"
-    [terraform]="TF_VAR_*"
-)
+_get_env_preset() {
+    case "$1" in
+        aws)       echo "AWS_REGION,AWS_PROFILE,AWS_DEFAULT_REGION" ;;
+        azure)     echo "AZURE_SUBSCRIPTION_ID,AZURE_TENANT_ID" ;;
+        gcloud)    echo "GOOGLE_PROJECT,GOOGLE_REGION,GCLOUD_PROJECT" ;;
+        terraform) echo "TF_VAR_*" ;;
+        *)         echo "" ;;
+    esac
+}
 
 #===============================================================================
 # Utility Functions
@@ -836,7 +840,8 @@ except: pass
         while IFS= read -r name; do
             [[ -z "$name" ]] && continue
 
-            local preset_value="${DOCKER_MOUNT_PRESETS[$name]:-}"
+            local preset_value
+            preset_value="$(_get_mount_preset "$name")"
             if [[ -z "$preset_value" ]]; then
                 log_warn "Unknown Docker mount preset: $name"
                 continue
@@ -861,7 +866,8 @@ except: pass
             fi
 
             # Add associated env vars
-            local env_list="${DOCKER_ENV_PRESETS[$name]:-}"
+            local env_list
+            env_list="$(_get_env_preset "$name")"
             if [[ -n "$env_list" ]]; then
                 IFS=',' read -ra env_names <<< "$env_list"
                 local env_name

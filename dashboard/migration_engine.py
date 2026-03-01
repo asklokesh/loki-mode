@@ -886,7 +886,7 @@ Summary: {summary}
             if len(entries) > 50:
                 header = entries[0]
                 recent = entries[-50:]
-                content = header + "\n## Session:".join(recent)
+                content = header + "\n## Session:" + "\n## Session:".join(recent)
             else:
                 content = existing
             content += entry

@@ -20,6 +20,7 @@ import os
 import json
 import logging
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -563,11 +564,11 @@ async def loki_memory_store_pattern(
         from memory.schemas import SemanticPattern
 
         base_path = safe_path_join('.loki', 'memory')
-        engine = MemoryEngine(base_path)
+        engine = MemoryEngine(base_path=base_path)
         engine.initialize()
 
         pattern_obj = SemanticPattern(
-            id=f"pattern-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+            id=f"pattern-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}",
             pattern=pattern,
             category=category,
             conditions=[],
@@ -821,7 +822,7 @@ async def loki_state_get() -> str:
         try:
             from memory.engine import MemoryEngine
             memory_path = safe_path_join('.loki', 'memory')
-            engine = MemoryEngine(memory_path)
+            engine = MemoryEngine(base_path=memory_path)
             state["memory_stats"] = engine.get_stats()
         except Exception:
             state["memory_stats"] = None
@@ -1004,9 +1005,13 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
     try:
         content = prd_content
         if not content and prd_path:
-            resolved = safe_path_join('.', prd_path)
-            if os.path.exists(resolved):
-                with safe_open(resolved, 'r') as f:
+            # Resolve relative paths against project root, absolute paths used as-is
+            if os.path.isabs(prd_path):
+                resolved = os.path.realpath(prd_path)
+            else:
+                resolved = os.path.realpath(os.path.join(get_project_root(), prd_path))
+            if os.path.exists(resolved) and os.path.isfile(resolved):
+                with open(resolved, 'r', encoding='utf-8') as f:
                     content = f.read()
             else:
                 return json.dumps({"error": f"PRD file not found: {prd_path}"})

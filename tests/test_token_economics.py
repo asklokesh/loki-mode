@@ -511,7 +511,7 @@ class TestTokenEconomicsRatio:
     def test_ratio_no_reads(self):
         te = TokenEconomics("s1")
         te.record_discovery(100)
-        assert te.get_ratio() == 0.0
+        assert te.get_ratio() == 999.99  # No reads with discoveries = sentinel value
 
     def test_ratio_no_discovery(self):
         te = TokenEconomics("s1")

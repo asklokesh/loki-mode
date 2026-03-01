@@ -43,7 +43,7 @@ fi
 
 # JSON escape helper: handles \, ", and control characters
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g' | tr -d '\n'
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g' | awk '{if(NR>1) printf "\\n"; printf "%s", $0}'
 }
 
 # Build payload JSON

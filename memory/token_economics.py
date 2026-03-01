@@ -505,9 +505,12 @@ class TokenEconomics:
             Ratio of discovery_tokens / read_tokens (0.0 if no reads)
         """
         read_tokens = self.metrics["read_tokens"]
+        discovery_tokens = self.metrics["discovery_tokens"]
         if read_tokens == 0:
+            if discovery_tokens > 0:
+                return 999.99  # Sentinel: all discovery, no productive reads
             return 0.0
-        return self.metrics["discovery_tokens"] / read_tokens
+        return discovery_tokens / read_tokens
 
     def get_savings_percent(self) -> float:
         """

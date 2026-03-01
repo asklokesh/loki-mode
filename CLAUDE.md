@@ -15,7 +15,7 @@ claude --dangerously-skip-permissions
 ## Project Structure
 
 ```
-SKILL.md                    # Slim core skill (~210 lines) - progressive disclosure
+SKILL.md                    # Slim core skill (~266 lines) - progressive disclosure
 providers/                  # Multi-provider support (v5.0.0)
   claude.sh                 # Claude Code - full features
   codex.sh                  # OpenAI Codex CLI - degraded mode
@@ -44,7 +44,7 @@ skills/                     # On-demand skill modules (v3.0 architecture)
   patterns-advanced.md      # OptiMind, k8s-valkey, Constitutional AI
   parallel-workflows.md     # Git worktrees, parallel streams, auto-merge
   github-integration.md     # GitHub issue import, PR creation, notifications
-references/                 # Detailed documentation (19 files)
+references/                 # Detailed documentation (20 files)
   openai-patterns.md        # OpenAI Agents SDK: guardrails, tripwires, handoffs
   lab-research-patterns.md  # DeepMind + Anthropic: Constitutional AI, debate
   production-patterns.md    # HN 2025: What actually works in production
@@ -73,7 +73,7 @@ docs/                       # Architecture documentation
 autonomy/                   # Runtime and autonomous execution
   context-tracker.py        # Context window usage tracking
   notification-checker.py   # Notification trigger evaluation
-templates/                  # 12 PRD templates (saas, cli, discord-bot, etc.)
+templates/                  # 13 PRD templates (saas, cli, discord-bot, etc.)
 benchmarks/                 # SWE-bench and HumanEval benchmarks
 ```
 
@@ -127,40 +127,40 @@ LOKI_PROVIDER=codex loki start ./prd.md
 
 | File | Lines | Role |
 |---|---|---|
-| `autonomy/loki` | 8,916 | CLI (37 commands, dispatch at line 5627) |
-| `autonomy/run.sh` | 8,200 | Orchestration engine (RARV loop) |
-| `autonomy/completion-council.sh` | 1,372 | Completion detection (council voting) |
-| `dashboard/server.py` | 4,396 | FastAPI (100+ endpoints, WebSocket) |
-| `memory/retrieval.py` | 1,561 | Task-aware memory retrieval |
-| `memory/storage.py` | 1,384 | File-based memory backend |
-| `memory/engine.py` | 1,235 | Memory orchestrator |
-| `memory/consolidation.py` | 948 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | 1,272 | MCP server (13 tools) |
+| `autonomy/loki` | 10,820 | CLI (74 cmd_ functions, dispatch at line 7400) |
+| `autonomy/run.sh` | 8,766 | Orchestration engine (RARV loop) |
+| `autonomy/completion-council.sh` | 1,403 | Completion detection (council voting) |
+| `dashboard/server.py` | 4,482 | FastAPI (100+ endpoints, WebSocket) |
+| `memory/retrieval.py` | 1,565 | Task-aware memory retrieval |
+| `memory/storage.py` | 1,396 | File-based memory backend |
+| `memory/engine.py` | 1,297 | Memory orchestrator |
+| `memory/consolidation.py` | 951 | Episodic-to-semantic pipeline |
+| `mcp/server.py` | 1,439 | MCP server (15 tools) |
 | `providers/loader.sh` | 184 | Provider loader |
 
 ### Key Function Lookup
 
 | Function | Location | Purpose |
 |---|---|---|
-| `cmd_start()` | `loki:467` | Start autonomous execution |
-| `main()` (CLI) | `loki:5616` | CLI dispatch |
-| `main()` (runner) | `run.sh:7709` | Runner entry point |
-| `run_autonomous()` | `run.sh:6734` | Main iteration loop |
-| `build_prompt()` | `run.sh:6558` | Prompt construction |
-| `save_state()` | `run.sh:6446` | Persist state |
-| `council_should_stop()` | `completion-council.sh:1252` | Completion decision |
-| `run_code_review()` | `run.sh:4807` | 3-reviewer code review |
-| `create_checkpoint()` | `run.sh:5220` | Snapshot state |
-| `store_episode_trace()` | `run.sh:6360` | Memory storage bridge |
-| `check_human_intervention()` | `run.sh:7394` | PAUSE/STOP/INPUT signals |
-| `detect_complexity()` | `run.sh:1139` | Auto-detect project complexity |
-| `get_rarv_tier()` | `run.sh:1268` | Map iteration to model tier |
-| `check_budget_limit()` | `run.sh:5864` | Budget circuit breaker |
-| `is_rate_limited()` | `run.sh:5679` | Rate limit detection |
+| `cmd_start()` | `loki:485` | Start autonomous execution |
+| `main()` (CLI) | `loki:7400` | CLI dispatch |
+| `main()` (runner) | `run.sh:8234` | Runner entry point |
+| `run_autonomous()` | `run.sh:7233` | Main iteration loop |
+| `build_prompt()` | `run.sh:6899` | Prompt construction |
+| `save_state()` | `run.sh:6787` | Persist state |
+| `council_should_stop()` | `completion-council.sh:1283` | Completion decision |
+| `run_code_review()` | `run.sh:4935` | 3-reviewer code review |
+| `create_checkpoint()` | `run.sh:5483` | Snapshot state |
+| `store_episode_trace()` | `run.sh:6626` | Memory storage bridge |
+| `check_human_intervention()` | `run.sh:7897` | PAUSE/STOP/INPUT signals |
+| `detect_complexity()` | `run.sh:1182` | Auto-detect project complexity |
+| `get_rarv_tier()` | `run.sh:1311` | Map iteration to model tier |
+| `check_budget_limit()` | `run.sh:6125` | Budget circuit breaker |
+| `is_rate_limited()` | `run.sh:5940` | Rate limit detection |
 
 ### Critical Data Flow
 
-A PRD enters via `loki start` (line 467), which execs `run.sh`. The `run_autonomous()` loop (line 6734) builds prompts via `build_prompt()` (line 6558) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at completion-council.sh:1252), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+A PRD enters via `loki start` (line 485), which execs `run.sh`. The `run_autonomous()` loop (line 7233) builds prompts via `build_prompt()` (line 6899) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at completion-council.sh:1283), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
 
 See `.claude/projects/-Users-lokesh-git-loki-mode/memory/CODEBASE-KNOWLEDGE-GRAPH.md` for complete reference.
 
@@ -237,7 +237,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v6.4.0
+- Current: v6.5.0
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

@@ -307,6 +307,10 @@ class TextChunker:
         if len(text) <= max_size:
             return [text]
 
+        # Guard against infinite loop when overlap >= max_size
+        if overlap >= max_size:
+            overlap = 0
+
         chunks = []
         start = 0
         while start < len(text):
@@ -1062,12 +1066,17 @@ class EmbeddingEngine:
         # Find texts that need computing
         texts_to_compute = []
         indices_to_compute = []
-        for i, (text, key) in enumerate(zip(texts, cache_keys)):
-            if not self.config.cache_enabled or cached_results.get(key) is None:
-                texts_to_compute.append(text)
-                indices_to_compute.append(i)
-            else:
-                self._metrics["cache_hits"] += 1
+        if not self.config.cache_enabled:
+            # No cache - all texts need computing
+            texts_to_compute = list(texts)
+            indices_to_compute = list(range(len(texts)))
+        else:
+            for i, (text, key) in enumerate(zip(texts, cache_keys)):
+                if cached_results.get(key) is None:
+                    texts_to_compute.append(text)
+                    indices_to_compute.append(i)
+                else:
+                    self._metrics["cache_hits"] += 1
 
         # Compute missing embeddings
         new_embeddings = None

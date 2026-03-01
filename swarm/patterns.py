@@ -175,8 +175,8 @@ class VotingPattern(SwarmPattern):
         else:
             decision = "no_quorum"
 
-        # Check if unanimous
-        unanimous = (
+        # Check if unanimous (requires at least one vote)
+        unanimous = len(votes) > 0 and (
             vote_counts[VoteChoice.APPROVE.value] == len(votes) or
             vote_counts[VoteChoice.REJECT.value] == len(votes)
         )
@@ -507,8 +507,8 @@ class DelegationPattern(SwarmPattern):
         # Consider load if enabled
         load_factor = 1.0
         if self.consider_load:
-            total_tasks = candidate.tasks_completed + candidate.tasks_failed + 1
-            load_factor = 1.0 - (0.1 * min(10, total_tasks))  # Reduce score for busy agents
+            total_tasks = candidate.tasks_completed + candidate.tasks_failed
+            load_factor = 1.0 / (1.0 + 0.1 * total_tasks)  # Diminishing returns, never reaches zero
 
         return avg_proficiency * coverage * load_factor
 
@@ -741,6 +741,7 @@ class ClusterLifecycleHooks:
         Returns list of results: [{"hook": str, "success": bool, "output": str}]
         """
         import os
+        import shlex
         import subprocess
 
         results = []
@@ -757,7 +758,7 @@ class ClusterLifecycleHooks:
                         for k, v in context.items():
                             env[f"LOKI_CLUSTER_{k.upper()}"] = str(v)
                     proc = subprocess.run(
-                        hook, shell=True, capture_output=True, text=True,
+                        shlex.split(hook), shell=False, capture_output=True, text=True,
                         timeout=30, env=env
                     )
                     result["success"] = proc.returncode == 0
