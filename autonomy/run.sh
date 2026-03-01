@@ -1137,6 +1137,20 @@ validate_api_keys() {
         claude) key_var="ANTHROPIC_API_KEY" ;;
         codex)  key_var="OPENAI_API_KEY" ;;
         gemini) key_var="GOOGLE_API_KEY" ;;
+        cline)  # Cline manages its own keys via `cline auth`
+            if ! command -v cline &>/dev/null; then
+                log_error "Cline CLI not found. Install: npm install -g cline"
+                return 1
+            fi
+            return 0
+            ;;
+        aider)  # Aider manages keys via env vars or .aider.conf.yml
+            if ! command -v aider &>/dev/null; then
+                log_error "Aider not found. Install: pip install aider-chat"
+                return 1
+            fi
+            return 0
+            ;;
     esac
 
     if [[ -z "$key_var" ]]; then
@@ -1389,6 +1403,14 @@ get_provider_tier_param() {
                 fast) echo "${PROVIDER_THINKING_FAST:-low}" ;;
                 *) echo "medium" ;;
             esac
+            ;;
+        cline)
+            # Cline uses single externally-configured model
+            echo "${LOKI_CLINE_MODEL:-default}"
+            ;;
+        aider)
+            # Aider uses single externally-configured model
+            echo "${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
             ;;
         *)
             echo "development"
@@ -2177,6 +2199,15 @@ spawn_worktree_session() {
                 invoke_gemini "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1
                 ;;
+            cline)
+                # Cline supports parallel instances
+                invoke_cline "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
+                    >> "$log_file" 2>&1
+                ;;
+            aider)
+                # Aider has known issues with parallel - skip
+                log_warn "Aider does not support parallel sessions, skipping"
+                ;;
             *)
                 log_error "Unknown provider: ${PROVIDER_NAME}"
                 return 1
@@ -2268,6 +2299,12 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
             gemini)
                 # Uses invoke_gemini_capture for rate limit fallback to flash model
                 resolution=$(invoke_gemini_capture "$conflict_prompt" 2>/dev/null)
+                ;;
+            cline)
+                resolution=$(invoke_cline_capture "$conflict_prompt" 2>/dev/null)
+                ;;
+            aider)
+                resolution=$(invoke_aider_capture "$conflict_prompt" 2>/dev/null)
                 ;;
             *)
                 log_error "Unknown provider: ${PROVIDER_NAME}"
@@ -2514,6 +2551,12 @@ check_prerequisites() {
             gemini)
                 # TODO: Verify official Gemini CLI package name when available
                 log_info "Install: npm install -g @google/gemini-cli (or visit https://ai.google.dev/)"
+                ;;
+            cline)
+                log_info "Install: npm install -g cline"
+                ;;
+            aider)
+                log_info "Install: pip install aider-chat"
                 ;;
             *)
                 log_info "Install the $cli_name CLI for your provider"
@@ -2826,6 +2869,62 @@ invoke_gemini_capture() {
     fi
 
     echo "$output"
+}
+
+#===============================================================================
+# Cline Invocation (Tier 2 - Near-Full)
+#===============================================================================
+
+# Invoke Cline CLI in autonomous mode
+# Usage: invoke_cline "prompt" [additional args...]
+invoke_cline() {
+    local prompt="$1"
+    shift
+    local model="${LOKI_CLINE_MODEL:-}"
+    local model_flag=""
+    [[ -n "$model" ]] && model_flag="-m $model"
+    # shellcheck disable=SC2086
+    cline -y $model_flag "$prompt" "$@" 2>&1
+}
+
+# Invoke Cline and capture output (for variable assignment)
+# Usage: result=$(invoke_cline_capture "prompt")
+invoke_cline_capture() {
+    local prompt="$1"
+    shift
+    local model="${LOKI_CLINE_MODEL:-}"
+    local model_flag=""
+    [[ -n "$model" ]] && model_flag="-m $model"
+    # shellcheck disable=SC2086
+    cline -y $model_flag "$prompt" "$@" 2>&1
+}
+
+#===============================================================================
+# Aider Invocation (Tier 3 - Degraded, 18+ Providers)
+#===============================================================================
+
+# Invoke Aider in autonomous single-instruction mode
+# Usage: invoke_aider "prompt" [additional args...]
+invoke_aider() {
+    local prompt="$1"
+    shift
+    local model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
+    local extra_flags="${LOKI_AIDER_FLAGS:-}"
+    # shellcheck disable=SC2086
+    aider --message "$prompt" --yes-always --no-auto-commits \
+          --model "$model" $extra_flags "$@" 2>&1
+}
+
+# Invoke Aider and capture output (for variable assignment)
+# Usage: result=$(invoke_aider_capture "prompt")
+invoke_aider_capture() {
+    local prompt="$1"
+    shift
+    local model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
+    local extra_flags="${LOKI_AIDER_FLAGS:-}"
+    # shellcheck disable=SC2086
+    aider --message "$prompt" --yes-always --no-auto-commits \
+          --model "$model" $extra_flags "$@" 2>&1
 }
 
 #===============================================================================
@@ -3343,6 +3442,10 @@ track_iteration_complete() {
         model_tier="gpt-5.3-codex"
     elif [ "${PROVIDER_NAME:-claude}" = "gemini" ]; then
         model_tier="gemini-3-pro"
+    elif [ "${PROVIDER_NAME:-claude}" = "cline" ]; then
+        model_tier="${LOKI_CLINE_MODEL:-sonnet}"
+    elif [ "${PROVIDER_NAME:-claude}" = "aider" ]; then
+        model_tier="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
     fi
     local phase="${LAST_KNOWN_PHASE:-}"
     [ -z "$phase" ] && phase=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', 'unknown'))" 2>/dev/null || echo "unknown")
@@ -5143,6 +5246,14 @@ BUILD_PROMPT
                     invoke_gemini_capture "$prompt_text" \
                         > "$review_output" 2>/dev/null
                     ;;
+                cline)
+                    invoke_cline_capture "$prompt_text" \
+                        > "$review_output" 2>/dev/null
+                    ;;
+                aider)
+                    invoke_aider_capture "$prompt_text" \
+                        > "$review_output" 2>/dev/null
+                    ;;
                 *)
                     echo "VERDICT: PASS" > "$review_output"
                     echo "FINDINGS:" >> "$review_output"
@@ -5344,6 +5455,18 @@ OVERALL_RISK: HIGH or MEDIUM or LOW"
         gemini)
             if command -v gemini &>/dev/null; then
                 invoke_gemini_capture "$adversarial_prompt" \
+                    > "$result_file" 2>/dev/null || true
+            fi
+            ;;
+        cline)
+            if command -v cline &>/dev/null; then
+                invoke_cline_capture "$adversarial_prompt" \
+                    > "$result_file" 2>/dev/null || true
+            fi
+            ;;
+        aider)
+            if command -v aider &>/dev/null; then
+                invoke_aider_capture "$adversarial_prompt" \
                     > "$result_file" 2>/dev/null || true
             fi
             ;;
@@ -6063,7 +6186,7 @@ detect_rate_limit() {
         claude)
             wait_secs=$(parse_claude_reset_time "$log_file")
             ;;
-        codex|gemini|*)
+        codex|gemini|cline|aider|*)
             # No provider-specific reset time format known
             # Fall through to generic parsing
             ;;
@@ -7685,6 +7808,21 @@ if __name__ == "__main__":
                 rm -f "$tmp_output"
                 ;;
 
+            cline)
+                # Cline: Tier 2 - near-full mode with subagents and MCP
+                echo "[loki] Cline model: ${LOKI_CLINE_MODEL:-default}, tier: $tier_param" >> "$log_file"
+                echo "[loki] Cline model: ${LOKI_CLINE_MODEL:-default}, tier: $tier_param" >> "$agent_log"
+                { invoke_cline "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                } && exit_code=0 || exit_code=$?
+                ;;
+            aider)
+                # Aider: Tier 3 - degraded mode, 18+ providers
+                echo "[loki] Aider model: ${LOKI_AIDER_MODEL:-claude-3.7-sonnet}, tier: $tier_param" >> "$log_file"
+                echo "[loki] Aider model: ${LOKI_AIDER_MODEL:-claude-3.7-sonnet}, tier: $tier_param" >> "$agent_log"
+                { invoke_aider "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                } && exit_code=0 || exit_code=$?
+                ;;
+
             *)
                 log_error "Unknown provider: ${PROVIDER_NAME:-unknown}"
                 local exit_code=1
@@ -8279,7 +8417,7 @@ main() {
                     fi
                     shift 2
                 else
-                    log_error "--provider requires a value (claude, codex, gemini)"
+                    log_error "--provider requires a value (claude, codex, gemini, cline, aider)"
                     exit 1
                 fi
                 ;;
@@ -8313,7 +8451,7 @@ main() {
                 echo "Options:"
                 echo "  --parallel           Enable git worktree-based parallel workflows"
                 echo "  --allow-haiku        Enable Haiku model for fast tier (default: disabled)"
-                echo "  --provider <name>    Provider: claude (default), codex, gemini"
+                echo "  --provider <name>    Provider: claude (default), codex, gemini, cline, aider"
                 echo "  --bg, --background   Run in background mode"
                 echo "  --interactive-prd    Interactive PRD pre-flight analysis"
                 echo "  --help, -h           Show this help message"

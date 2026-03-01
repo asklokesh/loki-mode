@@ -2,13 +2,15 @@
 
 ## Multi-Provider Support (v5.0.0)
 
-Loki Mode supports three AI providers. Claude has full features; Codex and Gemini run in **degraded mode** (sequential execution only, no Task tool, no parallel agents).
+Loki Mode supports five AI providers. Claude has full features; all others run in **degraded mode** (sequential execution only, no Task tool, no parallel agents).
 
 | Provider | Full Features | Degraded | CLI Flag |
 |----------|---------------|----------|----------|
 | **Claude Code** | Yes | No | `--provider claude` (default) |
 | **OpenAI Codex CLI** | No | Yes | `--provider codex` |
 | **Google Gemini CLI** | No | Yes | `--provider gemini` |
+| **Cline CLI** | No | Yes | `--provider cline` |
+| **Aider** | No | Yes | `--provider aider` |
 
 **Degraded mode limitations:**
 - No Task tool (cannot spawn subagents)

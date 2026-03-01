@@ -391,7 +391,7 @@ async def agent_card() -> dict:
             "agents": 41,
             "swarms": 8,
             "quality_gates": 9,
-            "providers": ["claude", "codex", "gemini"],
+            "providers": ["claude", "codex", "gemini", "cline", "aider"],
             "streaming": True,
             "pushNotifications": False,
             "stateTransitionHistory": True,
@@ -2455,6 +2455,8 @@ _MODEL_PROVIDERS = {
     "gpt-5.3-codex": "codex",
     "gemini-3-pro": "gemini",
     "gemini-3-flash": "gemini",
+    "cline-default": "cline",
+    "aider-default": "aider",
 }
 
 

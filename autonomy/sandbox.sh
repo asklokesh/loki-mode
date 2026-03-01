@@ -164,6 +164,14 @@ warn_missing_api_keys() {
                 log_warn "GOOGLE_API_KEY not set - Gemini commands will fail inside container"
             fi
             ;;
+        cline)
+            log_info "Cline manages its own API keys via 'cline auth' - ensure authentication is configured"
+            ;;
+        aider)
+            if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+                log_warn "No API key set for Aider - set OPENAI_API_KEY or ANTHROPIC_API_KEY"
+            fi
+            ;;
     esac
 }
 
@@ -594,6 +602,18 @@ _desktop_install_provider_cli() {
             if ! docker sandbox exec "$sandbox_name" which gemini &>/dev/null 2>&1; then
                 log_info "Installing Gemini CLI in sandbox (one-time)..."
                 docker sandbox exec "$sandbox_name" npm install -g @google/gemini-cli 2>&1 | tail -1
+            fi
+            ;;
+        cline)
+            if ! docker sandbox exec "$sandbox_name" which cline &>/dev/null 2>&1; then
+                log_info "Installing Cline CLI in sandbox (one-time)..."
+                docker sandbox exec "$sandbox_name" npm install -g cline 2>&1 | tail -1
+            fi
+            ;;
+        aider)
+            if ! docker sandbox exec "$sandbox_name" which aider &>/dev/null 2>&1; then
+                log_info "Installing Aider in sandbox (one-time)..."
+                docker sandbox exec "$sandbox_name" pip install aider-chat 2>&1 | tail -1
             fi
             ;;
         # claude is pre-installed in the sandbox template

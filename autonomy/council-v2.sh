@@ -282,6 +282,20 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                 result='{"verdict":"REJECT","reasoning":"reviewer CLI unavailable","issues":[]}'
             fi
             ;;
+        cline)
+            if command -v cline &>/dev/null; then
+                result=$(cline -y "$full_prompt" 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
+            else
+                result='{"verdict":"REJECT","reasoning":"reviewer CLI unavailable","issues":[]}'
+            fi
+            ;;
+        aider)
+            if command -v aider &>/dev/null; then
+                result=$(aider --message "$full_prompt" --yes-always --no-auto-commits --no-git 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
+            else
+                result='{"verdict":"REJECT","reasoning":"reviewer CLI unavailable","issues":[]}'
+            fi
+            ;;
         *)
             result='{"verdict":"REJECT","reasoning":"review not supported for this provider","issues":[]}'
             ;;

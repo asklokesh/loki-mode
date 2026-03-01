@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.6.0] - 2026-03-01
+
+### Added
+- Cline CLI provider (Tier 2 - near-full capabilities with subagents and MCP)
+- Aider provider (Tier 3 - 18+ model provider support via OpenRouter, Ollama, etc.)
+- `--cline-model`, `--aider-model`, `--aider-flags` CLI options
+- Provider support in dashboard, sandbox, council-v2, and doctor commands
+
+### Fixed
+- Doctor command no longer aborts on first warning (set -e safety)
+- Duplicate --parallel flag in `loki run` command
+- `loki provider show` now accepts positional argument
+- Provider list, doctor JSON, and skill setup include all 5 providers
+
 ## [6.5.0] - 2026-02-28
 
 ### Security Fixes

@@ -5,7 +5,7 @@
 PROVIDERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # List of supported providers
-SUPPORTED_PROVIDERS=("claude" "codex" "gemini")
+SUPPORTED_PROVIDERS=("claude" "codex" "gemini" "cline" "aider")
 
 # Default provider
 DEFAULT_PROVIDER="claude"

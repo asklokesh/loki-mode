@@ -3,11 +3,11 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v6.5.0
+# Loki Mode v6.6.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
-**New in v5.0.0:** Multi-provider support (Claude/Codex/Gemini), abstract model tiers, degraded mode for non-Claude providers. See `skills/providers.md`.
+**New in v5.0.0:** Multi-provider support (Claude/Codex/Gemini/Cline/Aider), abstract model tiers, degraded mode for non-Claude providers. See `skills/providers.md`.
 
 ---
 
@@ -95,7 +95,7 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 **Parallelization rule (Claude only):** Launch up to 10 agents simultaneously for independent tasks.
 
-**Degraded mode (Codex/Gemini):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
+**Degraded mode (Codex/Gemini/Cline/Aider):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
 
 **Git worktree parallelism:** For true parallel feature development, use `--parallel` flag with run.sh. See `skills/parallel-workflows.md`.
 
@@ -187,6 +187,8 @@ claude --dangerously-skip-permissions
 ./autonomy/run.sh --provider claude ./prd.md   # Default, full features
 ./autonomy/run.sh --provider codex ./prd.json  # GPT-5.3 Codex, degraded mode
 ./autonomy/run.sh --provider gemini ./prd.md   # Gemini 3 Pro, degraded mode
+./autonomy/run.sh --provider cline ./prd.md    # Cline CLI, degraded mode
+./autonomy/run.sh --provider aider ./prd.md    # Aider (18+ providers), degraded mode
 
 # Or via CLI wrapper
 loki start --provider codex ./prd.md
@@ -199,6 +201,8 @@ loki start --provider codex ./prd.md
 - **Claude**: Opus 4.6, 1M context (beta), 128K output, adaptive thinking, agent teams, full features (Task tool, parallel agents, MCP)
 - **Codex**: GPT-5.3, 400K context, 128K output, MCP support, --full-auto mode, degraded (sequential only, no Task tool)
 - **Gemini**: Degraded mode (sequential only, no Task tool, 1M context)
+- **Cline**: Multi-provider CLI, degraded mode (sequential only, no Task tool)
+- **Aider**: 18+ provider backends, degraded mode (sequential only, no Task tool)
 
 ---
 
@@ -263,4 +267,4 @@ The following features are documented in skill modules but not yet fully automat
 | Quality gates 3-reviewer system | Implemented (v5.35.0) | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Benchmarks (HumanEval, SWE-bench) | Infrastructure only | Runner scripts and datasets exist in `benchmarks/`; no published results |
 
-**v6.5.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v6.6.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

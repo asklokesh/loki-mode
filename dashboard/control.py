@@ -132,7 +132,7 @@ class StartRequest(BaseModel):
 
     def validate_provider(self) -> None:
         """Validate provider is from allowed list."""
-        allowed_providers = ["claude", "codex", "gemini"]
+        allowed_providers = ["claude", "codex", "gemini", "cline", "aider"]
         if self.provider not in allowed_providers:
             raise ValueError(f"Invalid provider: {self.provider}. Must be one of: {', '.join(allowed_providers)}")
 

@@ -433,7 +433,7 @@ show_help() {
     echo "  help             Show this help"
     echo ""
     echo "Options for 'start':"
-    echo "  --provider NAME  AI provider: claude (default), codex, gemini"
+    echo "  --provider NAME  AI provider: claude (default), codex, gemini, cline, aider"
     echo "  --parallel       Enable parallel mode with git worktrees"
     echo "  --bg, --background  Run in background mode"
     echo "  --simple         Force simple complexity tier (3 phases)"
@@ -450,7 +450,7 @@ show_help() {
     echo "  --dry-run          Preview generated PRD without starting"
     echo "  --no-start         Generate PRD but don't start execution"
     echo "  --output FILE      Save PRD to custom path"
-    echo "  --provider NAME    AI provider: claude (default), codex, gemini"
+    echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
     echo "  --parallel         Enable parallel mode with git worktrees"
     echo "  --budget USD       Set cost budget limit"
     echo ""
@@ -499,7 +499,7 @@ cmd_start() {
                 echo "  PRD                   Path to PRD file (optional)"
                 echo ""
                 echo "Options:"
-                echo "  --provider NAME       AI provider: claude (default), codex, gemini"
+                echo "  --provider NAME       AI provider: claude (default), codex, gemini, cline, aider"
                 echo "  --parallel            Enable parallel mode with git worktrees"
                 echo "  --bg, --background    Run in background mode"
                 echo "  --simple              Force simple complexity tier (3 phases)"
@@ -536,13 +536,52 @@ cmd_start() {
                     args+=("--provider" "$provider")
                     shift 2
                 else
-                    echo -e "${RED}--provider requires a value (claude, codex, gemini)${NC}"
+                    echo -e "${RED}--provider requires a value (claude, codex, gemini, cline, aider)${NC}"
                     exit 1
                 fi
                 ;;
             --provider=*)
                 provider="${1#*=}"
                 args+=("--provider" "$provider")
+                shift
+                ;;
+            --aider-model)
+                if [[ -n "${2:-}" ]]; then
+                    export LOKI_AIDER_MODEL="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--aider-model requires a value${NC}"
+                    exit 1
+                fi
+                ;;
+            --aider-model=*)
+                export LOKI_AIDER_MODEL="${1#*=}"
+                shift
+                ;;
+            --aider-flags)
+                if [[ -n "${2:-}" ]]; then
+                    export LOKI_AIDER_FLAGS="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--aider-flags requires a value${NC}"
+                    exit 1
+                fi
+                ;;
+            --aider-flags=*)
+                export LOKI_AIDER_FLAGS="${1#*=}"
+                shift
+                ;;
+            --cline-model)
+                if [[ -n "${2:-}" ]]; then
+                    export LOKI_CLINE_MODEL="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--cline-model requires a value${NC}"
+                    exit 1
+                fi
+                ;;
+            --cline-model=*)
+                export LOKI_CLINE_MODEL="${1#*=}"
                 shift
                 ;;
             --parallel)
@@ -1342,12 +1381,15 @@ cmd_status() {
     # Show provider with capability
     local capability="full features"
     case "$current_provider" in
-        codex|gemini)
+        codex|gemini|aider)
             capability="degraded mode"
+            ;;
+        cline)
+            capability="near-full mode"
             ;;
     esac
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
-    echo -e "${DIM}  Switch with: loki provider set <claude|codex|gemini>${NC}"
+    echo -e "${DIM}  Switch with: loki provider set <claude|codex|gemini|cline|aider>${NC}"
     echo ""
 
     # Show running sessions (v6.4.0 - concurrent session support)
@@ -1624,12 +1666,14 @@ cmd_provider() {
 }
 
 cmd_provider_show() {
+    local positional_arg="${1:-}"
+
     local saved_provider=""
     if [ -f "$LOKI_DIR/state/provider" ]; then
         saved_provider=$(cat "$LOKI_DIR/state/provider" 2>/dev/null)
     fi
 
-    local current="${saved_provider:-${LOKI_PROVIDER:-claude}}"
+    local current="${positional_arg:-${saved_provider:-${LOKI_PROVIDER:-claude}}}"
 
     echo -e "${BOLD}Current Provider${NC}"
     echo ""
@@ -1640,7 +1684,10 @@ cmd_provider_show() {
         claude)
             echo -e "${GREEN}Status:${NC}   Full features (subagents, parallel, MCP)"
             ;;
-        codex|gemini)
+        cline)
+            echo -e "${GREEN}Status:${NC}   Near-full mode (subagents, MCP, 12+ providers)"
+            ;;
+        codex|gemini|aider)
             echo -e "${YELLOW}Status:${NC}   Degraded mode (sequential only)"
             ;;
     esac
@@ -1661,17 +1708,17 @@ cmd_provider_set() {
 
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
-        echo "Usage: loki provider set <claude|codex|gemini>"
+        echo "Usage: loki provider set <claude|codex|gemini|cline|aider>"
         exit 1
     fi
 
     # Validate provider
     case "$new_provider" in
-        claude|codex|gemini)
+        claude|codex|gemini|cline|aider)
             ;;
         *)
             echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
-            echo "Valid providers: claude, codex, gemini"
+            echo "Valid providers: claude, codex, gemini, cline, aider"
             exit 1
             ;;
     esac
@@ -1689,6 +1736,12 @@ cmd_provider_set() {
                 ;;
             gemini)
                 echo "Install: npm install -g @google/gemini-cli"
+                ;;
+            cline)
+                echo "Install: npm install -g cline"
+                ;;
+            aider)
+                echo "Install: pip install aider-chat"
                 ;;
         esac
         echo ""
@@ -1719,6 +1772,8 @@ cmd_provider_list() {
     local claude_status="${RED}not installed${NC}"
     local codex_status="${RED}not installed${NC}"
     local gemini_status="${RED}not installed${NC}"
+    local cline_status="${RED}not installed${NC}"
+    local aider_status="${RED}not installed${NC}"
 
     if command -v claude &> /dev/null; then
         claude_status="${GREEN}installed${NC}"
@@ -1728,6 +1783,12 @@ cmd_provider_list() {
     fi
     if command -v gemini &> /dev/null; then
         gemini_status="${GREEN}installed${NC}"
+    fi
+    if command -v cline &> /dev/null; then
+        cline_status="${GREEN}installed${NC}"
+    fi
+    if command -v aider &> /dev/null; then
+        aider_status="${GREEN}installed${NC}"
     fi
 
     # Display providers
@@ -1742,6 +1803,14 @@ cmd_provider_list() {
     marker=""
     [ "$current" = "gemini" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  gemini  - Gemini CLI (Google)         $gemini_status$marker"
+
+    marker=""
+    [ "$current" = "cline" ] && marker=" ${CYAN}(current)${NC}"
+    echo -e "  cline   - Cline (multi-provider)      $cline_status$marker"
+
+    marker=""
+    [ "$current" = "aider" ] && marker=" ${CYAN}(current)${NC}"
+    echo -e "  aider   - Aider (terminal pair prog)  $aider_status$marker"
 
     echo ""
     echo -e "Set provider: ${CYAN}loki provider set <name>${NC}"
@@ -1791,6 +1860,34 @@ cmd_provider_info() {
             echo "  - Sequential only (no subagents)"
             echo ""
             echo "Status:      Degraded mode"
+            ;;
+        cline)
+            echo "Name:        Cline CLI (Multi-Provider)"
+            echo "Vendor:      Cline (supports 12+ providers)"
+            echo "CLI:         cline"
+            echo "Flag:        -y (YOLO mode)"
+            echo ""
+            echo "Features:"
+            echo "  - Autonomous mode"
+            echo "  - Subagent support"
+            echo "  - MCP server support"
+            echo "  - 12+ model providers"
+            echo ""
+            echo "Status:      Near-full mode (Tier 2)"
+            ;;
+        aider)
+            echo "Name:        Aider (18+ Providers)"
+            echo "Vendor:      Aider (supports 18+ providers)"
+            echo "CLI:         aider"
+            echo "Flag:        --yes-always"
+            echo ""
+            echo "Features:"
+            echo "  - Autonomous mode"
+            echo "  - 18+ model providers"
+            echo "  - Architect mode (dual model)"
+            echo "  - Built-in lint/test integration"
+            echo ""
+            echo "Status:      Degraded mode (Tier 3)"
             ;;
         *)
             echo -e "${RED}Unknown provider: $provider${NC}"
@@ -2770,7 +2867,7 @@ cmd_run() {
                 echo "  --dry-run          Preview generated PRD without starting"
                 echo "  --no-start         Generate PRD but don't start execution"
                 echo "  --output FILE      Save PRD to custom path"
-                echo "  --provider NAME    AI provider: claude (default), codex, gemini"
+                echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo "  --simple           Force simple complexity tier"
@@ -2867,7 +2964,6 @@ cmd_run() {
                 shift
                 ;;
             --worktree|-w)
-                start_args+=("--parallel")
                 use_worktree=true
                 shift
                 ;;
@@ -3219,7 +3315,7 @@ cmd_issue() {
                 echo "  --output FILE      Save PRD to custom path (default: .loki/prd-issue-N.md)"
                 echo ""
                 echo "Options passed to 'start' (when --start is used):"
-                echo "  --provider NAME    AI provider: claude (default), codex, gemini"
+                echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo ""
@@ -3932,7 +4028,7 @@ cmd_config() {
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
             echo "  model.fast           Model for fast tier"
-            echo "  provider             Default AI provider: claude, codex, gemini"
+            echo "  provider             Default AI provider: claude, codex, gemini, cline, aider"
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
@@ -3975,8 +4071,8 @@ cmd_config_set() {
             ;;
         provider)
             case "$value" in
-                claude|codex|gemini) ;;
-                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, gemini)${NC}"; return 1 ;;
+                claude|codex|gemini|cline|aider) ;;
+                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, gemini, cline, aider)${NC}"; return 1 ;;
             esac
             ;;
         issue.provider)
@@ -4272,6 +4368,8 @@ cmd_setup_skill() {
         "$HOME/.claude/skills/loki-mode:Claude Code"
         "$HOME/.codex/skills/loki-mode:Codex CLI"
         "$HOME/.gemini/skills/loki-mode:Gemini CLI"
+        "$HOME/.cline/skills/loki-mode:Cline CLI"
+        "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
 
     local created=0
@@ -4420,6 +4518,12 @@ cmd_doctor() {
             gemini)
                 version=$(gemini --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
                 ;;
+            cline)
+                version=$(cline --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                ;;
+            aider)
+                version=$(aider --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                ;;
         esac
 
         local version_display=""
@@ -4454,17 +4558,19 @@ cmd_doctor() {
     }
 
     echo -e "${CYAN}Required:${NC}"
-    doctor_check "Node.js (>= 18)"    node     required    18.0
-    doctor_check "Python 3 (>= 3.8)"  python3  required    3.8
-    doctor_check "jq"                  jq       required
-    doctor_check "git"                 git      required
-    doctor_check "curl"                curl     required
+    doctor_check "Node.js (>= 18)"    node     required    18.0  || true
+    doctor_check "Python 3 (>= 3.8)"  python3  required    3.8   || true
+    doctor_check "jq"                  jq       required          || true
+    doctor_check "git"                 git      required          || true
+    doctor_check "curl"                curl     required          || true
     echo ""
 
     echo -e "${CYAN}AI Providers:${NC}"
-    doctor_check "Claude CLI"          claude   optional
-    doctor_check "Codex CLI"           codex    optional
-    doctor_check "Gemini CLI"          gemini   optional
+    doctor_check "Claude CLI"          claude   optional || true
+    doctor_check "Codex CLI"           codex    optional || true
+    doctor_check "Gemini CLI"          gemini   optional || true
+    doctor_check "Cline CLI"           cline    optional || true
+    doctor_check "Aider CLI"           aider    optional || true
     echo ""
 
     echo -e "${CYAN}Skills:${NC}"
@@ -4472,6 +4578,8 @@ cmd_doctor() {
         "$HOME/.claude/skills/loki-mode:Claude Code"
         "$HOME/.codex/skills/loki-mode:Codex CLI"
         "$HOME/.gemini/skills/loki-mode:Gemini CLI"
+        "$HOME/.cline/skills/loki-mode:Cline CLI"
+        "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
     for entry in "${skill_dirs[@]}"; do
         local sdir="${entry%%:*}"
@@ -4491,7 +4599,7 @@ cmd_doctor() {
     echo ""
 
     echo -e "${CYAN}System:${NC}"
-    doctor_check "bash (>= 4.0)"      bash     recommended  4.0
+    doctor_check "bash (>= 4.0)"      bash     recommended  4.0  || true
 
     # Disk space check
     local disk_avail
@@ -4591,6 +4699,8 @@ checks.append(check_tool('bash', 'bash', 'recommended', '4.0'))
 checks.append(check_tool('Claude CLI', 'claude', 'optional'))
 checks.append(check_tool('Codex CLI', 'codex', 'optional'))
 checks.append(check_tool('Gemini CLI', 'gemini', 'optional'))
+checks.append(check_tool('Cline CLI', 'cline', 'optional'))
+checks.append(check_tool('Aider CLI', 'aider', 'optional'))
 
 # Disk space
 disk_gb = None
@@ -6742,8 +6852,17 @@ except Exception: pass
                 gemini)
                     (cd "$codebase_path" && gemini --approval-mode=yolo "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
+                cline)
+                    (cd "$codebase_path" && cline -y "$phase_prompt" 2>&1) || phase_exit=$?
+                    ;;
+                aider)
+                    local aider_model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
+                    local aider_flags="${LOKI_AIDER_FLAGS:-}"
+                    # shellcheck disable=SC2086
+                    (cd "$codebase_path" && aider --message "$phase_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || phase_exit=$?
+                    ;;
                 *)
-                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, gemini${NC}"
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, gemini, cline, aider${NC}"
                     phase_exit=1
                     ;;
             esac
@@ -6902,6 +7021,15 @@ except Exception: pass
                 ;;
             gemini)
                 (cd "$codebase_path" && gemini --approval-mode=yolo "$doc_prompt" 2>&1) || doc_exit=$?
+                ;;
+            cline)
+                (cd "$codebase_path" && cline -y "$doc_prompt" 2>&1) || doc_exit=$?
+                ;;
+            aider)
+                local aider_model="${LOKI_AIDER_MODEL:-claude-3.7-sonnet}"
+                local aider_flags="${LOKI_AIDER_FLAGS:-}"
+                # shellcheck disable=SC2086
+                (cd "$codebase_path" && aider --message "$doc_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || doc_exit=$?
                 ;;
         esac
 

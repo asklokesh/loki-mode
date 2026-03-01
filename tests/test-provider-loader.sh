@@ -34,7 +34,7 @@ echo ""
 # ===========================================
 log_test "validate_provider() with valid providers"
 valid_count=0
-for provider in claude codex gemini; do
+for provider in claude codex gemini cline aider; do
     if validate_provider "$provider"; then
         ((valid_count++))
     else
@@ -42,8 +42,8 @@ for provider in claude codex gemini; do
     fi
 done
 
-if [ $valid_count -eq 3 ]; then
-    log_pass "validate_provider() accepts all valid providers (claude, codex, gemini)"
+if [ $valid_count -eq 5 ]; then
+    log_pass "validate_provider() accepts all valid providers (claude, codex, gemini, cline, aider)"
 fi
 
 # ===========================================
@@ -203,8 +203,8 @@ fi
 # Test 6: SUPPORTED_PROVIDERS array
 # ===========================================
 log_test "SUPPORTED_PROVIDERS array contents"
-if [ ${#SUPPORTED_PROVIDERS[@]} -eq 3 ]; then
-    expected=("claude" "codex" "gemini")
+if [ ${#SUPPORTED_PROVIDERS[@]} -eq 5 ]; then
+    expected=("claude" "codex" "gemini" "cline" "aider")
     all_match=true
     for i in "${!expected[@]}"; do
         if [ "${SUPPORTED_PROVIDERS[$i]}" != "${expected[$i]}" ]; then
@@ -218,7 +218,7 @@ if [ ${#SUPPORTED_PROVIDERS[@]} -eq 3 ]; then
         log_fail "SUPPORTED_PROVIDERS order mismatch"
     fi
 else
-    log_fail "SUPPORTED_PROVIDERS should have 3 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
+    log_fail "SUPPORTED_PROVIDERS should have 5 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
 fi
 
 # ===========================================
@@ -229,6 +229,81 @@ if [ "$DEFAULT_PROVIDER" = "claude" ]; then
     log_pass "DEFAULT_PROVIDER is correctly set to 'claude'"
 else
     log_fail "DEFAULT_PROVIDER should be 'claude' (got: $DEFAULT_PROVIDER)"
+fi
+
+# ===========================================
+# Test 8: load_provider() loads cline config correctly
+# ===========================================
+log_test "load_provider() loads correct config for cline"
+unset PROVIDER_NAME PROVIDER_DISPLAY_NAME PROVIDER_CLI PROVIDER_DEGRADED PROVIDER_HAS_SUBAGENTS PROVIDER_HAS_MCP 2>/dev/null || true
+
+if load_provider "cline"; then
+    if [ "$PROVIDER_NAME" = "cline" ] && [ "$PROVIDER_CLI" = "cline" ] && [ "$PROVIDER_DEGRADED" = "false" ]; then
+        log_pass "load_provider() correctly loads cline config (not degraded)"
+    else
+        log_fail "load_provider() loaded cline but variables incorrect (NAME=$PROVIDER_NAME, DEGRADED=$PROVIDER_DEGRADED)"
+    fi
+else
+    log_fail "load_provider() failed to load cline"
+fi
+
+# ===========================================
+# Test 9: Cline has subagents and MCP (Tier 2)
+# ===========================================
+log_test "Cline provider has subagents and MCP capabilities"
+unset PROVIDER_NAME PROVIDER_HAS_SUBAGENTS PROVIDER_HAS_MCP PROVIDER_HAS_TASK_TOOL 2>/dev/null || true
+
+if load_provider "cline"; then
+    if [ "$PROVIDER_HAS_SUBAGENTS" = "true" ] && [ "$PROVIDER_HAS_MCP" = "true" ] && [ "$PROVIDER_HAS_TASK_TOOL" = "false" ]; then
+        log_pass "Cline has subagents=true, MCP=true, Task tool=false (Tier 2)"
+    else
+        log_fail "Cline capability flags incorrect (subagents=$PROVIDER_HAS_SUBAGENTS, MCP=$PROVIDER_HAS_MCP, task=$PROVIDER_HAS_TASK_TOOL)"
+    fi
+else
+    log_fail "load_provider() failed to load cline for capability check"
+fi
+
+# ===========================================
+# Test 10: load_provider() loads aider config correctly
+# ===========================================
+log_test "load_provider() loads correct config for aider"
+unset PROVIDER_NAME PROVIDER_DISPLAY_NAME PROVIDER_CLI PROVIDER_DEGRADED 2>/dev/null || true
+
+if load_provider "aider"; then
+    if [ "$PROVIDER_NAME" = "aider" ] && [ "$PROVIDER_CLI" = "aider" ] && [ "$PROVIDER_DEGRADED" = "true" ]; then
+        log_pass "load_provider() correctly loads aider config (degraded)"
+    else
+        log_fail "load_provider() loaded aider but variables incorrect (NAME=$PROVIDER_NAME, DEGRADED=$PROVIDER_DEGRADED)"
+    fi
+else
+    log_fail "load_provider() failed to load aider"
+fi
+
+# ===========================================
+# Test 11: Aider is fully degraded (Tier 3)
+# ===========================================
+log_test "Aider provider is fully degraded (no subagents, no MCP)"
+unset PROVIDER_NAME PROVIDER_HAS_SUBAGENTS PROVIDER_HAS_MCP PROVIDER_HAS_TASK_TOOL PROVIDER_HAS_PARALLEL 2>/dev/null || true
+
+if load_provider "aider"; then
+    if [ "$PROVIDER_HAS_SUBAGENTS" = "false" ] && [ "$PROVIDER_HAS_MCP" = "false" ] && [ "$PROVIDER_HAS_TASK_TOOL" = "false" ] && [ "$PROVIDER_HAS_PARALLEL" = "false" ]; then
+        log_pass "Aider all capabilities false (Tier 3 degraded)"
+    else
+        log_fail "Aider capability flags incorrect (subagents=$PROVIDER_HAS_SUBAGENTS, MCP=$PROVIDER_HAS_MCP)"
+    fi
+else
+    log_fail "load_provider() failed to load aider for capability check"
+fi
+
+# ===========================================
+# Test 12: Cline and Aider not in auto_detect_provider
+# ===========================================
+log_test "auto_detect_provider() does not return cline or aider"
+detected=$(auto_detect_provider 2>/dev/null)
+if [ "$detected" != "cline" ] && [ "$detected" != "aider" ]; then
+    log_pass "auto_detect_provider() does not auto-detect cline or aider"
+else
+    log_fail "auto_detect_provider() should not auto-detect $detected"
 fi
 
 echo ""

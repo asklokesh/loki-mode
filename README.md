@@ -9,7 +9,7 @@
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Autonomi](https://img.shields.io/badge/Autonomi-autonomi.dev-5B4EEA)](https://www.autonomi.dev/)
 
-**Current Version: v6.5.0**
+**Current Version: v6.6.0**
 
 ---
 
@@ -36,7 +36,7 @@ Every iteration follows the **RARV cycle**: Reason (read state, identify next ta
 | **Code Generation** | Full-stack apps from PRDs | Complex domain logic may need human review |
 | **Deployment** | Generates configs, Dockerfiles, CI/CD workflows | Does not deploy -- human provides cloud credentials and runs deploy |
 | **Testing** | 9 automated quality gates, blind review | Test quality depends on AI-generated assertions |
-| **Multi-Provider** | Claude (full), Codex/Gemini (sequential only) | Codex and Gemini lack parallel agents and Task tool |
+| **Multi-Provider** | Claude (full), Codex/Gemini/Cline/Aider (sequential only) | Non-Claude providers lack parallel agents and Task tool |
 | **Enterprise** | TLS, OIDC, RBAC, audit trail | Self-signed certs only; some features require env var activation |
 | **Dashboard** | Real-time status, task queue, agents | Single-machine only; no multi-node clustering |
 
@@ -44,7 +44,7 @@ Every iteration follows the **RARV cycle**: Reason (read state, identify next ta
 
 ## Quick Start
 
-**Requirements:** Node.js 18+, Python 3.8+, macOS/Linux/WSL2, and at least one AI CLI (Claude Code, Codex, or Gemini).
+**Requirements:** Node.js 18+, Python 3.8+, macOS/Linux/WSL2, and at least one AI CLI (Claude Code, Codex, Gemini, Cline, or Aider).
 
 ### CLI Mode
 
@@ -129,7 +129,7 @@ See [full architecture documentation](docs/enterprise/architecture.md) for the d
 | **Quality** | 9 gates: blind review, anti-sycophancy, mock/mutation detection | [Quality Gates](skills/quality-gates.md) |
 | **Dashboard** | Real-time monitoring, API v2, WebSocket, auto-starts with `loki start` | [Dashboard Guide](docs/dashboard-guide.md) |
 | **Memory** | 3-tier (episodic/semantic/procedural), knowledge graph, vector search | [Memory System](references/memory-system.md) |
-| **Providers** | Claude (full), Codex (sequential), Gemini (sequential) | [Provider Guide](skills/providers.md) |
+| **Providers** | Claude (full), Codex/Gemini/Cline/Aider (sequential) | [Provider Guide](skills/providers.md) |
 | **Enterprise** | TLS, OIDC/SSO, RBAC, OTEL, policy engine, audit trails | [Enterprise Guide](docs/enterprise/architecture.md) |
 | **Integrations** | Jira, Slack, Teams, GitHub Actions (Linear: partial) | [Integration Cookbook](docs/enterprise/integration-cookbook.md) |
 | **Deployment** | Helm, Docker Compose, Terraform configs (AWS/Azure/GCP) | [Deployment Guide](deploy/helm/README.md) |
@@ -142,8 +142,10 @@ See [full architecture documentation](docs/enterprise/architecture.md) for the d
 | Claude Code | `npm i -g @anthropic-ai/claude-code` | `--dangerously-skip-permissions` | Yes (10+) |
 | Codex CLI | `npm i -g @openai/codex` | `--full-auto` | No (sequential) |
 | Gemini CLI | `npm i -g @google/gemini-cli` | `--approval-mode=yolo` | No (sequential) |
+| Cline CLI | `npm i -g @anthropic-ai/cline` | `--auto-approve` | No (sequential) |
+| Aider | `pip install aider-chat` | `--yes-always` | No (sequential) |
 
-Claude gets full features (subagents, parallelization, MCP, Task tool). Codex and Gemini run in sequential mode -- one agent at a time, no Task tool. See [Provider Guide](skills/providers.md) for the full comparison.
+Claude gets full features (subagents, parallelization, MCP, Task tool). All other providers run in sequential mode -- one agent at a time, no Task tool. See [Provider Guide](skills/providers.md) for the full comparison.
 
 ---
 

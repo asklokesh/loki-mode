@@ -663,6 +663,8 @@ council_member_review() {
         claude) command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; } ;;
         codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
         gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
+        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
+        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -753,6 +755,16 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -5)
             fi
             ;;
+        cline)
+            if command -v cline &>/dev/null; then
+                verdict=$(cline -y "$prompt" 2>/dev/null | tail -5)
+            fi
+            ;;
+        aider)
+            if command -v aider &>/dev/null; then
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -5)
+            fi
+            ;;
     esac
 
     # Fallback: if no AI provider available, use heuristic-based review
@@ -777,6 +789,8 @@ council_devils_advocate() {
         claude) command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; } ;;
         codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
         gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
+        cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
+        aider) command -v aider >/dev/null 2>&1 || { log_error "Aider not found"; return 1; } ;;
     esac
 
     local evidence
@@ -828,6 +842,16 @@ REASON: your reasoning"
         gemini)
             if command -v gemini &>/dev/null; then
                 verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -5)
+            fi
+            ;;
+        cline)
+            if command -v cline &>/dev/null; then
+                verdict=$(cline -y "$prompt" 2>/dev/null | tail -5)
+            fi
+            ;;
+        aider)
+            if command -v aider &>/dev/null; then
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -5)
             fi
             ;;
     esac
