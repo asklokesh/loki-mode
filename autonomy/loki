@@ -11595,11 +11595,36 @@ cmd_remote() {
         exit 0
     fi
 
-    # Failed -- most likely workspace trust. Auto-recover.
-    # Launch claude with /exit piped in to auto-accept trust and quit immediately.
+    # Failed -- most likely workspace trust. Auto-recover by writing trust flag
+    # directly into ~/.claude.json (projects.<cwd>.hasTrustDialogAccepted = true).
     echo ""
     echo -e "${DIM}Auto-trusting workspace...${NC}"
-    printf '/exit\n' | claude --no-session-persistence 2>/dev/null || true
+
+    local cwd
+    cwd="$(python3 -c 'import os; print(os.path.realpath("."))')"
+    python3 -c "
+import json, os, sys
+
+config_path = os.path.expanduser('~/.claude.json')
+try:
+    with open(config_path) as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+
+projects = data.setdefault('projects', {})
+project = projects.setdefault(sys.argv[1], {})
+project['hasTrustDialogAccepted'] = True
+project.setdefault('allowedTools', [])
+
+with open(config_path, 'w') as f:
+    json.dump(data, f, indent=2)
+print('ok')
+" "$cwd" 2>/dev/null || {
+        echo -e "${YELLOW}Auto-trust failed. Please run 'claude' in this directory first to accept the trust dialog.${NC}"
+        exit 1
+    }
+
     echo ""
     echo -e "${GREEN}Launching remote control...${NC}"
     echo ""

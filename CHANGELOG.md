@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.12.4 - Remote Control Trust Fix (Direct Config Write)
+
+### Bug Fixes
+- **`loki remote` auto-trust via config**: Previous approach (piping `/exit` to `claude`) could not interact with the TUI trust dialog. Now writes `hasTrustDialogAccepted: true` directly to `~/.claude.json` projects config, which is the actual trust storage used by Claude Code. Uses `os.path.realpath()` to handle macOS symlinks (`/tmp` -> `/private/tmp`).
+
 ## v6.12.3 - Remote Control Zero-Friction Trust
 
 ### Bug Fixes
