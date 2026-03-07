@@ -11584,33 +11584,11 @@ cmd_remote() {
     # Emit event
     emit_event session cli remote_start "prd=${prd_abs:-none}"
 
-    # Try launching remote-control
-    # If workspace isn't trusted, it exits immediately with an error.
-    # We detect this and auto-launch interactive claude for trust acceptance,
-    # then retry automatically.
-    claude remote-control ${rc_flags[@]+"${rc_flags[@]}"}
-    local rc_exit=$?
+    # Auto-trust workspace before launching remote-control
+    # claude -p skips the trust dialog and implicitly registers the workspace
+    claude -p "" --no-session-persistence >/dev/null 2>&1 || true
 
-    # Exit 0 = normal session end, non-zero = error (likely trust issue)
-    if [ $rc_exit -eq 0 ]; then
-        exit 0
-    fi
-
-    # Assume trust failure (most common cause) -- auto-recover
-    echo ""
-    echo -e "${YELLOW}Remote control failed (likely workspace trust).${NC}"
-    echo -e "${CYAN}Opening Claude Code to accept the trust dialog...${NC}"
-    echo -e "${DIM}Once trusted, type /exit and remote control will start automatically.${NC}"
-    echo ""
-
-    # Launch interactive claude for trust acceptance
-    claude
-
-    echo ""
-    echo -e "${GREEN}Retrying remote control...${NC}"
-    echo ""
-
-    # Retry with exec (replace shell)
+    # Hand off to claude remote-control
     exec claude remote-control ${rc_flags[@]+"${rc_flags[@]}"}
 }
 
