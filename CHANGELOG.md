@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.12.5 - Remote Control Autonomous Permissions
+
+### Bug Fixes
+- **`loki remote` bypass permissions**: Added `--permission-mode bypassPermissions` to `claude remote-control` invocations so spawned remote sessions can actually use Read, Write, and Bash tools. Without this, Loki Mode was blocked from operating in remote sessions.
+
 ## v6.12.4 - Remote Control Trust Fix (Direct Config Write)
 
 ### Bug Fixes
