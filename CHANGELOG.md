@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.13.0 - Whispr Flow Integration
+
+### Added
+- **Whispr Flow voice-driven development**: New `autonomy/whispr-flow.sh` module enabling continuous voice interaction during autonomous execution. Complements BMAD (pre-development artifacts) with runtime voice control.
+- **Voice command parsing**: Natural language commands routed to Loki actions -- "pause", "focus on auth", "skip deployment", "add task: fix login", "show status", "review the code".
+- **TTS narration**: Real-time text-to-speech feedback for phase transitions, task completions, errors, and build results. Enable with `--whispr-narrate`.
+- **CLI commands**: `loki whispr start|stop|status|inject|parse|narrate|history|context`.
+- **`--whispr-flow` flag**: Enable Whispr Flow when starting Loki Mode (`loki start --whispr-flow prd.md`).
+- **run.sh integration**: Whispr Flow context injected into `build_prompt()` alongside BMAD and OpenSpec contexts. Directives consumed after each iteration.
+- **Phase transition narration**: `set_phase()` in run.sh now emits TTS narration events when Whispr Flow is active.
+- **Skill module**: `skills/whispr-flow.md` with full voice command reference, architecture docs, and integration guide.
+- **State management**: `.loki/whispr/` directory with session.json, command-history.json, directives.log, current-directive.md.
+
 ## v6.12.5 - Remote Control Autonomous Permissions
 
 ### Bug Fixes

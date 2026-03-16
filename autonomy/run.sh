@@ -3127,6 +3127,12 @@ set_phase() {
 
         log_info "Phase changed: $current_phase -> $new_phase"
 
+        # Whispr Flow narration for phase transition
+        local _whispr_script="${SCRIPT_DIR:-$(dirname "$0")}/whispr-flow.sh"
+        if [[ -f "$_whispr_script" ]] && [[ -d ".loki/whispr" ]]; then
+            "$_whispr_script" narrate phase_transition "$current_phase -> $new_phase" 2>/dev/null || true
+        fi
+
         # Update orchestrator state
         if [ -f "$orch_file" ]; then
             python3 -c "
@@ -7733,6 +7739,21 @@ except Exception:
 " 2>/dev/null || true)
     fi
 
+    # Whispr Flow context injection (if active)
+    local whispr_context=""
+    if [[ -d ".loki/whispr" ]] && [[ -f ".loki/whispr/session.json" ]]; then
+        local whispr_script="${SCRIPT_DIR:-$(dirname "$0")}/whispr-flow.sh"
+        if [[ -f "$whispr_script" ]]; then
+            whispr_context=$("$whispr_script" context 2>/dev/null || true)
+            # Consume directive after reading (one-shot injection)
+            "$whispr_script" consume 2>/dev/null || true
+            # Emit narration event for iteration start
+            if [[ "${WHISPR_NARRATE:-false}" == "true" ]] || [[ "${WHISPR_FLOW_ENABLED:-false}" == "true" ]]; then
+                "$whispr_script" narrate task_complete "Iteration $iteration starting" 2>/dev/null || true
+            fi
+        fi
+    fi
+
     # Degraded providers with small models need simplified prompts
     # Full RARV/SDLC instructions overwhelm models < 30B parameters
     if [ "${PROVIDER_DEGRADED:-false}" = "true" ]; then
@@ -7757,15 +7778,15 @@ except Exception:
     else
         if [ $retry -eq 0 ]; then
             if [ -n "$prd" ]; then
-                echo "Loki Mode with PRD at $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+                echo "Loki Mode with PRD at $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $whispr_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
             else
-                echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+                echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $whispr_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
             fi
         else
             if [ -n "$prd" ]; then
-                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $whispr_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
             else
-                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
+                echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $whispr_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $compaction_reminder $completion_instruction $sdlc_instruction $autonomous_suffix"
             fi
         fi
     fi

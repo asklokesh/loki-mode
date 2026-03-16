@@ -449,6 +449,8 @@ show_help() {
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo "  --openspec PATH      Use OpenSpec change directory as input"
+    echo "  --whispr-flow        Enable Whispr Flow voice-driven development"
+    echo "  --whispr-narrate     Enable TTS narration of execution events"
     echo ""
     echo "Options for 'run' (v6.0.0):"
     echo "  --dry-run          Preview generated PRD without starting"
@@ -492,6 +494,8 @@ cmd_start() {
     local provider=""
     local bmad_project_path=""
     local openspec_change_path=""
+    local whispr_flow_enabled=""
+    local whispr_narrate=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -517,6 +521,8 @@ cmd_start() {
                 echo "  --budget USD          Cost budget limit (auto-pause when exceeded)"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
+                echo "  --whispr-flow         Enable Whispr Flow voice-driven development"
+                echo "  --whispr-narrate      Enable TTS narration of execution events"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
                 echo ""
                 echo "Environment Variables:"
@@ -533,6 +539,7 @@ cmd_start() {
                 echo "  loki start --provider codex     # Use OpenAI Codex CLI"
                 echo "  loki start --bmad-project ./my-project  # Start from BMAD artifacts"
                 echo "  loki start --openspec ./openspec/changes/my-feature  # Start from OpenSpec change"
+                echo "  loki start --whispr-flow ./prd.md   # Voice-driven development flow"
                 echo "  loki start --yes                # Skip confirmation prompt"
                 echo "  LOKI_PRD_FILE=./prd.md loki start  # PRD via env var"
                 exit 0
@@ -667,6 +674,14 @@ cmd_start() {
                 ;;
             --openspec=*)
                 openspec_change_path="${1#*=}"
+                shift
+                ;;
+            --whispr-flow)
+                whispr_flow_enabled="true"
+                shift
+                ;;
+            --whispr-narrate)
+                whispr_narrate="true"
                 shift
                 ;;
             --budget)
@@ -925,6 +940,35 @@ cmd_start() {
         --steps '["init", "load_memory", "start_runner"]' \
         --outcome success \
         --context "{\"provider\":\"$effective_provider\",\"prd_path\":\"${prd_file:-}\"}"
+
+    # Initialize Whispr Flow if enabled
+    if [[ "${whispr_flow_enabled:-}" == "true" ]]; then
+        local whispr_script="${SCRIPT_DIR:-$(dirname "$0")}/whispr-flow.sh"
+        if [[ -f "$whispr_script" ]]; then
+            echo -e "${CYAN}Initializing Whispr Flow...${NC}"
+            export WHISPR_FLOW_ENABLED=true
+            if [[ "${whispr_narrate:-}" == "true" ]]; then
+                export WHISPR_NARRATE=true
+                echo -e "${CYAN}  TTS narration: enabled${NC}"
+            fi
+            # Initialize session (non-blocking, no listen loop)
+            mkdir -p "$LOKI_DIR/whispr"
+            cat > "$LOKI_DIR/whispr/session.json" <<WEOF
+{
+    "status": "active",
+    "startedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "narrate": ${whispr_narrate:-false},
+    "listenInterval": 30,
+    "commandCount": 0,
+    "lastActivity": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "mode": "integrated"
+}
+WEOF
+            echo -e "${GREEN}Whispr Flow active. Use 'loki whispr inject' to send voice commands.${NC}"
+        else
+            echo -e "${YELLOW}Warning: whispr-flow.sh not found, Whispr Flow disabled${NC}"
+        fi
+    fi
 
     exec "$RUN_SH" "${args[@]}"
 }
@@ -7873,6 +7917,9 @@ main() {
         voice)
             cmd_voice "$@"
             ;;
+        whispr)
+            cmd_whispr "$@"
+            ;;
         secrets)
             cmd_secrets "$@"
             ;;
@@ -10861,6 +10908,96 @@ cmd_voice() {
         *)
             echo -e "${RED}Unknown voice command: $subcommand${NC}"
             echo "Run 'loki voice help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+# Whispr Flow - Voice-driven development flow controller
+cmd_whispr() {
+    local subcommand="${1:-status}"
+    shift || true
+
+    local WHISPR_SCRIPT="$SKILL_DIR/autonomy/whispr-flow.sh"
+
+    # Check fallback locations
+    if [ ! -f "$WHISPR_SCRIPT" ]; then
+        local loki_dir
+        loki_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        WHISPR_SCRIPT="$loki_dir/whispr-flow.sh"
+    fi
+
+    if [ ! -f "$WHISPR_SCRIPT" ]; then
+        echo -e "${RED}Error: Whispr Flow module not found${NC}"
+        echo "Expected at: $SKILL_DIR/autonomy/whispr-flow.sh"
+        exit 1
+    fi
+
+    case "$subcommand" in
+        start)
+            echo -e "${BOLD}Starting Whispr Flow...${NC}"
+            "$WHISPR_SCRIPT" start "$@"
+            ;;
+        stop)
+            "$WHISPR_SCRIPT" stop
+            ;;
+        status)
+            "$WHISPR_SCRIPT" status
+            ;;
+        inject)
+            if [ $# -eq 0 ]; then
+                echo -e "${RED}Usage: loki whispr inject \"your voice command\"${NC}"
+                exit 1
+            fi
+            "$WHISPR_SCRIPT" inject "$@"
+            ;;
+        parse)
+            if [ $# -eq 0 ]; then
+                echo -e "${RED}Usage: loki whispr parse \"your voice input\"${NC}"
+                exit 1
+            fi
+            "$WHISPR_SCRIPT" parse "$@"
+            ;;
+        narrate)
+            "$WHISPR_SCRIPT" narrate "$@"
+            ;;
+        history)
+            "$WHISPR_SCRIPT" history
+            ;;
+        context)
+            "$WHISPR_SCRIPT" context
+            ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki whispr${NC} - Whispr Flow voice-driven development"
+            echo ""
+            echo "Usage: loki whispr <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  start [--narrate] [--listen-interval SECS]"
+            echo "                         Start continuous voice-driven flow"
+            echo "  stop                   Stop the Whispr Flow session"
+            echo "  status                 Show session and voice backend status"
+            echo "  inject \"command\"        Parse and execute a voice command"
+            echo "  parse \"text\"            Parse voice input without executing"
+            echo "  narrate EVENT [DETAIL]  Narrate an execution event via TTS"
+            echo "  history                Show command history"
+            echo "  context                Show current context for prompt injection"
+            echo ""
+            echo "Voice Commands (natural language):"
+            echo "  \"pause\" / \"resume\" / \"stop\"       - Execution control"
+            echo "  \"focus on auth\"                    - Reprioritize tasks"
+            echo "  \"skip deployment\"                  - Skip phases"
+            echo "  \"add task: fix login bug\"          - Inject new tasks"
+            echo "  \"show status\"                      - Get progress info"
+            echo "  \"review the code\"                  - Trigger code review"
+            echo ""
+            echo "Integration with loki start:"
+            echo "  loki start --whispr-flow ./prd.md           # Enable Whispr Flow"
+            echo "  loki start --whispr-flow --whispr-narrate   # With TTS narration"
+            ;;
+        *)
+            echo -e "${RED}Unknown whispr command: $subcommand${NC}"
+            echo "Run 'loki whispr help' for usage."
             exit 1
             ;;
     esac

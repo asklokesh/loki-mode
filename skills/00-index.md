@@ -28,6 +28,7 @@
 | GitHub issues, PRs, syncing | `github-integration.md` |
 | Multi-provider (Codex, Gemini) | `providers.md` |
 | OpenSpec delta context, brownfield modifications | `openspec-integration.md` |
+| Voice-driven development, narration, voice commands | `whispr-flow.md` |
 | Plan deepening, knowledge extraction | `compound-learning.md` |
 
 ## Module Descriptions
@@ -117,6 +118,15 @@
 - Scenario-to-test mapping (GIVEN/WHEN/THEN)
 - Source mapping and verification tracking
 - Complexity-based agent strategy
+
+### whispr-flow.md (v1.0.0)
+**When:** Voice-driven development, controlling execution via voice commands, narration
+- Voice-to-directive parsing (natural language -> Loki actions)
+- Continuous voice listening with command routing
+- TTS narration of execution events (phase changes, task completion, errors)
+- Focus/priority commands ("focus on auth", "skip deployment")
+- Task injection via voice ("add task: fix login bug")
+- Integration with run.sh prompt injection (.loki/whispr/ state)
 
 ### compound-learning.md (v5.30.0)
 **When:** After architecture phase (deepen plan), after verification (extract learnings)
