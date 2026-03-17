@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.16.0] - 2026-03-17
+
+### Added
+- Dashboard memory browser: FTS5 full-text search with collection filtering and result display
+- Dashboard memory browser: storage backend stats showing backend type, entry counts, database size, FTS5 status
+- Dashboard: quality gates and RARV timeline components now wired into standalone dashboard pages
+- Dashboard bundle: 6 previously unexported components now registered and available (quality-gates, rarv-timeline, run-manager, audit-viewer, api-keys, tenant-switcher)
+
 ## v6.15.1 - BMAD Adapter Path Resolution and Sprint-Status Integration
 
 ### Fixed

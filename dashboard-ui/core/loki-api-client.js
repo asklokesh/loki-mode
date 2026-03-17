@@ -742,6 +742,24 @@ export class LokiApiClient extends EventTarget {
     return this._get('/api/memory/economics');
   }
 
+  /**
+   * Full-text search across memory (FTS5)
+   * @param {string} query - Search query
+   * @param {string} collection - 'episodes'|'patterns'|'skills'|'all' (default: 'all')
+   * @param {number} limit - Max results (default: 20)
+   */
+  async searchMemory(query, collection = 'all', limit = 20) {
+    const params = new URLSearchParams({ q: query, collection, limit: String(limit) });
+    return this._get(`/api/memory/search?${params}`);
+  }
+
+  /**
+   * Get memory system statistics (counts, size, backend info)
+   */
+  async getMemoryStats() {
+    return this._get('/api/memory/stats', true);
+  }
+
   // ============================================
   // Registry API (Cross-project)
   // ============================================

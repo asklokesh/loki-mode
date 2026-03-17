@@ -14,6 +14,7 @@ import { getApiClient } from '../core/loki-api-client.js';
 /** @type {Array<{id: string, label: string, icon: string}>} Tab definitions with SVG path data */
 const TABS = [
   { id: 'summary', label: 'Summary', icon: 'M4 6h16M4 12h16M4 18h16' },
+  { id: 'search', label: 'Search', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
   { id: 'episodes', label: 'Episodes', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
   { id: 'patterns', label: 'Patterns', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
   { id: 'skills', label: 'Skills', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
@@ -43,12 +44,20 @@ export class LokiMemoryBrowser extends LokiElement {
 
     // Data
     this._summary = null;
+    this._stats = null;
     this._episodes = [];
     this._patterns = [];
     this._skills = [];
     this._tokenEconomics = null;
     this._selectedItem = null;
     this._lastFocusedElement = null;
+
+    // Search state
+    this._searchQuery = '';
+    this._searchCollection = 'all';
+    this._searchResults = [];
+    this._searchLoading = false;
+    this._searchError = null;
   }
 
   connectedCallback() {
@@ -88,9 +97,15 @@ export class LokiMemoryBrowser extends LokiElement {
     this.render();
 
     try {
-      // Load summary first
-      this._summary = await this._api.getMemorySummary().catch(() => null);
-      this._tokenEconomics = await this._api.getTokenEconomics().catch(() => null);
+      // Load summary and stats in parallel
+      const [summary, economics, stats] = await Promise.allSettled([
+        this._api.getMemorySummary(),
+        this._api.getTokenEconomics(),
+        this._api.getMemoryStats(),
+      ]);
+      this._summary = summary.status === 'fulfilled' ? summary.value : null;
+      this._tokenEconomics = economics.status === 'fulfilled' ? economics.value : null;
+      this._stats = stats.status === 'fulfilled' ? stats.value : null;
 
       // Load tab-specific data
       await this._loadTabData();
@@ -191,6 +206,75 @@ export class LokiMemoryBrowser extends LokiElement {
     }
   }
 
+  async _executeSearch() {
+    const query = this._searchQuery.trim();
+    if (!query) return;
+
+    this._searchLoading = true;
+    this._searchError = null;
+    this.render();
+
+    try {
+      const result = await this._api.searchMemory(query, this._searchCollection, 20);
+      this._searchResults = result.results || [];
+    } catch (error) {
+      this._searchError = error.message || 'Search failed';
+      this._searchResults = [];
+    }
+
+    this._searchLoading = false;
+    this.render();
+    // Re-focus the search input after render
+    requestAnimationFrame(() => {
+      const input = this.shadowRoot.getElementById('memory-search-input');
+      if (input) input.focus();
+    });
+  }
+
+  _renderSearch() {
+    const collectionOptions = ['all', 'episodes', 'patterns', 'skills'];
+    return `
+      <div class="search-panel">
+        <div class="search-bar">
+          <input type="text" id="memory-search-input" class="search-input"
+                 placeholder="Search memory (FTS5)..."
+                 value="${this._escapeHtml(this._searchQuery)}"
+                 aria-label="Search memory">
+          <select id="memory-search-collection" class="search-select" aria-label="Collection filter">
+            ${collectionOptions.map(c => `<option value="${c}" ${this._searchCollection === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary" id="search-btn" ${this._searchLoading ? 'disabled' : ''}>
+            ${this._searchLoading ? 'Searching...' : 'Search'}
+          </button>
+        </div>
+        ${this._searchError ? `<div class="search-error">Error: ${this._escapeHtml(this._searchError)}</div>` : ''}
+        ${this._searchResults.length > 0 ? `
+          <div class="search-results-header">
+            <span>${this._searchResults.length} result${this._searchResults.length !== 1 ? 's' : ''} for "${this._escapeHtml(this._searchQuery)}"</span>
+          </div>
+          <div class="item-list" role="list" aria-label="Search results">
+            ${this._searchResults.map(r => `
+              <div class="item-card search-result" tabindex="0" role="listitem"
+                   aria-label="${this._escapeHtml(r.collection || 'unknown')}: ${this._escapeHtml(r.snippet || r.id)}">
+                <div class="item-header">
+                  <span class="item-category">${this._escapeHtml(r.collection || 'unknown')}</span>
+                  <span class="item-id mono">${this._escapeHtml(r.id || '')}</span>
+                </div>
+                <div class="item-title">${this._escapeHtml(r.snippet || r.id || '')}</div>
+                <div class="item-meta">
+                  ${r.rank != null ? `<span>Rank: ${r.rank}</span>` : ''}
+                  ${r.category ? `<span>${this._escapeHtml(r.category)}</span>` : ''}
+                  ${r.timestamp ? `<span>${new Date(r.timestamp).toLocaleString()}</span>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : (!this._searchLoading && this._searchQuery ? '<div class="empty-state">No results found</div>' : '')}
+        ${!this._searchQuery ? '<div class="empty-state">Enter a query to search across all memory layers using full-text search</div>' : ''}
+      </div>
+    `;
+  }
+
   _renderSummary() {
     if (!this._summary) {
       return '<div class="empty-state">No memory data available</div>';
@@ -263,6 +347,54 @@ export class LokiMemoryBrowser extends LokiElement {
           </div>
         ` : ''}
       </div>
+
+      ${this._stats ? `
+        <div class="stats-section">
+          <div class="stats-header">Storage Backend</div>
+          <div class="stats-grid">
+            <div class="stats-item">
+              <span class="stats-label">Backend</span>
+              <span class="stats-value mono">${this._escapeHtml(this._stats.backend || this._stats.storage_type || 'unknown')}</span>
+            </div>
+            ${this._stats.total_entries != null ? `
+              <div class="stats-item">
+                <span class="stats-label">Total Entries</span>
+                <span class="stats-value mono">${this._stats.total_entries.toLocaleString()}</span>
+              </div>
+            ` : ''}
+            ${this._stats.db_size_bytes != null ? `
+              <div class="stats-item">
+                <span class="stats-label">DB Size</span>
+                <span class="stats-value mono">${(this._stats.db_size_bytes / 1024).toFixed(1)} KB</span>
+              </div>
+            ` : ''}
+            ${this._stats.fts_enabled != null ? `
+              <div class="stats-item">
+                <span class="stats-label">FTS5 Search</span>
+                <span class="stats-value ${this._stats.fts_enabled ? 'enabled' : 'disabled'}">${this._stats.fts_enabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+            ` : ''}
+            ${this._stats.episodes_count != null ? `
+              <div class="stats-item">
+                <span class="stats-label">Episodes</span>
+                <span class="stats-value mono">${this._stats.episodes_count}</span>
+              </div>
+            ` : ''}
+            ${this._stats.patterns_count != null ? `
+              <div class="stats-item">
+                <span class="stats-label">Patterns</span>
+                <span class="stats-value mono">${this._stats.patterns_count}</span>
+              </div>
+            ` : ''}
+            ${this._stats.skills_count != null ? `
+              <div class="stats-item">
+                <span class="stats-label">Skills</span>
+                <span class="stats-value mono">${this._stats.skills_count}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      ` : ''}
 
       <div class="summary-actions">
         <button class="btn btn-secondary" id="consolidate-btn">
@@ -911,6 +1043,112 @@ export class LokiMemoryBrowser extends LokiElement {
           white-space: nowrap;
         }
 
+        /* Search styles */
+        .search-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .search-bar {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .search-input {
+          flex: 1;
+          padding: 8px 12px;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          font-size: 12px;
+          font-family: inherit;
+        }
+
+        .search-input:focus {
+          outline: none;
+          border-color: var(--loki-accent);
+          box-shadow: 0 0 0 2px rgba(85, 61, 233, 0.15);
+        }
+
+        .search-select {
+          padding: 8px 10px;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          font-size: 12px;
+          font-family: inherit;
+          cursor: pointer;
+        }
+
+        .search-error {
+          color: var(--loki-red, var(--loki-error));
+          font-size: 11px;
+          padding: 6px 10px;
+          background: var(--loki-bg-secondary);
+          border-radius: 4px;
+          border-left: 3px solid var(--loki-red, var(--loki-error));
+        }
+
+        .search-results-header {
+          font-size: 11px;
+          color: var(--loki-text-secondary);
+          font-weight: 500;
+        }
+
+        .search-result .item-category {
+          text-transform: capitalize;
+        }
+
+        /* Stats styles */
+        .stats-section {
+          margin-top: 16px;
+          background: var(--loki-bg-secondary);
+          border-radius: 5px;
+          padding: 14px;
+        }
+
+        .stats-header {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--loki-text-primary);
+          margin-bottom: 10px;
+        }
+
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          gap: 10px;
+        }
+
+        .stats-item {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .stats-label {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .stats-value {
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--loki-text-primary);
+        }
+
+        .stats-value.enabled {
+          color: var(--loki-green, var(--loki-success));
+        }
+
+        .stats-value.disabled {
+          color: var(--loki-text-muted);
+        }
+
         .empty-state {
           text-align: center;
           padding: 40px;
@@ -930,6 +1168,9 @@ export class LokiMemoryBrowser extends LokiElement {
       switch (this._activeTab) {
         case 'summary':
           tabContent = this._renderSummary();
+          break;
+        case 'search':
+          tabContent = this._renderSearch();
           break;
         case 'episodes':
           tabContent = this._renderEpisodes();
@@ -1027,6 +1268,38 @@ export class LokiMemoryBrowser extends LokiElement {
     const refreshBtn = this.shadowRoot.getElementById('refresh-btn');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', () => this._loadData());
+    }
+
+    // Search controls
+    const searchInput = this.shadowRoot.getElementById('memory-search-input');
+    const searchBtn = this.shadowRoot.getElementById('search-btn');
+    const searchSelect = this.shadowRoot.getElementById('memory-search-collection');
+
+    if (searchInput) {
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this._searchQuery = searchInput.value;
+          this._executeSearch();
+        }
+      });
+      searchInput.addEventListener('input', (e) => {
+        this._searchQuery = e.target.value;
+      });
+    }
+
+    if (searchBtn) {
+      searchBtn.addEventListener('click', () => {
+        const input = this.shadowRoot.getElementById('memory-search-input');
+        if (input) this._searchQuery = input.value;
+        this._executeSearch();
+      });
+    }
+
+    if (searchSelect) {
+      searchSelect.addEventListener('change', (e) => {
+        this._searchCollection = e.target.value;
+      });
     }
   }
 

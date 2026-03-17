@@ -83,6 +83,12 @@ export { LokiPromptOptimizer } from './components/loki-prompt-optimizer.js';
 export { LokiQualityScore } from './components/loki-quality-score.js';
 export { LokiMigrationDashboard } from './components/loki-migration-dashboard.js';
 export { LokiAnalytics } from './components/loki-analytics.js';
+export { LokiQualityGates } from './components/loki-quality-gates.js';
+export { LokiRarvTimeline } from './components/loki-rarv-timeline.js';
+export { LokiRunManager } from './components/loki-run-manager.js';
+export { LokiAuditViewer } from './components/loki-audit-viewer.js';
+export { LokiApiKeys } from './components/loki-api-keys.js';
+export { LokiTenantSwitcher } from './components/loki-tenant-switcher.js';
 
 // Version
 export const VERSION = '1.3.0';
@@ -137,6 +143,12 @@ const componentModules = [
   './components/loki-quality-score.js',
   './components/loki-migration-dashboard.js',
   './components/loki-analytics.js',
+  './components/loki-quality-gates.js',
+  './components/loki-rarv-timeline.js',
+  './components/loki-run-manager.js',
+  './components/loki-audit-viewer.js',
+  './components/loki-api-keys.js',
+  './components/loki-tenant-switcher.js',
 ];
 
 // Components are registered via customElements.define in their respective files

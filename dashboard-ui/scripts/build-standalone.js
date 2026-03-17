@@ -671,6 +671,7 @@ function generateStandaloneHTML(bundleCode) {
       <!-- Overview + Tasks (combined) -->
       <div class="section-page active" id="page-overview">
         <loki-overview id="overview"></loki-overview>
+        <loki-rarv-timeline id="rarv-timeline"></loki-rarv-timeline>
         <loki-session-diff id="session-diff"></loki-session-diff>
         <div style="margin-top: 28px;">
           <div class="section-page-header">
@@ -732,6 +733,7 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <div style="display: grid; gap: 24px;">
           <loki-quality-score id="quality-score"></loki-quality-score>
+          <loki-quality-gates id="quality-gates"></loki-quality-gates>
           <loki-prompt-optimizer id="prompt-optimizer"></loki-prompt-optimizer>
         </div>
       </div>
@@ -884,6 +886,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'session-diff',
       'prompt-optimizer',
       'quality-score',
+      'quality-gates',
+      'rarv-timeline',
       'migration-dashboard',
       'analytics-dashboard'
     ];
