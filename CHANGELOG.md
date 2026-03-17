@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.13.1 - PRD Template Quality Fixes
+
+### Bug Fixes
+- **simple-todo-app.md**: Added project structure, database schema, API endpoints, testing section, and success criteria to pass quality audit
+- **api-only.md**: Added project structure, data model, expanded testing section, and added success criteria
+- **e-commerce.md**: Removed undocumented 'reviews' from features (no schema/API supported it)
+- **full-stack-demo.md**: Expanded project structure, made tests required instead of optional, added acceptance criteria
+
 ## v6.13.0 - Real Demo Execution
 
 ### Features

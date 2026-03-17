@@ -12,7 +12,7 @@ A simple e-commerce storefront called "ShopBase" with a product catalog, shoppin
 
 ### MVP Features
 1. **Product Catalog** - Browse products with images, prices, descriptions, and categories
-2. **Product Detail** - Full product page with image gallery, variants (size/color), and reviews
+2. **Product Detail** - Full product page with image gallery and variants (size/color)
 3. **Shopping Cart** - Add/remove items, update quantities, persistent cart (survives refresh)
 4. **Checkout** - Shipping address form, order summary, Stripe payment
 5. **Order Confirmation** - Confirmation page and email receipt
