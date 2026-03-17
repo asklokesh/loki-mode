@@ -756,7 +756,7 @@ cmd_start() {
 
         # Run the BMAD adapter to normalize artifacts
         echo -e "${CYAN}Running BMAD adapter...${NC}"
-        local adapter_script="${SCRIPT_DIR:-$(dirname "$0")}/bmad-adapter.py"
+        local adapter_script="$(dirname "$(resolve_script_path "$0")")/bmad-adapter.py"
         if [[ ! -f "$adapter_script" ]]; then
             echo -e "${RED}Error: BMAD adapter not found at $adapter_script${NC}"
             echo "Please ensure autonomy/bmad-adapter.py exists."
@@ -808,7 +808,7 @@ cmd_start() {
 
         # Run the OpenSpec adapter to normalize artifacts
         echo -e "${CYAN}Running OpenSpec adapter...${NC}"
-        local adapter_script="${SCRIPT_DIR:-$(dirname "$0")}/openspec-adapter.py"
+        local adapter_script="$(dirname "$(resolve_script_path "$0")")/openspec-adapter.py"
         if [[ ! -f "$adapter_script" ]]; then
             echo -e "${RED}Error: OpenSpec adapter not found at $adapter_script${NC}"
             echo "Please ensure autonomy/openspec-adapter.py exists."

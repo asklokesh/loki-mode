@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.15.1 - BMAD Adapter Path Resolution and Sprint-Status Integration
+
+### Fixed
+- BMAD adapter path resolution broken for global npm installs -- resolve_script_path now used instead of dirname "$0" fallback which resolved to bin/ symlink directory
+- BMAD sprint-status.yml now read and parsed -- completed/done stories are skipped when populating the task queue, preventing re-implementation of already-completed work
+
 ## v6.15.0 - SQLite Memory Backend and MCP Memory Tools
 
 ### Features

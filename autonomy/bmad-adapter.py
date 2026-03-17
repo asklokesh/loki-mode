@@ -147,6 +147,7 @@ class BmadArtifacts:
         self.prd_path: Optional[Path] = None
         self.architecture_path: Optional[Path] = None
         self.epics_path: Optional[Path] = None
+        self.sprint_status_path: Optional[Path] = None
         self.output_dir: Optional[Path] = None
         self.errors: List[str] = []
         self._discover()
@@ -202,6 +203,11 @@ class BmadArtifacts:
         if epics_path.exists():
             self.epics_path = epics_path
 
+        # Find sprint-status.yml (optional)
+        sprint_path = self.output_dir / "sprint-status.yml"
+        if sprint_path.exists():
+            self.sprint_status_path = sprint_path
+
     @property
     def is_valid(self) -> bool:
         """True if at least a PRD was found."""
@@ -213,6 +219,7 @@ class BmadArtifacts:
             "prd": str(self.prd_path) if self.prd_path else None,
             "architecture": str(self.architecture_path) if self.architecture_path else None,
             "epics": str(self.epics_path) if self.epics_path else None,
+            "sprint_status": str(self.sprint_status_path) if self.sprint_status_path else None,
         }
 
 
@@ -438,6 +445,73 @@ def parse_epics(epics_path: Path) -> List[Dict[str, Any]]:
     return epics
 
 
+# -- Sprint Status Parsing (stdlib-only YAML) ---------------------------------
+
+def parse_sprint_status(path: Path) -> set:
+    """Parse sprint-status.yml and return a set of completed story names.
+
+    Uses a simple line-by-line parser for the specific BMAD sprint-status
+    format (no PyYAML dependency). Recognizes stories with status
+    'completed' or 'done' (case-insensitive).
+
+    Expected format:
+        epics:
+          - name: "Epic Name"
+            status: in-progress
+            stories:
+              - name: "Story title"
+                status: completed
+    """
+    text = _safe_read(path)
+    completed: set = set()
+    current_name: Optional[str] = None
+    in_stories = False
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        # Detect stories: block start
+        if stripped == "stories:":
+            in_stories = True
+            current_name = None
+            continue
+
+        # Detect epics: block start (reset stories context)
+        if stripped == "epics:":
+            in_stories = False
+            current_name = None
+            continue
+
+        # Top-level list item under epics resets stories context
+        # (indentation: "  - name:" for epics vs "      - name:" for stories)
+        indent = len(line) - len(line.lstrip())
+
+        if in_stories:
+            # Story name line: "      - name: ..." or "        name: ..."
+            name_match = re.match(r'^-?\s*name:\s*["\']?(.*?)["\']?\s*$', stripped)
+            if name_match:
+                current_name = name_match.group(1).strip()
+                continue
+
+            # Story status line
+            status_match = re.match(r'^status:\s*["\']?(.*?)["\']?\s*$', stripped)
+            if status_match:
+                status = status_match.group(1).strip().lower()
+                if status in ("completed", "done") and current_name:
+                    completed.add(current_name)
+                current_name = None
+                continue
+
+            # A new epic-level item resets context
+            if indent <= 4 and stripped.startswith("- name:"):
+                in_stories = False
+                current_name = None
+
+    return completed
+
+
 # -- Architecture Summary -----------------------------------------------------
 
 def summarize_architecture(arch_path: Path) -> str:
@@ -593,6 +667,7 @@ def write_outputs(
     arch_summary: Optional[str],
     tasks_json: Optional[List[Dict[str, Any]]],
     validation_report: Optional[List[Dict[str, str]]],
+    completed_stories: Optional[set] = None,
 ) -> List[str]:
     """Write all output files to the specified directory.
 
@@ -632,6 +707,12 @@ def write_outputs(
             val_lines.append(f"- [{level}] {item['message']}")
         _write_atomic(val_path, "\n".join(val_lines) + "\n")
         written.append(str(val_path))
+
+    # bmad-completed-stories.json
+    if completed_stories:
+        completed_path = output_dir / "bmad-completed-stories.json"
+        _write_atomic(completed_path, json.dumps(sorted(completed_stories), indent=2))
+        written.append(str(completed_path))
 
     return written
 
@@ -674,6 +755,11 @@ def run(
     if artifacts.epics_path:
         epics_data = parse_epics(artifacts.epics_path)
 
+    # 4b. Parse sprint status (optional)
+    completed_stories: Optional[set] = None
+    if artifacts.sprint_status_path:
+        completed_stories = parse_sprint_status(artifacts.sprint_status_path)
+
     # 5. Build combined metadata
     combined_metadata: Dict[str, Any] = {
         "project_classification": classification,
@@ -714,6 +800,7 @@ def run(
         arch_summary=arch_summary,
         tasks_json=epics_data,
         validation_report=validation_report,
+        completed_stories=completed_stories,
     )
 
     print(f"BMAD adapter: processed {artifacts.prd_path}")
@@ -722,7 +809,10 @@ def run(
         print(f"  Classification: {classification.get('project_type', 'unknown')} / {classification.get('complexity', 'unknown')}")
     print(f"  Artifacts: PRD={'found' if artifacts.prd_path else 'MISSING'}, "
           f"Architecture={'found' if artifacts.architecture_path else 'missing'}, "
-          f"Epics={'found' if artifacts.epics_path else 'missing'}")
+          f"Epics={'found' if artifacts.epics_path else 'missing'}, "
+          f"SprintStatus={'found' if artifacts.sprint_status_path else 'missing'}")
+    if completed_stories:
+        print(f"  Completed stories (will skip): {len(completed_stories)}")
     print(f"  Output files written to {abs_output_dir}/:")
     for path in written:
         print(f"    - {Path(path).name}")

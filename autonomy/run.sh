@@ -7879,6 +7879,7 @@ import sys
 
 bmad_tasks_path = ".loki/bmad-tasks.json"
 pending_path = ".loki/queue/pending.json"
+completed_stories_path = ".loki/bmad-completed-stories.json"
 
 try:
     with open(bmad_tasks_path, "r") as f:
@@ -7886,6 +7887,17 @@ try:
 except (json.JSONDecodeError, FileNotFoundError) as e:
     print(f"Warning: Could not read BMAD tasks: {e}", file=sys.stderr)
     sys.exit(0)
+
+# Load completed stories from sprint-status (if available)
+completed_stories = set()
+if os.path.exists(completed_stories_path):
+    try:
+        with open(completed_stories_path, "r") as f:
+            completed_list = json.load(f)
+            if isinstance(completed_list, list):
+                completed_stories = {s.lower() for s in completed_list if isinstance(s, str)}
+    except (json.JSONDecodeError, FileNotFoundError):
+        pass
 
 # Extract stories from BMAD structure
 # Supports both flat list and nested epic/story format
@@ -7913,6 +7925,21 @@ elif isinstance(bmad_data, dict):
 if not stories:
     print("No BMAD stories found to queue", file=sys.stderr)
     sys.exit(0)
+
+# Filter out completed stories from sprint-status
+skipped_count = 0
+if completed_stories:
+    filtered = []
+    for story in stories:
+        if isinstance(story, dict):
+            title = story.get("title", story.get("name", "")).lower()
+            if title and title in completed_stories:
+                skipped_count += 1
+                continue
+        filtered.append(story)
+    stories = filtered
+    if skipped_count > 0:
+        print(f"Skipped {skipped_count} completed stories (from sprint-status.yml)", file=sys.stderr)
 
 # Load existing pending tasks (if any)
 existing = []
@@ -7954,7 +7981,10 @@ for i, story in enumerate(stories):
 with open(pending_path, "w") as f:
     json.dump(existing, f, indent=2)
 
-print(f"Added {len(stories)} BMAD stories to task queue")
+msg = f"Added {len(stories)} BMAD stories to task queue"
+if skipped_count > 0:
+    msg += f" (skipped {skipped_count} completed)"
+print(msg)
 BMAD_QUEUE_EOF
 
     if [[ $? -ne 0 ]]; then
