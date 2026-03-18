@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.26.1] - 2026-03-18
+
+### Fixed
+- `loki web` now works correctly: web app is served by the dashboard FastAPI server on port 57374 instead of a separate static file server that could not proxy API calls
+- Added web-app/dist/ to npm package files so the web app is included in global installs
+- Web app SPA catch-all route serves index.html for client-side routing
+
 ## [6.25.2] - 2026-03-18
 
 ### Fixed

@@ -2907,9 +2907,9 @@ cmd_dashboard_open() {
 }
 
 # Web app management
-WEB_DEFAULT_PORT=57375
-WEB_PID_DIR="${LOKI_DIR}/web"
-WEB_PID_FILE="${WEB_PID_DIR}/web.pid"
+# The web app is served directly by the dashboard FastAPI server (port 57374).
+# No separate web server process is needed -- the dashboard mounts web-app/dist/
+# as static files and handles SPA catch-all routing.
 
 cmd_web() {
     local subcommand="${1:-start}"
@@ -2929,7 +2929,7 @@ cmd_web() {
             cmd_web_help
             ;;
         *)
-            # Treat unknown args as options to start (e.g., loki web --port 8080)
+            # Treat unknown args as options to start (e.g., loki web --no-open)
             cmd_web_start "$subcommand" "$@"
             ;;
     esac
@@ -2942,52 +2942,30 @@ cmd_web_help() {
     echo ""
     echo "Commands:"
     echo "  start    Start the web app (default)"
-    echo "  stop     Stop the web app server"
-    echo "  status   Show web app server status"
+    echo "  stop     Stop the dashboard server (alias for 'loki dashboard stop')"
+    echo "  status   Show dashboard server status"
     echo "  help     Show this help"
     echo ""
     echo "Options (for start):"
-    echo "  --port PORT    Port for web app (default: $WEB_DEFAULT_PORT)"
     echo "  --no-open      Don't open browser automatically"
-    echo "  --no-api       Don't auto-start the dashboard API"
     echo ""
-    echo "The web app connects to the dashboard API at localhost:${DASHBOARD_DEFAULT_PORT}."
-    echo "By default, 'loki web' starts the API if it's not already running."
+    echo "The web app is served by the dashboard API at localhost:${DASHBOARD_DEFAULT_PORT}."
+    echo "Both API endpoints and static files are served from the same origin."
     echo ""
     echo "Examples:"
-    echo "  loki web                  Start web app and open browser"
-    echo "  loki web --port 8080      Use custom port"
-    echo "  loki web --no-open        Start without opening browser"
-    echo "  loki web stop             Stop the web app server"
+    echo "  loki web                  Start dashboard and open web app in browser"
+    echo "  loki web --no-open        Start dashboard without opening browser"
+    echo "  loki web stop             Stop the dashboard server"
 }
 
 cmd_web_start() {
-    local port="$WEB_DEFAULT_PORT"
     local open_browser=true
-    local start_api=true
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --port)
-                if [[ -n "${2:-}" ]]; then
-                    port="$2"
-                    shift 2
-                else
-                    echo -e "${RED}--port requires a value${NC}"
-                    exit 1
-                fi
-                ;;
-            --port=*)
-                port="${1#*=}"
-                shift
-                ;;
             --no-open)
                 open_browser=false
-                shift
-                ;;
-            --no-api)
-                start_api=false
                 shift
                 ;;
             --help|-h)
@@ -3002,14 +2980,7 @@ cmd_web_start() {
         esac
     done
 
-    # Validate port
-    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}Invalid port: $port${NC}"
-        echo "Port must be a number."
-        exit 1
-    fi
-
-    # Find web-app dist directory
+    # Check that web-app dist exists
     local web_dist="${SKILL_DIR}/web-app/dist"
     if [ ! -d "$web_dist" ] || [ ! -f "$web_dist/index.html" ]; then
         echo -e "${RED}Error: Web app not built${NC}"
@@ -3020,185 +2991,51 @@ cmd_web_start() {
         exit 1
     fi
 
-    # Ensure dashboard API is running (web app needs it)
-    if [ "$start_api" = true ]; then
-        local api_running=false
-        if [ -f "$DASHBOARD_PID_FILE" ]; then
-            local api_pid
-            api_pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
-            if [ -n "$api_pid" ] && kill -0 "$api_pid" 2>/dev/null; then
-                api_running=true
-            fi
-        fi
-
-        if [ "$api_running" = false ]; then
-            echo -e "${CYAN}Starting dashboard API (required by web app)...${NC}"
-            cmd_dashboard_start
-            echo ""
-        fi
-    fi
-
-    # Check if web server is already running
-    if [ -f "$WEB_PID_FILE" ]; then
-        local existing_pid
-        existing_pid=$(cat "$WEB_PID_FILE" 2>/dev/null)
-        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-            echo -e "${YELLOW}Web app already running (PID: $existing_pid)${NC}"
-            cmd_web_status
-            exit 0
-        fi
-        rm -f "$WEB_PID_FILE"
-    fi
-
-    # Check if port is in use
-    if command -v lsof &> /dev/null; then
-        if lsof -i ":$port" &> /dev/null; then
-            echo -e "${RED}Error: Port $port is already in use${NC}"
-            echo ""
-            echo "Check what's using the port:"
-            echo "  lsof -i :$port"
-            echo ""
-            echo "Or use a different port:"
-            echo "  loki web --port 8080"
-            exit 1
-        fi
-    fi
-
-    # Ensure PID directory exists
-    mkdir -p "$WEB_PID_DIR"
-
-    local log_file="${WEB_PID_DIR}/web.log"
-    local url="http://127.0.0.1:${port}"
-
-    echo -e "${GREEN}Starting web app server...${NC}"
-    echo -e "${CYAN}Port:${NC}      $port"
-    echo -e "${CYAN}Serving:${NC}   $web_dist"
-    echo ""
-
-    # Start Python http.server serving the dist directory
-    local python_cmd="python3"
-    if ! command -v python3 &> /dev/null; then
-        if command -v python &> /dev/null; then
-            python_cmd="python"
-        else
-            echo -e "${RED}Error: Python not found${NC}"
-            echo "Python is required to serve the web app."
-            exit 1
-        fi
-    fi
-
-    nohup "$python_cmd" -m http.server "$port" --directory "$web_dist" --bind 127.0.0.1 > "$log_file" 2>&1 &
-    local new_pid=$!
-
-    # Save PID and port
-    echo "$new_pid" > "$WEB_PID_FILE"
-    echo "$port" > "${WEB_PID_DIR}/port"
-
-    # Wait and verify
-    sleep 1
-
-    if kill -0 "$new_pid" 2>/dev/null; then
-        echo -e "${GREEN}Web app started${NC}"
-        echo ""
-        echo "  PID:  $new_pid"
-        echo "  URL:  $url"
-        echo "  Logs: $log_file"
-        echo ""
-        echo -e "Stop with: ${CYAN}loki web stop${NC}"
-
-        # Open browser
-        if [ "$open_browser" = true ]; then
-            echo ""
-            echo -e "${GREEN}Opening browser: $url${NC}"
-            if command -v open &> /dev/null; then
-                open "$url"
-            elif command -v xdg-open &> /dev/null; then
-                xdg-open "$url"
-            elif command -v start &> /dev/null; then
-                start "$url"
-            else
-                echo "Could not detect browser opener."
-                echo "Please open in browser: $url"
-            fi
-        fi
-    else
-        rm -f "$WEB_PID_FILE"
-        echo -e "${RED}Failed to start web app server${NC}"
-        echo ""
-        echo "Check the log file for errors:"
-        echo "  cat $log_file"
-        exit 1
-    fi
-}
-
-cmd_web_stop() {
-    if [ ! -f "$WEB_PID_FILE" ]; then
-        echo -e "${YELLOW}Web app server is not running${NC}"
-        exit 0
-    fi
-
-    local pid
-    pid=$(cat "$WEB_PID_FILE" 2>/dev/null)
-
-    if [ -z "$pid" ]; then
-        rm -f "$WEB_PID_FILE"
-        echo -e "${YELLOW}Web app server is not running (empty PID file)${NC}"
-        exit 0
-    fi
-
-    if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null
-        sleep 1
-        # Force kill if still running
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null
-        fi
-        echo -e "${GREEN}Web app server stopped (PID: $pid)${NC}"
-    else
-        echo -e "${YELLOW}Web app server was not running (stale PID: $pid)${NC}"
-    fi
-
-    rm -f "$WEB_PID_FILE"
-}
-
-cmd_web_status() {
-    if [ ! -f "$WEB_PID_FILE" ]; then
-        echo -e "${YELLOW}Web app server is not running${NC}"
-        return 0
-    fi
-
-    local pid
-    pid=$(cat "$WEB_PID_FILE" 2>/dev/null)
-
-    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-        rm -f "$WEB_PID_FILE"
-        echo -e "${YELLOW}Web app server is not running${NC}"
-        return 0
-    fi
-
-    local port="$WEB_DEFAULT_PORT"
-    if [ -f "${WEB_PID_DIR}/port" ]; then
-        port=$(cat "${WEB_PID_DIR}/port" 2>/dev/null)
-    fi
-
-    echo -e "${GREEN}Web app server is running${NC}"
-    echo ""
-    echo "  PID:  $pid"
-    echo "  URL:  http://127.0.0.1:${port}"
-    echo ""
-
-    # Also show dashboard API status
+    # Ensure dashboard server is running (it serves both API and web app)
+    local api_running=false
     if [ -f "$DASHBOARD_PID_FILE" ]; then
         local api_pid
         api_pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
         if [ -n "$api_pid" ] && kill -0 "$api_pid" 2>/dev/null; then
-            echo -e "  Dashboard API: ${GREEN}running${NC} (PID: $api_pid)"
-        else
-            echo -e "  Dashboard API: ${RED}not running${NC}"
+            api_running=true
         fi
-    else
-        echo -e "  Dashboard API: ${RED}not running${NC}"
     fi
+
+    if [ "$api_running" = false ]; then
+        echo -e "${CYAN}Starting dashboard server...${NC}"
+        cmd_dashboard_start
+        echo ""
+    fi
+
+    local url="http://127.0.0.1:${DASHBOARD_DEFAULT_PORT}"
+
+    echo -e "${GREEN}Web app available at: $url${NC}"
+    echo ""
+    echo -e "Stop with: ${CYAN}loki web stop${NC} or ${CYAN}loki dashboard stop${NC}"
+
+    # Open browser
+    if [ "$open_browser" = true ]; then
+        echo ""
+        if command -v open &> /dev/null; then
+            open "$url"
+        elif command -v xdg-open &> /dev/null; then
+            xdg-open "$url"
+        elif command -v start &> /dev/null; then
+            start "$url"
+        else
+            echo "Please open in browser: $url"
+        fi
+    fi
+}
+
+cmd_web_stop() {
+    # Web app is served by the dashboard -- stopping dashboard stops the web app
+    cmd_dashboard_stop
+}
+
+cmd_web_status() {
+    # Web app is served by the dashboard -- show dashboard status
+    cmd_dashboard_status
 }
 
 # Import GitHub issues
