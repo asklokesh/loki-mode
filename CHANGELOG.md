@@ -5,6 +5,10 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.26.6] - 2026-03-18
+
+### Fixed
+- web-app/dist/ now committed to git and included in npm package -- root .gitignore had `dist/` which excluded it from the repo, so CI never had the built files to publish
 ## [6.26.5] - 2026-03-18
 
 ### Fixed

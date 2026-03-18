@@ -21,6 +21,7 @@ __pycache__/
 
 # Build outputs
 dist/
+!web-app/dist/
 *.vsix
 
 # Local development (not tracked)

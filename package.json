@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "6.26.5",
+  "version": "6.26.6",
   "description": "Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
   "keywords": [
     "agent",
