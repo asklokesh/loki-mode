@@ -16,6 +16,7 @@ __pycache__/
 
 # Build artifacts
 **/dist/
+!web-app/dist/
 **/.next/
 **/build/
 
