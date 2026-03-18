@@ -286,43 +286,6 @@ manager = ConnectionManager()
 start_time = datetime.now(timezone.utc)
 
 
-async def _orphan_watchdog():
-    """Background task that shuts down dashboard if the parent session dies.
-
-    When the session process is killed (SIGKILL), the cleanup trap never runs
-    and the dashboard is left orphaned. This watchdog checks the session PID
-    every 30 seconds and initiates shutdown if the session is gone.
-    """
-    loki_dir = _get_loki_dir()
-    pid_file = loki_dir / "loki.pid"
-    # Wait 60s before first check to let session fully start
-    await asyncio.sleep(60)
-    while True:
-        try:
-            if pid_file.exists():
-                pid = int(pid_file.read_text().strip())
-                try:
-                    os.kill(pid, 0)  # Check if process exists
-                except OSError:
-                    # Session PID is dead -- we're orphaned
-                    logger.warning(
-                        "Session PID %d is gone. Dashboard shutting down to avoid orphan.", pid
-                    )
-                    # Clean up our own PID file
-                    dash_pid = loki_dir / "dashboard" / "dashboard.pid"
-                    dash_pid.unlink(missing_ok=True)
-                    # Give a moment for any in-flight requests
-                    await asyncio.sleep(2)
-                    os._exit(0)
-            # If PID file doesn't exist and we've been running >2 min, also shut down
-            elif time.time() - _dashboard_start_time > 120:
-                logger.warning("No session PID file found. Dashboard shutting down.")
-                os._exit(0)
-        except (ValueError, OSError):
-            pass
-        await asyncio.sleep(30)
-
-
 _dashboard_start_time = time.time()
 
 
@@ -332,11 +295,8 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     _telemetry.send_telemetry("dashboard_start")
-    # Start orphan watchdog
-    watchdog_task = asyncio.create_task(_orphan_watchdog())
     yield
     # Shutdown
-    watchdog_task.cancel()
     await close_db()
 
 
@@ -436,6 +396,26 @@ async def get_status() -> StatusResponse:
     loki_dir = _get_loki_dir()
     uptime = (datetime.now(timezone.utc) - start_time).total_seconds()
 
+    # Read VERSION file early (independent of .loki/ dir)
+    version = "unknown"
+    dashboard_dir = os.path.dirname(__file__)
+    project_root = os.path.dirname(dashboard_dir)
+    version_file = os.path.join(project_root, "VERSION")
+    if os.path.isfile(version_file):
+        try:
+            with open(version_file) as vf:
+                version = vf.read().strip()
+        except (OSError, IOError) as e:
+            logger.warning(f"Failed to read VERSION file: {e}")
+
+    # If .loki/ directory doesn't exist, return idle status immediately
+    if not loki_dir.is_dir():
+        return StatusResponse(
+            status="idle",
+            version=version,
+            uptime_seconds=uptime,
+        )
+
     # Read dashboard-state.json (written by run.sh every 2 seconds)
     state_file = loki_dir / "dashboard-state.json"
     pid_file = loki_dir / "loki.pid"
@@ -450,18 +430,6 @@ async def get_status() -> StatusResponse:
     current_task = ""
     pending_tasks = 0
     running_agents = 0
-    version = "unknown"
-
-    # Read VERSION file
-    dashboard_dir = os.path.dirname(__file__)
-    project_root = os.path.dirname(dashboard_dir)
-    version_file = os.path.join(project_root, "VERSION")
-    if os.path.isfile(version_file):
-        try:
-            with open(version_file) as vf:
-                version = vf.read().strip()
-        except (OSError, IOError) as e:
-            logger.warning(f"Failed to read VERSION file: {e}")
 
     # Read dashboard state
     if state_file.exists():

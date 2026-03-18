@@ -9347,7 +9347,6 @@ cleanup() {
         if type app_runner_cleanup &>/dev/null; then
             app_runner_cleanup
         fi
-        stop_dashboard
         stop_status_monitor
         kill_all_registered
         rm -f "$loki_dir/loki.pid" 2>/dev/null
@@ -9379,7 +9378,6 @@ except (json.JSONDecodeError, OSError): pass
         if type app_runner_cleanup &>/dev/null; then
             app_runner_cleanup
         fi
-        stop_dashboard
         stop_status_monitor
         kill_all_registered
         rm -f "$loki_dir/loki.pid" "$loki_dir/PAUSE" 2>/dev/null
@@ -9974,7 +9972,6 @@ main() {
     if type app_runner_cleanup &>/dev/null; then
         app_runner_cleanup
     fi
-    stop_dashboard
     stop_status_monitor
     local loki_dir="${TARGET_DIR:-.}/.loki"
     rm -f "$loki_dir/loki.pid" 2>/dev/null
