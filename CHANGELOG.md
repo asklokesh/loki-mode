@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.18.0] - 2026-03-18
+
+### Added
+- `loki plan` command: pre-execution PRD analysis with complexity assessment, cost estimation, iteration planning, and quality gate preview
+- `--json` flag for programmatic JSON output
+- `--verbose` flag for detailed analysis breakdown
+- No API keys required -- pure local analysis
+
 ## [6.17.2] - 2026-03-18
 
 ### Added

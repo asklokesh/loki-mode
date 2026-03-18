@@ -435,6 +435,7 @@ show_help() {
     echo "  agent [cmd]      Agent type dispatch (list|info|run|start|review)"
     echo "  remote [PRD]     Start remote session (connect from phone/browser, Claude Pro/Max)"
   echo "  trigger          Event-driven autonomous execution (schedules, webhooks)"
+    echo "  plan <PRD>       Dry-run PRD analysis: complexity, cost, and execution plan"
     echo "  version          Show version"
     echo "  help             Show this help"
     echo ""
@@ -8298,6 +8299,507 @@ for line in sys.stdin:
     esac
 }
 
+# Dry-run PRD analysis and cost estimation (v6.18.0)
+cmd_plan() {
+    local prd_file=""
+    local show_json=false
+    local show_verbose=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki plan${NC} - Dry-run PRD analysis and cost estimation"
+                echo ""
+                echo "Usage: loki plan <PRD> [options]"
+                echo ""
+                echo "Analyzes a PRD file without executing anything. Outputs complexity,"
+                echo "estimated iterations, token usage, cost, and execution plan."
+                echo ""
+                echo "Options:"
+                echo "  --json        Machine-readable JSON output"
+                echo "  --verbose     Show detailed per-iteration breakdown"
+                echo "  --help, -h    Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  loki plan ./prd.md"
+                echo "  loki plan ./prd.md --json"
+                echo "  loki plan ./prd.md --verbose"
+                return 0
+                ;;
+            --json) show_json=true; shift ;;
+            --verbose) show_verbose=true; shift ;;
+            *)
+                if [ -z "$prd_file" ]; then
+                    prd_file="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$prd_file" ]; then
+        echo -e "${RED}Usage: loki plan <PRD file>${NC}"
+        echo "Run 'loki plan --help' for usage."
+        return 1
+    fi
+
+    if [ ! -f "$prd_file" ]; then
+        echo -e "${RED}PRD file not found: $prd_file${NC}"
+        return 1
+    fi
+
+    local prd_path
+    prd_path="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
+
+    python3 -c "
+import json, sys, os, re, math
+
+prd_path = sys.argv[1]
+show_json = sys.argv[2] == 'true'
+show_verbose = sys.argv[3] == 'true'
+
+# Colors (disabled for JSON mode)
+if show_json:
+    RED = GREEN = YELLOW = BLUE = CYAN = BOLD = DIM = NC = ''
+else:
+    RED = '\033[0;31m'
+    GREEN = '\033[0;32m'
+    YELLOW = '\033[1;33m'
+    BLUE = '\033[0;34m'
+    CYAN = '\033[0;36m'
+    BOLD = '\033[1m'
+    DIM = '\033[2m'
+    NC = '\033[0m'
+
+# --- Read and analyze PRD ---
+with open(prd_path, 'r') as f:
+    content = f.read()
+
+prd_words = len(content.split())
+prd_lines = content.count('\n') + 1
+
+# Detect PRD format
+is_json_prd = prd_path.endswith('.json')
+sections = []
+features = []
+endpoints = []
+integrations = []
+databases = []
+ui_components = []
+
+if is_json_prd:
+    try:
+        prd_data = json.loads(content)
+        features = prd_data.get('features', prd_data.get('requirements', []))
+        if isinstance(features, list):
+            features = [f.get('title', f.get('name', str(f))) if isinstance(f, dict) else str(f) for f in features]
+        else:
+            features = []
+    except Exception:
+        features = []
+else:
+    # Markdown analysis
+    for line in content.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('## '):
+            sections.append(stripped[3:].strip())
+        elif stripped.startswith('### '):
+            sections.append(stripped[4:].strip())
+
+    # Count features: headers + checkboxes
+    feature_patterns = re.findall(r'^(?:##?\s+|[-*]\s+\[.\]\s+)(.+)', content, re.MULTILINE)
+    features = feature_patterns
+
+    # Count API endpoints
+    endpoint_patterns = re.findall(
+        r'(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+[/\w{}:.-]+',
+        content, re.IGNORECASE
+    )
+    endpoints = endpoint_patterns
+
+    # Count external integrations
+    integration_keywords = [
+        'oauth', 'saml', 'oidc', 'stripe', 'twilio', 'sendgrid',
+        'aws', 'gcp', 'azure', 'firebase', 's3', 'redis', 'kafka',
+        'elasticsearch', 'rabbitmq', 'webhook', 'socket.io', 'websocket',
+        'graphql', 'grpc', 'docker', 'kubernetes', 'k8s'
+    ]
+    content_lower = content.lower()
+    for kw in integration_keywords:
+        if kw in content_lower:
+            integrations.append(kw)
+
+    # Count database mentions
+    db_keywords = ['postgresql', 'postgres', 'mysql', 'mongodb', 'sqlite',
+                   'dynamodb', 'cassandra', 'redis', 'prisma', 'typeorm',
+                   'sequelize', 'drizzle', 'knex', 'database', 'migration']
+    for kw in db_keywords:
+        if kw in content_lower:
+            databases.append(kw)
+
+    # Count UI components
+    ui_keywords = ['dashboard', 'form', 'table', 'modal', 'navbar',
+                   'sidebar', 'chart', 'graph', 'calendar', 'kanban',
+                   'drag.and.drop', 'responsive', 'mobile', 'animation']
+    for kw in ui_keywords:
+        if re.search(kw, content_lower):
+            ui_components.append(kw)
+
+feature_count = len(features)
+endpoint_count = len(endpoints)
+integration_count = len(integrations)
+db_count = len(databases)
+ui_count = len(ui_components)
+section_count = len(sections)
+
+# --- Determine complexity ---
+complexity_score = 0
+complexity_reasons = []
+
+if prd_words < 200 and feature_count < 5:
+    complexity = 'simple'
+    complexity_reasons.append('Short PRD (<200 words, <5 features)')
+elif prd_words > 3000 or feature_count > 30:
+    complexity_score += 3
+    complexity_reasons.append(f'Large PRD ({prd_words} words, {feature_count} features)')
+elif prd_words > 1000 or feature_count > 15:
+    complexity_score += 2
+    complexity_reasons.append(f'Medium PRD ({prd_words} words, {feature_count} features)')
+else:
+    complexity_score += 1
+    complexity_reasons.append(f'Standard PRD ({prd_words} words, {feature_count} features)')
+
+if endpoint_count > 20:
+    complexity_score += 2
+    complexity_reasons.append(f'{endpoint_count} API endpoints detected')
+elif endpoint_count > 5:
+    complexity_score += 1
+    complexity_reasons.append(f'{endpoint_count} API endpoints detected')
+
+if integration_count > 3:
+    complexity_score += 2
+    complexity_reasons.append(str(integration_count) + ' external integrations: ' + ', '.join(integrations[:5]))
+elif integration_count > 0:
+    complexity_score += 1
+    complexity_reasons.append(str(integration_count) + ' external integrations: ' + ', '.join(integrations))
+
+if db_count > 1:
+    complexity_score += 1
+    complexity_reasons.append('Multiple data stores: ' + ', '.join(databases[:4]))
+
+if ui_count > 5:
+    complexity_score += 1
+    complexity_reasons.append(f'{ui_count} UI components detected')
+
+# Map score to tier
+if complexity_score <= 1:
+    complexity = 'simple'
+elif complexity_score <= 3:
+    complexity = 'moderate'
+elif complexity_score <= 5:
+    complexity = 'complex'
+else:
+    complexity = 'enterprise'
+
+# --- Estimate iterations ---
+iteration_map = {
+    'simple': (3, 5),
+    'moderate': (6, 12),
+    'complex': (12, 24),
+    'enterprise': (24, 48),
+}
+min_iter, max_iter = iteration_map[complexity]
+
+# Adjust based on specific counts
+if endpoint_count > 10:
+    max_iter = max(max_iter, max_iter + endpoint_count // 5)
+if integration_count > 2:
+    max_iter += integration_count
+
+estimated_iterations = (min_iter + max_iter) // 2
+
+# --- Token estimation per iteration by RARV tier ---
+# RARV cycle: 4 iterations per cycle (plan, develop, develop, test)
+# Tokens estimated per iteration step
+tokens_per_tier = {
+    'planning': {'input': 50000, 'output': 8000, 'model': 'Opus'},
+    'development': {'input': 80000, 'output': 15000, 'model': 'Sonnet'},
+    'fast': {'input': 30000, 'output': 5000, 'model': 'Haiku'},
+}
+
+# Pricing per 1M tokens
+pricing = {
+    'Opus':   {'input': 15.00, 'output': 75.00},
+    'Sonnet': {'input': 3.00, 'output': 15.00},
+    'Haiku':  {'input': 0.25, 'output': 1.25},
+}
+
+# Build per-iteration plan
+iteration_plan = []
+total_input_tokens = 0
+total_output_tokens = 0
+total_cost = 0.0
+tier_totals = {'Opus': 0.0, 'Sonnet': 0.0, 'Haiku': 0.0}
+tier_iterations = {'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
+
+for i in range(estimated_iterations):
+    rarv_step = i % 4
+    if rarv_step == 0:
+        tier = 'planning'
+        phase_label = 'Reason (Planning)'
+    elif rarv_step == 1:
+        tier = 'development'
+        phase_label = 'Act (Implementation)'
+    elif rarv_step == 2:
+        tier = 'development'
+        phase_label = 'Reflect (Review)'
+    else:
+        tier = 'fast'
+        phase_label = 'Verify (Testing)'
+
+    info = tokens_per_tier[tier]
+    model = info['model']
+    inp = info['input']
+    out = info['output']
+
+    cost = (inp / 1_000_000) * pricing[model]['input'] + \
+           (out / 1_000_000) * pricing[model]['output']
+
+    total_input_tokens += inp
+    total_output_tokens += out
+    total_cost += cost
+    tier_totals[model] += cost
+    tier_iterations[model] += 1
+
+    iteration_plan.append({
+        'iteration': i + 1,
+        'phase': phase_label,
+        'model': model,
+        'input_tokens': inp,
+        'output_tokens': out,
+        'cost_usd': round(cost, 4),
+    })
+
+# --- Execution plan (what each cycle tackles) ---
+execution_phases = []
+cycle_count = math.ceil(estimated_iterations / 4)
+phase_names = []
+
+# Generate phase names based on PRD content
+if sections:
+    phase_names = sections[:cycle_count]
+else:
+    # Generic phases based on complexity
+    generic = [
+        'Project setup and scaffolding',
+        'Core data models and database schema',
+        'API endpoints and business logic',
+        'Frontend components and pages',
+        'Authentication and authorization',
+        'External integrations',
+        'Testing and quality assurance',
+        'Performance optimization',
+        'Documentation and deployment',
+        'Edge cases and error handling',
+        'Security hardening',
+        'Final polish and review',
+    ]
+    phase_names = generic[:cycle_count]
+
+for idx, name in enumerate(phase_names):
+    execution_phases.append({
+        'cycle': idx + 1,
+        'iterations': f'{idx * 4 + 1}-{min((idx + 1) * 4, estimated_iterations)}',
+        'focus': name,
+    })
+
+# --- Time estimation ---
+# Average ~3.5 minutes per iteration (API calls + processing)
+minutes_per_iteration = 3.5
+total_minutes = estimated_iterations * minutes_per_iteration
+if total_minutes < 60:
+    time_estimate = f'{int(total_minutes)} minutes'
+elif total_minutes < 120:
+    time_estimate = f'{int(total_minutes // 60)} hour {int(total_minutes % 60)} minutes'
+else:
+    time_estimate = f'{total_minutes / 60:.1f} hours'
+
+min_time = min_iter * minutes_per_iteration
+max_time = max_iter * minutes_per_iteration
+
+# --- Quality gates ---
+quality_gates = [
+    {'gate': 'Static Analysis', 'trigger': 'Every iteration', 'applies': True},
+    {'gate': 'Unit Tests', 'trigger': 'Verify phase (every 4th iteration)', 'applies': True},
+    {'gate': 'Code Review (3-reviewer)', 'trigger': 'After implementation cycles', 'applies': complexity in ('complex', 'enterprise')},
+    {'gate': 'Anti-sycophancy Check', 'trigger': 'On unanimous review approval', 'applies': complexity in ('complex', 'enterprise')},
+    {'gate': 'Integration Tests', 'trigger': 'Mid-project and final', 'applies': integration_count > 0 or endpoint_count > 3},
+    {'gate': 'Coverage Gate (>80%)', 'trigger': 'Final verification', 'applies': True},
+    {'gate': 'Security Scan', 'trigger': 'Before completion', 'applies': integration_count > 0},
+    {'gate': 'Performance Benchmark', 'trigger': 'Before completion', 'applies': complexity in ('complex', 'enterprise')},
+    {'gate': 'Completion Council', 'trigger': 'After all phases', 'applies': True},
+]
+active_gates = [g for g in quality_gates if g['applies']]
+
+# --- Provider recommendation ---
+if integration_count > 3 or complexity in ('complex', 'enterprise'):
+    recommended_provider = 'Claude'
+    provider_reason = 'Full feature support needed (subagents, parallel, MCP)'
+elif complexity == 'simple' and endpoint_count == 0:
+    recommended_provider = 'Any (Claude/Codex/Gemini)'
+    provider_reason = 'Simple project works with all providers'
+else:
+    recommended_provider = 'Claude'
+    provider_reason = 'Best iteration quality and tool support'
+
+# --- Output ---
+if show_json:
+    result = {
+        'prd_file': prd_path,
+        'prd_stats': {
+            'words': prd_words,
+            'lines': prd_lines,
+            'sections': section_count,
+            'features': feature_count,
+            'endpoints': endpoint_count,
+            'integrations': integrations,
+            'databases': databases,
+            'ui_components': ui_count,
+        },
+        'complexity': {
+            'tier': complexity,
+            'score': complexity_score,
+            'reasons': complexity_reasons,
+        },
+        'iterations': {
+            'estimated': estimated_iterations,
+            'range': [min_iter, max_iter],
+            'rarv_cycles': cycle_count,
+        },
+        'tokens': {
+            'total_input': total_input_tokens,
+            'total_output': total_output_tokens,
+            'total': total_input_tokens + total_output_tokens,
+        },
+        'cost': {
+            'total_usd': round(total_cost, 2),
+            'by_model': {k: round(v, 2) for k, v in tier_totals.items()},
+            'iterations_by_model': tier_iterations,
+        },
+        'time': {
+            'estimated': time_estimate,
+            'minutes': round(total_minutes, 1),
+            'range_minutes': [round(min_time, 1), round(max_time, 1)],
+        },
+        'execution_plan': execution_phases,
+        'quality_gates': [g['gate'] for g in active_gates],
+        'provider': {
+            'recommended': recommended_provider,
+            'reason': provider_reason,
+        },
+    }
+    if show_verbose:
+        result['iteration_details'] = iteration_plan
+    print(json.dumps(result, indent=2))
+    sys.exit(0)
+
+# --- Formatted output ---
+print()
+print(f'{BOLD}PRD Analysis: {os.path.basename(prd_path)}{NC}')
+print(f'{DIM}' + '=' * 60 + f'{NC}')
+
+# PRD Stats
+print(f'\n{CYAN}PRD Statistics{NC}')
+print(f'  Words: {prd_words}  |  Lines: {prd_lines}  |  Sections: {section_count}')
+print(f'  Features: {feature_count}  |  Endpoints: {endpoint_count}  |  Integrations: {integration_count}')
+if databases:
+    print('  Data stores: ' + ', '.join(databases[:4]))
+if ui_count > 0:
+    print(f'  UI components: {ui_count}')
+
+# Complexity
+color = {'simple': GREEN, 'moderate': YELLOW, 'complex': RED, 'enterprise': RED}
+cx_color = color.get(complexity, NC)
+print(f'\n{CYAN}Complexity{NC}')
+print(f'  Tier: {cx_color}{BOLD}{complexity.upper()}{NC} (score: {complexity_score})')
+for reason in complexity_reasons:
+    print(f'  {DIM}- {reason}{NC}')
+
+# Iterations
+print(f'\n{CYAN}Estimated Iterations{NC}')
+print(f'  Count: {BOLD}{estimated_iterations}{NC} (range: {min_iter}-{max_iter})')
+print(f'  RARV cycles: {cycle_count} (4 iterations per cycle)')
+opus_n = tier_iterations.get('Opus', 0)
+sonnet_n = tier_iterations.get('Sonnet', 0)
+haiku_n = tier_iterations.get('Haiku', 0)
+print(f'  Model distribution: Opus x{opus_n} | Sonnet x{sonnet_n} | Haiku x{haiku_n}')
+
+# Tokens
+total_tok = total_input_tokens + total_output_tokens
+print(f'\n{CYAN}Token Usage Estimate{NC}')
+print(f'  Input:  {total_input_tokens:>12,} tokens')
+print(f'  Output: {total_output_tokens:>12,} tokens')
+print(f'  Total:  {total_tok:>12,} tokens')
+
+# Cost
+ds = chr(36)  # dollar sign
+print(f'\n{CYAN}Cost Estimate{NC}')
+print(f'  {BOLD}Total: {ds}{total_cost:.2f}{NC}')
+for model in ['Opus', 'Sonnet', 'Haiku']:
+    pct = (tier_totals[model] / total_cost * 100) if total_cost > 0 else 0
+    bar_len = int(pct / 5)
+    bar = '#' * bar_len + '.' * (20 - bar_len)
+    mc = tier_totals[model]
+    print('  {:>6}: {}{:>7.2f} ({:4.1f}%) [{}]'.format(model, ds, mc, pct, bar))
+
+# Time
+print(f'\n{CYAN}Time Estimate{NC}')
+print(f'  Estimated: {BOLD}{time_estimate}{NC}')
+min_t_str = f'{int(min_time)} min' if min_time < 60 else f'{min_time/60:.1f} hr'
+max_t_str = f'{int(max_time)} min' if max_time < 60 else f'{max_time/60:.1f} hr'
+print(f'  Range: {min_t_str} - {max_t_str}')
+
+# Execution plan
+print(f'\n{CYAN}Execution Plan{NC}')
+for phase in execution_phases:
+    c_num = phase.get('cycle', '')
+    c_iters = phase.get('iterations', '')
+    c_focus = phase.get('focus', '')
+    print(f'  {BOLD}Cycle {c_num}{NC} (iterations {c_iters}): {c_focus}')
+
+# Quality gates
+print(f'\n{CYAN}Quality Gates ({len(active_gates)} active){NC}')
+for g in active_gates:
+    g_name = g.get('gate', '')
+    g_trig = g.get('trigger', '')
+    print(f'  {GREEN}[*]{NC} {g_name} -- {DIM}{g_trig}{NC}')
+
+# Provider recommendation
+print(f'\n{CYAN}Recommended Provider{NC}')
+print(f'  {BOLD}{recommended_provider}{NC}')
+print(f'  {DIM}{provider_reason}{NC}')
+
+# Verbose: per-iteration breakdown
+if show_verbose:
+    print(f'\n{CYAN}Per-Iteration Breakdown{NC}')
+    hdr = '  ' + DIM + '{:>4}  {:<24} {:<7} {:>8} {:>8} {:>8}'.format('Iter', 'Phase', 'Model', 'Input', 'Output', 'Cost') + NC
+    print(hdr)
+    print('  ' + DIM + '-' * 65 + NC)
+    for it in iteration_plan:
+        i_num = it.get('iteration', 0)
+        i_phase = it.get('phase', '')
+        i_model = it.get('model', '')
+        i_inp = it.get('input_tokens', 0)
+        i_out = it.get('output_tokens', 0)
+        i_cost = it.get('cost_usd', 0)
+        print('  {:>4}  {:<24} {:<7} {:>7,} {:>7,} {}{:>6.2f}'.format(i_num, i_phase, i_model, i_inp, i_out, ds, i_cost))
+
+print(f'\n{DIM}This is an estimate. Actual usage depends on PRD complexity,')
+print(f'code review cycles, and test failures.{NC}')
+print()
+" "$prd_path" "$show_json" "$show_verbose"
+}
+
 # Main command dispatcher
 main() {
     if [ $# -eq 0 ]; then
@@ -8460,6 +8962,9 @@ main() {
             ;;
         trigger)
             cmd_trigger "$@"
+            ;;
+        plan)
+            cmd_plan "$@"
             ;;
         version|--version|-v)
             cmd_version
