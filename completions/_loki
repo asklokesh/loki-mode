@@ -108,6 +108,7 @@ function _loki_commands {
         'enterprise:Enterprise feature commands'
         'voice:Voice input commands'
         'doctor:Check system prerequisites'
+        'onboard:Analyze repo and generate CLAUDE.md'
         'version:Show version'
         'completions:Output shell completions'
         'help:Show help'

@@ -436,6 +436,7 @@ show_help() {
     echo "  remote [PRD]     Start remote session (connect from phone/browser, Claude Pro/Max)"
   echo "  trigger          Event-driven autonomous execution (schedules, webhooks)"
     echo "  failover [cmd]   Cross-provider auto-failover (status|--enable|--test|--chain)"
+    echo "  onboard [path]   Analyze a repo and generate CLAUDE.md (structure, conventions, commands)"
     echo "  plan <PRD>       Dry-run PRD analysis: complexity, cost, and execution plan"
     echo "  version          Show version"
     echo "  help             Show this help"
@@ -9189,6 +9190,9 @@ main() {
         failover)
             cmd_failover "$@"
             ;;
+        onboard)
+            cmd_onboard "$@"
+            ;;
         version|--version|-v)
             cmd_version
             ;;
@@ -13825,6 +13829,856 @@ $diff"
             return 1
             ;;
     esac
+}
+
+# Project onboarding - analyze repo and generate CLAUDE.md (v6.21.0)
+cmd_onboard() {
+    local target_path="."
+    local depth=2
+    local format="markdown"
+    local output_path=""
+    local use_stdout=false
+    local update_mode=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --depth)
+                depth="${2:-2}"
+                shift 2
+                ;;
+            --format)
+                format="${2:-markdown}"
+                shift 2
+                ;;
+            --output)
+                output_path="${2:-}"
+                shift 2
+                ;;
+            --stdout)
+                use_stdout=true
+                shift
+                ;;
+            --update)
+                update_mode=true
+                shift
+                ;;
+            --help|-h)
+                echo -e "${BOLD}loki onboard${NC} - Analyze a project and generate CLAUDE.md"
+                echo ""
+                echo "Usage: loki onboard [path] [options]"
+                echo ""
+                echo "Arguments:"
+                echo "  path              Path to repository (default: current directory)"
+                echo ""
+                echo "Options:"
+                echo "  --depth N         Analysis depth: 1=surface, 2=moderate, 3=deep (default: 2)"
+                echo "  --format FORMAT   Output format: markdown, json, yaml (default: markdown)"
+                echo "  --output PATH     Custom output file path"
+                echo "  --stdout          Print to stdout instead of writing file"
+                echo "  --update          Update existing CLAUDE.md with new findings"
+                echo "  --help            Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  loki onboard                    # Analyze current directory"
+                echo "  loki onboard ~/projects/myapp   # Analyze specific repo"
+                echo "  loki onboard --depth 3          # Deep analysis with dependency mapping"
+                echo "  loki onboard --format json      # JSON output"
+                echo "  loki onboard --stdout            # Print to terminal"
+                return 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                echo "Run 'loki onboard --help' for usage."
+                return 1
+                ;;
+            *)
+                target_path="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Validate target path
+    if [ ! -d "$target_path" ]; then
+        log_error "Directory not found: $target_path"
+        return 1
+    fi
+
+    # Resolve to absolute path
+    target_path="$(cd "$target_path" && pwd)"
+
+    # When --stdout, send log messages to stderr to keep stdout clean
+    if [ "$use_stdout" = true ]; then
+        log_info "Analyzing project at: $target_path" >&2
+        log_info "Depth: $depth | Format: $format" >&2
+    else
+        log_info "Analyzing project at: $target_path"
+        log_info "Depth: $depth | Format: $format"
+    fi
+
+    # --- Detect project metadata ---
+    local project_name
+    project_name="$(basename "$target_path")"
+
+    local languages=""
+    local frameworks=""
+    local build_system=""
+    local test_framework=""
+    local entry_points=""
+    local package_manager=""
+    local project_description=""
+    local project_version=""
+
+    # Detect languages and config files
+    local config_files=""
+
+    if [ -f "$target_path/package.json" ]; then
+        config_files="$config_files package.json"
+        languages="$languages JavaScript/TypeScript"
+        package_manager="npm"
+        if [ -f "$target_path/yarn.lock" ]; then
+            package_manager="yarn"
+        elif [ -f "$target_path/pnpm-lock.yaml" ]; then
+            package_manager="pnpm"
+        elif [ -f "$target_path/bun.lockb" ]; then
+            package_manager="bun"
+        fi
+        # Extract metadata from package.json
+        if command -v python3 &>/dev/null; then
+            local pkg_name
+            pkg_name=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$target_path/package.json'))
+    print(d.get('name', ''))
+except: pass
+" 2>/dev/null || true)
+            if [ -n "$pkg_name" ]; then
+                project_name="$pkg_name"
+            fi
+            project_description=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$target_path/package.json'))
+    print(d.get('description', ''))
+except: pass
+" 2>/dev/null || true)
+            project_version=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$target_path/package.json'))
+    print(d.get('version', ''))
+except: pass
+" 2>/dev/null || true)
+            entry_points=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$target_path/package.json'))
+    main = d.get('main', '')
+    if main: print(main)
+    scripts = d.get('scripts', {})
+    if 'start' in scripts: print('scripts.start: ' + scripts['start'])
+except: pass
+" 2>/dev/null || true)
+        fi
+        # Detect frameworks from dependencies
+        if grep -q '"react"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks React"
+        fi
+        if grep -q '"next"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks Next.js"
+        fi
+        if grep -q '"vue"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks Vue"
+        fi
+        if grep -q '"express"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks Express"
+        fi
+        if grep -q '"fastify"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks Fastify"
+        fi
+        if grep -q '"svelte"' "$target_path/package.json" 2>/dev/null; then
+            frameworks="$frameworks Svelte"
+        fi
+        # Detect test framework
+        if grep -q '"jest"' "$target_path/package.json" 2>/dev/null; then
+            test_framework="$test_framework jest"
+        fi
+        if grep -q '"vitest"' "$target_path/package.json" 2>/dev/null; then
+            test_framework="$test_framework vitest"
+        fi
+        if grep -q '"mocha"' "$target_path/package.json" 2>/dev/null; then
+            test_framework="$test_framework mocha"
+        fi
+        if grep -q '"playwright"' "$target_path/package.json" 2>/dev/null; then
+            test_framework="$test_framework playwright"
+        fi
+    fi
+
+    if [ -f "$target_path/pyproject.toml" ]; then
+        config_files="$config_files pyproject.toml"
+        languages="$languages Python"
+        package_manager="pip/poetry"
+        if grep -q "django" "$target_path/pyproject.toml" 2>/dev/null; then
+            frameworks="$frameworks Django"
+        fi
+        if grep -q "flask" "$target_path/pyproject.toml" 2>/dev/null; then
+            frameworks="$frameworks Flask"
+        fi
+        if grep -q "fastapi" "$target_path/pyproject.toml" 2>/dev/null; then
+            frameworks="$frameworks FastAPI"
+        fi
+        if grep -q "pytest" "$target_path/pyproject.toml" 2>/dev/null; then
+            test_framework="$test_framework pytest"
+        fi
+    fi
+
+    if [ -f "$target_path/setup.py" ] || [ -f "$target_path/setup.cfg" ]; then
+        config_files="$config_files setup.py"
+        languages="$languages Python"
+        [ -z "$package_manager" ] && package_manager="pip"
+    fi
+
+    if [ -f "$target_path/requirements.txt" ]; then
+        config_files="$config_files requirements.txt"
+        languages="$languages Python"
+        [ -z "$package_manager" ] && package_manager="pip"
+    fi
+
+    if [ -f "$target_path/Cargo.toml" ]; then
+        config_files="$config_files Cargo.toml"
+        languages="$languages Rust"
+        package_manager="cargo"
+        build_system="cargo"
+        test_framework="$test_framework cargo-test"
+    fi
+
+    if [ -f "$target_path/go.mod" ]; then
+        config_files="$config_files go.mod"
+        languages="$languages Go"
+        package_manager="go-modules"
+        build_system="go"
+        test_framework="$test_framework go-test"
+    fi
+
+    if [ -f "$target_path/Gemfile" ]; then
+        config_files="$config_files Gemfile"
+        languages="$languages Ruby"
+        package_manager="bundler"
+        if grep -q "rails" "$target_path/Gemfile" 2>/dev/null; then
+            frameworks="$frameworks Rails"
+        fi
+        if grep -q "rspec" "$target_path/Gemfile" 2>/dev/null; then
+            test_framework="$test_framework rspec"
+        fi
+    fi
+
+    if [ -f "$target_path/pom.xml" ]; then
+        config_files="$config_files pom.xml"
+        languages="$languages Java"
+        build_system="maven"
+        package_manager="maven"
+    fi
+
+    if [ -f "$target_path/build.gradle" ] || [ -f "$target_path/build.gradle.kts" ]; then
+        config_files="$config_files build.gradle"
+        languages="$languages Java/Kotlin"
+        build_system="gradle"
+        package_manager="gradle"
+    fi
+
+    if [ -f "$target_path/Makefile" ]; then
+        config_files="$config_files Makefile"
+        [ -z "$build_system" ] && build_system="make"
+    fi
+
+    if [ -f "$target_path/CMakeLists.txt" ]; then
+        config_files="$config_files CMakeLists.txt"
+        languages="$languages C/C++"
+        build_system="cmake"
+    fi
+
+    # Detect shell scripts
+    local shell_count=0
+    shell_count=$(find "$target_path" -maxdepth 2 -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$shell_count" -gt 0 ]; then
+        languages="$languages Bash"
+    fi
+
+    # Deduplicate languages
+    languages=$(echo "$languages" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ *//;s/ *$//')
+    frameworks=$(echo "$frameworks" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ *//;s/ *$//')
+    test_framework=$(echo "$test_framework" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ *//;s/ *$//')
+
+    # --- Detect CI/CD ---
+    local ci_system=""
+    if [ -d "$target_path/.github/workflows" ]; then
+        ci_system="GitHub Actions"
+    fi
+    if [ -f "$target_path/.gitlab-ci.yml" ]; then
+        ci_system="$ci_system GitLab CI"
+    fi
+    if [ -f "$target_path/Jenkinsfile" ]; then
+        ci_system="$ci_system Jenkins"
+    fi
+    if [ -f "$target_path/.circleci/config.yml" ]; then
+        ci_system="$ci_system CircleCI"
+    fi
+    if [ -f "$target_path/.travis.yml" ]; then
+        ci_system="$ci_system Travis CI"
+    fi
+
+    # --- Read README ---
+    local readme_content=""
+    local readme_file=""
+    for f in README.md readme.md README.rst README README.txt; do
+        if [ -f "$target_path/$f" ]; then
+            readme_file="$f"
+            readme_content=$(head -50 "$target_path/$f" 2>/dev/null || true)
+            break
+        fi
+    done
+
+    # Extract first meaningful line from README as description fallback
+    if [ -z "$project_description" ] && [ -n "$readme_content" ]; then
+        project_description=$(echo "$readme_content" | grep -v '^#' | grep -v '^$' | grep -v '^\[' | grep -v '^!' | head -1 | sed 's/^ *//')
+    fi
+
+    # --- Build directory tree ---
+    local tree_output=""
+    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+        # Use git ls-files for accurate tree (respects .gitignore)
+        tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -200 || true)
+    else
+        # Fallback: find with common excludions
+        tree_output=$(find "$target_path" -maxdepth 4 -type f \
+            -not -path '*/node_modules/*' \
+            -not -path '*/.git/*' \
+            -not -path '*/vendor/*' \
+            -not -path '*/__pycache__/*' \
+            -not -path '*/dist/*' \
+            -not -path '*/build/*' \
+            -not -path '*/.next/*' \
+            -not -path '*/target/*' \
+            2>/dev/null | sed "s|$target_path/||" | sort | head -200)
+    fi
+
+    # Categorize files
+    local src_files=""
+    local test_files=""
+    local doc_files=""
+    local config_file_list=""
+    local ci_files=""
+    local other_files=""
+
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        case "$file" in
+            *.test.*|*.spec.*|*_test.*|*_spec.*|tests/*|test/*|__tests__/*|spec/*)
+                test_files="$test_files $file"
+                ;;
+            *.md|*.rst|*.txt|docs/*|doc/*|wiki/*)
+                doc_files="$doc_files $file"
+                ;;
+            .github/*|.gitlab-ci*|.circleci/*|Jenkinsfile|.travis*)
+                ci_files="$ci_files $file"
+                ;;
+            package.json|pyproject.toml|Cargo.toml|go.mod|Gemfile|pom.xml|build.gradle*|Makefile|CMakeLists.txt|*.toml|*.cfg|*.ini|*.yml|*.yaml|Dockerfile*|docker-compose*|.env*|.eslint*|.prettier*|tsconfig*|jest.config*|vitest.config*)
+                config_file_list="$config_file_list $file"
+                ;;
+            *.js|*.ts|*.tsx|*.jsx|*.py|*.rs|*.go|*.rb|*.java|*.kt|*.c|*.cpp|*.h|*.hpp|*.sh|*.swift|*.cs|*.php|*.lua|*.zig|*.el|*.clj)
+                src_files="$src_files $file"
+                ;;
+            *)
+                other_files="$other_files $file"
+                ;;
+        esac
+    done <<< "$tree_output"
+
+    local src_count=$(echo "$src_files" | wc -w | tr -d ' ')
+    local test_count=$(echo "$test_files" | wc -w | tr -d ' ')
+    local doc_count=$(echo "$doc_files" | wc -w | tr -d ' ')
+
+    # --- Depth 2+: Analyze source files ---
+    local key_exports=""
+    local key_functions=""
+    local key_classes=""
+
+    if [ "$depth" -ge 2 ]; then
+        if [ "$use_stdout" = true ]; then
+            log_info "Depth 2: Scanning source files for exports, functions, classes..." >&2
+        else
+            log_info "Depth 2: Scanning source files for exports, functions, classes..."
+        fi
+
+        for src_file in $src_files; do
+            [ ! -f "$target_path/$src_file" ] && continue
+            local file_lines
+            file_lines=$(wc -l < "$target_path/$src_file" 2>/dev/null | tr -d ' ')
+
+            # Only scan files under 2000 lines for performance
+            [ "$file_lines" -gt 2000 ] && continue
+
+            local file_ext="${src_file##*.}"
+            case "$file_ext" in
+                js|ts|tsx|jsx)
+                    # Find exported functions/classes
+                    local exports
+                    exports=$(grep -n "^export " "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$exports" ]; then
+                        key_exports="$key_exports
+$src_file:
+$exports"
+                    fi
+                    ;;
+                py)
+                    # Find class and function definitions
+                    local classes
+                    classes=$(grep -n "^class " "$target_path/$src_file" 2>/dev/null | head -5 || true)
+                    local funcs
+                    funcs=$(grep -n "^def \|^async def " "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$classes" ]; then
+                        key_classes="$key_classes
+$src_file:
+$classes"
+                    fi
+                    if [ -n "$funcs" ]; then
+                        key_functions="$key_functions
+$src_file:
+$funcs"
+                    fi
+                    ;;
+                go)
+                    local funcs
+                    funcs=$(grep -n "^func " "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$funcs" ]; then
+                        key_functions="$key_functions
+$src_file:
+$funcs"
+                    fi
+                    ;;
+                rs)
+                    local funcs
+                    funcs=$(grep -n "^pub fn \|^pub async fn " "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$funcs" ]; then
+                        key_functions="$key_functions
+$src_file:
+$funcs"
+                    fi
+                    ;;
+                sh)
+                    local funcs
+                    funcs=$(grep -n "^[a-zA-Z_][a-zA-Z_0-9]*() {" "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$funcs" ]; then
+                        key_functions="$key_functions
+$src_file:
+$funcs"
+                    fi
+                    ;;
+                rb)
+                    local classes
+                    classes=$(grep -n "^class " "$target_path/$src_file" 2>/dev/null | head -5 || true)
+                    local funcs
+                    funcs=$(grep -n "^  def " "$target_path/$src_file" 2>/dev/null | head -10 || true)
+                    if [ -n "$classes" ]; then
+                        key_classes="$key_classes
+$src_file:
+$classes"
+                    fi
+                    if [ -n "$funcs" ]; then
+                        key_functions="$key_functions
+$src_file:
+$funcs"
+                    fi
+                    ;;
+                java|kt)
+                    local classes
+                    classes=$(grep -n "^public class \|^class \|^data class " "$target_path/$src_file" 2>/dev/null | head -5 || true)
+                    if [ -n "$classes" ]; then
+                        key_classes="$key_classes
+$src_file:
+$classes"
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    # --- Depth 3: Dependency analysis ---
+    local dep_graph=""
+
+    if [ "$depth" -ge 3 ]; then
+        if [ "$use_stdout" = true ]; then
+            log_info "Depth 3: Analyzing imports and dependencies..." >&2
+        else
+            log_info "Depth 3: Analyzing imports and dependencies..."
+        fi
+
+        for src_file in $src_files; do
+            [ ! -f "$target_path/$src_file" ] && continue
+            local file_lines
+            file_lines=$(wc -l < "$target_path/$src_file" 2>/dev/null | tr -d ' ')
+            [ "$file_lines" -gt 2000 ] && continue
+
+            local imports=""
+            local file_ext="${src_file##*.}"
+            case "$file_ext" in
+                js|ts|tsx|jsx)
+                    imports=$(grep "^import " "$target_path/$src_file" 2>/dev/null | grep -v "node_modules" | head -15 || true)
+                    ;;
+                py)
+                    imports=$(grep "^import \|^from " "$target_path/$src_file" 2>/dev/null | head -15 || true)
+                    ;;
+                go)
+                    imports=$(sed -n '/^import (/,/^)/p' "$target_path/$src_file" 2>/dev/null | grep -v '^import\|^)' | head -15 || true)
+                    ;;
+                rs)
+                    imports=$(grep "^use " "$target_path/$src_file" 2>/dev/null | head -15 || true)
+                    ;;
+            esac
+
+            if [ -n "$imports" ]; then
+                dep_graph="$dep_graph
+$src_file:
+$imports"
+            fi
+        done
+    fi
+
+    # --- Detect build/run/test commands ---
+    local build_cmd=""
+    local run_cmd=""
+    local test_cmd=""
+
+    if [ -f "$target_path/package.json" ]; then
+        if command -v python3 &>/dev/null; then
+            local scripts_json
+            scripts_json=$(python3 -c "
+import json
+try:
+    d = json.load(open('$target_path/package.json'))
+    s = d.get('scripts', {})
+    for k in ['build', 'dev', 'start', 'test', 'lint', 'format', 'check', 'typecheck']:
+        if k in s:
+            print(f'{k}: {s[k]}')
+except: pass
+" 2>/dev/null || true)
+            if echo "$scripts_json" | grep -q "^build:"; then
+                build_cmd="${package_manager:-npm} run build"
+            fi
+            if echo "$scripts_json" | grep -q "^dev:"; then
+                run_cmd="${package_manager:-npm} run dev"
+            elif echo "$scripts_json" | grep -q "^start:"; then
+                run_cmd="${package_manager:-npm} start"
+            fi
+            if echo "$scripts_json" | grep -q "^test:"; then
+                test_cmd="${package_manager:-npm} test"
+            fi
+        fi
+    fi
+
+    if [ -f "$target_path/Makefile" ]; then
+        [ -z "$build_cmd" ] && build_cmd="make"
+        if grep -q "^test:" "$target_path/Makefile" 2>/dev/null; then
+            [ -z "$test_cmd" ] && test_cmd="make test"
+        fi
+        if grep -q "^run:" "$target_path/Makefile" 2>/dev/null; then
+            [ -z "$run_cmd" ] && run_cmd="make run"
+        fi
+    fi
+
+    if [ -f "$target_path/Cargo.toml" ]; then
+        build_cmd="cargo build"
+        run_cmd="cargo run"
+        test_cmd="cargo test"
+    fi
+
+    if [ -f "$target_path/go.mod" ]; then
+        build_cmd="go build ./..."
+        run_cmd="go run ."
+        test_cmd="go test ./..."
+    fi
+
+    if [ -f "$target_path/pyproject.toml" ]; then
+        if grep -q '\[tool.pytest' "$target_path/pyproject.toml" 2>/dev/null; then
+            test_cmd="pytest"
+        fi
+        if grep -q '\[tool.poetry' "$target_path/pyproject.toml" 2>/dev/null; then
+            build_cmd="poetry build"
+            run_cmd="poetry run python -m ${project_name}"
+        fi
+    fi
+
+    # --- Generate output ---
+    local output=""
+
+    if [ "$format" = "json" ]; then
+        # JSON output
+        output=$(cat <<ENDJSON
+{
+  "project": {
+    "name": "$project_name",
+    "description": $(python3 -c "import json; print(json.dumps('$project_description'))" 2>/dev/null || echo "\"$project_description\""),
+    "version": "$project_version",
+    "path": "$target_path"
+  },
+  "languages": "$(echo $languages | sed 's/  */ /g')",
+  "frameworks": "$(echo $frameworks | sed 's/  */ /g')",
+  "build_system": "$build_system",
+  "package_manager": "$package_manager",
+  "test_framework": "$(echo $test_framework | sed 's/  */ /g')",
+  "ci": "$(echo $ci_system | sed 's/  */ /g')",
+  "files": {
+    "source": $src_count,
+    "test": $test_count,
+    "docs": $doc_count
+  },
+  "commands": {
+    "build": "$build_cmd",
+    "run": "$run_cmd",
+    "test": "$test_cmd"
+  },
+  "depth": $depth
+}
+ENDJSON
+)
+    elif [ "$format" = "yaml" ]; then
+        # YAML output
+        output=$(cat <<ENDYAML
+project:
+  name: $project_name
+  description: "$project_description"
+  version: "$project_version"
+  path: $target_path
+languages: $languages
+frameworks: $frameworks
+build_system: $build_system
+package_manager: $package_manager
+test_framework: $(echo $test_framework | sed 's/  */ /g')
+ci: $(echo $ci_system | sed 's/  */ /g')
+files:
+  source: $src_count
+  test: $test_count
+  docs: $doc_count
+commands:
+  build: "$build_cmd"
+  run: "$run_cmd"
+  test: "$test_cmd"
+depth: $depth
+ENDYAML
+)
+    else
+        # Markdown output (CLAUDE.md format)
+        output="# $project_name"
+        [ -n "$project_description" ] && output="$output
+
+$project_description"
+        [ -n "$project_version" ] && output="$output
+
+Version: $project_version"
+
+        output="$output
+
+## Overview
+
+| Property | Value |
+|----------|-------|
+| Languages | ${languages:-N/A} |
+| Frameworks | ${frameworks:-N/A} |
+| Build System | ${build_system:-N/A} |
+| Package Manager | ${package_manager:-N/A} |
+| Test Framework | ${test_framework:-N/A} |
+| CI/CD | ${ci_system:-N/A} |"
+
+        # Commands section
+        if [ -n "$build_cmd" ] || [ -n "$run_cmd" ] || [ -n "$test_cmd" ]; then
+            output="$output
+
+## Commands
+
+\`\`\`bash"
+            [ -n "$build_cmd" ] && output="$output
+# Build
+$build_cmd"
+            [ -n "$run_cmd" ] && output="$output
+
+# Run
+$run_cmd"
+            [ -n "$test_cmd" ] && output="$output
+
+# Test
+$test_cmd"
+            output="$output
+\`\`\`"
+        fi
+
+        # Project structure
+        output="$output
+
+## Project Structure
+
+Files: $src_count source, $test_count test, $doc_count docs"
+
+        # Show directory structure (top-level)
+        local top_dirs
+        top_dirs=$(echo "$tree_output" | sed 's|/.*||' | sort -u | head -30)
+        if [ -n "$top_dirs" ]; then
+            output="$output
+
+\`\`\`"
+            while IFS= read -r dir; do
+                [ -z "$dir" ] && continue
+                if [ -d "$target_path/$dir" ]; then
+                    # Count files in directory
+                    local dir_count
+                    dir_count=$(echo "$tree_output" | grep "^${dir}/" | wc -l | tr -d ' ')
+                    output="$output
+$dir/    ($dir_count files)"
+                else
+                    output="$output
+$dir"
+                fi
+            done <<< "$top_dirs"
+            output="$output
+\`\`\`"
+        fi
+
+        # Key files
+        if [ -n "$config_file_list" ]; then
+            output="$output
+
+## Key Files
+"
+            for cf in $config_file_list; do
+                output="$output
+- \`$cf\`"
+            done
+        fi
+
+        if [ -n "$entry_points" ]; then
+            output="$output
+
+## Entry Points
+
+\`\`\`
+$entry_points
+\`\`\`"
+        fi
+
+        # Depth 2+: exports, functions, classes
+        if [ "$depth" -ge 2 ]; then
+            if [ -n "$key_classes" ]; then
+                output="$output
+
+## Key Classes
+\`\`\`
+$key_classes
+\`\`\`"
+            fi
+
+            if [ -n "$key_functions" ]; then
+                output="$output
+
+## Key Functions
+\`\`\`
+$key_functions
+\`\`\`"
+            fi
+
+            if [ -n "$key_exports" ]; then
+                output="$output
+
+## Exports
+\`\`\`
+$key_exports
+\`\`\`"
+            fi
+        fi
+
+        # Depth 3: dependency graph
+        if [ "$depth" -ge 3 ] && [ -n "$dep_graph" ]; then
+            output="$output
+
+## Dependency Graph (Imports)
+\`\`\`
+$dep_graph
+\`\`\`"
+        fi
+
+        # CI/CD section
+        if [ -n "$ci_system" ] && [ -n "$ci_files" ]; then
+            output="$output
+
+## CI/CD ($ci_system)
+"
+            for cf in $ci_files; do
+                output="$output
+- \`$cf\`"
+            done
+        fi
+
+        # Architecture notes from README
+        if [ -n "$readme_file" ]; then
+            output="$output
+
+## Documentation
+
+See \`$readme_file\` for project documentation."
+        fi
+
+        output="$output
+
+---
+Generated by loki onboard (depth $depth) on $(date +%Y-%m-%d)"
+    fi
+
+    # --- Output ---
+    if [ "$use_stdout" = true ]; then
+        echo "$output"
+        return 0
+    fi
+
+    # Determine output path
+    if [ -z "$output_path" ]; then
+        output_path="$target_path/.claude/CLAUDE.md"
+    fi
+
+    # Handle update mode
+    if [ "$update_mode" = true ] && [ -f "$output_path" ]; then
+        local timestamp
+        timestamp=$(date +%Y-%m-%d)
+        local update_marker="## Updated: $timestamp"
+        # Append new findings after a separator
+        {
+            cat "$output_path"
+            echo ""
+            echo "---"
+            echo ""
+            echo "$update_marker"
+            echo ""
+            echo "$output"
+        } > "${output_path}.tmp"
+        mv "${output_path}.tmp" "$output_path"
+        log_info "Updated: $output_path"
+        return 0
+    fi
+
+    # Create directory and write
+    local output_dir
+    output_dir=$(dirname "$output_path")
+    mkdir -p "$output_dir"
+
+    echo "$output" > "$output_path"
+    log_info "Generated: $output_path"
+    log_info "Project: $project_name | $src_count source files | $test_count tests | $doc_count docs"
+
+    if [ -n "$languages" ]; then
+        log_info "Languages: $languages"
+    fi
+    if [ -n "$frameworks" ]; then
+        log_info "Frameworks: $frameworks"
+    fi
 }
 
 main "$@"

@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.21.0] - 2026-03-18
+
+### Added
+- `loki onboard` command: instant project analysis and CLAUDE.md generation
+- Scans directory structure, package files, README, CI configs to detect project type
+- Language detection: JavaScript/TypeScript, Python, Rust, Go, Ruby, Java/Kotlin, C/C++, Bash
+- Framework detection: React, Next.js, Vue, Svelte, Express, Fastify, Django, Flask, FastAPI, Rails
+- Build/run/test command extraction from package.json scripts, Makefile, Cargo.toml, go.mod
+- CI/CD detection: GitHub Actions, GitLab CI, Jenkins, CircleCI, Travis CI
+- Depth levels: 1 (surface), 2 (exports/functions/classes), 3 (import dependency graph)
+- Output formats: markdown (default), json, yaml
+- Flags: --depth, --format, --output, --stdout, --update
+- Default output: .claude/CLAUDE.md with project overview, structure, commands, key files
+- Shell completions for bash and zsh
+- Test suite: `tests/test-onboard-command.sh` with 9 tests
+
 ## [6.20.0] - 2026-03-18
 
 ### Added

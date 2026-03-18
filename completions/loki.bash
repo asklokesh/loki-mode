@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start quick demo init stop pause resume status dashboard logs serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise voice secrets doctor watchdog audit metrics syslog version completions help"
+    local main_commands="start quick demo init stop pause resume status dashboard logs serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise voice secrets doctor watchdog audit metrics syslog onboard version completions help"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -126,6 +126,22 @@ _loki_completion() {
             fi
             local issue_cmds="parse view"
             COMPREPLY=( $(compgen -W "${issue_cmds}" -- "$cur") )
+            ;;
+
+        onboard)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--depth --format --output --stdout --update --help" -- "$cur") )
+                return 0
+            fi
+            if [[ "$prev" == "--depth" ]]; then
+                COMPREPLY=( $(compgen -W "1 2 3" -- "$cur") )
+                return 0
+            fi
+            if [[ "$prev" == "--format" ]]; then
+                COMPREPLY=( $(compgen -W "markdown json yaml" -- "$cur") )
+                return 0
+            fi
+            _filedir -d
             ;;
 
         completions)
