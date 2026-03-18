@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { api } from './api/client';
 import { usePolling } from './hooks/usePolling';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -24,14 +24,19 @@ export default function App() {
   const fetchChecklist = useCallback(() => api.getChecklist(), []);
   const fetchFiles = useCallback(() => api.getFiles(), []);
 
-  const { data: status } = usePolling(fetchStatus, 2000);
-  const { data: agents, loading: agentsLoading } = usePolling(fetchAgents, 3000);
-  const { data: logs, loading: logsLoading } = usePolling(fetchLogs, 2000);
-  const { data: memory, loading: memoryLoading } = usePolling(fetchMemory, 5000);
-  const { data: checklist, loading: checklistLoading } = usePolling(fetchChecklist, 5000);
-  const { data: files, loading: filesLoading } = usePolling(fetchFiles, 10000);
+  // Status polls at 2s when running, 30s when idle -- everything else pauses when idle
+  const [isRunning, setIsRunning] = useState(false);
+  const { data: status } = usePolling(fetchStatus, isRunning ? 2000 : 30000);
+  const { data: agents, loading: agentsLoading } = usePolling(fetchAgents, 3000, isRunning);
+  const { data: logs, loading: logsLoading } = usePolling(fetchLogs, 2000, isRunning);
+  const { data: memory, loading: memoryLoading } = usePolling(fetchMemory, 5000, isRunning);
+  const { data: checklist, loading: checklistLoading } = usePolling(fetchChecklist, 5000, isRunning);
+  const { data: files, loading: filesLoading } = usePolling(fetchFiles, 10000, isRunning);
 
-  const isRunning = status?.running || false;
+  // Sync isRunning from status response
+  useEffect(() => {
+    if (status !== null) setIsRunning(status.running ?? false);
+  }, [status]);
 
   const handleStartBuild = useCallback(async (prd: string, provider: string) => {
     setStartError(null);

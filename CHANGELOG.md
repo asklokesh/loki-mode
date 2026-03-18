@@ -1,3 +1,8 @@
+## [6.30.1] - 2026-03-18
+
+### Fixed
+- Purple Lab: stop polling all API endpoints when idle -- status now polls every 30s (was 2s) when no session running; agents/logs/memory/checklist/files polling pauses entirely until session starts. Eliminates 57+ unnecessary network requests visible in browser devtools.
+
 ## v6.30.0 (2026-03-18)
 
 ### New Features
