@@ -14028,6 +14028,7 @@ cmd_metrics() {
 
     local metrics_output
     metrics_output=$(LOKI_DIR="$loki_dir" \
+        LOKI_SKILL_DIR="$SKILL_DIR" \
         METRICS_JSON="$show_json" \
         METRICS_LAST_N="$last_n" \
         METRICS_SAVE="$save_file" \
@@ -14244,12 +14245,17 @@ if os.path.isdir(semantic_dir):
         semantic_count += len([f for f in files if f.endswith(".json")])
 
 # --- Build output ---
-version = "6.32.0"
+version = "6.33.0"
 try:
-    version_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
-    # In heredoc context, __file__ is not reliable; try relative
-    for vf in ["VERSION", "../VERSION", os.path.join(loki_dir, "..", "VERSION")]:
-        if os.path.isfile(vf):
+    skill_dir = os.environ.get("LOKI_SKILL_DIR", "")
+    version_candidates = [
+        os.path.join(skill_dir, "VERSION") if skill_dir else "",
+        "VERSION",
+        "../VERSION",
+        os.path.join(loki_dir, "..", "VERSION"),
+    ]
+    for vf in version_candidates:
+        if vf and os.path.isfile(vf):
             with open(vf) as f:
                 version = f.read().strip()
             break

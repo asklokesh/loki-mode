@@ -1,3 +1,9 @@
+## v6.33.1 (2026-03-18)
+
+### Bug Fixes
+- Fix `loki metrics` version display (was hardcoded to v6.32.0 instead of reading runtime version)
+- Pass `LOKI_SKILL_DIR` env var to metrics Python heredoc for proper version detection
+
 ## v6.33.0 (2026-03-18)
 
 ### New Features
