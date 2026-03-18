@@ -394,7 +394,7 @@ show_help() {
     echo "  demo             Run interactive demo (~60s simulated session)"
     echo "  init [name]      Project scaffolding with 22 PRD templates"
     echo "  issue <url|num>  [DEPRECATED] Use 'loki run' instead"
-    echo "  watch [sec]      Live TUI session monitor (v6.0.0)"
+    echo "  watch [prd]      Auto-rerun on PRD file changes (v6.33.0)"
     echo "  export <format>  Export session data: json|markdown|csv|timeline (v6.0.0)"
     echo "  stop             Stop execution immediately"
     echo "  cleanup          Kill orphaned processes from crashed sessions"
@@ -487,7 +487,7 @@ show_help() {
     echo "  loki start ./prd.md           # Start with PRD file"
     echo "  loki start --bg               # Start in background"
     echo "  loki start --parallel         # Start in parallel mode"
-    echo "  loki watch                    # Live session monitor"
+    echo "  loki watch                    # Watch PRD for changes, auto-rerun"
     echo "  loki export json              # Export session data"
     echo "  loki config set maxTier sonnet  # Cap model cost"
     echo "  loki status                   # Check current status"
@@ -4312,126 +4312,252 @@ EOF
 
 # Show configuration
 #===============================================================================
-# loki watch - Live TUI session monitor (v6.0.0)
+# loki watch - Auto-rerun on PRD file changes (v6.33.0)
 #===============================================================================
 
 cmd_watch() {
-    local interval="${1:-2}"
+    local prd_path=""
+    local run_once=false
+    local poll_interval=2
+    local no_auto_start=false
+    local debounce=3
+    local _watch_child_pid=""
 
-    # Handle --help
-    if [[ "$interval" == "--help" || "$interval" == "-h" ]]; then
-        # fall through to help block
-        :
-    elif ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        echo -e "${RED}Invalid interval: $interval (expected positive number)${NC}"
-        return 1
-    elif [[ "$interval" =~ ^0+(\.0+)?$ ]]; then
-        echo -e "${RED}Invalid interval: $interval (must be greater than 0)${NC}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki watch${NC} - Auto-rerun on PRD file changes (v6.33.0)"
+                echo ""
+                echo "Usage: loki watch [prd-path] [options]"
+                echo ""
+                echo "Monitors a PRD file for changes and automatically re-runs Loki Mode"
+                echo "when the file is saved. Enables a tight edit-PRD-see-results loop."
+                echo ""
+                echo "Arguments:"
+                echo "  prd-path            Path to PRD file (default: auto-detect prd.md, PRD.md, or first *.md)"
+                echo ""
+                echo "Options:"
+                echo "  --once              Run once immediately then exit"
+                echo "  --interval N        Poll interval in seconds for fallback watcher (default: 2)"
+                echo "  --no-auto-start     Watch but do not auto-start, just print change timestamps"
+                echo "  --debounce N        Wait N seconds after change before triggering (default: 3)"
+                echo "  --help, -h          Show this help"
+                echo ""
+                echo "File watcher priority:"
+                echo "  1. fswatch (macOS)    -- native filesystem events"
+                echo "  2. inotifywait (Linux) -- inotify-based"
+                echo "  3. stat polling        -- universal fallback"
+                echo ""
+                echo "Examples:"
+                echo "  loki watch                       # Auto-detect PRD and watch"
+                echo "  loki watch ./my-prd.md           # Watch specific file"
+                echo "  loki watch --once                # Run once immediately then exit"
+                echo "  loki watch --no-auto-start       # Just report changes, don't run"
+                echo "  loki watch --debounce 5          # Wait 5s after change before triggering"
+                echo "  loki watch --interval 1          # Poll every 1s (fallback mode)"
+                return 0
+                ;;
+            --once) run_once=true; shift ;;
+            --interval) poll_interval="${2:-2}"; shift 2 ;;
+            --interval=*) poll_interval="${1#*=}"; shift ;;
+            --no-auto-start) no_auto_start=true; shift ;;
+            --debounce) debounce="${2:-3}"; shift 2 ;;
+            --debounce=*) debounce="${1#*=}"; shift ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo "Run 'loki watch --help' for usage."
+                return 1
+                ;;
+            *)
+                if [ -z "$prd_path" ]; then
+                    prd_path="$1"
+                else
+                    echo -e "${RED}Unexpected argument: $1${NC}"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate numeric arguments
+    if ! [[ "$poll_interval" =~ ^[0-9]+$ ]] || [ "$poll_interval" -lt 1 ]; then
+        echo -e "${RED}Invalid --interval: $poll_interval (expected positive integer)${NC}"
         return 1
     fi
-    if [[ "$interval" == "--help" || "$interval" == "-h" ]]; then
-        echo -e "${BOLD}loki watch${NC} - Live session monitor (v6.0.0)"
+    if ! [[ "$debounce" =~ ^[0-9]+$ ]] || [ "$debounce" -lt 0 ]; then
+        echo -e "${RED}Invalid --debounce: $debounce (expected non-negative integer)${NC}"
+        return 1
+    fi
+
+    # Auto-detect PRD file if not specified
+    if [ -z "$prd_path" ]; then
+        if [ -f "prd.md" ]; then
+            prd_path="prd.md"
+        elif [ -f "PRD.md" ]; then
+            prd_path="PRD.md"
+        else
+            # Find first .md file in current directory
+            local first_md
+            first_md=$(ls -1 *.md 2>/dev/null | head -1 || true)
+            if [ -n "$first_md" ]; then
+                prd_path="$first_md"
+            else
+                echo -e "${RED}No PRD file found.${NC}"
+                echo "Specify a file: loki watch ./my-prd.md"
+                echo "Or create one: prd.md, PRD.md, or any .md file in current directory."
+                return 1
+            fi
+        fi
+    fi
+
+    if [ ! -f "$prd_path" ]; then
+        echo -e "${RED}PRD file not found: $prd_path${NC}"
+        return 1
+    fi
+
+    # Resolve to absolute path
+    prd_path="$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")"
+    local prd_basename
+    prd_basename="$(basename "$prd_path")"
+
+    # --once mode: run immediately and exit
+    if [ "$run_once" = true ]; then
+        echo -e "${BOLD}loki watch${NC} --once: running loki start ${prd_basename}"
+        "$0" start "$prd_path"
+        return $?
+    fi
+
+    # Graceful shutdown handler
+    _watch_cleanup() {
         echo ""
-        echo "Usage: loki watch [interval]"
-        echo ""
-        echo "Options:"
-        echo "  interval    Refresh interval in seconds (default: 2)"
-        echo ""
-        echo "Displays:"
-        echo "  - Current iteration and RARV phase"
-        echo "  - Provider and model tier"
-        echo "  - Task queue status"
-        echo "  - Recent log lines"
-        echo "  - Cost tracking"
-        echo ""
-        echo "Press Ctrl+C to exit."
+        echo "Watch stopped."
+        if [ -n "$_watch_child_pid" ] && kill -0 "$_watch_child_pid" 2>/dev/null; then
+            echo "Stopping running loki session (PID $_watch_child_pid)..."
+            kill "$_watch_child_pid" 2>/dev/null
+            wait "$_watch_child_pid" 2>/dev/null || true
+        fi
+        # Kill any background watcher process
+        if [ -n "${_watch_bg_pid:-}" ] && kill -0 "$_watch_bg_pid" 2>/dev/null; then
+            kill "$_watch_bg_pid" 2>/dev/null
+            wait "$_watch_bg_pid" 2>/dev/null || true
+        fi
         exit 0
-    fi
+    }
+    trap '_watch_cleanup' INT TERM
 
-    if [ ! -d "$LOKI_DIR" ]; then
-        echo -e "${RED}No active session found.${NC}"
-        echo "Start a session with: loki start <prd>"
-        exit 1
-    fi
+    local last_run="never"
 
-    echo -e "${BOLD}Loki Mode Watch${NC} (refresh: ${interval}s, Ctrl+C to exit)"
+    echo -e "${BOLD}loki watch${NC} -- monitoring ${prd_basename} for changes"
+    echo "Watching: $prd_path"
+    echo "Debounce: ${debounce}s | Ctrl+C to exit"
+    if [ "$no_auto_start" = true ]; then
+        echo "Mode: observe only (--no-auto-start)"
+    fi
     echo ""
 
-    trap 'echo ""; echo "Watch stopped."; return 0' INT TERM
+    _watch_status_line() {
+        echo -e "\rWatching ${prd_basename} -- last run: ${last_run} -- next: on change"
+    }
 
-    while true; do
-        clear
-        echo -e "${BOLD}Loki Mode Watch${NC} $(date '+%H:%M:%S') (refresh: ${interval}s)"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _watch_trigger() {
+        local change_time
+        change_time="$(date '+%H:%M:%S')"
 
-        # Session status
-        if [ -f "$LOKI_DIR/PAUSE" ]; then
-            echo -e "Status: ${YELLOW}PAUSED${NC}"
-        elif [ -f "$LOKI_DIR/STOP" ]; then
-            echo -e "Status: ${RED}STOPPED${NC}"
-        elif [ -f "$LOKI_DIR/loki.pid" ] && kill -0 "$(cat "$LOKI_DIR/loki.pid" 2>/dev/null)" 2>/dev/null; then
-            echo -e "Status: ${GREEN}RUNNING${NC}"
-        else
-            echo -e "Status: ${DIM}IDLE${NC}"
+        if [ "$no_auto_start" = true ]; then
+            echo "PRD changed: ${change_time}"
+            return 0
         fi
 
-        # Iteration and phase
-        if [ -f "$LOKI_DIR/state/iteration" ]; then
-            local iter
-            iter=$(cat "$LOKI_DIR/state/iteration" 2>/dev/null || echo "?")
-            echo -e "Iteration: $iter"
-        fi
-
-        # Provider info
-        local prov="${LOKI_PROVIDER:-claude}"
-        if [ -f "$LOKI_DIR/state/provider" ]; then
-            prov=$(cat "$LOKI_DIR/state/provider" 2>/dev/null || echo "$prov")
-        fi
-        echo -e "Provider: $prov"
-
-        # Queue status
-        echo ""
-        echo -e "${CYAN}Task Queue:${NC}"
-        for queue in pending in-progress completed failed; do
-            local queue_file="$LOKI_DIR/queue/${queue}.json"
-            if [ -f "$queue_file" ]; then
-                local count
-                count=$(_QUEUE_FILE="$queue_file" python3 -c "import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "0")
-                echo "  $queue: $count"
-            fi
-        done
-
-        # Cost tracking
-        if [ -f "$LOKI_DIR/state/cost-tracker.json" ]; then
-            echo ""
-            echo -e "${CYAN}Cost:${NC}"
-            _LOKI_COST_FILE="$LOKI_DIR/state/cost-tracker.json" python3 -c "
-import json, os
-with open(os.environ['_LOKI_COST_FILE']) as f:
-    data = json.load(f)
-total = data.get('total_cost_usd', 0)
-budget = data.get('budget_limit', 0)
-print(f'  Total: \${total:.4f}')
-if budget > 0:
-    print(f'  Budget: \${budget:.2f} ({total/budget*100:.1f}% used)')
-" 2>/dev/null || true
-        fi
-
-        # Recent log
-        echo ""
-        echo -e "${CYAN}Recent Activity:${NC}"
-        local log_file="$LOKI_DIR/logs/loki-run.log"
-        if [ -f "$log_file" ]; then
-            tail -5 "$log_file" 2>/dev/null | sed 's/^/  /'
-        else
-            echo "  (no log file)"
+        # Kill any currently running loki session
+        if [ -n "$_watch_child_pid" ] && kill -0 "$_watch_child_pid" 2>/dev/null; then
+            echo "Stopping previous loki session (PID $_watch_child_pid)..."
+            kill "$_watch_child_pid" 2>/dev/null
+            wait "$_watch_child_pid" 2>/dev/null || true
+            _watch_child_pid=""
         fi
 
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "PRD changed -- starting loki... (${change_time})"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
 
-        sleep "$interval"
-    done
+        "$0" start "$prd_path" &
+        _watch_child_pid=$!
+        last_run="$change_time"
+    }
+
+    # Determine watcher backend
+    local watcher="poll"
+    if command -v fswatch &>/dev/null; then
+        watcher="fswatch"
+    elif command -v inotifywait &>/dev/null; then
+        watcher="inotifywait"
+    fi
+
+    echo "Watcher: $watcher"
+    _watch_status_line
+
+    case "$watcher" in
+        fswatch)
+            # Use fswatch for native macOS filesystem events
+            fswatch -1 --latency "$debounce" "$prd_path" | while read -r _event; do
+                _watch_trigger
+                _watch_status_line
+                # Re-attach fswatch for next change
+                fswatch -1 --latency "$debounce" "$prd_path" > /dev/null 2>&1 || true
+            done
+            # Fallback: loop-based fswatch for continuous watching
+            while true; do
+                fswatch -1 --latency "$debounce" "$prd_path" > /dev/null 2>&1
+                _watch_trigger
+                _watch_status_line
+            done
+            ;;
+        inotifywait)
+            while true; do
+                inotifywait -qq -e modify "$prd_path" 2>/dev/null
+                if [ "$debounce" -gt 0 ]; then
+                    sleep "$debounce"
+                fi
+                _watch_trigger
+                _watch_status_line
+            done
+            ;;
+        poll)
+            # Universal fallback: stat-based polling
+            local last_mtime
+            last_mtime=$(stat -f '%m' "$prd_path" 2>/dev/null || stat -c '%Y' "$prd_path" 2>/dev/null || echo "0")
+            local debounce_pending=false
+            local debounce_deadline=0
+
+            while true; do
+                sleep "$poll_interval"
+                local current_mtime
+                current_mtime=$(stat -f '%m' "$prd_path" 2>/dev/null || stat -c '%Y' "$prd_path" 2>/dev/null || echo "0")
+
+                if [ "$current_mtime" != "$last_mtime" ]; then
+                    last_mtime="$current_mtime"
+                    if [ "$debounce" -gt 0 ]; then
+                        # Start debounce window
+                        debounce_pending=true
+                        debounce_deadline=$(( $(date +%s) + debounce ))
+                    else
+                        _watch_trigger
+                        _watch_status_line
+                    fi
+                fi
+
+                # Check debounce deadline
+                if [ "$debounce_pending" = true ] && [ "$(date +%s)" -ge "$debounce_deadline" ]; then
+                    debounce_pending=false
+                    _watch_trigger
+                    _watch_status_line
+                fi
+            done
+            ;;
+    esac
 }
 
 #===============================================================================

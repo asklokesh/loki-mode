@@ -85,6 +85,30 @@ if (results.some(r => !r.ok)) {
   console.log(`  loki setup-skill`);
 }
 
+// PATH check: warn if npm global bin is not in PATH
+try {
+  const { execSync } = require('child_process');
+  const npmBin = execSync('npm bin -g 2>/dev/null || npm prefix -g', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  const npmBinDir = npmBin.endsWith('/bin') ? npmBin : npmBin + '/bin';
+  const pathDirs = (process.env.PATH || '').split(':');
+  const lokiBinInPath = pathDirs.some(d => d === npmBinDir || d === npmBin);
+  if (!lokiBinInPath) {
+    console.log('');
+    console.log('[IMPORTANT] The `loki` command may not be in your PATH.');
+    console.log('');
+    console.log('Add the npm global bin directory to your PATH:');
+    console.log(`  export PATH="${npmBinDir}:$PATH"`);
+    console.log('');
+    console.log('To make this permanent, add it to your shell config (~/.zshrc or ~/.bashrc):');
+    console.log(`  echo 'export PATH="${npmBinDir}:$PATH"' >> ~/.zshrc && source ~/.zshrc`);
+    console.log('');
+    console.log('Or use the Homebrew tap (sets PATH automatically):');
+    console.log('  brew tap asklokesh/tap && brew install loki-mode');
+  }
+} catch {
+  // If npm bin check fails, skip PATH warning silently
+}
+
 console.log('');
 console.log('CLI commands:');
 console.log('  loki start ./prd.md              Start with Claude (default)');

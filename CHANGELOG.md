@@ -1,3 +1,10 @@
+## v6.32.1 (2026-03-18)
+
+### Fixed
+- postinstall: detect when npm global bin dir is not in PATH and print clear fix instructions
+- Fixes "command not found: loki" for users with Homebrew-managed Node.js (affects npm prefix pointing to keg dir)
+- Also suggests Homebrew tap as alternative install method
+
 ## v6.32.0 (2026-03-18)
 
 ### New Features
@@ -1338,7 +1345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard frontend: Fixed event listener leak in task board component on re-setup
 - Dashboard frontend: Fixed model pricing mutation across instances (moved to instance-level state)
 - Dashboard frontend: Fixed keyboard shortcut help overlay to include Context (9) and Notifications (0)
-- GitHub Actions: Fixed base64 -w 0 portability (release.yml now uses base64 | tr -d '\n')
+- GitHub Actions: Fixed base64 -w 0 portability (release.yml now uses base64 | tr -d '
+')
 - GitHub Actions: Updated deprecated model ID in wiki-sync.yml to claude-sonnet-4-5-20250929
 - npm: Fixed Python __pycache__ files leaking into package (added prepack cleanup + .npmignore patterns)
 - Versions: Fixed learning/__init__.py version (was 1.2.0, now matches release), added missing __version__ to memory/__init__.py
@@ -1637,7 +1645,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - run.sh: PRD paths with special chars break JSON (#49)
 - hooks/validate-bash.sh: Trailing newline in logged JSON (#51)
 - events/emit.sh: Key names not JSON-escaped (#52)
-- hooks/quality-gate.sh: TODOS count becomes "0\n0" (#53)
+- hooks/quality-gate.sh: TODOS count becomes "0
+0" (#53)
 - completion-council.sh: COUNCIL_SIZE>3 assigns empty role (#54)
 
 ### Added
@@ -1781,9 +1790,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub: 12 good-first-issues (#14-#25) for community onboarding
 
 ### Fixed
-- Shell: BSD sed `\U` uppercase conversion fails on macOS (use awk instead)
+- Shell: BSD sed ` ` uppercase conversion fails on macOS (use awk instead)
 - Shell: BSD sed `\+` regex fails on macOS (use `sed -E` extended regex)
-- Shell: `dogfood-stats.sh` grep -c produces "0\n0" on no matches (use `|| true`)
+- Shell: `dogfood-stats.sh` grep -c produces "0
+0" on no matches (use `|| true`)
 - Shell: `cmd_init()` --output/--template crash on missing argument (add guard checks)
 - Shell: `--budget` accepts non-numeric values (add validation)
 - Shell: Demo phase counter off-by-one (0/7 instead of 1/7)
@@ -1857,7 +1867,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell: `validate-bash.sh` `$` anchors removed (was bypassed by `rm -rf /*`)
 - Shell: `track-metrics.sh` TOOL_NAME properly JSON-escaped
 - Shell: `emit.sh` failed `shift 3` no longer re-processes args
-- Shell: `quality-gate.sh` TODOS no longer becomes "0\n0"
+- Shell: `quality-gate.sh` TODOS no longer becomes "0
+0"
 - Shell: Council `COUNCIL_SIZE>3` now assigns "generalist" role instead of empty
 - Dashboard: `get_episode()` and `get_skill()` check directory existence
 - Dashboard: Inconsistent LOKI_DIR resolution unified via helper function
@@ -6690,4 +6701,3 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 [1.1.0]: https://github.com/asklokesh/loki-mode/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/asklokesh/loki-mode/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/asklokesh/loki-mode/releases/tag/v1.0.0
-

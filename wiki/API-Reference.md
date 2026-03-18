@@ -64,7 +64,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "6.32.0",
+  "version": "6.32.1",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
