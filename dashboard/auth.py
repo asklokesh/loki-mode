@@ -10,6 +10,8 @@ Supports enterprise SSO providers (Okta, Azure AD, Google Workspace).
 Token storage: ~/.loki/dashboard/tokens.json
 """
 
+from __future__ import annotations
+
 import base64
 import hashlib
 import json

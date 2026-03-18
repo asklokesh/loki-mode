@@ -5,6 +5,8 @@ Shells out to `npx @rigour-labs/cli` to run quality scans, parses JSON output,
 and maps findings to the Loki Mode quality gate format.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os

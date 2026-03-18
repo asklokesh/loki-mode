@@ -5,6 +5,8 @@ Uses failure patterns from FailureExtractor to generate improved prompt
 sections for agents. Stores versioned prompts with change tracking.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging

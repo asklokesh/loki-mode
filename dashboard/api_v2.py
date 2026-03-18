@@ -7,6 +7,8 @@ Mount this router in server.py with:
     app.include_router(api_v2_router)
 """
 
+from __future__ import annotations
+
 import csv
 import io
 import json

@@ -4,6 +4,8 @@ FastAPI server for Loki Mode Dashboard.
 Provides REST API and WebSocket endpoints for dashboard functionality.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

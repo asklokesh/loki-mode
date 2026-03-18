@@ -12,6 +12,8 @@ Syslog forwarding (optional):
   LOKI_AUDIT_SYSLOG_PROTO defaults to "udp" (also supports "tcp").
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging

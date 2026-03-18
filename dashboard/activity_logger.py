@@ -5,6 +5,8 @@ Appends structured JSONL entries to ~/.loki/activity.jsonl with automatic
 rotation at 10MB. Provides query and session-diff capabilities.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os

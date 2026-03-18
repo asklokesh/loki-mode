@@ -7,6 +7,8 @@ and usage tracking. Builds on dashboard.auth for core token operations.
 Storage: Extends ~/.loki/dashboard/tokens.json with additional fields.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 

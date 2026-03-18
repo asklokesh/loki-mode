@@ -6,6 +6,8 @@ Implements data models, MigrationPipeline, and phase gates for safe,
 incremental codebase migrations with checkpoint/rollback support.
 """
 
+from __future__ import annotations
+
 import dataclasses
 import json
 import logging

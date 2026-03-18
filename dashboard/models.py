@@ -4,6 +4,8 @@ SQLAlchemy models for Loki Mode Dashboard.
 Uses SQLAlchemy 2.0 style with async support.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional

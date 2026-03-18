@@ -6,6 +6,8 @@ of RARV execution runs. A "run" wraps a Session with run-specific
 operations and timeline event tracking.
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
 from typing import Optional

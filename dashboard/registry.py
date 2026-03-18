@@ -5,6 +5,8 @@ Manages cross-project registration, discovery, and tracking.
 Projects are stored in ~/.loki/dashboard/projects.json
 """
 
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone

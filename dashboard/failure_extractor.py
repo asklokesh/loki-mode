@@ -6,6 +6,8 @@ repeated task failures, excessive RARV cycles, verification failures,
 agent timeouts, and user corrections.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
