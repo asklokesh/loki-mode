@@ -1,3 +1,9 @@
+## [6.27.1] - 2026-03-18
+
+### Fixed
+- Purple Lab (loki web): web-app/server.py was missing from npm package -- loki web failed with "server not found" error on any npm install
+- Added web-app/server.py to package.json files array
+
 # Changelog
 
 All notable changes to Loki Mode will be documented in this file.
