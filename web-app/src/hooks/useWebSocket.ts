@@ -1,9 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PurpleLabWebSocket } from '../api/client';
+import type { StatusResponse, Agent, LogEntry } from '../types/api';
 
-export function useWebSocket() {
+export interface StateUpdate {
+  status: StatusResponse;
+  agents: Agent[];
+  logs: LogEntry[];
+}
+
+export function useWebSocket(onStateUpdate?: (update: StateUpdate) => void) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<PurpleLabWebSocket | null>(null);
+  const onStateUpdateRef = useRef(onStateUpdate);
+
+  // Keep ref in sync without re-creating the WebSocket on every render
+  useEffect(() => {
+    onStateUpdateRef.current = onStateUpdate;
+  }, [onStateUpdate]);
 
   useEffect(() => {
     const ws = new PurpleLabWebSocket();
@@ -11,6 +24,11 @@ export function useWebSocket() {
 
     ws.on('connected', () => setConnected(true));
     ws.on('disconnected', () => setConnected(false));
+    ws.on('state_update', (data: unknown) => {
+      if (onStateUpdateRef.current && data && typeof data === 'object') {
+        onStateUpdateRef.current(data as StateUpdate);
+      }
+    });
     ws.connect();
 
     return () => {

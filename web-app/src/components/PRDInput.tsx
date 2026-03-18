@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { api } from '../api/client';
 
 interface PRDInputProps {
-  onSubmit: (prd: string, provider: string) => void;
+  onSubmit: (prd: string, provider: string) => Promise<void>;
   running: boolean;
   error?: string | null;
 }

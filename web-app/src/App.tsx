@@ -41,7 +41,12 @@ export default function App() {
   const handleStartBuild = useCallback(async (prd: string, provider: string) => {
     setStartError(null);
     try {
-      await api.startSession({ prd, provider });
+      const result = await api.startSession({ prd, provider });
+      if (result.started) {
+        setIsRunning(true); // immediately switch to running view -- don't wait for next poll
+      } else {
+        setStartError('Session did not start. Check that loki is installed and a provider is configured.');
+      }
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start session');
     }
@@ -50,6 +55,7 @@ export default function App() {
   const handleStopBuild = useCallback(async () => {
     try {
       await api.stopSession();
+      setIsRunning(false); // immediately switch back to idle view
     } catch {
       // ignore stop errors
     }

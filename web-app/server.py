@@ -502,6 +502,105 @@ async def get_template_content(filename: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+async def _push_state_to_client(ws: WebSocket) -> None:
+    """Background task: push state snapshots to a single WebSocket client.
+
+    Pushes every 2s when a session is running, every 30s when idle.
+    """
+    while True:
+        is_running = (
+            session.process is not None
+            and session.running
+            and session.process.poll() is None
+        )
+        interval = 2.0 if is_running else 30.0
+
+        # Build status payload (same logic as GET /api/session/status)
+        loki_dir = _loki_dir()
+        phase = "idle"
+        iteration = 0
+        complexity = "standard"
+        current_task = ""
+        pending_tasks = 0
+
+        state_file = loki_dir / "state" / "session.json"
+        if state_file.exists():
+            try:
+                with open(state_file) as f:
+                    state_data = json.load(f)
+                phase = state_data.get("phase", phase)
+                iteration = state_data.get("iteration", iteration)
+                complexity = state_data.get("complexity", complexity)
+                current_task = state_data.get("current_task", current_task)
+                pending_tasks = state_data.get("pending_tasks", pending_tasks)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        uptime = time.time() - session.start_time if is_running else 0
+        status_payload = {
+            "running": session.running,
+            "paused": False,
+            "phase": phase,
+            "iteration": iteration,
+            "complexity": complexity,
+            "mode": "autonomous",
+            "provider": session.provider,
+            "current_task": current_task,
+            "pending_tasks": pending_tasks,
+            "running_agents": 0,
+            "uptime": round(uptime),
+            "version": "",
+            "pid": str(session.process.pid) if session.process else "",
+            "projectDir": session.project_dir,
+        }
+
+        # Build agents payload
+        agents_payload: list = []
+        agents_file = loki_dir / "state" / "agents.json"
+        if agents_file.exists():
+            try:
+                with open(agents_file) as f:
+                    agents_data = json.load(f)
+                if isinstance(agents_data, list):
+                    agents_payload = agents_data
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Build logs payload (last 50 lines)
+        recent = session.log_lines[-50:] if session.log_lines else []
+        logs_payload = []
+        for line in recent:
+            level = "info"
+            lower = line.lower()
+            if "error" in lower or "fail" in lower:
+                level = "error"
+            elif "warn" in lower:
+                level = "warning"
+            elif "debug" in lower:
+                level = "debug"
+            logs_payload.append({
+                "timestamp": "",
+                "level": level,
+                "message": line,
+                "source": "loki",
+            })
+
+        try:
+            await ws.send_json({
+                "type": "state_update",
+                "data": {
+                    "status": status_payload,
+                    "agents": agents_payload,
+                    "logs": logs_payload,
+                },
+            })
+        except Exception:
+            # Client disconnected; exit task
+            return
+
+        await asyncio.sleep(interval)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     """Real-time stream of loki output and events."""
@@ -521,6 +620,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "data": {"line": line, "timestamp": ""},
         }))
 
+    # Start server-push state task for this connection
+    push_task = asyncio.create_task(_push_state_to_client(ws))
+
     try:
         while True:
             # Keep connection alive; handle client messages if needed
@@ -535,6 +637,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        push_task.cancel()
         session.ws_clients.discard(ws)
 
 
@@ -574,7 +677,7 @@ def main() -> None:
     host = os.environ.get("PURPLE_LAB_HOST", HOST)
     port = int(os.environ.get("PURPLE_LAB_PORT", str(PORT)))
     print(f"Purple Lab starting on http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info", timeout_keep_alive=30)
 
 
 if __name__ == "__main__":

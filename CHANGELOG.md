@@ -1,3 +1,10 @@
+## [6.30.2] - 2026-03-18
+
+### Fixed
+- Purple Lab: Start Build button appeared to do nothing after click -- POST /api/session/start returned 200 but UI stayed on PRD screen because isRunning state only updated on next poll cycle (up to 30s in idle). Now immediately transitions to running view on successful start response.
+- Stop button now immediately transitions back to PRD/idle view on success.
+- PRDInput onSubmit prop typed as Promise<void> to ensure await works correctly in component.
+
 ## [6.30.1] - 2026-03-18
 
 ### Fixed
