@@ -20,6 +20,8 @@ export const api = {
   getLogs: (lines = 200) => fetchJSON<import('../types/api').LogEntry[]>(`/logs?lines=${lines}`),
   getMemorySummary: () => fetchJSON<import('../types/api').MemorySummary>('/memory/summary'),
   getChecklist: () => fetchJSON<import('../types/api').ChecklistSummary>('/checklist/summary'),
+  getFiles: () => fetchJSON<import('../types/api').FileNode[]>('/files'),
+  getFileContent: (path: string) => fetchJSON<{ content: string }>(`/files/content?path=${encodeURIComponent(path)}`),
 };
 
 export class DashboardWebSocket {

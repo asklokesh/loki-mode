@@ -9,6 +9,9 @@ import { PRDInput } from './components/PRDInput';
 import { PhaseVisualizer } from './components/PhaseVisualizer';
 import { AgentDashboard } from './components/AgentDashboard';
 import { TerminalOutput } from './components/TerminalOutput';
+import { QualityGatesPanel } from './components/QualityGatesPanel';
+import { FileBrowser } from './components/FileBrowser';
+import { MemoryViewer } from './components/MemoryViewer';
 
 export default function App() {
   const { connected } = useWebSocket();
@@ -16,10 +19,16 @@ export default function App() {
   const fetchStatus = useCallback(() => api.getStatus(), []);
   const fetchAgents = useCallback(() => api.getAgents(), []);
   const fetchLogs = useCallback(() => api.getLogs(200), []);
+  const fetchMemory = useCallback(() => api.getMemorySummary(), []);
+  const fetchChecklist = useCallback(() => api.getChecklist(), []);
+  const fetchFiles = useCallback(() => api.getFiles(), []);
 
   const { data: status } = usePolling(fetchStatus, 2000);
   const { data: agents, loading: agentsLoading } = usePolling(fetchAgents, 3000);
   const { data: logs, loading: logsLoading } = usePolling(fetchLogs, 2000);
+  const { data: memory, loading: memoryLoading } = usePolling(fetchMemory, 5000);
+  const { data: checklist, loading: checklistLoading } = usePolling(fetchChecklist, 5000);
+  const { data: files, loading: filesLoading } = usePolling(fetchFiles, 10000);
 
   const isRunning = status?.running || false;
 
@@ -57,14 +66,25 @@ export default function App() {
             />
           </div>
 
-          {/* Center column: Terminal Output (main focus) */}
-          <div className="col-span-6 flex flex-col">
+          {/* Center column: Terminal Output */}
+          <div className="col-span-5 flex flex-col">
             <TerminalOutput logs={logs} loading={logsLoading} />
           </div>
 
-          {/* Right column: Agents */}
-          <div className="col-span-3 flex flex-col gap-6">
+          {/* Right column: Agents + Quality Gates */}
+          <div className="col-span-4 flex flex-col gap-6">
             <AgentDashboard agents={agents} loading={agentsLoading} />
+            <QualityGatesPanel checklist={checklist} loading={checklistLoading} />
+          </div>
+        </div>
+
+        {/* Bottom row: File Browser + Memory Viewer */}
+        <div className="mt-6 grid grid-cols-12 gap-6">
+          <div className="col-span-6">
+            <FileBrowser files={files} loading={filesLoading} />
+          </div>
+          <div className="col-span-6">
+            <MemoryViewer memory={memory} loading={memoryLoading} />
           </div>
         </div>
       </main>

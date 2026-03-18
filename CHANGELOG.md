@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.26.0] - 2026-03-18
+
+### Added
+- Web App: File Browser with recursive tree view, expand/collapse, file content preview
+- Web App: Memory Viewer with episodic/semantic/skills stat cards, token usage progress bar
+- Web App: Quality Gates Panel with 9-gate status display, progress bar, expandable details
+- API client: `/api/files` and `/api/files/content` endpoints for file tree browsing
+- App layout: 4-section dashboard with bottom row for File Browser and Memory Viewer
+- Production build: 223KB JS (68KB gzipped) + 16KB CSS (4KB gzipped) -- 10 components total
+
 ## [6.25.1] - 2026-03-18
 
 ### Fixed
