@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.25.0] - 2026-03-18
+
+### Added
+- Loki Web App: Replit-like web UI for visual PRD-to-code workflow
+- PRD Input panel with template selector (13 templates) and provider picker
+- Agent Dashboard with live status, color-coded agent cards, phase indicators
+- RARV Phase Visualizer with SVG circular animation and iteration counter
+- Terminal Output with color-coded log levels, auto-scroll, timestamp formatting
+- Control Bar with phase, complexity, model tier, task count, uptime display
+- WebSocket + REST API integration with auto-reconnect and polling hooks
+- Vite + React 19 + TypeScript + Tailwind, matches autonomi.dev design system exactly
+- Production build: 214KB JS (66KB gzipped) + 15KB CSS (4KB gzipped)
+
 ## [6.24.0] - 2026-03-18
 
 ### Added

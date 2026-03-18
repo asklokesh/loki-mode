@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar for terminal */
+  .terminal-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .terminal-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .terminal-scroll::-webkit-scrollbar-thumb {
+    background: rgba(61, 82, 160, 0.2);
+    border-radius: 3px;
+  }
+  .terminal-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(61, 82, 160, 0.35);
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(61, 82, 160, 0.08);
+  }
+
+  .glass-subtle {
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(61, 82, 160, 0.06);
+  }
+
+  /* Geometric pattern: concentric circles (RARV theme) */
+  .pattern-circles {
+    position: absolute;
+    inset: 0;
+    opacity: 0.04;
+    background-image: radial-gradient(circle at 20% 30%, transparent 30%, #6C63FF 30.5%, transparent 31%),
+                       radial-gradient(circle at 80% 70%, transparent 25%, #6C63FF 25.5%, transparent 26%),
+                       radial-gradient(circle at 50% 50%, transparent 40%, #6C63FF 40.5%, transparent 41%);
+    pointer-events: none;
+  }
+
+  /* Geometric pattern: dot matrix (agent view) */
+  .pattern-dots {
+    position: absolute;
+    inset: 0;
+    opacity: 0.02;
+    background-image: radial-gradient(#2D3142 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+  }
+
+  /* Phase indicator pulse */
+  @keyframes phase-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .phase-active {
+    animation: phase-pulse 2s ease-in-out infinite;
+  }
+
+  /* Terminal cursor blink */
+  @keyframes cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  .terminal-cursor::after {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background: #7091E6;
+    animation: cursor-blink 1s step-end infinite;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+  }
+}
