@@ -1243,6 +1243,7 @@ detect_complexity() {
     if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
         local prd_words=$(wc -w < "$prd_path" | tr -d ' ')
         local feature_count=0
+        local prd_lines=$(wc -l < "$prd_path" | tr -d ' ')
 
         # Detect PRD format and count features accordingly
         if [[ "$prd_path" == *.json ]]; then
@@ -1262,14 +1263,23 @@ detect_complexity() {
             feature_count=$(grep -c "^##\|^- \[" "$prd_path" 2>/dev/null || echo "0")
         fi
 
-        if [ "$prd_words" -lt 200 ] && [ "$feature_count" -lt 5 ]; then
+        # Count distinct sections (h2/h3 headers) for structural complexity (#74)
+        local section_count=0
+        if [[ "$prd_path" != *.json ]]; then
+            section_count=$(grep -c "^##\|^###" "$prd_path" 2>/dev/null || echo "0")
+        fi
+
+        # PRD complexity uses content length, feature count, AND structural depth (#74)
+        # A PRD with multiple sections or substantial content is not "simple" even with few project files
+        if [ "$prd_words" -lt 200 ] && [ "$feature_count" -lt 5 ] && [ "$section_count" -lt 3 ]; then
             prd_complexity="simple"
-        elif [ "$prd_words" -gt 1000 ] || [ "$feature_count" -gt 15 ]; then
+        elif [ "$prd_words" -gt 1000 ] || [ "$feature_count" -gt 15 ] || [ "$section_count" -gt 10 ]; then
             prd_complexity="complex"
         fi
     fi
 
     # Determine final complexity
+    # A non-simple PRD always prevents "simple" classification regardless of file count (#74)
     if [ "$file_count" -le 5 ] && [ "$prd_complexity" = "simple" ] && \
        [ "$has_external" = "false" ] && [ "$has_microservices" = "false" ]; then
         DETECTED_COMPLEXITY="simple"
@@ -1280,7 +1290,7 @@ detect_complexity() {
         DETECTED_COMPLEXITY="standard"
     fi
 
-    log_info "Detected complexity: $DETECTED_COMPLEXITY (files: $file_count, external: $has_external, microservices: $has_microservices)"
+    log_info "Detected complexity: $DETECTED_COMPLEXITY (files: $file_count, prd: $prd_complexity, external: $has_external, microservices: $has_microservices)"
 }
 
 # Get phases based on complexity tier
@@ -2824,6 +2834,9 @@ init_loki_dir() {
     mkdir -p .loki/artifacts/{releases,reports,backups}
     mkdir -p .loki/memory/{ledgers,handoffs,learnings,episodic,semantic,skills}
     mkdir -p .loki/metrics/{efficiency,rewards}
+    # Clear stale metrics from previous sessions so loki metrics shows current run data (#75)
+    rm -f .loki/metrics/efficiency/iteration-*.json 2>/dev/null || true
+    rm -f .loki/metrics/rewards/*.json 2>/dev/null || true
     mkdir -p .loki/rules
     mkdir -p .loki/signals
 

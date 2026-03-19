@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.37.5] - 2026-03-19
+
+### Fixed
+- CLI: watch PRD auto-detect now verifies file is readable before proceeding (#67)
+- CLI: config set rejects invalid budget values (negative, zero, non-numeric) (#68)
+- CLI: agent run captures subagent exit code and surfaces non-zero as failure (#72)
+- Orchestrator: detect_complexity checks PRD content length and section count, not just file count (#74)
+- CLI: loki metrics clears stale data from prior sessions at run start (#75)
+- CLI: cmd_pause warns when session is running in perpetual mode where PAUSE is ignored (#84)
+
 ## [6.37.4] - 2026-03-19
 
 ### Security

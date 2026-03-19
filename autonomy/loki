@@ -1365,6 +1365,15 @@ cmd_pause() {
     fi
 
     if is_session_running; then
+        # Warn if running in perpetual mode where PAUSE is auto-cleared (#84)
+        local current_mode="${LOKI_AUTONOMY_MODE:-perpetual}"
+        local perpetual_flag="${LOKI_PERPETUAL_MODE:-false}"
+        if [ "$current_mode" = "perpetual" ] || [ "$perpetual_flag" = "true" ]; then
+            echo -e "${YELLOW}Warning: Session is running in perpetual mode.${NC}"
+            echo -e "${YELLOW}PAUSE signals are auto-cleared in perpetual mode and will be ignored.${NC}"
+            echo -e "Use ${CYAN}loki stop${NC} to halt a perpetual session, or switch autonomy mode first:"
+            echo -e "  ${DIM}loki config set autonomy_mode checkpoint${NC}"
+        fi
         touch "$LOKI_DIR/PAUSE"
         # Emit session pause event
         emit_event session cli pause "reason=user_requested"
@@ -4476,6 +4485,13 @@ cmd_watch() {
         return 1
     fi
 
+    # Verify the PRD file is readable (#67)
+    if [ ! -r "$prd_path" ]; then
+        echo -e "${RED}PRD file is not readable: $prd_path${NC}"
+        echo "Check file permissions: ls -la $prd_path"
+        return 1
+    fi
+
     # Resolve to absolute path
     prd_path="$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")"
     local prd_basename
@@ -5001,7 +5017,11 @@ cmd_config_set() {
             ;;
         budget)
             if ! echo "$value" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
-                echo -e "${RED}Invalid budget: $value (expected: numeric USD amount)${NC}"; return 1
+                echo -e "${RED}Invalid budget: $value (expected: positive numeric USD amount)${NC}"; return 1
+            fi
+            # Reject zero and negative values (#68)
+            if echo "$value" | grep -qE '^0+(\.0+)?$'; then
+                echo -e "${RED}Invalid budget: $value (must be greater than 0)${NC}"; return 1
             fi
             ;;
         model.planning|model.development|model.fast)
@@ -14717,33 +14737,40 @@ for a in agents:
             echo -e "${DIM}Persona: ${persona:0:80}...${NC}"
             echo ""
 
-            # Invoke current provider
+            # Invoke current provider and capture exit code (#72)
             local provider="${LOKI_PROVIDER:-claude}"
             if [ -f ".loki/state/provider" ]; then
                 provider=$(cat ".loki/state/provider" 2>/dev/null)
             fi
 
+            local agent_exit=0
             case "$provider" in
                 claude)
-                    claude -p "$full_prompt" 2>&1
+                    claude -p "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
                 codex)
-                    codex exec --full-auto "$full_prompt" 2>&1
+                    codex exec --full-auto "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
                 gemini)
-                    gemini --approval-mode=yolo "$full_prompt" 2>&1
+                    gemini --approval-mode=yolo "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
                 cline)
-                    cline -y "$full_prompt" 2>&1
+                    cline -y "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
                 aider)
-                    aider --message "$full_prompt" --yes-always --no-auto-commits < /dev/null 2>&1
+                    aider --message "$full_prompt" --yes-always --no-auto-commits < /dev/null 2>&1 || agent_exit=$?
                     ;;
                 *)
                     echo -e "${RED}Unknown provider: $provider${NC}"
                     return 1
                     ;;
             esac
+
+            if [ "$agent_exit" -ne 0 ]; then
+                echo ""
+                echo -e "${RED}Agent exited with code $agent_exit${NC}"
+                return "$agent_exit"
+            fi
             ;;
 
         start)
