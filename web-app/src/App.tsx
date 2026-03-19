@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { api } from './api/client';
 import { usePolling } from './hooks/usePolling';
 import { useWebSocket, StateUpdate } from './hooks/useWebSocket';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Header } from './components/Header';
 import { ControlBar } from './components/ControlBar';
 import { StatusOverview } from './components/StatusOverview';
@@ -20,7 +21,8 @@ import type { SessionDetail } from './api/client';
 
 export default function App() {
   const [startError, setStartError] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  // Restore isRunning from sessionStorage so page refresh during build doesn't flash landing
+  const [isRunning, setIsRunning] = useState(() => sessionStorage.getItem('pl_running') === '1');
   const [isPaused, setIsPaused] = useState(false);
   const [currentPrd, setCurrentPrd] = useState<string | null>(null);
   const [wasRunning, setWasRunning] = useState(false);
@@ -65,11 +67,10 @@ export default function App() {
     }
   }, [httpStatus, wsStatus]);
 
-  // Track wasRunning to show report/metrics after session ends
+  // Persist isRunning to sessionStorage so refresh doesn't flash landing page
   useEffect(() => {
-    if (isRunning) {
-      setWasRunning(true);
-    }
+    sessionStorage.setItem('pl_running', isRunning ? '1' : '0');
+    if (isRunning) setWasRunning(true);
   }, [isRunning]);
 
   // Rarely-changing data: memory, checklist, files -- slow HTTP polls (30s)
@@ -288,33 +289,39 @@ export default function App() {
           /* ========== RUNNING STATE: Monitoring panels ========== */
           <>
             {/* Status bar with stop/pause/resume buttons */}
-            <ControlBar
-              status={status}
-              prdSummary={prdSummary}
-              onStop={handleStopBuild}
-              onPause={handlePause}
-              onResume={handleResume}
-              isPaused={isPaused}
-            />
+            <ErrorBoundary name="ControlBar">
+              <ControlBar
+                status={status}
+                prdSummary={prdSummary}
+                onStop={handleStopBuild}
+                onPause={handlePause}
+                onResume={handleResume}
+                isPaused={isPaused}
+              />
+            </ErrorBoundary>
 
             {/* Stats overview */}
             <div className="mt-4">
-              <StatusOverview status={status} />
+              <ErrorBoundary name="StatusOverview">
+                <StatusOverview status={status} />
+              </ErrorBoundary>
             </div>
 
             {/* Main layout: 3-column grid */}
-            <div className="mt-4 grid grid-cols-12 gap-6" style={{ minHeight: 'calc(100vh - 340px)' }}>
-              {/* Left column: Phase + PRD (collapsed) */}
+            <div className="mt-4 grid grid-cols-12 gap-6" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
+              {/* Left column: Phase */}
               <div className="col-span-3 flex flex-col gap-6">
-                <PhaseVisualizer
-                  currentPhase={status?.phase || 'idle'}
-                  iteration={status?.iteration || 0}
-                />
+                <ErrorBoundary name="PhaseVisualizer">
+                  <PhaseVisualizer
+                    currentPhase={status?.phase || 'idle'}
+                    iteration={status?.iteration || 0}
+                  />
+                </ErrorBoundary>
               </div>
 
               {/* Center column: Terminal Output + Metrics tab */}
-              <div className="col-span-5 flex flex-col gap-0">
-                <div className="flex items-center gap-1 mb-2">
+              <div className="col-span-5 flex flex-col gap-0 min-h-0">
+                <div className="flex items-center gap-1 mb-2 flex-shrink-0">
                   <button
                     onClick={() => setActiveTab('terminal')}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
@@ -336,27 +343,39 @@ export default function App() {
                     Metrics
                   </button>
                 </div>
-                {activeTab === 'terminal' ? (
-                  <TerminalOutput logs={logs} loading={logsLoading} subscribe={subscribe} />
-                ) : (
-                  <MetricsPanel visible={true} />
-                )}
+                <div className="flex-1 min-h-0">
+                  <ErrorBoundary name="Terminal">
+                    {activeTab === 'terminal' ? (
+                      <TerminalOutput logs={logs} loading={logsLoading} subscribe={subscribe} />
+                    ) : (
+                      <MetricsPanel visible={true} />
+                    )}
+                  </ErrorBoundary>
+                </div>
               </div>
 
               {/* Right column: Agents + Quality Gates */}
-              <div className="col-span-4 flex flex-col gap-6">
-                <AgentDashboard agents={agents} loading={agentsLoading} />
-                <QualityGatesPanel checklist={checklist} loading={checklistLoading} />
+              <div className="col-span-4 flex flex-col gap-6 overflow-y-auto">
+                <ErrorBoundary name="AgentDashboard">
+                  <AgentDashboard agents={agents} loading={agentsLoading} />
+                </ErrorBoundary>
+                <ErrorBoundary name="QualityGates">
+                  <QualityGatesPanel checklist={checklist} loading={checklistLoading} />
+                </ErrorBoundary>
               </div>
             </div>
 
             {/* Bottom row: File Browser + Memory Viewer */}
             <div className="mt-6 grid grid-cols-12 gap-6">
               <div className="col-span-6">
-                <FileBrowser files={files} loading={filesLoading} />
+                <ErrorBoundary name="FileBrowser">
+                  <FileBrowser files={files} loading={filesLoading} />
+                </ErrorBoundary>
               </div>
               <div className="col-span-6">
-                <MemoryViewer memory={memory} loading={memoryLoading} />
+                <ErrorBoundary name="MemoryViewer">
+                  <MemoryViewer memory={memory} loading={memoryLoading} />
+                </ErrorBoundary>
               </div>
             </div>
           </>

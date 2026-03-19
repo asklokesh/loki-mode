@@ -76,7 +76,7 @@ export function AgentDashboard({ agents, loading }: AgentDashboardProps) {
 }
 
 function AgentCard({ agent, compact }: { agent: Agent; compact?: boolean }) {
-  const colorClass = getAgentColor(agent.type || agent.name);
+  const colorClass = getAgentColor(agent.type || agent.name || '');
 
   if (compact) {
     return (

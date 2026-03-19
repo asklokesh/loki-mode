@@ -92,8 +92,8 @@ export function TerminalOutput({ logs, loading, subscribe }: TerminalOutputProps
   };
 
   return (
-    <div className="glass p-0 overflow-hidden flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+    <div className="glass p-0 overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 380px)', minHeight: '300px', maxHeight: '600px' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
         <h3 className="text-sm font-semibold text-charcoal uppercase tracking-wider">
           Terminal
         </h3>
@@ -127,7 +127,7 @@ export function TerminalOutput({ logs, loading, subscribe }: TerminalOutputProps
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto terminal-scroll bg-charcoal/[0.03] p-4 font-mono text-xs leading-relaxed min-h-[300px]"
+        className="flex-1 overflow-y-auto terminal-scroll bg-charcoal/[0.03] p-4 font-mono text-xs leading-relaxed"
       >
         {loading && !logs && wsLines.length === 0 && (
           <div className="text-slate animate-pulse">Connecting to log stream...</div>
