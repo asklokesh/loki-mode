@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import (
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from dashboard.models import Base, Project, Run, RunEvent
+from dashboard.models import Base, Project, Run, RunEvent, Tenant
 from dashboard.runs import (
     RunCreate,
     RunEventResponse,
@@ -70,9 +70,19 @@ async def db(engine):
 
 
 @pytest_asyncio.fixture
-async def project(db: AsyncSession):
+async def tenant(db: AsyncSession):
+    """Create a test tenant and return it."""
+    t = Tenant(name="Test Tenant", slug="test-tenant")
+    db.add(t)
+    await db.flush()
+    await db.refresh(t)
+    return t
+
+
+@pytest_asyncio.fixture
+async def project(db: AsyncSession, tenant):
     """Create a test project and return it."""
-    proj = Project(name="Test Project", description="For run tests")
+    proj = Project(name="Test Project", description="For run tests", tenant_id=tenant.id)
     db.add(proj)
     await db.flush()
     await db.refresh(proj)
@@ -80,9 +90,9 @@ async def project(db: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def second_project(db: AsyncSession):
+async def second_project(db: AsyncSession, tenant):
     """Create a second test project."""
-    proj = Project(name="Second Project", description="Another project")
+    proj = Project(name="Second Project", description="Another project", tenant_id=tenant.id)
     db.add(proj)
     await db.flush()
     await db.refresh(proj)
