@@ -33,13 +33,13 @@
 - Server: GET /api/session/prd-prefill, POST /api/session/pause, POST /api/session/resume endpoints
 - 23 E2E tests pass (docker compose -f docker-compose.test.yml up --abort-on-container-exit)
 
-## v6.33.1 (2026-03-18)
+## [6.33.1] - 2026-03-18
 
 ### Bug Fixes
 - Fix `loki metrics` version display (was hardcoded to v6.32.0 instead of reading runtime version)
 - Pass `LOKI_SKILL_DIR` env var to metrics Python heredoc for proper version detection
 
-## v6.33.0 (2026-03-18)
+## [6.33.0] - 2026-03-18
 
 ### New Features
 - `loki watch [prd-path]` command: auto-rerun on PRD file changes
@@ -57,14 +57,14 @@
 ### Tests
 - New test suite: tests/test-watch-command.sh (12 tests)
 
-## v6.32.1 (2026-03-18)
+## [6.32.1] - 2026-03-18
 
 ### Fixed
 - postinstall: detect when npm global bin dir is not in PATH and print clear fix instructions
 - Fixes "command not found: loki" for users with Homebrew-managed Node.js (affects npm prefix pointing to keg dir)
 - Also suggests Homebrew tap as alternative install method
 
-## v6.32.0 (2026-03-18)
+## [6.32.0] - 2026-03-18
 
 ### New Features
 - `loki metrics` command: session productivity reporter that analyzes past Loki Mode sessions
@@ -83,7 +83,7 @@
 ### Tests
 - New test suite: tests/test-metrics-command.sh (12 tests)
 
-## v6.31.0 (2026-03-18)
+## [6.31.0] - 2026-03-18
 
 ### New Features
 - `loki explain [path]` command: analyze any codebase and generate a plain-English architectural explanation
@@ -117,7 +117,7 @@
 ### Fixed
 - Purple Lab: stop polling all API endpoints when idle -- status now polls every 30s (was 2s) when no session running; agents/logs/memory/checklist/files polling pauses entirely until session starts. Eliminates 57+ unnecessary network requests visible in browser devtools.
 
-## v6.30.0 (2026-03-18)
+## [6.30.0] - 2026-03-18
 
 ### New Features
 - `loki share` command: upload session reports as shareable GitHub Gists in one command
@@ -129,7 +129,7 @@
 ### Tests
 - New test suite: tests/test-share-command.sh (8 tests)
 
-## v6.29.0 (2026-03-18)
+## [6.29.0] - 2026-03-18
 
 ### New Features
 - BMAD story priority ordering by MVP/phase label: stories from MVP epics are queued first, then Phase 2, then Phase 3
@@ -142,7 +142,7 @@
 - run.sh BMAD queue population sorts stories by priority_weight before queuing
 - track_iteration_complete() triggers bmad_write_back() after successful iterations
 
-## v6.28.0 (2026-03-18)
+## [6.28.0] - 2026-03-18
 
 ### New Features
 - `loki init` project scaffolding: creates project directory, prd.md from template, .loki/ config, README.md, and git init
@@ -398,13 +398,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard: quality gates and RARV timeline components now wired into standalone dashboard pages
 - Dashboard bundle: 6 previously unexported components now registered and available (quality-gates, rarv-timeline, run-manager, audit-viewer, api-keys, tenant-switcher)
 
-## v6.15.1 - BMAD Adapter Path Resolution and Sprint-Status Integration
+## [6.15.1] - BMAD Adapter Path Resolution and Sprint-Status Integration
 
 ### Fixed
 - BMAD adapter path resolution broken for global npm installs -- resolve_script_path now used instead of dirname "$0" fallback which resolved to bin/ symlink directory
 - BMAD sprint-status.yml now read and parsed -- completed/done stories are skipped when populating the task queue, preventing re-implementation of already-completed work
 
-## v6.15.0 - SQLite Memory Backend and MCP Memory Tools
+## [6.15.0] - SQLite Memory Backend and MCP Memory Tools
 
 ### Features
 - **SQLite + FTS5 memory storage**: New primary storage backend with full-text search. Factory auto-selects SQLite when available, falls back to JSON storage. Located in `memory/sqlite_storage.py`.
@@ -412,13 +412,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **3 MCP memory tools**: Added `mem_search`, `mem_timeline`, and `mem_get` tools to `mcp/server.py` for programmatic memory access.
 - **Dashboard memory endpoints**: New `/api/memory/search` and `/api/memory/stats` endpoints plus 5 existing endpoints upgraded to use SQLite backend.
 
-## v6.14.0 - Standalone Quality Review
+## [6.14.0] - Standalone Quality Review
 
 ### Features
 - **`loki review <dir>` command**: Standalone quality gate runner for any project directory. Runs 6 gates: project-type detection, lint, tests, security, dependencies, and structure. Supports `--json` and `--verbose` flags. No AI provider needed. Works as a CI/CD step.
 - **GitHub Action (`review`)**: New reusable action at `.github/actions/review/action.yml` -- enables `loki review` in any GitHub Actions workflow.
 
-## v6.13.1 - PRD Template Quality Fixes
+## [6.13.1] - PRD Template Quality Fixes
 
 ### Bug Fixes
 - **simple-todo-app.md**: Added project structure, database schema, API endpoints, testing section, and success criteria to pass quality audit
@@ -426,37 +426,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **e-commerce.md**: Removed undocumented 'reviews' from features (no schema/API supported it)
 - **full-stack-demo.md**: Expanded project structure, made tests required instead of optional, added acceptance criteria
 
-## v6.13.0 - Real Demo Execution
+## [6.13.0] - Real Demo Execution
 
 ### Features
 - **`loki demo` rewrite**: Replaced simulated/fake demo with real execution that runs `loki start` on a bundled template. Supports `--dir`, `--provider`, `--dry-run` flags. Shows project summary and offers to open result in browser.
 
-## v6.12.5 - Remote Control Autonomous Permissions
+## [6.12.5] - Remote Control Autonomous Permissions
 
 ### Bug Fixes
 - **`loki remote` bypass permissions**: Added `--permission-mode bypassPermissions` to `claude remote-control` invocations so spawned remote sessions can actually use Read, Write, and Bash tools. Without this, Loki Mode was blocked from operating in remote sessions.
 
-## v6.12.4 - Remote Control Trust Fix (Direct Config Write)
+## [6.12.4] - Remote Control Trust Fix (Direct Config Write)
 
 ### Bug Fixes
 - **`loki remote` auto-trust via config**: Previous approach (piping `/exit` to `claude`) could not interact with the TUI trust dialog. Now writes `hasTrustDialogAccepted: true` directly to `~/.claude.json` projects config, which is the actual trust storage used by Claude Code. Uses `os.path.realpath()` to handle macOS symlinks (`/tmp` -> `/private/tmp`).
 
-## v6.12.3 - Remote Control Zero-Friction Trust
+## [6.12.3] - Remote Control Zero-Friction Trust
 
 ### Bug Fixes
 - **`loki remote` zero-friction trust**: Auto-trust workspace by piping `/exit` to `claude` instead of requiring manual interaction. Fully automatic recovery from untrusted workspace errors.
 
-## v6.12.2 - Remote Control Trust Fix (set -e)
+## [6.12.2] - Remote Control Trust Fix (set -e)
 
 ### Bug Fixes
 - **`loki remote` trust auto-recovery**: Fixed `set -euo pipefail` causing script to exit before auto-recovery could trigger on workspace trust errors. Now uses `|| rc_exit=$?` pattern to capture exit code safely.
 
-## v6.12.1 - Remote Control Trust Auto-Recovery
+## [6.12.1] - Remote Control Trust Auto-Recovery
 
 ### Bug Fixes
 - **`loki remote` trust auto-recovery**: On workspace trust failure, automatically opens interactive Claude for trust acceptance, then retries remote-control seamlessly
 
-## v6.12.0 - OpenSpec Bridge + Remote Control Improvements
+## [6.12.0] - OpenSpec Bridge + Remote Control Improvements
 
 ### New Features
 - **OpenSpec Bridge** (`loki start --openspec PATH`): Spec-driven development input pathway
@@ -480,7 +480,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_openspec_adapter.py` -- 28 unit tests
 - `examples/openspec/` -- 6 test fixtures
 
-## v6.11.3 - Remote Control Auto-Trust with Auto-Recovery
+## [6.11.3] - Remote Control Auto-Trust with Auto-Recovery
 
 ### Bug Fixes
 - **`loki remote` auto-recovery**: When workspace isn't trusted, automatically opens interactive Claude Code for trust acceptance, then retries remote-control -- zero manual steps needed
@@ -1990,7 +1990,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## v5.26.0 - Developer Adoption and Community Infrastructure
+## [5.26.0] - Developer Adoption and Community Infrastructure
 
 ### Added
 - CONTRIBUTING.md with prerequisites, setup, and test instructions
