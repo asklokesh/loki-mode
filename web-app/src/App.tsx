@@ -15,7 +15,8 @@ import { MemoryViewer } from './components/MemoryViewer';
 import { ReportPanel } from './components/ReportPanel';
 import { MetricsPanel } from './components/MetricsPanel';
 import { SessionHistory } from './components/SessionHistory';
-import type { StatusResponse, Agent, LogEntry } from './types/api';
+import type { StatusResponse, Agent, LogEntry, FileNode } from './types/api';
+import type { SessionDetail } from './api/client';
 
 export default function App() {
   const [startError, setStartError] = useState<string | null>(null);
@@ -27,6 +28,7 @@ export default function App() {
   const [showMetrics, setShowMetrics] = useState(false);
   const [activeTab, setActiveTab] = useState<'terminal' | 'metrics'>('terminal');
   const [selectedProvider, setSelectedProvider] = useState('claude');
+  const [viewingSession, setViewingSession] = useState<SessionDetail | null>(null);
 
   // Primary state -- populated by WebSocket state_update pushes
   const [wsStatus, setWsStatus] = useState<StatusResponse | null>(null);
@@ -113,6 +115,15 @@ export default function App() {
     }
   }, []);
 
+  const handleLoadSession = useCallback(async (item: { id: string }) => {
+    try {
+      const detail = await api.getSessionDetail(item.id);
+      setViewingSession(detail);
+    } catch {
+      // Session detail not available
+    }
+  }, []);
+
   const handleProviderChange = useCallback((provider: string) => {
     setSelectedProvider(provider);
   }, []);
@@ -195,13 +206,69 @@ export default function App() {
               </div>
             )}
 
+            {/* Past session viewer */}
+            {viewingSession && (
+              <div className="w-full max-w-3xl mt-4">
+                <div className="glass p-4 rounded-2xl">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-charcoal uppercase tracking-wider">
+                      Session: {viewingSession.id}
+                    </h3>
+                    <button
+                      onClick={() => setViewingSession(null)}
+                      className="text-xs text-slate hover:text-charcoal transition-colors px-2 py-1 rounded-lg hover:bg-white/30"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="text-[10px] font-mono text-slate mb-3">{viewingSession.path}</div>
+
+                  {/* PRD preview */}
+                  {viewingSession.prd && (
+                    <div className="mb-3">
+                      <div className="text-[10px] text-slate uppercase tracking-wider font-semibold mb-1">PRD</div>
+                      <div className="bg-charcoal/[0.03] rounded-lg p-3 font-mono text-xs text-charcoal/80 max-h-32 overflow-y-auto terminal-scroll whitespace-pre-wrap">
+                        {viewingSession.prd.slice(0, 500)}{viewingSession.prd.length > 500 ? '...' : ''}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* File tree */}
+                  {viewingSession.files.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-[10px] text-slate uppercase tracking-wider font-semibold mb-1">
+                        Files ({viewingSession.files.length})
+                      </div>
+                      <div className="bg-charcoal/[0.03] rounded-lg p-3 font-mono text-xs max-h-40 overflow-y-auto terminal-scroll">
+                        {viewingSession.files.map((f: FileNode, i: number) => (
+                          <div key={i} className="text-charcoal/70">
+                            {f.type === 'directory' ? `${f.name}/` : f.name}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Logs */}
+                  {viewingSession.logs.length > 0 && (
+                    <div>
+                      <div className="text-[10px] text-slate uppercase tracking-wider font-semibold mb-1">
+                        Logs ({viewingSession.logs.length} lines)
+                      </div>
+                      <div className="bg-charcoal/[0.03] rounded-lg p-3 font-mono text-[10px] max-h-40 overflow-y-auto terminal-scroll">
+                        {viewingSession.logs.map((line: string, i: number) => (
+                          <div key={i} className="text-charcoal/70">{line}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Session history */}
             <div className="w-full max-w-3xl mt-4">
-              <SessionHistory onLoadSession={(item) => {
-                // No-op: session reload from history is view-only for now
-                // (project files are on disk; user can navigate to them manually)
-                void item;
-              }} />
+              <SessionHistory onLoadSession={handleLoadSession} />
             </div>
 
             {/* Connection status hint */}

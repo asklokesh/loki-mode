@@ -830,14 +830,67 @@ async def get_metrics() -> JSONResponse:
     return JSONResponse(content=metrics)
 
 
+def _infer_session_status(entry: Path) -> str:
+    """Infer session status from project directory contents."""
+    # 1. Check .loki/state/session.json for explicit phase
+    state_file = entry / ".loki" / "state" / "session.json"
+    if state_file.exists():
+        try:
+            with open(state_file) as f:
+                st = json.load(f)
+            phase = st.get("phase", "")
+            if phase and phase != "idle":
+                return phase
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 2. Check .loki/autonomy-state.json (run.sh writes this)
+    for state_name in ("autonomy-state.json", ".loki/autonomy-state.json"):
+        sf = entry / state_name
+        if sf.exists():
+            try:
+                with open(sf) as f:
+                    st = json.load(f)
+                if st.get("completed") or st.get("status") == "completed":
+                    return "completed"
+                if st.get("status"):
+                    return st["status"]
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # 3. Infer from file contents
+    files = set()
+    try:
+        files = {f.name for f in entry.iterdir() if not f.name.startswith(".")}
+    except OSError:
+        pass
+
+    source_extensions = {".js", ".ts", ".tsx", ".py", ".html", ".css", ".go", ".rs", ".java", ".rb"}
+    has_source = any(
+        (entry / f).suffix in source_extensions
+        for f in files
+        if (entry / f).is_file()
+    )
+    has_prd = "PRD.md" in files or "prd.md" in files
+
+    if has_source:
+        return "completed"
+    if has_prd and len(files) <= 2:
+        return "started"
+    if has_prd:
+        return "in_progress"
+
+    return "empty"
+
+
 @app.get("/api/sessions/history")
 async def get_sessions_history() -> JSONResponse:
-    """Return list of past loki sessions from ~/.loki-sessions/ or ~/.loki/sessions/."""
+    """Return list of past loki sessions from ~/purple-lab-projects/ etc."""
     history: list[dict] = []
     search_dirs = [
+        Path.home() / "purple-lab-projects",
         Path.home() / ".loki-sessions",
         Path.home() / ".loki" / "sessions",
-        Path.home() / "purple-lab-projects",
     ]
     for base_dir in search_dirs:
         if not base_dir.is_dir():
@@ -850,7 +903,7 @@ async def get_sessions_history() -> JSONResponse:
                 "path": str(entry),
                 "date": "",
                 "prd_snippet": "",
-                "status": "unknown",
+                "status": _infer_session_status(entry),
             }
             # Read timestamp from directory mtime
             try:
@@ -869,19 +922,81 @@ async def get_sessions_history() -> JSONResponse:
                     except OSError:
                         pass
                     break
-            # Try to read status
-            state_file = entry / ".loki" / "state" / "session.json"
-            if state_file.exists():
-                try:
-                    with open(state_file) as f:
-                        st = json.load(f)
-                    session_info["status"] = st.get("phase", "unknown")
-                except (json.JSONDecodeError, OSError):
-                    pass
+            # Count project files for progress indication
+            try:
+                file_count = sum(1 for f in entry.rglob("*") if f.is_file()
+                                 and ".git" not in f.parts and "node_modules" not in f.parts
+                                 and "__pycache__" not in f.parts)
+                session_info["file_count"] = file_count
+            except OSError:
+                session_info["file_count"] = 0
+
             history.append(session_info)
         if history:
             break  # Use first directory that has entries
     return JSONResponse(content=history)
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session_detail(session_id: str) -> JSONResponse:
+    """Get details of a past session for read-only viewing."""
+    import re
+    # Validate session_id format (prevent path traversal)
+    if not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+
+    search_dirs = [
+        Path.home() / "purple-lab-projects",
+        Path.home() / ".loki-sessions",
+        Path.home() / ".loki" / "sessions",
+    ]
+    target: Optional[Path] = None
+    for base_dir in search_dirs:
+        candidate = base_dir / session_id
+        if candidate.is_dir():
+            target = candidate
+            break
+
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # Read PRD
+    prd_content = ""
+    for prd_name in ("PRD.md", "prd.md", ".loki/prd.md"):
+        prd_file = target / prd_name
+        if prd_file.exists():
+            try:
+                prd_content = prd_file.read_text(errors="replace")
+            except OSError:
+                pass
+            break
+
+    # Build file tree
+    files = _build_file_tree(target)
+
+    # Read logs if available
+    log_lines: list[str] = []
+    for log_name in (".loki/logs/session.log", ".loki/session.log", "loki.log"):
+        log_file = target / log_name
+        if log_file.exists():
+            try:
+                text = log_file.read_text(errors="replace")
+                log_lines = text.splitlines()[-200:]
+            except OSError:
+                pass
+            break
+
+    # Status
+    status = _infer_session_status(target)
+
+    return JSONResponse(content={
+        "id": session_id,
+        "path": str(target),
+        "status": status,
+        "prd": prd_content,
+        "files": files,
+        "logs": log_lines,
+    })
 
 
 @app.post("/api/session/onboard")

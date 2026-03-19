@@ -66,6 +66,15 @@ export interface SessionHistoryItem {
   status: string;
 }
 
+export interface SessionDetail {
+  id: string;
+  path: string;
+  status: string;
+  prd: string;
+  files: import('../types/api').FileNode[];
+  logs: string[];
+}
+
 export interface OnboardResult {
   output: string;
   claude_md: string;
@@ -150,6 +159,9 @@ export const api = {
 
   // Session history
   getSessionsHistory: () => fetchJSON<SessionHistoryItem[]>('/sessions/history'),
+
+  getSessionDetail: (sessionId: string) =>
+    fetchJSON<SessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`),
 
   // Onboard
   onboardRepo: (path: string) =>
