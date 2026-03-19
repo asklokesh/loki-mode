@@ -1,0 +1,12 @@
+{
+  "mcp_servers": [
+    {
+      "name": "broken",
+      "command": "node",
+      "args": [
+        "-e",
+        "process.exit(1)"
+      ]
+    }
+  ]
+}

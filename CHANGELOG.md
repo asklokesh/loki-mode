@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.36.2] - 2026-03-19
+
+### Fixed
+- Dashboard not refreshing in Claude Code sessions: `_get_loki_dir()` used relative `.loki/` path which resolved to the dashboard server's CWD (loki-mode install dir), not the project directory where `run.sh` writes state. Now resolves via LOKI_DIR env var -> CWD/.loki -> ~/.loki fallback chain.
+- Dashboard WebSocket was passive (never pushed `.loki/` state). Added `_push_loki_state_loop()` background task that watches `dashboard-state.json` for changes and broadcasts `status_update` messages every 2s when running (30s idle), transforming raw state to StatusResponse-compatible format.
+- Dashboard overview component now connects WebSocket on mount so server-push state updates are received in real-time (supplements existing 5s HTTP polling)
+
 ## [6.36.1] - 2026-03-19
 
 ### Fixed
