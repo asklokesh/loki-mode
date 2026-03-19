@@ -289,14 +289,98 @@ start_time = datetime.now(timezone.utc)
 _dashboard_start_time = time.time()
 
 
+async def _push_loki_state_loop() -> None:
+    """Background loop: push .loki/ state changes to all WebSocket clients.
+
+    Reads dashboard-state.json every 2s when running (30s when idle) and
+    broadcasts a state_update message so clients don't rely solely on polling.
+    """
+    last_mtime: float = 0.0
+    while True:
+        try:
+            if not manager.active_connections:
+                await asyncio.sleep(5)
+                continue
+
+            loki_dir = _get_loki_dir()
+            state_file = loki_dir / "dashboard-state.json"
+
+            if state_file.exists():
+                try:
+                    mtime = state_file.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+
+                # Only broadcast if file changed
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    try:
+                        raw = json.loads(state_file.read_text())
+                        # Transform to StatusResponse-compatible format
+                        agents_list = raw.get("agents", [])
+                        running_agents = len(agents_list) if isinstance(agents_list, list) else 0
+                        tasks = raw.get("tasks", {})
+                        pending = tasks.get("pending", [])
+                        in_prog = tasks.get("inProgress", [])
+                        status_str = raw.get("mode", "autonomous")
+                        if status_str == "paused":
+                            status_str = "paused"
+                        elif status_str in ("stopped", ""):
+                            status_str = "stopped"
+                        else:
+                            status_str = "running"
+
+                        payload = {
+                            "status": status_str,
+                            "phase": raw.get("phase", ""),
+                            "iteration": raw.get("iteration", 0),
+                            "complexity": raw.get("complexity", "standard"),
+                            "mode": raw.get("mode", ""),
+                            "provider": raw.get("provider", "claude"),
+                            "running_agents": running_agents,
+                            "pending_tasks": len(pending) if isinstance(pending, list) else 0,
+                            "current_task": in_prog[0].get("payload", {}).get("action", "") if isinstance(in_prog, list) and in_prog else "",
+                            "version": raw.get("version", ""),
+                        }
+                        await manager.broadcast({
+                            "type": "status_update",
+                            "data": payload,
+                        })
+                    except (json.JSONDecodeError, OSError, KeyError):
+                        pass
+
+            # Poll faster when a session is running
+            pid_file = loki_dir / "loki.pid"
+            is_running = False
+            if pid_file.exists():
+                try:
+                    pid = int(pid_file.read_text().strip())
+                    os.kill(pid, 0)
+                    is_running = True
+                except (ValueError, OSError, ProcessLookupError):
+                    pass
+
+            await asyncio.sleep(2.0 if is_running else 30.0)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            await asyncio.sleep(5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     await init_db()
     _telemetry.send_telemetry("dashboard_start")
+    push_task = asyncio.create_task(_push_loki_state_loop())
     yield
     # Shutdown
+    push_task.cancel()
+    try:
+        await push_task
+    except (asyncio.CancelledError, Exception):
+        pass
     await close_db()
 
 
@@ -1573,8 +1657,29 @@ async def get_audit_summary(days: int = 7):
 # =============================================================================
 
 def _get_loki_dir() -> _Path:
-    """Get LOKI_DIR, refreshing from env on each call for consistency."""
-    return _Path(os.environ.get("LOKI_DIR", ".loki"))
+    """Get LOKI_DIR, refreshing from env on each call for consistency.
+
+    Resolution order:
+    1. LOKI_DIR env var (set by run.sh during active sessions)
+    2. .loki/ in current working directory
+    3. ~/.loki/ as global fallback
+    """
+    env_dir = os.environ.get("LOKI_DIR")
+    if env_dir:
+        return _Path(env_dir)
+
+    # Check CWD first
+    cwd_loki = _Path.cwd() / ".loki"
+    if cwd_loki.is_dir():
+        return cwd_loki
+
+    # Check home directory fallback
+    home_loki = _Path.home() / ".loki"
+    if home_loki.is_dir():
+        return home_loki
+
+    # Default: relative .loki/ (will be created when session starts)
+    return _Path(".loki")
 
 
 _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')

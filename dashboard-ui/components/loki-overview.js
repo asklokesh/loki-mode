@@ -53,6 +53,8 @@ export class LokiOverview extends LokiElement {
     this._setupApi();
     this._loadStatus();
     this._startPolling();
+    // Connect WebSocket for real-time server push (supplements polling)
+    this._api.connect().catch(() => {});
   }
 
   disconnectedCallback() {
