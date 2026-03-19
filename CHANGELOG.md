@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.36.1] - 2026-03-19
+
+### Fixed
+- Session history now shows real status (not "Unknown") for past builds
+- Past builds in session history are clickable and open the PRD/files/logs viewer
+- Remove null byte from CHANGELOG.md that was causing GitHub to render it as binary
+
 ## [6.36.0] - 2026-03-19
 
 ### Fixed

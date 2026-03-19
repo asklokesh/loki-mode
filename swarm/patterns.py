@@ -757,8 +757,12 @@ class ClusterLifecycleHooks:
                     if context:
                         for k, v in context.items():
                             env[f"LOKI_CLUSTER_{k.upper()}"] = str(v)
+                    # Expand env var references in hook command so
+                    # $LOKI_CLUSTER_* placeholders resolve with shell=False
+                    import string
+                    expanded = string.Template(hook).safe_substitute(env)
                     proc = subprocess.run(
-                        shlex.split(hook), shell=False, capture_output=True, text=True,
+                        shlex.split(expanded), shell=False, capture_output=True, text=True,
                         timeout=30, env=env
                     )
                     result["success"] = proc.returncode == 0
