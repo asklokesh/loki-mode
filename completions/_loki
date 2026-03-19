@@ -44,8 +44,11 @@ function _loki {
                 projects)
                     _loki_projects
                     ;;
-                voice)
-                    _loki_voice
+                telemetry)
+                    _loki_telemetry
+                    ;;
+                agent)
+                    _loki_agent
                     ;;
                 status)
                     _arguments \
@@ -121,7 +124,8 @@ function _loki_commands {
         'dogfood:Self-development statistics'
         'projects:Project registry commands'
         'enterprise:Enterprise feature commands'
-        'voice:Voice input commands'
+        'telemetry:OpenTelemetry management'
+        'agent:Agent type dispatch'
         'doctor:Check system prerequisites'
         'onboard:Analyze repo and generate CLAUDE.md'
         'metrics:Session productivity report'
@@ -294,17 +298,29 @@ function _loki_projects {
     _describe -t cmds 'projects subcommand' cmds
 }
 
-function _loki_voice {
+function _loki_telemetry {
     local -a cmds
     cmds=(
-        'status:Voice input status'
-        'listen:Start listening'
-        'dictate:Dictate PRD'
-        'speak:Text-to-speech'
-        'start:Start voice session'
-        'help:Voice help'
+        'status:Show telemetry config'
+        'enable:Enable OTEL'
+        'disable:Disable OTEL for current project'
+        'stop:Permanently opt out across all sessions'
+        'start:Remove persistent opt-out'
+        'help:Telemetry help'
     )
-    _describe -t cmds 'voice subcommand' cmds
+    _describe -t cmds 'telemetry subcommand' cmds
+}
+
+function _loki_agent {
+    local -a cmds
+    cmds=(
+        'list:List agent types'
+        'info:Show agent type details'
+        'run:Run agent with prompt'
+        'start:Start agent in background'
+        'help:Agent help'
+    )
+    _describe -t cmds 'agent subcommand' cmds
 }
 
 function _loki_reset {

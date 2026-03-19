@@ -2662,10 +2662,43 @@ async def pause_session():
     """Pause the current session by creating PAUSE file."""
     if not _control_limiter.check("control"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    pause_file = _get_loki_dir() / "PAUSE"
+
+    loki_dir = _get_loki_dir()
+    pid_file = loki_dir / "loki.pid"
+
+    # Verify loki process is running before attempting pause
+    process_running = False
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)  # Signal 0: check existence without killing
+            process_running = True
+        except (ValueError, OSError, ProcessLookupError):
+            pass
+
+    pause_file = loki_dir / "PAUSE"
     pause_file.parent.mkdir(parents=True, exist_ok=True)
     pause_file.write_text(datetime.now(timezone.utc).isoformat())
-    return {"success": True, "message": "Session paused"}
+
+    if not process_running:
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "message": "Session process is not running; pause signal may have no effect"},
+        )
+
+    # Poll up to 5s to confirm process is still alive with PAUSE file present
+    for _ in range(10):
+        try:
+            os.kill(pid, 0)
+            return {"success": True, "message": "Session paused", "process_verified": True}
+        except OSError:
+            break
+        await asyncio.sleep(0.5)
+
+    return JSONResponse(
+        status_code=503,
+        content={"success": False, "message": "Session process exited unexpectedly after pause signal"},
+    )
 
 
 @app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control"))])
@@ -2673,13 +2706,58 @@ async def resume_session():
     """Resume a paused session by removing PAUSE/STOP files."""
     if not _control_limiter.check("control"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    loki_dir = _get_loki_dir()
+    pid_file = loki_dir / "loki.pid"
+
+    # Verify loki process is running before attempting resume
+    process_running = False
+    pid = 0
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)  # Signal 0: check existence without killing
+            process_running = True
+        except (ValueError, OSError, ProcessLookupError):
+            pass
+
+    if not process_running:
+        # Still remove the files for cleanup, but return 503
+        for fname in ["PAUSE", "STOP"]:
+            fpath = loki_dir / fname
+            try:
+                fpath.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "message": "Session did not respond to resume signal"},
+        )
+
     for fname in ["PAUSE", "STOP"]:
-        fpath = _get_loki_dir() / fname
+        fpath = loki_dir / fname
         try:
             fpath.unlink(missing_ok=True)
         except Exception:
             pass
-    return {"success": True, "message": "Session resumed"}
+
+    # Poll up to 5s to verify the process is still running and acknowledged the resume
+    for _ in range(10):
+        try:
+            os.kill(pid, 0)
+            if not (loki_dir / "PAUSE").exists():
+                return {"success": True, "message": "Session resumed", "process_verified": True}
+        except OSError:
+            return JSONResponse(
+                status_code=503,
+                content={"success": False, "message": "Session did not respond to resume signal"},
+            )
+        await asyncio.sleep(0.5)
+
+    return JSONResponse(
+        status_code=503,
+        content={"success": False, "message": "Session did not respond to resume signal"},
+    )
 
 
 @app.post("/api/control/stop", dependencies=[Depends(auth.require_scope("control"))])

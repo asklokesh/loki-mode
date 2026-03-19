@@ -410,7 +410,7 @@ show_help() {
     echo "  api [cmd]        Dashboard/API server (start|stop|status)"
     echo "  sandbox [cmd]    Docker sandbox (start|stop|status|logs|shell|build)"
     echo "  notify [cmd]     Send notifications (test|slack|discord|webhook|status)"
-    echo "  voice [cmd]      Voice input for PRD creation (status|listen|dictate|speak|start)"
+    echo "  telemetry [cmd]  OpenTelemetry management (status|enable|disable|stop|start)"
     echo "  import           Import GitHub issues as tasks"
     echo "  github [cmd]     GitHub integration (sync|export|pr|status)"
     echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
@@ -9744,7 +9744,8 @@ main() {
             cmd_enterprise "$@"
             ;;
         voice)
-            cmd_voice "$@"
+            echo "Voice mode is planned for a future release. Track progress at github.com/asklokesh/loki-mode/issues/85"
+            exit 0
             ;;
         secrets)
             cmd_secrets "$@"
@@ -13176,95 +13177,9 @@ for check, passed in checks.items():
 
 # Voice input commands
 cmd_voice() {
-    local subcommand="${1:-status}"
-    local VOICE_SCRIPT="$SKILL_DIR/autonomy/voice.sh"
-
-    # Check fallback locations for voice script
-    if [ ! -f "$VOICE_SCRIPT" ]; then
-        # Try relative to loki CLI location
-        local loki_dir
-        loki_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        VOICE_SCRIPT="$loki_dir/voice.sh"
-    fi
-
-    if [ ! -f "$VOICE_SCRIPT" ]; then
-        echo -e "${RED}Error: Voice module not found${NC}"
-        echo "Expected at: $SKILL_DIR/autonomy/voice.sh"
-        echo ""
-        echo "Voice input requires the voice.sh module."
-        echo "This feature may not be available in all installations."
-        exit 1
-    fi
-
-    case "$subcommand" in
-        status)
-            "$VOICE_SCRIPT" status
-            ;;
-        listen)
-            echo -e "${BOLD}Starting voice input...${NC}"
-            local text
-            text=$("$VOICE_SCRIPT" listen)
-            if [ -n "$text" ]; then
-                echo ""
-                echo -e "${GREEN}Transcribed text:${NC}"
-                echo "$text"
-            fi
-            ;;
-        dictate)
-            local output="${2:-prd-voice.md}"
-            echo -e "${BOLD}Starting guided PRD dictation...${NC}"
-            echo ""
-            "$VOICE_SCRIPT" dictate "$output"
-            if [ -f "$output" ]; then
-                echo ""
-                echo -e "${GREEN}PRD created: $output${NC}"
-                echo ""
-                echo "Start Loki Mode with:"
-                echo "  loki start $output"
-            fi
-            ;;
-        speak)
-            shift
-            if [ $# -eq 0 ]; then
-                echo -e "${RED}Usage: loki voice speak MESSAGE${NC}"
-                exit 1
-            fi
-            "$VOICE_SCRIPT" speak "$*"
-            ;;
-        start)
-            # Dictate PRD and start Loki Mode
-            local prd_file="${2:-prd-voice-$(date +%Y%m%d%H%M%S).md}"
-            echo -e "${BOLD}Voice-activated PRD creation...${NC}"
-            "$VOICE_SCRIPT" dictate "$prd_file"
-            if [ -f "$prd_file" ]; then
-                echo ""
-                echo -e "${GREEN}PRD created. Starting Loki Mode...${NC}"
-                cmd_start "$prd_file"
-            fi
-            ;;
-        --help|-h|help)
-            echo -e "${BOLD}loki voice${NC} - Voice input for PRD creation"
-            echo ""
-            echo "Usage: loki voice <command> [options]"
-            echo ""
-            echo "Commands:"
-            echo "  status           Check voice input capabilities"
-            echo "  listen           Listen and transcribe voice input"
-            echo "  dictate [FILE]   Guided PRD dictation (default: prd-voice.md)"
-            echo "  speak MESSAGE    Text-to-speech output"
-            echo "  start [FILE]     Dictate PRD and start Loki Mode immediately"
-            echo ""
-            echo "Requirements:"
-            echo "  macOS: Enable Dictation in System Settings > Keyboard"
-            echo "  Or: Set OPENAI_API_KEY for Whisper API transcription"
-            echo "  Or: pip install openai-whisper for local transcription"
-            ;;
-        *)
-            echo -e "${RED}Unknown voice command: $subcommand${NC}"
-            echo "Run 'loki voice help' for usage."
-            exit 1
-            ;;
-    esac
+    # Voice mode is planned for a future release (#85)
+    echo "Voice mode is planned for a future release. Track progress at github.com/asklokesh/loki-mode/issues/85"
+    return 0
 }
 
 # Enterprise features (optional - requires env vars)
@@ -13752,9 +13667,22 @@ cmd_telemetry() {
             echo -e "${BOLD}Telemetry Status${NC}"
             echo ""
 
+            # Check persistent opt-out (~/.loki/config)
+            local global_config="${HOME}/.loki/config"
+            local persistently_disabled=false
+            if [ -f "$global_config" ] && grep -q "^TELEMETRY_DISABLED=true" "$global_config" 2>/dev/null; then
+                persistently_disabled=true
+            fi
+
+            if [ "$persistently_disabled" = true ]; then
+                echo -e "  Opt-out:   ${RED}disabled persistently${NC} (loki telemetry start to re-enable)"
+            fi
+
             local endpoint="${LOKI_OTEL_ENDPOINT:-}"
-            if [ -n "$endpoint" ]; then
+            if [ -n "$endpoint" ] && [ "$persistently_disabled" = false ]; then
                 echo -e "  Endpoint:  ${GREEN}$endpoint${NC}"
+            elif [ "$persistently_disabled" = true ]; then
+                echo -e "  Endpoint:  ${YELLOW}ignored (opted out)${NC}"
             else
                 echo -e "  Endpoint:  ${YELLOW}not configured${NC}"
             fi
@@ -13787,6 +13715,15 @@ try {
 
         enable)
             local endpoint="${1:-http://localhost:4318}"
+
+            # Check persistent opt-out
+            local global_config="${HOME}/.loki/config"
+            if [ -f "$global_config" ] && grep -q "^TELEMETRY_DISABLED=true" "$global_config" 2>/dev/null; then
+                echo -e "${YELLOW}Telemetry is persistently disabled.${NC}"
+                echo "Run 'loki telemetry start' first to re-enable."
+                return 1
+            fi
+
             echo -e "${BOLD}Enabling telemetry${NC}"
 
             # Save to config
@@ -13830,15 +13767,49 @@ with open('$config_file', 'w') as f:
             echo "  Unset LOKI_OTEL_ENDPOINT in your shell for immediate effect."
             ;;
 
+        stop)
+            # Persistent opt-out across all sessions
+            local global_config="${HOME}/.loki/config"
+            mkdir -p "${HOME}/.loki"
+
+            # Remove existing TELEMETRY_DISABLED line if present, then add
+            if [ -f "$global_config" ]; then
+                grep -v "^TELEMETRY_DISABLED=" "$global_config" > "${global_config}.tmp" 2>/dev/null || true
+                mv "${global_config}.tmp" "$global_config"
+            fi
+            echo "TELEMETRY_DISABLED=true" >> "$global_config"
+
+            echo -e "${BOLD}Telemetry permanently disabled${NC}"
+            echo ""
+            echo "  Opt-out saved to: $global_config"
+            echo "  This persists across all sessions and new runs."
+            echo "  Run 'loki telemetry start' to re-enable."
+            ;;
+
+        start)
+            # Remove persistent opt-out
+            local global_config="${HOME}/.loki/config"
+            if [ -f "$global_config" ]; then
+                grep -v "^TELEMETRY_DISABLED=" "$global_config" > "${global_config}.tmp" 2>/dev/null || true
+                mv "${global_config}.tmp" "$global_config"
+            fi
+
+            echo -e "${BOLD}Telemetry opt-out removed${NC}"
+            echo ""
+            echo "  Telemetry can now be enabled with 'loki telemetry enable [endpoint]'."
+            ;;
+
         --help|-h|help)
-            echo -e "${BOLD}loki telemetry${NC} - OpenTelemetry management (v6.7.0)"
+            echo -e "${BOLD}loki telemetry${NC} - OpenTelemetry management"
             echo ""
             echo "Usage: loki telemetry <command>"
             echo ""
             echo "Commands:"
             echo "  status              Show current telemetry config"
             echo "  enable [endpoint]   Enable OTEL (default: http://localhost:4318)"
-            echo "  disable             Disable OTEL"
+            echo "  disable             Disable OTEL for current project"
+            echo "  stop                Permanently opt out of telemetry across all sessions"
+            echo "  start               Remove persistent opt-out, re-enable telemetry"
             echo ""
             ;;
         *)
@@ -14648,19 +14619,19 @@ cmd_agent() {
             local filter_swarm="${1:-}"
             echo -e "${BOLD}Agent Types${NC}"
             echo ""
-            python3 << PYEOF
-import json, sys
+            TYPES_FILE="$types_file" FILTER_SWARM="$filter_swarm" FILTER_SWARM2="${2:-}" python3 << 'PYEOF'
+import json, sys, os
 
-with open("$types_file") as f:
+with open(os.environ["TYPES_FILE"]) as f:
     agents = json.load(f)
 
-filter_swarm = "$filter_swarm"
+filter_swarm = os.environ.get("FILTER_SWARM", "")
 if filter_swarm and filter_swarm.startswith("--swarm"):
     # Handle --swarm=X or --swarm X
     if "=" in filter_swarm:
         filter_swarm = filter_swarm.split("=")[1]
     else:
-        filter_swarm = "${2:-}"
+        filter_swarm = os.environ.get("FILTER_SWARM2", "")
 
 swarms = {}
 for a in agents:
@@ -14690,13 +14661,13 @@ PYEOF
                 echo -e "${RED}Usage: loki agent info <type>${NC}"
                 return 1
             fi
-            python3 << PYEOF
-import json, sys
+            TYPES_FILE="$types_file" AGENT_TYPE="$agent_type" python3 << 'PYEOF'
+import json, sys, os
 
-with open("$types_file") as f:
+with open(os.environ["TYPES_FILE"]) as f:
     agents = json.load(f)
 
-target = "$agent_type"
+target = os.environ["AGENT_TYPE"]
 found = None
 for a in agents:
     if a["type"] == target:

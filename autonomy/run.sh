@@ -602,6 +602,12 @@ if [ -f "${SCRIPT_DIR}/playwright-verify.sh" ]; then
 fi
 
 # Anonymous usage telemetry (opt-out: LOKI_TELEMETRY_DISABLED=true or DO_NOT_TRACK=1)
+# Also check persistent opt-out from ~/.loki/config (#77)
+if [ -f "${HOME}/.loki/config" ] && grep -q "^TELEMETRY_DISABLED=true" "${HOME}/.loki/config" 2>/dev/null; then
+    LOKI_TELEMETRY_DISABLED=true
+    export LOKI_TELEMETRY_DISABLED
+    unset LOKI_OTEL_ENDPOINT
+fi
 TELEMETRY_SCRIPT="$SCRIPT_DIR/telemetry.sh"
 if [ -f "$TELEMETRY_SCRIPT" ]; then
     # shellcheck source=telemetry.sh

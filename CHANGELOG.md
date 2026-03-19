@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.37.7] - 2026-03-19
+
+### Fixed
+- Dashboard: pause/resume API now verifies loki process is alive via PID file before signaling; response includes `process_verified` field (#94)
+- Dashboard: task list status normalization consistent across all three sources (state.json, queue/*.json, queue/*.md); `inProgress` always maps to `in_progress` (#89)
+- CLI: closed stale issues for features already implemented: heredoc types_file via env var (#64), telemetry persistent opt-out via ~/.loki/config (#77), zsh completions via completions/_loki (#80), cmd_voice delegates to voice.sh module (#85)
+
 ## [6.37.6] - 2026-03-19
 
 ### Fixed
