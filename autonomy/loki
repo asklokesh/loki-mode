@@ -2635,6 +2635,21 @@ cmd_dashboard_start() {
     echo "$host" > "${DASHBOARD_PID_DIR}/host"
     echo "$url_scheme" > "${DASHBOARD_PID_DIR}/scheme"
 
+    # Wait for PID file to be written (up to 10 seconds)
+    # Fixes race condition where PID file may not exist yet when checked
+    local pid_wait_retries=20
+    local pid_wait_interval=0.5
+    while [[ $pid_wait_retries -gt 0 ]]; do
+        if [[ -f "$DASHBOARD_PID_FILE" ]]; then
+            break
+        fi
+        sleep "$pid_wait_interval"
+        pid_wait_retries=$((pid_wait_retries - 1))
+    done
+    if [[ ! -f "$DASHBOARD_PID_FILE" ]]; then
+        echo -e "${YELLOW}Warning: Dashboard PID file not written within timeout${NC}"
+    fi
+
     # Wait a moment and check if process is still running
     sleep 1
 

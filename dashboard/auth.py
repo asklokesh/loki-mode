@@ -468,16 +468,68 @@ def validate_oidc_token(token_str: str) -> Optional[dict]:
     - Audience matches OIDC_AUDIENCE or OIDC_CLIENT_ID
     - Token is not expired
 
-    SECURITY WARNING: Cryptographic signature verification is NOT performed
-    unless PyJWT is installed. This implementation only validates claims.
-    An attacker can forge JWTs unless LOKI_OIDC_SKIP_SIGNATURE_VERIFY is
-    explicitly set to 'true' (which is INSECURE and only for local testing).
+    SECURITY CRITICAL: Without PyJWT, JWT signatures are NOT cryptographically
+    verified. An attacker can forge tokens with arbitrary claims. For any
+    production deployment, you MUST install PyJWT + cryptography so that
+    this function verifies the RS256/RS384/RS512 signature against the
+    provider's JWKS endpoint. Without signature verification, OIDC
+    authentication provides ZERO security.
 
-    For production: Install PyJWT + cryptography for proper RSA/HMAC
-    signature verification.
+    For production: pip install PyJWT cryptography
     """
     if not OIDC_ENABLED:
         return None
+
+    import logging as _logging
+    import sys
+    _auth_logger = _logging.getLogger("loki.auth")
+
+    # -- Attempt PyJWT-based cryptographic verification first --
+    # This is the ONLY secure path. Without this, tokens are NOT verified.
+    try:
+        import jwt as _pyjwt
+        from jwt import PyJWKClient
+
+        jwks_config = _get_oidc_config()
+        jwks_uri = jwks_config.get("jwks_uri")
+        if not jwks_uri:
+            _auth_logger.error("OIDC discovery document missing jwks_uri -- cannot verify token")
+            return None
+
+        jwks_client = PyJWKClient(jwks_uri)
+        signing_key = jwks_client.get_signing_key_from_jwt(token_str)
+
+        expected_aud = OIDC_AUDIENCE or OIDC_CLIENT_ID
+        decoded = _pyjwt.decode(
+            token_str,
+            signing_key.key,
+            algorithms=["RS256", "RS384", "RS512"],
+            audience=expected_aud,
+            issuer=OIDC_ISSUER,
+        )
+
+        return {
+            "id": decoded.get("sub", ""),
+            "name": decoded.get("name", decoded.get("email", decoded.get("sub", ""))),
+            "email": decoded.get("email", ""),
+            "scopes": ["*"],  # OIDC users get full access
+            "auth_method": "oidc",
+            "issuer": decoded.get("iss"),
+        }
+    except ImportError:
+        # PyJWT not installed -- fall through to claims-only path with loud warning
+        _warning_msg = (
+            "WARNING: OIDC JWT signatures are NOT cryptographically verified. "
+            "Install PyJWT with 'pip install PyJWT cryptography' for production use."
+        )
+        _auth_logger.warning(_warning_msg)
+        # Also print to stderr so operators notice even without log config
+        print(_warning_msg, file=sys.stderr)
+    except Exception as exc:
+        _auth_logger.error("PyJWT signature verification failed: %s", exc)
+        return None
+
+    # -- Fallback: claims-only validation (INSECURE without PyJWT) --
 
     try:
         parts = token_str.split(".")
@@ -487,16 +539,14 @@ def validate_oidc_token(token_str: str) -> Optional[dict]:
         # Basic sanity check: signature part must not be empty
         header_b64, payload_b64, signature_b64 = parts
         if not signature_b64 or len(signature_b64) < 10:
-            import logging as _logging
-            _logging.getLogger("loki.auth").error(
+            _auth_logger.error(
                 "OIDC token rejected: signature part is missing or too short"
             )
             return None
 
         # CRITICAL: Check if signature verification is explicitly skipped
         if not OIDC_SKIP_SIGNATURE_VERIFY:
-            import logging as _logging
-            _logging.getLogger("loki.auth").critical(
+            _auth_logger.critical(
                 "OIDC token received but signature verification is NOT implemented. "
                 "Set LOKI_OIDC_SKIP_SIGNATURE_VERIFY=true to explicitly allow "
                 "unverified tokens (INSECURE - local testing only), or install "
