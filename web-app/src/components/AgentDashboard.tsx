@@ -15,6 +15,7 @@ const AGENT_TYPE_COLORS: Record<string, string> = {
 };
 
 function getAgentColor(type: string): string {
+  if (!type) return AGENT_TYPE_COLORS.default;
   const lower = type.toLowerCase();
   for (const [key, value] of Object.entries(AGENT_TYPE_COLORS)) {
     if (lower.includes(key)) return value;

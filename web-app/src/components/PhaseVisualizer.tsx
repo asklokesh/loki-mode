@@ -13,6 +13,7 @@ const PHASES: { key: RARVPhase; label: string; description: string }[] = [
 ];
 
 function mapPhaseString(phase: string): RARVPhase {
+  if (!phase) return 'reason';
   const lower = phase.toLowerCase();
   if (lower.includes('reason') || lower.includes('plan')) return 'reason';
   if (lower.includes('act') || lower.includes('implement') || lower.includes('code')) return 'act';
