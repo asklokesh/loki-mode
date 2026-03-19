@@ -5,27 +5,25 @@ interface StatusOverviewProps {
 }
 
 export function StatusOverview({ status }: StatusOverviewProps) {
-  if (!status) return null;
-
   const stats = [
     {
       label: 'Iteration',
-      value: status.iteration.toString(),
+      value: status ? status.iteration.toString() : '--',
       color: 'text-primary',
     },
     {
       label: 'Agents',
-      value: status.running_agents.toString(),
-      color: status.running_agents > 0 ? 'text-success' : 'text-slate',
+      value: status ? status.running_agents.toString() : '--',
+      color: status && status.running_agents > 0 ? 'text-success' : 'text-slate',
     },
     {
       label: 'Pending',
-      value: status.pending_tasks.toString(),
-      color: status.pending_tasks > 0 ? 'text-warning' : 'text-slate',
+      value: status ? status.pending_tasks.toString() : '--',
+      color: status && status.pending_tasks > 0 ? 'text-warning' : 'text-slate',
     },
     {
       label: 'Provider',
-      value: status.provider || '--',
+      value: status?.provider || '--',
       color: 'text-accent-product',
     },
   ];

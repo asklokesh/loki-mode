@@ -69,6 +69,24 @@ class SessionState:
         self.log_lines: list[str] = []
         self.ws_clients: set[WebSocket] = set()
         self._reader_task: Optional[asyncio.Task] = None
+        self._lock = asyncio.Lock()
+
+    async def cleanup(self) -> None:
+        """Cancel reader task and close process pipes."""
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            try:
+                await asyncio.wait_for(self._reader_task, timeout=3)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        self._reader_task = None
+
+        if self.process:
+            try:
+                if self.process.stdout:
+                    self.process.stdout.close()
+            except Exception:
+                pass
 
     def reset(self) -> None:
         self.process = None
@@ -97,6 +115,9 @@ class StartRequest(BaseModel):
 class StopResponse(BaseModel):
     stopped: bool
     message: str
+
+
+_MAX_PRD_BYTES = 1_048_576  # 1 MB
 
 
 class PlanRequest(BaseModel):
@@ -143,7 +164,7 @@ async def _broadcast(msg: dict) -> None:
     """Send a JSON message to all connected WebSocket clients."""
     data = json.dumps(msg)
     dead: list[WebSocket] = []
-    for ws in session.ws_clients:
+    for ws in list(session.ws_clients):
         try:
             await ws.send_text(data)
         except Exception:
@@ -158,7 +179,7 @@ async def _read_process_output() -> None:
     if proc is None or proc.stdout is None:
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         while session.running and proc.poll() is None:
@@ -223,72 +244,78 @@ async def start_session(req: StartRequest) -> JSONResponse:
     """Start a new loki session with the given PRD."""
     if len(req.prd.encode()) > _MAX_PRD_BYTES:
         return JSONResponse(status_code=400, content={"error": "PRD exceeds 1 MB limit"})
-    if session.running:
-        return JSONResponse(
-            status_code=409,
-            content={"error": "A session is already running. Stop it first."},
-        )
 
-    # Determine project directory
-    project_dir = req.projectDir
-    if not project_dir:
-        project_dir = os.path.join(Path.home(), "purple-lab-projects", f"project-{int(time.time())}")
-    os.makedirs(project_dir, exist_ok=True)
+    async with session._lock:
+        if session.running:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "A session is already running. Stop it first."},
+            )
 
-    # Write PRD to a temp file in the project dir
-    prd_path = os.path.join(project_dir, "PRD.md")
-    with open(prd_path, "w") as f:
-        f.write(req.prd)
+        # Clean up any stale reader task from previous session
+        await session.cleanup()
 
-    # Build the loki start command
-    if req.mode == "quick":
-        # Extract first non-blank line as the task description
-        first_line = next((l.strip() for l in req.prd.splitlines() if l.strip()), req.prd[:200])
-        cmd = [
-            str(LOKI_CLI),
-            "quick",
-            first_line,
-        ]
-    else:
-        cmd = [
-            str(LOKI_CLI),
-            "start",
-            "--provider", req.provider,
-            prd_path,
-        ]
+        # Determine project directory
+        project_dir = req.projectDir
+        if not project_dir:
+            project_dir = os.path.join(Path.home(), "purple-lab-projects", f"project-{int(time.time())}")
+        os.makedirs(project_dir, exist_ok=True)
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            cwd=project_dir,
-            env={**os.environ, "LOKI_DIR": os.path.join(project_dir, ".loki")},
-        )
-    except FileNotFoundError:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"loki CLI not found at {LOKI_CLI}"},
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to start session: {e}"},
-        )
+        # Write PRD to a temp file in the project dir
+        prd_path = os.path.join(project_dir, "PRD.md")
+        with open(prd_path, "w") as f:
+            f.write(req.prd)
 
-    # Update session state
-    session.reset()
-    session.process = proc
-    session.running = True
-    session.provider = req.provider
-    session.prd_text = req.prd
-    session.project_dir = project_dir
-    session.start_time = time.time()
+        # Build the loki start command
+        if req.mode == "quick":
+            # Extract first non-blank line as the task description
+            first_line = next((l.strip() for l in req.prd.splitlines() if l.strip()), req.prd[:200])
+            cmd = [
+                str(LOKI_CLI),
+                "quick",
+                first_line,
+            ]
+        else:
+            cmd = [
+                str(LOKI_CLI),
+                "start",
+                "--provider", req.provider,
+                prd_path,
+            ]
 
-    # Start background output reader
-    session._reader_task = asyncio.create_task(_read_process_output())
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                cwd=project_dir,
+                env={**os.environ, "LOKI_DIR": os.path.join(project_dir, ".loki")},
+                start_new_session=True,  # create new process group for clean kill
+            )
+        except FileNotFoundError:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"loki CLI not found at {LOKI_CLI}"},
+            )
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to start session: {e}"},
+            )
+
+        # Update session state
+        session.reset()
+        session.process = proc
+        session.running = True
+        session.provider = req.provider
+        session.prd_text = req.prd
+        session.project_dir = project_dir
+        session.start_time = time.time()
+
+        # Start background output reader
+        session._reader_task = asyncio.create_task(_read_process_output())
 
     await _broadcast({"type": "session_start", "data": {
         "provider": req.provider,
@@ -307,24 +334,48 @@ async def start_session(req: StartRequest) -> JSONResponse:
 @app.post("/api/session/stop")
 async def stop_session() -> JSONResponse:
     """Stop the current loki session."""
-    if not session.running or session.process is None:
-        return JSONResponse(content={"stopped": False, "message": "No session running"})
+    async with session._lock:
+        if not session.running or session.process is None:
+            return JSONResponse(content={"stopped": False, "message": "No session running"})
 
-    try:
-        # Send SIGTERM, then SIGKILL after 5s
-        session.process.terminate()
+        proc = session.process
+
+        # 1. Mark stopped first so reader task loop exits
+        session.running = False
+
+        # 2. Cancel reader task before killing process
+        await session.cleanup()
+
+        # 3. Kill the process group (catches child processes too)
         try:
-            session.process.wait(timeout=5)
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            # Fallback: kill the process directly
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        try:
+            proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            session.process.kill()
-            session.process.wait(timeout=3)
-    except Exception:
-        pass
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                pass
 
-    session.running = False
-    await _broadcast({"type": "session_end", "data": {"message": "Session stopped by user"}})
+        await _broadcast({"type": "session_end", "data": {"message": "Session stopped by user"}})
 
-    return JSONResponse(content={"stopped": True, "message": "Session stopped"})
+        return JSONResponse(content={"stopped": True, "message": "Session stopped"})
 
 
 @app.get("/api/session/status")
@@ -607,9 +658,6 @@ def _run_loki_cmd(args: list, cwd: Optional[str] = None, timeout: int = 60) -> t
         return (1, str(e))
 
 
-_MAX_PRD_BYTES = 1_048_576  # 1 MB
-
-
 @app.post("/api/session/plan")
 async def plan_session(req: PlanRequest) -> JSONResponse:
     """Run loki plan dry-run analysis and return structured result."""
@@ -620,7 +668,7 @@ async def plan_session(req: PlanRequest) -> JSONResponse:
         f.write(req.prd)
         prd_tmp = f.name
     try:
-        rc, output = await asyncio.get_event_loop().run_in_executor(
+        rc, output = await asyncio.get_running_loop().run_in_executor(
             None, lambda: _run_loki_cmd(["plan", prd_tmp], timeout=90)
         )
     finally:
@@ -671,7 +719,7 @@ async def plan_session(req: PlanRequest) -> JSONResponse:
 async def generate_report(req: ReportRequest) -> JSONResponse:
     """Run loki report and return content."""
     fmt = req.format if req.format in ("html", "markdown") else "markdown"
-    rc, output = await asyncio.get_event_loop().run_in_executor(
+    rc, output = await asyncio.get_running_loop().run_in_executor(
         None, lambda: _run_loki_cmd(["report", "--format", fmt], timeout=60)
     )
     return JSONResponse(content={
@@ -684,7 +732,7 @@ async def generate_report(req: ReportRequest) -> JSONResponse:
 @app.post("/api/session/share")
 async def share_session() -> JSONResponse:
     """Run loki share and return Gist URL."""
-    rc, output = await asyncio.get_event_loop().run_in_executor(
+    rc, output = await asyncio.get_running_loop().run_in_executor(
         None, lambda: _run_loki_cmd(["share"], timeout=60)
     )
     # Try to extract URL from output
@@ -748,7 +796,7 @@ async def set_provider(req: ProviderSetRequest) -> JSONResponse:
 @app.get("/api/session/metrics")
 async def get_metrics() -> JSONResponse:
     """Run loki metrics --json and return parsed output."""
-    rc, output = await asyncio.get_event_loop().run_in_executor(
+    rc, output = await asyncio.get_running_loop().run_in_executor(
         None, lambda: _run_loki_cmd(["metrics", "--json"], timeout=30)
     )
     # Try JSON parse
@@ -852,7 +900,7 @@ async def onboard_session(req: OnboardRequest) -> JSONResponse:
     if not target.is_dir():
         return JSONResponse(status_code=400, content={"error": "Path must be a directory"})
 
-    rc, output = await asyncio.get_event_loop().run_in_executor(
+    rc, output = await asyncio.get_running_loop().run_in_executor(
         None, lambda: _run_loki_cmd(["onboard", str(target)], cwd=str(target), timeout=120)
     )
     # Try to read generated CLAUDE.md
@@ -868,6 +916,17 @@ async def onboard_session(req: OnboardRequest) -> JSONResponse:
         "claude_md": claude_content,
         "returncode": rc,
     })
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health_check() -> JSONResponse:
+    """Health check for load balancers and orchestrators."""
+    return JSONResponse(content={"status": "ok", "service": "purple-lab"})
 
 
 # ---------------------------------------------------------------------------
@@ -1011,6 +1070,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         push_task.cancel()
+        try:
+            await push_task
+        except (asyncio.CancelledError, Exception):
+            pass
         session.ws_clients.discard(ws)
 
 

@@ -25,10 +25,8 @@ function getModelTier(phase: string): string {
 }
 
 export function ControlBar({ status, prdSummary, onStop, onPause, onResume, isPaused }: ControlBarProps) {
-  if (!status) return null;
-
-  const tier = getModelTier(status.phase || '');
-  const paused = isPaused ?? status.paused ?? false;
+  const tier = status ? getModelTier(status.phase || '') : '--';
+  const paused = isPaused ?? status?.paused ?? false;
 
   return (
     <div className="glass px-5 py-3 flex items-center gap-6 text-sm">
@@ -36,7 +34,7 @@ export function ControlBar({ status, prdSummary, onStop, onPause, onResume, isPa
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate uppercase tracking-wider font-medium">Phase</span>
         <span className="font-mono font-semibold text-charcoal">
-          {status.phase || 'idle'}
+          {status?.phase || 'idle'}
         </span>
       </div>
 
@@ -46,10 +44,10 @@ export function ControlBar({ status, prdSummary, onStop, onPause, onResume, isPa
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate uppercase tracking-wider font-medium">Complexity</span>
         <span className={`font-mono font-semibold ${
-          status.complexity === 'complex' ? 'text-warning' :
-          status.complexity === 'simple' ? 'text-success' : 'text-charcoal'
+          status?.complexity === 'complex' ? 'text-warning' :
+          status?.complexity === 'simple' ? 'text-success' : 'text-charcoal'
         }`}>
-          {status.complexity || 'standard'}
+          {status?.complexity || 'standard'}
         </span>
       </div>
 
@@ -73,15 +71,15 @@ export function ControlBar({ status, prdSummary, onStop, onPause, onResume, isPa
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate uppercase tracking-wider font-medium">Tasks</span>
         <span className="font-mono text-charcoal">
-          {status.current_task ? (
+          {status?.current_task ? (
             <span className="text-xs">{status.current_task}</span>
           ) : (
             <span className="text-slate">--</span>
           )}
         </span>
-        {status.pending_tasks > 0 && (
+        {(status?.pending_tasks ?? 0) > 0 && (
           <span className="text-xs text-primary-wash font-mono">
-            +{status.pending_tasks} pending
+            +{status?.pending_tasks} pending
           </span>
         )}
       </div>
@@ -102,9 +100,9 @@ export function ControlBar({ status, prdSummary, onStop, onPause, onResume, isPa
       <div className="flex-1" />
 
       {/* Uptime */}
-      {status.uptime > 0 && (
+      {(status?.uptime ?? 0) > 0 && (
         <span className="font-mono text-xs text-slate">
-          {formatUptime(status.uptime)}
+          {formatUptime(status?.uptime ?? 0)}
         </span>
       )}
 

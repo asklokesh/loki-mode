@@ -44,11 +44,11 @@ export default function App() {
 
   const { connected, subscribe } = useWebSocket(handleStateUpdate);
 
-  // Fallback HTTP poll for status (30s) -- keeps UI alive if WebSocket is down
+  // Fallback HTTP poll for status (30s) -- only when WebSocket is disconnected
   const fetchStatus = useCallback(() => api.getStatus(), []);
-  const { data: httpStatus } = usePolling(fetchStatus, 30000);
+  const { data: httpStatus } = usePolling(fetchStatus, 30000, !connected);
 
-  // Sync isRunning and status from HTTP fallback when WebSocket has no data yet
+  // Sync isRunning and status from HTTP fallback when WebSocket has no data
   useEffect(() => {
     if (wsStatus === null && httpStatus !== null) {
       setIsRunning(httpStatus.running ?? false);
@@ -95,12 +95,21 @@ export default function App() {
 
   const handleStopBuild = useCallback(async () => {
     try {
-      await api.stopSession();
+      const result = await api.stopSession();
+      if (result.stopped) {
+        setIsRunning(false);
+        setIsPaused(false);
+        setCurrentPrd(null);
+        // Clear WS state so stale data doesn't linger
+        setWsStatus(null);
+        setWsAgents(null);
+        setWsLogs(null);
+      }
+    } catch {
+      // Force UI to stopped state even on error -- process likely died
       setIsRunning(false);
       setIsPaused(false);
       setCurrentPrd(null);
-    } catch {
-      // ignore stop errors
     }
   }, []);
 

@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.36.0] - 2026-03-19
+
+### Fixed
+- CRITICAL: Stop session now kills the entire process group (catches loki child processes), cancels the reader task, and closes stdout pipes -- previously only killed the parent process leaving orphaned children, leaked file descriptors, and accumulated background tasks across start/stop cycles
+- CRITICAL: Race condition on concurrent start requests -- session state mutations now protected by asyncio.Lock preventing double-spawned loki processes
+- CRITICAL: Replaced deprecated `asyncio.get_event_loop()` with `asyncio.get_running_loop()` across 6 call sites (Python 3.12+ compatibility)
+- CRITICAL: UI screen flashing/blank during state transitions -- HTTP status poll now only runs when WebSocket is disconnected, eliminating stale data that caused `isRunning` to flip and unmount/remount the entire layout
+- HIGH: `SessionState.reset()` did not cancel the reader task -- tasks accumulated across start/stop cycles causing memory leaks and open file descriptor exhaustion
+- HIGH: `_broadcast()` iterated over mutable `ws_clients` set during send -- concurrent WebSocket disconnects could cause RuntimeError; now iterates over a copy
+- HIGH: Stop handler in frontend silently swallowed all errors and unconditionally set `isRunning=false` -- now checks backend response and clears stale WebSocket state on stop
+- HIGH: `StatusOverview` and `ControlBar` components returned `null` when status was null during transitions -- caused entire running layout to briefly unmount showing blank screen; now render placeholder values
+- HIGH: WebSocket push_task not properly awaited on cancellation -- could leave tasks in undefined state; now awaited with CancelledError handling
+- Subprocess now spawned with `start_new_session=True` for clean process group kill on stop
+
+### Added
+- `/health` endpoint for load balancer and orchestrator health checks
+- WebSocket disconnect indicator already visible in header (verified working)
+
 ## [6.35.1] - 2026-03-19
 
 ### Fixed
