@@ -94,8 +94,8 @@ class Project(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     prd_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active")
-    tenant_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True
+    tenant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -105,7 +105,7 @@ class Project(Base):
     )
 
     # Relationships
-    tenant: Mapped[Optional["Tenant"]] = relationship(
+    tenant: Mapped["Tenant"] = relationship(
         "Tenant", back_populates="projects"
     )
     tasks: Mapped[list["Task"]] = relationship(

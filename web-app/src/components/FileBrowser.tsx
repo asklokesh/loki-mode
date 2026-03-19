@@ -27,6 +27,8 @@ function formatSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+const LAZY_CHUNK_SIZE = 100;
+
 function TreeNode({
   node,
   depth,
@@ -39,8 +41,11 @@ function TreeNode({
   selectedPath: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(LAZY_CHUNK_SIZE);
   const isDir = node.type === 'directory';
   const isSelected = node.path === selectedPath;
+  const children = isDir && expanded ? node.children ?? [] : [];
+  const hasMore = children.length > visibleCount;
 
   return (
     <div>
@@ -53,6 +58,7 @@ function TreeNode({
         onClick={() => {
           if (isDir) {
             setExpanded(!expanded);
+            if (expanded) setVisibleCount(LAZY_CHUNK_SIZE);
           } else {
             onSelectFile(node.path);
           }
@@ -74,9 +80,9 @@ function TreeNode({
           </span>
         )}
       </button>
-      {isDir && expanded && node.children && node.children.length > 0 && (
+      {children.length > 0 && (
         <div>
-          {node.children.map((child) => (
+          {children.slice(0, visibleCount).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
@@ -85,6 +91,16 @@ function TreeNode({
               selectedPath={selectedPath}
             />
           ))}
+          {hasMore && (
+            <button
+              type="button"
+              className="w-full text-left text-xs text-primary hover:text-primary/80 py-1 transition-colors"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}
+              onClick={() => setVisibleCount((c) => c + LAZY_CHUNK_SIZE)}
+            >
+              Show more ({children.length - visibleCount} remaining)
+            </button>
+          )}
         </div>
       )}
     </div>

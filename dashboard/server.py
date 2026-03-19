@@ -2854,7 +2854,7 @@ def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> 
     pricing = pricing_table.get(model.lower(), pricing_table.get("sonnet", {}))
     input_cost = (input_tokens / 1_000_000) * pricing.get("input", 3.00)
     output_cost = (output_tokens / 1_000_000) * pricing.get("output", 15.00)
-    return round(input_cost + output_cost, 4)
+    return round(input_cost + output_cost, 6)
 
 
 @app.get("/api/cost")
@@ -2947,20 +2947,20 @@ async def get_cost():
     return {
         "total_input_tokens": total_input,
         "total_output_tokens": total_output,
-        "estimated_cost_usd": round(estimated_cost, 4),
+        "estimated_cost_usd": round(estimated_cost, 6),
         "by_phase": {k: {
             "input_tokens": v["input_tokens"],
             "output_tokens": v["output_tokens"],
-            "cost_usd": round(v["cost_usd"], 4),
+            "cost_usd": round(v["cost_usd"], 6),
         } for k, v in by_phase.items()},
         "by_model": {k: {
             "input_tokens": v["input_tokens"],
             "output_tokens": v["output_tokens"],
-            "cost_usd": round(v["cost_usd"], 4),
+            "cost_usd": round(v["cost_usd"], 6),
         } for k, v in by_model.items()},
         "budget_limit": budget_limit,
-        "budget_used": round(budget_used, 4) if budget_limit is not None else None,
-        "budget_remaining": round(budget_remaining, 4) if budget_remaining is not None else None,
+        "budget_used": round(budget_used, 6) if budget_limit is not None else None,
+        "budget_remaining": round(budget_remaining, 6) if budget_remaining is not None else None,
     }
 
 
