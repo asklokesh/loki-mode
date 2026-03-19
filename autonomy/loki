@@ -219,7 +219,7 @@ require_jq() {
         echo "  brew install jq    (macOS)"
         echo "  apt install jq     (Debian/Ubuntu)"
         echo "  yum install jq     (RHEL/CentOS)"
-        exit 1
+        return 1
     fi
 }
 
@@ -1454,7 +1454,7 @@ cmd_status() {
         esac
     done
 
-    require_jq
+    require_jq || return 1
 
     if [ ! -d "$LOKI_DIR" ]; then
         echo -e "${BOLD}Loki Mode Status${NC}"
@@ -3455,7 +3455,7 @@ cmd_issue_parse() {
 
 # View parsed GitHub issue details
 cmd_issue_view() {
-    require_jq
+    require_jq || return 1
 
     local issue_ref="${1:-}"
 
@@ -3570,7 +3570,7 @@ cmd_issue_view() {
 #===============================================================================
 
 cmd_run() {
-    require_jq
+    require_jq || return 1
 
     local issue_ref=""
     local dry_run=false
@@ -3734,6 +3734,22 @@ cmd_run() {
                 ;;
         esac
     done
+
+    # Validate git prerequisites for --ship and --pr flags
+    if $create_pr || $auto_merge; then
+        if ! command -v git &>/dev/null; then
+            echo -e "${RED}Error: --pr/--ship requires git but it is not installed.${NC}"
+            return 1
+        fi
+        if ! git rev-parse --git-dir &>/dev/null 2>&1; then
+            echo -e "${RED}Error: --pr/--ship requires a git repository but the current directory is not one.${NC}"
+            return 1
+        fi
+        if [[ -z "$(git remote 2>/dev/null)" ]]; then
+            echo -e "${RED}Error: --pr/--ship requires a git remote but none is configured.${NC}"
+            return 1
+        fi
+    fi
 
     # Add --parallel once if worktree mode is enabled (not per-flag)
     if $use_worktree; then
@@ -3998,7 +4014,7 @@ cmd_issue() {
     echo -e "${YELLOW}  'loki run' supports GitHub, GitLab, Jira, and Azure DevOps issues.${NC}" >&2
     echo "" >&2
 
-    require_jq
+    require_jq || return 1
 
     local issue_ref=""
     local repo=""
@@ -6599,6 +6615,19 @@ QPRDEOF
 
 # Project scaffolding (v6.28.0)
 cmd_init() {
+    # Guard: check if .loki/ already exists to avoid overwriting active session
+    if [[ -d ".loki" ]]; then
+        if [[ -f ".loki/loki.pid" ]]; then
+            local pid
+            pid=$(cat ".loki/loki.pid" 2>/dev/null)
+            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                echo -e "${RED}Cannot initialize: active session running. Stop it first with 'loki stop'.${NC}"
+                return 1
+            fi
+        fi
+        echo -e "${YELLOW}Reinitializing existing .loki/ directory${NC}"
+    fi
+
     local version=$(get_version)
     local project_name=""
     local template_name=""
@@ -10804,7 +10833,7 @@ print()
 
 # Reset session state
 cmd_reset() {
-    require_jq
+    require_jq || return 1
 
     local subcommand="${1:-all}"
 
