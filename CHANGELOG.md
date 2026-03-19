@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.38.4] - 2026-03-19
+
+### Fixed
+- Purple Lab: file content viewer now works for past sessions -- new `GET /api/sessions/{id}/file?path=` endpoint reads files from completed project directories with path traversal protection (previously only worked during active sessions, returning 400 for past builds)
+- Purple Lab: ProjectWorkspace uses session-scoped file endpoint so clicking files in the file tree actually loads content
+- Purple Lab: terminal output contained in fixed-height scrollable window (was growing infinitely, pushing page content down)
+- Purple Lab: error boundaries wrap all monitoring panels -- component crashes show retry button instead of blanking entire app
+- Purple Lab: session state persisted to sessionStorage -- page refresh during active build no longer flashes landing page
+- Purple Lab: null guards on agent type and phase toLowerCase calls (fixes TypeError crash when agents have undefined type)
+
+### Added
+- ProjectWorkspace component: full IDE-like view with file tree sidebar, code viewer, and HTML preview iframe
+- "View Project" primary CTA button after build completes -- opens ProjectWorkspace with file browser
+- ErrorBoundary component with retry button for graceful crash recovery
+
 ## [6.38.3] - 2026-03-19
 
 ### Added
