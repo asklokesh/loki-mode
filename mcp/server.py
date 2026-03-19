@@ -88,6 +88,23 @@ def _get_mcp_state_manager():
     return _state_manager
 
 
+def cleanup_mcp_singletons():
+    """Clean up module-level singletons to prevent resource leaks on restart.
+
+    Call this before restarting the MCP server to release file handles
+    held by the StateManager and LearningCollector instances.
+    """
+    global _state_manager, _learning_collector
+    if _state_manager is not None:
+        if hasattr(_state_manager, 'close'):
+            _state_manager.close()
+        _state_manager = None
+    if _learning_collector is not None:
+        if hasattr(_learning_collector, 'close'):
+            _learning_collector.close()
+        _learning_collector = None
+
+
 # ============================================================
 # PATH SECURITY - Prevent path traversal attacks
 # ============================================================
@@ -1679,12 +1696,16 @@ Use loki_state_get and loki_task_queue_list to gather data."""
 
 def main():
     import argparse
+    import atexit
     parser = argparse.ArgumentParser(description='Loki Mode MCP Server')
     parser.add_argument('--transport', choices=['stdio', 'http'], default='stdio',
                        help='Transport mechanism (default: stdio)')
     parser.add_argument('--port', type=int, default=8421,
                        help='Port for HTTP transport (default: 8421)')
     args = parser.parse_args()
+
+    # Register cleanup to prevent file handle leaks on shutdown/restart
+    atexit.register(cleanup_mcp_singletons)
 
     logger.info(f"Starting Loki Mode MCP server (transport: {args.transport})")
 

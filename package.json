@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "6.36.2",
+  "version": "6.36.6",
   "description": "Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
   "keywords": [
     "agent",
@@ -56,7 +56,7 @@
     "type": "git",
     "url": "git+https://github.com/asklokesh/loki-mode.git"
   },
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "author": "Lokesh",
   "bin": {
     "loki": "autonomy/loki",

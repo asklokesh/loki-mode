@@ -1212,13 +1212,17 @@ detect_complexity() {
     fi
 
     # Count files in project (excluding common non-source dirs)
-    local file_count=$(find "$target_dir" -type f \
+    local file_count=0
+    file_count=$(find "$target_dir" -type f \
         \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
         -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" \
         -o -name "*.rb" -o -name "*.php" -o -name "*.swift" -o -name "*.kt" \) \
         ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/vendor/*" \
         ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/__pycache__/*" \
         2>/dev/null | wc -l | tr -d ' ')
+    # Validate file_count is numeric (guard against empty/malformed pipeline output)
+    file_count="${file_count:-0}"
+    file_count="${file_count//[^0-9]/}"
 
     # Check for external integrations
     local has_external=false
@@ -7901,8 +7905,10 @@ build_prompt() {
     # Load existing context if resuming
     local context_injection=""
     if [ $retry -gt 0 ]; then
-        local ledger=$(load_ledger_context)
-        local handoff=$(load_handoff_context)
+        local ledger=""
+        type -t load_ledger_context &>/dev/null && ledger=$(load_ledger_context)
+        local handoff=""
+        type -t load_handoff_context &>/dev/null && handoff=$(load_handoff_context)
 
         if [ -n "$ledger" ]; then
             context_injection="PREVIOUS_LEDGER_STATE: $ledger"
@@ -8432,11 +8438,15 @@ run_autonomous() {
         if [ -n "$found_prd" ]; then
             log_info "Found existing PRD: $found_prd"
             prd_path="$found_prd"
+            # Warn if a generated PRD also exists (user file takes precedence)
+            if [ -f ".loki/generated-prd.md" ] || [ -f ".loki/generated-prd.json" ]; then
+                log_warn "Using user PRD ($found_prd) instead of generated PRD (.loki/generated-prd.md). Remove generated PRD if no longer needed."
+            fi
         elif [ -f ".loki/generated-prd.md" ]; then
-            log_info "Using previously generated PRD: .loki/generated-prd.md"
+            log_info "No user PRD found. Using previously generated PRD: .loki/generated-prd.md"
             prd_path=".loki/generated-prd.md"
         elif [ -f ".loki/generated-prd.json" ]; then
-            log_info "Using previously generated PRD: .loki/generated-prd.json"
+            log_info "No user PRD found. Using previously generated PRD: .loki/generated-prd.json"
             prd_path=".loki/generated-prd.json"
         else
             log_info "No PRD found - will analyze codebase and generate one"
@@ -9194,8 +9204,9 @@ check_human_intervention() {
                 log_warn "PAUSE file created by budget limit - NOT auto-clearing in perpetual mode"
                 log_warn "Budget limit reached. Remove .loki/signals/BUDGET_EXCEEDED and .loki/PAUSE to continue."
                 notify_intervention_needed "Budget limit reached - execution paused" 2>/dev/null || true
+                local pause_result
                 handle_pause
-                local pause_result=$?
+                pause_result=$?
                 rm -f "$loki_dir/PAUSE"
                 if [ "$pause_result" -eq 1 ]; then
                     return 2
@@ -9211,8 +9222,9 @@ check_human_intervention() {
         fi
         log_warn "PAUSE file detected - pausing execution"
         notify_intervention_needed "Execution paused via PAUSE file"
+        local pause_result
         handle_pause
-        local pause_result=$?
+        pause_result=$?
         rm -f "$loki_dir/PAUSE"
         if [ "$pause_result" -eq 1 ]; then
             # STOP was requested during pause
@@ -9228,8 +9240,9 @@ check_human_intervention() {
             rm -f "$loki_dir/PAUSE_AT_CHECKPOINT"
             notify_intervention_needed "Execution paused at checkpoint"
             touch "$loki_dir/PAUSE"
+            local pause_result
             handle_pause
-            local pause_result=$?
+            pause_result=$?
             rm -f "$loki_dir/PAUSE"
             if [ "$pause_result" -eq 1 ]; then
                 return 2

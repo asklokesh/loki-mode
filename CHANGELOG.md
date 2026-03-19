@@ -5,6 +5,47 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.36.6] - 2026-03-19
+
+### Fixed
+- CI: `loki ci --pr --github-comment --format github` no longer fails with `unbound variable: report_timestamp_` -- trailing underscore typo fixed in `autonomy/loki` line 16742 (#145)
+
+### Changed
+- License transitioned from MIT to Business Source License 1.1 (BSL 1.1)
+- Free for personal, internal, academic, and non-commercial use
+- Commercial use that competes with Loki Mode requires a separate license from Autonomi, Inc.
+- Each version automatically converts to Apache License 2.0 four years after release (Change Date: March 19, 2030)
+- Updated license references across all distribution channels: package.json, vscode-extension, Python SDK (pyproject.toml), TypeScript SDK, README badge and section
+- Added LICENSE-CHANGE-NOTICE.md explaining what changed and what is/isn't affected
+
+## [6.36.5] - 2026-03-19
+
+### Fixed
+- Memory: `EpisodeCluster.to_dict()` now uses `getattr()` instead of `.get()` for EpisodeTrace dataclass instances in `memory/consolidation.py` (#134)
+- MCP: module-level `_state_manager` and `_learning_collector` singletons are now cleaned up via `cleanup_mcp_singletons()` registered with `atexit`, preventing file handle leaks on server restart (#130)
+- State: `VersionVector.concurrent_with()` now returns True for identical vectors, matching causality semantics where equal vectors represent independent events with the same knowledge (#129)
+- Memory: numpy and sentence-transformers import failures now emit `logging.warning()` in `memory/retrieval.py` and `memory/engine.py` so users know why vector search is degraded (#125)
+- Dashboard: `require_scope()` dependency returns `True` instead of `None` when auth is disabled, preventing FastAPI from treating the None return as a valid passthrough for `/api/control/*` endpoints (#87)
+
+## [6.36.4] - 2026-03-19
+
+### Fixed
+- Purple Lab: CORS origins are now configurable via `PURPLE_LAB_CORS_ORIGINS` env var (comma-separated list), enabling remote and Docker deployments that were previously blocked by hardcoded localhost-only origins (#135)
+- Purple Lab: path traversal protection now uses `Path.relative_to()` instead of `str.startswith()`, preventing the prefix-collision edge case where `/tmp/proj` would incorrectly match `/tmp/projother`; symlink chains that escape the project base are also rejected (#115)
+
+## [6.36.3] - 2026-03-19
+
+### Fixed
+- Orchestrator reliability: initialize `file_count` before use to prevent unbound variable errors in run.sh (#66)
+- Orchestrator reliability: add guards in `load_ledger_context` to handle missing or malformed ledger files gracefully (#62)
+- Orchestrator reliability: PRD conflict resolution no longer overwrites user-specified PRD when a session already exists (#60)
+- CLI safety: `require_jq` now returns exit code 1 on failure instead of silently continuing, preventing cascading errors in dependent commands (#57)
+- CLI safety: `cmd_init` checks for an active session before initializing and exits cleanly if one exists (#70)
+- CLI safety: `--ship` and `--pr` flags now validate git prerequisites (clean working tree, remote set) before proceeding (#69)
+- Critical CLI fix: JSON validation runs before merge signal extraction to prevent crashes on malformed provider output (#56)
+- Critical CLI fix: `handle_pause` return value is now captured and propagated correctly, preventing silent pause failures (#58)
+- Critical CLI fix: `--provider` flag validation rejects unknown provider names with a clear error message instead of falling through to undefined behavior (#82)
+
 ## [6.36.2] - 2026-03-19
 
 ### Fixed

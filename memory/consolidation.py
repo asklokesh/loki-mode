@@ -81,7 +81,7 @@ class Cluster:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            "episode_ids": [ep.id if hasattr(ep, 'id') else ep.get('id', '') for ep in self.episodes],
+            "episode_ids": [getattr(ep, 'id', '') if not isinstance(ep, dict) else ep.get('id', '') for ep in self.episodes],
             "label": self.label,
             "size": len(self.episodes),
         }

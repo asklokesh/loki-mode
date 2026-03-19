@@ -18,10 +18,13 @@ See references/memory-system.md for full documentation.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 # numpy is optional - only required for vector operations
 try:
@@ -30,6 +33,10 @@ try:
 except ImportError:
     np = None  # type: ignore
     NUMPY_AVAILABLE = False
+    logger.warning(
+        "numpy not installed. Vector operations in memory retrieval will be "
+        "degraded. Install with: pip install numpy"
+    )
 
 # Import from sibling modules
 from .schemas import EpisodeTrace, SemanticPattern, ProceduralSkill

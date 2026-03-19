@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 # Import schemas - these are expected to be created in parallel
 from .schemas import (
@@ -598,6 +601,13 @@ class MemoryEngine:
         """
         if self._embedding_func is None:
             # Fall back to keyword matching if no embeddings
+            if not getattr(self, '_embedding_warning_logged', False):
+                logger.warning(
+                    "Vector search unavailable: numpy or sentence-transformers "
+                    "not installed. Falling back to keyword matching. "
+                    "Install with: pip install numpy sentence-transformers"
+                )
+                self._embedding_warning_logged = True
             return self._keyword_search(query, collection, top_k)
 
         # Use embeddings for similarity search

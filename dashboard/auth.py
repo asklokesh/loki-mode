@@ -645,7 +645,7 @@ def require_scope(scope: str):
     """
     async def check_scope(token_info: Optional[dict] = Security(get_current_token)):
         if not ENTERPRISE_AUTH_ENABLED and not OIDC_ENABLED:
-            return  # No auth required
+            return True  # Auth disabled - allow access with explicit truthy value
 
         if not token_info:
             raise HTTPException(status_code=401, detail="Authentication required")

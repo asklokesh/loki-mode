@@ -44,9 +44,20 @@ DIST_DIR = SCRIPT_DIR / "dist"
 
 app = FastAPI(title="Purple Lab", docs_url=None, redoc_url=None)
 
+_default_cors_origins = [
+    f"http://127.0.0.1:{PORT}",
+    f"http://localhost:{PORT}",
+]
+_cors_env = os.environ.get("PURPLE_LAB_CORS_ORIGINS", "")
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else _default_cors_origins
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:57375", "http://localhost:57375"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -149,12 +160,25 @@ def _loki_dir() -> Path:
 
 
 def _safe_resolve(base: Path, requested: str) -> Optional[Path]:
-    """Resolve a path ensuring it stays within base (path traversal protection)."""
+    """Resolve a path ensuring it stays within base (path traversal protection).
+
+    Uses os.path.commonpath to avoid the startswith prefix collision where
+    /tmp/proj would incorrectly pass a check against /tmp/projother.
+    Also rejects symlinks that escape the base directory.
+    """
     try:
         resolved = (base / requested).resolve()
         base_resolved = base.resolve()
-        if str(resolved).startswith(str(base_resolved)):
-            return resolved
+        # Ensure resolved is strictly inside base_resolved
+        resolved.relative_to(base_resolved)
+        # Reject if any component is a symlink pointing outside base
+        check = base_resolved
+        for part in resolved.relative_to(base_resolved).parts:
+            check = check / part
+            if check.is_symlink():
+                link_target = check.resolve()
+                link_target.relative_to(base_resolved)  # raises ValueError if outside
+        return resolved
     except (ValueError, OSError):
         pass
     return None

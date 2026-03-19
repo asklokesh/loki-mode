@@ -100,7 +100,13 @@ class VersionVector:
         return False
 
     def concurrent_with(self, other: "VersionVector") -> bool:
-        """Check if two vectors are concurrent (neither dominates)."""
+        """Check if two vectors are concurrent (neither dominates).
+
+        Per causality rules, identical vectors are concurrent (happened
+        independently with the same knowledge).
+        """
+        if self.versions == other.versions:
+            return True
         return not self.dominates(other) and not other.dominates(self)
 
     def to_dict(self) -> Dict[str, int]:
