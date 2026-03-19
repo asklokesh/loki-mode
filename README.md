@@ -14,7 +14,7 @@
 
 ### Traction
 
-**737 stars** | **150 forks** | **10,600+ Docker pulls** | **19,000+ npm downloads** | **590 commits** | **252 releases published** | **18 releases in a single day (March 18, 2026)**
+**740 stars** | **149 forks** | **11,400+ Docker pulls** | **18,000+ npm downloads** | **606 commits** | **256 releases published** | **18 releases in a single day (March 18, 2026)**
 
 ---
 
