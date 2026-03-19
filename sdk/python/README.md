@@ -48,4 +48,4 @@ The SDK wraps the Loki Mode Dashboard API (default port 57374).
 
 ## License
 
-MIT
+Business Source License 1.1 -- see [LICENSE](../../LICENSE)

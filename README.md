@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/loki-mode)](https://www.npmjs.com/package/loki-mode)
 [![npm downloads](https://img.shields.io/npm/dw/loki-mode)](https://www.npmjs.com/package/loki-mode)
 [![GitHub stars](https://img.shields.io/github/stars/asklokesh/loki-mode)](https://github.com/asklokesh/loki-mode)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
 [![Agent Types](https://img.shields.io/badge/Agent%20Types-41-blue)]()
 [![Autonomi](https://img.shields.io/badge/Autonomi-autonomi.dev-5B4EEA)](https://www.autonomi.dev/)
 [![Docker Pulls](https://img.shields.io/docker/pulls/asklokesh/loki-mode)](https://hub.docker.com/r/asklokesh/loki-mode)
@@ -243,7 +243,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+Business Source License 1.1 -- see [LICENSE](LICENSE) and [LICENSE-CHANGE-NOTICE.md](LICENSE-CHANGE-NOTICE.md).
+
+Free for personal, internal, academic, and non-commercial use. Commercial use that competes with Loki Mode requires a separate license. Converts to Apache 2.0 on March 19, 2030. Contact founder@autonomi.dev for commercial licensing.
 
 ---
 

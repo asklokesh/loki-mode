@@ -1,21 +1,123 @@
-MIT License
+Business Source License 1.1
 
-Copyright (c) 2025 Loki Mode Contributors
+Parameters
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licensor:             Autonomi, Inc. (autonomi.dev)
+Licensed Work:        Loki Mode and all associated components, including but not
+                      limited to its multi-agent orchestration engine, agent
+                      coordination protocols, review and verification systems,
+                      documentation, research, architectural patterns, and any
+                      rebranded or successor versions of this software.
+                      The Licensed Work is (c) 2024-2026 Autonomi, Inc.
+                      All rights reserved.
+Additional Use Grant: You may make production use of the Licensed Work, provided
+                      that such use does not include offering the Licensed Work,
+                      or any derivative work or adaptation of it, to third parties
+                      as a commercial product, hosted service, managed service, or
+                      embedded component of a commercial offering that competes
+                      with any product or service provided by the Licensor.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+                      For purposes of this license, "compete" means offering a
+                      product or service that provides substantially the same or
+                      similar functionality as the Licensed Work to third parties,
+                      whether for a fee or free of charge, including but not
+                      limited to:
+                      (a) multi-agent AI development orchestration platforms or
+                          frameworks;
+                      (b) autonomous software development products or services;
+                      (c) AI-powered code generation, review, or deployment
+                          services that incorporate or replicate the Licensed
+                          Work's orchestration, review, verification, or agent
+                          coordination systems; or
+                      (d) products or services that substantially replicate the
+                          Licensed Work's core architectural patterns, including
+                          the RARV (Reason-Act-Reflect-Verify) cycle, Completion
+                          Council peer review system, or multi-agent swarm
+                          coordination model.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+                      The following uses are permitted without a commercial license:
+                      (i)   individual and non-commercial use;
+                      (ii)  internal business use where the Licensed Work is used
+                            as a tool and is not itself the product or service
+                            being offered to third parties;
+                      (iii) academic, educational, and research use;
+                      (iv)  evaluation and testing in non-production environments;
+                      (v)   contributions back to the Licensed Work under a signed
+                            Contributor License Agreement.
+
+Change Date:          March 19, 2030
+Change License:       Apache License, Version 2.0
+
+For information about alternative licensing arrangements for the Licensed Work,
+please contact: founder@autonomi.dev
+
+Intellectual Property Notice
+
+The Licensed Work embodies proprietary methodologies, architectural patterns,
+and research developed by the Licensor. These include, without limitation, the
+RARV execution cycle, the Completion Council consensus-based review system,
+context persistence mechanisms for long-running autonomous sessions, multi-
+provider orchestration protocols, and swarm-based agent coordination models.
+Use of these methodologies, whether through the Licensed Work's code or through
+independent reimplementation based on the Licensed Work's documentation or
+published research, is subject to the terms of this License.
+
+Contributions
+
+External contributions to the Licensed Work are accepted only under a signed
+Contributor License Agreement (CLA) that assigns sufficient rights to the
+Licensor to sublicense, relicense, and commercially distribute the contribution
+as part of the Licensed Work. Contributing code to the Licensed Work without a
+signed CLA does not grant the Licensor any rights to the contribution, and such
+contributions may be removed.
+
+Notice
+
+The Business Source License (this document, or the "License") is not an Open
+Source license. However, the Licensed Work will eventually be made available
+under an Open Source License, as stated in this License.
+
+License text copyright (c) 2017 MariaDB Corporation Ab, All Rights Reserved.
+"Business Source License" is a trademark of MariaDB Corporation Ab.
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, above, permitting limited production
+use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly
+available distribution of a specific version of the Licensed Work under this
+License, whichever comes first, the Licensor hereby grants you rights under
+the terms of the Change License, and the rights granted in the paragraph above
+terminate.
+
+If your use of the Licensed Work does not comply with the requirements
+currently in effect as described in this License, you must purchase a
+commercial license from the Licensor, its affiliated entities, or authorized
+resellers, or you must refrain from using the Licensed Work.
+
+All copies of the original and modified Licensed Work, and derivative works of
+the Licensed Work, are subject to this License. This License applies separately
+for each version of the Licensed Work and the Change Date may vary for each
+version of the Licensed Work released by Licensor.
+
+You must conspicuously display this License on each original or modified copy
+of the Licensed Work. If you receive the Licensed Work in original or modified
+form from a third party, the terms and conditions set forth in this License
+apply to your use of that work.
+
+Any use of the Licensed Work in violation of this License will automatically
+terminate your rights under this License for the current and all other
+versions of the Licensed Work.
+
+This License does not grant you any right in any trademark or logo of Licensor
+or its affiliates (provided that you may use a trademark or logo of Licensor
+as expressly required by this License).
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE LICENSED WORK IS PROVIDED ON
+AN "AS IS" BASIS. LICENSOR HEREBY DISCLAIMS ALL WARRANTIES AND CONDITIONS,
+EXPRESS OR IMPLIED, INCLUDING (WITHOUT LIMITATION) WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AND
+TITLE.

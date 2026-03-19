@@ -4,7 +4,7 @@
   "description": "Loki Mode by Autonomi - Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI",
   "version": "6.36.5",
   "publisher": "asklokesh",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/asklokesh/loki-mode"

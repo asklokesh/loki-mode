@@ -56,7 +56,7 @@
     "type": "git",
     "url": "git+https://github.com/asklokesh/loki-mode.git"
   },
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "author": "Lokesh",
   "bin": {
     "loki": "autonomy/loki",

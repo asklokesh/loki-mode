@@ -20,7 +20,7 @@
     "claude", "anthropic"
   ],
   "author": "Lokesh Mure <lokesh@autonomi.dev>",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/asklokesh/loki-mode.git",
