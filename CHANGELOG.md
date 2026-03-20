@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.45.1] - 2026-03-20
+
+### Fixed
+- Stale "running" status: check session.json mtime, mark completed if idle > 5 min
+- Preview showing raw JSON error: verify entry file exists before setting preview URL
+- Add "Build" button to IDE workspace so users can start builds from project page
+- Hide .loki/ folder from file tree (internal state, not user files)
+- Normalize status labels: completion_promise_fulfilled -> Completed
+
 ## [6.45.0] - 2026-03-20
 
 ### Added
