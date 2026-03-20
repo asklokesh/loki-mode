@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.40.0] - 2026-03-19
+
+### Added
+- Monaco Editor integration in ProjectWorkspace -- full VS Code-grade syntax highlighting for 17+ languages, bracket pair colorization, code folding, smooth scrolling
+- Resizable split panes (react-resizable-panels) -- drag to resize file tree, editor, and preview panels independently
+- File CRUD API endpoints: PUT (save/update), POST (create file), DELETE (delete file), POST directory (create folder) -- all with path traversal protection and atomic writes
+- File create/delete from file tree sidebar (+ File, + Dir buttons, hover X to delete)
+- Cmd/Ctrl+S keyboard shortcut to save files
+- Unsaved changes indicator (purple dot) and Save button in editor header
+- Unsaved changes warning on file switch and back navigation
+- Session data auto-refresh after file CRUD operations
+
+### Changed
+- ProjectPage lazy-loaded chunk grew from 8KB to 59KB (includes Monaco + resizable panels)
+- Editor replaces plain code table viewer -- proper language detection, line numbers, word wrap, folding
+- Preview panel is now a resizable pane instead of fixed 50% width
+
 ## [6.39.0] - 2026-03-19
 
 ### Added

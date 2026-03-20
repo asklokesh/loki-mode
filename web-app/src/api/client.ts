@@ -176,6 +176,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
+
+  // File CRUD
+  saveSessionFile: (sessionId: string, path: string, content: string) =>
+    fetchJSON<{ saved: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+  createSessionFile: (sessionId: string, path: string, content: string = '') =>
+    fetchJSON<{ created: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/file`, {
+      method: 'POST',
+      body: JSON.stringify({ path, content }),
+    }),
+  deleteSessionFile: (sessionId: string, path: string) =>
+    fetchJSON<{ deleted: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    }),
+  createSessionDirectory: (sessionId: string, path: string) =>
+    fetchJSON<{ created: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/directory`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
 };
 
 export class PurpleLabWebSocket {

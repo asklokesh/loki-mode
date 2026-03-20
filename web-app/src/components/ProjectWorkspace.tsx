@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import Editor from '@monaco-editor/react';
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { api } from '../api/client';
 import type { FileNode } from '../types/api';
 import type { SessionDetail } from '../api/client';
@@ -34,6 +36,34 @@ function getFileIcon(name: string, type: string): string {
   return icons[ext] || '..';
 }
 
+function getMonacoLanguage(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    js: 'javascript', jsx: 'javascript',
+    ts: 'typescript', tsx: 'typescript',
+    py: 'python',
+    html: 'html', htm: 'html',
+    css: 'css', scss: 'scss', less: 'less',
+    json: 'json',
+    md: 'markdown',
+    go: 'go',
+    rs: 'rust',
+    sh: 'shell', bash: 'shell',
+    yml: 'yaml', yaml: 'yaml',
+    xml: 'xml', svg: 'xml',
+    sql: 'sql',
+    java: 'java',
+    kt: 'kotlin',
+    rb: 'ruby',
+    dockerfile: 'dockerfile',
+  };
+  // Handle special filenames
+  const lower = filename.toLowerCase();
+  if (lower === 'dockerfile') return 'dockerfile';
+  if (lower === 'makefile') return 'makefile';
+  return map[ext] || 'plaintext';
+}
+
 function hasHtmlFile(files: FileNode[]): boolean {
   for (const f of files) {
     if (f.type === 'file' && f.name.endsWith('.html')) return true;
@@ -60,10 +90,12 @@ function formatSize(bytes: number): string {
 }
 
 function FileTree({
-  nodes, selectedPath, onSelect, depth = 0,
+  nodes, selectedPath, onSelect, onDelete, depth = 0,
 }: {
   nodes: FileNode[]; selectedPath: string | null;
-  onSelect: (path: string, name: string) => void; depth?: number;
+  onSelect: (path: string, name: string) => void;
+  onDelete?: (path: string, name: string) => void;
+  depth?: number;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const set = new Set<string>();
@@ -78,7 +110,7 @@ function FileTree({
         const isOpen = expanded.has(node.path);
         const isSelected = node.path === selectedPath;
         return (
-          <div key={node.path}>
+          <div key={node.path} className="group/file">
             <button
               onClick={() => {
                 if (isDir) {
@@ -108,9 +140,26 @@ function FileTree({
               {!isDir && node.size != null && node.size > 0 && (
                 <span className="text-[10px] text-slate/40 ml-auto flex-shrink-0">{formatSize(node.size)}</span>
               )}
+              {!isDir && onDelete && (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(node.path, node.name);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.stopPropagation(); onDelete(node.path, node.name); }
+                  }}
+                  className="text-[10px] text-slate/30 hover:text-red-500 ml-1 flex-shrink-0 opacity-0 group-hover/file:opacity-100 transition-opacity cursor-pointer"
+                  title="Delete file"
+                >
+                  x
+                </span>
+              )}
             </button>
             {isDir && isOpen && node.children && (
-              <FileTree nodes={node.children} selectedPath={selectedPath} onSelect={onSelect} depth={depth + 1} />
+              <FileTree nodes={node.children} selectedPath={selectedPath} onSelect={onSelect} onDelete={onDelete} depth={depth + 1} />
             )}
           </div>
         );
@@ -123,59 +172,170 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>('');
   const [fileContent, setFileContent] = useState<string | null>(null);
+  const [editorContent, setEditorContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isModified, setIsModified] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [sessionData, setSessionData] = useState<SessionDetail>(session);
+  const editorRef = useRef<unknown>(null);
 
-  const canPreview = hasHtmlFile(session.files);
-  const previewUrl = `/api/sessions/${encodeURIComponent(session.id)}/preview/index.html`;
+  const canPreview = hasHtmlFile(sessionData.files);
+  const previewUrl = `/api/sessions/${encodeURIComponent(sessionData.id)}/preview/index.html`;
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const updated = await api.getSessionDetail(sessionData.id);
+      setSessionData(updated);
+    } catch {
+      // ignore refresh errors
+    }
+  }, [sessionData.id]);
 
   const handleFileSelect = useCallback(async (path: string, name: string) => {
+    // Warn about unsaved changes
+    if (isModified) {
+      const discard = window.confirm('Unsaved changes. Discard?');
+      if (!discard) return;
+    }
+
     setSelectedFile(path);
     setSelectedFileName(name);
     setFileLoading(true);
+    setIsModified(false);
     try {
-      const result = session.id
-        ? await api.getSessionFileContent(session.id, path)
+      const result = sessionData.id
+        ? await api.getSessionFileContent(sessionData.id, path)
         : await api.getFileContent(path);
       setFileContent(result.content);
+      setEditorContent(result.content);
     } catch {
       setFileContent('[Error loading file]');
+      setEditorContent('[Error loading file]');
     } finally {
       setFileLoading(false);
-      if (scrollRef.current) scrollRef.current.scrollTop = 0;
     }
-  }, [session.id]);
+  }, [sessionData.id, isModified]);
+
+  const handleSave = useCallback(async () => {
+    if (!selectedFile || editorContent === null || !sessionData.id) return;
+    setIsSaving(true);
+    try {
+      await api.saveSessionFile(sessionData.id, selectedFile, editorContent);
+      setFileContent(editorContent);
+      setIsModified(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      window.alert(`Save failed: ${msg}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedFile, editorContent, sessionData.id]);
+
+  // Cmd/Ctrl+S keyboard shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        if (isModified && selectedFile) {
+          handleSave();
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isModified, selectedFile, handleSave]);
 
   // Auto-select index.html on mount
   useEffect(() => {
-    const indexFile = session.files.find(f => f.name === 'index.html' && f.type === 'file');
+    const indexFile = sessionData.files.find(f => f.name === 'index.html' && f.type === 'file');
     if (indexFile) {
       handleFileSelect(indexFile.path, indexFile.name);
       setShowPreview(true);
     }
-  }, [session.files, handleFileSelect]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const fileSize = selectedFile ? findFileSize(session.files, selectedFile) : undefined;
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    if (value !== undefined) {
+      setEditorContent(value);
+      setIsModified(value !== fileContent);
+    }
+  }, [fileContent]);
+
+  const handleEditorMount = useCallback((editor: unknown) => {
+    editorRef.current = editor;
+  }, []);
+
+  const handleCreateFile = useCallback(async () => {
+    const name = window.prompt('New file name (e.g. src/utils.ts):');
+    if (!name || !name.trim()) return;
+    try {
+      await api.createSessionFile(sessionData.id, name.trim());
+      await refreshSession();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      window.alert(`Create file failed: ${msg}`);
+    }
+  }, [sessionData.id, refreshSession]);
+
+  const handleCreateFolder = useCallback(async () => {
+    const name = window.prompt('New folder name (e.g. src/components):');
+    if (!name || !name.trim()) return;
+    try {
+      await api.createSessionDirectory(sessionData.id, name.trim());
+      await refreshSession();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      window.alert(`Create folder failed: ${msg}`);
+    }
+  }, [sessionData.id, refreshSession]);
+
+  const handleDeleteFile = useCallback(async (path: string, name: string) => {
+    const confirmed = window.confirm(`Delete "${name}"?`);
+    if (!confirmed) return;
+    try {
+      await api.deleteSessionFile(sessionData.id, path);
+      // If the deleted file was selected, clear the editor
+      if (selectedFile === path) {
+        setSelectedFile(null);
+        setSelectedFileName('');
+        setFileContent(null);
+        setEditorContent(null);
+        setIsModified(false);
+      }
+      await refreshSession();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      window.alert(`Delete failed: ${msg}`);
+    }
+  }, [sessionData.id, selectedFile, refreshSession]);
+
+  const fileSize = selectedFile ? findFileSize(sessionData.files, selectedFile) : undefined;
   const fileExt = selectedFileName.split('.').pop()?.toUpperCase() || '';
-  const lines = fileContent?.split('\n') || [];
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="glass px-5 py-3 flex items-center gap-4 flex-shrink-0 border-b border-white/10">
-        <button onClick={onClose}
+        <button onClick={() => {
+          if (isModified) {
+            const discard = window.confirm('Unsaved changes. Discard?');
+            if (!discard) return;
+          }
+          onClose();
+        }}
           className="text-xs font-medium px-3 py-1.5 rounded-lg border border-white/20 text-slate hover:text-charcoal hover:bg-white/30 transition-colors">
           Back
         </button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-bold text-charcoal truncate">{session.id}</h2>
-          <p className="text-[10px] font-mono text-slate truncate">{session.path}</p>
+          <h2 className="text-sm font-bold text-charcoal truncate">{sessionData.id}</h2>
+          <p className="text-[10px] font-mono text-slate truncate">{sessionData.path}</p>
         </div>
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-          session.status === 'completed' || session.status === 'completion_promise_fulfilled'
+          sessionData.status === 'completed' || sessionData.status === 'completion_promise_fulfilled'
             ? 'bg-success/10 text-success' : 'bg-slate/10 text-slate'
-        }`}>{session.status}</span>
+        }`}>{sessionData.status}</span>
         {canPreview && (
           <button onClick={() => setShowPreview(!showPreview)}
             className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
@@ -187,79 +347,136 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
         )}
       </div>
 
-      {/* Workspace: file tree | code viewer | preview */}
-      <div className="flex-1 flex min-h-0">
-        {/* Sidebar: file tree */}
-        <div className="w-56 flex-shrink-0 border-r border-white/10 overflow-y-auto terminal-scroll bg-white/30">
-          <div className="px-3 py-2 border-b border-white/10">
-            <span className="text-[10px] text-slate uppercase tracking-wider font-semibold">Files</span>
-          </div>
-          {session.files.length > 0 ? (
-            <FileTree nodes={session.files} selectedPath={selectedFile} onSelect={handleFileSelect} />
-          ) : (
-            <div className="p-4 text-xs text-slate">No files</div>
-          )}
-        </div>
-
-        {/* Code viewer */}
-        <div className={`flex-1 flex flex-col min-w-0 ${showPreview ? 'max-w-[50%]' : ''}`}>
-          {selectedFile ? (
-            <>
-              <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 flex-shrink-0 bg-white/20">
-                <span className={`text-[10px] font-bold ${getLanguageClass(selectedFileName)}`}>
-                  {getFileIcon(selectedFileName, 'file')}
-                </span>
-                <span className="text-xs font-mono text-charcoal truncate">{selectedFile}</span>
-                <span className="ml-auto text-[10px] text-slate/50 font-mono">
-                  {fileSize != null ? formatSize(fileSize) : ''}
-                </span>
-                <span className="text-[10px] text-slate/40 font-mono uppercase">{fileExt}</span>
+      {/* Workspace: file tree | editor | preview */}
+      <div className="flex-1 min-h-0">
+        <PanelGroup orientation="horizontal" className="h-full">
+          {/* Sidebar: file tree */}
+          <Panel defaultSize={20} minSize={15}>
+            <div className="h-full flex flex-col border-r border-white/10 bg-white/30">
+              <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2">
+                <span className="text-[10px] text-slate uppercase tracking-wider font-semibold flex-1">Files</span>
+                <button
+                  onClick={handleCreateFile}
+                  title="New File"
+                  className="text-[10px] text-slate hover:text-accent-product px-1.5 py-0.5 rounded border border-white/20 hover:border-accent-product/30 transition-colors"
+                >
+                  + File
+                </button>
+                <button
+                  onClick={handleCreateFolder}
+                  title="New Folder"
+                  className="text-[10px] text-slate hover:text-accent-product px-1.5 py-0.5 rounded border border-white/20 hover:border-accent-product/30 transition-colors"
+                >
+                  + Dir
+                </button>
               </div>
-              <div ref={scrollRef} className="flex-1 overflow-auto terminal-scroll bg-charcoal/[0.03]">
-                {fileLoading ? (
-                  <div className="text-slate text-xs animate-pulse p-4">Loading...</div>
+              <div className="flex-1 overflow-y-auto terminal-scroll">
+                {sessionData.files.length > 0 ? (
+                  <FileTree
+                    nodes={sessionData.files}
+                    selectedPath={selectedFile}
+                    onSelect={handleFileSelect}
+                    onDelete={handleDeleteFile}
+                  />
                 ) : (
-                  <table className="font-mono text-xs leading-relaxed w-full border-collapse">
-                    <tbody>
-                      {lines.map((line, i) => (
-                        <tr key={i} className="hover:bg-white/30">
-                          <td className="text-right pr-4 pl-3 py-0 select-none text-slate/30 w-12 align-top border-r border-white/10 text-[10px]">
-                            {i + 1}
-                          </td>
-                          <td className={`pl-4 pr-3 py-0 whitespace-pre-wrap break-all ${getLanguageClass(selectedFileName)}`}>
-                            {line || '\u00A0'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="p-4 text-xs text-slate">No files</div>
                 )}
               </div>
-            </>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-slate text-sm">
-              Select a file to view its contents
             </div>
-          )}
-        </div>
+          </Panel>
 
-        {/* Live preview */}
-        {showPreview && (
-          <div className="w-[50%] flex-shrink-0 border-l border-white/10 flex flex-col">
-            <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 flex-shrink-0 bg-white/20">
-              <span className="text-xs font-semibold text-charcoal">Live Preview</span>
-              <span className="text-[10px] font-mono text-slate/50 truncate ml-auto">{previewUrl}</span>
+          <PanelResizeHandle className="w-1 bg-white/10 hover:bg-accent-product/30 transition-colors cursor-col-resize" />
+
+          {/* Editor */}
+          <Panel defaultSize={showPreview ? 50 : 80} minSize={25}>
+            <div className="h-full flex flex-col min-w-0">
+              {selectedFile ? (
+                <>
+                  <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 flex-shrink-0 bg-white/20">
+                    <span className={`text-[10px] font-bold ${getLanguageClass(selectedFileName)}`}>
+                      {getFileIcon(selectedFileName, 'file')}
+                    </span>
+                    <span className="text-xs font-mono text-charcoal truncate">
+                      {selectedFile}
+                    </span>
+                    {isModified && (
+                      <span className="w-2 h-2 rounded-full bg-accent-product flex-shrink-0" title="Unsaved changes" />
+                    )}
+                    {isSaving && (
+                      <span className="text-[10px] text-accent-product animate-pulse flex-shrink-0">Saving...</span>
+                    )}
+                    <span className="ml-auto text-[10px] text-slate/50 font-mono">
+                      {fileSize != null ? formatSize(fileSize) : ''}
+                    </span>
+                    <span className="text-[10px] text-slate/40 font-mono uppercase">{fileExt}</span>
+                    {isModified && (
+                      <button
+                        onClick={handleSave}
+                        className="text-[10px] font-medium px-2 py-0.5 rounded border border-accent-product/40 bg-accent-product/10 text-accent-product hover:bg-accent-product/20 transition-colors"
+                      >
+                        Save
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0">
+                    {fileLoading ? (
+                      <div className="text-slate text-xs animate-pulse p-4">Loading...</div>
+                    ) : (
+                      <Editor
+                        value={editorContent ?? ''}
+                        language={getMonacoLanguage(selectedFileName)}
+                        theme="vs"
+                        onChange={handleEditorChange}
+                        onMount={handleEditorMount}
+                        options={{
+                          minimap: { enabled: false },
+                          fontSize: 13,
+                          lineNumbers: 'on',
+                          wordWrap: 'on',
+                          scrollBeyondLastLine: false,
+                          automaticLayout: true,
+                          padding: { top: 8 },
+                          renderLineHighlight: 'line',
+                          smoothScrolling: true,
+                          cursorBlinking: 'smooth',
+                          folding: true,
+                          bracketPairColorization: { enabled: true },
+                        }}
+                      />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-slate text-sm">
+                  Select a file to view its contents
+                </div>
+              )}
             </div>
-            <div className="flex-1 bg-white">
-              <iframe
-                src={previewUrl}
-                title="Project Preview"
-                className="w-full h-full border-0"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-              />
-            </div>
-          </div>
-        )}
+          </Panel>
+
+          {/* Live preview (collapsible) */}
+          {showPreview && (
+            <>
+              <PanelResizeHandle className="w-1 bg-white/10 hover:bg-accent-product/30 transition-colors cursor-col-resize" />
+              <Panel defaultSize={30} minSize={20} collapsible>
+                <div className="h-full flex flex-col border-l border-white/10">
+                  <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 flex-shrink-0 bg-white/20">
+                    <span className="text-xs font-semibold text-charcoal">Live Preview</span>
+                    <span className="text-[10px] font-mono text-slate/50 truncate ml-auto">{previewUrl}</span>
+                  </div>
+                  <div className="flex-1 bg-white">
+                    <iframe
+                      src={previewUrl}
+                      title="Project Preview"
+                      className="w-full h-full border-0"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                    />
+                  </div>
+                </div>
+              </Panel>
+            </>
+          )}
+        </PanelGroup>
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -145,6 +145,19 @@ class ProviderSetRequest(BaseModel):
 
 
 class OnboardRequest(BaseModel):
+    path: str
+
+
+class FileWriteRequest(BaseModel):
+    path: str
+    content: str = ""
+
+
+class DirectoryCreateRequest(BaseModel):
+    path: str
+
+
+class FileDeleteRequest(BaseModel):
     path: str
 
 # ---------------------------------------------------------------------------
@@ -1180,6 +1193,180 @@ async def preview_session_file(session_id: str, file_path: str = "index.html") -
         mime_type = "application/octet-stream"
 
     return FileResponse(str(resolved), media_type=mime_type)
+
+
+@app.put("/api/sessions/{session_id}/file")
+async def save_session_file(session_id: str, req: FileWriteRequest) -> JSONResponse:
+    """Save or update file content in a session's project directory."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not req.path:
+        return JSONResponse(status_code=400, content={"error": "Path is required"})
+    if len(req.content.encode("utf-8", errors="replace")) > 1_048_576:
+        return JSONResponse(status_code=413, content={"error": "Content exceeds 1 MB limit"})
+
+    search_dirs = [
+        Path.home() / "purple-lab-projects",
+        Path.home() / ".loki-sessions",
+        Path.home() / ".loki" / "sessions",
+    ]
+    target: Optional[Path] = None
+    for base_dir in search_dirs:
+        candidate = base_dir / session_id
+        if candidate.is_dir():
+            target = candidate
+            break
+
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    base = target.resolve()
+    resolved = _safe_resolve(base, req.path)
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid path (traversal blocked)"})
+
+    # Atomic write: write to .tmp then rename
+    tmp_path = resolved.with_suffix(resolved.suffix + ".tmp")
+    try:
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(req.content, encoding="utf-8")
+        tmp_path.rename(resolved)
+    except OSError as e:
+        # Clean up temp file on failure
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return JSONResponse(status_code=500, content={"error": f"Failed to write file: {e}"})
+
+    return JSONResponse(content={"saved": True, "path": req.path})
+
+
+@app.post("/api/sessions/{session_id}/file")
+async def create_session_file(session_id: str, req: FileWriteRequest) -> JSONResponse:
+    """Create a new file in a session's project directory."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not req.path:
+        return JSONResponse(status_code=400, content={"error": "Path is required"})
+
+    search_dirs = [
+        Path.home() / "purple-lab-projects",
+        Path.home() / ".loki-sessions",
+        Path.home() / ".loki" / "sessions",
+    ]
+    target: Optional[Path] = None
+    for base_dir in search_dirs:
+        candidate = base_dir / session_id
+        if candidate.is_dir():
+            target = candidate
+            break
+
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    base = target.resolve()
+    resolved = _safe_resolve(base, req.path)
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid path (traversal blocked)"})
+
+    if resolved.exists():
+        return JSONResponse(status_code=409, content={"error": "File already exists"})
+
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(req.content, encoding="utf-8")
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to create file: {e}"})
+
+    return JSONResponse(content={"created": True, "path": req.path})
+
+
+@app.delete("/api/sessions/{session_id}/file")
+async def delete_session_file(session_id: str, req: FileDeleteRequest) -> JSONResponse:
+    """Delete a file from a session's project directory."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not req.path:
+        return JSONResponse(status_code=400, content={"error": "Path is required"})
+
+    search_dirs = [
+        Path.home() / "purple-lab-projects",
+        Path.home() / ".loki-sessions",
+        Path.home() / ".loki" / "sessions",
+    ]
+    target: Optional[Path] = None
+    for base_dir in search_dirs:
+        candidate = base_dir / session_id
+        if candidate.is_dir():
+            target = candidate
+            break
+
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    base = target.resolve()
+    resolved = _safe_resolve(base, req.path)
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid path (traversal blocked)"})
+
+    if not resolved.exists():
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+
+    if resolved.is_dir():
+        return JSONResponse(status_code=400, content={"error": "Cannot delete directories, only files"})
+
+    try:
+        resolved.unlink()
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to delete file: {e}"})
+
+    return JSONResponse(content={"deleted": True, "path": req.path})
+
+
+@app.post("/api/sessions/{session_id}/directory")
+async def create_session_directory(session_id: str, req: DirectoryCreateRequest) -> JSONResponse:
+    """Create a directory in a session's project directory."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not req.path:
+        return JSONResponse(status_code=400, content={"error": "Path is required"})
+
+    search_dirs = [
+        Path.home() / "purple-lab-projects",
+        Path.home() / ".loki-sessions",
+        Path.home() / ".loki" / "sessions",
+    ]
+    target: Optional[Path] = None
+    for base_dir in search_dirs:
+        candidate = base_dir / session_id
+        if candidate.is_dir():
+            target = candidate
+            break
+
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    base = target.resolve()
+    resolved = _safe_resolve(base, req.path)
+    if resolved is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid path (traversal blocked)"})
+
+    if resolved.exists():
+        return JSONResponse(status_code=409, content={"error": "Path already exists"})
+
+    try:
+        resolved.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return JSONResponse(status_code=409, content={"error": "Directory already exists"})
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to create directory: {e}"})
+
+    return JSONResponse(content={"created": True, "path": req.path})
 
 
 @app.post("/api/session/onboard")
