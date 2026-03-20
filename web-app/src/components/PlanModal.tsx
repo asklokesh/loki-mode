@@ -17,6 +17,20 @@ export function PlanModal({ plan, loading, onConfirm, onCancel }: PlanModalProps
           <div className="flex flex-col items-center py-8 gap-3">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             <p className="text-sm text-muted">Analyzing PRD...</p>
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={onCancel}
+                className="px-4 py-2 text-sm font-medium text-muted hover:text-ink transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors underline"
+              >
+                Skip analysis, build now
+              </button>
+            </div>
           </div>
         ) : plan ? (
           <>
