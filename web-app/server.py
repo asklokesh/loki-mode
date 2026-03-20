@@ -1807,6 +1807,125 @@ async def delete_secret(key: str) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Preview info (smart project type detection)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/sessions/{session_id}/preview-info")
+async def get_preview_info(session_id: str) -> JSONResponse:
+    """Detect project type and determine the best preview strategy."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    info: dict = {
+        "type": "unknown",
+        "preview_url": None,
+        "entry_file": None,
+        "dev_command": None,
+        "port": None,
+        "description": "No preview available",
+    }
+
+    # Detect project type from files
+    files = {f.name for f in target.iterdir() if f.is_file()} if target.is_dir() else set()
+    has_package_json = "package.json" in files
+    has_index_html = (
+        "index.html" in files
+        or (target / "public" / "index.html").exists()
+        or (target / "src" / "index.html").exists()
+    )
+    has_pyproject = "pyproject.toml" in files or "setup.py" in files or "requirements.txt" in files
+    has_go_mod = "go.mod" in files
+    has_cargo = "Cargo.toml" in files
+    has_dockerfile = "Dockerfile" in files or "docker-compose.yml" in files
+
+    # Read package.json for more info
+    pkg_scripts: dict = {}
+    pkg_deps: dict = {}
+    if has_package_json:
+        try:
+            pkg = json.loads((target / "package.json").read_text())
+            pkg_scripts = pkg.get("scripts", {})
+            pkg_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Determine project type and preview strategy
+    is_react = "react" in pkg_deps or "next" in pkg_deps or "vite" in pkg_deps
+    is_express = "express" in pkg_deps or "fastify" in pkg_deps or "koa" in pkg_deps or "hono" in pkg_deps
+    is_flask = has_pyproject and any((target / f).exists() for f in ["app.py", "main.py", "server.py"])
+    is_fastapi = has_pyproject and any(
+        "fastapi" in (target / f).read_text(errors="replace")
+        for f in ["app.py", "main.py", "server.py"]
+        if (target / f).exists()
+    )
+
+    if is_react or (has_package_json and has_index_html):
+        info["type"] = "web-app"
+        info["entry_file"] = "index.html"
+        info["preview_url"] = f"/api/sessions/{session_id}/preview/index.html"
+        info["dev_command"] = pkg_scripts.get("dev") or pkg_scripts.get("start")
+        info["description"] = "Web application -- serves HTML/CSS/JS"
+    elif is_express or (has_package_json and ("start" in pkg_scripts or "dev" in pkg_scripts) and not has_index_html):
+        # API/server project
+        port = 3000  # default
+        # Try to detect port from scripts
+        start_script = pkg_scripts.get("start", "") + pkg_scripts.get("dev", "")
+        port_match = re.search(r"(?:PORT|port)[=: ]*(\d+)", start_script)
+        if port_match:
+            port = int(port_match.group(1))
+        info["type"] = "api"
+        info["port"] = port
+        info["dev_command"] = pkg_scripts.get("dev") or pkg_scripts.get("start")
+        info["description"] = f"API server -- runs on port {port}"
+        # Check for swagger/openapi
+        for swagger_path in ["swagger.json", "openapi.json", "docs", "api-docs"]:
+            if (target / swagger_path).exists():
+                info["preview_url"] = f"/api/sessions/{session_id}/preview/{swagger_path}"
+                break
+    elif is_fastapi or is_flask:
+        info["type"] = "python-api"
+        info["port"] = 8000
+        info["dev_command"] = "uvicorn app:app --reload" if is_fastapi else "flask run"
+        info["description"] = "Python API server"
+    elif has_index_html:
+        info["type"] = "static-site"
+        info["entry_file"] = "index.html"
+        info["preview_url"] = f"/api/sessions/{session_id}/preview/index.html"
+        info["description"] = "Static site -- serves HTML directly"
+    elif has_package_json and "test" in pkg_scripts:
+        info["type"] = "library"
+        info["dev_command"] = pkg_scripts.get("test")
+        info["description"] = "Library/package -- run tests to verify"
+    elif has_go_mod:
+        info["type"] = "go-app"
+        info["dev_command"] = "go run ."
+        info["description"] = "Go application"
+    elif has_cargo:
+        info["type"] = "rust-app"
+        info["dev_command"] = "cargo run"
+        info["description"] = "Rust application"
+    elif has_dockerfile:
+        info["type"] = "containerized"
+        info["dev_command"] = "docker compose up"
+        info["description"] = "Containerized application"
+    else:
+        # Check for any README or docs
+        for doc_file in ["README.md", "readme.md", "README.txt"]:
+            if (target / doc_file).exists():
+                info["type"] = "project"
+                info["entry_file"] = doc_file
+                info["preview_url"] = f"/api/sessions/{session_id}/preview/{doc_file}"
+                info["description"] = "Project -- showing README"
+                break
+
+    return JSONResponse(content=info)
+
+
+# ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 

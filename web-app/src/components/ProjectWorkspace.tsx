@@ -11,6 +11,7 @@ import {
   Square, Pause, Play,
   Code2, Eye as PreviewIcon, Settings2, KeyRound, FileText as PrdIcon,
   AlertTriangle,
+  Server, Package, Terminal,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { IconButton } from './ui/IconButton';
@@ -71,14 +72,6 @@ function getMonacoLanguage(filename: string): string {
   if (lower === 'dockerfile') return 'dockerfile';
   if (lower === 'makefile') return 'makefile';
   return map[ext] || 'plaintext';
-}
-
-function hasHtmlFile(files: FileNode[]): boolean {
-  for (const f of files) {
-    if (f.type === 'file' && f.name.endsWith('.html')) return true;
-    if (f.children && hasHtmlFile(f.children)) return true;
-  }
-  return false;
 }
 
 function findFileSize(files: FileNode[], path: string): number | undefined {
@@ -462,13 +455,35 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     return () => clearInterval(interval);
   }, [actionState?.loading]);
 
-  const canPreview = hasHtmlFile(sessionData.files);
-  const previewUrl = `/api/sessions/${encodeURIComponent(sessionData.id)}/preview/index.html`;
+  // Smart preview detection
+  const [previewInfo, setPreviewInfo] = useState<{
+    type: string;
+    preview_url: string | null;
+    entry_file: string | null;
+    dev_command: string | null;
+    port: number | null;
+    description: string;
+  } | null>(null);
+
+  useEffect(() => {
+    api.getPreviewInfo(sessionData.id).then(setPreviewInfo).catch(() => {});
+  }, [sessionData.id]);
+
+  const defaultPreviewUrl = previewInfo?.preview_url || `/api/sessions/${encodeURIComponent(sessionData.id)}/preview/index.html`;
 
   // Preview history state
-  const [previewHistory, setPreviewHistory] = useState<string[]>([previewUrl]);
+  const [previewHistory, setPreviewHistory] = useState<string[]>([]);
   const [previewHistoryIndex, setPreviewHistoryIndex] = useState(0);
-  const currentPreviewUrl = previewHistory[previewHistoryIndex] || previewUrl;
+
+  // Reset preview history when previewInfo loads
+  useEffect(() => {
+    if (previewInfo?.preview_url) {
+      setPreviewHistory([previewInfo.preview_url]);
+      setPreviewHistoryIndex(0);
+    }
+  }, [previewInfo?.preview_url]);
+
+  const currentPreviewUrl = previewHistory[previewHistoryIndex] || defaultPreviewUrl;
   const [previewInputUrl, setPreviewInputUrl] = useState(currentPreviewUrl);
 
   const refreshSession = useCallback(async () => {
@@ -955,20 +970,34 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
 
                     {activeWorkspaceTab === 'preview' && (
                       <div className="h-full flex flex-col">
-                        {/* Preview toolbar with back/forward/refresh/URL */}
+                        {/* Preview toolbar */}
                         <div className="px-3 py-1.5 border-b border-border flex items-center gap-2 bg-hover">
-                          <IconButton icon={PreviewBack} label="Back" size="sm" onClick={handlePreviewBack} disabled={previewHistoryIndex <= 0} />
-                          <IconButton icon={PreviewForward} label="Forward" size="sm" onClick={handlePreviewForward} disabled={previewHistoryIndex >= previewHistory.length - 1} />
-                          <IconButton icon={RotateCw} label="Refresh" size="sm" onClick={() => setPreviewKey(k => k + 1)} />
-                          <input
-                            value={previewInputUrl}
-                            onChange={e => setPreviewInputUrl(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') navigatePreview(previewInputUrl); }}
-                            className="flex-1 px-3 py-1 text-xs font-mono bg-card border border-border rounded-btn"
-                          />
-                          <IconButton icon={ExternalLink} label="Open in new tab" size="sm" onClick={() => window.open(currentPreviewUrl, '_blank')} />
+                          {previewInfo?.preview_url ? (
+                            <>
+                              <IconButton icon={PreviewBack} label="Back" size="sm" onClick={handlePreviewBack} disabled={previewHistoryIndex <= 0} />
+                              <IconButton icon={PreviewForward} label="Forward" size="sm" onClick={handlePreviewForward} disabled={previewHistoryIndex >= previewHistory.length - 1} />
+                              <IconButton icon={RotateCw} label="Refresh" size="sm" onClick={() => setPreviewKey(k => k + 1)} />
+                              <input
+                                value={previewInputUrl}
+                                onChange={e => setPreviewInputUrl(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') navigatePreview(previewInputUrl); }}
+                                className="flex-1 px-3 py-1 text-xs font-mono bg-card border border-border rounded-btn"
+                              />
+                              <IconButton icon={ExternalLink} label="Open in new tab" size="sm" onClick={() => window.open(currentPreviewUrl, '_blank')} />
+                            </>
+                          ) : previewInfo ? (
+                            <div className="flex-1 flex items-center gap-2 text-sm text-muted">
+                              <span className="font-medium text-ink">{previewInfo.description}</span>
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex items-center text-sm text-muted">
+                              Detecting project type...
+                            </div>
+                          )}
                         </div>
-                        {canPreview ? (
+
+                        {/* Content based on project type */}
+                        {previewInfo?.preview_url ? (
                           <div className="flex-1 bg-white">
                             <iframe
                               key={previewKey}
@@ -979,9 +1008,40 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                             />
                           </div>
+                        ) : previewInfo ? (
+                          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
+                            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                              {previewInfo.type === 'api' || previewInfo.type === 'python-api' ? (
+                                <Server size={28} className="text-primary" />
+                              ) : previewInfo.type === 'library' ? (
+                                <Package size={28} className="text-primary" />
+                              ) : previewInfo.type === 'go-app' || previewInfo.type === 'rust-app' ? (
+                                <Terminal size={28} className="text-primary" />
+                              ) : (
+                                <FolderOpen size={28} className="text-primary" />
+                              )}
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-heading text-ink mb-1">{previewInfo.type.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</h3>
+                              <p className="text-sm text-muted">{previewInfo.description}</p>
+                            </div>
+                            {previewInfo.dev_command && (
+                              <div className="card p-4 max-w-md w-full">
+                                <p className="text-xs font-semibold text-muted-accessible uppercase tracking-wider mb-2">Run locally</p>
+                                <code className="text-sm font-mono text-primary bg-hover px-3 py-2 rounded-btn block">
+                                  {previewInfo.dev_command}
+                                </code>
+                              </div>
+                            )}
+                            {previewInfo.port && (
+                              <p className="text-xs text-muted">
+                                Server runs on port {previewInfo.port}
+                              </p>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex-1 flex items-center justify-center text-muted text-sm">
-                            No HTML files found for preview
+                            Detecting project type...
                           </div>
                         )}
                       </div>

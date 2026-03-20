@@ -231,6 +231,17 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/chat/${encodeURIComponent(taskId)}`,
     ),
 
+  // Preview info (smart project type detection)
+  getPreviewInfo: (sessionId: string) =>
+    fetchJSON<{
+      type: string;
+      preview_url: string | null;
+      entry_file: string | null;
+      dev_command: string | null;
+      port: number | null;
+      description: string;
+    }>(`/sessions/${encodeURIComponent(sessionId)}/preview-info`),
+
   // Secrets
   getSecrets: () =>
     fetchJSON<Record<string, string>>('/secrets'),
