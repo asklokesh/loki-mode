@@ -1,9 +1,17 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { AuthProvider } from './hooks/useAuth';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { Skeleton } from './components/ui/Skeleton';
+
+// Suppress "Changes may not be saved" dialog on refresh.
+// Purple Lab auto-persists state to sessionStorage -- nothing is lost.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (e) => {
+    delete e.returnValue;
+  });
+}
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProjectPage = lazy(() => import('./pages/ProjectPage'));
