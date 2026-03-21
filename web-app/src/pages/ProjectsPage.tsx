@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Trash2 } from 'lucide-react';
+import { Search, Plus, Trash2, CheckSquare, Square, XCircle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -56,7 +56,9 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterTab>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<SessionHistoryItem | null>(null);
+  const [deleteBulk, setDeleteBulk] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -76,18 +78,59 @@ export default function ProjectsPage() {
     return list;
   }, [sessions, filter, search]);
 
+  const selectionMode = selected.size > 0;
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(filtered.map(s => s.id)));
+  };
+
+  const clearSelection = () => {
+    setSelected(new Set());
+  };
+
   const handleDeleteClick = (e: React.MouseEvent, session: SessionHistoryItem) => {
     e.stopPropagation();
     setDeleteTarget(session);
   };
 
+  const handleBulkDelete = () => {
+    if (selected.size === 0) return;
+    setDeleteBulk(true);
+  };
+
   const handleDeleteConfirm = async () => {
-    if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await api.deleteSession(deleteTarget.id);
-      setDeleteTarget(null);
-      setNotification('Project deleted');
+      if (deleteBulk) {
+        // Delete all selected
+        const ids = Array.from(selected);
+        let deleted = 0;
+        for (const id of ids) {
+          try {
+            await api.deleteSession(id);
+            deleted++;
+          } catch {
+            // Continue deleting others
+          }
+        }
+        setSelected(new Set());
+        setDeleteBulk(false);
+        setNotification(`${deleted} project${deleted !== 1 ? 's' : ''} deleted`);
+      } else if (deleteTarget) {
+        await api.deleteSession(deleteTarget.id);
+        setDeleteTarget(null);
+        setNotification('Project deleted');
+      }
       setTimeout(() => setNotification(null), 3000);
       refresh();
     } catch (err) {
@@ -98,14 +141,47 @@ export default function ProjectsPage() {
     }
   };
 
+  const deleteCount = deleteBulk ? selected.size : 1;
+  const deleteLabel = deleteBulk
+    ? `${selected.size} project${selected.size !== 1 ? 's' : ''}`
+    : (deleteTarget?.prd_snippet || 'Untitled project');
+
   return (
     <div className="max-w-[1400px] mx-auto px-6 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-heading text-h1 text-[#36342E]">Projects</h1>
-        <Button icon={Plus} onClick={() => navigate('/')}>
-          New Project
-        </Button>
+        <div className="flex items-center gap-2">
+          {selectionMode && (
+            <>
+              <span className="text-xs text-[#6B6960] mr-1">
+                {selected.size} selected
+              </span>
+              <button
+                onClick={selectAll}
+                className="px-3 py-1.5 text-xs font-medium text-[#6B6960] hover:text-[#36342E] hover:bg-[#F8F4F0] rounded-[3px] transition-colors"
+              >
+                Select all
+              </button>
+              <button
+                onClick={clearSelection}
+                className="px-3 py-1.5 text-xs font-medium text-[#6B6960] hover:text-[#36342E] hover:bg-[#F8F4F0] rounded-[3px] transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-[3px] transition-colors"
+              >
+                <Trash2 size={12} />
+                Delete ({selected.size})
+              </button>
+            </>
+          )}
+          <Button icon={Plus} onClick={() => navigate('/')}>
+            New Project
+          </Button>
+        </div>
       </div>
 
       {/* Search + Filters */}
@@ -154,7 +230,21 @@ export default function ProjectsPage() {
             <ProjectCard
               key={session.id}
               session={session}
-              onClick={() => navigate(`/project/${session.id}`)}
+              isSelected={selected.has(session.id)}
+              selectionMode={selectionMode}
+              onClick={() => {
+                if (selectionMode) {
+                  setSelected(prev => {
+                    const next = new Set(prev);
+                    if (next.has(session.id)) next.delete(session.id);
+                    else next.add(session.id);
+                    return next;
+                  });
+                } else {
+                  navigate(`/project/${session.id}`);
+                }
+              }}
+              onSelect={(e) => toggleSelect(session.id, e)}
               onDelete={(e) => handleDeleteClick(e, session)}
             />
           ))}
@@ -162,18 +252,19 @@ export default function ProjectsPage() {
       )}
 
       {/* Delete confirmation dialog */}
-      {deleteTarget && (
+      {(deleteTarget || deleteBulk) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
             <h2 className="text-base font-semibold text-[#36342E] mb-2">
-              Delete {deleteTarget.prd_snippet || 'Untitled project'}?
+              Delete {deleteCount > 1 ? `${deleteCount} projects` : deleteLabel}?
             </h2>
             <p className="text-sm text-[#6B6960] mb-6">
-              This will remove all files, dependencies, and state. This cannot be undone.
+              This will remove all files, dependencies, and state.
+              This cannot be undone.
             </p>
             <div className="flex items-center justify-end gap-3">
               <button
-                onClick={() => setDeleteTarget(null)}
+                onClick={() => { setDeleteTarget(null); setDeleteBulk(false); }}
                 disabled={deleting}
                 className="px-4 py-2 text-sm font-medium text-[#6B6960] hover:text-[#36342E] rounded-[5px] hover:bg-[#F8F4F0] transition-colors disabled:opacity-50"
               >
@@ -184,7 +275,7 @@ export default function ProjectsPage() {
                 disabled={deleting}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-[5px] transition-colors disabled:opacity-50"
               >
-                {deleting ? 'Deleting...' : 'Delete'}
+                {deleting ? 'Deleting...' : `Delete${deleteCount > 1 ? ` (${deleteCount})` : ''}`}
               </button>
             </div>
           </div>
@@ -193,8 +284,11 @@ export default function ProjectsPage() {
 
       {/* Notification toast */}
       {notification && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-[#36342E] text-white text-sm rounded-[5px] shadow-lg">
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-[#36342E] text-white text-sm rounded-[5px] shadow-lg flex items-center gap-2">
           {notification}
+          <button onClick={() => setNotification(null)} className="text-white/60 hover:text-white">
+            <XCircle size={14} />
+          </button>
         </div>
       )}
     </div>
@@ -203,11 +297,17 @@ export default function ProjectsPage() {
 
 function ProjectCard({
   session,
+  isSelected,
+  selectionMode,
   onClick,
+  onSelect,
   onDelete,
 }: {
   session: SessionHistoryItem;
+  isSelected: boolean;
+  selectionMode: boolean;
   onClick: () => void;
+  onSelect: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
 }) {
   const dateStr = new Date(session.date).toLocaleDateString(undefined, {
@@ -217,7 +317,25 @@ function ProjectCard({
   });
 
   return (
-    <Card hover onClick={onClick} className="group relative">
+    <Card
+      hover
+      onClick={onClick}
+      className={`group relative ${isSelected ? 'ring-2 ring-red-400 bg-red-50/30' : ''}`}
+    >
+      {/* Selection checkbox */}
+      <button
+        onClick={onSelect}
+        aria-label={isSelected ? 'Deselect project' : 'Select project'}
+        className={`absolute top-3 left-3 p-0.5 rounded transition-all z-10 ${
+          selectionMode || isSelected
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100'
+        } ${isSelected ? 'text-red-600' : 'text-[#939084] hover:text-[#36342E]'}`}
+      >
+        {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+      </button>
+
+      {/* Delete button */}
       <button
         onClick={onDelete}
         aria-label="Delete project"
@@ -225,6 +343,7 @@ function ProjectCard({
       >
         <Trash2 size={14} />
       </button>
+
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-[#6B6960]">{dateStr}</span>
         <Badge status={statusToBadge(session.status)}>{STATUS_LABELS[session.status] || session.status}</Badge>
