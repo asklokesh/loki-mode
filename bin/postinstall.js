@@ -131,6 +131,35 @@ try {
   // If npm bin check fails, skip PATH warning silently
 }
 
+// Install Python dependencies for Purple Lab (pexpect, watchdog, httpx)
+try {
+  const { execSync } = require('child_process');
+  const pyDeps = ['pexpect', 'watchdog', 'httpx'];
+  // Check if deps are already installed
+  const missing = pyDeps.filter(dep => {
+    try {
+      execSync(`python3 -c "import ${dep}"`, { stdio: 'pipe' });
+      return false;
+    } catch { return true; }
+  });
+  if (missing.length > 0) {
+    console.log(`Installing Python dependencies: ${missing.join(', ')}...`);
+    try {
+      execSync(`python3 -m pip install --break-system-packages ${missing.join(' ')}`, { stdio: 'pipe', timeout: 60000 });
+      console.log('  [OK] Python dependencies installed');
+    } catch {
+      try {
+        execSync(`python3 -m pip install ${missing.join(' ')}`, { stdio: 'pipe', timeout: 60000 });
+        console.log('  [OK] Python dependencies installed');
+      } catch {
+        console.log(`  [WARN] Could not install Python deps. Run: pip install ${missing.join(' ')}`);
+      }
+    }
+  }
+} catch {
+  // Python not available, skip silently
+}
+
 console.log('');
 console.log('CLI commands:');
 console.log('  loki start ./prd.md              Start with Claude (default)');

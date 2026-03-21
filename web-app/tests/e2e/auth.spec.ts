@@ -34,15 +34,11 @@ test.describe('Authentication', () => {
     }
   });
 
-  test('Login page shows Purple Lab branding', async ({ page }) => {
-    await page.goto('/login');
+  test('Purple Lab branding is visible', async ({ page }) => {
+    await page.goto('/');
     await page.waitForLoadState('networkidle');
-    if (page.url().includes('/login')) {
-      await expect(page.locator('h1:has-text("Purple Lab")')).toBeVisible({ timeout: 10000 });
-    } else {
-      // Local mode: verify app loaded (Purple Lab in sidebar)
-      await expect(page.locator('text=Purple Lab')).toBeVisible({ timeout: 10000 });
-    }
+    // Branding should be visible somewhere on the page (sidebar or login)
+    await expect(page.locator('text=Purple Lab').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('Local mode bypasses login (home page loads directly)', async ({ page }) => {

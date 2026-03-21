@@ -83,7 +83,16 @@
     "completions/",
     "src/",
     "web-app/dist/",
-    "web-app/server.py"
+    "web-app/server.py",
+    "web-app/auth.py",
+    "web-app/models.py",
+    "web-app/crypto.py",
+    "web-app/requirements.txt",
+    "web-app/alembic.ini",
+    "web-app/migrations/",
+    "web-app/Dockerfile",
+    "web-app/docker-compose.purple-lab.yml",
+    "web-app/deploy/"
   ],
   "scripts": {
     "postinstall": "node bin/postinstall.js",

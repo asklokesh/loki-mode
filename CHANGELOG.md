@@ -5,12 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [6.53.0] - 2026-03-21 - Nested preview detection, terminal WS fix, dev server controls
+## [6.53.0] - 2026-03-21 - npm package fix, 58/58 E2E pass, auto-install pexpect
 
 ### Fixed
-- Live preview now detects package.json in immediate subdirectories (nested project structures)
-- Terminal WebSocket close code 4000 handled gracefully — no retry loop when server rejects connection
-- Dev server controls panel always visible in ProjectWorkspace (not conditional on previewInfo.dev_command)
+- npm package now includes auth.py, models.py, crypto.py, migrations/, Dockerfile, K8s manifests
+- postinstall auto-installs Python deps (pexpect, watchdog, httpx) so terminal works out of the box
+- Terminal auto-installs pexpect if missing; closes with code 4000 (no retry loop) if install fails
+- Live preview detects package.json in subdirectories (nested project structures)
+- Dev server controls always visible in preview (users can always start a custom command)
+- All 58 E2E tests pass (0 failures), all 53 backend tests pass
 
 ## [6.52.0] - 2026-03-21 - Cloud readiness: encryption, migrations, linting
 
