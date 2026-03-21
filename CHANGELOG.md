@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.53.0] - 2026-03-21 - Nested preview detection, terminal WS fix, dev server controls
+
+### Fixed
+- Live preview now detects package.json in immediate subdirectories (nested project structures)
+- Terminal WebSocket close code 4000 handled gracefully — no retry loop when server rejects connection
+- Dev server controls panel always visible in ProjectWorkspace (not conditional on previewInfo.dev_command)
+
 ## [6.52.0] - 2026-03-21 - Cloud readiness: encryption, migrations, linting
 
 ### Added

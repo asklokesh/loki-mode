@@ -2583,13 +2583,22 @@ async def get_preview_info(session_id: str) -> JSONResponse:
         "description": "No preview available",
     }
 
-    # Detect project type from files
+    # Detect project type from files (check root and first-level subdirectories)
     files = {f.name for f in target.iterdir() if f.is_file()} if target.is_dir() else set()
     has_package_json = "package.json" in files
+    # If package.json not at root, check immediate subdirectories (e.g. project inside a folder)
+    project_root = target
+    if not has_package_json and target.is_dir():
+        for subdir in target.iterdir():
+            if subdir.is_dir() and (subdir / "package.json").exists():
+                project_root = subdir
+                files = {f.name for f in subdir.iterdir() if f.is_file()}
+                has_package_json = True
+                break
     has_index_html = (
         "index.html" in files
-        or (target / "public" / "index.html").exists()
-        or (target / "src" / "index.html").exists()
+        or (project_root / "public" / "index.html").exists()
+        or (project_root / "src" / "index.html").exists()
     )
     has_pyproject = "pyproject.toml" in files or "setup.py" in files or "requirements.txt" in files
     has_go_mod = "go.mod" in files
@@ -2601,7 +2610,7 @@ async def get_preview_info(session_id: str) -> JSONResponse:
     pkg_deps: dict = {}
     if has_package_json:
         try:
-            pkg = json.loads((target / "package.json").read_text())
+            pkg = json.loads((project_root / "package.json").read_text())
             pkg_scripts = pkg.get("scripts", {})
             pkg_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
         except (json.JSONDecodeError, OSError):
@@ -2610,11 +2619,11 @@ async def get_preview_info(session_id: str) -> JSONResponse:
     # Determine project type and preview strategy
     is_react = "react" in pkg_deps or "next" in pkg_deps or "vite" in pkg_deps
     is_express = "express" in pkg_deps or "fastify" in pkg_deps or "koa" in pkg_deps or "hono" in pkg_deps
-    is_flask = has_pyproject and any((target / f).exists() for f in ["app.py", "main.py", "server.py"])
+    is_flask = has_pyproject and any((project_root / f).exists() for f in ["app.py", "main.py", "server.py"])
     is_fastapi = has_pyproject and any(
-        "fastapi" in (target / f).read_text(errors="replace")
+        "fastapi" in (project_root / f).read_text(errors="replace")
         for f in ["app.py", "main.py", "server.py"]
-        if (target / f).exists()
+        if (project_root / f).exists()
     )
 
     if is_react or (has_package_json and has_index_html):
@@ -3282,13 +3291,24 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
 
     if not HAS_PEXPECT:
-        await ws.send_text(json.dumps({
-            "type": "output",
-            "data": "\r\n[Error] pexpect is not installed. "
-                    "Run: pip install pexpect\r\n",
-        }))
-        await ws.close()
-        return
+        # Try to install pexpect automatically
+        import subprocess as _sp
+        try:
+            _sp.run(
+                [sys.executable, "-m", "pip", "install", "--break-system-packages", "pexpect"],
+                capture_output=True, timeout=30,
+            )
+            import pexpect as _pex  # noqa: F811
+            globals()["HAS_PEXPECT"] = True
+        except Exception:
+            await ws.send_text(json.dumps({
+                "type": "output",
+                "data": "\r\n[Error] pexpect is not installed and auto-install failed.\r\n"
+                        "Run: pip install pexpect\r\n",
+            }))
+            # Close with 4000 = "do not retry" custom code
+            await ws.close(code=4000, reason="pexpect not installed")
+            return
 
     # ---- Reuse or spawn PTY ------------------------------------------------
     pty = _terminal_ptys.get(session_id)

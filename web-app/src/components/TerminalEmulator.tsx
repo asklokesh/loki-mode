@@ -84,9 +84,22 @@ export function TerminalEmulator({ sessionId, isActive }: TerminalEmulatorProps)
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (!mountedRef.current) return;
       const term = terminalRef.current;
+
+      // Code 4000 = server says "do not retry" (e.g. pexpect not installed)
+      if (event.code === 4000) {
+        if (term) {
+          term.writeln(
+            '\r\n\x1b[31m-- Terminal unavailable: ' +
+            (event.reason || 'server rejected connection') +
+            '. --\x1b[0m'
+          );
+        }
+        return;
+      }
+
       const attempts = reconnectAttemptsRef.current;
 
       if (attempts >= MAX_RECONNECT_ATTEMPTS) {

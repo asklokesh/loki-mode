@@ -1279,50 +1279,48 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                               <p className="text-sm text-muted">{previewInfo.description}</p>
                             </div>
 
-                            {/* Dev server controls */}
-                            {(previewInfo.dev_command || previewInfo.type !== 'unknown') && (
-                              <div className="card p-4 max-w-md w-full space-y-3">
-                                {previewInfo.dev_command && (
-                                  <>
-                                    <p className="text-xs font-semibold text-muted-accessible uppercase tracking-wider">Dev Server</p>
-                                    <div className="flex items-center gap-2">
-                                      <code className="text-sm font-mono text-primary bg-hover px-3 py-2 rounded-btn flex-1 text-left truncate">
-                                        {previewInfo.dev_command}
-                                      </code>
-                                      <button
-                                        onClick={() => handleStartDevServer()}
-                                        disabled={devServerStarting}
-                                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-btn bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50"
-                                      >
-                                        <Play size={12} />
-                                        {devServerStarting ? 'Starting...' : 'Start'}
-                                      </button>
-                                    </div>
-                                  </>
-                                )}
-
-                                {/* Custom command input */}
-                                <div className="pt-2 border-t border-border">
-                                  <p className="text-xs text-muted mb-2">Or use a custom command:</p>
+                            {/* Dev server controls -- always shown so users can start a dev server */}
+                            <div className="card p-4 max-w-md w-full space-y-3">
+                              {previewInfo.dev_command && (
+                                <>
+                                  <p className="text-xs font-semibold text-muted-accessible uppercase tracking-wider">Dev Server</p>
                                   <div className="flex items-center gap-2">
-                                    <input
-                                      value={customDevCommand}
-                                      onChange={e => setCustomDevCommand(e.target.value)}
-                                      onKeyDown={e => { if (e.key === 'Enter' && customDevCommand.trim()) handleStartDevServer(customDevCommand.trim()); }}
-                                      placeholder="e.g. npm run dev"
-                                      className="flex-1 px-3 py-1.5 text-xs font-mono bg-card border border-border rounded-btn"
-                                    />
+                                    <code className="text-sm font-mono text-primary bg-hover px-3 py-2 rounded-btn flex-1 text-left truncate">
+                                      {previewInfo.dev_command}
+                                    </code>
                                     <button
-                                      onClick={() => customDevCommand.trim() && handleStartDevServer(customDevCommand.trim())}
-                                      disabled={devServerStarting || !customDevCommand.trim()}
-                                      className="px-3 py-1.5 text-xs font-medium rounded-btn border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                                      onClick={() => handleStartDevServer()}
+                                      disabled={devServerStarting}
+                                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-btn bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50"
                                     >
-                                      Run
+                                      <Play size={12} />
+                                      {devServerStarting ? 'Starting...' : 'Start'}
                                     </button>
                                   </div>
+                                </>
+                              )}
+
+                              {/* Custom command input */}
+                              <div className={previewInfo.dev_command ? "pt-2 border-t border-border" : ""}>
+                                <p className="text-xs text-muted mb-2">{previewInfo.dev_command ? 'Or use a custom command:' : 'Start a dev server:'}</p>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    value={customDevCommand}
+                                    onChange={e => setCustomDevCommand(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter' && customDevCommand.trim()) handleStartDevServer(customDevCommand.trim()); }}
+                                    placeholder="e.g. npm run dev"
+                                    className="flex-1 px-3 py-1.5 text-xs font-mono bg-card border border-border rounded-btn"
+                                  />
+                                  <button
+                                    onClick={() => customDevCommand.trim() && handleStartDevServer(customDevCommand.trim())}
+                                    disabled={devServerStarting || !customDevCommand.trim()}
+                                    className="px-3 py-1.5 text-xs font-medium rounded-btn border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                                  >
+                                    Run
+                                  </button>
                                 </div>
                               </div>
-                            )}
+                            </div>
 
                             {/* Error display */}
                             {devServerError && (
