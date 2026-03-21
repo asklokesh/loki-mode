@@ -467,6 +467,14 @@ class DevServerManager:
         re.compile(r"Running\s+on\s+https?://127\.0\.0\.1:(\d+)"),
         # Go: "Listening on :8080"
         re.compile(r"(?:listening|serving)\s+on\s+:(\d+)", re.IGNORECASE),
+        # Spring Boot/Tomcat: "Tomcat started on port(s): 8080"
+        re.compile(r"Tomcat\s+started\s+on\s+port\(s\):\s*(\d+)", re.IGNORECASE),
+        # Rails: "Listening on http://0.0.0.0:3000"
+        re.compile(r"Listening\s+on\s+https?://0\.0\.0\.0:(\d+)", re.IGNORECASE),
+        # Laravel: "Server running on [http://127.0.0.1:8000]"
+        re.compile(r"Server\s+running\s+on\s+\[https?://127\.0\.0\.1:(\d+)\]", re.IGNORECASE),
+        # Phoenix: "Running MyApp.Endpoint with Bandit at http://localhost:4000"
+        re.compile(r"Running\s+\S+\.Endpoint\s+.*?https?://localhost:(\d+)", re.IGNORECASE),
         # Generic "listening on port 3000" or "on port 3000"
         re.compile(r"listening\s+on\s+(?:port\s+)?(\d+)", re.IGNORECASE),
         re.compile(r"on\s+port\s+(\d+)", re.IGNORECASE),
@@ -549,6 +557,9 @@ class DevServerManager:
                 pkg = json.loads(pkg_json.read_text())
                 scripts = pkg.get("scripts", {})
                 deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                # Check for Expo/React Native
+                if "expo" in deps:
+                    return {"command": "npx expo start", "expected_port": 8081, "framework": "expo"}
                 if "dev" in scripts:
                     port = 5173 if "vite" in deps else 3000
                     fw = "vite" if "vite" in deps else "next" if "next" in deps else "node"
@@ -593,6 +604,38 @@ class DevServerManager:
             return {"command": "go run .", "expected_port": 8080, "framework": "go"}
         if (root / "Cargo.toml").exists():
             return {"command": "cargo run", "expected_port": 8080, "framework": "rust"}
+
+        # Java/Spring Boot -- Maven
+        if (root / "pom.xml").exists():
+            if (root / "mvnw").exists():
+                return {"command": "./mvnw spring-boot:run", "expected_port": 8080, "framework": "spring"}
+            return {"command": "mvn spring-boot:run", "expected_port": 8080, "framework": "spring"}
+
+        # Java/Spring Boot -- Gradle
+        if (root / "build.gradle").exists() or (root / "build.gradle.kts").exists():
+            if (root / "gradlew").exists():
+                return {"command": "./gradlew bootRun", "expected_port": 8080, "framework": "spring"}
+            return {"command": "gradle bootRun", "expected_port": 8080, "framework": "spring"}
+
+        # Ruby on Rails
+        if (root / "Gemfile").exists() and (root / "config" / "routes.rb").exists():
+            return {"command": "bundle exec rails server", "expected_port": 3000, "framework": "rails"}
+
+        # PHP/Laravel
+        if (root / "artisan").exists():
+            return {"command": "php artisan serve", "expected_port": 8000, "framework": "laravel"}
+
+        # Elixir/Phoenix
+        if (root / "mix.exs").exists() and (root / "lib").is_dir():
+            return {"command": "mix phx.server", "expected_port": 4000, "framework": "phoenix"}
+
+        # Swift/Vapor
+        if (root / "Package.swift").exists():
+            return {"command": "swift run", "expected_port": 8080, "framework": "swift"}
+
+        # Static HTML (no framework -- serve with Python)
+        if (root / "index.html").exists():
+            return {"command": "python3 -m http.server 8000", "expected_port": 8000, "framework": "static"}
 
         return None
 
@@ -2010,6 +2053,42 @@ async def get_sessions_history() -> JSONResponse:
     return JSONResponse(content=history)
 
 
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str) -> JSONResponse:
+    """Delete a session and all its files, processes, and state."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # 1. Stop dev server if running
+    if session_id in dev_server_manager.servers:
+        await dev_server_manager.stop(session_id)
+
+    # 2. Stop file watcher if running
+    file_watcher.stop(session_id)
+
+    # 3. Close terminal PTY if open
+    pty = _terminal_ptys.get(session_id)
+    if pty:
+        try:
+            pty.close()
+        except Exception:
+            pass
+        _terminal_ptys.pop(session_id, None)
+
+    # 4. Delete project directory (including node_modules, .loki, everything)
+    import shutil
+    try:
+        shutil.rmtree(str(target))
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to delete: {e}"})
+
+    return JSONResponse(content={"deleted": True, "path": str(target)})
+
+
 @app.get("/api/sessions/{session_id}")
 async def get_session_detail(session_id: str) -> JSONResponse:
     """Get details of a past session for read-only viewing."""
@@ -2723,6 +2802,13 @@ async def get_preview_info(session_id: str) -> JSONResponse:
     has_go_mod = "go.mod" in files
     has_cargo = "Cargo.toml" in files
     has_dockerfile = "Dockerfile" in files or "docker-compose.yml" in files
+    has_pom = "pom.xml" in files
+    has_gradle = "build.gradle" in files or "build.gradle.kts" in files
+    has_gemfile = "Gemfile" in files
+    has_rails_routes = (project_root / "config" / "routes.rb").exists()
+    has_artisan = "artisan" in files
+    has_mix = "mix.exs" in files
+    has_package_swift = "Package.swift" in files
 
     # Read package.json for more info
     pkg_scripts: dict = {}
@@ -2736,6 +2822,7 @@ async def get_preview_info(session_id: str) -> JSONResponse:
             pass
 
     # Determine project type and preview strategy
+    is_expo = "expo" in pkg_deps
     is_react = "react" in pkg_deps or "next" in pkg_deps or "vite" in pkg_deps
     is_express = "express" in pkg_deps or "fastify" in pkg_deps or "koa" in pkg_deps or "hono" in pkg_deps
     is_flask = has_pyproject and any((project_root / f).exists() for f in ["app.py", "main.py", "server.py"])
@@ -2745,7 +2832,12 @@ async def get_preview_info(session_id: str) -> JSONResponse:
         if (project_root / f).exists()
     )
 
-    if is_react or (has_package_json and has_index_html):
+    if is_expo:
+        info["type"] = "expo"
+        info["port"] = 8081
+        info["dev_command"] = "npx expo start"
+        info["description"] = "Expo/React Native app -- scan QR code with Expo Go"
+    elif is_react or (has_package_json and has_index_html):
         info["type"] = "web-app"
         info["entry_file"] = "index.html"
         info["preview_url"] = f"/api/sessions/{session_id}/preview/index.html"
@@ -2790,19 +2882,58 @@ async def get_preview_info(session_id: str) -> JSONResponse:
         info["type"] = "rust-app"
         info["dev_command"] = "cargo run"
         info["description"] = "Rust application"
+    elif has_pom or has_gradle:
+        info["type"] = "spring"
+        info["port"] = 8080
+        if has_pom:
+            info["dev_command"] = "./mvnw spring-boot:run" if (project_root / "mvnw").exists() else "mvn spring-boot:run"
+        else:
+            info["dev_command"] = "./gradlew bootRun" if (project_root / "gradlew").exists() else "gradle bootRun"
+        info["description"] = "Java Spring Boot application"
+    elif has_gemfile and has_rails_routes:
+        info["type"] = "rails"
+        info["port"] = 3000
+        info["dev_command"] = "bundle exec rails server"
+        info["description"] = "Ruby on Rails application"
+    elif has_artisan:
+        info["type"] = "laravel"
+        info["port"] = 8000
+        info["dev_command"] = "php artisan serve"
+        info["description"] = "PHP Laravel application"
+    elif has_mix and (project_root / "lib").is_dir():
+        info["type"] = "phoenix"
+        info["port"] = 4000
+        info["dev_command"] = "mix phx.server"
+        info["description"] = "Elixir Phoenix application"
+    elif has_package_swift:
+        info["type"] = "swift"
+        info["port"] = 8080
+        info["dev_command"] = "swift run"
+        info["description"] = "Swift/Vapor application"
     elif has_dockerfile:
         info["type"] = "containerized"
         info["dev_command"] = "docker compose up"
         info["description"] = "Containerized application"
+    elif has_index_html and not has_package_json:
+        info["type"] = "static"
+        info["port"] = 8000
+        info["entry_file"] = "index.html"
+        info["preview_url"] = f"/api/sessions/{session_id}/preview/index.html"
+        info["dev_command"] = "python3 -m http.server 8000"
+        info["description"] = "Static HTML/CSS/JS site"
     else:
         # Check for any README or docs
+        found_doc = False
         for doc_file in ["README.md", "readme.md", "README.txt"]:
             if (target / doc_file).exists():
                 info["type"] = "project"
                 info["entry_file"] = doc_file
                 info["preview_url"] = f"/api/sessions/{session_id}/preview/{doc_file}"
                 info["description"] = "Project -- showing README"
+                found_doc = True
                 break
+        if not found_doc:
+            info["description"] = "Project type not detected -- use the custom command input to start a dev server"
 
     # Verify the entry file actually exists on disk before returning a preview URL
     if info["entry_file"]:
@@ -2812,6 +2943,70 @@ async def get_preview_info(session_id: str) -> JSONResponse:
             info["entry_file"] = None
 
     return JSONResponse(content=info)
+
+
+@app.get("/api/sessions/{session_id}/expo-qr")
+async def expo_qr_page(session_id: str) -> Response:
+    """Return an HTML page with QR code for Expo Go."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+
+    import socket
+    # Get LAN IP for physical device access
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        lan_ip = "localhost"
+
+    server = dev_server_manager.servers.get(session_id)
+    port = server["port"] if server and server.get("port") else 8081
+
+    expo_url = f"exp://{lan_ip}:{port}"
+    qr_api = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={expo_url}"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head><style>
+  body {{ font-family: system-ui, sans-serif; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; min-height: 100vh; margin: 0;
+         background: #1a1a2e; color: #e0e0e0; }}
+  .card {{ background: #16213e; border-radius: 16px; padding: 32px; text-align: center;
+           box-shadow: 0 8px 32px rgba(0,0,0,0.3); max-width: 400px; }}
+  h2 {{ margin: 0 0 8px; color: #fff; font-size: 20px; }}
+  p {{ margin: 4px 0; color: #9ca3af; font-size: 14px; }}
+  img {{ margin: 16px 0; border-radius: 8px; }}
+  .url {{ font-family: monospace; background: #0f3460; padding: 8px 16px; border-radius: 8px;
+          font-size: 13px; margin-top: 12px; color: #7c83ff; word-break: break-all; }}
+  .instructions {{ margin-top: 16px; text-align: left; font-size: 13px; line-height: 1.6; }}
+  .instructions li {{ margin: 4px 0; }}
+  .web-link {{ margin-top: 16px; }}
+  .web-link a {{ color: #7c83ff; text-decoration: none; font-size: 13px; }}
+  .web-link a:hover {{ text-decoration: underline; }}
+</style></head>
+<body>
+  <div class="card">
+    <h2>Expo Go</h2>
+    <p>Scan with Expo Go on your phone</p>
+    <img src="{qr_api}" alt="QR Code" width="200" height="200" />
+    <div class="url">{expo_url}</div>
+    <div class="instructions">
+      <ol>
+        <li>Install <b>Expo Go</b> on your phone</li>
+        <li>Make sure phone is on the same WiFi network</li>
+        <li>Scan the QR code above</li>
+      </ol>
+    </div>
+    <div class="web-link">
+      <a href="http://{lan_ip}:{port}" target="_blank">Open web version</a>
+    </div>
+  </div>
+</body>
+</html>"""
+    from starlette.responses import HTMLResponse
+    return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------

@@ -603,7 +603,9 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
 
   // Determine preview URL: point iframe directly to dev server (avoids proxy path issues with asset URLs)
   const devServerProxyUrl = devServer?.running && devServer?.port
-    ? (devServer.portless_url || `http://localhost:${devServer.port}/`)
+    ? (devServer.framework === 'expo'
+        ? `/api/sessions/${encodeURIComponent(sessionData.id)}/expo-qr`
+        : (devServer.portless_url || `http://localhost:${devServer.port}/`))
     : null;
   const defaultPreviewUrl = previewInfo?.preview_url || `/api/sessions/${encodeURIComponent(sessionData.id)}/preview/index.html`;
   const effectivePreviewUrl = devServerProxyUrl || defaultPreviewUrl;

@@ -185,6 +185,11 @@ export const api = {
   getSessionDetail: (sessionId: string) =>
     fetchJSON<SessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`),
 
+  deleteSession: (sessionId: string) =>
+    fetchJSON<{ deleted: boolean; path: string }>(`/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    }),
+
   // Onboard
   onboardRepo: (path: string) =>
     fetchJSON<OnboardResult>('/session/onboard', {

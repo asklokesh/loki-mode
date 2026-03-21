@@ -16,11 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preview iframe now loads http://localhost:{port}/ directly instead of routing through proxy path prefix (/proxy/sessionId/) which broke absolute asset URLs in Next.js and other frameworks
 - Frameworks using absolute URL references (Next.js, etc.) now render correctly in Purple Lab preview panel
 
-## [6.56.0] - 2026-03-21 - Dashboard venv fixes, proxy error logging
+## [6.56.0] - 2026-03-21 - Project delete, Expo QR, stack-agnostic detection
+
+### Added
+- Delete projects from Projects page (trash icon, confirmation dialog, full cleanup: files, node_modules, processes, PTY, dev server)
+- Expo/React Native QR code preview for Expo Go mobile testing
+- Java/Spring Boot detection (Maven + Gradle with wrapper support)
+- Ruby on Rails detection
+- PHP/Laravel detection
+- Elixir/Phoenix detection
+- Swift/Vapor detection
+- Static HTML fallback (python3 -m http.server)
+- Port detection patterns for Tomcat, Rails, Laravel, Phoenix
 
 ### Fixed
-- Install httpx, pexpect, and watchdog in dashboard virtual environment (missing deps caused startup failures)
-- Improved proxy error logging for better debugging
+- Preview iframe points directly to localhost:port (fixes CSS/JS asset loading for all frameworks)
+- beforeunload dialog suppressed globally (was blocking page refresh)
+- Proxy error handler with logging (catches and reports actual errors instead of generic 500)
+- Dashboard venv installs httpx/pexpect/watchdog (proxy was crashing with ModuleNotFoundError)
 
 ## [6.55.0] - 2026-03-21 - Auto-install deps, portless, dev server fixes
 

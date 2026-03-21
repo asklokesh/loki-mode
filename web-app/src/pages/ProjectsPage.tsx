@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus } from 'lucide-react';
+import { Search, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -56,9 +56,12 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterTab>('all');
+  const [deleteTarget, setDeleteTarget] = useState<SessionHistoryItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
 
   const fetchSessions = useCallback(() => api.getSessionsHistory(), []);
-  const { data: sessions } = usePolling(fetchSessions, 15000, true);
+  const { data: sessions, refresh } = usePolling(fetchSessions, 15000, true);
 
   const filtered = useMemo(() => {
     if (!sessions) return [];
@@ -72,6 +75,28 @@ export default function ProjectsPage() {
     }
     return list;
   }, [sessions, filter, search]);
+
+  const handleDeleteClick = (e: React.MouseEvent, session: SessionHistoryItem) => {
+    e.stopPropagation();
+    setDeleteTarget(session);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.deleteSession(deleteTarget.id);
+      setDeleteTarget(null);
+      setNotification('Project deleted');
+      setTimeout(() => setNotification(null), 3000);
+      refresh();
+    } catch (err) {
+      setNotification(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setTimeout(() => setNotification(null), 5000);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="max-w-[1400px] mx-auto px-6 py-8">
@@ -130,8 +155,46 @@ export default function ProjectsPage() {
               key={session.id}
               session={session}
               onClick={() => navigate(`/project/${session.id}`)}
+              onDelete={(e) => handleDeleteClick(e, session)}
             />
           ))}
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <h2 className="text-base font-semibold text-[#36342E] mb-2">
+              Delete {deleteTarget.prd_snippet || 'Untitled project'}?
+            </h2>
+            <p className="text-sm text-[#6B6960] mb-6">
+              This will remove all files, dependencies, and state. This cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-4 py-2 text-sm font-medium text-[#6B6960] hover:text-[#36342E] rounded-[5px] hover:bg-[#F8F4F0] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-[5px] transition-colors disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification toast */}
+      {notification && (
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-[#36342E] text-white text-sm rounded-[5px] shadow-lg">
+          {notification}
         </div>
       )}
     </div>
@@ -141,9 +204,11 @@ export default function ProjectsPage() {
 function ProjectCard({
   session,
   onClick,
+  onDelete,
 }: {
   session: SessionHistoryItem;
   onClick: () => void;
+  onDelete: (e: React.MouseEvent) => void;
 }) {
   const dateStr = new Date(session.date).toLocaleDateString(undefined, {
     month: 'short',
@@ -152,7 +217,14 @@ function ProjectCard({
   });
 
   return (
-    <Card hover onClick={onClick}>
+    <Card hover onClick={onClick} className="group relative">
+      <button
+        onClick={onDelete}
+        aria-label="Delete project"
+        className="absolute top-3 right-3 p-1.5 rounded-[3px] text-[#939084] opacity-0 group-hover:opacity-100 hover:text-red-600 hover:bg-red-50 transition-all z-10"
+      >
+        <Trash2 size={14} />
+      </button>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-[#6B6960]">{dateStr}</span>
         <Badge status={statusToBadge(session.status)}>{STATUS_LABELS[session.status] || session.status}</Badge>
