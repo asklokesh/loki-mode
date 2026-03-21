@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.58.0] - 2026-03-21 - 3-dot project menu, static file fix, Docker-first, UI polish
+
+### Added
+- 3-dot context menu on project cards (Open, Open in new tab, Copy path, Delete)
+- Docker Compose as highest-priority dev server detection (isolated containers)
+- LLM instructed to generate Dockerfile + docker-compose.yml for all projects
+- Docker cleanup on project deletion (docker compose down --volumes)
+- Expo/React Native QR code preview for Expo Go mobile testing
+- 7 new framework detections (Spring Boot, Rails, Laravel, Phoenix, Swift, Expo, static HTML)
+- Auto-install npm/pip dependencies before dev server start
+
+### Fixed
+- Static file serving: replaced broken StaticFiles mount with direct catch-all serving
+- Preview iframe points directly to localhost:port (fixes CSS/JS for Next.js and all frameworks)
+- Preview URL bar shows path only, not full http://localhost:3000/
+- beforeunload dialog suppressed globally (was blocking page refresh)
+- Dev server Start button passes detected command to API
+- Dev server searches subdirectories for package.json
+- preview-info returns "npm run dev" instead of raw script content
+- AI Chat filters raw Claude tool-use output
+- Dashboard venv installs httpx/pexpect/watchdog
+- Proxy error handler with logging (catches actual errors instead of generic 500)
+
 ## [6.57.2] - 2026-03-21 - Docker-first dev server, multi-select delete, Expo QR, 7 framework detections
 
 ### Added
