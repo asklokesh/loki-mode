@@ -190,7 +190,7 @@ ensure_dashboard_venv() {
     if [ "$installed" = false ]; then
         # Install without greenlet first (it may need a C compiler).
         # SQLAlchemy only requires greenlet for sync-in-async; aiosqlite is pure async.
-        if ! "${dashboard_venv}/bin/pip" install fastapi uvicorn pydantic websockets sqlalchemy aiosqlite 2>&1 | tail -1; then
+        if ! "${dashboard_venv}/bin/pip" install fastapi uvicorn pydantic websockets sqlalchemy aiosqlite httpx pexpect watchdog 2>&1 | tail -1; then
             echo -e "${RED}Failed to install dashboard dependencies${NC}"
             echo "Try manually: ${dashboard_venv}/bin/pip install fastapi uvicorn sqlalchemy aiosqlite"
             return 1

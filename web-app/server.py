@@ -2862,7 +2862,16 @@ async def get_devserver_status(session_id: str) -> JSONResponse:
 @app.api_route("/proxy/{session_id}/{path:path}",
                methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def proxy_to_devserver(session_id: str, path: str, request: Request):
-    """Proxy requests to the dev server running for this session.
+    """Proxy requests to the dev server running for this session."""
+    try:
+        return await _do_proxy(session_id, path, request)
+    except Exception as e:
+        logger.error("Proxy error for %s/%s: %s", session_id, path, e, exc_info=True)
+        return JSONResponse({"error": f"Proxy failed: {e}"}, status_code=502)
+
+
+async def _do_proxy(session_id: str, path: str, request: Request):
+    """Internal proxy implementation.
 
     Uses streaming to handle large responses without buffering them entirely
     in memory (important for JS bundles, images, etc.).
