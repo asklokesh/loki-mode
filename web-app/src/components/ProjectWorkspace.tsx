@@ -1289,7 +1289,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                                       {previewInfo.dev_command}
                                     </code>
                                     <button
-                                      onClick={() => handleStartDevServer()}
+                                      onClick={() => handleStartDevServer(previewInfo.dev_command || undefined)}
                                       disabled={devServerStarting}
                                       className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-btn bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50"
                                     >
@@ -1336,7 +1336,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                                 <div className="flex items-center justify-between mb-2">
                                   <p className="text-xs text-danger font-medium">Dev server crashed</p>
                                   <button
-                                    onClick={() => handleStartDevServer()}
+                                    onClick={() => handleStartDevServer(previewInfo.dev_command || customDevCommand || undefined)}
                                     className="text-xs px-2 py-1 rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
                                   >
                                     Restart

@@ -2308,6 +2308,14 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
                         break
                     # Strip ANSI escape codes for clean display
                     clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_line.rstrip("\n"))
+                    # Filter out noisy tool-use output lines from Claude
+                    stripped = clean.strip()
+                    if stripped in ("[Tool: Read]", "[Tool: Bash]", "[Tool: Write]",
+                                    "[Tool: Edit]", "[Tool: Grep]", "[Tool: Glob]",
+                                    "[Result]", "[Thinking]"):
+                        continue
+                    if not stripped:
+                        continue
                     task.output_lines.append(clean)
                 proc.stdout.close()
 
