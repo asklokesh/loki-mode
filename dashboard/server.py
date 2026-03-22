@@ -1622,6 +1622,51 @@ async def get_cross_project_learnings():
 
 
 # =============================================================================
+# Active Project Focus (for AI Chat / cross-directory usage)
+# =============================================================================
+
+class FocusRequest(BaseModel):
+    """Schema for setting the active project directory."""
+    project_dir: str
+
+
+@app.post("/api/focus")
+async def set_focus(request: FocusRequest):
+    """Set the active project directory for .loki/ resolution.
+
+    When the dashboard runs in one CWD but a session (e.g. AI Chat) runs
+    in a different project directory, call this endpoint so the dashboard
+    reads .loki/ from the correct location.
+    """
+    global _active_project_dir
+    project_dir = request.project_dir.strip()
+    if not project_dir:
+        raise HTTPException(status_code=400, detail="project_dir must not be empty")
+    p = _Path(project_dir)
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {project_dir}")
+    _active_project_dir = str(p.resolve())
+    return {"project_dir": _active_project_dir, "loki_dir": str(_get_loki_dir())}
+
+
+@app.get("/api/focus")
+async def get_focus():
+    """Get the currently focused project directory."""
+    return {
+        "project_dir": _active_project_dir,
+        "loki_dir": str(_get_loki_dir()),
+    }
+
+
+@app.delete("/api/focus")
+async def clear_focus():
+    """Clear the active project directory override (revert to CWD-based resolution)."""
+    global _active_project_dir
+    _active_project_dir = None
+    return {"project_dir": None, "loki_dir": str(_get_loki_dir())}
+
+
+# =============================================================================
 # Enterprise Features (Optional - enabled via environment variables)
 # =============================================================================
 
@@ -1816,17 +1861,29 @@ async def get_audit_summary(days: int = 7):
 # File-based Session Endpoints (reads from .loki/ flat files)
 # =============================================================================
 
+# Active project directory override (set via API or run.sh notification)
+# When set, _get_loki_dir() resolves .loki/ relative to this path instead of CWD.
+_active_project_dir: Optional[str] = None
+
+
 def _get_loki_dir() -> _Path:
     """Get LOKI_DIR, refreshing from env on each call for consistency.
 
     Resolution order:
     1. LOKI_DIR env var (set by run.sh during active sessions)
-    2. .loki/ in current working directory
-    3. ~/.loki/ as global fallback
+    2. _active_project_dir (set via /api/focus API for cross-directory projects)
+    3. .loki/ in current working directory
+    4. ~/.loki/ as global fallback
     """
     env_dir = os.environ.get("LOKI_DIR")
     if env_dir:
         return _Path(env_dir)
+
+    # Check API-set project directory (for AI Chat running in different CWD)
+    if _active_project_dir:
+        project_loki = _Path(_active_project_dir) / ".loki"
+        if project_loki.is_dir():
+            return project_loki
 
     # Check CWD first
     cwd_loki = _Path.cwd() / ".loki"

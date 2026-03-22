@@ -147,7 +147,9 @@ function ChatMessageBubble({ msg }: { msg: ChatMessage }) {
                 {parsed && parsed.commands.length > 0 ? `, ${parsed.commands.length} commands run` : ''}
               </span>
             ) : (
-              `Exit code: ${msg.returncode}`
+              <span className="text-red-400">
+                Task failed. {msg.returncode === 124 ? 'Timed out.' : 'Check the output above for error details.'}
+              </span>
             )}
           </div>
         )}
@@ -156,6 +158,12 @@ function ChatMessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
+const modeDescriptions: Record<string, string> = {
+  quick: 'Quick: Fast single-task fix (3 iterations max)',
+  standard: 'Standard: Thorough implementation with testing',
+  max: 'Max: Full autonomous build from your description',
+};
+
 export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }: AIChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -163,9 +171,24 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeTaskRef = useRef<string | null>(null);
+
+  // UX-001: Restore chat history from sessionStorage on mount
+  useEffect(() => {
+    const saved = sessionStorage.getItem(`chat_${sessionId}`);
+    if (saved) {
+      try { setMessages(JSON.parse(saved)); } catch { /* ignore corrupt data */ }
+    }
+  }, [sessionId]);
+
+  // UX-001: Persist chat history to sessionStorage (last 50 messages)
+  useEffect(() => {
+    if (messages.length > 0) {
+      sessionStorage.setItem(`chat_${sessionId}`, JSON.stringify(messages.slice(-50)));
+    }
+  }, [messages, sessionId]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -233,7 +256,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
       }
 
       if (pollCount >= maxPolls) {
-        poll = { complete: true, output_lines: ['Build timed out after 5 minutes.'], files_changed: [], returncode: 1 };
+        poll = { complete: true, output_lines: ['Task timed out after 5 minutes. The AI may still be working in the background. Try checking the terminal or refreshing.'], files_changed: [], returncode: 1 };
       }
     } while (!poll.complete);
 
@@ -451,6 +474,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
             <button
               key={m}
               onClick={() => setMode(m)}
+              title={modeDescriptions[m]}
               className={`text-xs font-semibold px-3 py-1.5 rounded-btn transition-colors capitalize ${
                 mode === m ? 'bg-primary text-white' : 'text-muted hover:text-ink'
               }`}
@@ -461,9 +485,8 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
         </div>
         {/* Input + send */}
         <div className="flex items-center gap-2">
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => {
@@ -472,8 +495,10 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
                 handleSend();
               }
             }}
-            placeholder="Ask AI to modify your project..."
-            className="flex-1 px-3 py-1.5 text-xs bg-card border border-border rounded-btn outline-none focus:border-primary transition-colors"
+            placeholder="Ask AI to modify your project... (Shift+Enter for new line)"
+            rows={1}
+            className="flex-1 px-3 py-1.5 text-xs bg-card border border-border rounded-btn outline-none focus:border-primary transition-colors resize-none"
+            style={{ maxHeight: '120px', overflow: 'auto' }}
             disabled={sending}
           />
           {streaming ? (

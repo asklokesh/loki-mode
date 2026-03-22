@@ -21,13 +21,16 @@ interface ServiceHealthBarProps {
 
 export function ServiceHealthBar({ sessionId, services, activePort, onPortChange }: ServiceHealthBarProps) {
   const [restarting, setRestarting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleRestart = async (serviceName: string) => {
     setRestarting(serviceName);
+    setError(null);
     try {
       await api.restartService(sessionId, serviceName);
     } catch {
-      // Best effort
+      setError(`Failed to restart ${serviceName}`);
+      setTimeout(() => setError(null), 5000);
     } finally {
       setTimeout(() => setRestarting(null), 3000);
     }
@@ -49,11 +52,19 @@ export function ServiceHealthBar({ sessionId, services, activePort, onPortChange
     return null;
   };
 
-  if (services.length === 0) return null;
+  if (services.length === 0) {
+    return (
+      <div className="flex items-center gap-1 px-2 py-1 bg-card border-b border-border">
+        <span className="text-[10px] text-muted font-semibold uppercase mr-1">Services:</span>
+        <span className="text-[10px] text-muted/50">Waiting for services to start...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-1 px-2 py-1 bg-card border-b border-border overflow-x-auto">
       <span className="text-[10px] text-muted font-semibold uppercase mr-1 flex-shrink-0">Services:</span>
+      {error && <span className="text-[10px] text-red-400 ml-2">{error}</span>}
       {services.map(svc => {
         const hasPort = svc.ports && svc.ports.length > 0;
         const isActive = hasPort && svc.ports![0] === activePort;

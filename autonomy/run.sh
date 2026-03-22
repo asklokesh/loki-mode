@@ -8849,10 +8849,14 @@ for section_name, section_content in sections.items():
     if is_feature_section:
         # Extract numbered items or bullet points
         for line in section_content.split("\n"):
+            raw_line = line
             line = line.strip()
             # Match: "1. Feature name" or "- Feature name" or "* Feature name"
             m = re.match(r'^(?:\d+[\.\)]\s*|\-\s+|\*\s+)(.+)', line)
             if m:
+                # BUG-V63-003 fix: skip indented sub-bullets (check raw_line before strip)
+                if raw_line and raw_line[0] in (' ', '\t'):
+                    continue
                 feature_text = m.group(1).strip()
                 if len(feature_text) > 10:  # Skip very short lines
                     features.append({
@@ -8881,13 +8885,24 @@ if not features:
 def extract_acceptance_criteria(section_name, sections):
     """Extract testable criteria from section content."""
     criteria = []
+    seen_criteria = set()  # BUG-V63-004 fix: deduplicate criteria
     content = sections.get(section_name, "")
     for line in content.split("\n"):
+        raw_line = line
         line = line.strip()
-        if line.startswith(("- ", "* ", "  - ", "  * ")):
+        # BUG-V63-003 fix: check indentation on raw_line before strip
+        if raw_line and raw_line[0] in (' ', '\t'):
+            # Indented sub-bullet
+            if line.startswith(("- ", "* ")):
+                text = re.sub(r'^[\-\*]\s+', '', line).strip()
+                if len(text) > 5 and text not in seen_criteria:
+                    criteria.append(text)
+                    seen_criteria.add(text)
+        elif line.startswith(("- ", "* ")):
             text = re.sub(r'^[\-\*]\s+', '', line).strip()
-            if len(text) > 5:
+            if len(text) > 5 and text not in seen_criteria:
                 criteria.append(text)
+                seen_criteria.add(text)
     # Also check for acceptance criteria section
     for key in ["acceptance criteria", "success criteria", "definition of done"]:
         for sname, scontent in sections.items():
@@ -8896,7 +8911,10 @@ def extract_acceptance_criteria(section_name, sections):
                     cline = cline.strip()
                     m = re.match(r'^(?:\d+[\.\)]\s*|\-\s+|\*\s+|\[.\]\s*)(.+)', cline)
                     if m:
-                        criteria.append(m.group(1).strip())
+                        text = m.group(1).strip()
+                        if text not in seen_criteria:
+                            criteria.append(text)
+                            seen_criteria.add(text)
     return criteria[:10]  # Cap at 10
 
 # Determine priority based on position (earlier = higher)
@@ -8913,19 +8931,36 @@ def get_priority(index, total):
 # Build task queue entries
 pending_path = ".loki/queue/pending.json"
 existing = []
+wrapper = None  # BUG-V63-005 fix: preserve dict wrapper if present
 if os.path.exists(pending_path):
     try:
         with open(pending_path, "r") as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                existing = data
-            elif isinstance(data, dict) and "tasks" in data:
-                existing = data["tasks"]
+            raw_data = json.load(f)
+            if isinstance(raw_data, list):
+                existing = raw_data
+                wrapper = None
+            elif isinstance(raw_data, dict):
+                existing = raw_data.get("tasks", [])
+                wrapper = {k: v for k, v in raw_data.items() if k != "tasks"}
     except (json.JSONDecodeError, FileNotFoundError):
         existing = []
 
 existing_ids = {t.get("id") for t in existing if isinstance(t, dict)}
 added = 0
+
+# BUG-V63-001 fix: extract audience once with flag to break both loops
+audience = "a user"
+audience_found = False
+for key in ["target audience", "users", "user personas", "audience"]:
+    if audience_found:
+        break
+    for sname in sections:
+        if key in sname.lower():
+            first_line = sections[sname].split("\n")[0].strip()
+            if first_line:
+                audience = first_line[:100]
+                audience_found = True
+                break
 
 for i, feat in enumerate(features):
     task_id = f"prd-{i+1:03d}"
@@ -8954,25 +8989,20 @@ for i, feat in enumerate(features):
     if criteria:
         task["acceptance_criteria"] = criteria
 
-    # Add user story format
-    # Try to extract target audience for user story
-    audience = "a user"
-    for key in ["target audience", "users", "user personas", "audience"]:
-        for sname in sections:
-            if key in sname.lower():
-                # Extract first line
-                first_line = sections[sname].split("\n")[0].strip()
-                if first_line:
-                    audience = first_line[:100]
-                    break
-
     task["user_story"] = f"As {audience}, I want to {feat['title'].lower().rstrip('.')}, so that the product delivers its core value."
 
     existing.append(task)
     added += 1
 
+# BUG-V63-005 fix: write back in original format (dict wrapper or bare list)
+if wrapper is not None:
+    wrapper["tasks"] = existing
+    output = wrapper
+else:
+    output = existing
+
 with open(pending_path, "w") as f:
-    json.dump(existing, f, indent=2)
+    json.dump(output, f, indent=2)
 
 print(f"Extracted {added} tasks from PRD ({len(features)} features found)", file=sys.stderr)
 PRD_PARSE_EOF
@@ -9052,6 +9082,16 @@ run_autonomous() {
 
     load_state
     local retry=$RETRY_COUNT
+
+    # Notify dashboard of active project directory (for AI Chat cross-directory usage)
+    if command -v curl &>/dev/null; then
+        local project_cwd
+        project_cwd="$(pwd)"
+        curl -sf -X POST "http://127.0.0.1:${DASHBOARD_PORT}/api/focus" \
+            -H "Content-Type: application/json" \
+            -d "{\"project_dir\": \"${project_cwd}\"}" \
+            >/dev/null 2>&1 || true
+    fi
 
     # Initialize Cross-Provider Failover (v6.19.0)
     init_failover_state

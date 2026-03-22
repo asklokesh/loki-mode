@@ -641,8 +641,11 @@ class DevServerManager:
                                 p_str = str(p)
                                 if ":" in p_str:
                                     parts = p_str.split(":")
-                                    host_port = int(parts[-2])
-                                    svc_ports.append(host_port)
+                                    try:
+                                        host_port = int(parts[-2].split("-")[0])
+                                        svc_ports.append(host_port)
+                                    except (ValueError, IndexError):
+                                        continue
                             services_info.append({
                                 "name": svc_name,
                                 "ports": svc_ports,
@@ -1347,21 +1350,30 @@ class DevServerManager:
                     info["auto_fix_status"] = "circuit breaker open (3 failures in 5 min)"
                     logger.warning("Auto-fix circuit breaker open for session %s", session_id)
                 elif attempts < 3:
-                    info["auto_fix_attempts"] = attempts + 1
-                    timestamps.append(now)
-                    info["auto_fix_timestamps"] = timestamps
-                    backoff_seconds = 5 * (3 ** attempts)
-                    error_context = "\n".join(info.get("output_lines", [])[-30:])
+                    # BUG-V63-009: Prevent dual monitors from racing to auto-fix
+                    if not info.get("_auto_fixing"):
+                        info["_auto_fixing"] = True
+                        info["auto_fix_attempts"] = attempts + 1
+                        timestamps.append(now)
+                        info["auto_fix_timestamps"] = timestamps
+                        backoff_seconds = 5 * (3 ** attempts)
+                        error_context = "\n".join(info.get("output_lines", [])[-30:])
 
-                    async def _delayed_auto_fix():
-                        await asyncio.sleep(backoff_seconds)
-                        await self._auto_fix(session_id, error_context)
+                        async def _delayed_auto_fix():
+                            try:
+                                await asyncio.sleep(backoff_seconds)
+                                await self._auto_fix(session_id, error_context)
+                            finally:
+                                _info = self.servers.get(session_id)
+                                if _info:
+                                    _info["_auto_fixing"] = False
 
-                    try:
-                        task = asyncio.ensure_future(_delayed_auto_fix())
-                        info["_auto_fix_task"] = task
-                    except Exception:
-                        logger.warning("Failed to schedule auto-fix for session %s", session_id, exc_info=True)
+                        try:
+                            task = asyncio.ensure_future(_delayed_auto_fix())
+                            info["_auto_fix_task"] = task
+                        except Exception:
+                            info["_auto_fixing"] = False
+                            logger.warning("Failed to schedule auto-fix for session %s", session_id, exc_info=True)
 
     async def _monitor_backend_output(self, session_id: str) -> None:
         """Background task: read backend dev server stdout for multi-service setups."""
@@ -1442,8 +1454,9 @@ class DevServerManager:
             except Exception:
                 logger.debug("Docker context gathering for auto-fix failed", exc_info=True)
 
-        # Save original command before stop() removes the info dict
+        # Save original command and multi_service flag before stop() removes the info dict
         cmd = info.get("original_command")
+        is_multi_service = info.get("multi_service", False)
 
         try:
             auto_fix_env = {**os.environ}
@@ -1465,7 +1478,12 @@ class DevServerManager:
                 # Restart the dev server
                 await self.stop(session_id)
                 await asyncio.sleep(1)
-                await self.start(session_id, str(target), command=cmd)
+                # BUG-V63-008: For multi-service sessions, omit command= to re-enter
+                # the multi-service detection path in start()
+                if is_multi_service:
+                    await self.start(session_id, str(target))
+                else:
+                    await self.start(session_id, str(target), command=cmd)
                 # Transfer circuit breaker state to the new info dict
                 new_info = self.servers.get(session_id)
                 if new_info:
@@ -1512,6 +1530,11 @@ class DevServerManager:
         fix_task = info.get("_auto_fix_task")
         if fix_task and not fix_task.done():
             fix_task.cancel()
+
+        # Cancel any tracked Docker service fix tasks (BUG-V64-003)
+        for task in info.get("_fix_tasks", {}).values():
+            if not task.done():
+                task.cancel()
 
         # For Docker containers, run docker compose down
         if info.get("framework") == "docker":
@@ -1668,8 +1691,15 @@ class DevServerManager:
         project_dir = Path(info.get("project_dir", "."))
         info["docker_service_health"] = {}
 
-        while info.get("process") and info["process"].poll() is None:
+        while True:
+            info = self.servers.get(session_id)
+            if not info or not info.get("process") or info["process"].poll() is not None:
+                break
             await asyncio.sleep(10)
+            # Re-check after sleep in case server was stopped
+            info = self.servers.get(session_id)
+            if not info or not info.get("process") or info["process"].poll() is not None:
+                break
 
             try:
                 docker_ctx = await _gather_docker_context(project_dir)
@@ -1702,6 +1732,20 @@ class DevServerManager:
                     recent_fixes = [t for t in svc_health["fix_timestamps"] if now - t < 600]
 
                     if len(recent_fixes) < 3:
+                        # BUG-V63-009: Prevent dual monitors from racing to auto-fix
+                        if info.get("_auto_fixing"):
+                            svc_health["fix_status"] = "fix_in_progress"
+                            info["docker_service_health"][name] = svc_health
+                            continue
+
+                        # BUG-V64-004: Skip if a fix task is already running for this service
+                        existing_task = info.get("_fix_tasks", {}).get(name)
+                        if existing_task and not existing_task.done():
+                            svc_health["fix_status"] = "fix_in_progress"
+                            info["docker_service_health"][name] = svc_health
+                            continue  # Skip, previous fix still running
+
+                        info["_auto_fixing"] = True
                         svc_logs = docker_ctx.get("service_logs", {}).get(name, "")
                         diagnoses = _diagnose_errors(svc_logs)
                         diag_text = "\n".join(f"- {d['diagnosis']}: {d['suggestion']}" for d in diagnoses)
@@ -1716,8 +1760,11 @@ class DevServerManager:
                         svc_health["fix_timestamps"] = recent_fixes + [now]
                         svc_health["fix_status"] = "fixing"
 
-                        # Trigger fix asynchronously
-                        asyncio.ensure_future(self._auto_fix_service(session_id, name, fix_prompt))
+                        # BUG-V64-003: Track fix tasks so they can be cancelled on stop
+                        if "_fix_tasks" not in info:
+                            info["_fix_tasks"] = {}
+                        task = asyncio.ensure_future(self._auto_fix_service(session_id, name, fix_prompt))
+                        info["_fix_tasks"][name] = task
                     else:
                         svc_health["fix_status"] = "circuit_breaker_open"
 
@@ -1743,6 +1790,7 @@ class DevServerManager:
         project_dir = info.get("project_dir", ".")
         loki = _find_loki_cli()
         if not loki:
+            info["_auto_fixing"] = False
             return
 
         try:
@@ -1760,12 +1808,21 @@ class DevServerManager:
                 capture_output=True, cwd=project_dir, timeout=30
             )
 
-            svc_health = info.get("docker_service_health", {}).get(service_name, {})
-            svc_health["fix_status"] = "fixed" if proc.returncode == 0 else "fix_failed"
+            # BUG-V64-005: Re-fetch from live info dict to avoid writing to detached dict
+            info = self.servers.get(session_id)
+            if info and "docker_service_health" in info and service_name in info["docker_service_health"]:
+                info["docker_service_health"][service_name]["fix_status"] = "fixed" if proc.returncode == 0 else "fix_failed"
         except Exception as exc:
             logger.error("Auto-fix for service '%s' failed: %s", service_name, exc)
-            svc_health = info.get("docker_service_health", {}).get(service_name, {})
-            svc_health["fix_status"] = "fix_failed"
+            # BUG-V64-005: Re-fetch from live info dict
+            info = self.servers.get(session_id)
+            if info and "docker_service_health" in info and service_name in info["docker_service_health"]:
+                info["docker_service_health"][service_name]["fix_status"] = "fix_failed"
+        finally:
+            # BUG-V63-009: Clear the auto-fixing lock
+            info = self.servers.get(session_id)
+            if info:
+                info["_auto_fixing"] = False
 
     async def stop_all(self) -> None:
         """Stop all dev servers (used on shutdown)."""
@@ -1781,8 +1838,17 @@ dev_server_manager = DevServerManager()
 # ---------------------------------------------------------------------------
 
 
+_docker_context_cache: dict[str, tuple[float, dict]] = {}
+
+
 async def _gather_docker_context(project_dir: Path) -> dict:
     """Gather Docker Compose service status, logs, and project context."""
+    cache_key = str(project_dir)
+    now = time.time()
+    cached = _docker_context_cache.get(cache_key)
+    if cached and now - cached[0] < 30:
+        return cached[1]
+
     loop = asyncio.get_running_loop()
     result: dict = {"service_status": [], "failing_services": [], "service_logs": {},
                     "project_structure": "", "env_keys": []}
@@ -1793,22 +1859,37 @@ async def _gather_docker_context(project_dir: Path) -> dict:
             ["docker", "compose", "ps", "--format", "json"],
             capture_output=True, text=True, cwd=str(project_dir), timeout=10
         ))
-        if ps_proc.returncode == 0:
-            for line in ps_proc.stdout.strip().split("\n"):
-                if line.strip():
-                    try:
-                        svc = json.loads(line)
-                        status_entry = {
-                            "name": svc.get("Service", svc.get("Name", "unknown")),
-                            "state": svc.get("State", "unknown"),
-                            "status": svc.get("Status", ""),
-                            "exit_code": svc.get("ExitCode", 0),
-                        }
-                        result["service_status"].append(status_entry)
-                        if status_entry["state"] in ("exited", "dead", "restarting"):
-                            result["failing_services"].append(status_entry["name"])
-                    except json.JSONDecodeError:
-                        pass
+        if ps_proc.returncode == 0 and ps_proc.stdout.strip():
+            raw = ps_proc.stdout.strip()
+            # Handle both NDJSON (one object per line) and JSON array formats
+            # Docker Compose v2.21+ returns a JSON array instead of NDJSON
+            services_data: list = []
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    services_data = parsed
+                else:
+                    services_data = [parsed]
+            except json.JSONDecodeError:
+                # NDJSON format - one JSON object per line
+                for line in raw.split("\n"):
+                    if line.strip():
+                        try:
+                            services_data.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+            for svc in services_data:
+                if not isinstance(svc, dict):
+                    continue
+                status_entry = {
+                    "name": svc.get("Service", svc.get("Name", "unknown")),
+                    "state": svc.get("State", "unknown"),
+                    "status": svc.get("Status", ""),
+                    "exit_code": svc.get("ExitCode", 0),
+                }
+                result["service_status"].append(status_entry)
+                if status_entry["state"] in ("exited", "dead", "restarting"):
+                    result["failing_services"].append(status_entry["name"])
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
 
@@ -1839,11 +1920,11 @@ async def _gather_docker_context(project_dir: Path) -> dict:
     # Project structure
     try:
         ls_proc = await loop.run_in_executor(None, lambda: subprocess.run(
-            ["find", ".", "-maxdepth", "2", "-type", "f",
+            ["find", ".", "-maxdepth", "2", "-type", "f", "(",
              "-name", "*.py", "-o", "-name", "*.ts",
              "-o", "-name", "*.tsx", "-o", "-name", "*.js", "-o", "-name", "package.json",
              "-o", "-name", "requirements.txt", "-o", "-name", "Dockerfile",
-             "-o", "-name", "docker-compose.yml", "-o", "-name", "*.env"],
+             "-o", "-name", "docker-compose.yml", "-o", "-name", "*.env", ")"],
             capture_output=True, text=True, cwd=str(project_dir), timeout=5
         ))
         result["project_structure"] = ls_proc.stdout[:2000] if ls_proc.stdout else ""
@@ -1861,6 +1942,7 @@ async def _gather_docker_context(project_dir: Path) -> dict:
         except OSError:
             pass
 
+    _docker_context_cache[cache_key] = (time.time(), result)
     return result
 
 
@@ -3979,7 +4061,10 @@ async def get_preview_info(session_id: str) -> JSONResponse:
                         p_str = str(p)
                         if ":" in p_str:
                             parts = p_str.split(":")
-                            svc_ports.append(int(parts[-2]))
+                            try:
+                                svc_ports.append(int(parts[-2].split("-")[0]))
+                            except (ValueError, IndexError):
+                                continue
                     compose_services.append({
                         "name": svc_name,
                         "ports": svc_ports,
@@ -4251,7 +4336,10 @@ async def get_session_services(session_id: str) -> JSONResponse:
                             p_str = str(p)
                             if ":" in p_str:
                                 parts = p_str.split(":")
-                                svc_ports.append(int(parts[-2]))
+                                try:
+                                    svc_ports.append(int(parts[-2].split("-")[0]))
+                                except (ValueError, IndexError):
+                                    continue
                         services_info.append({
                             "name": svc_name,
                             "ports": svc_ports,
