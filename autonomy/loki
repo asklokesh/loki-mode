@@ -3091,7 +3091,9 @@ cmd_dashboard_open() {
 
 PURPLE_LAB_DEFAULT_PORT=57375
 PURPLE_LAB_DEFAULT_HOST="127.0.0.1"
-PURPLE_LAB_PID_FILE="${LOKI_DIR}/purple-lab/purple-lab.pid"
+# Use HOME-based path so stop works from any CWD
+PURPLE_LAB_STATE_DIR="${HOME}/.loki/purple-lab"
+PURPLE_LAB_PID_FILE="${PURPLE_LAB_STATE_DIR}/purple-lab.pid"
 
 cmd_web() {
     local subcommand="${1:-start}"
@@ -3281,7 +3283,12 @@ cmd_web_start() {
     nohup "$DASHBOARD_PYTHON" "$server_py" > "$log_file" 2>&1 &
     local pid=$!
 
+    mkdir -p "$PURPLE_LAB_STATE_DIR"
     echo "$pid" > "$PURPLE_LAB_PID_FILE"
+    echo "$port" > "${PURPLE_LAB_STATE_DIR}/port"
+    # Also write to local .loki for backward compat
+    mkdir -p "${LOKI_DIR}/purple-lab"
+    echo "$pid" > "${LOKI_DIR}/purple-lab/purple-lab.pid"
     echo "$port" > "${LOKI_DIR}/purple-lab/port"
 
     # Wait for server to be ready
@@ -3324,16 +3331,20 @@ cmd_web_start() {
 cmd_web_stop() {
     local stopped=false
     local port
-    port=$(cat "${LOKI_DIR}/purple-lab/port" 2>/dev/null || echo "$PURPLE_LAB_DEFAULT_PORT")
+    port=$(cat "${PURPLE_LAB_STATE_DIR}/port" 2>/dev/null || cat "${LOKI_DIR}/purple-lab/port" 2>/dev/null || echo "$PURPLE_LAB_DEFAULT_PORT")
 
     # Gracefully stop any active session before killing Purple Lab
     curl -s --max-time 3 -X POST "http://127.0.0.1:${port}/api/session/stop" >/dev/null 2>&1 || true
     sleep 1
 
-    # Try PID file first
-    if [ -f "$PURPLE_LAB_PID_FILE" ]; then
+    # Try PID file first (check global location, then local)
+    local pid_file="$PURPLE_LAB_PID_FILE"
+    if [ ! -f "$pid_file" ]; then
+        pid_file="${LOKI_DIR}/purple-lab/purple-lab.pid"
+    fi
+    if [ -f "$pid_file" ]; then
         local pid
-        pid=$(cat "$PURPLE_LAB_PID_FILE" 2>/dev/null)
+        pid=$(cat "$pid_file" 2>/dev/null)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null
             sleep 1
@@ -3361,11 +3372,32 @@ cmd_web_stop() {
         stopped=true
     fi
 
+    # Also kill any orphan web-app/server.py processes (catches processes from other CWDs)
+    local orphan_pids
+    orphan_pids=$(pgrep -f "web-app/server.py" 2>/dev/null || true)
+    if [ -n "$orphan_pids" ]; then
+        for opid in $orphan_pids; do
+            if kill -0 "$opid" 2>/dev/null; then
+                kill "$opid" 2>/dev/null
+                sleep 1
+                if kill -0 "$opid" 2>/dev/null; then
+                    kill -9 "$opid" 2>/dev/null
+                fi
+                if [ "$stopped" = false ]; then
+                    echo -e "${GREEN}Purple Lab stopped (orphan process PID: $opid)${NC}"
+                fi
+                stopped=true
+            fi
+        done
+    fi
+
     if [ "$stopped" = false ]; then
         echo "Purple Lab is not running."
     fi
 
+    # Clean PID files from current dir AND home dir (catches cross-CWD state)
     rm -f "$PURPLE_LAB_PID_FILE" "${LOKI_DIR}/purple-lab/port" 2>/dev/null || true
+    rm -f "$HOME/.loki/purple-lab/purple-lab.pid" "$HOME/.loki/purple-lab/port" 2>/dev/null || true
 
     # Kill only processes that Purple Lab started (tracked in child-pids.json)
     # External loki sessions (started via "loki start" from terminal) are NOT touched
