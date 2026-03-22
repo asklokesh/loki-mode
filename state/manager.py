@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from enum import Enum
 from contextlib import contextmanager
+import copy
 import uuid
 import glob as glob_module
 
@@ -102,11 +103,11 @@ class VersionVector:
     def concurrent_with(self, other: "VersionVector") -> bool:
         """Check if two vectors are concurrent (neither dominates).
 
-        Per causality rules, identical vectors are concurrent (happened
-        independently with the same knowledge).
+        Identical vectors represent the same causal point and are NOT
+        concurrent -- they are causally ordered (same event).
         """
         if self.versions == other.versions:
-            return True
+            return False
         return not self.dominates(other) and not other.dominates(self)
 
     def to_dict(self) -> Dict[str, int]:
@@ -796,6 +797,9 @@ class StateManager:
         """
         Merge updates into existing state.
 
+        Holds a file lock across the entire read-modify-write to prevent
+        lost updates from concurrent callers.
+
         Args:
             file_ref: File reference
             updates: Dictionary of updates to merge
@@ -804,9 +808,12 @@ class StateManager:
         Returns:
             StateChange object
         """
-        current = self.get_state(file_ref, default={})
-        merged = {**current, **updates}
-        return self.set_state(file_ref, merged, source)
+        path = self._resolve_path(file_ref)
+
+        with self._file_lock(path, exclusive=True):
+            current = self.get_state(file_ref, default={})
+            merged = {**current, **updates}
+            return self.set_state(file_ref, merged, source)
 
     def delete_state(
         self,
@@ -1147,16 +1154,34 @@ class StateManager:
         return states
 
     def refresh_cache(self) -> None:
-        """Refresh all cached entries from disk."""
+        """Refresh all cached entries from disk.
+
+        Collects cached paths under _cache_lock, then releases it before
+        calling _read_file (which acquires _file_lock) to avoid ABBA
+        deadlock between _cache_lock and _file_lock.
+        """
         with self._cache_lock:
-            for path_str in list(self._cache.keys()):
-                path = Path(path_str)
-                if path.exists():
-                    data = self._read_file(path)
-                    if data:
-                        self._put_in_cache(path, data)
+            cached_paths = list(self._cache.keys())
+
+        # Read files WITHOUT holding _cache_lock to avoid deadlock
+        refreshed: Dict[str, Optional[Dict[str, Any]]] = {}
+        for path_str in cached_paths:
+            path = Path(path_str)
+            if path.exists():
+                refreshed[path_str] = self._read_file(path)
+            else:
+                refreshed[path_str] = None
+
+        # Re-acquire _cache_lock to update entries
+        with self._cache_lock:
+            for path_str, data in refreshed.items():
+                if data is not None:
+                    path = Path(path_str)
+                    data_hash = self._compute_hash(data)
+                    mtime = path.stat().st_mtime if path.exists() else 0
+                    self._cache[path_str] = (data, data_hash, mtime)
                 else:
-                    del self._cache[path_str]
+                    self._cache.pop(path_str, None)
 
     # -------------------------------------------------------------------------
     # Optimistic Updates (SYN-014)
@@ -1231,8 +1256,8 @@ class StateManager:
             self._pending_updates[path_str] = []
         self._pending_updates[path_str].append(pending)
 
-        # Apply optimistically to local state
-        current_state = self.get_state(file_ref, default={})
+        # Apply optimistically to local state (deep copy to avoid mutating cache)
+        current_state = copy.deepcopy(self.get_state(file_ref, default={}))
         current_state[key] = value
         current_state["_version_vector"] = version_vector.to_dict()
         current_state["_last_source"] = source
@@ -1398,7 +1423,13 @@ class StateManager:
             seen = set()
             merged = []
             for item in local + remote:
-                item_key = json.dumps(item, sort_keys=True, default=str) if isinstance(item, (dict, list)) else item
+                try:
+                    item_key = json.dumps(item, sort_keys=True, default=str) if isinstance(item, (dict, list)) else item
+                    # Verify the key is hashable before adding to seen set
+                    hash(item_key)
+                except TypeError:
+                    # Fall back to JSON serialization for unhashable types
+                    item_key = json.dumps(item, sort_keys=True, default=str)
                 if item_key not in seen:
                     seen.add(item_key)
                     merged.append(item)
@@ -1603,19 +1634,21 @@ class StateManager:
         if not history_dir.exists():
             return
 
-        version_files = glob_module.glob(str(history_dir / "*.json"))
-        if len(version_files) <= self.version_retention:
-            return
+        all_files = glob_module.glob(str(history_dir / "*.json"))
 
-        # Sort by version number and remove oldest
+        # Filter to only files with numeric stems (ignore temp/orphan files)
         version_nums = []
-        for vf in version_files:
+        for vf in all_files:
             try:
                 version_num = int(Path(vf).stem)
                 version_nums.append((version_num, vf))
             except ValueError:
                 pass
 
+        if len(version_nums) <= self.version_retention:
+            return
+
+        # Sort by version number and remove oldest
         version_nums.sort(key=lambda x: x[0])
         to_remove = version_nums[:-self.version_retention]
 
@@ -1777,17 +1810,21 @@ class StateManager:
 
 # Singleton instance for convenience
 _default_manager: Optional[StateManager] = None
+_default_manager_lock = threading.Lock()
 
 
 def get_state_manager(
     loki_dir: Optional[Union[str, Path]] = None,
     **kwargs
 ) -> StateManager:
-    """Get the default state manager instance."""
+    """Get the default state manager instance (thread-safe)."""
     global _default_manager
 
     if _default_manager is None:
-        _default_manager = StateManager(loki_dir, **kwargs)
+        with _default_manager_lock:
+            # Double-checked locking: re-test after acquiring lock
+            if _default_manager is None:
+                _default_manager = StateManager(loki_dir, **kwargs)
 
     return _default_manager
 
@@ -1796,6 +1833,7 @@ def reset_state_manager() -> None:
     """Reset the default state manager (for testing)."""
     global _default_manager
 
-    if _default_manager:
-        _default_manager.stop()
-        _default_manager = None
+    with _default_manager_lock:
+        if _default_manager:
+            _default_manager.stop()
+            _default_manager = None
