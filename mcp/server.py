@@ -592,6 +592,10 @@ async def loki_memory_store_pattern(
     Returns:
         Pattern ID if successful
     """
+    # Validate confidence range
+    if not (0.0 <= confidence <= 1.0):
+        return json.dumps({"success": False, "error": "confidence must be between 0.0 and 1.0"})
+
     _emit_tool_event_async(
         'loki_memory_store_pattern', 'start',
         parameters={'pattern': pattern, 'category': category, 'confidence': confidence}
@@ -646,8 +650,10 @@ async def loki_task_queue_list() -> str:
         if manager and STATE_MANAGER_AVAILABLE:
             queue = manager.get_state("state/task-queue.json")
             if queue:
+                # Strip internal fields before returning
+                response = {k: v for k, v in queue.items() if k not in ("_next_id", "version")}
                 _emit_tool_event_async('loki_task_queue_list', 'complete', result_status='success')
-                return json.dumps(queue, default=str)
+                return json.dumps(response, default=str)
             # If no queue found via StateManager, return empty
             result = json.dumps({"tasks": [], "message": "No task queue found"})
             _emit_tool_event_async('loki_task_queue_list', 'complete', result_status='success')
@@ -663,8 +669,10 @@ async def loki_task_queue_list() -> str:
         with safe_open(queue_path, 'r') as f:
             queue = json.load(f)
 
+        # Strip internal fields before returning
+        response = {k: v for k, v in queue.items() if k not in ("_next_id", "version")}
         _emit_tool_event_async('loki_task_queue_list', 'complete', result_status='success')
-        return json.dumps(queue, default=str)
+        return json.dumps(response, default=str)
     except PathTraversalError as e:
         logger.error(f"Path traversal attempt blocked: {e}")
         _emit_tool_event_async('loki_task_queue_list', 'complete', result_status='error', error='Access denied')
@@ -694,6 +702,14 @@ async def loki_task_queue_add(
     Returns:
         Task ID if successful
     """
+    # Validate priority and phase enums
+    valid_priorities = {"low", "medium", "high", "critical"}
+    valid_phases = {"discovery", "architecture", "development", "testing", "deployment"}
+    if priority not in valid_priorities:
+        return json.dumps({"success": False, "error": f"priority must be one of: {', '.join(sorted(valid_priorities))}"})
+    if phase not in valid_phases:
+        return json.dumps({"success": False, "error": f"phase must be one of: {', '.join(sorted(valid_phases))}"})
+
     _emit_tool_event_async(
         'loki_task_queue_add', 'start',
         parameters={'title': title, 'priority': priority, 'phase': phase}
@@ -716,7 +732,17 @@ async def loki_task_queue_add(
                 queue = {"tasks": [], "version": "1.0"}
 
         # Create new task with monotonic counter to avoid ID collisions after deletions
-        next_id = queue.get("_next_id", len(queue['tasks']) + 1)
+        # When _next_id is missing, scan existing IDs to find the max and use max+1
+        if "_next_id" not in queue:
+            existing_ids = []
+            for t in queue.get("tasks", []):
+                try:
+                    existing_ids.append(int(t["id"].replace("task-", "")))
+                except (ValueError, KeyError):
+                    pass
+            next_id = (max(existing_ids) + 1) if existing_ids else 1
+        else:
+            next_id = queue["_next_id"]
         task_id = f"task-{next_id:04d}"
         queue["_next_id"] = next_id + 1
         task = {
@@ -768,6 +794,14 @@ async def loki_task_queue_update(
     Returns:
         Updated task if successful
     """
+    # Validate status and priority enums when provided
+    valid_statuses = {"pending", "in_progress", "completed", "blocked"}
+    valid_priorities = {"low", "medium", "high", "critical"}
+    if status is not None and status not in valid_statuses:
+        return json.dumps({"success": False, "error": f"status must be one of: {', '.join(sorted(valid_statuses))}"})
+    if priority is not None and priority not in valid_priorities:
+        return json.dumps({"success": False, "error": f"priority must be one of: {', '.join(sorted(valid_priorities))}"})
+
     _emit_tool_event_async(
         'loki_task_queue_update', 'start',
         parameters={'task_id': task_id, 'status': status, 'priority': priority}
@@ -793,9 +827,9 @@ async def loki_task_queue_update(
         # Find and update task
         for task in queue["tasks"]:
             if task["id"] == task_id:
-                if status:
+                if status is not None:
                     task["status"] = status
-                if priority:
+                if priority is not None:
                     task["priority"] = priority
                 task["updated_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -850,7 +884,7 @@ async def loki_state_get() -> str:
                 state["autonomy_state"] = autonomy_data
         else:
             # Fallback to direct file read
-            state_path = safe_path_join('.loki', 'state', 'autonomy-state.json')
+            state_path = safe_path_join('.loki', 'autonomy-state.json')
             if os.path.exists(state_path):
                 with safe_open(state_path, 'r') as f:
                     state["autonomy_state"] = json.load(f)
@@ -1056,8 +1090,15 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
         if not content:
             return json.dumps({"error": "No PRD content or path provided"})
 
-        # Initialize project state
-        os.makedirs('.loki/state', exist_ok=True)
+        # Initialize project state using safe path operations
+        state_dir = safe_path_join('.loki', 'state')
+        safe_makedirs(state_dir, exist_ok=True)
+
+        # Persist PRD content so downstream tools can access it
+        prd_dest = safe_path_join('.loki', 'state', 'prd.md')
+        with safe_open(prd_dest, 'w') as f:
+            f.write(content)
+
         project = {
             "status": "initialized",
             "prd_length": len(content),
@@ -1201,10 +1242,11 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
         if not target:
             return json.dumps({"error": f"Checkpoint not found: {checkpoint_id}"})
 
-        # Write checkpoint state as current state
+        # Write checkpoint state as current state, stripping the injected "id" field
+        restored_state = {k: v for k, v in target.items() if k != "id"}
         state_path = safe_path_join('.loki', 'state', 'orchestrator.json')
         with safe_open(state_path, 'w') as f:
-            json.dump(target, f, indent=2)
+            json.dump(restored_state, f, indent=2)
 
         _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='success')
         return json.dumps({"restored": True, "checkpoint_id": checkpoint_id})
@@ -1310,7 +1352,10 @@ async def loki_code_search(
         file_filter: Filter by file path substring (e.g., "autonomy/", "dashboard/") (optional)
         type_filter: Filter by chunk type: "function", "class", "header", "section", "file" (optional)
     """
-    _emit_tool_event_async('loki_code_search', 'start', query=query)
+    _emit_tool_event_async('loki_code_search', 'start',
+                           parameters={'query': query, 'n_results': n_results,
+                                       'language': language, 'file_filter': file_filter,
+                                       'type_filter': type_filter})
 
     collection = _get_chroma_collection()
     if collection is None:
@@ -1362,7 +1407,7 @@ async def loki_code_search(
                 "name": meta.get("name", ""),
                 "type": meta.get("type", ""),
                 "language": meta.get("language", ""),
-                "relevance": round(1 - dist, 4),  # Convert distance to similarity
+                "relevance": round(max(0.0, 1.0 - dist / 2.0), 4),  # L2 distance to similarity
                 "preview": preview,
             })
 
@@ -1390,6 +1435,17 @@ async def loki_code_search_stats() -> str:
 
     try:
         count = collection.count()
+
+        # Short-circuit on empty collection to avoid limit=0 error
+        if count == 0:
+            return json.dumps({
+                "total_chunks": 0,
+                "unique_files": 0,
+                "by_language": {},
+                "by_type": {},
+                "reindex_command": "python3.12 tools/index-codebase.py --reset",
+            })
+
         results = collection.get(limit=count, include=["metadatas"])
 
         langs = {}
@@ -1448,19 +1504,13 @@ async def mem_search(
             _emit_tool_event_async('mem_search', 'complete', result_status='success')
             return result
 
-        # Try SQLite backend first (has FTS5), fall back to keyword search
-        try:
-            from memory.sqlite_storage import SQLiteMemoryStorage
-            storage = SQLiteMemoryStorage(base_path)
-            results = storage.search_fts(query, collection=collection, limit=limit)
-        except (ImportError, Exception):
-            # Fall back to retrieval-based search
-            from memory.retrieval import MemoryRetrieval
-            from memory.storage import MemoryStorage
-            storage = MemoryStorage(base_path)
-            retriever = MemoryRetrieval(storage)
-            context = {"goal": query, "task_type": "exploration"}
-            results = retriever.retrieve_task_aware(context, top_k=limit)
+        # Use retrieval-based search
+        from memory.retrieval import MemoryRetrieval
+        from memory.storage import MemoryStorage
+        storage = MemoryStorage(base_path)
+        retriever = MemoryRetrieval(storage)
+        context = {"goal": query, "task_type": "exploration"}
+        results = retriever.retrieve_task_aware(context, top_k=limit)
 
         # Compact results for token efficiency
         compact = []
@@ -1530,48 +1580,25 @@ async def mem_timeline(
         from datetime import timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
-        try:
-            from memory.sqlite_storage import SQLiteMemoryStorage
-            storage = SQLiteMemoryStorage(base_path)
+        from memory.storage import MemoryStorage
+        storage = MemoryStorage(base_path)
+        timeline = storage.get_timeline()
+        actions = timeline.get("recent_actions", [])[:limit]
 
-            # Get timeline actions
-            timeline = storage.get_timeline()
-            actions = timeline.get("recent_actions", [])[:limit]
-
-            # Get recent episodes for richer context
-            episode_ids = storage.list_episodes(since=cutoff, limit=limit)
-            episodes = []
-            for eid in episode_ids:
-                ep = storage.load_episode(eid)
-                if ep:
-                    episodes.append({
-                        "id": ep.get("id"),
-                        "timestamp": ep.get("timestamp"),
-                        "phase": ep.get("phase"),
-                        "goal": (ep.get("goal", "") or "")[:150],
-                        "outcome": ep.get("outcome"),
-                        "duration_seconds": ep.get("duration_seconds"),
-                        "files_modified": ep.get("files_modified", [])[:5],
-                    })
-
-        except (ImportError, Exception):
-            from memory.storage import MemoryStorage
-            storage = MemoryStorage(base_path)
-            timeline = storage.get_timeline()
-            actions = timeline.get("recent_actions", [])[:limit]
-
-            episode_ids = storage.list_episodes(since=cutoff, limit=limit)
-            episodes = []
-            for eid in episode_ids:
-                ep = storage.load_episode(eid)
-                if ep:
-                    episodes.append({
-                        "id": ep.get("id"),
-                        "timestamp": ep.get("timestamp"),
-                        "phase": ep.get("phase"),
-                        "goal": (ep.get("goal", "") or "")[:150],
-                        "outcome": ep.get("outcome"),
-                    })
+        episode_ids = storage.list_episodes(since=cutoff, limit=limit)
+        episodes = []
+        for eid in episode_ids:
+            ep = storage.load_episode(eid)
+            if ep:
+                episodes.append({
+                    "id": ep.get("id"),
+                    "timestamp": ep.get("timestamp"),
+                    "phase": ep.get("phase"),
+                    "goal": (ep.get("goal", "") or "")[:150],
+                    "outcome": ep.get("outcome"),
+                    "duration_seconds": ep.get("duration_seconds"),
+                    "files_modified": ep.get("files_modified", [])[:5],
+                })
 
         result = json.dumps({
             "actions": actions,
@@ -1624,12 +1651,8 @@ async def mem_get(
         # Cap at 20 to prevent abuse
         id_list = id_list[:20]
 
-        try:
-            from memory.sqlite_storage import SQLiteMemoryStorage
-            storage = SQLiteMemoryStorage(base_path)
-        except (ImportError, Exception):
-            from memory.storage import MemoryStorage
-            storage = MemoryStorage(base_path)
+        from memory.storage import MemoryStorage
+        storage = MemoryStorage(base_path)
 
         entries = {}
         for mem_id in id_list:

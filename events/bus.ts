@@ -70,39 +70,53 @@ function getTimestamp(): string {
 }
 
 /**
+ * Sleep helper that does not busy-wait.
+ */
+function sleepSync(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // Intentional short spin -- only used for brief lock retries (< 200ms)
+  }
+}
+
+/**
  * Write a file with an exclusive lockfile to prevent concurrent corruption.
  * Creates a .lock file, writes data, then removes the lock.
+ * If the lock cannot be acquired after retries, the write is skipped
+ * and a warning is logged to stderr.
  */
 function writeFileWithLock(filepath: string, data: string): void {
   const lockfile = filepath + ".lock";
-  let fd: number | null = null;
-  try {
-    // Acquire lock by creating lockfile exclusively (fails if already exists)
-    fd = fs.openSync(lockfile, "wx");
-    fs.closeSync(fd);
-    fd = null;
-    // Write the actual data
-    fs.writeFileSync(filepath, data);
-  } catch (e: unknown) {
-    // If lock acquisition failed (file exists), retry once after brief delay
-    if (e instanceof Error && "code" in e && (e as NodeJS.ErrnoException).code === "EEXIST") {
-      // Another process holds the lock; wait briefly and retry
-      const start = Date.now();
-      while (fs.existsSync(lockfile) && Date.now() - start < 1000) {
-        // Busy-wait up to 1 second
+  const maxRetries = 5;
+  const retryDelayMs = 200;
+  let acquired = false;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const fd = fs.openSync(lockfile, "wx");
+      fs.closeSync(fd);
+      acquired = true;
+      break;
+    } catch (e: unknown) {
+      if (e instanceof Error && "code" in e && (e as NodeJS.ErrnoException).code === "EEXIST") {
+        // Lock held by another process; wait and retry
+        if (attempt < maxRetries - 1) {
+          sleepSync(retryDelayMs);
+        }
+      } else {
+        throw e;
       }
-      try {
-        fd = fs.openSync(lockfile, "wx");
-        fs.closeSync(fd);
-        fd = null;
-        fs.writeFileSync(filepath, data);
-      } catch {
-        // Fall back to unlocked write
-        fs.writeFileSync(filepath, data);
-      }
-    } else {
-      throw e;
     }
+  }
+
+  if (!acquired) {
+    // Lock could not be acquired after retries -- skip write to avoid corruption
+    process.stderr.write(`[loki-events] WARNING: could not acquire lock for ${filepath}, skipping write\n`);
+    return;
+  }
+
+  try {
+    fs.writeFileSync(filepath, data);
   } finally {
     try {
       fs.unlinkSync(lockfile);
@@ -124,7 +138,7 @@ export class EventBus {
   private processedIds: Set<string>;
   private subscribers: Array<{ types: EventType[] | null; callback: EventCallback }>;
   private running: boolean;
-  private pollInterval: NodeJS.Timer | null;
+  private pollInterval: ReturnType<typeof setInterval> | null;
 
   constructor(lokiDir: string = ".loki") {
     this.lokiDir = lokiDir;

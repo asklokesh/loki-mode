@@ -5,6 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.62.0] - 2026-03-22 - 215-Bug Mega-Fix: Full Codebase Audit Resolution
+
+### Fixed (215 bugs across 20 components)
+- **CLI** (35 bugs): Shell injection via Python interpolation, unbound variable crashes, --mirofish flag eating next arg, template bash 3.2 incompatibility, config type coercion
+- **Orchestrator** (28 bugs): ITERATION_COUNT persistence, stale daily log detection, non-atomic state writes, gate escalation PAUSE path, retry counter counting successes
+- **Purple Lab** (30 bugs): Dead code after stop_session, missing session.reset(), pexpect NameError, secrets missing in chat, pause state not tracked, pip installing into server env
+- **Dashboard** (14 bugs): Unauthenticated token creation, WS close before accept, task state machine missing DONE transitions, file handle leaks, project_id filtering
+- **Completion Council** (10 bugs): TOTAL_DONE_SIGNALS not reset, tail -5 dropping VOTE lines, inconsistent thresholds, convergence ignoring commits, inverted logic
+- **Memory** (13 bugs): Vector search discarding embeddings, deadlock via nested locks, non-atomic layer writes, float comparison rewrites, progressive retrieval unbounded
+- **MCP** (13 bugs): Wrong fallback path, nonexistent sqlite_storage import, L2 distance formula, PRD content discarded, parameter validation
+- **Providers** (7 bugs): Gemini frozen model selection, Codex invalid model injection, auto-detect missing Cline/Aider, Gemini output buffering
+- **Sandbox** (12 bugs): setsid PID tracking, macOS realpath failure, readonly empty state, API key shell expansion, hardcoded container names
+- **Events** (13 bugs): Disconnected event channels, stagnation check never firing, incompatible locking, spin lock blocking Node.js, memory-heavy file reads
+- **State Manager** (7 bugs): ABBA deadlock potential, non-atomic update_state, incorrect concurrent_with semantics, singleton race condition
+- **Adapters** (10 bugs): BMAD indentation destruction, relative path resolution, MiroFish resume re-running pipeline, OpenSpec duplicate headings
+- **Parallel Workflows** (12 bugs): Branch double-prefixing, git add -A staging secrets, non-atomic signal files, merge into wrong branch
+- **GitHub/CI** (6 bugs): Security scan flagging removals, VSCode build step, shell test errors hidden, Homebrew SHA256
+- **Packaging** (10 bugs): state/ missing from npm tarball, missing chmod +x, only Claude symlink in Docker, shell:true in bin wrapper
+- **Templates** (6 bugs): 9 templates missing critical sections, duplicate templates, stale examples, README undocumenting 9 templates
+- **Cross-cutting** (12 bugs): Queue file race conditions, non-atomic session.json, log truncation invalidating indices, temp file leaks
+
+### Added
+- 43 new CLI bug-fix regression tests (tests/test-bugfix-audit.sh)
+- 44 new Purple Lab regression tests (web-app/tests/test_server.py)
+- Bug audit report at docs/BUG-AUDIT-v6.61.0.md (215 bugs documented)
+
 ## [6.61.0] - 2026-03-22 - Purple Lab Security and Reliability Overhaul
 
 ### Security

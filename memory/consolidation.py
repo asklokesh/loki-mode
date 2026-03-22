@@ -225,6 +225,9 @@ class ConsolidationPipeline:
             if not merged:
                 self.storage.save_pattern(anti_pattern)
                 all_patterns.append(anti_pattern)
+                # Add to existing_patterns so subsequent anti-patterns in this
+                # run are checked against it, preventing current-run duplicates.
+                existing_patterns.append(anti_pattern)
                 result.anti_patterns_created += 1
 
         # 7. Create Zettelkasten links
@@ -294,6 +297,7 @@ class ConsolidationPipeline:
                 label=self._generate_cluster_label([episode])
             )
             used.add(i)
+            member_indices = [i]
 
             # Find similar episodes
             for j, other_episode in enumerate(episodes):
@@ -304,10 +308,11 @@ class ConsolidationPipeline:
                 if similarity >= threshold:
                     cluster.episodes.append(other_episode)
                     used.add(j)
+                    member_indices.append(j)
 
-            # Update centroid
+            # Update centroid using tracked indices (avoids O(n) list.index())
             if len(cluster.episodes) > 1:
-                cluster_embeddings = [embeddings[episodes.index(ep)] for ep in cluster.episodes]
+                cluster_embeddings = [embeddings[idx] for idx in member_indices]
                 cluster.centroid = np.mean(cluster_embeddings, axis=0)
                 cluster.label = self._generate_cluster_label(cluster.episodes)
 
@@ -408,13 +413,23 @@ class ConsolidationPipeline:
         """Convert episode to text for embedding."""
         parts = [episode.goal]
 
-        # Add action summaries
+        # Add action summaries (handle both ActionEntry objects and dicts)
         for action in episode.action_log[:5]:  # Limit to first 5 actions
-            parts.append(f"{action.tool}: {action.input[:100]}")
+            if isinstance(action, dict):
+                tool = action.get("tool", action.get("action", ""))
+                inp = action.get("input", action.get("target", ""))
+            else:
+                tool = action.tool
+                inp = action.input
+            parts.append(f"{tool}: {str(inp)[:100]}")
 
-        # Add error types
+        # Add error types (handle both ErrorEntry objects and dicts)
         for error in episode.errors_encountered:
-            parts.append(f"Error: {error.error_type}")
+            if isinstance(error, dict):
+                err_type = error.get("error_type", error.get("type", ""))
+            else:
+                err_type = error.error_type
+            parts.append(f"Error: {err_type}")
 
         return " ".join(parts)
 

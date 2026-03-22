@@ -51,9 +51,28 @@ PROVIDER_MAX_PARALLEL=1
 # Codex uses single model with effort parameter
 # NOTE: gpt-5.3-codex is the official model name for Codex CLI v0.98+
 CODEX_DEFAULT_MODEL="gpt-5.3-codex"
-PROVIDER_MODEL_PLANNING="${LOKI_CODEX_MODEL:-${LOKI_MODEL_PLANNING:-$CODEX_DEFAULT_MODEL}}"
-PROVIDER_MODEL_DEVELOPMENT="${LOKI_CODEX_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$CODEX_DEFAULT_MODEL}}"
-PROVIDER_MODEL_FAST="${LOKI_CODEX_MODEL:-${LOKI_MODEL_FAST:-$CODEX_DEFAULT_MODEL}}"
+
+# Known valid Codex model prefixes for validation (BUG-PROV-002 fix)
+# Generic LOKI_MODEL_* may contain Claude/Gemini model names (e.g. "opus", "sonnet",
+# "gemini-3-pro-preview") which are invalid for Codex. Validate before accepting.
+CODEX_KNOWN_MODELS=("gpt-" "o1-" "o3-" "o4-" "codex-" "ft:gpt-")
+
+_codex_validate_model() {
+    local model="$1"
+    for prefix in "${CODEX_KNOWN_MODELS[@]}"; do
+        if [[ "$model" == ${prefix}* ]]; then
+            echo "$model"
+            return 0
+        fi
+    done
+    # Not a valid Codex model name -- fall back to default
+    echo "$CODEX_DEFAULT_MODEL"
+}
+
+# Provider-specific env (LOKI_CODEX_MODEL) is trusted; generic LOKI_MODEL_* is validated
+PROVIDER_MODEL_PLANNING="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_PLANNING:-$CODEX_DEFAULT_MODEL}}")"
+PROVIDER_MODEL_DEVELOPMENT="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$CODEX_DEFAULT_MODEL}}")"
+PROVIDER_MODEL_FAST="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_FAST:-$CODEX_DEFAULT_MODEL}}")"
 
 # Effort levels (Codex-specific: maps to reasoning time, not model capability)
 PROVIDER_EFFORT_PLANNING="xhigh"
@@ -115,8 +134,11 @@ provider_get_tier_param() {
 }
 
 # Dynamic model resolution (v6.0.0)
-# Resolves a capability tier to a concrete effort level at runtime.
-# Codex uses a single model with effort parameter, so maxTier maps to effort cap.
+# NOTE (BUG-PROV-012): Unlike other providers, Codex resolve_model_for_tier returns
+# an EFFORT LEVEL (xhigh/high/low), not a model name. Codex uses a single model
+# (gpt-5.3-codex) with varying effort. Callers that need the model name should use
+# PROVIDER_MODEL_DEVELOPMENT (or CODEX_DEFAULT_MODEL) directly.
+# The effort value is passed via CODEX_MODEL_REASONING_EFFORT env var at invocation.
 resolve_model_for_tier() {
     local tier="$1"
 

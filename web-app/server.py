@@ -96,6 +96,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     _terminal_ptys.clear()
+    _terminal_ws_clients.clear()
 
 
 app = FastAPI(title="Purple Lab", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -133,11 +134,13 @@ class SessionState:
     def __init__(self) -> None:
         self.process: Optional[subprocess.Popen] = None
         self.running = False
+        self.paused = False
         self.provider = ""
         self.prd_text = ""
         self.project_dir = ""
         self.start_time: float = 0
         self.log_lines: list[str] = []
+        self.log_lines_total: int = 0  # absolute count of all lines ever appended
         self.ws_clients: set[WebSocket] = set()
         self._reader_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
@@ -162,11 +165,13 @@ class SessionState:
     def reset(self) -> None:
         self.process = None
         self.running = False
+        self.paused = False
         self.provider = ""
         self.prd_text = ""
         self.project_dir = ""
         self.start_time = 0
         self.log_lines = []
+        self.log_lines_total = 0
 
 
 def _kill_tracked_child_processes() -> None:
@@ -214,27 +219,68 @@ _PURPLE_LAB_PIDS_FILE = SCRIPT_DIR.parent / ".loki" / "purple-lab" / "child-pids
 
 
 def _track_child_pid(pid: int) -> None:
-    """Record a PID started by Purple Lab so loki web stop can clean it up."""
+    """Record a PID started by Purple Lab so loki web stop can clean it up.
+
+    Uses fcntl.flock for atomic read-modify-write to prevent race conditions.
+    """
+    import fcntl
     _PURPLE_LAB_PIDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    pids: list[int] = []
-    if _PURPLE_LAB_PIDS_FILE.exists():
+    fd = os.open(str(_PURPLE_LAB_PIDS_FILE), os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        f = os.fdopen(fd, "r+")
         try:
-            pids = json.loads(_PURPLE_LAB_PIDS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
+            content = f.read()
+            pids = json.loads(content) if content.strip() else []
+        except (json.JSONDecodeError, ValueError):
             pids = []
-    if pid not in pids:
-        pids.append(pid)
-    _PURPLE_LAB_PIDS_FILE.write_text(json.dumps(pids))
+        if pid not in pids:
+            pids.append(pid)
+        f.seek(0)
+        f.truncate()
+        f.write(json.dumps(pids))
+        f.flush()
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    else:
+        f.close()  # also releases lock and closes fd
 
 
 def _untrack_child_pid(pid: int) -> None:
-    """Remove a PID from tracking after it exits."""
+    """Remove a PID from tracking after it exits.
+
+    Uses fcntl.flock for atomic read-modify-write.
+    """
+    import fcntl
     if not _PURPLE_LAB_PIDS_FILE.exists():
         return
     try:
-        pids = json.loads(_PURPLE_LAB_PIDS_FILE.read_text())
-        pids = [p for p in pids if p != pid]
-        _PURPLE_LAB_PIDS_FILE.write_text(json.dumps(pids))
+        fd = os.open(str(_PURPLE_LAB_PIDS_FILE), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            f = os.fdopen(fd, "r+")
+            try:
+                content = f.read()
+                pids = json.loads(content) if content.strip() else []
+            except (json.JSONDecodeError, ValueError):
+                pids = []
+            pids = [p for p in pids if p != pid]
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(pids))
+            f.flush()
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        else:
+            f.close()
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -501,8 +547,8 @@ class DevServerManager:
         # Generic "listening on port 3000" or "on port 3000"
         re.compile(r"listening\s+on\s+(?:port\s+)?(\d+)", re.IGNORECASE),
         re.compile(r"on\s+port\s+(\d+)", re.IGNORECASE),
-        # "port 3000" standalone
-        re.compile(r"port\s+(\d+)", re.IGNORECASE),
+        # "listening on port 3000" / "running on port 3000" / "started on port 3000" / "serving on port 3000"
+        re.compile(r"(?:listening|running|started|serving)\s+(?:on\s+)?port\s+(\d+)", re.IGNORECASE),
         # Vite ready message: "ready in 300ms -- http://localhost:5173/"
         re.compile(r"ready\s+in\s+\d+m?s.*localhost:(\d+)"),
         # Generic URL patterns (last resort -- broad matches)
@@ -534,7 +580,7 @@ class DevServerManager:
         clean = re.sub(r"[^a-zA-Z0-9]", "", session_id)
         return f"lab-{clean[:6].lower()}"
 
-    def _ensure_portless_proxy(self) -> bool:
+    async def _ensure_portless_proxy(self) -> bool:
         """Start the portless proxy if not already running.
 
         Returns True if the proxy is available, False otherwise.
@@ -560,9 +606,8 @@ class DevServerManager:
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
             )
-            # Give it a moment to start
-            import time as _time
-            _time.sleep(1)
+            # Give it a moment to start (async to avoid blocking the event loop)
+            await asyncio.sleep(1)
             self._portless_proxy_started = True
             return True
         except (FileNotFoundError, OSError):
@@ -594,7 +639,10 @@ class DevServerManager:
                             for p in ports:
                                 p_str = str(p)
                                 if ":" in p_str:
-                                    host_port = p_str.split(":")[0]
+                                    # Handle IP:host:container (e.g. "127.0.0.1:8080:80")
+                                    # and host:container (e.g. "8080:80")
+                                    parts = p_str.split(":")
+                                    host_port = parts[-2]  # second-to-last is always host port
                                     port = int(host_port)
                                     break
                             if port != 3000:
@@ -622,8 +670,16 @@ class DevServerManager:
                 if "expo" in deps:
                     return {"command": "npx expo start", "expected_port": 8081, "framework": "expo"}
                 if "dev" in scripts:
-                    port = 5173 if "vite" in deps else 3000
-                    fw = "vite" if "vite" in deps else "next" if "next" in deps else "node"
+                    # Check Next.js BEFORE Vite -- Next.js projects may also have vite as a dep
+                    if "next" in deps:
+                        fw = "next"
+                        port = 3000
+                    elif "vite" in deps:
+                        fw = "vite"
+                        port = 5173
+                    else:
+                        fw = "node"
+                        port = 3000
                     return {"command": "npm run dev", "expected_port": port, "framework": fw}
                 if "start" in scripts:
                     fw = "next" if "next" in deps else "react" if "react" in deps else "node"
@@ -651,7 +707,7 @@ class DevServerManager:
             if py_file.exists():
                 try:
                     with open(py_file, "r", errors="replace") as f:
-                        src = f.read(1024)
+                        src = f.read(4096)
                     if "fastapi" in src.lower() or "FastAPI" in src:
                         module = py_entry[:-3]
                         return {"command": f"uvicorn {module}:app --reload --port 8000",
@@ -758,9 +814,28 @@ class DevServerManager:
                 logger.warning("npm install failed: %s", exc)
 
         if needs_pip:
+            # Use project venv if available, otherwise create one to avoid
+            # installing into the server's own Python environment.
+            venv_dir = None
+            for venv_name in ("venv", ".venv", "env"):
+                candidate = actual_path / venv_name
+                if candidate.is_dir() and (candidate / "bin" / "pip").exists():
+                    venv_dir = candidate
+                    break
+            if venv_dir is None:
+                # Create a virtual environment for the project
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "venv", str(actual_path / "venv")],
+                        capture_output=True, timeout=60,
+                    )
+                    venv_dir = actual_path / "venv"
+                except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+                    logger.warning("venv creation failed: %s", exc)
+            pip_executable = str(venv_dir / "bin" / "pip") if venv_dir else "pip"
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                    [pip_executable, "install", "-r", "requirements.txt"],
                     cwd=actual_dir,
                     capture_output=True,
                     timeout=120,
@@ -771,7 +846,7 @@ class DevServerManager:
         # Check if portless is available and proxy is running
         use_portless = False
         portless_app_name = None
-        if self._has_portless() and self._ensure_portless_proxy():
+        if self._has_portless() and await self._ensure_portless_proxy():
             portless_app_name = self._portless_app_name(session_id)
             use_portless = True
 
@@ -903,10 +978,12 @@ class DevServerManager:
                 info["output_lines"].append(text)
                 if len(info["output_lines"]) > 200:
                     info["output_lines"] = info["output_lines"][-200:]
-                if info["port"] is None:
-                    detected_port = self._parse_port(text)
-                    if detected_port:
-                        info["port"] = detected_port
+                detected_port = self._parse_port(text)
+                if detected_port:
+                    info["port"] = detected_port
+                    # Transition from "starting" to "running" when port is detected
+                    if info.get("status") == "starting":
+                        info["status"] = "running"
         except Exception:
             logger.error("Dev server monitor failed for session %s", session_id, exc_info=True)
         finally:
@@ -968,9 +1045,11 @@ class DevServerManager:
         )
 
         # Save original command before stop() removes the info dict
-        cmd = info.get("command")
+        cmd = info.get("original_command")
 
         try:
+            auto_fix_env = {**os.environ}
+            auto_fix_env.update(_load_secrets())
             result = await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: subprocess.run(
@@ -979,7 +1058,7 @@ class DevServerManager:
                     capture_output=True,
                     text=True,
                     timeout=300,
-                    env={**os.environ},
+                    env=auto_fix_env,
                     start_new_session=True,
                 ),
             )
@@ -1220,6 +1299,7 @@ async def _read_process_output() -> None:
                 break
             text = line.rstrip("\n")
             session.log_lines.append(text)
+            session.log_lines_total += 1
             # Keep last 5000 lines
             if len(session.log_lines) > 5000:
                 session.log_lines = session.log_lines[-5000:]
@@ -1230,8 +1310,9 @@ async def _read_process_output() -> None:
     except Exception:
         logger.error("Process output reader failed", exc_info=True)
     finally:
-        # Process ended
-        session.running = False
+        # Process ended -- acquire lock before mutating state
+        async with session._lock:
+            session.running = False
         await _broadcast({"type": "session_end", "data": {"message": "Session ended"}})
 
 
@@ -1276,7 +1357,18 @@ _SECRETS_FILE = SCRIPT_DIR.parent / ".loki" / "purple-lab" / "secrets.json"
 
 def _load_secrets() -> dict[str, str]:
     """Load secrets from disk, decrypting values if encryption is configured."""
-    from crypto import decrypt_value, encryption_available
+    try:
+        from crypto import decrypt_value, encryption_available
+    except ImportError:
+        # crypto module not available -- return raw secrets or empty dict
+        if _SECRETS_FILE.exists():
+            try:
+                data = json.loads(_SECRETS_FILE.read_text())
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
     if _SECRETS_FILE.exists():
         try:
             data = json.loads(_SECRETS_FILE.read_text())
@@ -1366,7 +1458,7 @@ async def start_session(req: StartRequest) -> JSONResponse:
         # Determine project directory
         project_dir = req.projectDir
         if not project_dir:
-            project_dir = os.path.join(Path.home(), "purple-lab-projects", f"project-{int(time.time())}")
+            project_dir = os.path.join(Path.home(), "purple-lab-projects", f"project-{int(time.time() * 1000)}")
         os.makedirs(project_dir, exist_ok=True)
 
         # Write PRD to a temp file in the project dir
@@ -1527,6 +1619,8 @@ async def stop_session() -> JSONResponse:
             except Exception:
                 pass
         _terminal_ptys.clear()
+        _terminal_ws_clients.clear()
+        _terminal_reader_tasks.clear()
 
         # Kill any orphaned loki-run processes for this project
         if session.project_dir:
@@ -1536,69 +1630,21 @@ async def stop_session() -> JSONResponse:
 
         await _broadcast({"type": "session_end", "data": {"message": "Session stopped by user"}})
 
-        return JSONResponse(content={"stopped": True, "message": "Session stopped"})
+        # Reset session state so it can be reused
+        session.reset()
 
-
-
-    if not session.running or session.process is None:
-        return
-
-    project_dir = session.project_dir
-    session.running = False
-    await session.cleanup()
-
-    proc = session.process
-    if proc and proc.poll() is None:
-        if sys.platform != "win32":
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-        else:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            if sys.platform != "win32":
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-            else:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-            try:
-                proc.wait(timeout=3)
-            except Exception:
-                pass
-
-    # Kill any orphaned loki-run processes for this project
-    if project_dir:
-        await asyncio.get_running_loop().run_in_executor(
-            None, _kill_tracked_child_processes
-        )
+    return JSONResponse(content={"stopped": True, "message": "Session stopped"})
 
 
 @app.get("/api/session/status")
 async def get_status() -> JSONResponse:
     """Get current session status."""
-    # Check if process is still alive
-    if session.process and session.running:
+    # Check if process is still alive (read-only -- do not mutate session.running
+    # here; that is handled by _read_process_output under the lock)
+    is_running = session.running
+    if session.process and is_running:
         if session.process.poll() is not None:
-            session.running = False
+            is_running = False
 
     # Try to read .loki state files for richer status
     loki_dir = _loki_dir()
@@ -1621,11 +1667,11 @@ async def get_status() -> JSONResponse:
         except (json.JSONDecodeError, OSError):
             pass
 
-    uptime = time.time() - session.start_time if session.running else 0
+    uptime = time.time() - session.start_time if is_running else 0
 
     return JSONResponse(content={
-        "running": session.running,
-        "paused": False,
+        "running": is_running,
+        "paused": session.paused,
         "phase": phase,
         "iteration": iteration,
         "complexity": complexity,
@@ -1790,6 +1836,7 @@ async def pause_session() -> JSONResponse:
         return JSONResponse(content={"paused": False, "message": "Process not found"})
     except Exception as e:
         return JSONResponse(content={"paused": False, "message": str(e)})
+    session.paused = True
     await _broadcast({"type": "session_paused", "data": {}})
     return JSONResponse(content={"paused": True})
 
@@ -1805,6 +1852,7 @@ async def resume_session() -> JSONResponse:
         return JSONResponse(content={"resumed": False, "message": "Process not found"})
     except Exception as e:
         return JSONResponse(content={"resumed": False, "message": str(e)})
+    session.paused = False
     await _broadcast({"type": "session_resumed", "data": {}})
     return JSONResponse(content={"resumed": True})
 
@@ -2249,8 +2297,6 @@ async def get_sessions_history() -> JSONResponse:
                 session_info["file_count"] = 0
 
             history.append(session_info)
-        if history:
-            break  # Use first directory that has entries
     return JSONResponse(content=history)
 
 
@@ -2263,6 +2309,10 @@ async def delete_session(session_id: str) -> JSONResponse:
     target = _find_session_dir(session_id)
     if target is None:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # Prevent deleting the currently active session directory
+    if session.project_dir and Path(session.project_dir).resolve() == target.resolve():
+        return JSONResponse(status_code=409, content={"error": "Cannot delete the currently active session. Stop it first."})
 
     # 1. Stop Docker containers for this project (before stopping dev server)
     try:
@@ -2726,6 +2776,8 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
             # Quick and Standard both use 'loki quick' -- fast, focused changes
             cmd_args = [loki, "quick", full_message + docker_note]
         try:
+            chat_env = {**os.environ}
+            chat_env.update(_load_secrets())
             proc = subprocess.Popen(
                 cmd_args,
                 stdout=subprocess.PIPE,
@@ -2733,7 +2785,7 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 cwd=str(target),
-                env={**os.environ},
+                env=chat_env,
                 start_new_session=True,
             )
             task.process = proc
@@ -2822,6 +2874,9 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
             task.files_changed = sorted(changed)
         except Exception:
             pass
+        # Untrack the child PID now that the chat process is done
+        if proc is not None:
+            _untrack_child_pid(proc.pid)
         task.complete = True
 
     asyncio.create_task(run_chat())
@@ -2911,8 +2966,8 @@ async def cancel_chat(session_id: str, task_id: str) -> JSONResponse:
         try:
             pgid = os.getpgid(task.process.pid)
             os.killpg(pgid, signal.SIGTERM)
-            task.process.wait(timeout=3)
-        except (ProcessLookupError, OSError):
+            await asyncio.to_thread(task.process.wait, timeout=3)
+        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
             pass
         if task.process.poll() is None:
             try:
@@ -2920,7 +2975,10 @@ async def cancel_chat(session_id: str, task_id: str) -> JSONResponse:
                 os.killpg(pgid, signal.SIGKILL)
             except (ProcessLookupError, OSError):
                 task.process.kill()
-            task.process.wait(timeout=5)
+            try:
+                await asyncio.to_thread(task.process.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
     task.output_lines.append("[cancelled by user]")
     task.returncode = 1
     task.complete = True
@@ -2965,6 +3023,8 @@ async def fix_session(session_id: str) -> JSONResponse:
             return
         proc: Optional[subprocess.Popen] = None
         try:
+            fix_env = {**os.environ}
+            fix_env.update(_load_secrets())
             proc = subprocess.Popen(
                 [loki, "quick", fix_message],
                 stdout=subprocess.PIPE,
@@ -2972,7 +3032,7 @@ async def fix_session(session_id: str) -> JSONResponse:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 cwd=str(target),
-                env={**os.environ},
+                env=fix_env,
                 start_new_session=True,
             )
             task.process = proc
@@ -3582,8 +3642,11 @@ async def proxy_websocket(websocket: WebSocket, session_id: str, path: str):
             async def client_to_upstream():
                 try:
                     while True:
-                        data = await websocket.receive_text()
-                        await upstream.send(data)
+                        msg = await websocket.receive()
+                        if msg.get("text") is not None:
+                            await upstream.send(msg["text"])
+                        elif msg.get("bytes") is not None:
+                            await upstream.send(msg["bytes"])
                 except (WebSocketDisconnect, Exception):
                     pass
 
@@ -3620,8 +3683,10 @@ async def proxy_websocket(websocket: WebSocket, session_id: str, path: str):
 async def auth_middleware(request: Request, call_next):
     """Enforce JWT auth when database is configured. Skip for public paths."""
     path = request.url.path
-    skip_auth_prefixes = ["/health", "/api/auth/", "/ws", "/proxy/"]
-    if any(path.startswith(p) for p in skip_auth_prefixes) or not path.startswith("/api/"):
+    skip_auth_prefixes = ["/health", "/api/auth/"]
+    if any(path.startswith(p) for p in skip_auth_prefixes) or not (
+        path.startswith("/api/") or path.startswith("/ws") or path.startswith("/proxy/")
+    ):
         return await call_next(request)
 
     # If no DB configured, skip auth (local mode)
@@ -3846,7 +3911,9 @@ async def _push_state_to_client(ws: WebSocket) -> None:
     Sends only incremental log deltas (new lines since last push) instead
     of the full log buffer each time.
     """
-    last_log_index = max(len(session.log_lines) - 100, 0)  # backfill handled on connect
+    # Track absolute log offset to handle truncation correctly.
+    # The buffer holds only the last N lines, but log_lines_total counts all.
+    last_abs_index = max(session.log_lines_total - 100, 0)  # backfill handled on connect
     while True:
         is_running = (
             session.process is not None
@@ -3856,30 +3923,49 @@ async def _push_state_to_client(ws: WebSocket) -> None:
         interval = 2.0 if is_running else 30.0
 
         # Build status payload (same logic as GET /api/session/status)
-        loki_dir = _loki_dir()
-        phase = "idle"
-        iteration = 0
-        complexity = "standard"
-        current_task = ""
-        pending_tasks = 0
+        # Use asyncio.to_thread to avoid blocking the event loop on file I/O
+        def _read_state_files():
+            loki_dir = _loki_dir()
+            _phase = "idle"
+            _iteration = 0
+            _complexity = "standard"
+            _current_task = ""
+            _pending_tasks = 0
+            _agents = []
 
-        state_file = loki_dir / "state" / "session.json"
-        if state_file.exists():
-            try:
-                with open(state_file) as f:
-                    state_data = json.load(f)
-                phase = state_data.get("phase", phase)
-                iteration = state_data.get("iteration", iteration)
-                complexity = state_data.get("complexity", complexity)
-                current_task = state_data.get("current_task", current_task)
-                pending_tasks = state_data.get("pending_tasks", pending_tasks)
-            except (json.JSONDecodeError, OSError):
-                pass
+            state_file = loki_dir / "state" / "session.json"
+            if state_file.exists():
+                try:
+                    with open(state_file) as f:
+                        state_data = json.load(f)
+                    _phase = state_data.get("phase", _phase)
+                    _iteration = state_data.get("iteration", _iteration)
+                    _complexity = state_data.get("complexity", _complexity)
+                    _current_task = state_data.get("current_task", _current_task)
+                    _pending_tasks = state_data.get("pending_tasks", _pending_tasks)
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            agents_file = loki_dir / "state" / "agents.json"
+            if agents_file.exists():
+                try:
+                    with open(agents_file) as f:
+                        agents_data = json.load(f)
+                    if isinstance(agents_data, list):
+                        _agents = agents_data
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            return _phase, _iteration, _complexity, _current_task, _pending_tasks, _agents
+
+        phase, iteration, complexity, current_task, pending_tasks, agents_payload = (
+            await asyncio.to_thread(_read_state_files)
+        )
 
         uptime = time.time() - session.start_time if is_running else 0
         status_payload = {
             "running": session.running,
-            "paused": False,
+            "paused": session.paused,
             "phase": phase,
             "iteration": iteration,
             "complexity": complexity,
@@ -3894,22 +3980,15 @@ async def _push_state_to_client(ws: WebSocket) -> None:
             "projectDir": session.project_dir,
         }
 
-        # Build agents payload
-        agents_payload: list = []
-        agents_file = loki_dir / "state" / "agents.json"
-        if agents_file.exists():
-            try:
-                with open(agents_file) as f:
-                    agents_data = json.load(f)
-                if isinstance(agents_data, list):
-                    agents_payload = agents_data
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Build incremental logs payload (only new lines since last push)
-        current_len = len(session.log_lines)
-        new_lines = session.log_lines[last_log_index:current_len] if current_len > last_log_index else []
-        last_log_index = current_len
+        # Build incremental logs payload using absolute offset to handle truncation
+        total_now = session.log_lines_total
+        buf_len = len(session.log_lines)
+        buf_start = total_now - buf_len  # absolute index of first item in buffer
+        if last_abs_index < buf_start:
+            last_abs_index = buf_start  # skip lines that were truncated away
+        relative_start = last_abs_index - buf_start
+        new_lines = session.log_lines[relative_start:] if relative_start < buf_len else []
+        last_abs_index = total_now
         logs_payload = []
         for line in new_lines:
             level = "info"
@@ -3946,10 +4025,11 @@ async def _push_state_to_client(ws: WebSocket) -> None:
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     """Real-time stream of loki output and events."""
+    await ws.accept()
     if len(session.ws_clients) >= MAX_WS_CLIENTS:
+        await ws.send_text(json.dumps({"type": "error", "data": {"message": "Too many connections"}}))
         await ws.close(code=1013, reason="Too many connections")
         return
-    await ws.accept()
     session.ws_clients.add(ws)
 
     # Send current state on connect
@@ -3977,13 +4057,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         while True:
             try:
                 data = await asyncio.wait_for(ws.receive_text(), timeout=60.0)
-                missed_pongs = 0  # any message resets idle counter
                 try:
                     msg = json.loads(data)
                     if msg.get("type") == "ping":
                         await ws.send_text(json.dumps({"type": "pong"}))
                     elif msg.get("type") == "pong":
-                        pass  # client responded to our ping
+                        missed_pongs = 0  # only reset on pong-type messages
                 except json.JSONDecodeError:
                     pass
             except asyncio.TimeoutError:
@@ -4016,6 +4095,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 # Track active WebSocket connections per session for multi-tab awareness
 _terminal_ws_clients: Dict[str, set] = {}
 
+# Track active PTY reader tasks per session to prevent duplicate readers
+_terminal_reader_tasks: Dict[str, asyncio.Task] = {}
+
 
 @app.websocket("/ws/terminal/{session_id}")
 async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
@@ -4025,10 +4107,11 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
     reconnect or second browser tab). Only kills the PTY when the *last*
     WebSocket client for this session disconnects.
     """
+    await ws.accept()
     if len(_terminal_ptys) >= MAX_TERMINAL_PTYS and session_id not in _terminal_ptys:
+        await ws.send_text(json.dumps({"type": "error", "data": {"message": "Too many terminal sessions"}}))
         await ws.close(code=1013, reason="Too many terminal sessions")
         return
-    await ws.accept()
 
     if not HAS_PEXPECT:
         # Try to install pexpect automatically
@@ -4039,6 +4122,7 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
                 capture_output=True, timeout=30,
             )
             import pexpect as _pex  # noqa: F811
+            globals()["pexpect"] = _pex
             globals()["HAS_PEXPECT"] = True
         except Exception:
             await ws.send_text(json.dumps({
@@ -4114,6 +4198,8 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
             pass
 
     # ---- Background task: read PTY output and forward to WebSocket ----------
+    # Only create one reader per PTY to avoid race conditions when multiple
+    # tabs connect to the same terminal session.
     async def read_pty_output() -> None:
         loop = asyncio.get_event_loop()
         while True:
@@ -4139,7 +4225,13 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
             except Exception:
                 break
 
-    reader_task = asyncio.create_task(read_pty_output())
+    existing_reader = _terminal_reader_tasks.get(session_id)
+    if existing_reader is not None and not existing_reader.done():
+        # A reader already exists for this PTY -- reuse it, don't create another
+        reader_task = None
+    else:
+        reader_task = asyncio.create_task(read_pty_output())
+        _terminal_reader_tasks[session_id] = reader_task
 
     try:
         while True:
@@ -4167,11 +4259,13 @@ async def terminal_websocket(ws: WebSocket, session_id: str) -> None:
     except Exception:
         logger.error("Terminal WebSocket error for session %s", session_id, exc_info=True)
     finally:
-        reader_task.cancel()
-        try:
-            await reader_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        if reader_task is not None:
+            reader_task.cancel()
+            try:
+                await reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            _terminal_reader_tasks.pop(session_id, None)
 
         # Untrack this client
         clients = _terminal_ws_clients.get(session_id)

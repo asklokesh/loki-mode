@@ -48,6 +48,10 @@ if ! [[ "$COUNCIL_CHECK_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
     COUNCIL_CHECK_INTERVAL=5
 fi
 COUNCIL_MIN_ITERATIONS=${LOKI_COUNCIL_MIN_ITERATIONS:-3}
+# BUG-QG-012: Enforce minimum of 1 to prevent council approving at iteration 0
+if [ "$COUNCIL_MIN_ITERATIONS" -lt 1 ] 2>/dev/null; then
+    COUNCIL_MIN_ITERATIONS=1
+fi
 COUNCIL_CONVERGENCE_WINDOW=${LOKI_COUNCIL_CONVERGENCE_WINDOW:-3}
 COUNCIL_STAGNATION_LIMIT=${LOKI_COUNCIL_STAGNATION_LIMIT:-5}
 COUNCIL_DONE_SIGNAL_LIMIT=${LOKI_COUNCIL_DONE_SIGNAL_LIMIT:-10}
@@ -84,6 +88,7 @@ council_init() {
     COUNCIL_PRD_PATH="$prd_path"
     COUNCIL_CONSECUTIVE_NO_CHANGE=0
     COUNCIL_DONE_SIGNALS=0
+    COUNCIL_TOTAL_DONE_SIGNALS=0
     COUNCIL_LAST_DIFF_HASH=""
 
     mkdir -p "$COUNCIL_STATE_DIR"
@@ -131,7 +136,11 @@ council_track_iteration() {
     local staged_hash
     staged_hash=$(git diff --cached --stat 2>/dev/null | (md5sum 2>/dev/null || md5 -r 2>/dev/null) | cut -d' ' -f1 || echo "unknown")
 
-    local combined_hash="${current_diff_hash}-${staged_hash}"
+    # Include latest commit hash so committed changes are detected (BUG-QG-004)
+    local commit_hash
+    commit_hash=$(git log --oneline -1 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+
+    local combined_hash="${current_diff_hash}-${staged_hash}-${commit_hash}"
 
     if [ "$combined_hash" = "$COUNCIL_LAST_DIFF_HASH" ]; then
         ((COUNCIL_CONSECUTIVE_NO_CHANGE++))
@@ -248,6 +257,9 @@ council_vote() {
     log_header "COMPLETION COUNCIL - Iteration $ITERATION_COUNT"
     log_info "Convening ${COUNCIL_SIZE}-member council..."
 
+    # Compute threshold using ceiling(2/3) formula, consistent with council_aggregate_votes
+    local effective_threshold=$(( (COUNCIL_SIZE * 2 + 2) / 3 ))
+
     # Gather evidence for council members
     local evidence_file="$vote_dir/evidence.md"
     council_gather_evidence "$evidence_file" "$prd_path"
@@ -287,30 +299,57 @@ council_vote() {
         # is based only on issues below the severity threshold
         if [ "$vote_result" = "REJECT" ] && [ "$COUNCIL_SEVERITY_THRESHOLD" != "low" ] && [ -n "$member_issues" ]; then
             local has_blocking_issue=false
+            local non_blocking_count=0
+            local total_issue_count=0
             local severity_order="critical high medium low"
             local threshold_reached=false
 
             while IFS= read -r issue_line; do
                 local issue_severity
                 issue_severity=$(echo "$issue_line" | grep -oE "(CRITICAL|HIGH|MEDIUM|LOW)" | head -1 | tr '[:upper:]' '[:lower:]')
+                [ -z "$issue_severity" ] && continue
+                ((total_issue_count++))
                 # Reset per issue line so previous iterations don't poison the check
                 threshold_reached=false
                 # Check if this severity meets or exceeds the threshold
+                local is_blocking=false
                 for sev in $severity_order; do
                     if [ "$sev" = "$issue_severity" ] && [ "$threshold_reached" = "false" ]; then
                         has_blocking_issue=true
+                        is_blocking=true
                         break
                     fi
                     if [ "$sev" = "$COUNCIL_SEVERITY_THRESHOLD" ]; then
                         threshold_reached=true
                     fi
                 done
+                if [ "$is_blocking" = "false" ]; then
+                    ((non_blocking_count++))
+                fi
             done <<< "$member_issues"
 
+            # Apply error budget: if no blocking issues, check non-blocking ratio
             if [ "$has_blocking_issue" = "false" ]; then
-                log_info "  Member $member ($role): REJECT overridden to APPROVE (issues below ${COUNCIL_SEVERITY_THRESHOLD} threshold)"
-                vote_result="APPROVE"
+                local budget_exceeded=false
+                if [ "$total_issue_count" -gt 0 ] && [ "$COUNCIL_ERROR_BUDGET" != "0.0" ] && [ "$COUNCIL_ERROR_BUDGET" != "0" ]; then
+                    # Check if non-blocking issue ratio exceeds the error budget
+                    budget_exceeded=$(_NB="$non_blocking_count" _TOTAL="$total_issue_count" _BUDGET="$COUNCIL_ERROR_BUDGET" python3 -c "
+import os
+nb = int(os.environ['_NB'])
+total = int(os.environ['_TOTAL'])
+budget = float(os.environ['_BUDGET'])
+ratio = nb / total if total > 0 else 0.0
+print('true' if ratio > budget else 'false')
+" 2>/dev/null || echo "false")
+                fi
+                if [ "$budget_exceeded" = "true" ]; then
+                    log_info "  Member $member ($role): REJECT maintained (non-blocking issue ratio exceeds error budget ${COUNCIL_ERROR_BUDGET})"
+                else
+                    log_info "  Member $member ($role): REJECT overridden to APPROVE (issues below ${COUNCIL_SEVERITY_THRESHOLD} threshold, within error budget)"
+                    vote_result="APPROVE"
+                fi
             fi
+
         fi
 
         if [ "$vote_result" = "APPROVE" ]; then
@@ -333,7 +372,7 @@ council_vote() {
     done
 
     # Anti-sycophancy check: if unanimous APPROVE, run devil's advocate
-    if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 3 ]; then
+    if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
         log_warn "Unanimous approval detected - running anti-sycophancy check..."
         local contrarian_verdict
         contrarian_verdict=$(council_devils_advocate "$evidence_file" "$vote_dir")
@@ -356,7 +395,7 @@ council_vote() {
     _COUNCIL_APPROVE="$approve_count" \
     _COUNCIL_REJECT="$reject_count" \
     _COUNCIL_ITERATION="${ITERATION_COUNT:-0}" \
-    _COUNCIL_THRESHOLD="$COUNCIL_THRESHOLD" \
+    _COUNCIL_THRESHOLD="$effective_threshold" \
     python3 -c "
 import json, os
 from datetime import datetime, timezone
@@ -387,7 +426,7 @@ with open(state_file, 'w') as f:
 " || log_warn "Failed to record council vote results"
 
     echo ""
-    log_info "Council verdict: $approve_count APPROVE / $reject_count REJECT (threshold: $COUNCIL_THRESHOLD)"
+    log_info "Council verdict: $approve_count APPROVE / $reject_count REJECT (threshold: $effective_threshold)"
     echo -e "$verdicts"
     echo ""
 
@@ -396,10 +435,10 @@ with open(state_file, 'w') as f:
         "iteration=$ITERATION_COUNT" \
         "approve=$approve_count" \
         "reject=$reject_count" \
-        "threshold=$COUNCIL_THRESHOLD" \
-        "result=$([ $approve_count -ge $COUNCIL_THRESHOLD ] && echo 'APPROVED' || echo 'REJECTED')" 2>/dev/null || true
+        "threshold=$effective_threshold" \
+        "result=$([ $approve_count -ge $effective_threshold ] && echo 'APPROVED' || echo 'REJECTED')" 2>/dev/null || true
 
-    if [ $approve_count -ge $COUNCIL_THRESHOLD ]; then
+    if [ $approve_count -ge $effective_threshold ]; then
         return 0  # Council says DONE
     fi
     return 1  # Council says CONTINUE
@@ -754,27 +793,27 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
         claude)
             if command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
-                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -5)
+                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -5)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -20)
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -5)
+                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -20)
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
-                verdict=$(cline -y "$prompt" 2>/dev/null | tail -5)
+                verdict=$(cline -y "$prompt" 2>/dev/null | tail -20)
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
-                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -5)
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -20)
             fi
             ;;
     esac
@@ -808,18 +847,12 @@ council_devils_advocate() {
     local evidence
     evidence=$(cat "$evidence_file" 2>/dev/null || echo "No evidence available")
 
-    # Read all previous approvals
-    local prev_verdicts=""
-    for f in "$vote_dir"/member-*.txt; do
-        [ -f "$f" ] && prev_verdicts="${prev_verdicts}\n$(cat "$f")"
-    done
+    # BUG-QG-009: Do NOT show prior verdicts to devil's advocate (blind review)
+    # Previous code read member-*.txt files here, biasing the contrarian reviewer
 
     local prompt="ANTI-SYCOPHANCY CHECK: All council members unanimously APPROVED this project.
 
 Your job is to be the CONTRARIAN. Find ANY reason this should NOT be approved.
-
-Previous verdicts:
-${prev_verdicts}
 
 EVIDENCE:
 ${evidence}
@@ -843,27 +876,27 @@ REASON: your reasoning"
         claude)
             if command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
-                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -5)
+                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -5)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -20)
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -5)
+                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -20)
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
-                verdict=$(cline -y "$prompt" 2>/dev/null | tail -5)
+                verdict=$(cline -y "$prompt" 2>/dev/null | tail -20)
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
-                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -5)
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -20)
             fi
             ;;
     esac
@@ -985,10 +1018,15 @@ council_evaluate_member() {
     # If code is still changing, work may not be done
     local current_diff_hash
     current_diff_hash=$(git diff --stat HEAD 2>/dev/null | (md5sum 2>/dev/null || md5 -r 2>/dev/null) | cut -d' ' -f1 || echo "unknown")
-    if [ "$COUNCIL_CONSECUTIVE_NO_CHANGE" -eq 0 ] && [ "$ITERATION_COUNT" -gt "$COUNCIL_MIN_ITERATIONS" ]; then
-        # Code is still actively changing -- likely not done
-        vote="CONTINUE"
-        reasons="${reasons}code still changing between iterations; "
+    if [ "$COUNCIL_CONSECUTIVE_NO_CHANGE" -gt 0 ] && [ "$ITERATION_COUNT" -gt "$COUNCIL_MIN_ITERATIONS" ]; then
+        # Code has stopped changing -- stagnation, not necessarily done
+        # (BUG-QG-011: previously inverted -- forced CONTINUE when code was changing,
+        # which penalized active progress. Now: stagnation with no passing checks = CONTINUE)
+        if [ "$vote" = "COMPLETE" ]; then
+            : # Other checks passed despite stagnation -- allow COMPLETE
+        else
+            reasons="${reasons}code stagnated with failing checks; "
+        fi
     fi
 
     # Check 3: Are there uncaught errors in logs?
@@ -1296,7 +1334,7 @@ council_evaluate() {
             complete_count=$(_RF="$round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('complete_votes', 0))" 2>/dev/null || echo "0")
         fi
 
-        if [ "$complete_count" -eq "$COUNCIL_SIZE" ] && [ "$COUNCIL_SIZE" -ge 3 ]; then
+        if [ "$complete_count" -eq "$COUNCIL_SIZE" ] && [ "$COUNCIL_SIZE" -ge 2 ]; then
             # Step 3: Unanimous -- run devil's advocate
             local da_result
             da_result=$(council_devils_advocate_review "$ITERATION_COUNT")

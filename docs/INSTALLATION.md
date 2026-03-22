@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v6.61.0
+**Version:** v6.62.0
 
 ---
 
@@ -54,7 +54,7 @@ npm install -g loki-mode
 
 Installs the `loki` CLI and automatically sets up the skill for Claude Code, Codex CLI, and Gemini CLI via the postinstall script.
 
-**Prerequisites:** Node.js 16+
+**Prerequisites:** Node.js 18+
 
 **What it does:**
 - Installs the `loki` CLI binary to your PATH

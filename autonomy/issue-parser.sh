@@ -258,8 +258,7 @@ parse_github_issue() {
 
     # Parse the reference
     local parsed_ref
-    parsed_ref=$(parse_issue_ref "$issue_ref")
-    if [ $? -ne 0 ]; then
+    if ! parsed_ref=$(parse_issue_ref "$issue_ref"); then
         return 1
     fi
 
@@ -272,9 +271,7 @@ parse_github_issue() {
 
     # Fetch issue data
     local issue_data
-    issue_data=$(gh issue view "$number" --repo "$owner/$repo" --json number,title,body,labels,assignees,milestone,state,url,createdAt,author 2>&1)
-
-    if [ $? -ne 0 ]; then
+    if ! issue_data=$(gh issue view "$number" --repo "$owner/$repo" --json number,title,body,labels,assignees,milestone,state,url,createdAt,author 2>&1); then
         log_error "Failed to fetch issue: $issue_data"
         return 1
     fi
@@ -612,8 +609,8 @@ main() {
 
     # Parse the issue
     local result
-    result=$(parse_github_issue "$issue_ref" "$format")
-    local exit_code=$?
+    local exit_code=0
+    result=$(parse_github_issue "$issue_ref" "$format") || exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
         exit $exit_code

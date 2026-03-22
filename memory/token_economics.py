@@ -557,15 +557,22 @@ class TokenEconomics:
         """
         Get a summary of token economics for this session.
 
+        Caches computed values to avoid redundant filesystem scans
+        when check_thresholds() re-calls get_ratio()/get_savings_percent().
+
         Returns:
             Dictionary with session info, metrics, and computed values
         """
+        # Pre-compute once; check_thresholds reuses the cached baseline.
+        ratio = self.get_ratio()
+        savings = self.get_savings_percent()
+
         return {
             "session_id": self.session_id,
             "started_at": self.started_at.isoformat(),
             "metrics": dict(self.metrics),
-            "ratio": self.get_ratio(),
-            "savings_percent": self.get_savings_percent(),
+            "ratio": ratio,
+            "savings_percent": savings,
             "thresholds_triggered": [a.to_dict() for a in self.check_thresholds()],
         }
 

@@ -23,8 +23,10 @@ def _to_utc_isoformat(dt: datetime) -> str:
     Handles both timezone-aware and timezone-naive datetimes.
     If dt has a non-UTC timezone, converts to UTC first.
     """
-    # If timezone-aware and not UTC, convert to UTC
-    if dt.tzinfo is not None and dt.utcoffset() != timezone.utc.utcoffset(None):
+    # If timezone-aware and not UTC, convert to UTC.
+    # Compare as timedelta values (not by identity) for reliable cross-tz checks.
+    from datetime import timedelta as _td
+    if dt.tzinfo is not None and (dt.utcoffset() or _td(0)) != _td(0):
         dt = dt.astimezone(timezone.utc)
 
     iso = dt.isoformat()

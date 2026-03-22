@@ -5,7 +5,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="6.61.0"
+LABEL version="6.62.0"
 LABEL description="Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI"
 LABEL url="https://www.autonomi.dev/"
 
@@ -83,6 +83,7 @@ COPY --chown=loki:loki mcp/ ./mcp/
 COPY --chown=loki:loki learning/ ./learning/
 COPY --chown=loki:loki templates/ ./templates/
 COPY --chown=loki:loki integrations/ ./integrations/
+COPY --chown=loki:loki completions/ ./completions/
 
 # Install dashboard Python dependencies
 RUN pip3 install --no-cache-dir --break-system-packages \

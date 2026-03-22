@@ -54,11 +54,38 @@ PROVIDER_MAX_PARALLEL=1
 GEMINI_DEFAULT_PRO="gemini-3-pro-preview"
 GEMINI_DEFAULT_FLASH="gemini-3-flash-preview"
 
-PROVIDER_MODEL_PLANNING="${LOKI_GEMINI_MODEL_PLANNING:-${LOKI_MODEL_PLANNING:-$GEMINI_DEFAULT_PRO}}"
-PROVIDER_MODEL_DEVELOPMENT="${LOKI_GEMINI_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-$GEMINI_DEFAULT_PRO}}"
-PROVIDER_MODEL_FAST="${LOKI_GEMINI_MODEL_FAST:-${LOKI_MODEL_FAST:-$GEMINI_DEFAULT_FLASH}}"
-PROVIDER_MODEL="${PROVIDER_MODEL_PLANNING}"
+# Known valid Gemini model prefixes for validation
+GEMINI_KNOWN_MODELS=("gemini-" "models/gemini-")
+
+# Validate that a model name looks like a Gemini model
+_gemini_validate_model() {
+    local model="$1"
+    local fallback="$2"
+    for prefix in "${GEMINI_KNOWN_MODELS[@]}"; do
+        if [[ "$model" == ${prefix}* ]]; then
+            echo "$model"
+            return 0
+        fi
+    done
+    # Not a valid Gemini model name -- fall back
+    echo "$fallback"
+}
+
+PROVIDER_MODEL_PLANNING="$(_gemini_validate_model "${LOKI_GEMINI_MODEL_PLANNING:-${LOKI_MODEL_PLANNING:-$GEMINI_DEFAULT_PRO}}" "$GEMINI_DEFAULT_PRO")"
+PROVIDER_MODEL_DEVELOPMENT="$(_gemini_validate_model "${LOKI_GEMINI_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-$GEMINI_DEFAULT_PRO}}" "$GEMINI_DEFAULT_PRO")"
+PROVIDER_MODEL_FAST="$(_gemini_validate_model "${LOKI_GEMINI_MODEL_FAST:-${LOKI_MODEL_FAST:-$GEMINI_DEFAULT_FLASH}}" "$GEMINI_DEFAULT_FLASH")"
 PROVIDER_MODEL_FALLBACK="${LOKI_GEMINI_MODEL_FALLBACK:-$GEMINI_DEFAULT_FLASH}"
+
+# BUG-PROV-006 fix: PROVIDER_MODEL is now a function, not a frozen variable.
+# For backward compatibility, set the variable to planning model at load time,
+# but callers should use provider_get_current_model() for runtime resolution.
+PROVIDER_MODEL="${PROVIDER_MODEL_PLANNING}"
+
+# Return the model for the current tier at runtime (not frozen at load time)
+provider_get_current_model() {
+    local tier="${LOKI_CURRENT_TIER:-planning}"
+    resolve_model_for_tier "$tier"
+}
 
 # Thinking levels (Gemini-specific: maps to reasoning depth)
 PROVIDER_THINKING_PLANNING="high"
@@ -106,27 +133,37 @@ provider_version() {
 # Invocation function with rate limit fallback
 # Uses --model flag to specify model, --approval-mode=yolo for autonomous mode
 # Falls back to flash model if pro hits rate limit
+# Accepts optional --model <name> as first args to override default model
+# BUG-PROV-010 fix: uses tee to stream output while still capturing for rate-limit check
 # Note: < /dev/null prevents Gemini from pausing on stdin
 provider_invoke() {
+    local model
+    model=$(provider_get_current_model)
+
+    # Allow callers to pass --model <name> to override
+    if [[ "${1:-}" == "--model" ]] && [[ -n "${2:-}" ]]; then
+        model="$2"
+        shift 2
+    fi
+
     local prompt="$1"
     shift
-    local output
     local exit_code
 
-    # Try primary model first - capture stderr separately to avoid polluting output
-    local stderr_file
+    # Stream output via tee while capturing for rate-limit check
+    local output_file stderr_file
+    output_file=$(mktemp)
     stderr_file=$(mktemp)
-    output=$(gemini --approval-mode=yolo --model "$PROVIDER_MODEL" "$prompt" "$@" < /dev/null 2>"$stderr_file")
-    exit_code=$?
+    gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>"$stderr_file" | tee "$output_file"
+    exit_code=${PIPESTATUS[0]}
 
     # Check for rate limit (429) or quota exceeded (check stderr for error indicators)
     if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$stderr_file" 2>/dev/null; then
-        rm -f "$stderr_file"
-        echo "[loki] Rate limit hit on $PROVIDER_MODEL, falling back to $PROVIDER_MODEL_FALLBACK" >&2
+        rm -f "$stderr_file" "$output_file"
+        echo "[loki] Rate limit hit on $model, falling back to $PROVIDER_MODEL_FALLBACK" >&2
         gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
-        echo "$output"
-        rm -f "$stderr_file"
+        rm -f "$stderr_file" "$output_file"
         return $exit_code
     fi
 }
@@ -185,8 +222,8 @@ resolve_model_for_tier() {
 }
 
 # Tier-aware invocation with rate limit fallback
-# Uses --model flag to specify model
-# Falls back to flash model if pro hits rate limit
+# BUG-PROV-001 fix: uses resolve_model_for_tier to select actual model for the tier
+# BUG-PROV-010 fix: uses tee to stream output while capturing for rate-limit check
 # Note: < /dev/null prevents Gemini from pausing on stdin
 provider_invoke_with_tier() {
     local tier="$1"
@@ -198,23 +235,22 @@ provider_invoke_with_tier() {
 
     echo "[loki] Using tier: $tier, model: $model" >&2
 
-    local output
     local exit_code
 
-    # Try selected model first - capture stderr separately to avoid polluting output
-    local stderr_file
+    # Stream output via tee while capturing for rate-limit check
+    local output_file stderr_file
+    output_file=$(mktemp)
     stderr_file=$(mktemp)
-    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>"$stderr_file")
-    exit_code=$?
+    gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>"$stderr_file" | tee "$output_file"
+    exit_code=${PIPESTATUS[0]}
 
     # Check for rate limit (429) or quota exceeded - fallback to flash
     if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$stderr_file" 2>/dev/null; then
-        rm -f "$stderr_file"
+        rm -f "$stderr_file" "$output_file"
         echo "[loki] Rate limit hit on $model, falling back to $PROVIDER_MODEL_FALLBACK" >&2
         gemini --approval-mode=yolo --model "$PROVIDER_MODEL_FALLBACK" "$prompt" "$@" < /dev/null
     else
-        echo "$output"
-        rm -f "$stderr_file"
+        rm -f "$stderr_file" "$output_file"
         return $exit_code
     fi
 }

@@ -55,11 +55,13 @@ cd ../project-feature-auth
 npm install  # or pip install, cargo build, etc.
 ```
 
-### Create Testing Worktree (tracks main)
+### Create Testing Worktree (based on main)
 
 ```bash
-# Testing always runs against latest main
-git worktree add ../project-testing main
+# Testing always runs against latest main via a dedicated branch
+# NOTE: git worktree cannot checkout the same branch in two worktrees,
+# so we create a parallel-testing branch based on main
+git worktree add ../project-testing -b parallel-testing main
 
 # Pull latest before each test run
 cd ../project-testing
@@ -369,16 +371,16 @@ for feature in "${features[@]}"; do
   echo "Spawned: ${feature} (PID: $!)"
 done
 
-# Create testing worktree
+# Create testing worktree (dedicated branch based on main)
 testing_path="../${PROJECT_NAME}-testing"
 if [ ! -d "$testing_path" ]; then
-  git worktree add "$testing_path" main
+  git worktree add "$testing_path" -b parallel-testing main
 fi
 
-# Create docs worktree
+# Create docs worktree (dedicated branch based on main)
 docs_path="../${PROJECT_NAME}-docs"
 if [ ! -d "$docs_path" ]; then
-  git worktree add "$docs_path" main
+  git worktree add "$docs_path" -b parallel-docs main
 fi
 
 echo "Parallel streams initialized"

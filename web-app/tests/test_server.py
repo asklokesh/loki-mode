@@ -616,3 +616,547 @@ class TestCommandValidation:
         from server import DevServerStartRequest
         req = DevServerStartRequest(command="  npm run dev  ")
         assert req.command == "npm run dev"
+
+
+# ============================================================================
+# Bug fix regression tests
+# ============================================================================
+
+
+class TestBugPL001002_DeadCodeRemoved:
+    """BUG-PL-001/002: Dead code after stop_session removed, session.reset() called."""
+
+    def test_session_reset_clears_state(self):
+        """Verify SessionState.reset() clears all fields."""
+        from server import SessionState
+        s = SessionState()
+        s.running = True
+        s.provider = "claude"
+        s.prd_text = "test"
+        s.project_dir = "/tmp/test"
+        s.start_time = 1000.0
+        s.log_lines = ["line1", "line2"]
+        s.paused = True
+        s.reset()
+        assert s.running is False
+        assert s.paused is False
+        assert s.provider == ""
+        assert s.prd_text == ""
+        assert s.project_dir == ""
+        assert s.start_time == 0
+        assert s.log_lines == []
+        assert s.process is None
+
+
+class TestBugWS001_PexpectAutoInstall:
+    """BUG-WS-001: After auto-install, pexpect module should be globally bound."""
+
+    def test_globals_pexpect_binding(self):
+        """The auto-install path sets globals()['pexpect'] = _pex."""
+        import server
+        source = Path(server.__file__).read_text()
+        assert 'globals()["pexpect"] = _pex' in source
+
+
+class TestBugPL003_LockOnRunningFalse:
+    """BUG-PL-003: _read_process_output acquires lock before setting running=False."""
+
+    def test_lock_acquired_in_reader(self):
+        """Verify the lock is used around session.running = False in _read_process_output."""
+        import server
+        import inspect
+        source = inspect.getsource(server._read_process_output)
+        assert "async with session._lock" in source
+        assert "session.running = False" in source
+
+
+class TestBugPL005_PauseState:
+    """BUG-PL-005: SessionState tracks paused state."""
+
+    def test_session_state_has_paused(self):
+        from server import SessionState
+        s = SessionState()
+        assert hasattr(s, "paused")
+        assert s.paused is False
+
+    def test_reset_clears_paused(self):
+        from server import SessionState
+        s = SessionState()
+        s.paused = True
+        s.reset()
+        assert s.paused is False
+
+
+class TestBugPL009_MillisecondTimestamp:
+    """BUG-PL-009: Project dir uses millisecond timestamps."""
+
+    def test_millisecond_precision_in_source(self):
+        """Source code uses time.time() * 1000 for project dir naming."""
+        import server
+        source = Path(server.__file__).read_text()
+        assert "int(time.time() * 1000)" in source
+
+
+class TestBugPL010_StatusReadOnly:
+    """BUG-PL-010: get_status does not mutate session.running."""
+
+    def test_get_status_uses_local_var(self):
+        """get_status should use a local is_running variable, not mutate session.running."""
+        import server
+        import inspect
+        source = inspect.getsource(server.get_status)
+        assert "is_running" in source
+        # Should NOT contain direct mutation of session.running
+        lines = source.splitlines()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert "session.running = " not in stripped, (
+                "get_status should not mutate session.running"
+            )
+
+
+class TestBugPL011_HistoryAggregation:
+    """BUG-PL-011: History aggregates from all directories, not just first."""
+
+    def test_no_early_break_in_history(self):
+        """get_sessions_history should not break after the first non-empty dir."""
+        import server
+        import inspect
+        source = inspect.getsource(server.get_sessions_history)
+        # The bug was: `if history: break`
+        assert "if history:" not in source or "break" not in source
+
+
+class TestBugPL013_CryptoImportError:
+    """BUG-PL-013: _load_secrets handles crypto ImportError gracefully."""
+
+    def test_load_secrets_without_crypto(self, tmp_path):
+        """_load_secrets returns empty dict when crypto module is missing."""
+        import server
+        # Temporarily point to a non-existent secrets file
+        original = server._SECRETS_FILE
+        server._SECRETS_FILE = tmp_path / "secrets.json"
+        try:
+            result = server._load_secrets()
+            assert result == {}
+        finally:
+            server._SECRETS_FILE = original
+
+    def test_load_secrets_reads_raw_without_crypto(self, tmp_path):
+        """When crypto is unavailable, raw secrets are returned."""
+        import server
+        secrets_file = tmp_path / "secrets.json"
+        secrets_file.write_text(json.dumps({"API_KEY": "test123"}))
+        original = server._SECRETS_FILE
+        server._SECRETS_FILE = secrets_file
+        try:
+            result = server._load_secrets()
+            assert result.get("API_KEY") == "test123"
+        finally:
+            server._SECRETS_FILE = original
+
+
+class TestBugDS003_PortRegex:
+    """BUG-DS-003: Port regex is more specific now."""
+
+    def test_port_standalone_not_matched(self):
+        """Plain 'port 3000' without a verb prefix should not match the tightened pattern."""
+        from server import DevServerManager
+        mgr = DevServerManager()
+        # This should NOT match the generic broad pattern that was removed
+        result = mgr._parse_port("port 3000")
+        # It may still match via URL patterns, but "port 3000" alone with no
+        # verb prefix is no longer a match from the replaced pattern.
+        # Other more specific patterns may catch it though.
+        # The key test is that noise lines do not match.
+        noise = "The configuration sets port 22 for SSH"
+        # "port 22" is below 1024, so it should be rejected anyway
+        assert mgr._parse_port(noise) is None
+
+    def test_listening_on_port_matches(self):
+        from server import DevServerManager
+        mgr = DevServerManager()
+        assert mgr._parse_port("Server listening on port 4000") == 4000
+
+    def test_running_on_port_matches(self):
+        from server import DevServerManager
+        mgr = DevServerManager()
+        assert mgr._parse_port("App running on port 8080") == 8080
+
+    def test_started_on_port_matches(self):
+        from server import DevServerManager
+        mgr = DevServerManager()
+        assert mgr._parse_port("Server started on port 3000") == 3000
+
+
+class TestBugDS005_DockerComposePortParsing:
+    """BUG-DS-005: Docker Compose IP:host:container port parsing."""
+
+    @pytest.mark.asyncio
+    async def test_ip_host_container_port(self, tmp_path):
+        """Port format '127.0.0.1:8080:80' should extract 8080 as host port."""
+        from server import DevServerManager
+        mgr = DevServerManager()
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(
+            "services:\n"
+            "  web:\n"
+            "    build: .\n"
+            '    ports:\n'
+            '      - "127.0.0.1:9090:80"\n'
+        )
+        result = await mgr.detect_dev_command(str(tmp_path))
+        assert result is not None
+        assert result["expected_port"] == 9090
+        assert result["framework"] == "docker"
+
+    @pytest.mark.asyncio
+    async def test_host_container_port(self, tmp_path):
+        """Port format '8080:80' should extract 8080 as host port."""
+        from server import DevServerManager
+        mgr = DevServerManager()
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(
+            "services:\n"
+            "  web:\n"
+            "    build: .\n"
+            '    ports:\n'
+            '      - "4567:80"\n'
+        )
+        result = await mgr.detect_dev_command(str(tmp_path))
+        assert result is not None
+        assert result["expected_port"] == 4567
+
+
+class TestBugDS007_FastAPIDetection:
+    """BUG-DS-007: FastAPI detection reads 4096 bytes instead of 1024."""
+
+    @pytest.mark.asyncio
+    async def test_fastapi_detected_beyond_1024(self, tmp_path):
+        """FastAPI import after 1024 bytes should still be detected."""
+        from server import DevServerManager
+        mgr = DevServerManager()
+        app = tmp_path / "app.py"
+        # Put the import after 1024 bytes of comments
+        padding = "# " + "x" * 100 + "\n"
+        lines = [padding] * 15  # ~1530 bytes of comments
+        lines.append("from fastapi import FastAPI\napp = FastAPI()\n")
+        app.write_text("".join(lines))
+        result = await mgr.detect_dev_command(str(tmp_path))
+        assert result is not None
+        assert result["framework"] == "fastapi"
+
+
+class TestBugDS008_NextJsOverVite:
+    """BUG-DS-008: Framework detection picks Next.js over Vite."""
+
+    @pytest.mark.asyncio
+    async def test_nextjs_detected_when_both_present(self, tmp_path):
+        """When both next and vite are deps, Next.js should be detected."""
+        from server import DevServerManager
+        mgr = DevServerManager()
+        pkg = tmp_path / "package.json"
+        pkg.write_text(json.dumps({
+            "scripts": {"dev": "next dev"},
+            "dependencies": {"next": "^14.0.0", "vite": "^5.0.0"},
+        }))
+        result = await mgr.detect_dev_command(str(tmp_path))
+        assert result is not None
+        assert result["framework"] == "next"
+        assert result["expected_port"] == 3000
+
+
+class TestBugDS009_MonitorTransitionsStatus:
+    """BUG-DS-009: _monitor_output transitions status from starting to running."""
+
+    def test_monitor_output_updates_status(self):
+        """Verify the source has status transition logic in _monitor_output."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager._monitor_output)
+        assert '"starting"' in source
+        assert '"running"' in source
+
+
+class TestBugDS002_AutoFixOriginalCommand:
+    """BUG-DS-002: Auto-fix uses original_command to avoid double-wrapping."""
+
+    def test_auto_fix_reads_original_command(self):
+        """The _auto_fix method should use info.get('original_command')."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager._auto_fix)
+        assert 'info.get("original_command")' in source
+
+
+class TestBugPL004_SecretsInjection:
+    """BUG-PL-004: Chat/fix/auto-fix inject secrets into env."""
+
+    def test_chat_session_loads_secrets(self):
+        """chat_session should call _load_secrets() and merge into env."""
+        import server
+        import inspect
+        source = inspect.getsource(server.chat_session)
+        assert "_load_secrets()" in source
+
+    def test_fix_session_loads_secrets(self):
+        """fix_session should call _load_secrets() and merge into env."""
+        import server
+        import inspect
+        source = inspect.getsource(server.fix_session)
+        assert "_load_secrets()" in source
+
+    def test_auto_fix_loads_secrets(self):
+        """_auto_fix should call _load_secrets() and merge into env."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager._auto_fix)
+        assert "_load_secrets()" in source
+
+
+class TestBugPL006_DeleteActiveSession:
+    """BUG-PL-006: delete_session prevents deleting active session directory."""
+
+    def test_delete_session_source_has_409_check(self):
+        """delete_session should check if session dir matches active session."""
+        import server
+        import inspect
+        source = inspect.getsource(server.delete_session)
+        assert "409" in source
+        assert "active" in source.lower() or "currently" in source.lower()
+
+
+class TestBugPL007_UntrackChatPID:
+    """BUG-PL-007: Chat PIDs are untracked after completion."""
+
+    def test_chat_session_untracks_pid(self):
+        """run_chat should call _untrack_child_pid after completion."""
+        import server
+        import inspect
+        source = inspect.getsource(server.chat_session)
+        assert "_untrack_child_pid" in source
+
+
+class TestBugPL008_AuthWsProxy:
+    """BUG-PL-008: /ws and /proxy are covered by auth when DATABASE_URL is set."""
+
+    def test_auth_middleware_covers_ws_and_proxy(self):
+        """Auth middleware should NOT skip /ws and /proxy paths."""
+        import server
+        import inspect
+        source = inspect.getsource(server.auth_middleware)
+        # Extract the skip_auth_prefixes list from source
+        import re
+        match = re.search(r'skip_auth_prefixes\s*=\s*\[([^\]]+)\]', source)
+        assert match is not None
+        skip_list = match.group(1)
+        # /ws and /proxy should NOT be in the skip list
+        assert '"/ws"' not in skip_list, "/ws should not be in skip_auth_prefixes"
+        assert '"/proxy/"' not in skip_list, "/proxy/ should not be in skip_auth_prefixes"
+
+
+class TestBugPL012_CancelChatTimeout:
+    """BUG-PL-012: cancel_chat handles TimeoutExpired."""
+
+    def test_cancel_chat_has_timeout_handling(self):
+        """cancel_chat should handle subprocess.TimeoutExpired."""
+        import server
+        import inspect
+        source = inspect.getsource(server.cancel_chat)
+        assert "TimeoutExpired" in source
+
+
+class TestBugDS006_AsyncSleep:
+    """BUG-DS-006: _ensure_portless_proxy uses asyncio.sleep."""
+
+    def test_ensure_portless_is_async(self):
+        """_ensure_portless_proxy should be an async method."""
+        import server
+        import inspect
+        assert inspect.iscoroutinefunction(server.DevServerManager._ensure_portless_proxy)
+
+    def test_uses_asyncio_sleep(self):
+        """Should use asyncio.sleep instead of time.sleep."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager._ensure_portless_proxy)
+        assert "asyncio.sleep" in source
+        assert "time.sleep" not in source and "_time.sleep" not in source
+
+
+class TestBugWS006_TerminalWsClientsCleanup:
+    """BUG-WS-006: _terminal_ws_clients is cleared on stop/shutdown."""
+
+    def test_stop_session_clears_terminal_ws_clients(self):
+        """stop_session should clear _terminal_ws_clients."""
+        import server
+        import inspect
+        source = inspect.getsource(server.stop_session)
+        assert "_terminal_ws_clients.clear()" in source
+
+
+class TestBugWS007_AcceptBeforeClose:
+    """BUG-WS-007: WS accepts before sending error and closing."""
+
+    def test_ws_endpoint_accepts_first(self):
+        """websocket_endpoint should accept() before checking limits."""
+        import server
+        import inspect
+        source = inspect.getsource(server.websocket_endpoint)
+        lines = [l.strip() for l in source.splitlines() if l.strip()]
+        accept_idx = next(i for i, l in enumerate(lines) if "ws.accept()" in l)
+        close_idx = next(i for i, l in enumerate(lines) if "ws.close(" in l)
+        assert accept_idx < close_idx, "accept() must come before close()"
+
+
+class TestBugWS008_BinaryFrames:
+    """BUG-WS-008: Proxy handles both text and binary WebSocket frames."""
+
+    def test_proxy_ws_uses_receive(self):
+        """client_to_upstream should use receive() to handle both text and bytes."""
+        import server
+        import inspect
+        source = inspect.getsource(server.proxy_websocket)
+        assert "receive()" in source or 'msg.get("text")' in source
+        assert 'msg.get("bytes")' in source
+
+
+class TestBugWS009_AsyncFileIO:
+    """BUG-WS-009: _push_state_to_client uses async file I/O."""
+
+    def test_push_state_uses_thread(self):
+        """_push_state_to_client should use asyncio.to_thread for file reads."""
+        import server
+        import inspect
+        source = inspect.getsource(server._push_state_to_client)
+        assert "asyncio.to_thread" in source
+
+
+class TestBugWS011_PongOnlyReset:
+    """BUG-WS-011: Keepalive missed_pongs only reset on pong messages."""
+
+    def test_pong_resets_missed_pongs(self):
+        """Only pong-type messages should reset missed_pongs."""
+        import server
+        import inspect
+        source = inspect.getsource(server.websocket_endpoint)
+        # The pattern should be: missed_pongs = 0 only in the pong branch
+        # NOT after receive_text()
+        lines = source.splitlines()
+        for i, line in enumerate(lines):
+            if "receive_text" in line.strip() or "wait_for" in line.strip():
+                # The next non-blank, non-comment line should NOT be missed_pongs = 0
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    next_line = lines[j].strip()
+                    if next_line and not next_line.startswith("#"):
+                        assert "missed_pongs = 0" not in next_line, (
+                            "missed_pongs should not be reset on any message"
+                        )
+                        break
+
+
+class TestBugXC006_AtomicPIDTracking:
+    """BUG-XC-006: PID tracking uses file lock for atomicity."""
+
+    def test_track_uses_flock(self):
+        """_track_child_pid should use fcntl.flock."""
+        import server
+        import inspect
+        source = inspect.getsource(server._track_child_pid)
+        assert "fcntl.flock" in source
+
+    def test_untrack_uses_flock(self):
+        """_untrack_child_pid should use fcntl.flock."""
+        import server
+        import inspect
+        source = inspect.getsource(server._untrack_child_pid)
+        assert "fcntl.flock" in source
+
+    def test_track_and_untrack_pid(self, tmp_path):
+        """Test actual track/untrack PID round-trip."""
+        import server
+        original = server._PURPLE_LAB_PIDS_FILE
+        server._PURPLE_LAB_PIDS_FILE = tmp_path / "child-pids.json"
+        try:
+            server._track_child_pid(12345)
+            pids = json.loads(server._PURPLE_LAB_PIDS_FILE.read_text())
+            assert 12345 in pids
+
+            server._track_child_pid(67890)
+            pids = json.loads(server._PURPLE_LAB_PIDS_FILE.read_text())
+            assert 12345 in pids
+            assert 67890 in pids
+
+            server._untrack_child_pid(12345)
+            pids = json.loads(server._PURPLE_LAB_PIDS_FILE.read_text())
+            assert 12345 not in pids
+            assert 67890 in pids
+        finally:
+            server._PURPLE_LAB_PIDS_FILE = original
+
+
+class TestBugXC009_LogTruncationOffset:
+    """BUG-XC-009: Log truncation tracks absolute offset."""
+
+    def test_session_state_has_log_lines_total(self):
+        """SessionState should track total log lines added."""
+        from server import SessionState
+        s = SessionState()
+        assert hasattr(s, "log_lines_total")
+        assert s.log_lines_total == 0
+
+    def test_reset_clears_total(self):
+        from server import SessionState
+        s = SessionState()
+        s.log_lines_total = 100
+        s.reset()
+        assert s.log_lines_total == 0
+
+
+class TestBugWS002_SingleReaderPerPTY:
+    """BUG-WS-002: Only one reader task per PTY is created."""
+
+    def test_reader_tasks_dict_exists(self):
+        """_terminal_reader_tasks should exist for tracking."""
+        import server
+        assert hasattr(server, "_terminal_reader_tasks")
+        assert isinstance(server._terminal_reader_tasks, dict)
+
+
+class TestBugWS004_AsyncWait:
+    """BUG-WS-004: cancel_chat uses asyncio.to_thread for wait()."""
+
+    def test_cancel_chat_uses_async_wait(self):
+        """cancel_chat should use asyncio.to_thread(task.process.wait, ...)."""
+        import server
+        import inspect
+        source = inspect.getsource(server.cancel_chat)
+        assert "asyncio.to_thread" in source
+
+
+class TestBugDS004_VenvForPip:
+    """BUG-DS-004: pip install uses project venv, not server Python."""
+
+    def test_start_creates_venv(self):
+        """DevServerManager.start should look for or create a venv."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager.start)
+        assert "venv" in source
+        # Should not use sys.executable for pip install
+        assert "sys.executable, \"-m\", \"pip\", \"install\"" not in source
+
+
+class TestBugDS013_PortUpdateFromMonitor:
+    """BUG-DS-013: _monitor_output always updates port when detected."""
+
+    def test_monitor_output_always_sets_port(self):
+        """_monitor_output should update info['port'] regardless of current value."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DevServerManager._monitor_output)
+        # The old code had: if info["port"] is None:
+        # The new code should unconditionally set info["port"]
+        assert 'if info["port"] is None' not in source

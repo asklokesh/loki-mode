@@ -182,6 +182,8 @@ if [[ -z "${LOKI_RUNNING_FROM_TEMP:-}" ]] && [[ "${BASH_SOURCE[0]}" == "${0}" ]]
     TEMP_SCRIPT="${TEMP_SCRIPT}.sh"
     cp "${BASH_SOURCE[0]}" "$TEMP_SCRIPT"
     chmod 700 "$TEMP_SCRIPT"
+    # BUG-XC-011: Set trap BEFORE exec so the temp file gets cleaned up
+    trap "rm -f '$TEMP_SCRIPT'" EXIT
     export LOKI_RUNNING_FROM_TEMP=1
     export LOKI_ORIGINAL_SCRIPT_DIR="$SCRIPT_DIR"
     export LOKI_ORIGINAL_PROJECT_DIR="$PROJECT_DIR"
@@ -1684,15 +1686,20 @@ import_github_issues() {
                 created_at: $created
             }')
 
-        # Append to pending.json (bare array format) with temp file cleanup on error
+        # BUG-XC-010: Create temp file in same directory as target (avoids cross-filesystem mv)
+        # and use flock for queue locking
         local temp_file
-        temp_file=$(mktemp)
-        if jq ". += [$task_json]" "$pending_file" > "$temp_file" && mv "$temp_file" "$pending_file"; then
-            log_info "Imported issue #$number: $title"
-            task_count=$((task_count + 1))
-        else
-            log_warn "Failed to import issue #$number"
-        fi
+        temp_file=$(mktemp ".loki/queue/pending.json.tmp.XXXXXX")
+        local lockfile=".loki/queue/.pending.lock"
+        (
+            flock -w 5 200 2>/dev/null || true
+            if jq ". += [$task_json]" "$pending_file" > "$temp_file" && mv "$temp_file" "$pending_file"; then
+                log_info "Imported issue #$number: $title"
+                task_count=$((task_count + 1))
+            else
+                log_warn "Failed to import issue #$number"
+            fi
+        ) 200>"$lockfile"
         rm -f "$temp_file"
     done < <(echo "$issues" | jq -c '.[]')
 
@@ -1930,10 +1937,15 @@ export_tasks_to_github() {
         desc=$(echo "$task" | jq -r '.description // ""')
 
         log_info "Creating issue: $title"
+        # BUG-GH-009: Check if label exists before using --label; skip if absent
+        local label_flag=""
+        if gh label list --repo "$repo" 2>/dev/null | grep -q "loki-mode"; then
+            label_flag="--label loki-mode"
+        fi
         gh issue create --repo "$repo" \
             --title "$title" \
             --body "$desc" \
-            --label "loki-mode" \
+            $label_flag \
             2>/dev/null || log_warn "Failed to create issue: $title"
     done
 }
@@ -2848,10 +2860,11 @@ init_loki_dir() {
     mkdir -p .loki/rules
     mkdir -p .loki/signals
 
-    # Initialize queue files if they don't exist
+    # BUG-XC-008: Initialize queue files only if missing or invalid JSON
     for queue in pending in-progress completed failed dead-letter; do
-        if [ ! -f ".loki/queue/${queue}.json" ]; then
-            echo "[]" > ".loki/queue/${queue}.json"
+        local qfile=".loki/queue/${queue}.json"
+        if [ ! -f "$qfile" ] || ! python3 -c "import json; json.load(open('$qfile'))" 2>/dev/null; then
+            echo "[]" > "$qfile"
         fi
     done
 
@@ -3450,23 +3463,28 @@ EOF
 )
 
     # Add to in-progress queue
+    # BUG-XC-003: Use flock for atomic queue modification
     local in_progress_file=".loki/queue/in-progress.json"
-    if [ -f "$in_progress_file" ]; then
-        local existing=$(cat "$in_progress_file")
-        if [ "$existing" = "[]" ] || [ -z "$existing" ]; then
-            echo "[$task_json]" > "$in_progress_file"
-        else
-            # Append to existing array
-            echo "$existing" | python3 -c "
+    local lockfile=".loki/queue/.in-progress.lock"
+    (
+        flock -w 5 200 2>/dev/null || true
+        if [ -f "$in_progress_file" ]; then
+            local existing=$(cat "$in_progress_file")
+            if [ "$existing" = "[]" ] || [ -z "$existing" ]; then
+                echo "[$task_json]" > "$in_progress_file"
+            else
+                # Append to existing array
+                echo "$existing" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 data.append($task_json)
 print(json.dumps(data, indent=2))
 " > "$in_progress_file" 2>/dev/null || echo "[$task_json]" > "$in_progress_file"
+            fi
+        else
+            echo "[$task_json]" > "$in_progress_file"
         fi
-    else
-        echo "[$task_json]" > "$in_progress_file"
-    fi
+    ) 200>"$lockfile"
 
     # Update current-task.json
     echo "$task_json" > .loki/queue/current-task.json
@@ -6146,7 +6164,8 @@ create_checkpoint() {
     mkdir -p "$cp_dir"
 
     # Copy critical state files (lightweight -- not full .loki/)
-    for f in state/orchestrator.json queue/pending.json queue/completed.json queue/in-progress.json queue/current-task.json; do
+    # BUG-ST-009: Include autonomy-state.json in checkpoint backup
+    for f in state/orchestrator.json autonomy-state.json queue/pending.json queue/completed.json queue/in-progress.json queue/current-task.json; do
         if [ -f ".loki/$f" ]; then
             local target_dir="$cp_dir/$(dirname "$f")"
             mkdir -p "$target_dir"
@@ -6191,9 +6210,11 @@ CPEOF
     cp_count=$(find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null | wc -l | tr -d ' ')
     if [ "$cp_count" -gt 50 ]; then
         local to_remove=$((cp_count - 50))
+        # BUG-ST-012: Sort by basename epoch suffix, not full path with extra dashes
         find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null \
-            | sort -t'-' -k3 -n \
+            | while read -r p; do basename "$p"; done | sort -t'-' -k3 -n \
             | head -n "$to_remove" | while read -r old_cp; do
+            old_cp="${checkpoint_dir}/${old_cp}"
             rm -rf "$old_cp" 2>/dev/null || true
         done
         # Rebuild index atomically from remaining checkpoints (sorted by epoch)
@@ -6552,7 +6573,9 @@ is_child_process_signal() {
 
 calculate_wait() {
     local retry="$1"
-    local wait_time=$((BASE_WAIT * (2 ** retry)))
+    # BUG-RUN-004: Cap exponent to prevent overflow at retry>=34
+    local exp=$((retry > 30 ? 30 : retry))
+    local wait_time=$((BASE_WAIT * (2 ** exp)))
 
     # Add jitter (0-30 seconds)
     local jitter=$((RANDOM % 30))
@@ -6637,14 +6660,16 @@ update_failover_state() {
 
     [ ! -f "$failover_file" ] && return 1
 
-    python3 << PYEOF 2>/dev/null || true
+    # BUG-RUN-008: Use single-quoted heredoc to prevent shell injection; pass vars via env
+    _FAILOVER_KEY="$key" _FAILOVER_VALUE="$value" _FAILOVER_FILE="$failover_file" \
+    python3 << 'PYEOF' 2>/dev/null || true
 import json, os
-fpath = os.path.join(os.environ.get('TARGET_DIR', '.'), '.loki/state/failover.json')
+fpath = os.environ['_FAILOVER_FILE']
 try:
     with open(fpath) as f:
         d = json.load(f)
-    key = "$key"
-    value = "$value"
+    key = os.environ['_FAILOVER_KEY']
+    value = os.environ['_FAILOVER_VALUE']
     # Handle type conversion
     if value == "null":
         d[key] = None
@@ -7255,18 +7280,8 @@ load_ledger_context() {
     fi
 }
 
-# Load recent handoffs for context
-load_handoff_context() {
-    local handoff_content=""
-
-    # Find most recent handoff (last 24 hours)
-    local recent_handoff=$(find .loki/memory/handoffs -name "*.md" -mtime -1 2>/dev/null | head -1)
-
-    if [ -n "$recent_handoff" ] && [ -f "$recent_handoff" ]; then
-        handoff_content=$(cat "$recent_handoff" | head -80)
-        echo "$handoff_content"
-    fi
-}
+# BUG-RUN-006: Removed duplicate load_handoff_context() (dead definition)
+# The active definition is below, after write_structured_handoff()
 
 # Write structured handoff document (v5.49.0)
 # Produces both JSON (machine-readable) and markdown (human-readable) handoffs
@@ -7773,9 +7788,12 @@ save_state() {
     local status="$2"
     local exit_code="$3"
 
-    cat > ".loki/autonomy-state.json" << EOF
+    # BUG-XC-004: Atomic write via temp file + mv
+    local state_tmp=".loki/autonomy-state.json.tmp.$$"
+    cat > "$state_tmp" << EOF
 {
     "retryCount": $retry_count,
+    "iterationCount": $ITERATION_COUNT,
     "status": "$status",
     "lastExitCode": $exit_code,
     "lastRun": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -7785,15 +7803,18 @@ save_state() {
     "baseWait": $BASE_WAIT
 }
 EOF
+    mv -f "$state_tmp" ".loki/autonomy-state.json"
 }
 
 load_state() {
     if [ -f ".loki/autonomy-state.json" ]; then
         if command -v python3 &> /dev/null; then
-            # Load both retry count and status from previous session
+            # Load retry count, iteration count, and status from previous session
             local prev_status
             prev_status=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('status', 'unknown'))" 2>/dev/null || echo "unknown")
             RETRY_COUNT=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('retryCount', 0))" 2>/dev/null || echo "0")
+            # BUG-RUN-003: Restore ITERATION_COUNT from persisted state
+            ITERATION_COUNT=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('iterationCount', 0))" 2>/dev/null || echo "0")
 
             # Reset retry count if previous session ended in a terminal state
             # This allows new sessions to start fresh after failures
@@ -8338,6 +8359,8 @@ if os.path.exists(pending_path):
 
 # Convert BMAD stories to queue task format (with deduplication)
 existing_ids = {t.get("id") for t in existing if isinstance(t, dict)}
+# BUG-ADP-005: Track added count separately from total stories
+added_count = 0
 for i, story in enumerate(stories):
     if not isinstance(story, dict):
         continue
@@ -8358,23 +8381,26 @@ for i, story in enumerate(stories):
     if acceptance:
         task["acceptance_criteria"] = acceptance
     existing.append(task)
+    added_count += 1
 
 # Write updated pending queue
 with open(pending_path, "w") as f:
     json.dump(existing, f, indent=2)
 
-msg = f"Added {len(stories)} BMAD stories to task queue"
+msg = f"Added {added_count} BMAD stories to task queue"
 if skipped_count > 0:
     msg += f" (skipped {skipped_count} completed)"
 print(msg)
 BMAD_QUEUE_EOF
 
-    if [[ $? -ne 0 ]]; then
+    local bmad_exit=$?
+    if [[ $bmad_exit -ne 0 ]]; then
         log_warn "Failed to populate BMAD queue (python3 error)"
+        # BUG-RUN-012: Do NOT touch marker file on failure -- allow retry on next run
         return 0
     fi
 
-    # Mark as populated so we don't re-add on restart
+    # Mark as populated so we don't re-add on restart (only on success)
     touch ".loki/queue/.bmad-populated"
     log_info "BMAD queue population complete"
 }
@@ -8464,12 +8490,19 @@ try:
 except (json.JSONDecodeError, FileNotFoundError):
     pass
 
+# BUG-RUN-005: Add deduplication check (like BMAD and MiroFish queue functions)
+existing_ids = {t.get("id") for t in existing if isinstance(t, dict)}
+added_count = 0
+
 # Convert OpenSpec tasks to queue format (skip completed tasks)
 for task in openspec_tasks:
     if task.get("status") == "completed":
         continue
+    task_id = task.get("id", "openspec-unknown")
+    if task_id in existing_ids:
+        continue
     queue_entry = {
-        "id": task.get("id", "openspec-unknown"),
+        "id": task_id,
         "title": task.get("title", "Untitled"),
         "description": f"[OpenSpec] {task.get('group', 'General')}: {task.get('title', '')}",
         "priority": task.get("priority", "medium"),
@@ -8481,11 +8514,12 @@ for task in openspec_tasks:
         }
     }
     existing.append(queue_entry)
+    added_count += 1
 
 with open(pending_path, "w") as f:
     json.dump(existing, f, indent=2)
 
-pending_count = sum(1 for t in openspec_tasks if t.get('status') != 'completed')
+pending_count = added_count
 if pending_count == 0:
     print("WARNING: All OpenSpec tasks are already marked as completed. No tasks added to queue.", file=sys.stderr)
     print("Check your tasks.md file -- all checkboxes are checked.", file=sys.stderr)
@@ -8795,6 +8829,11 @@ run_autonomous() {
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
 
+        # BUG-RUN-001/RUN-002: Per-iteration output file for scoped checks
+        # (completion promise and rate limit detection should not scan stale daily logs)
+        local iter_output
+        iter_output=$(mktemp ".loki/logs/iter-output-XXXXXX")
+
         # Log start time (to both archival and dashboard logs)
         echo "=== Session started at $(date) ===" | tee -a "$log_file" "$agent_log"
         echo "=== Provider: ${PROVIDER_NAME:-claude} ===" | tee -a "$log_file" "$agent_log"
@@ -8839,7 +8878,7 @@ run_autonomous() {
                 { LOKI_CURRENT_MODEL="$tier_param" \
                 claude --dangerously-skip-permissions --model "$tier_param" -p "$prompt" \
             --output-format stream-json --verbose 2>&1 | \
-            tee -a "$log_file" "$agent_log" | \
+            tee -a "$log_file" "$agent_log" "$iter_output" | \
             python3 -u -c '
 import sys
 import json
@@ -9055,7 +9094,7 @@ if __name__ == "__main__":
                 { LOKI_CODEX_REASONING_EFFORT="$tier_param" \
                 CODEX_MODEL_REASONING_EFFORT="$tier_param" \
                 codex exec --full-auto \
-                    "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                    "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;
 
@@ -9070,13 +9109,14 @@ if __name__ == "__main__":
                 # Try primary model, fallback on rate limit
                 local tmp_output
                 tmp_output=$(mktemp)
-                { gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log"; \
-                } && exit_code=0 || exit_code=$?
+                # BUG-RUN-011/RUN-013: Use PIPESTATUS[0] for primary invocation too
+                gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>&1 | tee "$tmp_output" | tee -a "$log_file" "$agent_log" "$iter_output"
+                exit_code=${PIPESTATUS[0]}
 
                 if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_output"; then
                     log_warn "Rate limit hit on $model, falling back to $fallback"
                     echo "[loki] Fallback to $fallback due to rate limit" >> "$log_file"
-                    gemini --approval-mode=yolo --model "$fallback" "$prompt" < /dev/null 2>&1 | tee -a "$log_file" "$agent_log"
+                    gemini --approval-mode=yolo --model "$fallback" "$prompt" < /dev/null 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"
                     exit_code=${PIPESTATUS[0]}
                 fi
                 rm -f "$tmp_output"
@@ -9086,14 +9126,14 @@ if __name__ == "__main__":
                 # Cline: Tier 2 - near-full mode with subagents and MCP
                 echo "[loki] Cline model: ${LOKI_CLINE_MODEL:-default}, tier: $tier_param" >> "$log_file"
                 echo "[loki] Cline model: ${LOKI_CLINE_MODEL:-default}, tier: $tier_param" >> "$agent_log"
-                { invoke_cline "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                { invoke_cline "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;
             aider)
                 # Aider: Tier 3 - degraded mode, 18+ providers
                 echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-sonnet-4-5-20250929}}, tier: $tier_param" >> "$log_file"
                 echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-sonnet-4-5-20250929}}, tier: $tier_param" >> "$agent_log"
-                { invoke_aider "$prompt" 2>&1 | tee -a "$log_file" "$agent_log"; \
+                { invoke_aider "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;
 
@@ -9221,17 +9261,21 @@ if __name__ == "__main__":
                 else
                     local cr_count
                     cr_count=$(track_gate_failure "code_review")
+                    # BUG-QG-007: Always append to gate_failures regardless of escalation tier
+                    # BUG-RUN-009: Write PAUSE to .loki/PAUSE (not .loki/signals/PAUSE)
                     if [ "$cr_count" -ge "$GATE_PAUSE_LIMIT" ]; then
                         log_error "Gate escalation: code_review failed $cr_count times (>= $GATE_PAUSE_LIMIT) - forcing PAUSE for human intervention"
                         echo "PAUSE" > "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
                         echo "code_review gate failed $cr_count consecutive times" >> "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
-                        touch "${TARGET_DIR:-.}/.loki/signals/PAUSE"
+                        touch "${TARGET_DIR:-.}/.loki/PAUSE"
+                        gate_failures="${gate_failures}code_review_PAUSED,"
                     elif [ "$cr_count" -ge "$GATE_ESCALATE_LIMIT" ]; then
                         log_warn "Gate escalation: code_review failed $cr_count times (>= $GATE_ESCALATE_LIMIT) - escalating"
                         echo "ESCALATE" > "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
                         gate_failures="${gate_failures}code_review_ESCALATED,"
                     elif [ "$cr_count" -ge "$GATE_CLEAR_LIMIT" ]; then
                         log_warn "Gate cleared: code_review failed $cr_count times (>= $GATE_CLEAR_LIMIT) - passing gate this iteration, counter continues"
+                        gate_failures="${gate_failures}code_review,"
                     else
                         gate_failures="${gate_failures}code_review,"
                         log_warn "Code review BLOCKED ($cr_count consecutive) - Critical/High findings"
@@ -9257,20 +9301,21 @@ if __name__ == "__main__":
         auto_capture_episode "$ITERATION_COUNT" "$exit_code" "${rarv_phase:-iteration}" \
             "${prd_path:-codebase-analysis}" "$duration" "$log_file"
 
+        # BUG-QG-008: Track iteration for convergence regardless of exit code
+        if type council_track_iteration &>/dev/null; then
+            council_track_iteration "$log_file"
+        fi
+
         # Check for success - ONLY stop on explicit completion promise
         # There's never a "complete" product - always improvements, bugs, features
         if [ $exit_code -eq 0 ]; then
             # Episode trace already captured by auto_capture_episode above (v6.15.0)
 
-            # Track iteration for Completion Council convergence detection
-            if type council_track_iteration &>/dev/null; then
-                council_track_iteration "$log_file"
-            fi
-
             # Perpetual mode: NEVER stop, always continue
             if [ "$PERPETUAL_MODE" = "true" ]; then
                 log_info "Perpetual mode: Ignoring exit, continuing immediately..."
-                ((retry++))
+                # BUG-RUN-010: Reset retry counter on success (only count failures)
+                retry=0
                 continue  # Immediately start next iteration, no wait
             fi
 
@@ -9285,11 +9330,13 @@ if __name__ == "__main__":
                 run_memory_consolidation
                 notify_all_complete
                 save_state $retry "council_approved" 0
+                rm -f "$iter_output" 2>/dev/null
                 return 0
             fi
 
             # Only stop if EXPLICIT completion promise text was output
-            if [ -n "$COMPLETION_PROMISE" ] && check_completion_promise "$log_file"; then
+            # BUG-RUN-001: Use per-iteration output, not stale daily log
+            if [ -n "$COMPLETION_PROMISE" ] && check_completion_promise "$iter_output"; then
                 echo ""
                 log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
                 log_info "Explicit completion promise detected in output."
@@ -9298,6 +9345,7 @@ if __name__ == "__main__":
                 run_memory_consolidation
                 notify_all_complete
                 save_state $retry "completion_promise_fulfilled" 0
+                rm -f "$iter_output" 2>/dev/null
                 return 0
             fi
 
@@ -9312,7 +9360,8 @@ if __name__ == "__main__":
 
             # SUCCESS exit - continue IMMEDIATELY to next iteration (no wait!)
             log_step "Starting next iteration..."
-            ((retry++))
+            # BUG-RUN-010: Reset retry counter on success (only count failures)
+            retry=0
             continue  # Immediately start next iteration, no exponential backoff
         fi
 
@@ -9323,7 +9372,8 @@ if __name__ == "__main__":
         create_checkpoint "iteration-${ITERATION_COUNT} failed (exit=$exit_code)" "iteration-${ITERATION_COUNT}-fail"
 
         # Handle retry - check for rate limit first
-        local rate_limit_wait=$(detect_rate_limit "$log_file")
+        # BUG-RUN-002: Use per-iteration output, not stale daily log
+        local rate_limit_wait=$(detect_rate_limit "$iter_output")
         local wait_time
 
         if [ $rate_limit_wait -gt 0 ]; then
@@ -9357,10 +9407,15 @@ if __name__ == "__main__":
         while [ $remaining -gt 0 ]; do
             local human_remaining=$(format_duration $remaining)
             printf "\r${YELLOW}Resuming in ${human_remaining}...${NC}          "
-            sleep $interval
-            remaining=$((remaining - interval))
+            # BUG-RUN-007: Prevent timer from overshooting into negative
+            local sleep_time=$((remaining < interval ? remaining : interval))
+            sleep $sleep_time
+            remaining=$((remaining - sleep_time))
         done
         echo ""
+
+        # Clean up per-iteration output file
+        rm -f "$iter_output" 2>/dev/null
 
         ((retry++))
     done
@@ -9581,7 +9636,16 @@ EOF
 # Cleanup Handler (with Ctrl+C pause support)
 #===============================================================================
 
+# BUG-XC-007: Guard against re-entrant signal handler execution
+_CLEANUP_IN_PROGRESS=0
+
 cleanup() {
+    # Prevent re-entrant execution
+    if [ "$_CLEANUP_IN_PROGRESS" -eq 1 ]; then
+        return
+    fi
+    _CLEANUP_IN_PROGRESS=1
+
     # Block further signals during critical cleanup operations
     trap '' INT TERM
 
@@ -9606,13 +9670,19 @@ cleanup() {
             rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
         fi
         if [ -f "$loki_dir/session.json" ]; then
+            # BUG-ST-008: Atomic session.json update via temp file + mv
             _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
-import json, os
+import json, os, tempfile
 sf = os.environ['_LOKI_SESSION_FILE']
 try:
-    with open(sf, 'r+') as f:
-        d = json.load(f); d['status'] = 'stopped'
-        f.seek(0); f.truncate(); json.dump(d, f)
+    with open(sf) as f:
+        d = json.load(f)
+    d['status'] = 'stopped'
+    sd = os.path.dirname(sf)
+    fd, tmp = tempfile.mkstemp(dir=sd, suffix='.json')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(d, f)
+    os.replace(tmp, sf)
 except (json.JSONDecodeError, OSError): pass
 " 2>/dev/null || true
         fi
@@ -9638,13 +9708,19 @@ except (json.JSONDecodeError, OSError): pass
         fi
         # Mark session.json as stopped
         if [ -f "$loki_dir/session.json" ]; then
+            # BUG-ST-008: Atomic session.json update via temp file + mv
             _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
-import json, os
+import json, os, tempfile
 sf = os.environ['_LOKI_SESSION_FILE']
 try:
-    with open(sf, 'r+') as f:
-        d = json.load(f); d['status'] = 'stopped'
-        f.seek(0); f.truncate(); json.dump(d, f)
+    with open(sf) as f:
+        d = json.load(f)
+    d['status'] = 'stopped'
+    sd = os.path.dirname(sf)
+    fd, tmp = tempfile.mkstemp(dir=sd, suffix='.json')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(d, f)
+    os.replace(tmp, sf)
 except (json.JSONDecodeError, OSError): pass
 " 2>/dev/null || true
         fi
@@ -9655,6 +9731,7 @@ except (json.JSONDecodeError, OSError): pass
     fi
 
     # Re-enable signals for pause mode
+    _CLEANUP_IN_PROGRESS=0
     trap cleanup INT TERM
 
     # Check if this signal was caused by a child process dying (e.g., dashboard)
@@ -10232,13 +10309,19 @@ main() {
     fi
     # Mark session.json as stopped
     if [ -f "$loki_dir/session.json" ]; then
+        # BUG-ST-008: Atomic session.json update via temp file + mv
         _LOKI_SESSION_FILE="$loki_dir/session.json" python3 -c "
-import json, os
+import json, os, tempfile
 sf = os.environ['_LOKI_SESSION_FILE']
 try:
-    with open(sf, 'r+') as f:
-        d = json.load(f); d['status'] = 'stopped'
-        f.seek(0); f.truncate(); json.dump(d, f)
+    with open(sf) as f:
+        d = json.load(f)
+    d['status'] = 'stopped'
+    sd = os.path.dirname(sf)
+    fd, tmp = tempfile.mkstemp(dir=sd, suffix='.json')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(d, f)
+    os.replace(tmp, sf)
 except (json.JSONDecodeError, OSError): pass
 " 2>/dev/null || true
     fi

@@ -171,9 +171,10 @@ print_capability_matrix() {
 }
 
 # Auto-detect best available provider
+# BUG-PROV-007 fix: includes all 5 supported providers in priority order
+# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Gemini/Aider (Tier 3, degraded)
 auto_detect_provider() {
-    # Prefer Claude (full features), then Codex, then Gemini
-    for p in claude codex gemini; do
+    for p in claude cline codex gemini aider; do
         if check_provider_installed "$p"; then
             echo "$p"
             return 0

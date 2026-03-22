@@ -31,12 +31,10 @@ services:
     working_dir: /workspace
     stdin_open: true
     tty: true
-    depends_on:
-      chroma:
-        condition: service_healthy
 
   chroma:
     image: chromadb/chroma:latest
+    profiles: ["search"]
     volumes:
       - chroma-data:/chroma/chroma
     ports:

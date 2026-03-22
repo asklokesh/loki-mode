@@ -290,7 +290,7 @@ class VectorIndex:
             "dimension": self.dimension
         }
 
-        with open(f"{path}.json", "w") as f:
+        with open(f"{path}.json", "w", encoding="utf-8") as f:
             json.dump(sidecar_data, f, indent=2)
 
     def load(self, path: str) -> None:
@@ -318,7 +318,7 @@ class VectorIndex:
         self.dimension = int(data["dimension"][0])
 
         # Load metadata
-        with open(json_path, "r") as f:
+        with open(json_path, "r", encoding="utf-8") as f:
             sidecar_data = json.load(f)
 
         self.ids = sidecar_data["ids"]

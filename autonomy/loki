@@ -696,13 +696,13 @@ cmd_start() {
                 shift
                 ;;
             --mirofish)
-                mirofish_url="${2:-http://localhost:5001}"
-                if [[ "${mirofish_url}" == --* ]] || [[ -z "${2:-}" ]]; then
-                    mirofish_url="http://localhost:5001"
+                if [[ -n "${2:-}" ]] && [[ "${2:-}" != --* ]]; then
+                    mirofish_url="$2"
+                    shift 2
                 else
+                    mirofish_url="http://localhost:5001"
                     shift
                 fi
-                shift
                 ;;
             --mirofish=*)
                 mirofish_url="${1#*=}"
@@ -1178,7 +1178,7 @@ list_running_sessions() {
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             # Avoid duplicates (if also in sessions/)
             local dup=false
-            for s in "${sessions[@]}"; do
+            for s in ${sessions[@]+"${sessions[@]}"}; do
                 if [[ "$s" == "$sid:"* ]]; then dup=true; break; fi
             done
             if ! $dup; then
@@ -1186,7 +1186,7 @@ list_running_sessions() {
             fi
         fi
     done
-    printf '%s\n' "${sessions[@]}"
+    printf '%s\n' ${sessions[@]+"${sessions[@]}"}
 }
 
 # Kill a PID with SIGTERM, wait, then SIGKILL if needed
@@ -1595,11 +1595,16 @@ cmd_resume() {
 
 # Show current status
 cmd_status() {
-    # Check for --json flag
+    # Check for flags
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) cmd_status_json; return $? ;;
-            *) shift ;;
+            --help|-h) echo "Usage: loki status [--json]"; return 0 ;;
+            *)
+                echo -e "${RED}Unknown flag: $1${NC}"
+                echo "Usage: loki status [--json]"
+                return 1
+                ;;
         esac
     done
 
@@ -1691,7 +1696,7 @@ cmd_status() {
 
     # Check pending tasks
     if [ -f "$LOKI_DIR/queue/pending.json" ]; then
-        local task_count=$(jq '.tasks | length' "$LOKI_DIR/queue/pending.json" 2>/dev/null || echo "0")
+        local task_count=$(jq 'if type == "array" then length elif .tasks then .tasks | length else 0 end' "$LOKI_DIR/queue/pending.json" 2>/dev/null || echo "0")
         echo -e "${CYAN}Pending Tasks:${NC} $task_count"
     fi
 
@@ -2784,23 +2789,25 @@ cmd_dashboard_start() {
     echo "$host" > "${DASHBOARD_PID_DIR}/host"
     echo "$url_scheme" > "${DASHBOARD_PID_DIR}/scheme"
 
-    # Wait for PID file to be written (up to 10 seconds)
-    # Fixes race condition where PID file may not exist yet when checked
-    local pid_wait_retries=20
-    local pid_wait_interval=0.5
-    while [[ $pid_wait_retries -gt 0 ]]; do
-        if [[ -f "$DASHBOARD_PID_FILE" ]]; then
+    # Wait for dashboard HTTP endpoint to become ready (up to 10 seconds)
+    local health_retries=20
+    local health_interval=0.5
+    local health_ok=false
+    while [[ $health_retries -gt 0 ]]; do
+        if curl -sf "http://${host}:${port}/api/status" >/dev/null 2>&1; then
+            health_ok=true
             break
         fi
-        sleep "$pid_wait_interval"
-        pid_wait_retries=$((pid_wait_retries - 1))
+        # Also check if the process died
+        if ! kill -0 "$new_pid" 2>/dev/null; then
+            break
+        fi
+        sleep "$health_interval"
+        health_retries=$((health_retries - 1))
     done
-    if [[ ! -f "$DASHBOARD_PID_FILE" ]]; then
-        echo -e "${YELLOW}Warning: Dashboard PID file not written within timeout${NC}"
+    if ! $health_ok && kill -0 "$new_pid" 2>/dev/null; then
+        echo -e "${YELLOW}Warning: Dashboard started but health check did not respond within timeout${NC}"
     fi
-
-    # Wait a moment and check if process is still running
-    sleep 1
 
     if kill -0 "$new_pid" 2>/dev/null; then
         local url="${url_scheme}://${host}:${port}"
@@ -3105,6 +3112,7 @@ cmd_web() {
             ;;
         *)
             # Treat unknown args as options to start (e.g., loki web --no-open)
+            shift
             cmd_web_start "$subcommand" "$@"
             ;;
     esac
@@ -3147,10 +3155,18 @@ cmd_web_start() {
                 shift
                 ;;
             --port)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}--port requires a port number${NC}"
+                    exit 1
+                fi
                 port="$2"
                 shift 2
                 ;;
             --prd)
+                if [[ -z "${2:-}" ]]; then
+                    echo -e "${RED}--prd requires a file path${NC}"
+                    exit 1
+                fi
                 prd_file="$2"
                 shift 2
                 ;;
@@ -3356,7 +3372,7 @@ cmd_web_stop() {
     local pids_file="${LOKI_DIR}/purple-lab/child-pids.json"
     if [ -f "$pids_file" ]; then
         local tracked_pids
-        tracked_pids=$(python3 -c "import json; [print(p) for p in json.load(open('$pids_file'))]" 2>/dev/null || true)
+        tracked_pids=$(LOKI_PIDS_FILE="$pids_file" python3 -c "import json, os; [print(p) for p in json.load(open(os.environ['LOKI_PIDS_FILE']))]" 2>/dev/null || true)
         if [ -n "$tracked_pids" ]; then
             echo "Cleaning up Purple Lab build processes..."
             for opid in $tracked_pids; do
@@ -3374,13 +3390,18 @@ cmd_web_stop() {
     fi
 
     # Also stop the Loki Dashboard if it was started by a Purple Lab session
-    local dash_pid
-    dash_pid=$(lsof -ti:57374 -sTCP:LISTEN 2>/dev/null | head -1 || true)
-    if [ -n "$dash_pid" ]; then
-        kill "$dash_pid" 2>/dev/null || true
-        sleep 1
-        kill -0 "$dash_pid" 2>/dev/null && kill -9 "$dash_pid" 2>/dev/null || true
-        echo "Loki Dashboard stopped (port 57374)"
+    local dash_port="${LOKI_DASHBOARD_PORT:-57374}"
+    local dash_pid_file="${LOKI_DIR}/dashboard/dashboard.pid"
+    if [ -f "$dash_pid_file" ]; then
+        local dash_pid
+        dash_pid=$(cat "$dash_pid_file" 2>/dev/null)
+        if [ -n "$dash_pid" ] && kill -0 "$dash_pid" 2>/dev/null; then
+            kill "$dash_pid" 2>/dev/null || true
+            sleep 1
+            kill -0 "$dash_pid" 2>/dev/null && kill -9 "$dash_pid" 2>/dev/null || true
+            echo "Loki Dashboard stopped (port $dash_port)"
+        fi
+        rm -f "$dash_pid_file" 2>/dev/null || true
     fi
 }
 
@@ -3536,7 +3557,7 @@ cmd_github() {
 
             # gh CLI
             if command -v gh &>/dev/null; then
-                echo -e "  gh CLI:       ${GREEN}installed$(gh --version 2>/dev/null | head -1 | sed 's/gh version /v/')${NC}"
+                echo -e "  gh CLI:       ${GREEN}installed $(gh --version 2>/dev/null | head -1 | sed 's/gh version /v/')${NC}"
                 if gh auth status &>/dev/null 2>&1; then
                     echo -e "  Auth:         ${GREEN}authenticated${NC}"
                 else
@@ -4802,16 +4823,9 @@ cmd_watch() {
 
     case "$watcher" in
         fswatch)
-            # Use fswatch for native macOS filesystem events
-            fswatch -1 --latency "$debounce" "$prd_path" | while read -r _event; do
-                _watch_trigger
-                _watch_status_line
-                # Re-attach fswatch for next change
-                fswatch -1 --latency "$debounce" "$prd_path" > /dev/null 2>&1 || true
-            done
-            # Fallback: loop-based fswatch for continuous watching
+            # Use fswatch with loop-based approach (avoids pipe subshell PID loss)
             while true; do
-                fswatch -1 --latency "$debounce" "$prd_path" > /dev/null 2>&1
+                fswatch -1 --latency "$debounce" "$prd_path" > /dev/null 2>&1 || true
                 _watch_trigger
                 _watch_status_line
             done
@@ -4920,14 +4934,14 @@ _export_json() {
     fi
 
     local json_output
-    json_output=$(python3 << 'EXPORT_JSON'
+    json_output=$(LOKI_DIR="$LOKI_DIR" LOKI_VERSION="$(get_version)" python3 << 'EXPORT_JSON'
 import json, os, glob
 from datetime import datetime
 
 loki_dir = os.environ.get("LOKI_DIR", ".loki")
 export = {
     "exported_at": datetime.utcnow().isoformat() + "Z",
-    "version": "6.0.0",
+    "version": os.environ.get("LOKI_VERSION", "0.0.0"),
     "session": {},
     "queue": {},
     "quality": {},
@@ -5045,7 +5059,7 @@ _export_csv() {
     fi
 
     local csv_output
-    csv_output=$(python3 << 'EXPORT_CSV'
+    csv_output=$(LOKI_DIR="$LOKI_DIR" python3 << 'EXPORT_CSV'
 import json, os, csv, io
 
 loki_dir = os.environ.get("LOKI_DIR", ".loki")
@@ -5058,7 +5072,8 @@ for queue in ["pending", "in-progress", "completed", "failed"]:
     if os.path.exists(qf):
         try:
             with open(qf) as f:
-                tasks = json.load(f)
+                data = json.load(f)
+            tasks = data.get("tasks", data) if isinstance(data, dict) else data
             for t in tasks:
                 writer.writerow([
                     queue,
@@ -5191,18 +5206,34 @@ cmd_config() {
 
 # v6.0.0: Set a configuration value
 cmd_config_set() {
+    local use_global=false
+
+    # Check for --global flag
+    if [[ "${1:-}" == "--global" ]]; then
+        use_global=true
+        shift
+    fi
+
     local key="${1:-}"
     local value="${2:-}"
 
     if [[ -z "$key" || -z "$value" ]]; then
-        echo -e "${RED}Usage: loki config set <key> <value>${NC}"
+        echo -e "${RED}Usage: loki config set [--global] <key> <value>${NC}"
         echo "Run 'loki config' for list of settable keys."
         return 1
     fi
 
+    # Determine config directory: --global writes to ~/.config/loki-mode/
+    local config_dir
+    if $use_global; then
+        config_dir="${HOME}/.config/loki-mode"
+    else
+        config_dir="$LOKI_DIR/config"
+    fi
+
     # Ensure config directory exists
-    mkdir -p "$LOKI_DIR/config"
-    local config_store="$LOKI_DIR/config/settings.json"
+    mkdir -p "$config_dir"
+    local config_store="$config_dir/settings.json"
 
     # Initialize if not exists
     if [ ! -f "$config_store" ]; then
@@ -5284,7 +5315,21 @@ for part in parts[:-1]:
     if part not in current or not isinstance(current[part], dict):
         current[part] = {}
     current = current[part]
-current[parts[-1]] = value
+# Type coercion: try int, then float, then bool, else string
+def coerce_type(v):
+    if v.lower() in ('true', 'false'):
+        return v.lower() == 'true'
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    return v
+
+current[parts[-1]] = coerce_type(value)
 
 with open(cfg_file, "w") as f:
     json.dump(config, f, indent=2)
@@ -5319,8 +5364,7 @@ cmd_config_get() {
         return 0
     fi
 
-    export LOKI_CFG_FILE="$config_store"
-    export LOKI_CFG_KEY="$key"
+    LOKI_CFG_FILE="$config_store" LOKI_CFG_KEY="$key" \
     python3 << 'GET_CONFIG'
 import json, os
 cfg_file = os.environ["LOKI_CFG_FILE"]
@@ -6949,30 +6993,34 @@ cmd_init() {
         ai-chatbot
     )
 
-    local -A TEMPLATE_LABELS=(
-        [simple-todo-app]="Simple Todo App"
-        [static-landing-page]="Static Landing Page"
-        [api-only]="REST API (No Frontend)"
-        [rest-api]="REST API"
-        [rest-api-auth]="REST API with Auth"
-        [cli-tool]="CLI Tool"
-        [discord-bot]="Discord Bot"
-        [chrome-extension]="Chrome Extension"
-        [blog-platform]="Blog Platform"
-        [full-stack-demo]="Full-Stack Demo"
-        [web-scraper]="Web Scraper"
-        [data-pipeline]="Data Pipeline"
-        [dashboard]="Analytics Dashboard"
-        [game]="Browser Game"
-        [slack-bot]="Slack Bot"
-        [npm-library]="npm Library"
-        [microservice]="Microservice"
-        [mobile-app]="Mobile App"
-        [saas-app]="SaaS Application"
-        [saas-starter]="SaaS Starter Kit"
-        [e-commerce]="E-Commerce Store"
-        [ai-chatbot]="AI Chatbot (RAG)"
-    )
+    # Template label lookup function (bash 3.2 compatible - no associative arrays)
+    _get_template_label() {
+        case "$1" in
+            simple-todo-app) echo "Simple Todo App" ;;
+            static-landing-page) echo "Static Landing Page" ;;
+            api-only) echo "REST API (No Frontend)" ;;
+            rest-api) echo "REST API" ;;
+            rest-api-auth) echo "REST API with Auth" ;;
+            cli-tool) echo "CLI Tool" ;;
+            discord-bot) echo "Discord Bot" ;;
+            chrome-extension) echo "Chrome Extension" ;;
+            blog-platform) echo "Blog Platform" ;;
+            full-stack-demo) echo "Full-Stack Demo" ;;
+            web-scraper) echo "Web Scraper" ;;
+            data-pipeline) echo "Data Pipeline" ;;
+            dashboard) echo "Analytics Dashboard" ;;
+            game) echo "Browser Game" ;;
+            slack-bot) echo "Slack Bot" ;;
+            npm-library) echo "npm Library" ;;
+            microservice) echo "Microservice" ;;
+            mobile-app) echo "Mobile App" ;;
+            saas-app) echo "SaaS Application" ;;
+            saas-starter) echo "SaaS Starter Kit" ;;
+            e-commerce) echo "E-Commerce Store" ;;
+            ai-chatbot) echo "AI Chatbot (RAG)" ;;
+            *) echo "$1" ;;
+        esac
+    }
 
     local template_count=${#TEMPLATE_NAMES[@]}
 
@@ -7070,7 +7118,7 @@ cmd_init() {
                 else
                     echo ","
                 fi
-                printf '  {"name": "%s", "label": "%s"}' "$tname" "${TEMPLATE_LABELS[$tname]}"
+                printf '  {"name": "%s", "label": "%s"}' "$tname" "$(_get_template_label "$tname")"
             done
             echo ""
             echo "]"
@@ -7085,7 +7133,7 @@ cmd_init() {
                 elif [[ "$tname" == "mobile-app" ]]; then
                     echo -e "  ${DIM}Complex:${NC}"
                 fi
-                printf "  %2d. ${CYAN}%-22s${NC} %s\n" "$idx" "$tname" "${TEMPLATE_LABELS[$tname]}"
+                printf "  %2d. ${CYAN}%-22s${NC} %s\n" "$idx" "$tname" "$(_get_template_label "$tname")"
                 idx=$((idx + 1))
             done
             echo ""
@@ -7108,7 +7156,7 @@ cmd_init() {
             elif [[ "$tname" == "mobile-app" ]]; then
                 echo -e "  ${DIM}Complex:${NC}"
             fi
-            printf "  %2d. %-22s %s\n" "$idx" "$tname" "${TEMPLATE_LABELS[$tname]}"
+            printf "  %2d. %-22s %s\n" "$idx" "$tname" "$(_get_template_label "$tname")"
             idx=$((idx + 1))
         done
         echo ""
@@ -7122,7 +7170,27 @@ cmd_init() {
 
         template_name="${TEMPLATE_NAMES[$((choice - 1))]}"
         echo ""
-        echo -e "Selected: ${CYAN}$template_name${NC} (${TEMPLATE_LABELS[$template_name]})"
+        echo -e "Selected: ${CYAN}$template_name${NC} ($(_get_template_label "$template_name"))"
+    fi
+
+    # Validate template_name against known list before filesystem lookup
+    local _tpl_valid=false
+    for _tpl_check in "${TEMPLATE_NAMES[@]}"; do
+        if [[ "$_tpl_check" == "$template_name" ]]; then
+            _tpl_valid=true
+            break
+        fi
+    done
+    if ! $_tpl_valid; then
+        echo -e "${RED}Unknown template: $template_name${NC}"
+        echo ""
+        echo "Available templates:"
+        for tname in "${TEMPLATE_NAMES[@]}"; do
+            echo "  $tname"
+        done
+        echo ""
+        echo "Run 'loki init --list' for details."
+        exit 1
     fi
 
     # Resolve template file
@@ -7162,6 +7230,19 @@ cmd_init() {
         target_dir="$(pwd)/$project_name"
     else
         target_dir="$(pwd)"
+    fi
+
+    # Guard: check if target directory has an active .loki/ session
+    if [[ -n "$project_name" ]] && [[ -d "$target_dir/.loki" ]]; then
+        if [[ -f "$target_dir/.loki/loki.pid" ]]; then
+            local _guard_pid
+            _guard_pid=$(cat "$target_dir/.loki/loki.pid" 2>/dev/null)
+            if [[ -n "$_guard_pid" ]] && kill -0 "$_guard_pid" 2>/dev/null; then
+                echo -e "${RED}Cannot initialize: active session running in $target_dir. Stop it first.${NC}"
+                return 1
+            fi
+        fi
+        echo -e "${YELLOW}Reinitializing existing .loki/ directory in $target_dir${NC}"
     fi
 
     # Build config JSON
@@ -7249,7 +7330,7 @@ ENDGITIGNORE
         if [[ -n "$project_name" ]]; then
             echo -e "  ${GREEN}CREATE${NC} $target_dir/"
         fi
-        echo -e "  ${GREEN}CREATE${NC} $target_dir/prd.md (${TEMPLATE_LABELS[$template_name]} template)"
+        echo -e "  ${GREEN}CREATE${NC} $target_dir/prd.md ($(_get_template_label "$template_name") template)"
         echo -e "  ${GREEN}CREATE${NC} $target_dir/.loki/"
         echo -e "  ${GREEN}CREATE${NC} $target_dir/.loki/loki.config.json"
         echo -e "  ${GREEN}CREATE${NC} $target_dir/README.md"
@@ -7281,8 +7362,10 @@ ENDGITIGNORE
     echo "$config_json" > "$target_dir/.loki/loki.config.json"
 
     # Only write README if it does not already exist
+    local did_write_readme=false
     if [[ ! -f "$target_dir/README.md" ]]; then
         echo "$readme_content" > "$target_dir/README.md"
+        did_write_readme=true
     fi
 
     # Git init (unless --no-git or already in a git repo)
@@ -7300,9 +7383,9 @@ ENDGITIGNORE
     echo -e "${GREEN}Project scaffolded:${NC} $target_dir"
     echo ""
     echo "  Files created:"
-    echo -e "    prd.md                   ${DIM}${TEMPLATE_LABELS[$template_name]} template${NC}"
+    echo -e "    prd.md                   ${DIM}$(_get_template_label "$template_name") template${NC}"
     echo -e "    .loki/loki.config.json   ${DIM}project configuration${NC}"
-    if [[ ! -f "$target_dir/README.md" ]] || [[ -n "$project_name" ]]; then
+    if $did_write_readme; then
         echo -e "    README.md                ${DIM}project readme${NC}"
     fi
     if $did_git_init; then
@@ -10620,24 +10703,25 @@ cmd_worktree() {
             fi
 
             # Validate JSON is parseable and contains required fields
-            if ! python3 -c "
-import json, sys
+            if ! LOKI_SIGNAL_FILE="$signal_file" python3 << 'MERGE_VALIDATE_PY'
+import json, sys, os
 try:
-    data = json.load(open('$signal_file'))
+    data = json.load(open(os.environ['LOKI_SIGNAL_FILE']))
     assert data.get('branch'), 'missing branch'
     assert data.get('worktree'), 'missing worktree'
 except Exception as e:
     print(str(e), file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null; then
+MERGE_VALIDATE_PY
+            then
                 echo -e "${RED}Invalid or corrupted merge signal file${NC}"
                 exit 1
             fi
 
             local branch
-            branch=$(python3 -c "import json; print(json.load(open('$signal_file'))['branch'])")
+            branch=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['branch'])")
             local worktree_path
-            worktree_path=$(python3 -c "import json; print(json.load(open('$signal_file'))['worktree'])")
+            worktree_path=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['worktree'])")
 
             if git merge --no-ff "$branch" -m "merge($name): auto-merge from parallel worktree"; then
                 echo -e "${GREEN}Merge successful${NC}"
@@ -10774,30 +10858,46 @@ cmd_state() {
                 esac
             done
 
-            PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
-import json, sys
-sys.path.insert(0, '${SKILL_DIR:-.}')
+            PYTHONPATH="${SKILL_DIR:-.}" \
+            LOKI_STATE_QUERY_TYPE="$query_type" \
+            LOKI_STATE_AGENT_ID="$agent_id" \
+            LOKI_STATE_EVENT_TYPE="$event_type" \
+            LOKI_STATE_TOPIC="$topic" \
+            LOKI_STATE_CLUSTER_ID="$cluster_id" \
+            LOKI_STATE_MIGRATION_ID="$migration_id" \
+            LOKI_STATE_LIMIT="$limit" \
+            LOKI_STATE_SKILL_DIR="${SKILL_DIR:-.}" \
+            python3 << 'STATE_QUERY_PY'
+import json, sys, os
+sys.path.insert(0, os.environ.get('LOKI_STATE_SKILL_DIR', '.'))
 from state.sqlite_backend import SqliteStateBackend
 db = SqliteStateBackend()
 
-query_type = '${query_type}'
+query_type = os.environ.get('LOKI_STATE_QUERY_TYPE', '')
+agent_id = os.environ.get('LOKI_STATE_AGENT_ID', '') or None
+event_type = os.environ.get('LOKI_STATE_EVENT_TYPE', '') or None
+topic = os.environ.get('LOKI_STATE_TOPIC', '') or None
+cluster_id = os.environ.get('LOKI_STATE_CLUSTER_ID', '') or None
+migration_id = os.environ.get('LOKI_STATE_MIGRATION_ID', '') or None
+limit = int(os.environ.get('LOKI_STATE_LIMIT', '20'))
+
 if query_type == 'events':
     results = db.query_events(
-        event_type='${event_type}' or None,
-        agent_id='${agent_id}' or None,
-        migration_id='${migration_id}' or None,
-        limit=int('${limit}')
+        event_type=event_type,
+        agent_id=agent_id,
+        migration_id=migration_id,
+        limit=limit
     )
 elif query_type == 'messages':
     results = db.query_messages(
-        topic='${topic}' or None,
-        cluster_id='${cluster_id}' or None,
-        limit=int('${limit}')
+        topic=topic,
+        cluster_id=cluster_id,
+        limit=limit
     )
 elif query_type == 'checkpoints':
     results = db.query_checkpoints(
-        migration_id='${migration_id}' or None,
-        limit=int('${limit}')
+        migration_id=migration_id,
+        limit=limit
     )
 else:
     print(f'Unknown query type: {query_type}')
@@ -10810,7 +10910,8 @@ else:
         print(json.dumps(r, indent=2))
         print('---')
     print(f'{len(results)} result(s)')
-" 2>&1 || {
+STATE_QUERY_PY
+            2>&1 || {
                 echo -e "${RED}Error querying state database${NC}"
                 return 1
             }
@@ -13964,14 +14065,17 @@ try {
             mkdir -p .loki
             local config_file=".loki/config.json"
             if [ -f "$config_file" ]; then
-                python3 -c "
-import json
-with open('$config_file') as f:
+                LOKI_TELEM_CFG="$config_file" LOKI_TELEM_ENDPOINT="$endpoint" \
+                python3 << 'TELEM_ENABLE_PY'
+import json, os
+cfg = os.environ['LOKI_TELEM_CFG']
+ep = os.environ['LOKI_TELEM_ENDPOINT']
+with open(cfg) as f:
     config = json.load(f)
-config['otel_endpoint'] = '$endpoint'
-with open('$config_file', 'w') as f:
+config['otel_endpoint'] = ep
+with open(cfg, 'w') as f:
     json.dump(config, f, indent=2)
-" 2>/dev/null
+TELEM_ENABLE_PY
             else
                 echo "{\"otel_endpoint\": \"$endpoint\"}" > "$config_file"
             fi
@@ -13987,14 +14091,15 @@ with open('$config_file', 'w') as f:
 
             local config_file=".loki/config.json"
             if [ -f "$config_file" ]; then
-                python3 -c "
-import json
-with open('$config_file') as f:
+                LOKI_TELEM_CFG="$config_file" python3 << 'TELEM_DISABLE_PY'
+import json, os
+cfg = os.environ['LOKI_TELEM_CFG']
+with open(cfg) as f:
     config = json.load(f)
 config.pop('otel_endpoint', None)
-with open('$config_file', 'w') as f:
+with open(cfg, 'w') as f:
     json.dump(config, f, indent=2)
-" 2>/dev/null
+TELEM_DISABLE_PY
             fi
 
             echo -e "  Telemetry disabled"
@@ -14161,9 +14266,10 @@ cmd_remote() {
         prd_abs="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
     fi
 
-    # Start dashboard in background if enabled
+    # Start dashboard in background if enabled, with cleanup trap
     if [ "${LOKI_DASHBOARD:-true}" = "true" ]; then
         cmd_api start >/dev/null 2>&1 &
+        trap 'cmd_api stop >/dev/null 2>&1 || true' EXIT INT TERM
     fi
 
     local version=$(get_version)
@@ -14762,9 +14868,9 @@ METRICS_SCRIPT
         fi
 
         echo "Uploading metrics report..."
-        local gist_desc="Loki Mode productivity report - ${project_name:-project} ($(date +%Y-%m-%d))"
         local project_name
         project_name=$(basename "$(pwd)")
+        local gist_desc="Loki Mode productivity report - ${project_name:-project} ($(date +%Y-%m-%d))"
         local gist_url
         gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" --public 2>&1)
         local gist_exit=$?
@@ -16767,12 +16873,13 @@ except Exception:
     # Gate 2: Security Scan
     _ci_scan() {
         local pattern="$1" sev="$2" cat="$3" finding="$4" suggestion="$5"
+        # Only scan added lines (starting with "+") to avoid flagging deleted code
         while IFS= read -r match; do
             [ -z "$match" ] && continue
             local ml
             ml=$(echo "$match" | cut -d: -f1)
             _ci_add_finding "diff" "$ml" "$sev" "$cat" "$finding" "$suggestion"
-        done < <(echo "$diff_content" | grep -nE "$pattern" 2>/dev/null || true)
+        done < <(echo "$diff_content" | grep -n '^+' | grep -E "$pattern" 2>/dev/null || true)
     }
 
     # Hardcoded secrets
@@ -16833,6 +16940,7 @@ except Exception:
     # --- Test suggestions ---
     local test_suggestions=""
     if [ "$ci_test_suggest" = true ] && [ -n "$changed_files" ]; then
+        export LOKI_CI_CHANGED_FILES="$changed_files"
         test_suggestions=$(python3 << 'TEST_SUGGEST_PY'
 import sys, os
 
@@ -16862,8 +16970,15 @@ for f in changed:
         suggestions.append({"file": f, "test_file": test_path, "alt_test_file": alt_path,
                           "framework": "pytest", "hint": f"Add unit tests for {name} module"})
     elif ext in (".js", ".ts", ".jsx", ".tsx"):
-        test_ext = ext.replace(".ts", ".test.ts").replace(".js", ".test.js").replace(".tsx", ".test.tsx").replace(".jsx", ".test.jsx")
-        if test_ext == ext:
+        if ext == ".tsx":
+            test_ext = ".test.tsx"
+        elif ext == ".jsx":
+            test_ext = ".test.jsx"
+        elif ext == ".ts":
+            test_ext = ".test.ts"
+        elif ext == ".js":
+            test_ext = ".test.js"
+        else:
             test_ext = f".test{ext}"
         test_path = os.path.join(dirpath, f"{name}{test_ext}")
         suggestions.append({"file": f, "test_file": test_path,
@@ -17037,6 +17152,7 @@ CI_JSON_OUT
         if [ -n "${test_suggestions:-}" ] && [ "$test_suggestions" != "[]" ]; then
             echo "### Test Suggestions"
             echo ""
+            export LOKI_CI_TEST_SUGG="${test_suggestions}"
             python3 -c "
 import json, os
 tests = json.loads(os.environ.get('LOKI_CI_TEST_SUGG', '[]'))
@@ -18773,7 +18889,7 @@ cmd_share() {
     tmpfile=$(mktemp "/tmp/loki-share-XXXXXX.$ext")
 
     echo "Generating session report..."
-    if ! loki report --format "$format" > "$tmpfile" 2>/dev/null; then
+    if ! "$0" report --format "$format" > "$tmpfile" 2>/dev/null; then
         echo -e "${RED}Failed to generate session report${NC}"
         rm -f "$tmpfile"
         exit 1

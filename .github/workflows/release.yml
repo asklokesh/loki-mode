@@ -196,8 +196,7 @@ jobs:
           with open('/tmp/changelog-body.txt') as f:
               changelog = f.read().strip()
 
-          # Escape for JSON safety
-          changelog_safe = changelog.replace('\\\\', '\\\\\\\\').replace('\"', \"'\")
+          changelog_safe = changelog
           if len(changelog_safe) > 1500:
               changelog_safe = changelog_safe[:1500] + '...'
 
@@ -405,7 +404,7 @@ jobs:
         working-directory: dashboard-ui
         run: |
           npm ci
-          npm run build
+          npm run build:all
 
       - name: Install extension dependencies
         working-directory: vscode-extension
@@ -436,7 +435,15 @@ jobs:
         id: sha
         run: |
           URL="https://github.com/asklokesh/loki-mode/archive/refs/tags/v${{ needs.release.outputs.version }}.tar.gz"
-          SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          curl -sL "$URL" -o /tmp/release.tar.gz
+          # Verify the downloaded file is a valid tarball (not a 404 error page)
+          if ! file /tmp/release.tar.gz | grep -q 'gzip compressed'; then
+            echo "ERROR: Downloaded file is not a valid gzip tarball"
+            echo "Contents: $(head -c 200 /tmp/release.tar.gz)"
+            exit 1
+          fi
+          SHA=$(sha256sum /tmp/release.tar.gz | cut -d' ' -f1)
+          rm -f /tmp/release.tar.gz
           echo "sha256=${SHA}" >> $GITHUB_OUTPUT
 
       - name: Update Homebrew formula via API

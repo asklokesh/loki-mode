@@ -90,14 +90,15 @@ provider_version() {
 
 # Invocation function
 # Uses -y (YOLO) for autonomous mode, positional prompt
+# BUG-PROV-009 fix: build model flag as array to prevent word-splitting on model
+# names that contain spaces or special characters
 provider_invoke() {
     local prompt="$1"
     shift
     local model="${LOKI_CLINE_MODEL:-}"
-    local model_flag=""
-    [[ -n "$model" ]] && model_flag="-m $model"
-    # shellcheck disable=SC2086
-    cline -y $model_flag "$prompt" "$@" 2>&1
+    local model_args=()
+    [[ -n "$model" ]] && model_args=("-m" "$model")
+    cline -y "${model_args[@]}" "$prompt" "$@" 2>&1
 }
 
 # Model tier to parameter (Cline uses single model, returns model name)

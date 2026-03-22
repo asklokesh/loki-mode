@@ -10,7 +10,7 @@
 
 services:
   autonomi:
-    image: asklokesh/loki-mode:5.52.0
+    image: asklokesh/loki-mode:latest
     build:
       context: ../..
       dockerfile: Dockerfile

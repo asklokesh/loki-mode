@@ -11,6 +11,9 @@ claude --dangerously-skip-permissions
 
 # Or via CLI
 ./autonomy/run.sh templates/e-commerce.md
+
+# Or scaffold a new project from a template
+loki init my-project --template saas-starter
 ```
 
 ## Templates
@@ -27,12 +30,20 @@ claude --dangerously-skip-permissions
 
 | Template | Description | Tech Stack | Est. Time |
 |----------|-------------|------------|-----------|
+| [rest-api.md](rest-api.md) | REST API with CRUD, pagination, filtering, Swagger docs (no auth) | Express, TypeScript, Prisma, SQLite | 25-35 min |
 | [rest-api-auth.md](rest-api-auth.md) | REST API with JWT auth, registration, login, refresh, rate limiting | Express/FastAPI, PostgreSQL, JWT, bcrypt | 30-45 min |
-| [full-stack-demo.md](full-stack-demo.md) | Bookmark manager with tags, search, and filtering | React, Express, SQLite, TailwindCSS | 30-60 min |
 | [cli-tool.md](cli-tool.md) | File organizer CLI with subcommands, config, watch mode, undo | Node.js, Commander.js, chalk, chokidar | 30-45 min |
 | [discord-bot.md](discord-bot.md) | Moderation bot with slash commands, auto-mod, reaction roles | discord.js, SQLite, node-cron | 45-60 min |
 | [chrome-extension.md](chrome-extension.md) | Tab manager extension with groups, sessions, search, memory monitor | Manifest V3, vanilla JS, Chrome APIs | 30-45 min |
 | [blog-platform.md](blog-platform.md) | Blog with markdown CMS, categories, RSS feed, SEO | Next.js, CodeMirror, SQLite, TailwindCSS | 45-60 min |
+| [full-stack-demo.md](full-stack-demo.md) | Bookmark manager with tags, search, and filtering | React, Express, SQLite, TailwindCSS | 30-60 min |
+| [web-scraper.md](web-scraper.md) | Configurable scraper with pagination, robots.txt, multi-format export | Python, httpx, BeautifulSoup4, SQLite | 30-45 min |
+| [data-pipeline.md](data-pipeline.md) | ETL pipeline with multi-source ingestion, transforms, monitoring | Python, Pydantic, SQLAlchemy, Click | 30-45 min |
+| [dashboard.md](dashboard.md) | Real-time analytics dashboard with charts, tables, drag-and-drop layout | React, Recharts, TanStack Table, WebSocket | 45-60 min |
+| [game.md](game.md) | Browser-based 2D game with enemy AI, scoring, levels, high scores | HTML5 Canvas, TypeScript, Web Audio API | 30-45 min |
+| [slack-bot.md](slack-bot.md) | Slack bot with slash commands, events, interactive messages, scheduling | Node.js, Bolt SDK, SQLite | 30-45 min |
+| [npm-library.md](npm-library.md) | npm package with TypeScript, dual ESM/CJS, tree shaking, auto docs | TypeScript, tsup, Vitest, typedoc | 30-45 min |
+| [microservice.md](microservice.md) | Containerized service with health checks, logging, Prometheus metrics | Express, TypeScript, Docker, Prisma, pino | 30-45 min |
 
 ### Complex
 
@@ -57,6 +68,7 @@ Every template follows a consistent structure:
 - **Requirements** - Non-functional requirements
 - **Testing** - Test strategy and coverage expectations
 - **Out of Scope** - Explicit boundaries to prevent scope creep
+- **Acceptance Criteria** - Measurable conditions for each feature
 - **Success Criteria** - How to know when it is done
 - **Purpose Footer** - What aspect of Loki Mode this template exercises
 
@@ -69,12 +81,15 @@ Every template follows a consistent structure:
 **Building something real?** Pick the template closest to your goal and customize it. The complex templates (`saas-starter.md`, `e-commerce.md`, `ai-chatbot.md`) are production-grade starting points.
 
 **Testing specific agent types:**
-- Frontend agent: `static-landing-page.md`, `chrome-extension.md`
-- Backend agent: `api-only.md`, `rest-api-auth.md`, `discord-bot.md`
+- Frontend agent: `static-landing-page.md`, `chrome-extension.md`, `dashboard.md`
+- Backend agent: `api-only.md`, `rest-api.md`, `rest-api-auth.md`, `microservice.md`
 - Full-stack agent: `full-stack-demo.md`, `blog-platform.md`
-- DevOps/CLI agent: `cli-tool.md`
+- DevOps/CLI agent: `cli-tool.md`, `data-pipeline.md`
+- Bot agent: `discord-bot.md`, `slack-bot.md`
 - Mobile agent: `mobile-app.md`
 - AI/ML agent: `ai-chatbot.md`
+- Game agent: `game.md`
+- Library agent: `npm-library.md`
 
 ## Customizing Templates
 

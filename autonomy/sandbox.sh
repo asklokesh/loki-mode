@@ -356,19 +356,24 @@ CREATED_AT=$(date -Iseconds)
 PARENT_DIR=$PROJECT_DIR
 EOF
 
-    # Save state
+    # Save state using python3 for safe JSON encoding (avoids shell injection
+    # from paths containing quotes, backslashes, or other special characters)
     mkdir -p "$(dirname "$WORKTREE_STATE_FILE")"
-    cat > "$WORKTREE_STATE_FILE" << EOF
-{
-    "sandbox_path": "$sandbox_path",
-    "sandbox_branch": "$sandbox_branch",
-    "created_at": "$(date -Iseconds)",
-    "provider": "$provider",
-    "prd_path": "$prd_path",
-    "status": "created",
-    "isolation_type": "worktree"
+    python3 -c "
+import json, sys, datetime
+data = {
+    'sandbox_path': sys.argv[1],
+    'sandbox_branch': sys.argv[2],
+    'created_at': datetime.datetime.now().astimezone().isoformat(),
+    'provider': sys.argv[3],
+    'prd_path': sys.argv[4],
+    'status': 'created',
+    'isolation_type': 'worktree'
 }
-EOF
+with open(sys.argv[5], 'w') as f:
+    json.dump(data, f, indent=4)
+    f.write('\n')
+" "$sandbox_path" "$sandbox_branch" "$provider" "$prd_path" "$WORKTREE_STATE_FILE"
 
     log_success "Worktree sandbox created: $sandbox_path"
     return 0
@@ -621,18 +626,44 @@ _desktop_install_provider_cli() {
 }
 
 # Build environment variable args for docker sandbox exec
+# Uses printf %q to escape values and prevent shell expansion corruption
+# (API keys can contain $, !, and other special characters)
 _desktop_build_env_args() {
     DESKTOP_ENV_ARGS=()
-    [[ -n "${ANTHROPIC_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
-    [[ -n "${OPENAI_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "OPENAI_API_KEY=$OPENAI_API_KEY")
-    [[ -n "${GOOGLE_API_KEY:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GOOGLE_API_KEY=$GOOGLE_API_KEY")
-    [[ -n "${GITHUB_TOKEN:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GITHUB_TOKEN=$GITHUB_TOKEN")
-    [[ -n "${GH_TOKEN:-}" ]] && DESKTOP_ENV_ARGS+=("-e" "GH_TOKEN=$GH_TOKEN")
-    # Forward all LOKI_* env vars
+    local _escaped
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        printf -v _escaped '%s' "$ANTHROPIC_API_KEY"
+        DESKTOP_ENV_ARGS+=("-e" "ANTHROPIC_API_KEY=$_escaped")
+    fi
+    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+        printf -v _escaped '%s' "$OPENAI_API_KEY"
+        DESKTOP_ENV_ARGS+=("-e" "OPENAI_API_KEY=$_escaped")
+    fi
+    if [[ -n "${GOOGLE_API_KEY:-}" ]]; then
+        printf -v _escaped '%s' "$GOOGLE_API_KEY"
+        DESKTOP_ENV_ARGS+=("-e" "GOOGLE_API_KEY=$_escaped")
+    fi
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        printf -v _escaped '%s' "$GITHUB_TOKEN"
+        DESKTOP_ENV_ARGS+=("-e" "GITHUB_TOKEN=$_escaped")
+    fi
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+        printf -v _escaped '%s' "$GH_TOKEN"
+        DESKTOP_ENV_ARGS+=("-e" "GH_TOKEN=$_escaped")
+    fi
+    # Forward all LOKI_* env vars via --env-file to avoid shell expansion issues
+    local _env_file="${TMPDIR:-/tmp}/loki-sandbox-env-$$"
+    local _has_loki_vars=false
     local var
     while IFS= read -r var; do
-        [[ -n "$var" ]] && DESKTOP_ENV_ARGS+=("-e" "$var=${!var}")
+        if [[ -n "$var" ]]; then
+            printf '%s=%s\n' "$var" "${!var}" >> "$_env_file"
+            _has_loki_vars=true
+        fi
     done < <(compgen -v LOKI_ 2>/dev/null || true)
+    if [[ "$_has_loki_vars" == "true" ]] && [[ -f "$_env_file" ]]; then
+        DESKTOP_ENV_ARGS+=("--env-file" "$_env_file")
+    fi
 }
 
 start_docker_desktop_sandbox() {
@@ -669,8 +700,9 @@ start_docker_desktop_sandbox() {
     # Build environment variable args
     _desktop_build_env_args
 
-    # Build loki command
-    local loki_cmd="bash ${PROJECT_DIR}/autonomy/run.sh"
+    # Build loki command - use SKILL_DIR (the loki-mode install directory) rather than
+    # PROJECT_DIR, which is the user's project and may not contain autonomy/run.sh
+    local loki_cmd="bash ${SKILL_DIR}/autonomy/run.sh"
     if [[ -n "$prd_path" ]]; then
         local abs_prd
         abs_prd=$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")
@@ -1028,8 +1060,14 @@ start_sandbox() {
     # Mount project directory
     if [[ "$SANDBOX_READONLY" == "true" ]]; then
         docker_args+=("--volume" "$PROJECT_DIR:/workspace:ro")
-        # Need a writable .loki directory
-        docker_args+=("--volume" "loki-sandbox-state:/workspace/.loki:rw")
+        # Need a writable .loki directory - copy existing state to a temp dir so we
+        # do not start with an empty volume (which would lose config/state)
+        local _loki_state_tmp="${TMPDIR:-/tmp}/loki-sandbox-state-$$"
+        mkdir -p "$_loki_state_tmp"
+        if [[ -d "$PROJECT_DIR/.loki" ]]; then
+            cp -a "$PROJECT_DIR/.loki/." "$_loki_state_tmp/" 2>/dev/null || true
+        fi
+        docker_args+=("--volume" "$_loki_state_tmp:/workspace/.loki:rw")
     else
         docker_args+=("--volume" "$PROJECT_DIR:/workspace:rw")
     fi
@@ -1152,8 +1190,11 @@ start_sandbox() {
     local loki_cmd="loki start"
     if [[ -n "$prd_path" ]]; then
         # Convert to container path (handle paths with spaces)
+        # macOS realpath does not support --relative-to, so use Python fallback
         local relative_prd
-        relative_prd=$(realpath --relative-to="$PROJECT_DIR" "$prd_path" 2>/dev/null || basename "$prd_path")
+        relative_prd=$(realpath --relative-to="$PROJECT_DIR" "$prd_path" 2>/dev/null \
+            || python3 -c "import os.path; print(os.path.relpath('$prd_path', '$PROJECT_DIR'))" 2>/dev/null \
+            || basename "$prd_path")
         local container_prd="/workspace/${relative_prd}"
         # Quote path to handle spaces
         loki_cmd="$loki_cmd \"$container_prd\""
@@ -1324,6 +1365,17 @@ sandbox_serve() {
 
     log_success "Starting dev server: $serve_cmd"
     log_info ""
+
+    # Warn if the dev server port was not published when the container started
+    local port_published
+    port_published=$(docker port "$CONTAINER_NAME" "$port" 2>/dev/null || true)
+    if [[ -z "$port_published" ]]; then
+        log_warn "Port $port is NOT published to the host."
+        log_warn "The dev server will run inside the container but will not be accessible from localhost."
+        log_warn "To fix, restart the sandbox with: LOKI_EXTRA_PORTS='$port:$port' loki sandbox start"
+        log_info ""
+    fi
+
     log_info "Access the app at:"
     log_info "  http://localhost:$port"
     log_info ""
@@ -1658,10 +1710,25 @@ main() {
     done
 
     # Detect sandbox mode for commands that need it
+    # For stop/status/etc, read persisted mode first so we stop the correct sandbox type
     local sandbox_mode=""
+    local _mode_file="${PROJECT_DIR}/.loki/sandbox/mode"
     case "$command" in
-        start|stop|status|prompt|shell|logs|run|serve|test|phase)
+        start)
             sandbox_mode=$(detect_sandbox_mode "$mode") || exit 1
+            # Persist the detected mode so stop/status use the same mode
+            mkdir -p "$(dirname "$_mode_file")"
+            echo "$sandbox_mode" > "$_mode_file"
+            ;;
+        stop|status|prompt|shell|logs|run|serve|test|phase)
+            # Read persisted mode if no explicit mode override was given
+            if [[ "$mode" == "auto" ]] && [[ -f "$_mode_file" ]]; then
+                sandbox_mode=$(cat "$_mode_file" 2>/dev/null || true)
+            fi
+            # Fall back to detection if no persisted mode
+            if [[ -z "$sandbox_mode" ]]; then
+                sandbox_mode=$(detect_sandbox_mode "$mode") || exit 1
+            fi
             ;;
     esac
 

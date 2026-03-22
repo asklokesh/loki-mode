@@ -1082,7 +1082,10 @@ class MemoryRetrieval:
 
         # Layer 3: Full details for highest priority items
         if budget_remaining > 100:  # At least 100 tokens remaining
-            full_details = self.retrieve_task_aware(context, top_k=10)
+            # Cap top_k based on remaining budget to avoid loading unbounded data.
+            # Estimate ~50 tokens per result as a rough lower bound.
+            max_results = max(1, min(10, budget_remaining // 50))
+            full_details = self.retrieve_task_aware(context, top_k=max_results)
             for detail in full_details:
                 detail["_layer"] = 3
 

@@ -34,6 +34,48 @@ A well-structured npm package with TypeScript support, comprehensive documentati
 - TypeScript declarations compile cleanly in consuming projects
 - Documentation generated without warnings
 
+## Project Structure
+```
+/
+├── src/
+│   ├── index.ts               # Public API exports
+│   ├── string/
+│   │   └── index.ts           # String utility functions
+│   ├── array/
+│   │   └── index.ts           # Array utility functions
+│   ├── object/
+│   │   └── index.ts           # Object utility functions
+│   └── types.ts               # Shared TypeScript types
+├── tests/
+│   ├── string.test.ts         # String utility tests
+│   ├── array.test.ts          # Array utility tests
+│   └── object.test.ts         # Object utility tests
+├── docs/                      # Auto-generated API docs (typedoc)
+├── .changeset/                # Changeset version management
+├── tsconfig.json
+├── tsup.config.ts             # Build config (ESM + CJS)
+├── vitest.config.ts           # Test config with coverage
+├── package.json               # exports map, sideEffects: false
+└── README.md
+```
+
+## Out of Scope
+- Runtime dependencies (library must be zero-dep)
+- Framework-specific integrations (React hooks, Vue composables)
+- Polyfills for legacy environments (ES2020+ baseline)
+- Monorepo or workspace setup
+- Documentation website hosting
+- npm org or scoped package configuration
+- Benchmarking suite
+
+## Acceptance Criteria
+- `npm pack` produces a tarball with both ESM and CJS builds
+- Importing the package in a TypeScript project shows correct type hints
+- Tree shaking eliminates unused exports in a Rollup/webpack build
+- `npm run docs` generates API documentation without warnings
+- `npm run test` passes with 90%+ line coverage
+- `npx changeset version` bumps version and updates changelog
+
 ## Success Metrics
 - Package installs and imports correctly in ESM and CJS projects
 - All public functions have TSDoc comments and generated docs

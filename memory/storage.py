@@ -13,6 +13,7 @@ import os
 import tempfile
 import shutil
 import fcntl
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union
@@ -80,6 +81,10 @@ class MemoryStorage:
             self.base_path = self._root_path / namespace
         else:
             self.base_path = self._root_path
+
+        # Reentrant lock tracking: prevents deadlock when _file_lock is
+        # called on the same path from nested operations in the same thread.
+        self._held_locks: threading.local = threading.local()
 
         self._ensure_directories()
         self._ensure_index()
@@ -193,7 +198,10 @@ class MemoryStorage:
     @contextmanager
     def _file_lock(self, path: Path, exclusive: bool = True):
         """
-        Context manager for file locking.
+        Context manager for reentrant file locking.
+
+        If the current thread already holds the lock for this path,
+        the call is a no-op (avoids deadlock from nested lock acquisition).
 
         Args:
             path: Path to the file to lock
@@ -203,6 +211,17 @@ class MemoryStorage:
             File handle with lock held
         """
         lock_path = path.with_suffix(path.suffix + ".lock")
+        lock_key = str(lock_path)
+
+        # Check if this thread already holds the lock (reentrant case)
+        if not hasattr(self._held_locks, "paths"):
+            self._held_locks.paths = set()
+
+        if lock_key in self._held_locks.paths:
+            # Already held by this thread -- skip to avoid deadlock
+            yield
+            return
+
         lock_path.parent.mkdir(parents=True, exist_ok=True)
 
         lock_file = None
@@ -211,8 +230,10 @@ class MemoryStorage:
             lock_file = open(lock_path, "w")
             lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             fcntl.flock(lock_file.fileno(), lock_type)
+            self._held_locks.paths.add(lock_key)
             yield
         finally:
+            self._held_locks.paths.discard(lock_key)
             if lock_file is not None:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
                 lock_file.close()
@@ -1196,7 +1217,7 @@ class MemoryStorage:
                 if data:
                     original_importance = data.get("importance", 0.5)
                     memories = self.apply_decay([data], decay_rate, half_life_days)
-                    if memories[0].get("importance") != original_importance:
+                    if abs(memories[0].get("importance", 0.5) - original_importance) > 0.001:
                         self._atomic_write(file_path, memories[0])
                         updated += 1
 
@@ -1220,7 +1241,7 @@ class MemoryStorage:
         for pattern in patterns:
             original = pattern.get("importance", 0.5)
             self.apply_decay([pattern], decay_rate, half_life_days)
-            if pattern.get("importance") != original:
+            if abs(pattern.get("importance", 0.5) - original) > 0.001:
                 updated += 1
 
         if updated > 0:
@@ -1241,7 +1262,7 @@ class MemoryStorage:
             if data:
                 original = data.get("importance", 0.5)
                 self.apply_decay([data], decay_rate, half_life_days)
-                if data.get("importance") != original:
+                if abs(data.get("importance", 0.5) - original) > 0.001:
                     self._atomic_write(file_path, data)
                     updated += 1
 

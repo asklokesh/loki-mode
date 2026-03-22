@@ -12,7 +12,7 @@
 # Environment:
 #   LOKI_DIR - Path to .loki directory (default: .loki)
 
-set -uo pipefail
+set -euo pipefail
 
 # Configuration
 LOKI_DIR="${LOKI_DIR:-.loki}"

@@ -135,12 +135,11 @@ jobs:
           echo ""
           echo "=== End Summary ==="
 
-      - name: Create issue on failure
+      - name: Write issue body
         if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BODY="## Weekly Integrity Audit Failure
+          cat > /tmp/audit-issue-body.md <<ISSUE_EOF
+          ## Weekly Integrity Audit Failure
 
           **Commit:** ${{ github.sha }}
           **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -158,9 +157,17 @@ jobs:
           | Python imports | ${{ steps.python_imports.outcome }} |
           | Dashboard health | ${{ steps.dashboard_health.outcome }} |
 
-          Review the workflow run for detailed logs."
+          Review the workflow run for detailed logs.
+          ISSUE_EOF
+          # Strip leading whitespace that YAML indentation adds
+          sed -i 's/^          //' /tmp/audit-issue-body.md
 
+      - name: Create issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           gh issue create \
             --title "Weekly Integrity Audit Failed - $(date -u '+%Y-%m-%d')" \
-            --body "$BODY" \
+            --body-file /tmp/audit-issue-body.md \
             --label "bug"

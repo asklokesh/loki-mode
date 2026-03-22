@@ -33,6 +33,54 @@ A Slack bot that responds to commands, processes events, and integrates with ext
 - Error handling verified for invalid inputs and API failures
 - Rate limiting compliance with Slack API limits
 
+## Project Structure
+```
+/
+├── src/
+│   ├── app.ts                 # Bolt app initialization
+│   ├── server.ts              # Entry point (Socket Mode or HTTP)
+│   ├── commands/
+│   │   ├── index.ts           # Command router
+│   │   ├── help.ts            # /help command handler
+│   │   └── remind.ts          # /remind command handler
+│   ├── events/
+│   │   ├── message.ts         # Message event handler
+│   │   └── reaction.ts        # Reaction event handler
+│   ├── actions/
+│   │   └── buttons.ts         # Interactive button handlers
+│   ├── views/
+│   │   └── modals.ts          # Modal view definitions
+│   ├── services/
+│   │   ├── scheduler.ts       # Cron-based scheduled messages
+│   │   └── external.ts        # External API integrations
+│   ├── db.ts                  # SQLite connection and queries
+│   └── config.ts              # Token and config from env
+├── tests/
+│   ├── commands.test.ts       # Command handler tests
+│   └── scheduler.test.ts      # Scheduler logic tests
+├── .env.example               # Required Slack tokens
+├── package.json
+└── README.md
+```
+
+## Out of Scope
+- OAuth installation flow for multi-workspace distribution
+- Slack App Directory submission
+- Real-time messaging API (RTM) -- use Events API instead
+- Message threading and conversation management
+- File upload or download handling
+- Workflow Builder integration
+- Slack Connect (cross-org) support
+
+## Acceptance Criteria
+- Bot connects via Socket Mode in development
+- All slash commands parse arguments and return formatted responses
+- Message events trigger the correct handler based on content
+- Interactive buttons and modals submit data and update the original message
+- Scheduled messages fire within 60 seconds of their configured time
+- Failed commands send an error notification to the admin channel
+- Help command lists all registered commands with usage examples
+
 ## Success Metrics
 - Bot responds to all registered slash commands
 - Event handlers process messages and reactions correctly

@@ -290,10 +290,10 @@ class MemoryEngine:
         """
         # Parse date from episode ID (format: ep-YYYY-MM-DD-XXX)
         parts = episode_id.split("-")
-        if len(parts) >= 4:
+        if len(parts) >= 5 and len(parts[1]) == 4 and len(parts[2]) == 2 and len(parts[3]) == 2:
             date_str = f"{parts[1]}-{parts[2]}-{parts[3]}"
         else:
-            # Search all directories
+            # Non-standard ID format; search all directories
             return self._search_episode(episode_id)
 
         data = self.storage.read_json(f"episodic/{date_str}/task-{episode_id}.json")
@@ -355,26 +355,9 @@ class MemoryEngine:
         Returns:
             Pattern ID
         """
-        pattern_dict = pattern.to_dict() if hasattr(pattern, "to_dict") else pattern.__dict__.copy()
-        pattern_id = pattern_dict.get("id", f"sem-{self._generate_id()}")
-        pattern_dict["id"] = pattern_id
-
-        # Load existing patterns
-        patterns_data = self.storage.read_json("semantic/patterns.json") or {"patterns": []}
-
-        # Check if pattern exists and update, otherwise append
-        existing_idx = None
-        for idx, p in enumerate(patterns_data["patterns"]):
-            if p.get("id") == pattern_id:
-                existing_idx = idx
-                break
-
-        if existing_idx is not None:
-            patterns_data["patterns"][existing_idx] = pattern_dict
-        else:
-            patterns_data["patterns"].append(pattern_dict)
-
-        self.storage.write_json("semantic/patterns.json", patterns_data)
+        # Delegate to storage.save_pattern() which performs the
+        # read-modify-write under a single file lock, preventing races.
+        pattern_id = self.storage.save_pattern(pattern)
 
         # Update index
         self._update_index_with_pattern(pattern_dict)
@@ -1191,10 +1174,54 @@ class MemoryEngine:
         collection: str,
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """Vector similarity search. Requires embeddings to be configured."""
-        # This is a placeholder for vector search implementation
-        # In production, this would use a vector database or local index
-        return self._keyword_search("", collection, top_k)
+        """Vector similarity search using cosine similarity against stored memories."""
+        try:
+            import numpy as np
+        except ImportError:
+            # No numpy available, fall back to keyword search
+            return self._keyword_search("", collection, top_k)
+
+        query_vec = np.asarray(embedding, dtype=np.float32)
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return self._keyword_search("", collection, top_k)
+        query_vec = query_vec / query_norm
+
+        # Load memories from the collection using the same paths as _keyword_search
+        items: List[Dict[str, Any]] = []
+        if collection == "episodic":
+            for ep in self.get_recent_episodes(limit=50):
+                items.append(ep.to_dict() if hasattr(ep, "to_dict") else ep.__dict__.copy())
+        elif collection == "semantic":
+            for pattern in self.find_patterns(min_confidence=0.3):
+                items.append(pattern.to_dict() if hasattr(pattern, "to_dict") else pattern.__dict__.copy())
+        elif collection == "procedural":
+            for skill in self.list_skills():
+                items.append(skill.to_dict() if hasattr(skill, "to_dict") else skill.__dict__.copy())
+
+        # Score each item by cosine similarity against its stored embedding
+        scored: List[tuple] = []
+        for item in items:
+            item_embedding = item.get("_embedding")
+            if not item_embedding:
+                continue
+            item_vec = np.asarray(item_embedding, dtype=np.float32)
+            item_norm = np.linalg.norm(item_vec)
+            if item_norm == 0:
+                continue
+            similarity = float(np.dot(query_vec, item_vec / item_norm))
+            scored.append((similarity, item))
+
+        if not scored:
+            # No embeddings stored; fall back to keyword search
+            return self._keyword_search("", collection, top_k)
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = []
+        for score, item in scored[:top_k]:
+            item["_score"] = score
+            results.append(item)
+        return results
 
     def _queue_for_embedding(
         self,

@@ -11,8 +11,7 @@ const lokiScript = path.join(__dirname, '..', 'autonomy', 'loki');
 const args = process.argv.slice(2);
 
 const child = spawn(lokiScript, args, {
-  stdio: 'inherit',
-  shell: true
+  stdio: 'inherit'
 });
 
 child.on('close', (code) => {

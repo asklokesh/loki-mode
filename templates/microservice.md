@@ -34,6 +34,55 @@ A containerized microservice with health checks, structured logging, graceful sh
 - Graceful shutdown completes within timeout
 - Metrics endpoint serves valid Prometheus format
 
+## Project Structure
+```
+/
+├── src/
+│   ├── app.ts                 # Express app setup, middleware stack
+│   ├── server.ts              # Entry point with graceful shutdown
+│   ├── config/
+│   │   └── index.ts           # Env-based config with validation
+│   ├── middleware/
+│   │   ├── requestId.ts       # Correlation ID injection
+│   │   ├── healthCheck.ts     # Liveness and readiness probes
+│   │   └── metrics.ts         # Prometheus metrics collection
+│   ├── routes/
+│   │   └── items.ts           # Example resource routes
+│   ├── repositories/
+│   │   └── itemRepo.ts        # Repository pattern data access
+│   ├── logger.ts              # pino structured logger
+│   └── types/
+│       └── index.ts           # Shared types
+├── prisma/
+│   ├── schema.prisma          # Database schema
+│   └── migrations/            # Database migrations
+├── tests/
+│   ├── items.test.ts          # API integration tests
+│   └── healthCheck.test.ts    # Health probe tests
+├── Dockerfile                 # Multi-stage build
+├── docker-compose.yml         # Local dev with PostgreSQL
+├── package.json
+└── README.md
+```
+
+## Out of Scope
+- Service mesh or sidecar proxy configuration
+- Message queue integration (RabbitMQ, Kafka)
+- API gateway or load balancer setup
+- Distributed tracing (OpenTelemetry spans)
+- Secret management (Vault, AWS Secrets Manager)
+- Kubernetes manifests or Helm charts
+- CI/CD pipeline configuration
+
+## Acceptance Criteria
+- Docker image builds with multi-stage Dockerfile under 150MB
+- GET /health/live returns 200 immediately after startup
+- GET /health/ready returns 200 only when database is connected
+- All request logs are valid JSON containing a correlation ID
+- SIGTERM triggers graceful shutdown: stops accepting new connections and drains existing ones
+- GET /metrics returns valid Prometheus exposition format
+- Environment variables validated on startup; missing required vars cause exit 1
+
 ## Success Metrics
 - Service starts in Docker and responds to API requests
 - Health probes return healthy status after startup

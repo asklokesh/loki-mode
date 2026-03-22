@@ -10,6 +10,8 @@ loading full memory content.
 """
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,7 +111,7 @@ class IndexLayer:
 
     def _save(self, index: Dict[str, Any]) -> None:
         """
-        Save index to disk.
+        Save index to disk atomically via temp file + os.replace().
 
         Args:
             index: Index dictionary to save
@@ -117,8 +119,19 @@ class IndexLayer:
         self.base_path.mkdir(parents=True, exist_ok=True)
         index["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-        with open(self.index_path, "w") as f:
-            json.dump(index, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.base_path), prefix=".tmp_index_", suffix=".json"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(index, f, indent=2)
+            os.replace(tmp_path, str(self.index_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
         self._cache = index
 

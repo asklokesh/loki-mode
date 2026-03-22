@@ -16,7 +16,7 @@ from dataclasses import asdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path as _Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 import re
 
 from fastapi import (
@@ -45,6 +45,7 @@ from .models import (
     Task,
     TaskPriority,
     TaskStatus,
+    Tenant,
 )
 from . import registry
 from . import auth
@@ -93,7 +94,7 @@ def _safe_json_read(path: _Path, default: Any = None) -> Any:
 
 def _safe_read_text(path: _Path) -> str:
     """Read a text file with UTF-8 encoding, replacing non-UTF-8 bytes."""
-    return open(path, encoding="utf-8", errors="replace").read()
+    return _Path(path).read_text(encoding="utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +176,7 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     prd_path: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["active", "archived", "completed", "paused"]] = None
 
 
 class ProjectResponse(BaseModel):
@@ -288,15 +289,16 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket) -> None:
-        """Accept a new WebSocket connection."""
+    async def connect(self, websocket: WebSocket) -> bool:
+        """Accept a new WebSocket connection. Returns False if rejected."""
         if len(self.active_connections) >= self.MAX_CONNECTIONS:
             await websocket.accept()
             await websocket.close(code=1013, reason="Connection limit reached. Try again later.")
             logger.warning(f"WebSocket connection rejected: limit of {self.MAX_CONNECTIONS} reached")
-            return
+            return False
         await websocket.accept()
         self.active_connections.append(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove a WebSocket connection."""
@@ -782,6 +784,13 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """Create a new project."""
+    # Validate tenant exists
+    tenant_result = await db.execute(
+        select(Tenant).where(Tenant.id == project.tenant_id)
+    )
+    if not tenant_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
     db_project = Project(
         name=project.name,
         description=project.description,
@@ -1111,6 +1120,10 @@ async def list_tasks(
                 except Exception:
                     pass
 
+    # Apply project_id filter if provided
+    if project_id is not None:
+        all_tasks = [t for t in all_tasks if t.get("project_id") == project_id]
+
     # Apply status filter if provided
     if status:
         all_tasks = [t for t in all_tasks if t["status"] == status]
@@ -1224,9 +1237,12 @@ async def update_task(
 
     update_data = task_update.model_dump(exclude_unset=True)
 
-    # Handle status change to completed
-    if "status" in update_data and update_data["status"] == TaskStatus.DONE:
-        update_data["completed_at"] = datetime.now(timezone.utc)
+    # Handle status change to/from completed
+    if "status" in update_data:
+        if update_data["status"] == TaskStatus.DONE:
+            update_data["completed_at"] = datetime.now(timezone.utc)
+        else:
+            update_data["completed_at"] = None
 
     for field, value in update_data.items():
         setattr(task, field, value)
@@ -1288,6 +1304,7 @@ _TASK_STATE_MACHINE: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.PENDING: {TaskStatus.IN_PROGRESS},
     TaskStatus.IN_PROGRESS: {TaskStatus.REVIEW, TaskStatus.DONE},
     TaskStatus.REVIEW: {TaskStatus.DONE, TaskStatus.IN_PROGRESS},
+    TaskStatus.DONE: {TaskStatus.IN_PROGRESS, TaskStatus.REVIEW},
 }
 
 
@@ -1367,12 +1384,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     import uuid as _uuid
     client_ip = websocket.client.host if websocket.client else f"ws-{_uuid.uuid4().hex}"
     if not _read_limiter.check(f"ws_{client_ip}"):
+        await websocket.accept()
         await websocket.close(code=1008)  # Policy Violation
         return
 
     if auth.is_enterprise_mode() or auth.is_oidc_mode():
         ws_token: Optional[str] = websocket.query_params.get("token")
         if not ws_token:
+            await websocket.accept()
             await websocket.close(code=1008)  # Policy Violation
             return
 
@@ -1385,10 +1404,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             token_info = auth.validate_token(ws_token)
 
         if token_info is None:
+            await websocket.accept()
             await websocket.close(code=1008)  # Policy Violation
             return
 
-    await manager.connect(websocket)
+    connected = await manager.connect(websocket)
+    if not connected:
+        return
     try:
         # Send initial connection confirmation
         await manager.send_personal(websocket, {
@@ -1431,9 +1453,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     break
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    finally:
         manager.disconnect(websocket)
 
 
@@ -1639,7 +1662,7 @@ class TokenResponse(BaseModel):
     token: Optional[str] = None  # Only on creation
 
 
-@app.post("/api/enterprise/tokens", response_model=TokenResponse, status_code=201)
+@app.post("/api/enterprise/tokens", response_model=TokenResponse, status_code=201, dependencies=[Depends(auth.require_scope("admin"))])
 async def create_token(request: TokenCreateRequest):
     """
     Generate a new API token (enterprise only).
@@ -1744,7 +1767,7 @@ async def query_audit_logs(
     resource_type: Optional[str] = None,
     resource_id: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = 0,
+    offset: int = Query(default=0, ge=0),
 ):
     """
     Query audit logs (enterprise only).
@@ -2349,7 +2372,7 @@ async def get_learning_signals(
     signalType: Optional[str] = None,
     source: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=1000),
-    offset: int = 0,
+    offset: int = Query(default=0, ge=0),
 ):
     """Get raw learning signals from both events.jsonl and learning signals directory."""
     events = _read_events(timeRange)
@@ -2695,19 +2718,18 @@ async def pause_session():
             content={"success": False, "message": "Session process is not running; pause signal may have no effect"},
         )
 
-    # Poll up to 5s to confirm process is still alive with PAUSE file present
-    for _ in range(10):
-        try:
-            os.kill(pid, 0)
-            return {"success": True, "message": "Session paused", "process_verified": True}
-        except OSError:
-            break
-        await asyncio.sleep(0.5)
-
-    return JSONResponse(
-        status_code=503,
-        content={"success": False, "message": "Session process exited unexpectedly after pause signal"},
-    )
+    # Verify process is still alive after writing the PAUSE file.
+    # Give the process a moment to notice the signal, then confirm it
+    # has not exited unexpectedly.
+    await asyncio.sleep(0.5)
+    try:
+        os.kill(pid, 0)
+        return {"success": True, "message": "Session paused", "process_verified": True}
+    except OSError:
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "message": "Session process exited unexpectedly after pause signal"},
+        )
 
 
 @app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control"))])

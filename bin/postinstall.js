@@ -93,11 +93,17 @@ try {
   const pathDirs = (process.env.PATH || '').split(':');
   const lokiBinInPath = pathDirs.some(d => d === npmBinDir || d === npmBin);
 
-  // On macOS with Homebrew Node, npm global bin path changes on every Node version upgrade.
-  // Auto-create stable symlinks in /opt/homebrew/bin/ so `loki` always works.
+  // On macOS with Homebrew Node, npm global bin path changes on every Node version upgrade
+  // (e.g., /opt/homebrew/Cellar/node/22.x/bin -> /opt/homebrew/Cellar/node/23.x/bin).
+  // Use the npm prefix bin directory which is stable across upgrades.
   if (os.platform() === 'darwin') {
-    const stableDir = '/opt/homebrew/bin';
-    if (fs.existsSync(stableDir)) {
+    let stableDir;
+    try {
+      stableDir = execSync('npm prefix -g', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim() + '/bin';
+    } catch {
+      stableDir = '/opt/homebrew/bin';
+    }
+    if (fs.existsSync(stableDir) && stableDir !== npmBinDir) {
       for (const bin of ['loki', 'loki-mode']) {
         const src = path.join(npmBinDir, bin);
         const dest = path.join(stableDir, bin);

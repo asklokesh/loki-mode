@@ -33,6 +33,51 @@ A real-time analytics dashboard that visualizes key business metrics with intera
 - Responsive design tested at 3 breakpoints (mobile, tablet, desktop)
 - Accessibility: all charts have aria labels, tables are keyboard navigable
 
+## Project Structure
+```
+/
+├── src/
+│   ├── components/
+│   │   ├── charts/            # Line, bar, pie, area chart components
+│   │   ├── tables/            # Data table with sorting and filtering
+│   │   ├── layout/            # Dashboard grid, drag-and-drop wrapper
+│   │   └── controls/          # Date picker, export buttons, filters
+│   ├── hooks/
+│   │   ├── useWebSocket.ts    # Real-time data subscription
+│   │   └── useLayout.ts       # Layout persistence (localStorage)
+│   ├── services/
+│   │   └── api.ts             # Mock data API client
+│   ├── types/
+│   │   └── index.ts           # Shared TypeScript types
+│   ├── App.tsx
+│   └── main.tsx
+├── server/
+│   ├── index.ts               # Express + WebSocket server
+│   └── mockData.ts            # Sample metrics generator
+├── tests/
+│   ├── charts.test.tsx        # Chart rendering tests
+│   └── e2e/                   # Playwright tests
+├── package.json
+└── README.md
+```
+
+## Out of Scope
+- Real database or data warehouse connections
+- User authentication or multi-tenant dashboards
+- Server-side rendering
+- PDF report generation
+- Alerting or notification rules
+- Historical data backfill
+- Custom chart builder UI
+
+## Acceptance Criteria
+- All four chart types (line, bar, pie, area) render with correct data
+- Date range filter applies to every widget on the dashboard
+- WebSocket pushes update visible charts without page refresh
+- Layout changes via drag-and-drop persist after browser reload
+- CSV export matches displayed table data exactly
+- PNG export captures the selected chart at screen resolution
+
 ## Success Metrics
 - Dashboard loads with sample data and renders all chart types
 - Date range filter updates all widgets simultaneously

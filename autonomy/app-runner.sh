@@ -42,6 +42,7 @@ _APP_RUNNER_PORT=""
 _APP_RUNNER_PID=""
 _APP_RUNNER_URL=""
 _APP_RUNNER_IS_DOCKER=false
+_APP_RUNNER_DOCKER_CONTAINER=""
 _APP_RUNNER_HAS_SETSID=false
 _APP_RUNNER_CRASH_COUNT=0
 _APP_RUNNER_RESTART_COUNT=0
@@ -145,7 +146,8 @@ _detect_port() {
             fi
             local port
             # Handle both simple (HOST:CONTAINER) and IP-bound (IP:HOST:CONTAINER) port formats
-            port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}')
+            # Also handle port ranges like "8080-8090:8080-8090" by taking the first port
+            port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}' | awk -F- '{print $1}')
             _APP_RUNNER_PORT="${port:-8080}"
             ;;
         *docker\ build*)
@@ -244,7 +246,11 @@ app_runner_init() {
     if [ -f "$dir/Dockerfile" ]; then
         if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
             _detect_port "docker build"
-            _APP_RUNNER_METHOD="docker build -t loki-app . && docker run -d -p ${_APP_RUNNER_PORT}:${_APP_RUNNER_PORT} --name loki-app-container loki-app"
+            # Include project hash in container name to avoid collisions across projects
+            local _project_hash
+            _project_hash=$(echo "$dir" | (md5sum 2>/dev/null || md5 -r 2>/dev/null || echo "$$") | cut -c1-8)
+            _APP_RUNNER_DOCKER_CONTAINER="loki-app-${_project_hash}"
+            _APP_RUNNER_METHOD="docker build -t loki-app . && docker run -d -p ${_APP_RUNNER_PORT}:${_APP_RUNNER_PORT} --name ${_APP_RUNNER_DOCKER_CONTAINER} loki-app"
             _APP_RUNNER_IS_DOCKER=true
             _write_detection "dockerfile" "$_APP_RUNNER_METHOD"
             log_info "App Runner: detected Dockerfile"
@@ -431,12 +437,28 @@ app_runner_start() {
     # Start the process in a new process group
     if command -v setsid >/dev/null 2>&1; then
         _APP_RUNNER_HAS_SETSID=true
-        (cd "$dir" && setsid bash -c "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        # Use setsid with a PID file so we capture the actual child PID (the process
+        # group leader) rather than the subshell PID, which would orphan the app.
+        local _pgid_file="$_APP_RUNNER_DIR/app.pgid.$$"
+        (cd "$dir" && setsid bash -c 'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        local _subshell_pid=$!
+        # Wait briefly for the pgid file to appear, then read the real PGID
+        local _pgid_wait=0
+        while [ ! -s "$_pgid_file" ] && [ "$_pgid_wait" -lt 10 ]; do
+            sleep 0.1
+            _pgid_wait=$(( _pgid_wait + 1 ))
+        done
+        if [ -s "$_pgid_file" ]; then
+            _APP_RUNNER_PID=$(cat "$_pgid_file")
+        else
+            _APP_RUNNER_PID=$_subshell_pid
+        fi
+        rm -f "$_pgid_file"
     else
         _APP_RUNNER_HAS_SETSID=false
         (cd "$dir" && bash -c "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        _APP_RUNNER_PID=$!
     fi
-    _APP_RUNNER_PID=$!
     # Register with central PID registry if available
     if type register_pid &>/dev/null; then
         register_pid "$_APP_RUNNER_PID" "app-runner" "method=$_APP_RUNNER_METHOD"
@@ -494,8 +516,10 @@ app_runner_stop() {
 
     # Docker cleanup
     if [ "$_APP_RUNNER_IS_DOCKER" = true ]; then
-        docker stop loki-app-container 2>/dev/null || true
-        docker rm loki-app-container 2>/dev/null || true
+        if [ -n "$_APP_RUNNER_DOCKER_CONTAINER" ]; then
+            docker stop "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
+            docker rm "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
+        fi
         if echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
             (cd "${TARGET_DIR:-.}" && docker compose down 2>/dev/null) || true
         fi
@@ -704,8 +728,10 @@ app_runner_cleanup() {
 
     # Docker-specific cleanup
     if [ "$_APP_RUNNER_IS_DOCKER" = true ]; then
-        docker stop loki-app-container 2>/dev/null || true
-        docker rm loki-app-container 2>/dev/null || true
+        if [ -n "$_APP_RUNNER_DOCKER_CONTAINER" ]; then
+            docker stop "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
+            docker rm "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
+        fi
         if echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
             (cd "${TARGET_DIR:-.}" && docker compose down 2>/dev/null) || true
         fi

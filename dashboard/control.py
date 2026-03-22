@@ -56,48 +56,58 @@ def atomic_write_json(file_path: Path, data: dict, use_lock: bool = True):
     """
     Atomically write JSON data to a file to prevent TOCTOU race conditions.
     Uses temporary file + os.rename() for atomicity.
-    Optionally uses fcntl.flock for additional safety.
+    Optionally uses fcntl.flock on a dedicated lock file for mutual exclusion.
     """
     try:
-        # Write to temporary file in same directory (for atomic rename)
-        temp_fd, temp_path = tempfile.mkstemp(
-            dir=file_path.parent,
-            prefix=f".{file_path.name}.",
-            suffix=".tmp"
-        )
+        lock_fd = -1
+        lock_path = str(file_path) + ".lock"
+
+        # Acquire exclusive lock on a dedicated lock file if requested.
+        # This ensures all writers to the same target contend on the same
+        # lock, unlike the previous approach which locked the temp file
+        # (each caller got its own temp file so the lock was a no-op).
+        if use_lock:
+            try:
+                lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            except (OSError, AttributeError):
+                # flock not available on this platform - continue without lock
+                if lock_fd >= 0:
+                    os.close(lock_fd)
+                lock_fd = -1
 
         try:
-            with os.fdopen(temp_fd, 'w') as f:
-                # Acquire exclusive lock if requested
-                if use_lock:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    except (OSError, AttributeError):
-                        # flock not available on this platform - continue without lock
-                        pass
+            # Write to temporary file in same directory (for atomic rename)
+            temp_fd, temp_path = tempfile.mkstemp(
+                dir=file_path.parent,
+                prefix=f".{file_path.name}.",
+                suffix=".tmp"
+            )
 
-                # Write data
-                json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-
-                # Release lock (happens automatically on close, but explicit is clearer)
-                if use_lock:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    except (OSError, AttributeError):
-                        pass
-
-            # Atomic rename
-            os.rename(temp_path, file_path)
-
-        except Exception:
-            # Clean up temp file on error
             try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(temp_fd, 'w') as f:
+                    json.dump(data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Atomic rename
+                os.rename(temp_path, file_path)
+
+            except Exception:
+                # Clean up temp file on error
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                raise
+
+        finally:
+            # Release the lock file (close releases flock automatically)
+            if lock_fd >= 0:
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    pass
 
     except Exception as e:
         raise RuntimeError(f"Failed to write {file_path}: {e}")

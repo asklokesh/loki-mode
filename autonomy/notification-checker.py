@@ -13,8 +13,10 @@ Usage:
 import argparse
 import json
 import os
+import random
 import re
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,8 +133,10 @@ def save_notifications(notif_dir, notifications):
 
 def make_notification(trigger_id, severity, message, iteration, data=None):
     """Create a notification entry."""
+    # Include iteration and random suffix to prevent ID collision within same second
+    rand_suffix = f"{random.randint(0, 0xFFFF):04x}"
     return {
-        "id": f"notif-{int(time.time())}-{trigger_id}",
+        "id": f"notif-{int(time.time())}-i{iteration}-{rand_suffix}-{trigger_id}",
         "trigger_id": trigger_id,
         "severity": severity,
         "message": message,
@@ -208,11 +212,11 @@ def check_file_access(trigger, loki_dir, iteration, notifications):
     if not patterns:
         return None
 
-    # Read last 200 lines of events
+    # Read last 200 lines of events using deque to avoid loading entire file
     results = []
     try:
-        lines = events_file.read_text().strip().split("\n")
-        recent = lines[-200:] if len(lines) > 200 else lines
+        with open(events_file, 'r') as f:
+            recent = deque(f, maxlen=200)
         for line in recent:
             try:
                 event = json.loads(line)
@@ -237,11 +241,12 @@ def check_file_access(trigger, loki_dir, iteration, notifications):
 
 
 def check_quality_gate(trigger, loki_dir, iteration, notifications):
-    """Check for quality gate failures."""
+    """Check for quality gate failures. Reports ALL failed gates, not just first."""
     state_file = Path(loki_dir) / "dashboard-state.json"
     if not state_file.exists():
-        return None
+        return []
 
+    results = []
     try:
         state = json.loads(state_file.read_text())
         gates = state.get("qualityGates", {})
@@ -249,37 +254,54 @@ def check_quality_gate(trigger, loki_dir, iteration, notifications):
             for gate_name, gate_data in gates.items():
                 if isinstance(gate_data, dict) and gate_data.get("status") == "failed":
                     msg = trigger["message"].format(gate=gate_name)
-                    return make_notification(
+                    results.append(make_notification(
                         trigger["id"], trigger["severity"], msg, iteration,
                         {"gate": gate_name},
-                    )
+                    ))
     except (json.JSONDecodeError, OSError, KeyError):
         pass
-    return None
+    return results if results else None
 
 
 def check_stagnation(trigger, loki_dir, iteration, notifications):
-    """Check for stuck iterations (no git diff changes)."""
+    """Check for stuck iterations (no git diff changes).
+
+    convergence.log format (pipe-delimited):
+      timestamp|iteration|files_changed|CONSECUTIVE_NO_CHANGE|DONE_SIGNALS
+
+    We parse field 4 (CONSECUTIVE_NO_CHANGE, 0-indexed field 3) from the
+    most recent line to determine if stagnation exceeds the threshold.
+    """
     council_file = Path(loki_dir) / "council" / "convergence.log"
     if not council_file.exists():
         return None
 
     try:
-        lines = council_file.read_text().strip().split("\n")
+        # Read only the tail of the file to avoid loading everything
+        with open(council_file, 'r') as f:
+            lines = deque(f, maxlen=20)
+
         max_no_progress = trigger.get("max_no_progress", 3)
-        # Count recent consecutive "no_change" entries
-        consecutive = 0
+
+        # Parse the most recent line's CONSECUTIVE_NO_CHANGE field
         for line in reversed(lines):
-            if "no_change" in line or "converged" in line:
-                consecutive += 1
-            else:
+            line = line.strip()
+            if not line:
+                continue
+            fields = line.split('|')
+            if len(fields) >= 4:
+                try:
+                    consecutive = int(fields[3])
+                except (ValueError, IndexError):
+                    consecutive = 0
+                if consecutive >= max_no_progress:
+                    msg = trigger["message"].format(count=consecutive)
+                    return make_notification(
+                        trigger["id"], trigger["severity"], msg, iteration,
+                        {"consecutive_no_progress": consecutive},
+                    )
+                # Only check the most recent entry
                 break
-        if consecutive >= max_no_progress:
-            msg = trigger["message"].format(count=consecutive)
-            return make_notification(
-                trigger["id"], trigger["severity"], msg, iteration,
-                {"consecutive_no_progress": consecutive},
-            )
     except OSError:
         pass
     return None
@@ -351,7 +373,11 @@ def check_triggers(loki_dir, iteration):
 
         result = checker(trigger, loki_dir, iteration, notifications)
         if result:
-            new_notifications.append(result)
+            # Checkers may return a single notification or a list of notifications
+            if isinstance(result, list):
+                new_notifications.extend(result)
+            else:
+                new_notifications.append(result)
 
     if new_notifications:
         notifications.extend(new_notifications)

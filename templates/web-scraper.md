@@ -33,6 +33,51 @@ A configurable web scraping tool that extracts structured data from websites, ha
 - Rate limiter verified with timing assertions
 - Export format validation for JSON, CSV, and SQLite
 
+## Project Structure
+```
+/
+├── src/
+│   ├── scraper/
+│   │   ├── engine.py          # Main scraping orchestrator
+│   │   ├── fetcher.py         # Async HTTP client with retries
+│   │   ├── parser.py          # CSS/XPath extraction logic
+│   │   └── pagination.py      # Next-page detection and following
+│   ├── compliance/
+│   │   └── robots.py          # robots.txt parser and enforcer
+│   ├── export/
+│   │   ├── json_export.py     # JSON file writer
+│   │   ├── csv_export.py      # CSV file writer
+│   │   └── sqlite_export.py   # SQLite database writer
+│   ├── cli.py                 # CLI entrypoint (argparse)
+│   └── config.py              # YAML config loader
+├── configs/
+│   └── example.yaml           # Sample scraping target definition
+├── tests/
+│   ├── test_parser.py         # Extraction logic tests
+│   ├── test_robots.py         # robots.txt compliance tests
+│   └── test_export.py         # Export format tests
+├── pyproject.toml
+└── README.md
+```
+
+## Out of Scope
+- JavaScript-rendered pages (Puppeteer, Playwright)
+- CAPTCHA solving or bypass
+- Login-required or session-based scraping
+- Distributed scraping across multiple machines
+- Web UI for configuring scraping jobs
+- Data deduplication across runs
+- Cloud storage export (S3, GCS)
+
+## Acceptance Criteria
+- YAML config defines target URL, CSS selectors, and field names
+- Scraper extracts all matching elements from a page
+- Pagination follows next-page links until no more pages remain
+- Requests are spaced by the configured delay interval
+- robots.txt disallow rules prevent scraping blocked paths
+- JSON, CSV, and SQLite exports all contain identical data
+- Failed requests retry with exponential backoff up to 3 times
+
 ## Success Metrics
 - Scraper extracts data matching CSS selector configuration
 - Pagination follows links and collects all pages

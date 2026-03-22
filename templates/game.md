@@ -33,6 +33,54 @@ A browser-based 2D game with player controls, enemy AI, scoring, levels, and per
 - Controls responsive on both keyboard and touch (mobile)
 - No memory leaks during extended play sessions
 
+## Project Structure
+```
+/
+├── src/
+│   ├── engine/
+│   │   ├── game.ts            # Main game loop and state machine
+│   │   ├── renderer.ts        # Canvas rendering layer
+│   │   ├── input.ts           # Keyboard and touch input handler
+│   │   └── audio.ts           # Web Audio API wrapper
+│   ├── entities/
+│   │   ├── player.ts          # Player sprite and controls
+│   │   ├── enemy.ts           # Enemy types and AI patterns
+│   │   └── projectile.ts      # Bullets and projectiles
+│   ├── systems/
+│   │   ├── collision.ts       # AABB collision detection
+│   │   ├── scoring.ts         # Score and level progression
+│   │   └── highscores.ts      # LocalStorage leaderboard
+│   ├── assets/
+│   │   ├── sprites/           # Sprite images
+│   │   └── sounds/            # Sound effect files
+│   ├── main.ts                # Entry point
+│   └── config.ts              # Game constants and key bindings
+├── tests/
+│   ├── collision.test.ts      # Collision detection tests
+│   └── scoring.test.ts        # Score and level logic tests
+├── index.html
+├── package.json
+└── README.md
+```
+
+## Out of Scope
+- Multiplayer or networked gameplay
+- 3D rendering or WebGL
+- Level editor or user-generated content
+- Achievements or progression system beyond levels
+- Mobile app packaging (Capacitor, Electron)
+- Analytics or telemetry
+- In-app purchases or monetization
+
+## Acceptance Criteria
+- Game transitions through menu, playing, paused, and game-over states
+- Player movement responds within one frame of input
+- At least three enemy types exhibit distinct movement patterns
+- Collision detection correctly identifies overlapping sprites
+- Score increases on enemy defeat and displays on screen
+- High score table persists across browser sessions
+- Sound effects play on collision, shoot, and level-up events
+
 ## Success Metrics
 - Game starts, plays, and ends with proper state transitions
 - Player can move, shoot, and interact with enemies
