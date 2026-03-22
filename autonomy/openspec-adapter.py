@@ -151,7 +151,11 @@ def _split_sections(text: str, level: int = 2) -> Dict[str, str]:
         heading = m.group(1).strip()
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        sections[heading] = text[start:end].strip()
+        body = text[start:end].strip()
+        if heading in sections:
+            sections[heading] = sections[heading] + "\n\n" + body
+        else:
+            sections[heading] = body
     return sections
 
 
@@ -444,9 +448,9 @@ def classify_complexity(
       - 11-20 tasks, 5-10 spec files -> complex
       - 20+ tasks or 10+ spec files -> enterprise
     """
-    if num_tasks > 20 or num_spec_files > 10:
+    if num_tasks >= 20 or num_spec_files > 10:
         return "enterprise"
-    if num_tasks > 10 or num_spec_files > 5:
+    if num_tasks > 10 or num_spec_files >= 5:
         return "complex"
     if num_tasks > 3 or num_spec_files > 1 or has_design:
         return "standard"

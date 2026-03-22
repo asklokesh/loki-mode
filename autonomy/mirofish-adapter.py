@@ -171,15 +171,20 @@ class MiroFishClient:
         Uploads the PRD file and simulation_requirement text.
         Returns: {project_id, ontology: {entity_types, edge_types, analysis_summary}}
         """
-        boundary = hashlib.md5(
-            f"{time.time()}-{prd_path}".encode()
-        ).hexdigest()
+        import secrets
+        boundary = secrets.token_hex(16)
 
         parts: List[bytes] = []
 
-        # File field
-        filename = Path(prd_path).name
-        file_content = Path(prd_path).read_bytes()
+        # File field (enforce size limit before reading)
+        prd_file = Path(prd_path)
+        file_size = prd_file.stat().st_size
+        if file_size > MAX_ARTIFACT_SIZE:
+            raise ValueError(
+                f"PRD too large ({file_size} bytes, max {MAX_ARTIFACT_SIZE}): {prd_file.name}"
+            )
+        filename = prd_file.name
+        file_content = prd_file.read_bytes()
         parts.append(
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="prd_file"; filename="{filename}"\r\n'
@@ -804,6 +809,7 @@ def run_pipeline(
     prd_path: Path,
     output_dir: Path,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> int:
     """Execute the 4-stage MiroFish pipeline.
 
@@ -825,6 +831,9 @@ def run_pipeline(
     """
     mf_dir = output_dir / "mirofish"
     mf_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pipeline deadline for timeout enforcement
+    pipeline_deadline = time.monotonic() + timeout
 
     # Compute PRD hash for caching / dedup
     prd_content = _safe_read(prd_path)
@@ -851,6 +860,13 @@ def run_pipeline(
     }
     _update_pipeline_state(output_dir, state)
 
+    def _check_deadline(stage_label: str) -> None:
+        """Raise TimeoutError if pipeline has exceeded its timeout."""
+        if time.monotonic() > pipeline_deadline:
+            raise TimeoutError(
+                f"Pipeline timeout ({timeout}s) exceeded before {stage_label}"
+            )
+
     try:
         # Extract simulation context from PRD
         context = extract_simulation_context(prd_path)
@@ -860,6 +876,7 @@ def run_pipeline(
         )
 
         # -- Stage 1: Ontology ------------------------------------------------
+        _check_deadline("Stage 1: Ontology")
         print("MiroFish Stage 1/4: Generating ontology...")
         onto_resp = client.generate_ontology(
             prd_path=str(prd_path),
@@ -880,6 +897,7 @@ def run_pipeline(
         print(f"MiroFish Stage 1/4: Ontology complete (project={project_id})")
 
         # -- Stage 2: Graph Build ---------------------------------------------
+        _check_deadline("Stage 2: Graph Build")
         print("MiroFish Stage 2/4: Building knowledge graph...")
         build_resp = client.build_graph(project_id)
         build_data = build_resp.get("data", build_resp)
@@ -903,6 +921,7 @@ def run_pipeline(
         print(f"MiroFish Stage 2/4: Graph complete (graph_id={graph_id})")
 
         # -- Stage 3: Simulation ----------------------------------------------
+        _check_deadline("Stage 3: Simulation")
         print("MiroFish Stage 3/4: Running simulation...")
 
         # Create simulation
@@ -944,6 +963,7 @@ def run_pipeline(
         )
 
         # -- Stage 4: Report --------------------------------------------------
+        _check_deadline("Stage 4: Report")
         print("MiroFish Stage 4/4: Generating report...")
         report_resp = client.generate_report(simulation_id)
         report_data = report_resp.get("data", report_resp)
@@ -990,6 +1010,12 @@ def run_pipeline(
         )
         return 0
 
+    except TimeoutError as exc:
+        state["status"] = "failed"
+        state["error"] = str(exc)
+        _update_pipeline_state(output_dir, state)
+        print(f"ERROR: MiroFish pipeline timed out: {exc}", file=sys.stderr)
+        return 1
     except RuntimeError as exc:
         state["status"] = "failed"
         state["error"] = str(exc)
@@ -1021,22 +1047,48 @@ def run_background(
     output_dir: str,
     base_url: str,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> int:
-    """Fork child process to run pipeline. Parent returns 0 immediately.
+    """Run pipeline in a background process. Parent returns 0 immediately.
 
-    Uses os.fork(). Child process:
-    1. Detaches from terminal (setsid)
-    2. Redirects stdout/stderr to output_dir/mirofish/pipeline.log
-    3. Writes PID to pipeline-state.json
-    4. Runs run_pipeline()
-    5. Updates state to completed/failed
+    On POSIX: uses os.fork() + setsid to detach from terminal.
+    On Windows: uses subprocess.Popen with CREATE_NEW_PROCESS_GROUP.
 
-    Parent returns 0 immediately.
+    Child/subprocess:
+    1. Redirects stdout/stderr to output_dir/mirofish/pipeline.log
+    2. Writes PID to pipeline-state.json
+    3. Runs run_pipeline()
+    4. Updates state to completed/failed
     """
-    # Ensure output directory exists before fork
+    # Ensure output directory exists before spawning
     mf_dir = Path(output_dir) / "mirofish"
     mf_dir.mkdir(parents=True, exist_ok=True)
 
+    if sys.platform == "win32":
+        # Windows: cannot fork; use subprocess with CREATE_NEW_PROCESS_GROUP
+        import subprocess as _sp
+        log_path = mf_dir / "pipeline.log"
+        cmd = [
+            sys.executable, __file__,
+            prd_path,
+            "--output-dir", output_dir,
+            "--url", base_url,
+            "--max-rounds", str(max_rounds),
+            "--timeout", str(timeout),
+        ]
+        log_fh = open(str(log_path), "w", encoding="utf-8")
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        proc = _sp.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=log_fh,
+            stdin=_sp.DEVNULL,
+            creationflags=CREATE_NEW_PROCESS_GROUP,
+        )
+        print(f"MiroFish: Background pipeline started (pid={proc.pid})")
+        return 0
+
+    # POSIX: fork + setsid
     pid = os.fork()
     if pid > 0:
         # Parent process
@@ -1082,6 +1134,7 @@ def run_background(
             prd_path=Path(prd_path),
             output_dir=Path(output_dir),
             max_rounds=max_rounds,
+            timeout=timeout,
         )
         os._exit(exit_code)  # noqa: use _exit in forked child
     except Exception:
@@ -1341,17 +1394,158 @@ def resume_pipeline(output_dir: Path, base_url: str, max_rounds: int) -> int:
         )
         return 1
 
-    # For resume, we re-run the full pipeline.
-    # A more sophisticated implementation would skip completed stages,
-    # but that requires persisting all intermediate IDs.
-    print("MiroFish: Resuming pipeline (re-running from start)...")
+    # Determine which stages are already completed
+    stages = state.get("stages", {})
+    completed_stages = set()
+    for stage_name, stage_data in stages.items():
+        if stage_data.get("status") == "completed":
+            completed_stages.add(stage_name)
+
+    if completed_stages:
+        completed_list = ", ".join(sorted(completed_stages))
+        print(f"MiroFish: Skipping completed stages: {completed_list}")
+
+    # Find first incomplete stage to resume from
+    resume_stage = 1
+    for idx in range(1, 5):
+        stage_key = list(stages.keys())[idx - 1] if idx - 1 < len(stages) else None
+        if stage_key and stages.get(stage_key, {}).get("status") == "completed":
+            resume_stage = idx + 1
+        else:
+            break
+
+    if resume_stage > 4:
+        print("MiroFish: All stages already completed.")
+        return 0
+
+    print(f"MiroFish: Resuming pipeline from stage {resume_stage}...")
+
+    # Reset pipeline status for retry
+    state["status"] = "running"
+    state["current_stage"] = resume_stage
+    state["error"] = None
+    state["pid"] = os.getpid()
+    _update_pipeline_state(output_dir, state)
+
     client = MiroFishClient(base_url=base_url)
-    return run_pipeline(
-        client=client,
-        prd_path=prd_path,
-        output_dir=output_dir,
-        max_rounds=max_rounds,
-    )
+    mf_dir = output_dir / "mirofish"
+
+    try:
+        context = extract_simulation_context(prd_path)
+
+        # Recover IDs from completed stages
+        project_id = stages.get("1_ontology", {}).get("project_id", "")
+        graph_id = stages.get("2_graph", {}).get("graph_id", "")
+        simulation_id = stages.get("3_simulation", {}).get("simulation_id", "")
+
+        if resume_stage <= 1:
+            # Stage 1: Ontology
+            print("MiroFish Stage 1/4: Generating ontology...")
+            onto_resp = client.generate_ontology(
+                prd_path=str(prd_path),
+                simulation_requirement=context["simulation_requirement"],
+                project_name=context["project_name"],
+            )
+            onto_data = onto_resp.get("data", onto_resp)
+            project_id = onto_data["project_id"]
+            state["stages"]["1_ontology"] = {
+                "status": "completed",
+                "project_id": project_id,
+                "completed_at": _now_iso(),
+            }
+            state["current_stage"] = 2
+            _update_pipeline_state(output_dir, state)
+            _write_json(mf_dir / "ontology.json", onto_resp)
+            print(f"MiroFish Stage 1/4: Ontology complete (project={project_id})")
+
+        if resume_stage <= 2:
+            print("MiroFish Stage 2/4: Building knowledge graph...")
+            build_resp = client.build_graph(project_id)
+            build_data = build_resp.get("data", build_resp)
+            task_id = build_data["task_id"]
+            state["stages"]["2_graph"]["status"] = "running"
+            state["stages"]["2_graph"]["task_id"] = task_id
+            _update_pipeline_state(output_dir, state)
+            graph_result = client.poll_graph_build(task_id)
+            graph_id = graph_result.get("graph_id", "")
+            state["stages"]["2_graph"] = {
+                "status": "completed",
+                "graph_id": graph_id,
+                "completed_at": _now_iso(),
+            }
+            state["current_stage"] = 3
+            _update_pipeline_state(output_dir, state)
+            _write_json(mf_dir / "graph.json", graph_result)
+            print(f"MiroFish Stage 2/4: Graph complete (graph_id={graph_id})")
+
+        if resume_stage <= 3:
+            print("MiroFish Stage 3/4: Running simulation...")
+            sim_resp = client.create_simulation(project_id, graph_id)
+            sim_data = sim_resp.get("data", sim_resp)
+            simulation_id = sim_data["simulation_id"]
+            state["stages"]["3_simulation"]["status"] = "running"
+            state["stages"]["3_simulation"]["simulation_id"] = simulation_id
+            _update_pipeline_state(output_dir, state)
+            prep_resp = client.prepare_simulation(simulation_id)
+            prep_data = prep_resp.get("data", prep_resp)
+            prep_task_id = prep_data["task_id"]
+            prep_result = client.poll_prepare(prep_task_id)
+            start_resp = client.start_simulation(simulation_id, max_rounds=max_rounds)
+            _write_json(mf_dir / "simulation-start.json", start_resp)
+            sim_result = client.poll_run_status(simulation_id)
+            state["stages"]["3_simulation"] = {
+                "status": "completed",
+                "simulation_id": simulation_id,
+                "completed_at": _now_iso(),
+            }
+            state["current_stage"] = 4
+            _update_pipeline_state(output_dir, state)
+            _write_json(mf_dir / "simulation-result.json", sim_result)
+            print(f"MiroFish Stage 3/4: Simulation complete (simulation_id={simulation_id})")
+        else:
+            # Need prep_result for normalize_report; load from saved state
+            prep_result = {}
+
+        if resume_stage <= 4:
+            print("MiroFish Stage 4/4: Generating report...")
+            report_resp = client.generate_report(simulation_id)
+            report_data = report_resp.get("data", report_resp)
+            report_task_id = report_data["task_id"]
+            state["stages"]["4_report"]["status"] = "running"
+            state["stages"]["4_report"]["task_id"] = report_task_id
+            _update_pipeline_state(output_dir, state)
+            report_result = client.poll_report(report_task_id)
+            report_id = report_result.get("report_id", "")
+            full_report = client.get_report(report_id)
+            _write_json(mf_dir / "report.json", full_report)
+            state["stages"]["4_report"] = {
+                "status": "completed",
+                "report_id": report_id,
+                "completed_at": _now_iso(),
+            }
+            _update_pipeline_state(output_dir, state)
+            print(f"MiroFish Stage 4/4: Report complete (report_id={report_id})")
+
+            # Normalize and write final outputs
+            normalized = normalize_report(full_report, simulation_data=prep_result if resume_stage <= 3 else {})
+            tasks = build_mirofish_tasks(full_report)
+            summary_md = _build_summary_markdown(normalized, tasks)
+            _write_json(output_dir / "mirofish-context.json", normalized)
+            _write_json(output_dir / "mirofish-tasks.json", tasks)
+            _write_atomic(output_dir / "mirofish-summary.md", summary_md)
+
+        state["status"] = "completed"
+        state["completed_at"] = _now_iso()
+        _update_pipeline_state(output_dir, state)
+        print("MiroFish: Resume complete.")
+        return 0
+
+    except Exception as exc:
+        state["status"] = "failed"
+        state["error"] = str(exc)
+        _update_pipeline_state(output_dir, state)
+        print(f"ERROR: MiroFish resume failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def main() -> None:
@@ -1511,6 +1705,7 @@ def main() -> None:
                 output_dir=str(output_dir),
                 base_url=args.url,
                 max_rounds=args.max_rounds,
+                timeout=args.timeout,
             )
         )
 
@@ -1522,6 +1717,7 @@ def main() -> None:
             prd_path=prd_path,
             output_dir=output_dir,
             max_rounds=args.max_rounds,
+            timeout=args.timeout,
         )
     )
 

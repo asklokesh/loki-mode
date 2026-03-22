@@ -166,7 +166,7 @@ class BmadArtifacts:
                     if custom_output:
                         candidate = (self.project_path / custom_output / "planning-artifacts").resolve()
                         # Ensure resolved path stays within the project root
-                        if candidate.is_dir() and str(candidate).startswith(str(self.project_path) + os.sep):
+                        if candidate.is_dir() and candidate.is_relative_to(self.project_path):
                             self.output_dir = candidate
                 except (json.JSONDecodeError, OSError):
                     pass
@@ -597,16 +597,16 @@ def write_sprint_status(path: Path, completed_stories: set) -> bool:
         line = lines[i]
         stripped = line.strip()
 
-        # Track story name
-        name_match = re.match(r'^(\s*)-?\s*name:\s*["\']?(.*?)["\']?\s*$', stripped)
+        # Track story name (match against original line to preserve indentation)
+        name_match = re.match(r'^(\s*)-?\s*name:\s*["\']?(.*?)["\']?\s*$', line)
         if name_match:
             current_name = name_match.group(2).strip()
             new_lines.append(line)
             i += 1
             continue
 
-        # Update status line for matching stories
-        status_match = re.match(r'^(\s*)status:\s*["\']?(.*?)["\']?\s*$', stripped)
+        # Update status line for matching stories (match against original line)
+        status_match = re.match(r'^(\s*)status:\s*["\']?(.*?)["\']?\s*$', line)
         if status_match and current_name and current_name.lower() in completed_lower:
             indent = status_match.group(1)
             old_status = status_match.group(2).strip().lower()
@@ -997,7 +997,7 @@ def run(
     if output_path.is_absolute():
         abs_output_dir = output_path
     else:
-        abs_output_dir = (Path(project_path).resolve() / output_dir).resolve()
+        abs_output_dir = (Path.cwd() / output_dir).resolve()
     written = write_outputs(
         output_dir=abs_output_dir,
         metadata=combined_metadata,
