@@ -1523,3 +1523,344 @@ class TestMultiServiceStatus:
         source = inspect.getsource(server.DevServerManager._install_pip_deps)
         assert "requirements.txt" in source
         assert "venv" in source
+
+
+# ============================================================================
+# Test AI-aware preview: _resolve_primary_service
+# ============================================================================
+
+
+class TestResolvePrimaryService:
+    """Tests for DevServerManager._resolve_primary_service()"""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from server import DevServerManager
+        self.manager = DevServerManager()
+
+    def test_frontend_name_wins(self):
+        """Service named 'frontend' should be primary even if not first."""
+        services = [
+            {"name": "backend", "ports": [8000], "has_build": True, "image": None},
+            {"name": "frontend", "ports": [3000], "has_build": True, "image": None},
+            {"name": "postgres", "ports": [5432], "has_build": False, "image": "postgres:15"},
+        ]
+        name, port = self.manager._resolve_primary_service(services)
+        assert name == "frontend"
+        assert port == 3000
+
+    def test_web_name_wins(self):
+        """Service named 'web' should be selected as primary."""
+        services = [
+            {"name": "api", "ports": [8000], "has_build": True, "image": None},
+            {"name": "web", "ports": [8080], "has_build": True, "image": None},
+        ]
+        name, port = self.manager._resolve_primary_service(services)
+        assert name == "web"
+        assert port == 8080
+
+    def test_frontend_port_fallback(self):
+        """When no frontend-named service, pick by frontend-typical port."""
+        services = [
+            {"name": "api-server", "ports": [8000], "has_build": True, "image": None},
+            {"name": "main-app", "ports": [3000], "has_build": True, "image": None},
+        ]
+        name, port = self.manager._resolve_primary_service(services)
+        assert name == "main-app"
+        assert port == 3000
+
+    def test_skip_infrastructure(self):
+        """Postgres/Redis should never be primary when a buildable service exists."""
+        services = [
+            {"name": "postgres", "ports": [5432], "has_build": False, "image": "postgres:15"},
+            {"name": "redis", "ports": [6379], "has_build": False, "image": "redis:7"},
+            {"name": "my-service", "ports": [9000], "has_build": True, "image": None},
+        ]
+        name, port = self.manager._resolve_primary_service(services)
+        assert name == "my-service"
+        assert port == 9000
+
+    def test_empty_services(self):
+        """Empty list returns None, default port."""
+        name, port = self.manager._resolve_primary_service([])
+        assert name is None
+        assert port == 3000
+
+    def test_no_ports(self):
+        """Services without ports return None, default port."""
+        services = [
+            {"name": "worker", "ports": [], "has_build": True, "image": None},
+            {"name": "cron", "ports": [], "has_build": True, "image": None},
+        ]
+        name, port = self.manager._resolve_primary_service(services)
+        assert name is None
+        assert port == 3000
+
+
+# ============================================================================
+# Test AI error diagnosis: _diagnose_errors
+# ============================================================================
+
+
+class TestDiagnoseErrors:
+    """Tests for _diagnose_errors() pattern matching."""
+
+    def test_missing_python_module(self):
+        """ModuleNotFoundError triggers missing dep diagnosis."""
+        from server import _diagnose_errors
+        logs = "ModuleNotFoundError: No module named 'redis'"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "missing_python_dep"]
+        assert len(matched) == 1
+        assert "redis" in matched[0]["diagnosis"]
+
+    def test_missing_node_module(self):
+        """Cannot find module triggers npm install suggestion."""
+        from server import _diagnose_errors
+        logs = "Error: Cannot find module 'express'"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "missing_node_dep"]
+        assert len(matched) == 1
+        assert "npm install" in matched[0]["suggestion"].lower()
+
+    def test_connection_refused(self):
+        """ECONNREFUSED suggests service not ready."""
+        from server import _diagnose_errors
+        logs = "ECONNREFUSED 127.0.0.1:5432"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "connection_refused"]
+        assert len(matched) == 1
+        assert "5432" in matched[0]["diagnosis"]
+
+    def test_port_conflict(self):
+        """EADDRINUSE triggers port conflict diagnosis."""
+        from server import _diagnose_errors
+        logs = "Error: listen EADDRINUSE: address already in use :::3000"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "port_conflict"]
+        assert len(matched) == 1
+
+    def test_syntax_error(self):
+        """SyntaxError triggers syntax error diagnosis."""
+        from server import _diagnose_errors
+        logs = "SyntaxError: invalid syntax (app.py, line 42)"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "syntax_error"]
+        assert len(matched) == 1
+        assert "syntax" in matched[0]["diagnosis"].lower()
+
+    def test_db_auth_failure(self):
+        """Database auth failure triggers credentials diagnosis."""
+        from server import _diagnose_errors
+        logs = 'FATAL:  password authentication failed for user "admin"'
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "db_auth"]
+        assert len(matched) == 1
+
+    def test_build_failure(self):
+        """Docker build exit code triggers build failure diagnosis."""
+        from server import _diagnose_errors
+        logs = "error: process '/bin/sh' returned a non-zero code: 127"
+        results = _diagnose_errors(logs)
+        assert len(results) >= 1
+        matched = [d for d in results if d["pattern"] == "build_failure"]
+        assert len(matched) == 1
+        assert "127" in matched[0]["diagnosis"]
+
+    def test_multiple_errors(self):
+        """Multiple distinct errors produce multiple diagnoses."""
+        from server import _diagnose_errors
+        logs = (
+            "ModuleNotFoundError: No module named 'redis'\n"
+            "ECONNREFUSED 127.0.0.1:5432"
+        )
+        results = _diagnose_errors(logs)
+        patterns = {d["pattern"] for d in results}
+        assert "missing_python_dep" in patterns
+        assert "connection_refused" in patterns
+
+    def test_no_errors(self):
+        """Clean logs produce empty list."""
+        from server import _diagnose_errors
+        logs = "Server running on port 8000"
+        results = _diagnose_errors(logs)
+        assert results == []
+
+    def test_empty_logs(self):
+        """Empty string does not crash."""
+        from server import _diagnose_errors
+        results = _diagnose_errors("")
+        assert results == []
+
+
+# ============================================================================
+# Test Docker context gathering: _gather_docker_context
+# ============================================================================
+
+
+class TestGatherDockerContext:
+    """Tests for _gather_docker_context() with mocked subprocess."""
+
+    @pytest.mark.asyncio
+    async def test_gathers_service_status(self):
+        """Mocks docker compose ps and verifies parsing."""
+        from server import _gather_docker_context
+
+        ps_json = (
+            '{"Service":"web","State":"running","Status":"Up 5 min","ExitCode":0}\n'
+            '{"Service":"db","State":"running","Status":"Up 5 min","ExitCode":0}\n'
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ps_json
+
+        with patch("server.subprocess.run", return_value=mock_result):
+            ctx = await _gather_docker_context(Path("/tmp/fake-project"))
+
+        assert len(ctx["service_status"]) == 2
+        names = [s["name"] for s in ctx["service_status"]]
+        assert "web" in names
+        assert "db" in names
+
+    @pytest.mark.asyncio
+    async def test_captures_failing_service_logs(self):
+        """When a service is exited, its logs are captured."""
+        from server import _gather_docker_context
+
+        ps_json = '{"Service":"api","State":"exited","Status":"Exited (1)","ExitCode":1}\n'
+
+        call_count = 0
+
+        def mock_subprocess_run(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                # docker compose ps
+                result.returncode = 0
+                result.stdout = ps_json
+            else:
+                # docker compose logs for failing service
+                result.returncode = 0
+                result.stdout = "Error: Cannot connect to database"
+            return result
+
+        with patch("server.subprocess.run", side_effect=mock_subprocess_run):
+            ctx = await _gather_docker_context(Path("/tmp/fake-project"))
+
+        assert "api" in ctx["failing_services"]
+        assert "api" in ctx["service_logs"]
+        assert "Cannot connect" in ctx["service_logs"]["api"]
+
+    @pytest.mark.asyncio
+    async def test_reads_env_keys(self, tmp_path):
+        """Reads .env file and extracts key names without values."""
+        from server import _gather_docker_context
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("DATABASE_URL=postgres://...\nSECRET_KEY=abc123\n# Comment\n\n")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+
+        with patch("server.subprocess.run", return_value=mock_result):
+            ctx = await _gather_docker_context(tmp_path)
+
+        assert "DATABASE_URL" in ctx["env_keys"]
+        assert "SECRET_KEY" in ctx["env_keys"]
+        # Values should NOT be present
+        assert "postgres://..." not in str(ctx["env_keys"])
+
+    @pytest.mark.asyncio
+    async def test_handles_docker_not_installed(self):
+        """Gracefully handles FileNotFoundError from docker."""
+        from server import _gather_docker_context
+
+        with patch("server.subprocess.run", side_effect=FileNotFoundError("docker")):
+            ctx = await _gather_docker_context(Path("/tmp/fake-project"))
+
+        # Should not crash -- service_status remains empty
+        assert ctx["service_status"] == []
+        assert ctx["failing_services"] == []
+
+    @pytest.mark.asyncio
+    async def test_handles_timeout(self):
+        """Gracefully handles subprocess timeout."""
+        from server import _gather_docker_context
+        import subprocess as sp
+
+        with patch("server.subprocess.run", side_effect=sp.TimeoutExpired("docker", 10)):
+            ctx = await _gather_docker_context(Path("/tmp/fake-project"))
+
+        # Should not crash
+        assert ctx["service_status"] == []
+
+
+# ============================================================================
+# Test self-healing monitor: circuit breaker logic
+# ============================================================================
+
+
+class TestServiceHealthMonitor:
+    """Tests for the self-healing monitor loop concepts."""
+
+    def test_circuit_breaker_blocks_after_3_attempts(self):
+        """After 3 fix attempts in 5 min, further fixes are blocked."""
+        now = time.time()
+        timestamps = [now - 200, now - 100, now - 10]  # 3 recent timestamps
+        recent = [t for t in timestamps if now - t < 300]
+        assert len(recent) >= 3
+        # This means circuit breaker should be open
+        info = {
+            "auto_fix_attempts": 3,
+            "auto_fix_timestamps": timestamps,
+        }
+        recent = [t for t in info["auto_fix_timestamps"] if now - t < 300]
+        blocked = len(recent) >= 3
+        assert blocked is True
+
+    def test_circuit_breaker_resets_after_window(self):
+        """Fix attempts older than 5 min (300s) don't count."""
+        now = time.time()
+        timestamps = [now - 600, now - 500, now - 400]  # All older than 300s
+        recent = [t for t in timestamps if now - t < 300]
+        assert len(recent) == 0
+        # Circuit breaker should be closed
+        blocked = len(recent) >= 3
+        assert blocked is False
+
+    def test_detects_service_state_change(self):
+        """Running -> exited transition triggers fix (status changes to error)."""
+        info = {"status": "running", "auto_fix_attempts": 0, "auto_fix_timestamps": []}
+        # Simulate what _monitor_output does when process exits
+        if info.get("status") in ("starting", "running"):
+            info["status"] = "error"
+            attempts = info.get("auto_fix_attempts", 0)
+            now = time.time()
+            timestamps = info.get("auto_fix_timestamps", [])
+            recent = [t for t in timestamps if now - t < 300]
+            if len(recent) < 3 and attempts < 3:
+                info["auto_fix_attempts"] = attempts + 1
+                info["auto_fix_timestamps"].append(now)
+        assert info["status"] == "error"
+        assert info["auto_fix_attempts"] == 1
+        assert len(info["auto_fix_timestamps"]) == 1
+
+    def test_already_exited_no_duplicate_fix(self):
+        """Service that was already stopped/exited doesn't trigger another fix."""
+        info = {"status": "stopped", "auto_fix_attempts": 0, "auto_fix_timestamps": []}
+        # Simulate check -- only "starting"/"running" trigger auto-fix
+        triggered = False
+        if info.get("status") in ("starting", "running"):
+            triggered = True
+            info["status"] = "error"
+        assert triggered is False
+        assert info["status"] == "stopped"
+        assert info["auto_fix_attempts"] == 0

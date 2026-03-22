@@ -649,11 +649,14 @@ class DevServerManager:
                                 "image": svc.get("image"),
                                 "has_build": "build" in svc,
                             })
-                        # Use the first exposed host port as the primary port
-                        for svc_entry in services_info:
-                            if svc_entry["ports"]:
-                                port = svc_entry["ports"][0]
-                                break
+                        # Use smart resolution to pick the user-facing service
+                        _primary_name, port = self._resolve_primary_service(services_info)
+                        if _primary_name is None:
+                            # Fallback: first service with any port
+                            for svc_entry in services_info:
+                                if svc_entry["ports"]:
+                                    port = svc_entry["ports"][0]
+                                    break
                 except ImportError:
                     # yaml not available -- fall back to regex parsing
                     try:
@@ -911,6 +914,36 @@ class DevServerManager:
                 if 1024 <= port <= 65535:
                     return port
         return None
+
+    def _resolve_primary_service(self, services_info: list[dict]) -> tuple[Optional[str], int]:
+        """Determine the primary user-facing service from Docker Compose services."""
+        frontend_names = {"frontend", "web", "client", "app", "ui", "next", "vite", "nginx"}
+        frontend_ports = {3000, 5173, 8080, 4200, 5000, 4000}
+
+        # Priority 1: Service name matches frontend patterns
+        for svc in services_info:
+            if svc["name"].lower() in frontend_names and svc.get("ports"):
+                return svc["name"], svc["ports"][0]
+
+        # Priority 2: Service has a frontend-typical port
+        for svc in services_info:
+            for p in svc.get("ports", []):
+                if p in frontend_ports:
+                    return svc["name"], p
+
+        # Priority 3: Custom-built service (has build, no standard image like postgres/redis)
+        infra_images = {"postgres", "redis", "mongo", "mysql", "rabbitmq", "memcached", "elasticsearch"}
+        for svc in services_info:
+            img = (svc.get("image") or "").split(":")[0].split("/")[-1].lower()
+            if svc.get("has_build") and img not in infra_images and svc.get("ports"):
+                return svc["name"], svc["ports"][0]
+
+        # Fallback: first service with any port
+        for svc in services_info:
+            if svc.get("ports"):
+                return svc["name"], svc["ports"][0]
+
+        return None, 3000
 
     def _install_pip_deps(self, project_path: Path, build_env: dict) -> None:
         """Install pip dependencies into a project venv (creates one if needed)."""
@@ -1203,6 +1236,10 @@ class DevServerManager:
 
         asyncio.create_task(self._monitor_output(session_id))
 
+        # For Docker projects, also start the service health monitor
+        if framework == "docker":
+            asyncio.create_task(self._monitor_docker_services(session_id))
+
         # Wait for port detection (up to 30s)
         for _ in range(60):
             await asyncio.sleep(0.5)
@@ -1386,6 +1423,24 @@ class DevServerManager:
             f"The dev server crashed. Fix the error and ensure the app starts correctly.\n\n"
             f"DEV SERVER ERROR OUTPUT:\n{error_context}"
         )
+
+        # Enrich with Docker context if applicable
+        if info.get("framework") == "docker":
+            try:
+                docker_ctx = await _gather_docker_context(target)
+                if docker_ctx.get("failing_services"):
+                    fix_message += "\n\nDOCKER SERVICE STATUS:\n" + json.dumps(docker_ctx["service_status"], indent=2)
+                    for svc_name, svc_logs in docker_ctx.get("service_logs", {}).items():
+                        if svc_name != "_combined":
+                            fix_message += f"\n\nFAILING SERVICE '{svc_name}' LOGS:\n{svc_logs}"
+                    diagnoses = _diagnose_errors("\n".join(docker_ctx.get("service_logs", {}).values()))
+                    if diagnoses:
+                        fix_message += "\n\nAUTO-DIAGNOSIS:\n" + "\n".join(
+                            f"- {d['diagnosis']}: {d['suggestion']}" for d in diagnoses)
+                if docker_ctx.get("project_structure"):
+                    fix_message += "\n\nPROJECT FILES:\n" + docker_ctx["project_structure"]
+            except Exception:
+                logger.debug("Docker context gathering for auto-fix failed", exc_info=True)
 
         # Save original command before stop() removes the info dict
         cmd = info.get("original_command")
@@ -1604,6 +1659,114 @@ class DevServerManager:
                 result["port"] = 1355
         return result
 
+    async def _monitor_docker_services(self, session_id: str) -> None:
+        """Background loop: poll Docker Compose services, auto-fix failures."""
+        info = self.servers.get(session_id)
+        if not info:
+            return
+
+        project_dir = Path(info.get("project_dir", "."))
+        info["docker_service_health"] = {}
+
+        while info.get("process") and info["process"].poll() is None:
+            await asyncio.sleep(10)
+
+            try:
+                docker_ctx = await _gather_docker_context(project_dir)
+            except Exception:
+                continue
+
+            # Update service health
+            for svc in docker_ctx.get("service_status", []):
+                name = svc["name"]
+                prev = info["docker_service_health"].get(name, {})
+                svc_health: dict = {
+                    "name": name,
+                    "status": svc["state"],
+                    "exit_code": svc.get("exit_code", 0),
+                    "restarts": prev.get("restarts", 0),
+                    "fix_attempts": prev.get("fix_attempts", 0),
+                    "fix_timestamps": prev.get("fix_timestamps", []),
+                }
+
+                # Detect new failure
+                was_running = prev.get("status") in ("running", None)
+                now_failed = svc["state"] in ("exited", "dead")
+
+                if was_running and now_failed:
+                    svc_health["restarts"] = prev.get("restarts", 0) + 1
+                    logger.warning("Docker service '%s' failed (exit %s)", name, svc.get("exit_code"))
+
+                    # Circuit breaker: max 3 fixes per service per 10 min
+                    now = time.time()
+                    recent_fixes = [t for t in svc_health["fix_timestamps"] if now - t < 600]
+
+                    if len(recent_fixes) < 3:
+                        svc_logs = docker_ctx.get("service_logs", {}).get(name, "")
+                        diagnoses = _diagnose_errors(svc_logs)
+                        diag_text = "\n".join(f"- {d['diagnosis']}: {d['suggestion']}" for d in diagnoses)
+
+                        fix_prompt = f"The '{name}' Docker service crashed (exit code {svc.get('exit_code', 1)}).\n"
+                        if diag_text:
+                            fix_prompt += f"\nDiagnosis:\n{diag_text}\n"
+                        fix_prompt += f"\nService logs:\n{svc_logs[:2000]}\n"
+                        fix_prompt += "\nFix the issue and ensure the service starts correctly."
+
+                        svc_health["fix_attempts"] += 1
+                        svc_health["fix_timestamps"] = recent_fixes + [now]
+                        svc_health["fix_status"] = "fixing"
+
+                        # Trigger fix asynchronously
+                        asyncio.ensure_future(self._auto_fix_service(session_id, name, fix_prompt))
+                    else:
+                        svc_health["fix_status"] = "circuit_breaker_open"
+
+                info["docker_service_health"][name] = svc_health
+
+            # Broadcast service health via WebSocket
+            try:
+                await _broadcast({
+                    "type": "service_health",
+                    "data": {
+                        "session_id": session_id,
+                        "services": list(info["docker_service_health"].values()),
+                    }
+                })
+            except Exception:
+                pass
+
+    async def _auto_fix_service(self, session_id: str, service_name: str, fix_prompt: str) -> None:
+        """Run targeted fix for a specific Docker service."""
+        info = self.servers.get(session_id)
+        if not info:
+            return
+        project_dir = info.get("project_dir", ".")
+        loki = _find_loki_cli()
+        if not loki:
+            return
+
+        try:
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                [loki, "quick", fix_prompt],
+                capture_output=True, text=True, cwd=project_dir, timeout=300,
+                env={**os.environ, **_load_secrets()}
+            )
+
+            # After fix, restart the specific service
+            await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "restart", service_name],
+                capture_output=True, cwd=project_dir, timeout=30
+            )
+
+            svc_health = info.get("docker_service_health", {}).get(service_name, {})
+            svc_health["fix_status"] = "fixed" if proc.returncode == 0 else "fix_failed"
+        except Exception as exc:
+            logger.error("Auto-fix for service '%s' failed: %s", service_name, exc)
+            svc_health = info.get("docker_service_health", {}).get(service_name, {})
+            svc_health["fix_status"] = "fix_failed"
+
     async def stop_all(self) -> None:
         """Stop all dev servers (used on shutdown)."""
         for sid in list(self.servers.keys()):
@@ -1611,6 +1774,135 @@ class DevServerManager:
 
 
 dev_server_manager = DevServerManager()
+
+
+# ---------------------------------------------------------------------------
+# Docker context gathering and error diagnosis
+# ---------------------------------------------------------------------------
+
+
+async def _gather_docker_context(project_dir: Path) -> dict:
+    """Gather Docker Compose service status, logs, and project context."""
+    loop = asyncio.get_running_loop()
+    result: dict = {"service_status": [], "failing_services": [], "service_logs": {},
+                    "project_structure": "", "env_keys": []}
+
+    # Get service status via docker compose ps
+    try:
+        ps_proc = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["docker", "compose", "ps", "--format", "json"],
+            capture_output=True, text=True, cwd=str(project_dir), timeout=10
+        ))
+        if ps_proc.returncode == 0:
+            for line in ps_proc.stdout.strip().split("\n"):
+                if line.strip():
+                    try:
+                        svc = json.loads(line)
+                        status_entry = {
+                            "name": svc.get("Service", svc.get("Name", "unknown")),
+                            "state": svc.get("State", "unknown"),
+                            "status": svc.get("Status", ""),
+                            "exit_code": svc.get("ExitCode", 0),
+                        }
+                        result["service_status"].append(status_entry)
+                        if status_entry["state"] in ("exited", "dead", "restarting"):
+                            result["failing_services"].append(status_entry["name"])
+                    except json.JSONDecodeError:
+                        pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    # Get logs for failing services
+    for svc_name in result["failing_services"]:
+        try:
+            log_proc = await loop.run_in_executor(None, lambda sn=svc_name: subprocess.run(
+                ["docker", "compose", "logs", "--tail", "50", sn],
+                capture_output=True, text=True, cwd=str(project_dir), timeout=15
+            ))
+            if log_proc.stdout:
+                result["service_logs"][svc_name] = log_proc.stdout[-3000:]  # Cap at 3KB
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    # If no specific failures, get combined logs tail
+    if not result["failing_services"]:
+        try:
+            log_proc = await loop.run_in_executor(None, lambda: subprocess.run(
+                ["docker", "compose", "logs", "--tail", "30"],
+                capture_output=True, text=True, cwd=str(project_dir), timeout=15
+            ))
+            if log_proc.stdout:
+                result["service_logs"]["_combined"] = log_proc.stdout[-3000:]
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    # Project structure
+    try:
+        ls_proc = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["find", ".", "-maxdepth", "2", "-type", "f",
+             "-name", "*.py", "-o", "-name", "*.ts",
+             "-o", "-name", "*.tsx", "-o", "-name", "*.js", "-o", "-name", "package.json",
+             "-o", "-name", "requirements.txt", "-o", "-name", "Dockerfile",
+             "-o", "-name", "docker-compose.yml", "-o", "-name", "*.env"],
+            capture_output=True, text=True, cwd=str(project_dir), timeout=5
+        ))
+        result["project_structure"] = ls_proc.stdout[:2000] if ls_proc.stdout else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    # Env variable names (not values)
+    env_file = project_dir / ".env"
+    if env_file.exists():
+        try:
+            for line in env_file.read_text(errors="replace").split("\n"):
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    result["env_keys"].append(line.split("=", 1)[0])
+        except OSError:
+            pass
+
+    return result
+
+
+def _diagnose_errors(logs: str) -> list[dict]:
+    """Pattern-match common errors in Docker/service logs and return diagnoses."""
+    diagnoses: list[dict] = []
+    patterns = [
+        (r"ModuleNotFoundError: No module named ['\"](\w+)['\"]",
+         lambda m: {"pattern": "missing_python_dep", "diagnosis": f"Missing Python dependency: {m.group(1)}",
+                     "suggestion": f"Add '{m.group(1)}' to requirements.txt and rebuild"}),
+        (r"Cannot find module ['\"]([^'\"]+)['\"]|ERR_MODULE_NOT_FOUND",
+         lambda m: {"pattern": "missing_node_dep", "diagnosis": "Missing Node.js module",
+                     "suggestion": "Run 'npm install' in the service directory"}),
+        (r"ECONNREFUSED.*:(\d+)|connection refused.*:(\d+)",
+         lambda m: {"pattern": "connection_refused",
+                     "diagnosis": f"Connection refused on port {m.group(1) or m.group(2)}",
+                     "suggestion": "A dependent service may not be ready. Add retry logic or health check wait."}),
+        (r"address already in use|EADDRINUSE",
+         lambda m: {"pattern": "port_conflict", "diagnosis": "Port already in use",
+                     "suggestion": "Another process is using the port. Change the port or stop the conflicting process."}),
+        (r"SyntaxError: (.+)",
+         lambda m: {"pattern": "syntax_error", "diagnosis": f"Syntax error: {m.group(1)[:100]}",
+                     "suggestion": "Fix the syntax error in the indicated file and line."}),
+        (r"FATAL:.*password authentication failed",
+         lambda m: {"pattern": "db_auth", "diagnosis": "Database authentication failed",
+                     "suggestion": "Check DATABASE_URL credentials match the postgres service environment."}),
+        (r"error.*returned a non-zero code: (\d+)",
+         lambda m: {"pattern": "build_failure", "diagnosis": f"Docker build failed (exit code {m.group(1)})",
+                     "suggestion": "Check the Dockerfile for errors. Common: missing system dependencies."}),
+        (r"npm ERR!|npm error",
+         lambda m: {"pattern": "npm_error", "diagnosis": "npm encountered an error",
+                     "suggestion": "Check package.json for invalid dependencies or run 'npm install' manually."}),
+    ]
+    seen: set[str] = set()
+    for pattern, handler in patterns:
+        for match in re.finditer(pattern, logs, re.IGNORECASE):
+            diag = handler(match)
+            key = diag["pattern"]
+            if key not in seen:
+                seen.add(key)
+                diagnoses.append(diag)
+    return diagnoses
 
 
 # ---------------------------------------------------------------------------
@@ -3135,6 +3427,25 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
                     "\n\nDEV SERVER ERROR (fix this):\n" + "\n".join(error_lines)
                 )
 
+        # Phase 1.5: Inject Docker Compose context
+        ds_info_docker = dev_server_manager.servers.get(session_id)
+        if ds_info_docker and ds_info_docker.get("framework") == "docker":
+            try:
+                docker_ctx = await _gather_docker_context(target)
+                if docker_ctx.get("failing_services"):
+                    context_parts.append("\n\nDOCKER SERVICE STATUS:\n" + json.dumps(docker_ctx["service_status"], indent=2))
+                    for svc_name, svc_logs in docker_ctx.get("service_logs", {}).items():
+                        if svc_name != "_combined":
+                            context_parts.append(f"\n\nFAILING SERVICE '{svc_name}' LOGS:\n{svc_logs}")
+                    diagnoses = _diagnose_errors("\n".join(docker_ctx.get("service_logs", {}).values()))
+                    if diagnoses:
+                        context_parts.append("\n\nAUTO-DIAGNOSIS:\n" + "\n".join(
+                            f"- {d['diagnosis']}: {d['suggestion']}" for d in diagnoses))
+                if docker_ctx.get("project_structure"):
+                    context_parts.append("\n\nPROJECT FILES:\n" + docker_ctx["project_structure"])
+            except Exception:
+                logger.debug("Docker context gathering failed", exc_info=True)
+
         # Inject quality gate failures if any
         gate_file = target / ".loki" / "quality" / "gate-failures.txt"
         if gate_file.exists():
@@ -3653,22 +3964,29 @@ async def get_preview_info(session_id: str) -> JSONResponse:
         info["type"] = "docker"
         info["dev_command"] = f"docker compose -f {compose_file} up --build"
         info["description"] = "Containerized app -- runs via Docker Compose"
-        # Try to detect port from compose file
+        # Use smart service resolution to find the primary port
         compose_port = 3000
+        compose_services: list[dict] = []
+        primary_service_name: Optional[str] = None
         try:
             import yaml
             with open(project_root / compose_file) as f:
                 compose_data = yaml.safe_load(f)
             if compose_data and "services" in compose_data:
-                for svc in compose_data["services"].values():
-                    ports = svc.get("ports", [])
-                    for p in ports:
+                for svc_name, svc in compose_data["services"].items():
+                    svc_ports: list[int] = []
+                    for p in svc.get("ports", []):
                         p_str = str(p)
                         if ":" in p_str:
-                            compose_port = int(p_str.split(":")[0])
-                            break
-                    if compose_port != 3000:
-                        break
+                            parts = p_str.split(":")
+                            svc_ports.append(int(parts[-2]))
+                    compose_services.append({
+                        "name": svc_name,
+                        "ports": svc_ports,
+                        "image": svc.get("image"),
+                        "has_build": "build" in svc,
+                    })
+                primary_service_name, compose_port = dev_server_manager._resolve_primary_service(compose_services)
         except ImportError:
             try:
                 content = (project_root / compose_file).read_text()
@@ -3680,6 +3998,10 @@ async def get_preview_info(session_id: str) -> JSONResponse:
         except Exception:
             pass
         info["port"] = compose_port
+        if primary_service_name:
+            info["primary_service"] = primary_service_name
+        if compose_services:
+            info["services"] = compose_services
     elif is_expo:
         info["type"] = "expo"
         info["port"] = 8081
@@ -3895,6 +4217,139 @@ async def get_devserver_status(session_id: str) -> JSONResponse:
         return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
     result = await dev_server_manager.status(session_id)
     return JSONResponse(content=result)
+
+
+@app.get("/api/sessions/{session_id}/services")
+async def get_session_services(session_id: str) -> JSONResponse:
+    """Get Docker Compose service list with primary detection."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # Check if dev server info has cached services
+    ds_info = dev_server_manager.servers.get(session_id)
+    if ds_info and ds_info.get("docker_service_health"):
+        return JSONResponse(content={
+            "services": list(ds_info["docker_service_health"].values()),
+            "framework": ds_info.get("framework"),
+        })
+
+    # Parse compose file directly
+    services_info: list[dict] = []
+    for compose_file in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
+        if (target / compose_file).exists():
+            try:
+                import yaml
+                with open(target / compose_file) as f:
+                    compose_data = yaml.safe_load(f)
+                if compose_data and "services" in compose_data:
+                    for svc_name, svc in compose_data["services"].items():
+                        svc_ports: list[int] = []
+                        for p in svc.get("ports", []):
+                            p_str = str(p)
+                            if ":" in p_str:
+                                parts = p_str.split(":")
+                                svc_ports.append(int(parts[-2]))
+                        services_info.append({
+                            "name": svc_name,
+                            "ports": svc_ports,
+                            "image": svc.get("image"),
+                            "has_build": "build" in svc,
+                        })
+            except (ImportError, Exception):
+                pass
+            break
+
+    primary_name, primary_port = dev_server_manager._resolve_primary_service(services_info)
+    for svc in services_info:
+        svc["is_primary"] = (svc["name"] == primary_name)
+
+    return JSONResponse(content={
+        "services": services_info,
+        "primary_service": primary_name,
+        "primary_port": primary_port,
+    })
+
+
+@app.get("/api/sessions/{session_id}/devserver/logs")
+async def get_devserver_logs(session_id: str, service: Optional[str] = None, tail: int = 50) -> JSONResponse:
+    """Get Docker service logs (optionally filtered to one service)."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    ds_info = dev_server_manager.servers.get(session_id)
+    if not ds_info:
+        return JSONResponse(status_code=404, content={"error": "No dev server running"})
+
+    # If not a Docker project, return buffered output lines
+    if ds_info.get("framework") != "docker":
+        return JSONResponse(content={
+            "logs": ds_info.get("output_lines", [])[-tail:],
+            "service": None,
+        })
+
+    # Docker project: use docker compose logs
+    project_dir = ds_info.get("project_dir", str(target))
+    tail = min(tail, 200)  # Cap at 200 lines
+    try:
+        cmd = ["docker", "compose", "logs", "--tail", str(tail)]
+        if service:
+            # Validate service name to prevent injection
+            if not re.match(r"^[a-zA-Z0-9._-]+$", service):
+                return JSONResponse(status_code=400, content={"error": "Invalid service name"})
+            cmd.append(service)
+        loop = asyncio.get_running_loop()
+        log_proc = await loop.run_in_executor(None, lambda: subprocess.run(
+            cmd, capture_output=True, text=True, cwd=project_dir, timeout=15
+        ))
+        logs_text = log_proc.stdout or ""
+        # Run diagnosis on the logs
+        diagnoses = _diagnose_errors(logs_text)
+        return JSONResponse(content={
+            "logs": logs_text[-5000:],
+            "service": service,
+            "diagnoses": diagnoses,
+        })
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Failed to get logs: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/devserver/restart-service")
+async def restart_service(session_id: str, req: dict = Body(...)) -> JSONResponse:
+    """Restart a specific Docker Compose service."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    ds_info = dev_server_manager.servers.get(session_id)
+    if not ds_info:
+        return JSONResponse(status_code=404, content={"error": "No dev server running"})
+    if ds_info.get("framework") != "docker":
+        return JSONResponse(status_code=400, content={"error": "Not a Docker project"})
+
+    service_name = req.get("service")
+    if not service_name or not re.match(r"^[a-zA-Z0-9._-]+$", service_name):
+        return JSONResponse(status_code=400, content={"error": "Invalid or missing service name"})
+
+    project_dir = ds_info.get("project_dir", ".")
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["docker", "compose", "restart", service_name],
+            capture_output=True, text=True, cwd=project_dir, timeout=30
+        ))
+        if result.returncode == 0:
+            return JSONResponse(content={"status": "restarted", "service": service_name})
+        else:
+            return JSONResponse(status_code=500, content={
+                "error": f"Restart failed: {result.stderr or result.stdout}",
+                "service": service_name,
+            })
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Restart failed: {exc}"})
 
 
 # ---------------------------------------------------------------------------

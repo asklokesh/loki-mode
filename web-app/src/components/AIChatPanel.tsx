@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, MessageSquare, FileCode2, Terminal as TerminalIcon } from 'lucide-react';
+import { Send, Square, MessageSquare, FileCode2, Terminal as TerminalIcon, Wrench } from 'lucide-react';
 import { api } from '../api/client';
 import { Button } from './ui/Button';
 
@@ -7,6 +7,7 @@ interface AIChatPanelProps {
   sessionId: string;
   defaultMode?: 'quick' | 'standard' | 'max';
   onFilesChanged?: (files: string[]) => void;
+  services?: Array<{name: string; fix_status?: string}>;
 }
 
 interface ChatMessage {
@@ -155,7 +156,7 @@ function ChatMessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function AIChatPanel({ sessionId, defaultMode, onFilesChanged }: AIChatPanelProps) {
+export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }: AIChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'quick' | 'standard' | 'max'>(defaultMode || 'quick');
@@ -433,6 +434,15 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged }: AIChatPa
               <Square className="w-2.5 h-2.5" />
               Stop
             </button>
+          </div>
+        )}
+        {/* Auto-fix indicator */}
+        {!streaming && services?.some(s => s.fix_status === 'fixing') && (
+          <div className="flex items-center gap-1.5 mb-2 px-1">
+            <Wrench size={10} className="text-yellow-400 animate-spin" />
+            <span className="text-[10px] text-yellow-400 font-mono">
+              Auto-fixing: {services.find(s => s.fix_status === 'fixing')?.name}
+            </span>
           </div>
         )}
         {/* Mode toggle */}

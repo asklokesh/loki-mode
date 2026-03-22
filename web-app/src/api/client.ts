@@ -332,6 +332,35 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // Docker Compose services list
+  getServices: (sessionId: string) =>
+    fetchJSON<{
+      services: Array<{
+        name: string;
+        ports: number[];
+        is_primary: boolean;
+        has_build: boolean;
+        status?: string;
+        exit_code?: number;
+        fix_status?: string;
+      }>;
+      primary_service: string | null;
+      primary_port: number;
+    }>(`/sessions/${encodeURIComponent(sessionId)}/services`),
+
+  // Docker service logs
+  getServiceLogs: (sessionId: string, service?: string, tail: number = 50) =>
+    fetchJSON<{ logs: string[]; service?: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/devserver/logs${service ? `?service=${encodeURIComponent(service)}&tail=${tail}` : `?tail=${tail}`}`
+    ),
+
+  // Restart a specific Docker service
+  restartService: (sessionId: string, service: string) =>
+    fetchJSON<{ restarted: boolean; service: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/devserver/restart-service`,
+      { method: 'POST', body: JSON.stringify({ service }) }
+    ),
+
   // Auth endpoints
   getMe: () =>
     fetchJSON<{ authenticated: boolean; local_mode?: boolean; sub?: string; email?: string; name?: string; avatar?: string }>('/auth/me'),
