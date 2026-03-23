@@ -1,505 +1,352 @@
 # Legacy Healing Patterns Reference
 
-**Source:** Amazon AGI Lab - "How Agentic AI Helps Heal the Systems We Can't Replace" (2026), AWS Transform, and production modernization patterns.
+## Sources (Validated)
+
+Every pattern in this document is traced to a specific source. If a pattern is our synthesis (not directly from a paper), it is marked as such.
+
+| # | Source | Year | Key Contribution |
+|---|--------|------|-----------------|
+| 1 | Michael Feathers, *Working Effectively with Legacy Code* | 2004 | Characterization tests, seams, dependency-breaking |
+| 2 | Martin Fowler, Strangler Fig Application | 2004 | Incremental replacement via facade |
+| 3 | Eric Evans, *Domain-Driven Design* Ch.14 | 2003 | Anti-Corruption Layer |
+| 4 | Amazon AGI Lab, "How Agentic AI Helps Heal Systems" | 2026 | Friction-as-semantics, RL gyms, agents as universal API |
+| 5 | arXiv:2602.22518, RepoMod-Bench | 2026 | System-boundary testing for behavioral equivalence |
+| 6 | arXiv:2602.04341, Model-Driven Modernization | 2026 | Observability + contract tests for conformance |
+| 7 | arXiv:2506.02290, HEC | 2025 | Equivalence verification via equality saturation |
+| 8 | arXiv:2502.12466, EquiBench | 2025 | LLM code equivalence reasoning benchmarks |
+| 9 | arXiv:2510.18509, VAPU | 2025 | Multi-agent pipeline for autonomous legacy updates |
+| 10 | arXiv:2504.11335, Code Reborn | 2025 | COBOL-to-Java AI-driven, 93% accuracy |
+| 11 | arXiv:2501.19204, Multi-Agent Web App Upgrades | 2025 | Autonomous legacy web application upgrades |
+| 12 | AWS Transform | 2025-2026 | Decomposition agents, semantic seeding, 1.1B LOC analyzed |
+| 13 | GitHub Copilot Legacy Systems | 2025 | 3-agent pattern: extract, test, rewrite |
+| 14 | Mark Seemann, Empirical Characterization Testing | 2025 | Falsifiable experiment pattern for characterization |
+| 15 | arXiv:2511.04427v2 | 2025 | Velocity-quality tradeoff (807 repos studied) |
+| 16 | ThoughtWorks, Strangler Fig Guide | 2025 | Practical implementation steps |
 
 ---
 
-## Table of Contents
+## 1. Characterization Testing (Feathers, 2004)
 
-1. [Codebase Archaeology](#codebase-archaeology)
-2. [Friction-as-Semantics Detection](#friction-as-semantics-detection)
-3. [Failure-First Learning (RL Gym Pattern)](#failure-first-learning)
-4. [Universal Adapter Pattern](#universal-adapter-pattern)
-5. [Incremental Healing Pipeline](#incremental-healing-pipeline)
-6. [Institutional Knowledge Extraction](#institutional-knowledge-extraction)
-7. [Cross-System Abstraction](#cross-system-abstraction)
-8. [Behavioral Baseline Verification](#behavioral-baseline-verification)
-9. [Healing Anti-Patterns](#healing-anti-patterns)
+### The Core Technique
+
+Michael Feathers defines a characterization test as "a test you write to understand the behavior of the system." It captures WHAT the code does, not what it SHOULD do.
+
+### Feathers' Recipe
+
+```
+1. Use a piece of code in a test harness
+2. Write an assertion that you KNOW will fail
+3. Let the failure tell you what the actual behavior is
+4. Change the test so it expects the behavior the code produces
+5. The test now documents actual behavior
+```
+
+### Why "Write a failing assertion" Matters (Seemann, 2025)
+
+Mark Seemann's empirical characterization testing (2025) explains: writing a failing test is a falsifiable experiment. If you write an assertion you EXPECT to pass, you might write a tautology. The failing assertion forces you to discover what the code actually does.
+
+### Characterization vs Unit Tests
+
+| Aspect | Characterization Test | Unit Test |
+|--------|---------------------|-----------|
+| **Verifies** | What code DOES | What code SHOULD do |
+| **Written** | After code exists | Before code exists (TDD) |
+| **When they differ** | Characterization wins during healing | Unit test wins in new development |
+| **Purpose** | Change detector | Correctness proof |
+
+### Dependency-Breaking Techniques (Feathers)
+
+Feathers catalogs 24 dependency-breaking techniques. Most relevant for healing:
+
+- **Sprout Method/Class**: Add new behavior in a new method/class, called from the legacy code
+- **Wrap Method/Class**: Wrap legacy behavior, adding new behavior before/after
+- **Extract and Override**: Extract dependency to a method, override in test subclass
+- **Introduce Seam**: Find a place where behavior can be altered without modifying the call site
+- **Pinch Point**: A narrow place in the dependency graph where you can intercept behavior
 
 ---
 
-## Codebase Archaeology
+## 2. Strangler Fig Pattern (Fowler, 2004)
 
-Before modifying any legacy system, perform a structured archaeology scan to understand what you're working with.
+### Definition
 
-### Dependency Archaeology
+Named after strangler figs that gradually grow around a host tree until they replace it. In software: gradually replace legacy components while both old and new run simultaneously.
 
-```yaml
-dependency_scan:
-  steps:
-    1_static_analysis:
-      - "Map import/require/include graphs"
-      - "Identify circular dependencies"
-      - "Find unused but loaded modules (may have side effects)"
-      - "Detect version-pinned dependencies with known CVEs"
+### Implementation (ThoughtWorks, 2025)
 
-    2_runtime_analysis:
-      - "Trace actual call paths during test execution"
-      - "Identify lazy-loaded modules"
-      - "Map database connection patterns"
-      - "Detect implicit dependencies (env vars, config files, filesystem layout)"
+```
+1. Identify system boundaries
+   - NOT arbitrary code boundaries
+   - Natural business domain boundaries
+   - Where the system interfaces with users or other systems
 
-    3_external_dependencies:
-      - "Map all external service calls (HTTP, gRPC, SOAP, raw TCP)"
-      - "Identify undocumented integrations"
-      - "Find hardcoded URLs, IPs, hostnames"
-      - "Map scheduled jobs and cron patterns"
+2. Define thin slices
+   - Small enough to replace safely
+   - Big enough to deliver business value
+   - Independent and self-contained where possible
 
-  output: ".loki/healing/dependency-graph.json"
+3. Introduce indirection layer (facade/proxy)
+   - Routes requests to old or new based on readiness
+   - Must NOT become a bottleneck
+   - Must NOT be a single point of failure
+
+4. Develop new component
+   - Behind the indirection layer
+   - With characterization tests from the old component
+
+5. Route traffic
+   - Canary: send 5% to new, 95% to old
+   - Compare outputs
+   - Gradually increase
+
+6. Retire old component
+   - Only after new component is verified at 100% traffic
+
+7. Iterate for next slice
 ```
 
-### Code Age Analysis
+### Best Practices (ThoughtWorks + AWS)
 
-```yaml
-code_age_analysis:
-  purpose: "Identify ancient code that nobody touches vs actively maintained code"
-  method:
-    - "git log --format='%at' --diff-filter=M -- <file> | head -1"
-    - "Classify files by last-modified date"
-    - "Identify 'fossilized' code (unchanged 5+ years)"
-    - "Flag 'radioactive' code (changed frequently, many authors, many bugs)"
-
-  risk_matrix:
-    fossilized_critical: "Unchanged 5+ years AND in critical path = highest risk"
-    fossilized_peripheral: "Unchanged 5+ years, not in critical path = low priority"
-    radioactive: "Changed frequently with many bugs = needs healing first"
-    stable_maintained: "Regularly updated, low bug rate = leave alone"
-```
-
-### Comment Archaeology
-
-Legacy systems encode business rules in comments. These comments are institutional knowledge.
-
-```yaml
-comment_patterns:
-  high_value:
-    - pattern: "hack|workaround|kludge|temporary"
-      meaning: "Encodes a constraint that forced a non-obvious solution"
-    - pattern: "don't touch|do not modify|fragile"
-      meaning: "Previous developer knew something dangerous about this code"
-    - pattern: "per .* requirement|compliance|regulation"
-      meaning: "Business/legal rule encoded in code"
-    - pattern: "see ticket|see bug|see issue"
-      meaning: "Historical context available in issue tracker"
-
-  extraction_command: |
-    grep -rn "TODO\|HACK\|FIXME\|XXX\|WORKAROUND\|don't touch\|do not modify" \
-      --include="*.py" --include="*.java" --include="*.js" --include="*.ts" \
-      --include="*.rb" --include="*.php" --include="*.go" --include="*.rs" \
-      --include="*.cbl" --include="*.cob" --include="*.f" --include="*.f90" \
-      ./src/
-```
+| Practice | Source | Rationale |
+|----------|--------|-----------|
+| Start with low-risk components | ThoughtWorks | Build confidence before tackling critical paths |
+| Handle shared databases via views/APIs | ThoughtWorks | Direct DB access creates hidden coupling |
+| Use feature flags and canary releases | ThoughtWorks | Reversible deployment |
+| Maintain a living migration roadmap | ThoughtWorks | Track what's strangled, in-progress, and next |
+| Use semantic seeding for decomposition | AWS Transform | Groups code into natural domains automatically |
 
 ---
 
-## Friction-as-Semantics Detection
+## 3. Anti-Corruption Layer (Evans, DDD 2003)
 
-**Key insight from Amazon AGI Lab:** "The logic behind legacy systems reveals itself most clearly through friction."
+### Definition
 
-### What Counts as Friction
+A layer that isolates a new system from a legacy system by translating between their models. Prevents the legacy model from "corrupting" the clean design of the new system.
 
-| Category | Examples | Usually a Bug? |
-|----------|---------|----------------|
-| **Timing** | Sleep/wait before operations, delayed responses | Often a business rule (rate limiting, sequencing) |
-| **Ordering** | Fields that must be filled in specific order | Almost always a business rule |
-| **Validation** | Rejections with cryptic error codes | Business rule encoded in validation |
-| **Side Effects** | Actions that trigger unexpected updates elsewhere | Cross-system dependency |
-| **Retry Logic** | Automatic retries with specific backoff | Compensating for known infrastructure issue |
-| **Format Quirks** | Date formats, number formatting, encoding | Interoperability requirement with another system |
-| **Magic Values** | Hardcoded numbers, special string values | Business thresholds, status codes |
-| **Dead Code** | Functions that appear unused | May be called dynamically or by external systems |
-
-### Detection Protocol
-
-```yaml
-friction_detection:
-  automated:
-    - "Find all sleep/wait/delay calls and document their purpose"
-    - "Find all hardcoded numeric values and trace their origin"
-    - "Find all try/catch blocks that swallow errors silently"
-    - "Find all retry loops and document what they compensate for"
-    - "Find all TODO/HACK/FIXME comments"
-
-  manual_verification:
-    for_each_friction:
-      1: "Can you remove it without breaking a test?"
-      2: "Can you remove it without breaking an integration?"
-      3: "Does git blame show it was added to fix a specific bug?"
-      4: "Is there a comment explaining why it exists?"
-      5: "Does the original author still work here? Ask them."
-
-  classification:
-    business_rule: "Keep and document"
-    true_bug: "Fix with characterization test"
-    unknown: "Keep until classified. NEVER remove unknown friction."
-```
-
----
-
-## Failure-First Learning
-
-**Key insight:** "The hardest part of training an AI agent is not teaching it what a successful workflow looks like; it's teaching it why workflows fail."
-
-### RL Gym Pattern (Adapted for Loki)
-
-Amazon AGI Lab trains agents in synthetic environments called RL gyms that reproduce the quirks and failure modes of real systems. Loki adapts this concept:
-
-```yaml
-failure_gym:
-  purpose: "Learn system behavior by provoking and cataloging failures"
-
-  protocol:
-    1_happy_path:
-      - "Run all existing tests -- record pass/fail baseline"
-      - "Execute all documented workflows end-to-end"
-      - "Record all outputs as behavioral baseline"
-
-    2_boundary_probing:
-      - "Send null/empty/max-length inputs to all entry points"
-      - "Test with invalid dates, negative numbers, special characters"
-      - "Test concurrent access patterns"
-      - "Test with slow/failing network connections"
-
-    3_state_corruption:
-      - "Kill processes mid-transaction"
-      - "Corrupt database state intentionally"
-      - "Remove expected files/directories"
-      - "Exhaust disk space / memory"
-
-    4_dependency_failure:
-      - "Disconnect external services one at a time"
-      - "Introduce latency to database connections"
-      - "Return unexpected responses from APIs"
-      - "Expire authentication tokens mid-session"
-
-  output:
-    for_each_failure:
-      - "trigger: What caused the failure"
-      - "behavior: How the system responded"
-      - "recovery: Did it recover? How?"
-      - "data_impact: Was data corrupted?"
-      - "user_impact: What would the user see?"
-      - "characterization_test: Test that reproduces this"
-```
-
-### Failure Memory Storage
-
-```yaml
-failure_memory:
-  episodic:
-    location: ".loki/memory/episodic/"
-    entry_type: "failure_trace"
-    fields:
-      - failure_id
-      - system_component
-      - trigger_action
-      - observed_behavior
-      - expected_behavior
-      - root_cause_analysis
-      - recovery_path
-      - characterization_test_id
-
-  semantic:
-    location: ".loki/memory/semantic/anti-patterns.json"
-    consolidation: "After 3+ similar failures, extract pattern"
-    example_pattern: |
-      {
-        "pattern": "silent_error_swallowing",
-        "description": "Legacy Java services catch Exception and return empty response",
-        "affected_languages": ["java", "php"],
-        "detection": "grep -rn 'catch.*Exception.*\\{\\s*\\}' --include='*.java'",
-        "healing": "Replace with explicit error response and logging",
-        "risk": "May break callers that check for empty response as 'no error'"
-      }
-```
-
----
-
-## Universal Adapter Pattern
-
-**Key insight from Amazon:** "By managing the idiosyncrasies of legacy systems behind the scenes, the agent effectively becomes a universal API."
-
-### Adapter Architecture
+### Components
 
 ```
 +-------------------+
-|  Modern Consumers |  REST/GraphQL/gRPC
+|  Modern System    |  Clean domain model
 +--------+----------+
          |
 +--------v----------+
-|   Adapter Layer    |  Clean types, error normalization, retries
+| Anti-Corruption    |
+| Layer              |
+|  +-- Facade       |  Simplified interface to legacy
+|  +-- Adapter      |  Converts data formats
+|  +-- Translator   |  Maps domain concepts
 +--------+----------+
          |
 +--------v----------+
-| Translation Layer  |  Format conversion, protocol bridging
-+--------+----------+
-         |
-+--------v----------+
-|   Legacy System    |  COBOL, SOAP, mainframe, raw SQL
+|  Legacy System    |  Untouched
 +-------------------+
 ```
 
-### Adapter Requirements
+### Connection to Amazon's "Universal API"
+
+Amazon AGI Lab describes agents that "effectively become a universal API" by managing legacy idiosyncrasies behind the scenes. This IS an anti-corruption layer, but implemented by an AI agent that learns the legacy system's behavior through its UI rather than through hand-coded middleware.
+
+**Key difference:** Traditional ACL is hand-coded and static. Amazon's approach uses AI agents trained on system behavior to create dynamic, adaptive ACLs.
+
+---
+
+## 4. Behavioral Equivalence Verification
+
+### System-Boundary Testing (RepoMod-Bench, arXiv:2602.22518)
+
+**Key insight:** "Software behavior is best verified at the system boundary rather than the unit level."
+
+RepoMod-Bench showed that unit-level testing allows agents to "overfit" to tests. System-boundary testing with implementation-agnostic test suites is the correct approach.
 
 ```yaml
-adapter_requirements:
-  behavioral_fidelity:
-    - "Adapter MUST reproduce all legacy behaviors, including quirks"
-    - "Adapter MUST preserve error semantics (same errors for same inputs)"
-    - "Adapter MUST handle all timing-dependent behaviors"
-    - "Adapter MUST NOT add new behaviors not present in legacy system"
+system_boundary_testing:
+  natural_boundaries:
+    - CLI output for a given set of inputs
+    - REST API responses for known requests
+    - Database state after operations
+    - File outputs for batch jobs
+    - Message queue payloads
 
-  testing:
-    - "Every legacy endpoint has a characterization test"
-    - "Adapter output is compared byte-for-byte with legacy output"
-    - "Adapter error responses match legacy error responses"
-    - "Performance characteristics are documented and monitored"
+  approach:
+    1: "Capture outputs at ALL system boundaries before modernization"
+    2: "Store as golden master (behavioral baseline)"
+    3: "Run the SAME tests against modernized code"
+    4: "Any difference = behavioral change requiring documentation"
 
-  documentation:
-    - "Every translation rule is documented"
-    - "Every quirk that the adapter absorbs is documented"
-    - "Mapping between modern API and legacy calls is explicit"
+  findings:
+    small_repos: "91.3% pass rate on projects under 10K LOC"
+    large_repos: "15.3% pass rate on projects over 50K LOC"
+    implication: "Break large codebases into smaller components before modernizing"
 ```
 
-### Cross-System Bridge
+### Observability-Based Verification (arXiv:2602.04341)
 
-When agents reason about workflow rather than application, they can bridge systems never designed to interoperate:
+The Model-Driven Modernization paper uses observability (logs, metrics, traces) and contract tests to verify behavioral and non-functional conformance.
 
 ```yaml
-cross_system_bridge:
-  pattern:
-    1_map_systems:
-      - "Map data models of both systems"
-      - "Identify semantic overlaps (same concept, different names)"
-      - "Identify gaps (concept exists in one but not the other)"
-      - "Map lifecycle states between systems"
+observability_verification:
+  capture_during_stabilize:
+    - "Add structured logging to all critical paths"
+    - "Add metrics (response time, error rate, throughput)"
+    - "Add distributed tracing"
 
-    2_build_bridge:
-      - "Create canonical data model that spans both systems"
-      - "Implement bidirectional translation"
-      - "Handle conflict resolution (which system is authoritative?)"
-      - "Add reconciliation checks"
+  verify_after_modernize:
+    - "Compare log patterns (same operations should produce same log sequences)"
+    - "Compare metrics (response time within 2x, error rate equal or lower)"
+    - "Compare traces (same service interactions)"
 
-    3_verify_bridge:
-      - "End-to-end tests across both systems"
-      - "Drift detection (systems diverging over time)"
-      - "Error propagation tests (failure in one, how does other respond?)"
+  contract_tests:
+    - "Define contracts at adapter boundaries"
+    - "Verify contracts after each modernization step"
+    - "Contracts are NOT unit tests -- they verify interface compliance"
+```
+
+### Formal Equivalence (Research Stage)
+
+HEC (arXiv:2506.02290) uses e-graphs and equality saturation for formal equivalence checking. EquiBench (arXiv:2502.12466) benchmarks LLM ability to reason about code equivalence.
+
+**Honest assessment:** Formal equivalence verification is research-stage. Loki uses system-boundary testing and observability, not formal verification.
+
+---
+
+## 5. Multi-Agent Modernization Patterns
+
+### AWS Transform Decomposition (2025-2026)
+
+AWS Transform uses specialized AI agents organized by domain:
+
+| Agent Category | Purpose | Loki Equivalent |
+|---------------|---------|-----------------|
+| **Code Agent** | Analyze types, LOC, complexity, dependencies | Archaeology phase, sonnet |
+| **Data Source Agent** | Identify databases, files, configs and their usage | Archaeology phase, sonnet |
+| **Decomposition Agent** | Group code into logical domains via semantic seeding | Isolate phase, opus |
+| **Refactor Agent** | Transform legacy code to modern language | Modernize phase, sonnet |
+| **Reforge Agent** | Optimize refactored code for maintainability | Modernize phase, sonnet |
+| **Testing Agent** | Generate test plans from application dependencies | All phases, sonnet |
+
+**Semantic Seeding:** AWS Transform identifies natural domain boundaries by analyzing code semantics, not just syntactic structure. This determines WHERE to place strangler fig boundaries.
+
+### GitHub Copilot 3-Agent Pattern (2025)
+
+GitHub uses three sequential agents for COBOL modernization:
+
+```
+Agent 1: Extract business logic from legacy code
+    |
+    v
+Agent 2: Generate characterization tests that validate that logic
+    |
+    v
+Agent 3: Generate modern code that passes those tests
+```
+
+**Key insight from Julia Kordick (Microsoft):** She never learned COBOL. She brought AI expertise and worked with domain experts who had decades of knowledge. The agent bridges the knowledge gap.
+
+### VAPU Pipeline (arXiv:2510.18509)
+
+VAPU uses a multi-agent pipeline with verification:
+
+```
+Requirements -> Developer Agent -> Verification Agent -> Finalizer Agent
+                    |                    |                    |
+                    v                    v                    v
+              Modify code        Check success        Complete phase
+                                 Give feedback         or revert
+```
+
+**Key result:** Medium-parameter models (Nova Pro 1.0, DeepSeek-V3) excelled at low error rate, while larger models (Claude 3.5 Sonnet, GPT-4o) excelled on harder tasks.
+
+---
+
+## 6. Institutional Knowledge Extraction
+
+### Sources of Knowledge (Ordered by Value)
+
+| Source | Value | Method | Validation |
+|--------|-------|--------|------------|
+| Code comments (hack, workaround, don't touch) | High | Regex scan | Cross-reference with git blame |
+| Git blame history | High | `git log --follow --diff-filter=M` | Date + author + commit message |
+| Error messages | Medium | Grep user-facing strings | Often encode business rules |
+| Test fixtures | Medium | Analyze expected values | Encode business expectations |
+| Configuration (magic numbers, thresholds) | Medium | Find hardcoded values | Trace usage to business logic |
+| Dead code | Low-Medium | Static analysis for unreachable code | May be called dynamically |
+| Documentation | Variable | Read docs, verify against code | Often outdated |
+
+### Comment Archaeology Patterns
+
+```bash
+# High-value patterns (likely encode business rules)
+grep -rn "hack\|workaround\|kludge\|temporary" --include="*.py" ./src/
+grep -rn "don't touch\|do not modify\|fragile\|careful" --include="*.py" ./src/
+grep -rn "per .* requirement\|compliance\|regulation" --include="*.py" ./src/
+grep -rn "see ticket\|see bug\|see issue\|JIRA" --include="*.py" ./src/
+
+# Code age analysis
+git log --format='%at %H' --diff-filter=M -- <file> | head -1
 ```
 
 ---
 
-## Incremental Healing Pipeline
+## 7. Healing Anti-Patterns (Validated)
 
-### Phase Gates for Healing
-
-Each healing phase has deterministic gates (shell-level, not LLM):
-
-```yaml
-healing_phase_gates:
-  archaeology_to_stabilize:
-    required:
-      - "friction-map.json exists with >0 entries"
-      - "failure-modes.json exists"
-      - "institutional-knowledge.md has >0 rules"
-      - "All critical paths have characterization tests"
-      - "Characterization tests pass at 100%"
-
-  stabilize_to_isolate:
-    required:
-      - "All characterization tests still pass"
-      - "No new static analysis warnings introduced"
-      - "Logging/observability added to critical paths"
-      - "Configuration extracted from hardcoded values"
-
-  isolate_to_modernize:
-    required:
-      - "Component boundaries defined in architecture doc"
-      - "Adapter interfaces created at boundaries"
-      - "Components can be tested independently"
-      - "Integration tests cover adapter boundaries"
-
-  modernize_to_validate:
-    required:
-      - "Replacement component passes original characterization tests"
-      - "Adapter layer handles all translation correctly"
-      - "Performance within acceptable bounds"
-      - "No institutional knowledge lost"
-```
-
-### Rollback Safety
-
-```yaml
-rollback_protocol:
-  before_each_change:
-    - "Create git checkpoint: loki checkpoint create healing-{component}-{phase}"
-    - "Snapshot behavioral baseline outputs"
-    - "Record all environment state"
-
-  on_healing_failure:
-    - "Restore from last checkpoint"
-    - "Record failure in episodic memory"
-    - "Update failure-modes.json with new mode"
-    - "Write characterization test for the failure"
-    - "Resume from REASON phase with new knowledge"
-```
+| Anti-Pattern | Why It Fails | What to Do | Source |
+|-------------|-------------|-----------|--------|
+| **Big Bang Rewrite** | Destroys institutional knowledge, 15.3% success rate at 50K+ LOC | Strangler Fig | Fowler 2004, arXiv:2602.22518 |
+| **Fixing Quirks Without Classification** | "This sleep(2) is unnecessary" -- may prevent race condition | Classify friction first | Amazon AGI Lab 2026 |
+| **Unit-Level Equivalence Testing** | Allows test overfitting, misses system-level behavioral changes | System-boundary testing | arXiv:2602.22518 |
+| **Comment Deletion as "Cleanup"** | Removes institutional knowledge permanently | Extract to institutional-knowledge.md first | Synthesis |
+| **Test Deletion** | "These tests are weird/slow" -- they capture critical behaviors | Keep until characterization complete | Feathers 2004 |
+| **Over-Abstracting** | Adding clean architecture layers adds complexity | Anti-corruption layer at boundaries only | Evans 2003 |
+| **Skipping Archaeology** | "I can see what this does" -- you see structure, not semantics | Always characterize before modifying | Feathers 2004, Amazon 2026 |
+| **Ignoring Dead Code** | May be called via reflection, dynamic dispatch, or external systems | Runtime analysis before removal | Feathers 2004 |
 
 ---
 
-## Institutional Knowledge Extraction
+## 8. Scale Constraints (Honest Assessment)
 
-### Knowledge Sources Priority
+Based on arXiv:2602.22518 (RepoMod-Bench) and arXiv:2504.11335 (Code Reborn):
 
-| Source | Value | Method |
-|--------|-------|--------|
-| Code comments | High | Regex scan for patterns (hack, workaround, don't touch) |
-| Git blame history | High | Map code age, author patterns, commit message analysis |
-| Error messages | Medium | User-facing errors often encode business rules |
-| Test fixtures | Medium | Expected values encode business expectations |
-| Configuration | Medium | Magic numbers, thresholds, feature flags |
-| Dead code | Low-Medium | May contain removed-but-relevant business logic |
-| Documentation | Variable | Often outdated, but useful as starting point |
+| Codebase Size | Expected Outcome | Strategy |
+|---------------|-----------------|----------|
+| <10K LOC | 91.3% automated pass rate | Full automated healing |
+| 10K-50K LOC | ~50% automated pass rate | Automated archaeology + guided modernization |
+| 50K-200K LOC | ~15% automated pass rate | Break into components first, then heal each |
+| >200K LOC | Not practical end-to-end | AWS Transform or similar enterprise tooling |
 
-### Extraction Output Format
-
-```markdown
-## Business Rule: Invoice Grace Period
-
-**Location:** src/billing/grace_period.py:45-67
-**Confidence:** High (explicit comment + test)
-**Source:** Code comment: "Per CFO directive 2019-Q3, 15-day grace for enterprise clients"
-**Git Blame:** Added by jsmith on 2019-10-14 (commit a1b2c3d)
-**Test:** tests/billing/test_grace.py::test_enterprise_15_day_grace
-**Dependencies:** Called by: invoice_reminder_job, late_fee_calculator
-**Risk if Removed:** Enterprise clients charged late fees immediately. Finance team escalation.
-```
+**Code Reborn (arXiv:2504.11335) findings for COBOL-to-Java:**
+- 93% accuracy (vs 75% manual, 82% rule-based tools)
+- 35% complexity reduction
+- 33% coupling reduction
+- Tested on 50,000 COBOL files
 
 ---
 
-## Behavioral Baseline Verification
-
-### Pre-Healing Baseline
-
-Before ANY code changes, capture a behavioral baseline:
-
-```yaml
-baseline_capture:
-  for_each_component:
-    - "Run all related tests, capture outputs"
-    - "Execute documented workflows, capture responses"
-    - "Query all API endpoints with known inputs, capture responses"
-    - "Run batch jobs, capture outputs"
-    - "Capture database state after operations"
-
-  storage: ".loki/healing/behavioral-baseline/{component}/"
-  format:
-    - "inputs.json: All test inputs"
-    - "outputs.json: All captured outputs"
-    - "errors.json: All error responses"
-    - "timing.json: Response time measurements"
-    - "side-effects.json: Database changes, file writes, external calls"
-```
-
-### Post-Healing Verification
-
-```yaml
-baseline_comparison:
-  strict_mode:
-    - "Compare outputs byte-for-byte"
-    - "Any difference = BLOCK until explained"
-    - "Explained differences must be documented as intentional"
-
-  relaxed_mode:
-    - "Compare semantic equivalence (JSON field comparison)"
-    - "Allow timing differences within 2x"
-    - "Allow format differences if adapter handles translation"
-    - "Flag removed functionality"
-```
-
----
-
-## Healing Anti-Patterns
-
-| Anti-Pattern | Why It Fails | What to Do Instead |
-|-------------|-------------|-------------------|
-| **Big Bang Rewrite** | "Let's rewrite it in Rust/Go/TypeScript" destroys institutional knowledge | Incremental healing, one component at a time |
-| **Premature Optimization** | "This SQL is slow, let me rewrite it" without understanding why it's structured that way | Characterize first, optimize after understanding |
-| **Comment Deletion** | "Clean up comments" removes institutional knowledge | Extract to institutional-knowledge.md first |
-| **Test Deletion** | "These tests are weird/slow" -- they capture critical behaviors | Keep ALL legacy tests until characterization is complete |
-| **Ignoring Dead Code** | "Remove unused functions" -- they may be called dynamically | Verify with runtime analysis before removing |
-| **Fixing Quirks** | "This sleep(2) is unnecessary" -- it may prevent a race condition | Classify friction first, fix only confirmed bugs |
-| **Over-Abstracting** | "Let's add a clean architecture layer" adds complexity without healing | Adapt at component boundaries only |
-| **Skipping Archaeology** | "I can see what this does" -- you see structure, not semantics | Always run archaeology before modification |
-
----
-
-## Language-Specific Healing Guides
+## 9. Language-Specific Patterns (Condensed)
 
 ### COBOL / Mainframe
-
-```yaml
-cobol_healing:
-  key_patterns:
-    - "COPYBOOK files define shared data structures"
-    - "PARAGRAPH names encode business process steps"
-    - "WORKING-STORAGE contains state"
-    - "88-level conditions are enum-like business rules"
-    - "PERFORM THRU defines transaction boundaries"
-
-  characterization:
-    - "Capture JCL job outputs as baseline"
-    - "Map COPYBOOK usage across programs"
-    - "Document SORT/MERGE operations (often encode business ordering)"
-    - "Trace CALL/EXEC CICS chains"
-```
+- COPYBOOK files = shared data structures (must map ALL usage)
+- PARAGRAPH names = business process steps
+- 88-level conditions = enum-like business rules
+- PERFORM THRU = transaction boundaries
+- **200 billion lines still running** banks, insurance, government
 
 ### Legacy Java (Pre-8)
-
-```yaml
-legacy_java_healing:
-  key_patterns:
-    - "XML configuration (Spring XML, Hibernate HBM) encodes wiring"
-    - "EJB session beans may have transaction semantics"
-    - "Servlet filters chain ordering matters"
-    - "JNDI lookups encode deployment dependencies"
-
-  characterization:
-    - "Map all XML bean definitions"
-    - "Trace transaction boundaries"
-    - "Document filter chain ordering"
-    - "Identify ThreadLocal usage (hidden state)"
-```
+- XML configuration (Spring XML, Hibernate HBM) = wiring
+- EJB session beans = transaction semantics
+- Servlet filter chain ordering matters
+- JNDI lookups = deployment dependencies
+- ThreadLocal = hidden state
 
 ### Legacy PHP (Pre-7)
-
-```yaml
-legacy_php_healing:
-  key_patterns:
-    - "register_globals behavior (variables from URL params)"
-    - "mysql_* functions (deprecated, SQL injection risk)"
-    - "include/require with variable paths (dynamic loading)"
-    - "Session handling with custom save handlers"
-
-  characterization:
-    - "Find all superglobal access ($_GET, $_POST, $_SESSION)"
-    - "Map include/require chains"
-    - "Identify SQL queries built with string concatenation"
-    - "Document session lifecycle"
-```
+- register_globals behavior (security risk)
+- mysql_* functions (SQL injection risk)
+- include/require with variable paths (dynamic loading)
+- Session handling with custom save handlers
 
 ### Legacy Python (2.x)
-
-```yaml
-legacy_python_healing:
-  key_patterns:
-    - "print as statement vs function"
-    - "unicode/str confusion"
-    - "Integer division behavior"
-    - "Old-style classes"
-    - "except Exception, e syntax"
-
-  characterization:
-    - "Run 2to3 in report mode (don't apply)"
-    - "Test with both Python 2 and 3 to find divergences"
-    - "Map all string/bytes handling"
-    - "Document any monkey-patching"
-```
+- print statement vs function
+- unicode/str confusion
+- Integer division behavior (// vs /)
+- Old-style classes
+- Run `2to3 --no-diffs -w` in report mode first

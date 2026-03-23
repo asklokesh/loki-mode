@@ -44,7 +44,7 @@
 
 ### quality-gates.md
 **When:** Code review, pre-commit checks, quality assurance
-- 9-gate quality system
+- 10-gate quality system (Gate 10: backward compatibility for healing)
 - Blind review + anti-sycophancy
 - Velocity-quality feedback loop (arXiv research)
 - Mandatory quality checks per task
