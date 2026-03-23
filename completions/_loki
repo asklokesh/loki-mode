@@ -91,6 +91,12 @@ function _loki {
                 completions)
                     _arguments '1:shell:(bash zsh)'
                     ;;
+                context|ctx)
+                    _loki_context
+                    ;;
+                code)
+                    _loki_code
+                    ;;
             esac
             ;;
     esac
@@ -130,6 +136,8 @@ function _loki_commands {
         'onboard:Analyze repo and generate CLAUDE.md'
         'metrics:Session productivity report'
         'share:Share session report as GitHub Gist'
+        'context:Context window management'
+        'code:Codebase intelligence'
         'version:Show version'
         'completions:Output shell completions'
         'help:Show help'
@@ -341,6 +349,55 @@ function _loki_issue {
         '--dry-run[Preview without saving]' \
         '--output[Custom output path]:file:_files' \
         '1:subcommand:(parse view)'
+}
+
+function _loki_context {
+    local -a cmds
+    cmds=(
+        'show:Show context window usage breakdown'
+        'files:List files in context with token estimates'
+        'tools:Show tool token usage per origin'
+        'add:Add file to context'
+        'clear:Clear accumulated context'
+        'help:Context help'
+    )
+    _describe -t cmds 'context subcommand' cmds
+
+    case $line[1] in
+        add)
+            _files
+            ;;
+    esac
+}
+
+function _loki_code {
+    local -a cmds
+    cmds=(
+        'overview:Generate workspace overview'
+        'symbols:Search for symbols'
+        'deps:Show dependency graph'
+        'hotspots:Find code hotspots'
+        'diff:Show colored diff'
+        'help:Code help'
+    )
+    _describe -t cmds 'code subcommand' cmds
+
+    case $line[1] in
+        overview)
+            _arguments \
+                '--silent[Compact output]' \
+                '*:directory:_directories'
+            ;;
+        deps)
+            _files
+            ;;
+        hotspots)
+            _arguments \
+                '--top[Number of results]:number:'
+            ;;
+        symbols)
+            ;;
+    esac
 }
 
 _loki "$@"

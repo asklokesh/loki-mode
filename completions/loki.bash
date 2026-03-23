@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start quick demo init stop pause resume status dashboard logs serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share explain plan report test ci watch telemetry agent version completions help"
+    local main_commands="start quick demo init stop pause resume status dashboard logs serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share explain plan report test ci watch telemetry agent context code run export review optimize heal migrate cluster worktree trigger failover remote version completions help"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -180,6 +180,44 @@ _loki_completion() {
 
         completions)
             COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
+            ;;
+
+        context|ctx)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "show files tools add clear help" -- "$cur") )
+                return 0
+            fi
+            if [[ "${words[2]}" == "add" ]]; then
+                COMPREPLY=( $(compgen -f -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        code)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "overview symbols deps hotspots diff help" -- "$cur") )
+                return 0
+            fi
+            case "${words[2]}" in
+                overview)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "--silent" -- "$cur") )
+                        return 0
+                    fi
+                    _filedir -d
+                    ;;
+                deps)
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+                hotspots)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=( $(compgen -W "--top" -- "$cur") )
+                        return 0
+                    fi
+                    ;;
+                symbols)
+                    ;;
+            esac
             ;;
     esac
 }
