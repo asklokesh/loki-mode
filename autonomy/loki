@@ -37,6 +37,13 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_debug() { echo -e "${CYAN}[DEBUG]${NC} $*"; }
 
+# Source TUI library if available (spinners, progress bars, tables, diffs)
+_LOKI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_LOKI_SCRIPT_DIR/tui.sh" ]; then
+    # shellcheck source=tui.sh
+    source "$_LOKI_SCRIPT_DIR/tui.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -443,6 +450,8 @@ show_help() {
     echo "  plan <PRD>       Dry-run PRD analysis: complexity, cost, and execution plan"
     echo "  ci [opts]        CI/CD quality gate integration (--pr, --report, --github-comment)"
     echo "  test [opts]      AI-powered test generation (--file, --dir, --changed, --dry-run)"
+    echo "  context [cmd]    Context window management (show|files|tools|add|clear)"
+    echo "  code [cmd]       Codebase intelligence (overview|symbols|deps|hotspots|diff)"
     echo "  report [opts]    Session report generator (--format text|markdown|html, --output)"
     echo "  share [opts]     Share session report as GitHub Gist (--private, --format)"
     echo "  version          Show version"
@@ -1701,13 +1710,40 @@ cmd_status() {
         echo -e "${CYAN}Pending Tasks:${NC} $task_count"
     fi
 
-    # Check budget
+    # Check budget with visual gauge
     if [ -f "$LOKI_DIR/metrics/budget.json" ]; then
         local budget_limit budget_used budget_remaining
         budget_limit=$(LOKI_BUDGET_FILE="$LOKI_DIR/metrics/budget.json" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_BUDGET_FILE'])); print(d.get('budget_limit', 0))" 2>/dev/null || echo "0")
         budget_used=$(LOKI_BUDGET_FILE="$LOKI_DIR/metrics/budget.json" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_BUDGET_FILE'])); print(round(d.get('budget_used', 0), 2))" 2>/dev/null || echo "0")
         if [ "$budget_limit" != "0" ]; then
             echo -e "${CYAN}Budget:${NC} \$$budget_used / \$$budget_limit"
+            # Show budget gauge if TUI is loaded
+            if type context_gauge &>/dev/null; then
+                local used_cents remaining_cents limit_cents
+                used_cents=$(echo "scale=0; $budget_used * 100" | bc 2>/dev/null || echo "0")
+                limit_cents=$(echo "scale=0; $budget_limit * 100" | bc 2>/dev/null || echo "100")
+                # Render as integer cents for the gauge
+                used_cents=${used_cents%.*}
+                limit_cents=${limit_cents%.*}
+                [ -z "$used_cents" ] && used_cents=0
+                [ -z "$limit_cents" ] && limit_cents=100
+                context_gauge "$used_cents" "$limit_cents" "Budget"
+            fi
+        else
+            echo -e "${CYAN}Cost:${NC} \$$budget_used (no limit)"
+        fi
+    fi
+
+    # Context window usage (token tracking)
+    if [ -f "$LOKI_DIR/state/context-usage.json" ]; then
+        local ctx_used ctx_total
+        ctx_total=$(python3 -c "import json; d=json.load(open('$LOKI_DIR/state/context-usage.json')); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
+        ctx_used=$(python3 -c "import json; d=json.load(open('$LOKI_DIR/state/context-usage.json')); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
+        if type context_gauge &>/dev/null; then
+            context_gauge "$ctx_used" "$ctx_total" "Context"
+        else
+            local ctx_pct=$((ctx_used * 100 / ctx_total))
+            echo -e "${CYAN}Context:${NC} ${ctx_pct}% (${ctx_used} / ${ctx_total} tokens)"
         fi
     fi
 
@@ -1719,6 +1755,10 @@ cmd_status() {
             echo -e "${CYAN}Dashboard:${NC} http://127.0.0.1:$port/"
         fi
     fi
+
+    echo ""
+    echo -e "${DIM}  Tip: loki context show   - detailed token breakdown${NC}"
+    echo -e "${DIM}  Tip: loki code overview   - codebase intelligence${NC}"
 }
 
 # JSON output for loki status --json
@@ -10619,6 +10659,12 @@ main() {
         share)
             cmd_share "$@"
             ;;
+        context|ctx)
+            cmd_context "$@"
+            ;;
+        code)
+            cmd_code "$@"
+            ;;
         version|--version|-v)
             cmd_version
             ;;
@@ -15362,6 +15408,561 @@ METRICS_SCRIPT
             exit 1
         fi
         echo -e "${GREEN}Shared: ${gist_url}${NC}"
+    fi
+}
+
+# Context window management (inspired by Kiro CLI /context command)
+# Shows token usage breakdown and context window utilization
+cmd_context() {
+    local subcommand="${1:-show}"
+    shift 2>/dev/null || true
+
+    case "$subcommand" in
+        --help|-h|help)
+            echo -e "${BOLD}loki context${NC} - Context window management"
+            echo ""
+            echo "Usage: loki context <subcommand>"
+            echo ""
+            echo "Subcommands:"
+            echo "  show       Show context window usage breakdown (default)"
+            echo "  files      List files currently in context with token estimates"
+            echo "  tools      Show tool token usage per origin (MCP, native)"
+            echo "  add        Add file to context (@file reference expansion)"
+            echo "  clear      Clear accumulated context (start fresh conversation)"
+            echo ""
+            echo "Examples:"
+            echo "  loki context                    # Show context usage"
+            echo "  loki context files              # List context files"
+            echo "  loki context tools              # Show tool token costs"
+            echo "  loki context add src/main.py    # Add file to context"
+            echo ""
+            echo "Inspired by: Kiro CLI /context command (kiro.dev)"
+            return 0
+            ;;
+        show)
+            _context_show "$@"
+            ;;
+        files)
+            _context_files "$@"
+            ;;
+        tools)
+            _context_tools "$@"
+            ;;
+        add)
+            _context_add "$@"
+            ;;
+        clear)
+            _context_clear "$@"
+            ;;
+        *)
+            echo -e "${RED}Unknown subcommand: $subcommand${NC}"
+            echo "Run 'loki context help' for usage."
+            return 1
+            ;;
+    esac
+}
+
+_context_show() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+
+    if [ ! -d "$loki_dir" ]; then
+        echo -e "${YELLOW}No active session.${NC}"
+        return 0
+    fi
+
+    section_header "Context Window Usage" 2>/dev/null || echo -e "\n${BOLD}Context Window Usage${NC}"
+
+    # Read context tracker data if available
+    local ctx_file="$loki_dir/state/context-usage.json"
+    if [ -f "$ctx_file" ]; then
+        local total_tokens used_tokens input_tokens output_tokens cache_tokens
+        total_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
+        used_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
+        input_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('input_tokens', 0))" 2>/dev/null || echo "0")
+        output_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('output_tokens', 0))" 2>/dev/null || echo "0")
+        cache_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('cache_read_tokens', 0))" 2>/dev/null || echo "0")
+
+        # Display gauge
+        if type context_gauge &>/dev/null; then
+            context_gauge "$used_tokens" "$total_tokens" "Window"
+        else
+            local pct=$((used_tokens * 100 / total_tokens))
+            echo -e "  ${CYAN}Context:${NC} ${pct}% used (${used_tokens} / ${total_tokens} tokens)"
+        fi
+        echo ""
+
+        # Breakdown
+        echo -e "  ${BOLD}Breakdown${NC} ${DIM}(estimated)${NC}"
+        echo -e "  ${DIM}Input tokens:${NC}  $(printf '%8s' "$input_tokens")"
+        echo -e "  ${DIM}Output tokens:${NC} $(printf '%8s' "$output_tokens")"
+        echo -e "  ${DIM}Cache reads:${NC}   $(printf '%8s' "$cache_tokens")"
+    else
+        echo -e "  ${DIM}No context tracking data yet.${NC}"
+        echo -e "  ${DIM}Context usage is tracked during active sessions.${NC}"
+    fi
+
+    # Show token costs if budget file exists
+    local budget_file="$loki_dir/metrics/budget.json"
+    if [ -f "$budget_file" ]; then
+        echo ""
+        echo -e "  ${BOLD}Cost${NC}"
+        local budget_used budget_limit
+        budget_used=$(python3 -c "import json; d=json.load(open('$budget_file')); print(round(d.get('budget_used', 0), 4))" 2>/dev/null || echo "0")
+        budget_limit=$(python3 -c "import json; d=json.load(open('$budget_file')); print(d.get('budget_limit', 0))" 2>/dev/null || echo "0")
+
+        if [ "$budget_limit" != "0" ]; then
+            echo -e "  ${DIM}Spent:${NC}     \$${budget_used} / \$${budget_limit}"
+            local remaining
+            remaining=$(echo "scale=4; $budget_limit - $budget_used" | bc 2>/dev/null || echo "0")
+            echo -e "  ${DIM}Remaining:${NC} \$${remaining}"
+        else
+            echo -e "  ${DIM}Spent:${NC} \$${budget_used} (no budget limit set)"
+        fi
+    fi
+    echo ""
+}
+
+_context_files() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    local ctx_files="$loki_dir/state/context-files.json"
+
+    section_header "Context Files" 2>/dev/null || echo -e "\n${BOLD}Context Files${NC}"
+
+    if [ -f "$ctx_files" ]; then
+        python3 << 'PYEOF'
+import json, os
+
+ctx_file = os.environ.get("LOKI_DIR", ".loki") + "/state/context-files.json"
+try:
+    with open(ctx_file) as f:
+        files = json.load(f)
+    total = 0
+    for entry in files:
+        name = entry.get("path", "unknown")
+        tokens = entry.get("estimated_tokens", 0)
+        total += tokens
+        print(f"  {tokens:>8} tokens  {name}")
+    print(f"\n  {'Total:':>8}  {total} tokens")
+except Exception:
+    print("  No context files tracked yet.")
+PYEOF
+    else
+        echo -e "  ${DIM}No context files tracked.${NC}"
+        echo ""
+        echo "  Add files with: loki context add <file>"
+        echo "  Or use @path syntax in your prompt:"
+        echo "    @src/main.py    - inject file contents"
+        echo "    @src/           - inject directory tree"
+    fi
+    echo ""
+}
+
+_context_tools() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+
+    section_header "Tool Token Usage" 2>/dev/null || echo -e "\n${BOLD}Tool Token Usage${NC}"
+
+    # Read MCP config and estimate tool token usage
+    local mcp_config="$loki_dir/mcp/config.json"
+    if [ -f "$mcp_config" ]; then
+        python3 << 'PYEOF'
+import json, os
+
+config_file = os.environ.get("LOKI_DIR", ".loki") + "/mcp/config.json"
+try:
+    with open(config_file) as f:
+        config = json.load(f)
+    servers = config.get("mcpServers", {})
+    total = 0
+    for name, server in servers.items():
+        tools = server.get("tools", [])
+        # Estimate ~500 tokens per tool definition
+        est = len(tools) * 500 if tools else 500
+        total += est
+        print(f"  {est:>6} tokens  {name} ({len(tools) if tools else '?'} tools)")
+    print(f"\n  Total MCP tool overhead: ~{total} tokens per request")
+except Exception:
+    print("  No MCP servers configured.")
+PYEOF
+    else
+        echo -e "  ${DIM}Native tools only (no MCP servers configured).${NC}"
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Native tools: ~2000 tokens (bash, read, write, glob, grep)${NC}"
+    echo -e "  ${DIM}Tip: Large MCP tool descriptions impact performance.${NC}"
+    echo ""
+}
+
+_context_add() {
+    local file_path="$1"
+    if [ -z "$file_path" ]; then
+        echo -e "${RED}Usage: loki context add <file-or-dir>${NC}"
+        echo ""
+        echo "Adds a file's content (or directory tree) to the context."
+        echo "Equivalent to @path inline reference syntax."
+        return 1
+    fi
+
+    # Strip @ prefix if user types it
+    file_path="${file_path#@}"
+
+    if [ -d "$file_path" ]; then
+        echo -e "${BOLD}Directory tree: ${file_path}${NC}"
+        echo ""
+        if type tree_display &>/dev/null; then
+            tree_display "$file_path"
+        else
+            find "$file_path" -maxdepth 3 -not -path '*/\.*' | head -50
+        fi
+        echo ""
+
+        # Count files and estimate tokens
+        local file_count
+        file_count=$(find "$file_path" -type f -not -path '*/\.*' | wc -l)
+        echo -e "${DIM}$file_count files in directory${NC}"
+    elif [ -f "$file_path" ]; then
+        local size
+        size=$(wc -c < "$file_path")
+        # Rough estimate: 1 token per 4 bytes
+        local est_tokens=$((size / 4))
+        local lines
+        lines=$(wc -l < "$file_path")
+
+        echo -e "${BOLD}File: ${file_path}${NC}"
+        echo -e "  ${DIM}Size:${NC}    $size bytes"
+        echo -e "  ${DIM}Lines:${NC}   $lines"
+        echo -e "  ${DIM}Tokens:${NC}  ~$est_tokens (estimated)"
+
+        # Store in context files list
+        local loki_dir="${LOKI_DIR:-.loki}"
+        mkdir -p "$loki_dir/state"
+        local ctx_files="$loki_dir/state/context-files.json"
+        python3 -c "
+import json, os
+path = '$file_path'
+tokens = $est_tokens
+ctx_file = '$ctx_files'
+try:
+    with open(ctx_file) as f:
+        files = json.load(f)
+except:
+    files = []
+# Avoid duplicates
+files = [f for f in files if f.get('path') != path]
+files.append({'path': path, 'estimated_tokens': tokens, 'size': $size, 'lines': $lines})
+with open(ctx_file, 'w') as f:
+    json.dump(files, f, indent=2)
+" 2>/dev/null
+
+        echo -e "  ${GREEN}Added to context.${NC}"
+    else
+        echo -e "${RED}Not found: $file_path${NC}"
+        return 1
+    fi
+}
+
+_context_clear() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    rm -f "$loki_dir/state/context-files.json"
+    rm -f "$loki_dir/state/context-usage.json"
+    echo -e "${GREEN}Context cleared.${NC}"
+    echo -e "${DIM}A new conversation will start fresh.${NC}"
+}
+
+# Codebase intelligence (inspired by Kiro CLI /code command)
+# Provides workspace overview, symbol search, and pattern matching
+cmd_code() {
+    local subcommand="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$subcommand" in
+        --help|-h|help)
+            echo -e "${BOLD}loki code${NC} - Codebase intelligence"
+            echo ""
+            echo "Usage: loki code <subcommand>"
+            echo ""
+            echo "Subcommands:"
+            echo "  overview    Generate workspace overview (file types, LOC, structure)"
+            echo "  symbols     Search for symbols (functions, classes, variables)"
+            echo "  deps        Show dependency graph for a file or module"
+            echo "  hotspots    Find code hotspots (most-changed files, complexity)"
+            echo "  diff        Show colored diff of recent changes"
+            echo ""
+            echo "Examples:"
+            echo "  loki code overview                  # Full codebase overview"
+            echo "  loki code overview --silent          # Compact output"
+            echo "  loki code symbols 'class.*Service'   # Find service classes"
+            echo "  loki code deps src/main.py           # Show dependencies"
+            echo "  loki code hotspots --top 10          # Top 10 changed files"
+            echo "  loki code diff                       # Colored diff of uncommitted changes"
+            echo ""
+            echo "Inspired by: Kiro CLI /code command (kiro.dev)"
+            return 0
+            ;;
+        overview)
+            _code_overview "$@"
+            ;;
+        symbols)
+            _code_symbols "$@"
+            ;;
+        deps)
+            _code_deps "$@"
+            ;;
+        hotspots)
+            _code_hotspots "$@"
+            ;;
+        diff)
+            _code_diff "$@"
+            ;;
+        *)
+            echo -e "${RED}Unknown subcommand: $subcommand${NC}"
+            echo "Run 'loki code help' for usage."
+            return 1
+            ;;
+    esac
+}
+
+_code_overview() {
+    local silent=false
+    local target_dir="."
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --silent|-s) silent=true; shift ;;
+            *) target_dir="$1"; shift ;;
+        esac
+    done
+
+    if $silent; then
+        echo -e "${BOLD}$(basename "$(cd "$target_dir" && pwd)")${NC}"
+    else
+        section_header "Codebase Overview: $(basename "$(cd "$target_dir" && pwd)")" 2>/dev/null || echo -e "\n${BOLD}Codebase Overview${NC}"
+    fi
+
+    # Language breakdown
+    python3 << PYEOF
+import os, collections, sys
+
+target = "$target_dir"
+silent = $( $silent && echo "True" || echo "False" )
+
+# File extension to language mapping
+EXT_MAP = {
+    '.py': 'Python', '.js': 'JavaScript', '.ts': 'TypeScript', '.tsx': 'TypeScript',
+    '.jsx': 'JavaScript', '.go': 'Go', '.rs': 'Rust', '.java': 'Java',
+    '.rb': 'Ruby', '.php': 'PHP', '.c': 'C', '.cpp': 'C++', '.h': 'C/C++ Header',
+    '.cs': 'C#', '.swift': 'Swift', '.kt': 'Kotlin', '.scala': 'Scala',
+    '.sh': 'Shell', '.bash': 'Shell', '.zsh': 'Shell',
+    '.html': 'HTML', '.css': 'CSS', '.scss': 'SCSS', '.vue': 'Vue',
+    '.md': 'Markdown', '.json': 'JSON', '.yaml': 'YAML', '.yml': 'YAML',
+    '.toml': 'TOML', '.xml': 'XML', '.sql': 'SQL',
+    '.dockerfile': 'Docker', '.tf': 'Terraform', '.proto': 'Protobuf',
+}
+
+SKIP_DIRS = {'.git', 'node_modules', '.loki', '__pycache__', '.venv', 'venv',
+             'dist', 'build', '.next', 'target', '.tox', '.mypy_cache',
+             'vendor', '.cargo', 'coverage', '.pytest_cache'}
+
+lang_files = collections.Counter()
+lang_lines = collections.Counter()
+total_files = 0
+total_lines = 0
+dir_count = 0
+
+for root, dirs, files in os.walk(target):
+    # Skip hidden and build directories
+    dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith('.')]
+    dir_count += 1
+    for f in files:
+        ext = os.path.splitext(f)[1].lower()
+        if ext in EXT_MAP:
+            lang = EXT_MAP[ext]
+            lang_files[lang] += 1
+            total_files += 1
+            try:
+                fp = os.path.join(root, f)
+                lines = sum(1 for _ in open(fp, 'rb'))
+                lang_lines[lang] += lines
+                total_lines += lines
+            except:
+                pass
+
+if not silent:
+    print(f"\n  Files: {total_files}  Lines: {total_lines:,}  Dirs: {dir_count}")
+    print()
+
+# Language table
+print("  Language         Files   Lines     %")
+print("  " + "-" * 40)
+for lang, count in lang_lines.most_common(15):
+    pct = (count / total_lines * 100) if total_lines > 0 else 0
+    files = lang_files[lang]
+    bar_len = int(pct / 5)
+    bar = "=" * bar_len
+    print(f"  {lang:<16} {files:>5}  {count:>7,}  {pct:>4.1f}% {bar}")
+
+if not silent:
+    # Show directory structure (top-level)
+    print()
+    print("  Top-level structure:")
+    entries = sorted(os.listdir(target))
+    for entry in entries:
+        if entry.startswith('.') and entry not in ('.github',):
+            continue
+        full = os.path.join(target, entry)
+        if os.path.isdir(full) and entry not in SKIP_DIRS:
+            subcount = sum(1 for _, _, fs in os.walk(full) for f in fs)
+            print(f"    {entry + '/':30s} ({subcount} files)")
+        elif os.path.isfile(full):
+            size = os.path.getsize(full)
+            if size > 1024:
+                print(f"    {entry:30s} ({size // 1024}KB)")
+PYEOF
+    echo ""
+}
+
+_code_symbols() {
+    local pattern="${1:-.}"
+    local file_type="${2:-}"
+
+    section_header "Symbol Search: $pattern" 2>/dev/null || echo -e "\n${BOLD}Symbol Search${NC}"
+
+    # Search for function/class definitions using ripgrep or grep
+    local search_patterns=(
+        "^(def|function|func|fn|pub fn|async def|class|interface|struct|enum|type|export (const|function|class|interface))\s+.*${pattern}"
+    )
+
+    if command -v rg &>/dev/null; then
+        rg -n --no-heading -e "^(def |function |func |fn |pub fn |async def |class |interface |struct |enum |type |export (const|function|class|interface) ).*${pattern}" \
+            --type-add 'code:*.{py,js,ts,tsx,go,rs,java,rb,php,c,cpp,h,cs,swift,kt}' \
+            -t code \
+            --glob '!node_modules' --glob '!.git' --glob '!dist' --glob '!build' \
+            . 2>/dev/null | head -50
+    else
+        grep -rn "^\(def\|function\|func\|fn\|class\|interface\|struct\|enum\|type\).*${pattern}" \
+            --include='*.py' --include='*.js' --include='*.ts' --include='*.go' \
+            --include='*.rs' --include='*.java' --include='*.rb' \
+            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+            . 2>/dev/null | head -50
+    fi
+    echo ""
+}
+
+_code_deps() {
+    local target_file="$1"
+    if [ -z "$target_file" ]; then
+        echo -e "${RED}Usage: loki code deps <file>${NC}"
+        return 1
+    fi
+
+    section_header "Dependencies: $target_file" 2>/dev/null || echo -e "\n${BOLD}Dependencies${NC}"
+
+    if [ ! -f "$target_file" ]; then
+        echo -e "${RED}File not found: $target_file${NC}"
+        return 1
+    fi
+
+    local ext="${target_file##*.}"
+    echo -e "  ${BOLD}Imports/Requires:${NC}"
+
+    case "$ext" in
+        py)
+            grep -n "^import\|^from.*import" "$target_file" 2>/dev/null | sed 's/^/  /'
+            ;;
+        js|ts|tsx|jsx)
+            grep -n "import\|require(" "$target_file" 2>/dev/null | sed 's/^/  /'
+            ;;
+        go)
+            grep -n "\"" "$target_file" 2>/dev/null | grep -v "//" | sed 's/^/  /'
+            ;;
+        rs)
+            grep -n "^use\|^extern crate" "$target_file" 2>/dev/null | sed 's/^/  /'
+            ;;
+        java)
+            grep -n "^import" "$target_file" 2>/dev/null | sed 's/^/  /'
+            ;;
+        rb)
+            grep -n "^require\|^require_relative" "$target_file" 2>/dev/null | sed 's/^/  /'
+            ;;
+        *)
+            echo -e "  ${DIM}Unsupported file type: .$ext${NC}"
+            ;;
+    esac
+
+    echo ""
+    echo -e "  ${BOLD}Referenced by:${NC}"
+    local basename_file
+    basename_file=$(basename "$target_file" ".$ext")
+    if command -v rg &>/dev/null; then
+        rg -l "$basename_file" --glob '!node_modules' --glob '!.git' --glob '!dist' . 2>/dev/null | \
+            grep -v "^${target_file}$" | head -20 | sed 's/^/  /'
+    else
+        grep -rl "$basename_file" --exclude-dir=node_modules --exclude-dir=.git . 2>/dev/null | \
+            grep -v "^${target_file}$" | head -20 | sed 's/^/  /'
+    fi
+    echo ""
+}
+
+_code_hotspots() {
+    local top_n=10
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --top) top_n="${2:-10}"; shift 2 ;;
+            --top=*) top_n="${1#*=}"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    section_header "Code Hotspots (top $top_n)" 2>/dev/null || echo -e "\n${BOLD}Code Hotspots${NC}"
+
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo -e "  ${RED}Not a git repository.${NC}"
+        return 1
+    fi
+
+    echo -e "  ${BOLD}Most Changed Files (last 90 days):${NC}"
+    echo ""
+    git log --since="90 days ago" --pretty=format: --name-only 2>/dev/null | \
+        sort | uniq -c | sort -rn | head -"$top_n" | \
+        while read -r count file; do
+            [ -z "$file" ] && continue
+            printf "  %4d changes  %s\n" "$count" "$file"
+        done
+
+    echo ""
+    echo -e "  ${BOLD}Largest Files by LOC:${NC}"
+    echo ""
+    find . -type f \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.go' \
+        -o -name '*.rs' -o -name '*.java' -o -name '*.sh' \) \
+        -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' \
+        -exec wc -l {} \; 2>/dev/null | sort -rn | head -"$top_n" | \
+        while read -r lines file; do
+            printf "  %6d lines  %s\n" "$lines" "$file"
+        done
+    echo ""
+}
+
+_code_diff() {
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo -e "${RED}Not a git repository.${NC}"
+        return 1
+    fi
+
+    # Use delta if available, otherwise colored diff
+    if command -v delta &>/dev/null; then
+        git diff "$@" | delta
+    else
+        git diff "$@" | while IFS= read -r line; do
+            case "$line" in
+                diff*)     echo -e "${BOLD}${line}${NC}" ;;
+                ---*)      echo -e "${BOLD}${line}${NC}" ;;
+                +++*)      echo -e "${BOLD}${line}${NC}" ;;
+                @@*)       echo -e "${CYAN}${line}${NC}" ;;
+                +*)        echo -e "${GREEN}${line}${NC}" ;;
+                -*)        echo -e "${RED}${line}${NC}" ;;
+                *)         echo "$line" ;;
+            esac
+        done
     fi
 }
 
