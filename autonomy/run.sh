@@ -1699,7 +1699,10 @@ import_github_issues() {
         temp_file=$(mktemp ".loki/queue/pending.json.tmp.XXXXXX")
         local lockfile=".loki/queue/.pending.lock"
         (
-            flock -w 5 200 2>/dev/null || true
+            if ! flock -w 5 200 2>/dev/null; then
+                log_warn "Could not acquire queue lock for issue #$number, skipping"
+                exit 1
+            fi
             if jq ". += [$task_json]" "$pending_file" > "$temp_file" && mv "$temp_file" "$pending_file"; then
                 log_info "Imported issue #$number: $title"
                 task_count=$((task_count + 1))
@@ -3074,10 +3077,11 @@ invoke_cline() {
     local prompt="$1"
     shift
     local model="${LOKI_CLINE_MODEL:-}"
-    local model_flag=""
-    [[ -n "$model" ]] && model_flag="-m $model"
-    # shellcheck disable=SC2086
-    cline -y $model_flag "$prompt" "$@" 2>&1
+    if [[ -n "$model" ]]; then
+        cline -y -m "$model" "$prompt" "$@" 2>&1
+    else
+        cline -y "$prompt" "$@" 2>&1
+    fi
 }
 
 # Invoke Cline and capture output (for variable assignment)
@@ -3086,10 +3090,11 @@ invoke_cline_capture() {
     local prompt="$1"
     shift
     local model="${LOKI_CLINE_MODEL:-}"
-    local model_flag=""
-    [[ -n "$model" ]] && model_flag="-m $model"
-    # shellcheck disable=SC2086
-    cline -y $model_flag "$prompt" "$@" 2>&1
+    if [[ -n "$model" ]]; then
+        cline -y -m "$model" "$prompt" "$@" 2>&1
+    else
+        cline -y "$prompt" "$@" 2>&1
+    fi
 }
 
 #===============================================================================
@@ -9305,7 +9310,8 @@ run_autonomous() {
         # Auto-track iteration start (for dashboard task queue)
         track_iteration_start "$ITERATION_COUNT" "$prd_path"
 
-        local prompt=$(build_prompt $retry "$prd_path" $ITERATION_COUNT)
+        local prompt
+        prompt=$(build_prompt "$retry" "$prd_path" "$ITERATION_COUNT")
 
         # BUG #5 fix: Clear LOKI_HUMAN_INPUT in the parent shell after build_prompt
         # consumed it. build_prompt runs in a subshell (command substitution), so
