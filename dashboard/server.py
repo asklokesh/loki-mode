@@ -2056,9 +2056,10 @@ async def get_episode(episode_id: str):
     ep_dir = loki_dir / "memory" / "episodic"
     if not ep_dir.exists():
         raise HTTPException(status_code=404, detail="Episode not found")
+    real_loki = os.path.realpath(str(loki_dir))
     for f in ep_dir.glob("*.json"):
         resolved = os.path.realpath(f)
-        if not resolved.startswith(os.path.realpath(str(loki_dir))):
+        if not resolved.startswith(real_loki + os.sep) and resolved != real_loki:
             raise HTTPException(status_code=403, detail="Access denied")
         try:
             data = json.loads(f.read_text())
@@ -2144,9 +2145,10 @@ async def get_skill(skill_id: str):
     skills_dir = loki_dir / "memory" / "skills"
     if not skills_dir.exists():
         raise HTTPException(status_code=404, detail="Skill not found")
+    real_loki = os.path.realpath(str(loki_dir))
     for f in skills_dir.glob("*.json"):
         resolved = os.path.realpath(f)
-        if not resolved.startswith(os.path.realpath(str(loki_dir))):
+        if not resolved.startswith(real_loki + os.sep) and resolved != real_loki:
             raise HTTPException(status_code=403, detail="Access denied")
         try:
             data = json.loads(f.read_text())
@@ -3547,8 +3549,8 @@ async def get_checkpoint(checkpoint_id: str):
 
     try:
         return json.loads(metadata_file.read_text())
-    except (json.JSONDecodeError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read checkpoint: {e}")
+    except (json.JSONDecodeError, IOError):
+        raise HTTPException(status_code=500, detail="Failed to read checkpoint data")
 
 
 @app.post("/api/checkpoints", status_code=201, dependencies=[Depends(auth.require_scope("control"))])
@@ -3816,8 +3818,20 @@ async def get_logs(lines: int = 100, token: Optional[dict] = Depends(auth.get_cu
                 file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime, tz=timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%S"
                 )
-                content = _safe_read_text(log_file)
-                for raw_line in content.strip().split("\n")[-lines:]:
+                # Read only the tail to avoid loading huge files into memory
+                tail_lines = []
+                try:
+                    with open(log_file, "rb") as lf:
+                        # Seek from end to find enough lines
+                        lf.seek(0, 2)
+                        file_size = lf.tell()
+                        # Read at most 1MB from the end (plenty for any reasonable lines count)
+                        read_size = min(file_size, 1024 * 1024)
+                        lf.seek(max(0, file_size - read_size))
+                        tail_lines = lf.read().decode("utf-8", errors="replace").strip().split("\n")[-lines:]
+                except (OSError, UnicodeDecodeError):
+                    tail_lines = []
+                for raw_line in tail_lines:
                     timestamp = ""
                     level = "info"
                     message = raw_line

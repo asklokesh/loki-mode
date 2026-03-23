@@ -512,7 +512,13 @@ class MemoryStorage:
             # Load existing patterns
             if patterns_path.exists():
                 with open(patterns_path, "r") as f:
-                    patterns_file = json.load(f)
+                    try:
+                        patterns_file = json.load(f)
+                    except json.JSONDecodeError:
+                        patterns_file = {
+                            "version": self.VERSION,
+                            "patterns": []
+                        }
             else:
                 patterns_file = {
                     "version": self.VERSION,
@@ -625,7 +631,10 @@ class MemoryStorage:
                 return False
 
             with open(patterns_path, "r") as f:
-                patterns_file = json.load(f)
+                try:
+                    patterns_file = json.load(f)
+                except json.JSONDecodeError:
+                    return False
 
             # Find and update pattern
             found = False
@@ -835,7 +844,15 @@ class MemoryStorage:
         with self._file_lock(timeline_path, exclusive=True):
             if timeline_path.exists():
                 with open(timeline_path, "r") as f:
-                    timeline = json.load(f)
+                    try:
+                        timeline = json.load(f)
+                    except json.JSONDecodeError:
+                        timeline = {
+                            "version": self.VERSION,
+                            "recent_actions": [],
+                            "key_decisions": [],
+                            "active_context": {}
+                        }
             else:
                 timeline = {
                     "version": self.VERSION,
@@ -908,7 +925,15 @@ class MemoryStorage:
         with self._file_lock(timeline_path, exclusive=True):
             if timeline_path.exists():
                 with open(timeline_path, "r") as f:
-                    timeline = json.load(f)
+                    try:
+                        timeline = json.load(f)
+                    except json.JSONDecodeError:
+                        timeline = {
+                            "version": self.VERSION,
+                            "recent_actions": [],
+                            "key_decisions": [],
+                            "active_context": {}
+                        }
             else:
                 timeline = {
                     "version": self.VERSION,

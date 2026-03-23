@@ -320,12 +320,13 @@ def check_compaction_frequency(trigger, loki_dir, iteration, notifications):
             return None
 
         max_per_hour = trigger.get("max_per_hour", 3)
-        now = time.time()
-        one_hour_ago = now - 3600
+        one_hour_ago_str = datetime.fromtimestamp(
+            time.time() - 3600, tz=timezone.utc
+        ).isoformat()
 
         recent = [
             c for c in compactions
-            if c.get("timestamp", "") > datetime.fromtimestamp(one_hour_ago, tz=timezone.utc).isoformat()
+            if c.get("timestamp", "") >= one_hour_ago_str
         ]
 
         if len(recent) >= max_per_hour:

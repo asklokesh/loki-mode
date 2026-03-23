@@ -41,9 +41,9 @@ else
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 fi
 
-# JSON escape helper: handles \, ", and control characters
+# JSON escape helper: handles \, ", and control characters including newlines
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g' | awk '{if(NR>1) printf "\\n"; printf "%s", $0}'
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s//\\b/g; s//\\f/g' | awk '{if(NR>1) printf "\\n"; printf "%s", $0}'
 }
 
 # Build payload JSON

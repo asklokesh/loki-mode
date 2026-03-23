@@ -6,6 +6,7 @@ This enables CLI, API, VS Code, and MCP to communicate without shared memory.
 """
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -16,6 +17,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Generator, List, Optional, Callable
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 class EventType(str, Enum):
@@ -374,7 +377,12 @@ class EventBus:
                             try:
                                 callback(event)
                             except Exception:
-                                pass  # Don't let one callback break others
+                                logger.warning(
+                                    "Event callback %s failed for event %s",
+                                    getattr(callback, "__name__", callback),
+                                    event.type,
+                                    exc_info=True,
+                                )
                     self.mark_processed(event)
                 time.sleep(poll_interval)
 

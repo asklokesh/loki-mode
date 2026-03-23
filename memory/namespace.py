@@ -140,20 +140,20 @@ class NamespaceManager:
         lock_path = Path(str(path) + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-        lock_file = None
+        lock_file = open(lock_path, "w")
         try:
-            lock_file = open(lock_path, "w")
             lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             fcntl.flock(lock_file.fileno(), lock_type)
-            yield
-        finally:
-            if lock_file is not None:
+            try:
+                yield
+            finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-                lock_file.close()
-                try:
-                    os.remove(lock_path)
-                except OSError:
-                    pass
+        finally:
+            lock_file.close()
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
 
     def _load_registry(self) -> Dict[str, Any]:
         """Load the namespace registry with shared file lock."""
@@ -163,7 +163,10 @@ class NamespaceManager:
 
         with self._file_lock(registry_path, exclusive=False):
             with open(registry_path, "r") as f:
-                return json.load(f)
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return {"version": "1.0.0", "namespaces": {}}
 
     def _save_registry(self, registry: Dict[str, Any]) -> None:
         """Save the namespace registry with exclusive file lock."""
