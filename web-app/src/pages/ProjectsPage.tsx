@@ -6,6 +6,8 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
+import { PageTransition } from '../components/PageTransition';
+import { StaggeredList } from '../components/StaggeredList';
 import type { SessionHistoryItem } from '../api/client';
 
 type FilterTab = 'all' | 'running' | 'completed' | 'failed';
@@ -100,6 +102,7 @@ export default function ProjectsPage() {
   };
 
   return (
+    <PageTransition>
     <div className="max-w-[1400px] mx-auto px-6 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -150,7 +153,11 @@ export default function ProjectsPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StaggeredList
+          animation="fade-in-up"
+          stagger={50}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+        >
           {filtered.map((session) => (
             <ProjectCard
               key={session.id}
@@ -160,7 +167,7 @@ export default function ProjectsPage() {
               onCopyPath={() => handleCopyPath(session.path)}
             />
           ))}
-        </div>
+        </StaggeredList>
       )}
 
       {/* Delete confirmation dialog */}
@@ -196,7 +203,7 @@ export default function ProjectsPage() {
 
       {/* Notification toast */}
       {notification && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-[#36342E] text-white text-sm rounded-[5px] shadow-lg flex items-center gap-2">
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-[#36342E] text-white text-sm rounded-[5px] shadow-lg flex items-center gap-2 animate-fade-in-up animation-fill-both">
           {notification}
           <button onClick={() => setNotification(null)} className="text-white/60 hover:text-white">
             <XCircle size={14} />
@@ -204,6 +211,7 @@ export default function ProjectsPage() {
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }
 

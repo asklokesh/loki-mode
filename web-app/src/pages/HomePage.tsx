@@ -16,6 +16,8 @@ import { MemoryViewer } from '../components/MemoryViewer';
 import { ReportPanel } from '../components/ReportPanel';
 import { MetricsPanel } from '../components/MetricsPanel';
 import { SessionHistory } from '../components/SessionHistory';
+import { PageTransition } from '../components/PageTransition';
+import { AnimateOnScroll } from '../components/AnimateOnScroll';
 import type { StatusResponse, Agent, LogEntry } from '../types/api';
 
 const CYCLING_PROMPTS = [
@@ -223,9 +225,10 @@ export default function HomePage() {
 
       <div className="max-w-[1920px] mx-auto px-6 py-6 relative z-10">
         {!isRunning ? (
+          <PageTransition>
           <div className="flex flex-col items-center">
             {/* Hero section */}
-            <div className="text-center mt-12 mb-10">
+            <AnimateOnScroll animation="fade-in-up" className="text-center mt-12 mb-10">
               <h2 className="font-heading text-h1 text-[#36342E]">
                 Describe it. Build it. Ship it.
               </h2>
@@ -233,10 +236,10 @@ export default function HomePage() {
                 Type what you want to build. Purple Lab handles the rest --
                 from code to containers, autonomously.
               </p>
-            </div>
+            </AnimateOnScroll>
 
             {/* One-line quick-start input */}
-            <div className="w-full max-w-2xl">
+            <AnimateOnScroll animation="fade-in-up" delay={100} className="w-full max-w-2xl">
               <div className="relative">
                 <input
                   ref={quickInputRef}
@@ -314,11 +317,11 @@ export default function HomePage() {
                   />
                 </div>
               )}
-            </div>
+            </AnimateOnScroll>
 
             {/* Post-build actions */}
             {wasRunning && !isRunning && (
-              <div className="w-full max-w-3xl mt-6 flex flex-col gap-4">
+              <AnimateOnScroll animation="fade-in-up" delay={200} className="w-full max-w-3xl mt-6 flex flex-col gap-4">
                 <button
                   onClick={async () => {
                     try {
@@ -342,18 +345,19 @@ export default function HomePage() {
                 </div>
                 <ReportPanel visible={showReport} />
                 <MetricsPanel visible={showMetrics} />
-              </div>
+              </AnimateOnScroll>
             )}
 
-            <div className="w-full max-w-3xl mt-6">
+            <AnimateOnScroll animation="fade-in" delay={300} className="w-full max-w-3xl mt-6">
               <SessionHistory onLoadSession={handleLoadSession} />
-            </div>
+            </AnimateOnScroll>
 
-            <div className="mt-6 text-xs text-[#6B6960] flex items-center gap-2">
+            <div className="mt-6 text-xs text-[#6B6960] flex items-center gap-2 animate-fade-in animation-fill-both animation-delay-400">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-[#1FC5A8]' : 'bg-[#C45B5B]'}`} />
               {connected ? 'Connected to Purple Lab backend' : 'Waiting for backend connection...'}
             </div>
           </div>
+          </PageTransition>
         ) : (
           <>
             <ErrorBoundary name="ControlBar">

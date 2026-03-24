@@ -1,3 +1,5 @@
+@import './styles/animations.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -168,9 +170,46 @@
   /* Pattern nodes (decorative dots) */
   .dark .pattern-nodes { opacity: 0.02; }
 
+  /* Interactive element hover transitions */
+  a, button, [role="button"], input, select, textarea, summary {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { transition-duration: 0s !important; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
     .phase-active { animation: none; }
+    .animate-fade-in,
+    .animate-fade-in-up,
+    .animate-fade-in-down,
+    .animate-fade-in-left,
+    .animate-fade-in-right,
+    .animate-scale-in,
+    .animate-slide-in-right,
+    .animate-slide-in-bottom,
+    .animate-fade-out,
+    .animate-scale-out,
+    .animate-slide-out-right,
+    .animate-pulse-soft,
+    .animate-bounce-gentle,
+    .animate-shake,
+    .animate-glow,
+    .animate-float,
+    .animate-gradient-shift,
+    .animate-text-gradient,
+    .animate-typewriter,
+    .animate-confetti,
+    .animate-number-roll {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
   }
 
   /* Phase indicator pulse */

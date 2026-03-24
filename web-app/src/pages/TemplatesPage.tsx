@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
+import { PageTransition } from '../components/PageTransition';
+import { StaggeredList } from '../components/StaggeredList';
 import type { TemplateMetadata } from '../types/api';
 
 type Category = 'all' | 'Website' | 'API' | 'CLI' | 'Bot' | 'Data' | 'Other';
@@ -126,6 +128,7 @@ export default function TemplatesPage() {
   };
 
   return (
+    <PageTransition>
     <div className="max-w-[1400px] mx-auto px-6 py-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-heading text-h1 text-[#36342E]">Templates</h1>
@@ -195,7 +198,11 @@ export default function TemplatesPage() {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <StaggeredList
+          animation="scale-in"
+          stagger={50}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
+        >
           {filtered.map((t) => {
             const gradient = t.gradient || CATEGORY_GRADIENTS[t.category] || CATEGORY_GRADIENTS.Other;
             const techStack = t.tech_stack || [];
@@ -290,8 +297,9 @@ export default function TemplatesPage() {
               </div>
             );
           })}
-        </div>
+        </StaggeredList>
       )}
     </div>
+    </PageTransition>
   );
 }
