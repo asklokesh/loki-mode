@@ -29,7 +29,9 @@ import type { BuildEvent } from './BuildActivityFeed';
 import { useKeyboardShortcuts, KeyboardShortcutsModal, ShortcutsHelpButton } from './KeyboardShortcuts';
 import { CommandPalette } from './CommandPalette';
 import type { CommandItem } from './CommandPalette';
-import type { FileNode } from '../types/api';
+import { CheckpointTimeline } from './CheckpointTimeline';
+import { ChangePreview } from './ChangePreview';
+import type { FileNode, ChangePreviewData } from '../types/api';
 import type { SessionDetail } from '../api/client';
 
 interface ProjectWorkspaceProps {
@@ -453,6 +455,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   const filesChangedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [buildEvents, setBuildEvents] = useState<BuildEvent[]>([]);
+  const [changePreviewData, setChangePreviewData] = useState<ChangePreviewData | null>(null);
 
   // Subscribe to WebSocket for file_changed events
   const { subscribe } = useWebSocket();
@@ -1070,6 +1073,29 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     }
   }, [sessionData.id, refreshSession]);
 
+  const handlePreviewChanges = useCallback(async () => {
+    try {
+      const data = await api.previewChanges(sessionData.id, 'preview current changes');
+      setChangePreviewData(data);
+    } catch {
+      // Silently fail -- preview is optional
+    }
+  }, [sessionData.id]);
+
+  const handleAcceptAllChanges = useCallback(() => {
+    setChangePreviewData(null);
+    refreshSession();
+  }, [refreshSession]);
+
+  const handleAcceptSelectedChanges = useCallback((_paths: string[]) => {
+    setChangePreviewData(null);
+    refreshSession();
+  }, [refreshSession]);
+
+  const handleRejectChanges = useCallback(() => {
+    setChangePreviewData(null);
+  }, []);
+
   const fileSize = selectedFile ? findFileSize(sessionData.files, selectedFile) : undefined;
   const fileExt = selectedFileName.split('.').pop()?.toUpperCase() || '';
 
@@ -1092,7 +1118,8 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     { id: 'quick-open', label: 'Quick Open File', category: 'file' as const, icon: FileCode2, action: () => { setShowQuickOpen(true); setQuickOpenQuery(''); }, shortcut: 'Cmd+P' },
     { id: 'zen', label: 'Toggle Zen Mode', category: 'setting' as const, icon: Maximize2, action: () => toggleZenMode() },
     { id: 'sidebar', label: 'Toggle File Tree', category: 'setting' as const, icon: PanelLeftClose, action: () => setSidebarVisible(v => !v) },
-  ], [setActiveWorkspaceTab, toggleZenMode]);
+    { id: 'preview-changes', label: 'Preview Pending Changes', category: 'command' as const, icon: GitBranch, action: () => handlePreviewChanges() },
+  ], [setActiveWorkspaceTab, toggleZenMode, handlePreviewChanges]);
 
   // Derive build phase from session status for the progress bar
   const buildPhase = useMemo(() => {
@@ -1220,6 +1247,12 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
         cost={buildStatus.cost}
         startTime={buildStatus.startTime}
         isRunning={isBuilding}
+      />
+
+      {/* Checkpoint timeline */}
+      <CheckpointTimeline
+        sessionId={sessionData.id}
+        onRestore={refreshSession}
       />
 
       {/* Workspace: vertical split - top: editor, bottom: activity panel */}
@@ -1919,8 +1952,25 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
       {/* Keyboard shortcuts modal */}
       <KeyboardShortcutsModal open={showHelp} onClose={() => setShowHelp(false)} />
 
-      {/* Command palette (Cmd+K) */}
-      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} commands={paletteCommands} />
+      {/* Command palette (Cmd+K) with file search */}
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        commands={paletteCommands}
+        sessionId={sessionData.id}
+        onFileSelect={handleFileSelect}
+      />
+
+      {/* Change preview modal */}
+      {changePreviewData && (
+        <ChangePreview
+          data={changePreviewData}
+          onAcceptAll={handleAcceptAllChanges}
+          onAcceptSelected={handleAcceptSelectedChanges}
+          onReject={handleRejectChanges}
+          onClose={() => setChangePreviewData(null)}
+        />
+      )}
     </div>
   );
 }

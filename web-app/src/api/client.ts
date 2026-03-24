@@ -369,6 +369,31 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/devserver/logs${service ? `?service=${encodeURIComponent(service)}&tail=${tail}` : `?tail=${tail}`}`
     ),
 
+  // Checkpoints
+  getCheckpoints: (sessionId: string) =>
+    fetchJSON<import('../types/api').Checkpoint[]>(
+      `/sessions/${encodeURIComponent(sessionId)}/checkpoints`
+    ),
+
+  restoreCheckpoint: (sessionId: string, checkpointId: string) =>
+    fetchJSON<{ restored: boolean; checkpoint_id: string; description: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`,
+      { method: 'POST' }
+    ),
+
+  // Change preview (dry-run diffs before applying)
+  previewChanges: (sessionId: string, message: string) =>
+    fetchJSON<import('../types/api').ChangePreviewData>(
+      `/sessions/${encodeURIComponent(sessionId)}/chat/preview`,
+      { method: 'POST', body: JSON.stringify({ message }) }
+    ),
+
+  // File search within a session
+  searchFiles: (sessionId: string, query: string) =>
+    fetchJSON<import('../types/api').FileSearchResult[]>(
+      `/sessions/${encodeURIComponent(sessionId)}/files/search?q=${encodeURIComponent(query)}`
+    ),
+
   // Restart a specific Docker service
   restartService: (sessionId: string, service: string) =>
     fetchJSON<{ restarted: boolean; service: string }>(
