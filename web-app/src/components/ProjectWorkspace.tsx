@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Server, Package, Terminal,
   RefreshCw, PanelLeftClose, PanelLeftOpen, PanelBottomClose, PanelBottomOpen, Maximize2, Minimize2,
+  LayoutDashboard,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -202,7 +203,7 @@ function flattenFiles(nodes: FileNode[], prefix = ''): { path: string; name: str
   return result;
 }
 
-type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd';
+type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard';
 
 function SecretsPanel() {
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -407,6 +408,9 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
   const [zenMode, setZenMode] = useState(false);
+  const [dashboardView, setDashboardView] = useState('overview');
+  const dashboardPort = 57374;
+  const [dashboardAvailable, setDashboardAvailable] = useState<boolean | null>(null);
 
   const toggleZenMode = useCallback(() => {
     setZenMode(prev => {
@@ -592,6 +596,14 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     const interval = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [activeWorkspaceTab, sessionData.id]);
+
+  // Check if Loki Dashboard is available when dashboard tab is active
+  useEffect(() => {
+    if (activeWorkspaceTab !== 'dashboard') return;
+    fetch(`http://127.0.0.1:${dashboardPort}/health`)
+      .then(r => setDashboardAvailable(r.ok))
+      .catch(() => setDashboardAvailable(false));
+  }, [activeWorkspaceTab]);
 
   // (auto-start moved after handleStartDevServer declaration)
 
@@ -1141,6 +1153,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                       { id: 'config' as const, label: 'Config', icon: Settings2 },
                       { id: 'secrets' as const, label: 'Secrets', icon: KeyRound },
                       { id: 'prd' as const, label: 'PRD', icon: PrdIcon },
+                      { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
                     ]).map(tab => (
                       <button
                         key={tab.id}
@@ -1588,6 +1601,72 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                           )}
                         </div>
                       </div>
+                    )}
+
+                    {activeWorkspaceTab === 'dashboard' && (
+                      dashboardAvailable === false ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-8 gap-4">
+                          <LayoutDashboard size={48} className="text-muted/30" />
+                          <h3 className="text-lg font-heading font-bold text-ink">Dashboard Not Running</h3>
+                          <p className="text-sm text-muted max-w-md">
+                            The Loki Dashboard provides task boards, RARV timeline, quality gates, and cost tracking.
+                            Start it to see project analytics.
+                          </p>
+                          <button
+                            onClick={async () => {
+                              setDashboardAvailable(null);
+                              try {
+                                const r = await fetch(`http://127.0.0.1:${dashboardPort}/health`);
+                                setDashboardAvailable(r.ok);
+                              } catch {
+                                setDashboardAvailable(false);
+                              }
+                            }}
+                            className="px-4 py-2 text-sm font-medium rounded-btn bg-primary text-white hover:bg-primary-hover"
+                          >
+                            Check Again
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="h-full flex flex-col">
+                          {/* Dashboard sub-nav */}
+                          <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-hover flex-shrink-0">
+                            {[
+                              { id: 'overview', label: 'Overview' },
+                              { id: 'tasks', label: 'Tasks' },
+                              { id: 'timeline', label: 'RARV Timeline' },
+                              { id: 'quality', label: 'Quality' },
+                              { id: 'cost', label: 'Cost' },
+                            ].map(view => (
+                              <button
+                                key={view.id}
+                                onClick={() => setDashboardView(view.id)}
+                                className={`px-3 py-1.5 text-xs font-medium rounded-btn transition-colors ${
+                                  dashboardView === view.id ? 'bg-primary/10 text-primary' : 'text-muted hover:text-ink hover:bg-hover'
+                                }`}
+                              >
+                                {view.label}
+                              </button>
+                            ))}
+                            <div className="flex-1" />
+                            <a
+                              href={`http://127.0.0.1:${dashboardPort}/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-muted hover:text-primary flex items-center gap-1"
+                            >
+                              Open full dashboard <ExternalLink size={12} />
+                            </a>
+                          </div>
+                          {/* Embedded iframe */}
+                          <iframe
+                            src={`http://127.0.0.1:${dashboardPort}/#${dashboardView}`}
+                            className="flex-1 w-full border-none"
+                            title="Loki Dashboard"
+                            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+                          />
+                        </div>
+                      )
                     )}
                   </div>
                 </div>
