@@ -513,7 +513,7 @@ async def agent_card() -> dict:
             "multi_tenant": True,
             "rbac": True,
             "audit_log": True,
-            "sso": False,
+            "sso": auth.is_oidc_mode(),
         },
         "authentication": {
             "schemes": ["bearer", "api-key"],

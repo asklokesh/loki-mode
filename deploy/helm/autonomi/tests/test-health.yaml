@@ -19,5 +19,5 @@ spec:
           response=$(curl --fail --silent --show-error --max-time 10 \
             "http://{{ include "autonomi.fullname" . }}-controlplane:{{ .Values.service.port }}/api/status")
           echo "$response"
-          echo "$response" | python3 -c "import sys, json; json.load(sys.stdin)" 2>/dev/null || \
-          echo "$response" | grep -q '{' || exit 1
+          # Verify response looks like valid JSON (starts with '{' and ends with '}')
+          echo "$response" | grep -q '^{.*}$' || exit 1
