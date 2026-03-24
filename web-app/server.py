@@ -5639,6 +5639,326 @@ def _pty_read(pty: "pexpect.spawn") -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint Timeline (Sprint 3.1)
+# ---------------------------------------------------------------------------
+
+
+def _get_checkpoints_dir(session_dir: Path) -> Path:
+    """Return the checkpoints directory for a session."""
+    return session_dir / ".loki" / "checkpoints"
+
+
+def _list_checkpoints(session_dir: Path) -> list[dict]:
+    """List all checkpoints for a session, sorted by timestamp."""
+    cp_dir = _get_checkpoints_dir(session_dir)
+    checkpoints: list[dict] = []
+
+    if not cp_dir.is_dir():
+        return checkpoints
+
+    for entry in sorted(cp_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        meta_file = entry / "meta.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text())
+                checkpoints.append({
+                    "id": entry.name,
+                    "timestamp": meta.get("timestamp", ""),
+                    "description": meta.get("description", f"Checkpoint {entry.name}"),
+                    "iteration": meta.get("iteration", 0),
+                    "files_changed": meta.get("files_changed", 0),
+                    "is_current": False,
+                })
+            except (json.JSONDecodeError, OSError):
+                checkpoints.append({
+                    "id": entry.name,
+                    "timestamp": "",
+                    "description": f"Checkpoint {entry.name}",
+                    "iteration": 0,
+                    "files_changed": 0,
+                    "is_current": False,
+                })
+        else:
+            # Create entry from directory name
+            checkpoints.append({
+                "id": entry.name,
+                "timestamp": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.localtime(entry.stat().st_mtime)
+                ),
+                "description": f"Checkpoint {entry.name}",
+                "iteration": 0,
+                "files_changed": 0,
+                "is_current": False,
+            })
+
+    # Mark the latest as current
+    if checkpoints:
+        checkpoints[-1]["is_current"] = True
+
+    return checkpoints
+
+
+@app.get("/api/sessions/{session_id}/checkpoints")
+async def get_checkpoints(session_id: str) -> JSONResponse:
+    """List all checkpoints for a session."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    checkpoints = _list_checkpoints(target)
+    return JSONResponse(content=checkpoints)
+
+
+@app.post("/api/sessions/{session_id}/checkpoints/{cp_id}/restore")
+async def restore_checkpoint(session_id: str, cp_id: str) -> JSONResponse:
+    """Restore a session to a specific checkpoint."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not re.match(r"^[a-zA-Z0-9._-]+$", cp_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid checkpoint ID"})
+
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    cp_dir = _get_checkpoints_dir(target) / cp_id
+    if not cp_dir.is_dir():
+        return JSONResponse(status_code=404, content={"error": "Checkpoint not found"})
+
+    # Restore files from checkpoint snapshot
+    snapshot_dir = cp_dir / "snapshot"
+    if snapshot_dir.is_dir():
+        import shutil
+        # Copy snapshot files back to project root, preserving existing .loki dir
+        for item in snapshot_dir.rglob("*"):
+            if item.is_file():
+                rel = item.relative_to(snapshot_dir)
+                dest = target / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(item), str(dest))
+
+    description = f"Restored to checkpoint {cp_id}"
+    meta_file = cp_dir / "meta.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            description = meta.get("description", description)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return JSONResponse(content={
+        "restored": True,
+        "checkpoint_id": cp_id,
+        "description": description,
+    })
+
+
+# ---------------------------------------------------------------------------
+# File Search (Sprint 3.3)
+# ---------------------------------------------------------------------------
+
+
+def _flatten_file_tree(nodes: list[dict], results: list[dict]) -> None:
+    """Recursively flatten a file tree into a list of file entries."""
+    for node in nodes:
+        results.append({
+            "path": node["path"],
+            "name": node["name"],
+            "type": node["type"],
+            "size": node.get("size"),
+        })
+        if node.get("children"):
+            _flatten_file_tree(node["children"], results)
+
+
+@app.get("/api/sessions/{session_id}/files/search")
+async def search_session_files(session_id: str, q: str = "") -> JSONResponse:
+    """Search files in a session project by name/path."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    if not q.strip():
+        return JSONResponse(content=[])
+
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    tree = _build_file_tree(target)
+    all_files: list[dict] = []
+    _flatten_file_tree(tree, all_files)
+
+    query = q.strip().lower()
+    results = [
+        f for f in all_files
+        if query in f["path"].lower() or query in f["name"].lower()
+    ]
+    # Return at most 50 results, files first, then directories
+    results.sort(key=lambda f: (f["type"] != "file", f["path"].lower()))
+    return JSONResponse(content=results[:50])
+
+
+# ---------------------------------------------------------------------------
+# Change Preview (Sprint 3.2)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/sessions/{session_id}/chat/preview")
+async def preview_chat_changes(session_id: str, req: ChatRequest) -> JSONResponse:
+    """Preview what changes a chat message would make (dry-run diff).
+
+    Uses git diff to show what would change without actually applying.
+    Returns structured diff data for the ChangePreview modal.
+    """
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # For the preview, we parse the current git status to generate mock diffs
+    # showing the pending unstaged/staged changes. In production this would
+    # invoke the LLM in dry-run mode, but for now we show actual pending changes.
+    files: list[dict] = []
+    total_add = 0
+    total_del = 0
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["git", "diff", "--numstat", "HEAD"],
+            capture_output=True, text=True, cwd=str(target), timeout=10
+        ))
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                parts = line.split("\t")
+                if len(parts) == 3:
+                    additions = int(parts[0]) if parts[0] != "-" else 0
+                    deletions = int(parts[1]) if parts[1] != "-" else 0
+                    filepath = parts[2]
+                    total_add += additions
+                    total_del += deletions
+
+                    # Get the actual diff hunks for this file
+                    diff_result = await loop.run_in_executor(None, lambda fp=filepath: subprocess.run(
+                        ["git", "diff", "HEAD", "--", fp],
+                        capture_output=True, text=True, cwd=str(target), timeout=10
+                    ))
+                    hunks = _parse_diff_hunks(diff_result.stdout if diff_result.returncode == 0 else "")
+
+                    action = "modify"
+                    files.append({
+                        "path": filepath,
+                        "action": action,
+                        "additions": additions,
+                        "deletions": deletions,
+                        "hunks": hunks,
+                    })
+
+        # Also check for untracked files
+        untracked_result = await loop.run_in_executor(None, lambda: subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=str(target), timeout=10
+        ))
+        if untracked_result.returncode == 0 and untracked_result.stdout.strip():
+            for filepath in untracked_result.stdout.strip().splitlines()[:20]:
+                try:
+                    fpath = target / filepath
+                    if fpath.is_file():
+                        content = fpath.read_text(errors="replace")
+                        line_count = len(content.splitlines())
+                        total_add += line_count
+                        lines = [
+                            {"type": "add", "content": l, "new_line": i + 1}
+                            for i, l in enumerate(content.splitlines()[:100])
+                        ]
+                        files.append({
+                            "path": filepath,
+                            "action": "add",
+                            "additions": line_count,
+                            "deletions": 0,
+                            "hunks": [{"old_start": 0, "old_count": 0, "new_start": 1, "new_count": line_count, "lines": lines}],
+                        })
+                except (OSError, UnicodeDecodeError):
+                    pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    return JSONResponse(content={
+        "session_id": session_id,
+        "message": req.message,
+        "files": files,
+        "total_additions": total_add,
+        "total_deletions": total_del,
+    })
+
+
+def _parse_diff_hunks(diff_text: str) -> list[dict]:
+    """Parse unified diff output into structured hunks."""
+    hunks: list[dict] = []
+    if not diff_text:
+        return hunks
+
+    current_hunk: Optional[dict] = None
+    old_line = 0
+    new_line = 0
+
+    for line in diff_text.splitlines():
+        if line.startswith("@@"):
+            # Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
+            if current_hunk:
+                hunks.append(current_hunk)
+            match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if match:
+                old_line = int(match.group(1))
+                new_line = int(match.group(3))
+                current_hunk = {
+                    "old_start": old_line,
+                    "old_count": int(match.group(2) or 1),
+                    "new_start": new_line,
+                    "new_count": int(match.group(4) or 1),
+                    "lines": [],
+                }
+            continue
+
+        if current_hunk is None:
+            continue
+
+        if line.startswith("+"):
+            current_hunk["lines"].append({
+                "type": "add",
+                "content": line[1:],
+                "new_line": new_line,
+            })
+            new_line += 1
+        elif line.startswith("-"):
+            current_hunk["lines"].append({
+                "type": "delete",
+                "content": line[1:],
+                "old_line": old_line,
+            })
+            old_line += 1
+        elif line.startswith(" "):
+            current_hunk["lines"].append({
+                "type": "context",
+                "content": line[1:],
+                "old_line": old_line,
+                "new_line": new_line,
+            })
+            old_line += 1
+            new_line += 1
+
+    if current_hunk:
+        hunks.append(current_hunk)
+
+    # Limit to 50 hunks max to prevent huge responses
+    return hunks[:50]
+
+
+# ---------------------------------------------------------------------------
 # Static file serving (built React app)
 # ---------------------------------------------------------------------------
 

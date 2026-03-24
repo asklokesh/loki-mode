@@ -79,3 +79,50 @@ export interface FileNode {
   children?: FileNode[];
   size?: number;
 }
+
+export interface Checkpoint {
+  id: string;
+  timestamp: string;
+  description: string;
+  iteration: number;
+  files_changed: number;
+  is_current: boolean;
+}
+
+export interface FileDiff {
+  path: string;
+  action: 'add' | 'modify' | 'delete';
+  additions: number;
+  deletions: number;
+  hunks: DiffHunk[];
+}
+
+export interface DiffHunk {
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines: DiffLine[];
+}
+
+export interface DiffLine {
+  type: 'add' | 'delete' | 'context';
+  content: string;
+  old_line?: number;
+  new_line?: number;
+}
+
+export interface ChangePreviewData {
+  session_id: string;
+  message: string;
+  files: FileDiff[];
+  total_additions: number;
+  total_deletions: number;
+}
+
+export interface FileSearchResult {
+  path: string;
+  name: string;
+  type: 'file' | 'directory';
+  size?: number;
+}
