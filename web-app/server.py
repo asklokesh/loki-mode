@@ -2430,13 +2430,17 @@ def _load_secrets() -> dict[str, str]:
 
 def _save_secrets(secrets: dict[str, str]) -> None:
     """Save secrets to disk, encrypting values if PURPLE_LAB_SECRET_KEY is set."""
-    from crypto import encrypt_value, encryption_available
     _SECRETS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if encryption_available():
-        encrypted = {k: encrypt_value(v) for k, v in secrets.items()}
-        _SECRETS_FILE.write_text(json.dumps(encrypted, indent=2))
-    else:
-        _SECRETS_FILE.write_text(json.dumps(secrets, indent=2))
+    try:
+        from crypto import encrypt_value, encryption_available
+        if encryption_available():
+            encrypted = {k: encrypt_value(v) for k, v in secrets.items()}
+            _SECRETS_FILE.write_text(json.dumps(encrypted, indent=2))
+            return
+    except ImportError:
+        pass
+    # Fallback: save as plaintext when crypto module is not available
+    _SECRETS_FILE.write_text(json.dumps(secrets, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -2506,6 +2510,16 @@ async def start_session(req: StartRequest) -> JSONResponse:
         project_dir = req.projectDir
         if not project_dir:
             project_dir = os.path.join(Path.home(), "purple-lab-projects", f"project-{int(time.time() * 1000)}")
+        else:
+            # Validate user-supplied path stays within home directory
+            try:
+                resolved_dir = Path(project_dir).resolve()
+                resolved_dir.relative_to(Path.home().resolve())
+            except (ValueError, OSError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Project directory must be within your home directory"},
+                )
         os.makedirs(project_dir, exist_ok=True)
 
         # Write PRD to a temp file in the project dir
@@ -2958,15 +2972,16 @@ async def get_prd_prefill() -> JSONResponse:
 @app.post("/api/session/pause")
 async def pause_session() -> JSONResponse:
     """Pause the current loki session by sending SIGUSR1."""
-    if not session.running or session.process is None:
-        return JSONResponse(content={"paused": False, "message": "No session running"})
-    try:
-        os.kill(session.process.pid, signal.SIGUSR1)
-    except ProcessLookupError:
-        return JSONResponse(content={"paused": False, "message": "Process not found"})
-    except Exception as e:
-        return JSONResponse(content={"paused": False, "message": str(e)})
-    session.paused = True
+    async with session._lock:
+        if not session.running or session.process is None:
+            return JSONResponse(content={"paused": False, "message": "No session running"})
+        try:
+            os.kill(session.process.pid, signal.SIGUSR1)
+        except ProcessLookupError:
+            return JSONResponse(content={"paused": False, "message": "Process not found"})
+        except Exception as e:
+            return JSONResponse(content={"paused": False, "message": str(e)})
+        session.paused = True
     await _broadcast({"type": "session_paused", "data": {}})
     return JSONResponse(content={"paused": True})
 
@@ -2974,15 +2989,16 @@ async def pause_session() -> JSONResponse:
 @app.post("/api/session/resume")
 async def resume_session() -> JSONResponse:
     """Resume the current loki session by sending SIGUSR2."""
-    if not session.running or session.process is None:
-        return JSONResponse(content={"resumed": False, "message": "No session running"})
-    try:
-        os.kill(session.process.pid, signal.SIGUSR2)
-    except ProcessLookupError:
-        return JSONResponse(content={"resumed": False, "message": "Process not found"})
-    except Exception as e:
-        return JSONResponse(content={"resumed": False, "message": str(e)})
-    session.paused = False
+    async with session._lock:
+        if not session.running or session.process is None:
+            return JSONResponse(content={"resumed": False, "message": "No session running"})
+        try:
+            os.kill(session.process.pid, signal.SIGUSR2)
+        except ProcessLookupError:
+            return JSONResponse(content={"resumed": False, "message": "Process not found"})
+        except Exception as e:
+            return JSONResponse(content={"resumed": False, "message": str(e)})
+        session.paused = False
     await _broadcast({"type": "session_resumed", "data": {}})
     return JSONResponse(content={"resumed": True})
 
@@ -3395,7 +3411,7 @@ async def get_sessions_history() -> JSONResponse:
                 continue
             session_info: dict = {
                 "id": entry.name,
-                "path": str(entry),
+                "path": f"~/purple-lab-projects/{entry.name}" if "purple-lab" in str(base_dir) else f"~/.loki/sessions/{entry.name}",
                 "date": "",
                 "prd_snippet": "",
                 "status": _infer_session_status(entry),
@@ -3479,7 +3495,7 @@ async def delete_session(session_id: str) -> JSONResponse:
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to delete: {e}"})
 
-    return JSONResponse(content={"deleted": True, "path": str(target)})
+    return JSONResponse(content={"deleted": True, "session_id": session_id})
 
 
 @app.get("/api/sessions/{session_id}")
@@ -3675,6 +3691,8 @@ async def create_session_file(session_id: str, req: FileWriteRequest) -> JSONRes
         return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
     if not req.path:
         return JSONResponse(status_code=400, content={"error": "Path is required"})
+    if len(req.content.encode("utf-8", errors="replace")) > 1_048_576:
+        return JSONResponse(status_code=413, content={"error": "Content exceeds 1 MB limit"})
 
     search_dirs = [
         Path.home() / "purple-lab-projects",
@@ -4185,6 +4203,7 @@ async def fix_session(session_id: str) -> JSONResponse:
                 start_new_session=True,
             )
             task.process = proc
+            _track_child_pid(proc.pid)
             loop = asyncio.get_running_loop()
 
             def _read() -> None:
@@ -4224,6 +4243,9 @@ async def fix_session(session_id: str) -> JSONResponse:
                 except (ProcessLookupError, OSError):
                     proc.kill()
                 proc.wait()
+        # Untrack the child PID now that the fix process is done
+        if proc is not None:
+            _untrack_child_pid(proc.pid)
         task.complete = True
 
     asyncio.create_task(run_fix())
@@ -4318,6 +4340,8 @@ async def set_secret(req: SecretRequest) -> JSONResponse:
 @app.delete("/api/secrets/{key}")
 async def delete_secret(key: str) -> JSONResponse:
     """Delete a secret."""
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key):
+        return JSONResponse(status_code=400, content={"error": "Invalid key format"})
     secrets = _load_secrets()
     if key not in secrets:
         return JSONResponse(status_code=404, content={"error": "Secret not found"})
