@@ -168,6 +168,27 @@
   /* Pattern nodes (decorative dots) */
   .dark .pattern-nodes { opacity: 0.02; }
 
+  /* Footer dark mode */
+  .dark .bg-\[\#F0EDE8\] { background-color: #141416 !important; }
+
+  /* How It Works / Template Showcase / Benefit Cards dark mode */
+  .dark .bg-\[\#FAF9F6\] { background-color: #0F0F11 !important; }
+  .dark .bg-gradient-to-br { --tw-gradient-from-opacity: 0.15; }
+
+  /* CTA gradient card dark mode */
+  .dark .from-\[\#553DE9\]\/5 { --tw-gradient-from: rgba(85, 61, 233, 0.1) !important; }
+  .dark .via-\[\#553DE9\]\/10 { --tw-gradient-via: rgba(85, 61, 233, 0.15) !important; }
+  .dark .to-\[\#1FC5A8\]\/5 { --tw-gradient-to: rgba(31, 197, 168, 0.08) !important; }
+  .dark .border-\[\#553DE9\]\/15 { border-color: rgba(123, 107, 239, 0.25) !important; }
+  .dark .border-\[\#553DE9\]\/30 { border-color: rgba(123, 107, 239, 0.35) !important; }
+  .dark .border-\[\#553DE9\]\/40 { border-color: rgba(123, 107, 239, 0.4) !important; }
+  .dark .hover\:border-\[\#553DE9\]\/30:hover { border-color: rgba(123, 107, 239, 0.4) !important; }
+  .dark .hover\:border-\[\#553DE9\]\/40:hover { border-color: rgba(123, 107, 239, 0.5) !important; }
+
+  /* Hide scrollbar for template showcase */
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0s !important; }
     .phase-active { animation: none; }

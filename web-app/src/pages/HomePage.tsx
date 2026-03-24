@@ -16,6 +16,11 @@ import { MemoryViewer } from '../components/MemoryViewer';
 import { ReportPanel } from '../components/ReportPanel';
 import { MetricsPanel } from '../components/MetricsPanel';
 import { SessionHistory } from '../components/SessionHistory';
+import { TrustedBy } from '../components/TrustedBy';
+import { HowItWorks } from '../components/HowItWorks';
+import { TemplateShowcase } from '../components/TemplateShowcase';
+import { BenefitCards } from '../components/BenefitCards';
+import { Footer } from '../components/Footer';
 import type { StatusResponse, Agent, LogEntry } from '../types/api';
 
 const CYCLING_PROMPTS = [
@@ -50,6 +55,7 @@ export default function HomePage() {
   const [promptIndex, setPromptIndex] = useState(0);
   const [placeholderFading, setPlaceholderFading] = useState(false);
   const quickInputRef = useRef<HTMLInputElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
 
   // Cycling placeholder animation
   useEffect(() => {
@@ -225,7 +231,7 @@ export default function HomePage() {
         {!isRunning ? (
           <div className="flex flex-col items-center">
             {/* Hero section */}
-            <div className="text-center mt-12 mb-10">
+            <div ref={heroRef} className="text-center mt-12 mb-10">
               <h2 className="font-heading text-h1 text-[#36342E]">
                 Describe it. Build it. Ship it.
               </h2>
@@ -353,6 +359,49 @@ export default function HomePage() {
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-[#1FC5A8]' : 'bg-[#C45B5B]'}`} />
               {connected ? 'Connected to Purple Lab backend' : 'Waiting for backend connection...'}
             </div>
+
+            {/* --- Below the fold sections --- */}
+
+            {/* 1. Trusted By */}
+            <TrustedBy />
+
+            {/* 2. How It Works */}
+            <HowItWorks />
+
+            {/* 3. Template Showcase */}
+            <TemplateShowcase />
+
+            {/* 4. Why Loki Mode (Benefit Cards) */}
+            <BenefitCards />
+
+            {/* 5. Call to Action */}
+            <section className="w-full max-w-3xl mx-auto py-16">
+              <div className="rounded-2xl bg-gradient-to-br from-[#553DE9]/5 via-[#553DE9]/10 to-[#1FC5A8]/5 border border-[#553DE9]/15 p-10 text-center">
+                <h2 className="font-heading text-h2 text-[#36342E] mb-3">
+                  Ready to build something amazing?
+                </h2>
+                <p className="text-sm text-[#6B6960] mb-6 max-w-md mx-auto">
+                  Go from idea to deployed product in minutes, not months. Let AI handle the heavy lifting.
+                </p>
+                <div className="flex items-center justify-center gap-3 flex-wrap">
+                  <button
+                    onClick={() => {
+                      heroRef.current?.scrollIntoView({ behavior: 'smooth' });
+                      setTimeout(() => quickInputRef.current?.focus(), 500);
+                    }}
+                    className="px-8 py-3 rounded-xl text-base font-semibold bg-[#553DE9] text-white hover:bg-[#4832c7] shadow-lg shadow-[#553DE9]/25 hover:shadow-xl hover:shadow-[#553DE9]/30 active:scale-[0.98] transition-all"
+                  >
+                    Start Building
+                  </button>
+                  <button
+                    onClick={() => navigate('/templates')}
+                    className="px-8 py-3 rounded-xl text-base font-semibold border border-[#553DE9]/30 text-[#553DE9] hover:bg-[#553DE9]/5 transition-all"
+                  >
+                    View Templates
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
         ) : (
           <>
@@ -421,6 +470,9 @@ export default function HomePage() {
           </>
         )}
       </div>
+
+      {/* Footer (only shown when not building) */}
+      {!isRunning && <Footer />}
     </div>
   );
 }
