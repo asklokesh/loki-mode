@@ -1975,6 +1975,12 @@ def _diagnose_errors(logs: str) -> list[dict]:
         (r"npm ERR!|npm error",
          lambda m: {"pattern": "npm_error", "diagnosis": "npm encountered an error",
                      "suggestion": "Check package.json for invalid dependencies or run 'npm install' manually."}),
+        (r"ENOTEMPTY.*node_modules|rename.*node_modules.*ENOTEMPTY",
+         lambda m: {"pattern": "node_modules_volume_conflict", "diagnosis": "Docker volume conflict with node_modules",
+                     "suggestion": "Replace named volume with anonymous volume in docker-compose.yml: use '- /app/node_modules' instead of '- name:/app/node_modules'. Then run 'docker compose down -v && docker compose up --build'."}),
+        (r"EACCES.*permission denied|EPERM.*operation not permitted",
+         lambda m: {"pattern": "permission_denied", "diagnosis": "File permission error in container",
+                     "suggestion": "Check Dockerfile USER directive and volume mount permissions. May need 'chown' in Dockerfile."}),
     ]
     seen: set[str] = set()
     for pattern, handler in patterns:
