@@ -222,4 +222,138 @@
   .quick-input-placeholder-exit {
     animation: placeholder-fade-out 0.3s ease-in forwards;
   }
+
+  /* ---- Enhancement A1: Hero animated constellation background ---- */
+  .hero-bg {
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-bg::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(ellipse 600px 400px at 30% 20%, rgba(85, 61, 233, 0.06), transparent),
+      radial-gradient(ellipse 500px 350px at 70% 70%, rgba(214, 51, 132, 0.04), transparent),
+      radial-gradient(ellipse 400px 300px at 50% 50%, rgba(47, 113, 227, 0.03), transparent);
+  }
+  .hero-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      radial-gradient(circle, rgba(85, 61, 233, 0.15) 1px, transparent 1px),
+      radial-gradient(circle, rgba(85, 61, 233, 0.10) 1px, transparent 1px),
+      radial-gradient(circle, rgba(85, 61, 233, 0.08) 1px, transparent 1px);
+    background-size: 180px 180px, 120px 120px, 90px 90px;
+    background-position: 0 0, 60px 60px, 30px 90px;
+    animation: constellation-drift 60s linear infinite;
+  }
+  @keyframes constellation-drift {
+    0% { transform: translate(0, 0); }
+    50% { transform: translate(-20px, -15px); }
+    100% { transform: translate(0, 0); }
+  }
+  .dark .hero-bg::before {
+    background:
+      radial-gradient(ellipse 600px 400px at 30% 20%, rgba(85, 61, 233, 0.10), transparent),
+      radial-gradient(ellipse 500px 350px at 70% 70%, rgba(214, 51, 132, 0.06), transparent),
+      radial-gradient(ellipse 400px 300px at 50% 50%, rgba(47, 113, 227, 0.05), transparent);
+  }
+  .dark .hero-bg::after {
+    background-image:
+      radial-gradient(circle, rgba(123, 107, 239, 0.20) 1px, transparent 1px),
+      radial-gradient(circle, rgba(123, 107, 239, 0.12) 1px, transparent 1px),
+      radial-gradient(circle, rgba(123, 107, 239, 0.08) 1px, transparent 1px);
+    background-size: 180px 180px, 120px 120px, 90px 90px;
+    background-position: 0 0, 60px 60px, 30px 90px;
+  }
+
+  /* ---- Enhancement A2: Typing cursor blink ---- */
+  @keyframes typing-cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  .typing-cursor {
+    animation: typing-cursor-blink 0.8s step-end infinite;
+    font-weight: 300;
+    color: #553DE9;
+  }
+  .dark .typing-cursor {
+    color: #7B6BEF;
+  }
+
+  /* ---- Enhancement A6: Gradient text effect ---- */
+  .gradient-text {
+    background: linear-gradient(135deg, #553DE9, #D63384, #2F71E3);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* ---- Enhancement A9: Input focus glow ---- */
+  .input-glow:focus {
+    box-shadow: 0 0 0 3px rgba(85, 61, 233, 0.15), 0 0 20px rgba(85, 61, 233, 0.08);
+  }
+  .dark .input-glow:focus {
+    box-shadow: 0 0 0 3px rgba(123, 107, 239, 0.20), 0 0 20px rgba(123, 107, 239, 0.12);
+  }
+
+  /* ---- Enhancement A7: Suggestion chip hover glow ---- */
+  .chip-glow {
+    position: relative;
+  }
+  .chip-glow:hover {
+    box-shadow: 0 0 12px rgba(85, 61, 233, 0.20), 0 2px 8px rgba(85, 61, 233, 0.10);
+  }
+  .dark .chip-glow:hover {
+    box-shadow: 0 0 12px rgba(123, 107, 239, 0.25), 0 2px 8px rgba(123, 107, 239, 0.15);
+  }
+
+  /* ---- Enhancement A4: Showcase carousel auto-scroll ---- */
+  .showcase-scroll {
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .showcase-scroll::-webkit-scrollbar { display: none; }
+  .showcase-card {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+  }
+
+  /* ---- Enhancement A3: Animated counter ---- */
+  @keyframes count-up-fade {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .counter-animate {
+    animation: count-up-fade 0.6s ease-out forwards;
+  }
+
+  /* ---- Enhancement A5: How it works connector ---- */
+  .step-connector {
+    border-top: 2px dashed #ECEAE3;
+  }
+  .dark .step-connector {
+    border-top: 2px dashed #2A2A30;
+  }
+
+  /* ---- Enhancement A4: Showcase card gradients ---- */
+  .showcase-gradient-1 { background: linear-gradient(135deg, #553DE9, #7B6BEF); }
+  .showcase-gradient-2 { background: linear-gradient(135deg, #D63384, #E06AAA); }
+  .showcase-gradient-3 { background: linear-gradient(135deg, #2F71E3, #5B9AEF); }
+  .showcase-gradient-4 { background: linear-gradient(135deg, #1FC5A8, #3DD9BD); }
+  .showcase-gradient-5 { background: linear-gradient(135deg, #E8A838, #F0C060); }
+  .showcase-gradient-6 { background: linear-gradient(135deg, #C45B5B, #D88080); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-bg::after { animation: none; }
+    .typing-cursor { animation: none; opacity: 1; }
+    .counter-animate { animation: none; opacity: 1; }
+  }
 }
