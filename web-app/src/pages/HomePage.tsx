@@ -16,6 +16,9 @@ import { MemoryViewer } from '../components/MemoryViewer';
 import { ReportPanel } from '../components/ReportPanel';
 import { MetricsPanel } from '../components/MetricsPanel';
 import { SessionHistory } from '../components/SessionHistory';
+import { Showcase } from '../components/Showcase';
+import { OpenSourceStats } from '../components/OpenSourceStats';
+import { NewsletterSignup } from '../components/NewsletterSignup';
 import type { StatusResponse, Agent, LogEntry } from '../types/api';
 
 const CYCLING_PROMPTS = [
@@ -78,6 +81,17 @@ export default function HomePage() {
         .catch(() => {
           // Template load failed -- ignore, user can still type manually
         });
+    }
+  }, []);
+
+  // Check for showcase prompt prefill from ShowcasePage navigation
+  useEffect(() => {
+    const showcasePrompt = sessionStorage.getItem('pl_showcase_prompt');
+    if (showcasePrompt) {
+      sessionStorage.removeItem('pl_showcase_prompt');
+      setQuickPrompt(showcasePrompt);
+      // Focus the input after a brief delay so user sees the pre-filled prompt
+      setTimeout(() => quickInputRef.current?.focus(), 100);
     }
   }, []);
 
@@ -352,6 +366,17 @@ export default function HomePage() {
             <div className="mt-6 text-xs text-[#6B6960] flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${connected ? 'bg-[#1FC5A8]' : 'bg-[#C45B5B]'}`} />
               {connected ? 'Connected to Purple Lab backend' : 'Waiting for backend connection...'}
+            </div>
+
+            {/* Built with Loki Mode showcase */}
+            <div className="w-full max-w-3xl mt-6">
+              <Showcase />
+            </div>
+
+            {/* Newsletter and open source stats footer */}
+            <div className="w-full max-w-3xl mt-4">
+              <NewsletterSignup />
+              <OpenSourceStats />
             </div>
           </div>
         ) : (

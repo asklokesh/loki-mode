@@ -2,9 +2,9 @@
 
 # Loki Mode
 
-### Autonomous multi-agent development with self-verification
+### Build the future, faster.
 
-**PRD in, tested code out.**
+**Describe what you want. Get production-ready code.**
 
 [![npm version](https://img.shields.io/npm/v/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=553DE9)](https://www.npmjs.com/package/loki-mode)
 [![npm downloads](https://img.shields.io/npm/dw/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=1FC5A8)](https://www.npmjs.com/package/loki-mode)
@@ -19,6 +19,17 @@
 ---
 
 > **How it works:** You provide a PRD. Loki Mode classifies complexity, assembles an agent team from 41 specialized types across 8 swarms, and runs autonomous RARV cycles (Reason - Act - Reflect - Verify) with 9 quality gates. Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
+
+---
+
+## Why Loki Mode?
+
+- **Truly autonomous** -- Describe what you want, walk away, come back to working code with tests
+- **Production quality built in** -- 9 quality gates, blind 3-reviewer code review, anti-sycophancy checks
+- **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
+- **5 AI providers** -- Claude, Codex, Gemini, Cline, Aider with automatic failover
+- **Full-stack output** -- Source code, tests, Docker configs, CI/CD pipelines, audit logs
+- **Open source** -- Free for personal, internal, and academic use. No vendor lock-in.
 
 ---
 
@@ -51,6 +62,75 @@ loki quick "build a landing page with a signup form"
 See the full [Installation Guide](docs/INSTALLATION.md).
 
 </details>
+
+---
+
+## What You Can Build
+
+| Project | Build Time | Complexity |
+|---------|:----------:|:----------:|
+| Landing page with signup form | ~10 min | Simple |
+| REST API with JWT auth | ~20 min | Simple |
+| Portfolio with animations | ~15 min | Simple |
+| SaaS dashboard with analytics | ~25 min | Standard |
+| E-commerce store with Stripe | ~45 min | Standard |
+| Task manager with kanban board | ~25 min | Standard |
+| Chat app with WebSocket | ~30 min | Standard |
+| Blog platform with MDX | ~30 min | Standard |
+| Microservice architecture | ~2 hours | Complex |
+| ML pipeline with monitoring | ~3 hours | Complex |
+
+---
+
+## What It Looks Like
+
+```
++------------------------------------------------------------------+
+|  Purple Lab                                                       |
+|  Powered by Loki                                                  |
++------------------------------------------------------------------+
+|         |                                                         |
+|  Home   |     Describe it. Build it. Ship it.                     |
+| Projects|                                                         |
+|Templates|  +----------------------------------------------------+ |
+|  Teams  |  |  Build a SaaS dashboard with user analytics...     | |
+|Showcase |  +----------------------------------------------------+ |
+| Compare |                                                         |
+|         |              [ Start Building ]                         |
+|         |                                                         |
+|---------|  +------+  +------+  +------+  +------+                 |
+|         |  |Phase |  |Agent |  |Termi-|  |Quali-|                 |
+| Settings|  |Viewer|  |Dash  |  | nal  |  | ty   |                 |
+|  Docs   |  +------+  +------+  +------+  +------+                |
+|         |                                                         |
+| v6.71.1 |  +------------------+  +------------------+            |
+|         |  |  File Browser    |  |  Memory Viewer   |            |
+|         |  +------------------+  +------------------+            |
++------------------------------------------------------------------+
+```
+
+```
++------------------------------------------------------------------+
+|  PROJECT WORKSPACE                                                |
++------------------------------------------------------------------+
+|  File Tree  |  Monaco Editor          |  AI Chat Panel            |
+|             |                         |                           |
+|  > src/     |  import { useState }    |  You: Add a search bar    |
+|    App.tsx  |  from 'react';          |                           |
+|    index.ts |                         |  AI: I will add a search  |
+|  > public/  |  export default         |  component with filtering |
+|  > tests/   |  function App() {       |  and debounced input...   |
+|             |    return (              |                           |
+|  package.json  <div>...</div>         |  [Send message]           |
+|             |    );                   |                           |
+|             |  }                      |  Activity | Quality Gates |
+|             |                         |  [Build Log]              |
+|             |  +--Live Preview------+ |  [Agent Status]           |
+|             |  | localhost:3000     | |  [Phase: Development]     |
+|             |  |                    | |                           |
+|             |  +--------------------+ |                           |
++------------------------------------------------------------------+
+```
 
 ---
 
@@ -140,10 +220,11 @@ loki web                           # launches at http://localhost:57375
 <td width="50%" valign="top">
 
 **Platform Pages**
-- Home -- PRD input with plan-before-build flow
-- Projects -- browse, search, filter past builds
+- Home -- One-line prompt to start building instantly
+- Projects -- Browse, search, filter past builds
 - Templates -- 20+ starter PRDs by category
-- Settings -- provider selection, configuration
+- Showcase -- Gallery of example projects to build
+- Compare -- Feature comparison vs competitors
 
 </td>
 <td width="50%" valign="top">
@@ -158,6 +239,24 @@ loki web                           # launches at http://localhost:57375
 </td>
 </tr>
 </table>
+
+---
+
+## Loki Mode vs. Alternatives
+
+| Feature | Loki Mode | bolt.new | Replit | Lovable |
+|---------|:---------:|:--------:|:------:|:-------:|
+| Self-hosted / your keys | Yes | No | No | No |
+| 5 AI provider failover | Yes | No | No | No |
+| 9 quality gates | Yes | No | No | No |
+| Blind code review | Yes | No | No | No |
+| Enterprise auth (SSO/RBAC) | Yes | No | Yes | No |
+| Air-gapped deployment | Yes | No | No | No |
+| Docker + CI/CD generation | Yes | No | Yes | No |
+| Open source | Yes | No | No | No |
+| Free tier | Open source | Yes | Yes | Yes |
+
+Loki Mode is the only platform that is fully self-hosted, open source, and includes automated quality verification. Your code, your keys, your infrastructure.
 
 ---
 
