@@ -93,8 +93,14 @@ def _safe_json_read(path: _Path, default: Any = None) -> Any:
 
 
 def _safe_read_text(path: _Path) -> str:
-    """Read a text file with UTF-8 encoding, replacing non-UTF-8 bytes."""
-    return _Path(path).read_text(encoding="utf-8", errors="replace")
+    """Read a text file with UTF-8 encoding, replacing non-UTF-8 bytes.
+
+    Returns empty string on any I/O or encoding error (truly safe).
+    """
+    try:
+        return _Path(path).read_text(encoding="utf-8", errors="replace")
+    except (OSError, IOError, ValueError):
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1592,8 +1598,9 @@ async def sync_registry():
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     try:
+        loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(None, registry.sync_registry_with_discovery),
+            loop.run_in_executor(None, registry.sync_registry_with_discovery),
             timeout=30.0,
         )
     except asyncio.TimeoutError:
@@ -1630,7 +1637,7 @@ class FocusRequest(BaseModel):
     project_dir: str
 
 
-@app.post("/api/focus")
+@app.post("/api/focus", dependencies=[Depends(auth.require_scope("control"))])
 async def set_focus(request: FocusRequest):
     """Set the active project directory for .loki/ resolution.
 
@@ -1642,10 +1649,17 @@ async def set_focus(request: FocusRequest):
     project_dir = request.project_dir.strip()
     if not project_dir:
         raise HTTPException(status_code=400, detail="project_dir must not be empty")
-    p = _Path(project_dir)
+    p = _Path(project_dir).resolve()
     if not p.is_dir():
         raise HTTPException(status_code=400, detail=f"Directory does not exist: {project_dir}")
-    _active_project_dir = str(p.resolve())
+    # Require the target directory to contain a .loki/ subdirectory to prevent
+    # pointing the dashboard at arbitrary filesystem locations.
+    if not (p / ".loki").is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Directory does not contain a .loki/ subdirectory: {project_dir}"
+        )
+    _active_project_dir = str(p)
     return {"project_dir": _active_project_dir, "loki_dir": str(_get_loki_dir())}
 
 
@@ -1658,7 +1672,7 @@ async def get_focus():
     }
 
 
-@app.delete("/api/focus")
+@app.delete("/api/focus", dependencies=[Depends(auth.require_scope("control"))])
 async def clear_focus():
     """Clear the active project directory override (revert to CWD-based resolution)."""
     global _active_project_dir
@@ -1752,7 +1766,7 @@ async def create_token(request: TokenCreateRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/api/enterprise/tokens", response_model=list[TokenResponse])
+@app.get("/api/enterprise/tokens", response_model=list[TokenResponse], dependencies=[Depends(auth.require_scope("admin"))])
 async def list_tokens(include_revoked: bool = False):
     """List all API tokens (enterprise only)."""
     if not auth.is_enterprise_mode():
@@ -2347,7 +2361,7 @@ def _read_learning_signals(signal_type: Optional[str] = None, limit: int = 50) -
 
 @app.get("/api/learning/metrics")
 async def get_learning_metrics(
-    timeRange: str = "7d",
+    timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
     source: Optional[str] = None,
 ):
@@ -2416,7 +2430,7 @@ async def get_learning_metrics(
 
 @app.get("/api/learning/trends")
 async def get_learning_trends(
-    timeRange: str = "7d",
+    timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
     source: Optional[str] = None,
 ):
@@ -2436,7 +2450,7 @@ async def get_learning_trends(
 
 @app.get("/api/learning/signals")
 async def get_learning_signals(
-    timeRange: str = "7d",
+    timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
     source: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=1000),
@@ -4956,7 +4970,7 @@ async def run_quality_scan(preset: str = Query("default")):
 
 
 @app.get("/api/quality-report")
-def get_quality_report(fmt: str = Query("json", alias="format")):
+def get_quality_report(fmt: str = Query("json", alias="format", pattern="^(json|markdown|html)$")):
     """Get an exportable quality audit report."""
     if not _read_limiter.check("quality-report"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
@@ -5034,6 +5048,10 @@ def start_migration(request_body: dict):
     options = request_body.get("options", {})
     if not codebase_path or not target:
         raise HTTPException(status_code=400, detail="codebase_path and target are required")
+    if not isinstance(codebase_path, str) or not isinstance(target, str):
+        raise HTTPException(status_code=400, detail="codebase_path and target must be strings")
+    if len(target) > 255:
+        raise HTTPException(status_code=400, detail="target must be 255 characters or fewer")
     # Check raw input for traversal BEFORE resolving
     if '..' in codebase_path:
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
