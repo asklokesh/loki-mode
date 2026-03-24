@@ -11,6 +11,7 @@ import {
   LogOut,
   Monitor,
   ChevronUp,
+  ChevronDown,
   Menu,
   X,
   Moon,
@@ -27,6 +28,7 @@ export interface SidebarProps {
 }
 
 const LS_KEY = 'pl_sidebar_collapsed';
+const LS_SECTIONS_KEY = 'pl_sidebar_sections';
 
 interface NavItem {
   to: string;
@@ -41,9 +43,30 @@ const mainNav: NavItem[] = [
   { to: '/teams', label: 'Teams', icon: Users },
   { to: '/metrics', label: 'Metrics', icon: BarChart3 },
 ];
+interface NavSection {
+  key: string;
+  label: string;
+  items: NavItem[];
+}
 
-const secondaryNav: NavItem[] = [
-  { to: '/settings', label: 'Settings', icon: Settings2 },
+const navSections: NavSection[] = [
+  {
+    key: 'main',
+    label: 'Navigation',
+    items: [
+      { to: '/', label: 'Home', icon: Home },
+      { to: '/projects', label: 'Projects', icon: FolderKanban },
+      { to: '/templates', label: 'Templates', icon: LayoutTemplate },
+      { to: '/teams', label: 'Teams', icon: Users },
+    ],
+  },
+  {
+    key: 'system',
+    label: 'System',
+    items: [
+      { to: '/settings', label: 'Settings', icon: Settings2 },
+    ],
+  },
 ];
 
 function useIsMobile() {
@@ -56,6 +79,23 @@ function useIsMobile() {
     return () => window.removeEventListener('resize', handler);
   }, []);
   return isMobile;
+}
+
+function getSectionState(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(LS_SECTIONS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setSectionState(state: Record<string, boolean>) {
+  try {
+    localStorage.setItem(LS_SECTIONS_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
 }
 
 export function Sidebar({ wsConnected, version }: SidebarProps) {
@@ -72,6 +112,17 @@ export function Sidebar({ wsConnected, version }: SidebarProps) {
     }
   });
 
+  // D38: Section collapse state
+  const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>(getSectionState);
+
+  const toggleSection = (key: string) => {
+    setSectionCollapsed(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      setSectionState(next);
+      return next;
+    });
+  };
+
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEY, collapsed ? '1' : '0');
@@ -85,7 +136,7 @@ export function Sidebar({ wsConnected, version }: SidebarProps) {
     if (isMobile) setMobileOpen(false);
   }, [location.pathname, isMobile]);
 
-  // On mobile: collapsed to icons only, expandable via hamburger
+  // D37: Smooth sidebar collapse/expand animation
   const showLabels = isMobile ? mobileOpen : !collapsed;
   const sidebarWidth = showLabels ? 240 : 64;
 
@@ -102,7 +153,7 @@ export function Sidebar({ wsConnected, version }: SidebarProps) {
 
   const sidebarContent = (
     <aside
-      className="flex flex-col h-full border-r border-[#ECEAE3] bg-white transition-[width] duration-200"
+      className="flex flex-col h-full border-r border-[#ECEAE3] bg-white transition-[width] duration-200 ease-in-out"
       style={{ width: sidebarWidth, minWidth: sidebarWidth }}
     >
       {/* Logo */}
@@ -138,35 +189,44 @@ export function Sidebar({ wsConnected, version }: SidebarProps) {
         )}
       </div>
 
-      {/* Main navigation */}
-      <nav className="flex-1 px-2 py-3 flex flex-col gap-1" aria-label="Main navigation">
-        {mainNav.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/'}
-            className={({ isActive }) => linkClasses(isActive)}
-            title={!showLabels ? item.label : undefined}
-          >
-            <item.icon size={18} />
-            {showLabels && <span>{item.label}</span>}
-          </NavLink>
-        ))}
-
-        {/* Separator */}
-        <div className="my-2 border-t border-[#ECEAE3]" />
-
-        {secondaryNav.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => linkClasses(isActive)}
-            title={!showLabels ? item.label : undefined}
-          >
-            <item.icon size={18} />
-            {showLabels && <span>{item.label}</span>}
-          </NavLink>
-        ))}
+      {/* Navigation with collapsible section headers (D38) */}
+      <nav className="flex-1 px-2 py-3 flex flex-col gap-1 overflow-y-auto" aria-label="Main navigation">
+        {navSections.map((section, si) => {
+          const isCollapsed = sectionCollapsed[section.key] ?? false;
+          return (
+            <div key={section.key}>
+              {si > 0 && <div className="my-2 border-t border-[#ECEAE3]" />}
+              {/* D38: Section header with collapse toggle */}
+              {showLabels && (
+                <button
+                  type="button"
+                  onClick={() => toggleSection(section.key)}
+                  className="w-full flex items-center justify-between px-3 py-1 mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#939084] hover:text-[#36342E] transition-colors"
+                >
+                  <span>{section.label}</span>
+                  <ChevronDown
+                    size={12}
+                    className={`transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+                  />
+                </button>
+              )}
+              <div className={`sidebar-section-content ${showLabels && isCollapsed ? 'sidebar-section-collapsed' : 'sidebar-section-expanded'}`}>
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    className={({ isActive }) => linkClasses(isActive)}
+                    title={!showLabels ? item.label : undefined}
+                  >
+                    <item.icon size={18} />
+                    {showLabels && <span>{item.label}</span>}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </nav>
 
       {/* Bottom section */}

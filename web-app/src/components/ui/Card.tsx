@@ -36,7 +36,7 @@ export function Card({
           : undefined
       }
       className={[
-        'bg-white border border-[#ECEAE3] rounded-[5px] shadow-card',
+        'bg-white border border-[#ECEAE3] rounded-[5px] shadow-card group',
         hover && 'hover:shadow-card-hover transition-shadow duration-200',
         onClick && 'cursor-pointer',
         paddingClasses[padding],

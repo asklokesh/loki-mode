@@ -1,16 +1,17 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, MoreVertical, Trash2, FolderOpen, Copy, ExternalLink, XCircle } from 'lucide-react';
+import { Search, Plus, MoreVertical, Trash2, FolderOpen, Copy, ExternalLink, XCircle, Star } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
+import { EmptyState } from '../components/EmptyState';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { PageTransition } from '../components/PageTransition';
 import { StaggeredList } from '../components/StaggeredList';
 import type { SessionHistoryItem } from '../api/client';
 
-type FilterTab = 'all' | 'running' | 'completed' | 'failed';
+type FilterTab = 'all' | 'running' | 'completed' | 'failed' | 'favorites';
 
 function statusToBadge(status: string): 'completed' | 'running' | 'failed' | 'started' | 'empty' {
   const normalized = normalizeStatus(status);
@@ -49,10 +50,31 @@ function normalizeStatus(s: string): string {
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'all', label: 'All' },
+  { key: 'favorites', label: 'Favorites' },
   { key: 'running', label: 'Running' },
   { key: 'completed', label: 'Completed' },
   { key: 'failed', label: 'Failed' },
 ];
+
+// D41: Favorites persistence
+const FAVORITES_KEY = 'pl_favorite_projects';
+
+function getFavorites(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveFavorites(favs: Set<string>) {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favs]));
+  } catch {
+    // ignore
+  }
+}
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -61,6 +83,17 @@ export default function ProjectsPage() {
   const [deleteTarget, setDeleteTarget] = useState<SessionHistoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<Set<string>>(getFavorites);
+
+  const toggleFavorite = (id: string) => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveFavorites(next);
+      return next;
+    });
+  };
 
   const fetchSessions = useCallback(() => api.getSessionsHistory(), []);
   const { data: sessions, refresh } = usePolling(fetchSessions, 15000, true);
@@ -68,15 +101,25 @@ export default function ProjectsPage() {
   const filtered = useMemo(() => {
     if (!sessions) return [];
     let list = sessions;
-    if (filter !== 'all') {
-      list = list.filter((s) => s.status === filter);
+
+    // D41: Filter favorites
+    if (filter === 'favorites') {
+      list = list.filter((s) => favorites.has(s.id));
+    } else if (filter !== 'all') {
+      list = list.filter((s) => normalizeStatus(s.status) === filter);
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((s) => s.prd_snippet.toLowerCase().includes(q));
     }
+    // Sort favorites to top
+    list = [...list].sort((a, b) => {
+      const aFav = favorites.has(a.id) ? 0 : 1;
+      const bFav = favorites.has(b.id) ? 0 : 1;
+      return aFav - bFav;
+    });
     return list;
-  }, [sessions, filter, search]);
+  }, [sessions, filter, search, favorites]);
 
   const handleCopyPath = (path: string) => {
     navigator.clipboard.writeText(path);
@@ -132,12 +175,13 @@ export default function ProjectsPage() {
               role="tab"
               aria-selected={filter === tab.key}
               onClick={() => setFilter(tab.key)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-[3px] transition-colors ${
+              className={`px-3 py-1.5 text-xs font-semibold rounded-[3px] transition-colors flex items-center gap-1 ${
                 filter === tab.key
                   ? 'bg-[#553DE9] text-white'
                   : 'text-[#6B6960] hover:text-[#36342E] hover:bg-[#F8F4F0]'
               }`}
             >
+              {tab.key === 'favorites' && <Star size={11} />}
               {tab.label}
             </button>
           ))}
@@ -146,12 +190,22 @@ export default function ProjectsPage() {
 
       {/* Grid */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <p className="text-[#6B6960] text-sm mb-4">No projects yet. Start building.</p>
-          <Button icon={Plus} onClick={() => navigate('/')}>
-            New Project
-          </Button>
-        </div>
+        filter === 'favorites' ? (
+          <EmptyState
+            title="No favorite projects"
+            description="Star a project to pin it here for quick access."
+            illustration="no-projects"
+          />
+        ) : (
+          <EmptyState
+            title="No projects yet"
+            description="Start building something amazing."
+            illustration="no-projects"
+            actionLabel="New Project"
+            actionIcon={Plus}
+            onAction={() => navigate('/')}
+          />
+        )
       ) : (
         <StaggeredList
           animation="fade-in-up"
@@ -162,6 +216,8 @@ export default function ProjectsPage() {
             <ProjectCard
               key={session.id}
               session={session}
+              isFavorite={favorites.has(session.id)}
+              onToggleFavorite={() => toggleFavorite(session.id)}
               onOpen={() => navigate(`/project/${session.id}`)}
               onDelete={() => setDeleteTarget(session)}
               onCopyPath={() => handleCopyPath(session.path)}
@@ -217,11 +273,15 @@ export default function ProjectsPage() {
 
 function ProjectCard({
   session,
+  isFavorite,
+  onToggleFavorite,
   onOpen,
   onDelete,
   onCopyPath,
 }: {
   session: SessionHistoryItem;
+  isFavorite: boolean;
+  onToggleFavorite: () => void;
   onOpen: () => void;
   onDelete: () => void;
   onCopyPath: () => void;
@@ -248,7 +308,20 @@ function ProjectCard({
   });
 
   return (
-    <Card hover onClick={onOpen} className="relative">
+    <Card hover onClick={onOpen} className="relative card-lift">
+      {/* D41: Favorite star */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
+        className={`absolute top-2.5 left-2.5 z-10 p-1 rounded-[3px] transition-colors ${
+          isFavorite
+            ? 'text-[#E5A940]'
+            : 'text-[#B8B5AD] opacity-0 group-hover:opacity-100 hover:text-[#E5A940]'
+        }`}
+        title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+      >
+        <Star size={14} fill={isFavorite ? 'currentColor' : 'none'} />
+      </button>
+
       {/* 3-dot menu */}
       <div className="absolute top-2.5 right-2.5 z-10" ref={menuRef}>
         <button
@@ -294,14 +367,14 @@ function ProjectCard({
         )}
       </div>
 
-      <div className="flex items-center justify-between mb-2 pr-6">
+      <div className="flex items-center justify-between mb-2 pr-6 pl-7">
         <span className="text-xs text-[#6B6960]">{dateStr}</span>
         <Badge status={statusToBadge(session.status)}>{STATUS_LABELS[session.status] || session.status}</Badge>
       </div>
-      <h3 className="text-sm font-medium text-[#36342E] line-clamp-2 mb-2">
+      <h3 className="text-sm font-medium text-[#36342E] line-clamp-2 mb-2 pl-7">
         {session.prd_snippet || 'Untitled project'}
       </h3>
-      <p className="text-xs text-[#6B6960] truncate">{session.path}</p>
+      <p className="text-xs text-[#6B6960] truncate pl-7">{session.path}</p>
     </Card>
   );
 }

@@ -36,6 +36,7 @@ import { ChangePreview } from './ChangePreview';
 import type { FileNode, ChangePreviewData } from '../types/api';
 import { CICDPanel } from './CICDPanel';
 import { Celebration } from './Celebration';
+import { Breadcrumb } from './Breadcrumb';
 import type { SessionDetail } from '../api/client';
 
 // Wrapper to avoid inline import complexity
@@ -1170,8 +1171,12 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
           Back
         </button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-bold text-ink truncate">{sessionData.id}</h2>
-          <p className="text-xs font-mono text-muted-accessible truncate">{sessionData.path}</p>
+          <Breadcrumb segments={[
+            { label: 'Projects', href: '/projects' },
+            { label: sessionData.prd?.slice(0, 40) || sessionData.id },
+            { label: activeWorkspaceTab.charAt(0).toUpperCase() + activeWorkspaceTab.slice(1) },
+          ]} />
+          <h2 className="text-sm font-bold text-ink truncate mt-0.5">{sessionData.id}</h2>
         </div>
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
           sessionData.status === 'completed' || sessionData.status === 'completion_promise_fulfilled'
@@ -1372,14 +1377,31 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                   <div className="flex-1 min-h-0" role="tabpanel">
                     {activeWorkspaceTab === 'code' && (
                       <div className="h-full flex flex-col min-w-0">
-                        {/* File tab bar */}
+                        {/* D39/D40: File tab bar with close buttons, unsaved dot, and drag-to-reorder */}
                         {openTabs.length > 0 && (
                           <div className="flex items-center border-b border-border bg-hover overflow-x-auto flex-shrink-0">
-                            {openTabs.map(tab => (
+                            {openTabs.map((tab, tabIdx) => (
                               <button
                                 key={tab.path}
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.effectAllowed = 'move';
+                                  e.dataTransfer.setData('text/plain', String(tabIdx));
+                                }}
+                                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                                  if (isNaN(fromIdx) || fromIdx === tabIdx) return;
+                                  setOpenTabs(prev => {
+                                    const next = [...prev];
+                                    const [moved] = next.splice(fromIdx, 1);
+                                    next.splice(tabIdx, 0, moved);
+                                    return next;
+                                  });
+                                }}
                                 onClick={() => handleFileSelect(tab.path, tab.name)}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono border-r border-border whitespace-nowrap transition-colors ${
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono border-r border-border whitespace-nowrap transition-colors cursor-grab active:cursor-grabbing ${
                                   tab.path === selectedFile
                                     ? 'bg-card text-ink'
                                     : 'text-muted hover:text-ink hover:bg-card'
@@ -1389,7 +1411,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                                   {getFileIcon(tab.name, 'file')}
                                 </span>
                                 {tab.name}
-                                {tab.modified && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+                                {tab.modified && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" title="Unsaved changes" />}
                                 <span
                                   role="button"
                                   tabIndex={-1}

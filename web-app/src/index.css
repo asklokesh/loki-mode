@@ -554,5 +554,98 @@
   .no-motion *, .no-motion *::before, .no-motion *::after {
     transition-duration: 0s !important;
     animation: none !important;
+  /* D45: Glassmorphism cards */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+  }
+  .dark .glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.06);
+  }
+
+  /* D46: Gradient borders */
+  .gradient-border {
+    border: 1px solid transparent;
+    background-clip: padding-box;
+    position: relative;
+  }
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #553DE9, #D63384);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  input:focus.gradient-border-focus::before,
+  textarea:focus.gradient-border-focus::before {
+    opacity: 1;
+  }
+
+  /* D47: Micro-interactions -- enhanced hover effects */
+  .card-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(0,0,0,0.10), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  .dark .card-lift:hover {
+    box-shadow: 0 12px 28px rgba(0,0,0,0.35), 0 4px 12px rgba(0,0,0,0.25);
+  }
+  button:hover:not(:disabled), [role="button"]:hover:not(:disabled) {
+    transform: scale(1.02);
+  }
+  button:active:not(:disabled), [role="button"]:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .icon-hover:hover {
+    color: #553DE9;
+  }
+  .dark .icon-hover:hover {
+    color: #7B6BEF;
+  }
+
+  /* D43: Page transition fade-in */
+  @keyframes page-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .page-enter {
+    animation: page-fade-in 200ms ease-out;
+  }
+
+  /* D44: Sticky header with shadow on scroll */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    transition: box-shadow 200ms ease;
+  }
+  .sticky-header-scrolled {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .dark .sticky-header-scrolled {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  }
+
+  /* D38: Sidebar section collapse toggle animation */
+  .sidebar-section-content {
+    overflow: hidden;
+    transition: max-height 200ms ease-out, opacity 200ms ease-out;
+  }
+  .sidebar-section-collapsed {
+    max-height: 0;
+    opacity: 0;
+  }
+  .sidebar-section-expanded {
+    max-height: 500px;
+    opacity: 1;
   }
 }

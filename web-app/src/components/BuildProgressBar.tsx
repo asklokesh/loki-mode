@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DollarSign, Clock, Zap } from 'lucide-react';
+import { AnimatedCounter } from './AnimatedCounter';
+import { ProgressRing } from './ProgressRing';
 
 interface BuildProgressBarProps {
   phase: string;       // 'planning' | 'building' | 'testing' | 'reviewing' | 'complete' | 'idle'
@@ -57,8 +59,8 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
         )}
       </div>
 
-      {/* Phase labels + stats */}
-      <div className="px-4 py-1.5 flex items-center gap-4 bg-card border-b border-border text-xs">
+      {/* D45: Phase labels + stats with glassmorphism */}
+      <div className="px-4 py-1.5 flex items-center gap-4 glass-card border-b border-border text-xs rounded-none">
         {/* Phase indicators */}
         <div className="flex items-center gap-1">
           {phases.map((p, i) => (
@@ -78,11 +80,18 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
 
         <div className="flex-1" />
 
-        {/* Stats */}
+        {/* D49: Progress ring for build percentage */}
+        {isRunning && (
+          <ProgressRing percentage={progress} size={24} strokeWidth={3}>
+            <span className="text-[8px] font-bold text-ink">{Math.round(progress)}</span>
+          </ProgressRing>
+        )}
+
+        {/* Stats with animated counter for cost (D48) */}
         <div className="flex items-center gap-3 text-muted">
           <span className="flex items-center gap-1">
             <Zap size={12} />
-            Iter {iteration}/{maxIterations}
+            Iter <AnimatedCounter target={iteration} duration={400} />/{maxIterations}
           </span>
           <span className="flex items-center gap-1">
             <Clock size={12} />
@@ -91,7 +100,7 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
           </span>
           <span className="flex items-center gap-1">
             <DollarSign size={12} />
-            ${cost.toFixed(2)}
+            <AnimatedCounter target={cost} duration={600} prefix="$" decimals={2} />
           </span>
         </div>
       </div>
