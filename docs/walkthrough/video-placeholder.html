@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Mode Demo -- CSS-Animated Product Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --purple: #553DE9;
+  --purple-light: #7B6BF0;
+  --purple-dark: #3D2BB5;
+  --purple-glow: rgba(85, 61, 233, 0.3);
+  --bg: #FAFAFA;
+  --bg-card: #FFFFFF;
+  --bg-code: #1E1E2E;
+  --text: #1A1A2E;
+  --text-muted: #6B7280;
+  --text-code: #CDD6F4;
+  --border: #E5E7EB;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --accent: #EC4899;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F0F1A;
+    --bg-card: #1A1A2E;
+    --text: #E2E8F0;
+    --text-muted: #94A3B8;
+    --border: #2D2D44;
+  }
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Header */
+.page-header {
+  text-align: center;
+  padding: 4rem 2rem 2rem;
+}
+
+.page-header h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  margin-bottom: 0.8rem;
+  background: linear-gradient(135deg, var(--purple), var(--purple-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.built-with {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.3rem 0.8rem;
+  background: rgba(85, 61, 233, 0.08);
+  color: var(--purple);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Video player container */
+.player-container {
+  max-width: 900px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+.player-frame {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.1);
+}
+
+/* Player titlebar */
+.player-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.2rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.player-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.player-dots span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.player-dots span:nth-child(1) { background: #FF5F57; }
+.player-dots span:nth-child(2) { background: #FFBD2E; }
+.player-dots span:nth-child(3) { background: #28CA41; }
+
+.player-title {
+  flex: 1;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* Video viewport */
+.video-viewport {
+  position: relative;
+  height: 420px;
+  background: var(--bg-code);
+  overflow: hidden;
+}
+
+/* All frames */
+.frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  padding: 2rem;
+}
+
+.frame.active { opacity: 1; }
+
+/* Frame 1: Empty editor */
+.frame-1 .editor-shell {
+  width: 100%;
+  max-width: 700px;
+}
+
+.shell-prompt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--text-code);
+  padding: 1.5rem;
+}
+
+.shell-prompt .prompt-symbol {
+  color: var(--success);
+  margin-right: 0.5rem;
+}
+
+.shell-prompt .path {
+  color: #89B4FA;
+}
+
+.shell-prompt .cursor-block {
+  display: inline-block;
+  width: 8px;
+  height: 1.1em;
+  background: #CDD6F4;
+  vertical-align: text-bottom;
+  animation: cursorBlink 1s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  50% { opacity: 0; }
+}
+
+.shell-welcome {
+  color: #6C7086;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  padding: 0 1.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Frame 2: Typing prompt */
+.frame-2 .typing-area {
+  width: 100%;
+  max-width: 700px;
+  padding: 1.5rem;
+}
+
+.frame-2 .cmd-line {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--text-code);
+  margin-bottom: 1rem;
+}
+
+.frame-2 .cmd-line .cmd { color: #CBA6F7; }
+
+.frame-2 .user-prompt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: #A6E3A1;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.type-char {
+  display: inline;
+  opacity: 0;
+}
+
+.frame.active .type-char {
+  animation: typeIn 0.03s ease forwards;
+}
+
+/* Frame 3: Code generation */
+.frame-3 .code-gen {
+  width: 100%;
+  max-width: 700px;
+}
+
+.gen-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: #CBA6F7;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.gen-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(203, 166, 247, 0.3);
+  border-top-color: #CBA6F7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.gen-files {
+  padding: 1rem 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--text-code);
+}
+
+.gen-file-line {
+  padding: 0.25rem 0;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gen-file-line .check {
+  color: var(--success);
+  font-weight: bold;
+}
+
+.gen-file-line .fname { color: #89B4FA; }
+.gen-file-line .fsize { color: #6C7086; font-size: 0.75rem; }
+
+.frame.active .gen-file-line {
+  animation: genFileIn 0.3s ease forwards;
+}
+
+@keyframes genFileIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.gen-code-preview {
+  margin-top: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--text-code);
+}
+
+.gen-code-preview .kw { color: #CBA6F7; }
+.gen-code-preview .fn { color: #89B4FA; }
+.gen-code-preview .str { color: #A6E3A1; }
+.gen-code-preview .num { color: #FAB387; }
+.gen-code-preview .cm { color: #6C7086; }
+
+.gen-code-line {
+  padding: 0.1rem 0;
+  opacity: 0;
+}
+
+.frame.active .gen-code-line {
+  animation: genFileIn 0.15s ease forwards;
+}
+
+/* Frame 4: Preview */
+.frame-4 .preview-mock {
+  width: 100%;
+  max-width: 600px;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+}
+
+.frame.active .preview-mock {
+  animation: previewIn 0.6s ease 0.3s forwards;
+}
+
+@keyframes previewIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.preview-header {
+  background: #F3F4F6;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.preview-url-bar {
+  flex: 1;
+  padding: 0.3rem 0.8rem;
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 5px;
+  font-size: 0.75rem;
+  color: #6B7280;
+}
+
+.preview-body {
+  background: linear-gradient(135deg, #553DE9 0%, #7B6BF0 50%, #EC4899 100%);
+  padding: 2.5rem;
+  text-align: center;
+  color: white;
+}
+
+.preview-body h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.preview-body p {
+  opacity: 0.9;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.preview-body button {
+  padding: 0.5rem 1.5rem;
+  background: white;
+  color: var(--purple);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.preview-cards {
+  display: flex;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  justify-content: center;
+}
+
+.preview-minicard {
+  background: rgba(255,255,255,0.15);
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  backdrop-filter: blur(5px);
+}
+
+/* Frame 5: Deploy success */
+.frame-5 .deploy-panel {
+  text-align: center;
+  color: white;
+}
+
+.deploy-ring {
+  width: 100px;
+  height: 100px;
+  margin: 0 auto 1.5rem;
+  position: relative;
+}
+
+.deploy-ring svg {
+  width: 100px;
+  height: 100px;
+}
+
+.deploy-ring .ring-bg {
+  stroke: rgba(255,255,255,0.1);
+  fill: none;
+  stroke-width: 4;
+}
+
+.deploy-ring .ring-fill {
+  stroke: var(--success);
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 283;
+  stroke-dashoffset: 283;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.frame.active .deploy-ring .ring-fill {
+  animation: ringFill 2s ease 0.3s forwards;
+}
+
+@keyframes ringFill {
+  to { stroke-dashoffset: 0; }
+}
+
+.deploy-checkmark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  opacity: 0;
+}
+
+.frame.active .deploy-checkmark {
+  animation: checkIn 0.4s ease 2s forwards;
+}
+
+@keyframes checkIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.deploy-checkmark svg {
+  width: 40px;
+  height: 40px;
+  stroke: var(--success);
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.deploy-panel h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  opacity: 0;
+}
+
+.frame.active .deploy-panel h2 {
+  animation: fadeUp 0.4s ease 2.2s forwards;
+}
+
+.deploy-panel .deploy-url-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--success);
+  opacity: 0;
+}
+
+.frame.active .deploy-panel .deploy-url-text {
+  animation: fadeUp 0.4s ease 2.5s forwards;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.deploy-stats-row {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-top: 1.5rem;
+  opacity: 0;
+}
+
+.frame.active .deploy-stats-row {
+  animation: fadeUp 0.4s ease 2.8s forwards;
+}
+
+.deploy-stat-item {
+  text-align: center;
+}
+
+.deploy-stat-item .val {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.deploy-stat-item .lbl {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* Player controls */
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+.play-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--purple);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.play-btn:hover {
+  background: var(--purple-dark);
+  transform: scale(1.05);
+}
+
+.play-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: white;
+  stroke: none;
+}
+
+.play-btn .pause-icon { display: none; }
+.play-btn.playing .play-icon { display: none; }
+.play-btn.playing .pause-icon { display: block; }
+
+/* Progress bar */
+.progress-track {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--purple);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.3s;
+}
+
+.time-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 70px;
+  text-align: right;
+}
+
+/* Frame labels */
+.frame-labels {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.6rem 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.frame-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.frame-label:hover {
+  color: var(--purple);
+  background: rgba(85, 61, 233, 0.06);
+}
+
+.frame-label.active {
+  color: var(--purple);
+  font-weight: 600;
+}
+
+/* Info section */
+.info-section {
+  max-width: 900px;
+  margin: 3rem auto;
+  padding: 0 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+
+.info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+}
+
+.info-card h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.info-card p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+footer {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .video-viewport { height: 350px; }
+  .frame { padding: 1rem; }
+  .preview-cards { flex-direction: column; align-items: center; }
+  .deploy-stats-row { gap: 1rem; }
+  .frame-labels { flex-wrap: wrap; gap: 0.3rem; }
+  .info-section { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <h1>See Loki Mode in Action</h1>
+  <p>Watch a complete product build -- from empty terminal to deployed application -- in an animated walkthrough.</p>
+  <span class="built-with">Built entirely with CSS animations -- no video required</span>
+</header>
+
+<div class="player-container">
+  <div class="player-frame">
+    <div class="player-titlebar">
+      <div class="player-dots"><span></span><span></span><span></span></div>
+      <div class="player-title">Loki Mode -- Product Demo</div>
+    </div>
+
+    <div class="video-viewport" id="viewport">
+      <!-- Frame 1: Empty editor (0-3s) -->
+      <div class="frame active" id="frame-1" data-duration="3000">
+        <div class="editor-shell">
+          <div class="shell-welcome">Loki Mode v6.71.1 -- Autonomous Development System</div>
+          <div class="shell-prompt">
+            <span class="prompt-symbol">$</span>
+            <span class="path">~/projects</span>
+            <span class="cursor-block"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frame 2: Typing prompt (3-6s) -->
+      <div class="frame" id="frame-2" data-duration="4000">
+        <div class="typing-area">
+          <div class="cmd-line">
+            <span class="prompt-symbol" style="color: #10B981;">$</span>
+            <span class="cmd">loki start</span> --provider claude ./prd.md
+          </div>
+          <div class="user-prompt" id="promptText"></div>
+        </div>
+      </div>
+
+      <!-- Frame 3: Code generation (6-12s) -->
+      <div class="frame" id="frame-3" data-duration="6000">
+        <div class="code-gen">
+          <div class="gen-header">
+            <div class="gen-spinner"></div>
+            Generating project files...
+          </div>
+          <div class="gen-files" id="genFiles">
+            <div class="gen-file-line" style="--delay: 0.3s"><span class="check">[done]</span> <span class="fname">src/app/layout.tsx</span> <span class="fsize">48 lines</span></div>
+            <div class="gen-file-line" style="--delay: 0.8s"><span class="check">[done]</span> <span class="fname">src/app/page.tsx</span> <span class="fsize">92 lines</span></div>
+            <div class="gen-file-line" style="--delay: 1.3s"><span class="check">[done]</span> <span class="fname">src/components/Dashboard.tsx</span> <span class="fsize">156 lines</span></div>
+            <div class="gen-file-line" style="--delay: 1.8s"><span class="check">[done]</span> <span class="fname">src/components/KanbanBoard.tsx</span> <span class="fsize">203 lines</span></div>
+            <div class="gen-file-line" style="--delay: 2.3s"><span class="check">[done]</span> <span class="fname">src/lib/db.ts</span> <span class="fsize">34 lines</span></div>
+            <div class="gen-file-line" style="--delay: 2.8s"><span class="check">[done]</span> <span class="fname">prisma/schema.prisma</span> <span class="fsize">67 lines</span></div>
+            <div class="gen-file-line" style="--delay: 3.3s"><span class="check">[done]</span> <span class="fname">src/app/api/tasks/route.ts</span> <span class="fsize">89 lines</span></div>
+          </div>
+          <div class="gen-code-preview">
+            <div class="gen-code-line" style="--delay: 3.8s"><span class="cm">// Auto-generated by Loki Mode</span></div>
+            <div class="gen-code-line" style="--delay: 4.0s"><span class="kw">export default function</span> <span class="fn">Dashboard</span>() {</div>
+            <div class="gen-code-line" style="--delay: 4.2s">&nbsp;&nbsp;<span class="kw">const</span> [tasks] = <span class="fn">useTasks</span>();</div>
+            <div class="gen-code-line" style="--delay: 4.4s">&nbsp;&nbsp;<span class="kw">return</span> &lt;<span class="fn">KanbanBoard</span> <span class="str">tasks</span>={tasks} /&gt;;</div>
+            <div class="gen-code-line" style="--delay: 4.6s">}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frame 4: Preview (12-15s) -->
+      <div class="frame" id="frame-4" data-duration="4000">
+        <div class="preview-mock">
+          <div class="preview-header">
+            <div class="player-dots"><span></span><span></span><span></span></div>
+            <div class="preview-url-bar">localhost:3000/dashboard</div>
+          </div>
+          <div class="preview-body">
+            <h2>Team Productivity Dashboard</h2>
+            <p>23 tasks completed this sprint -- 15% above target</p>
+            <button>View Full Report</button>
+            <div class="preview-cards">
+              <div class="preview-minicard">Tasks: 47 active</div>
+              <div class="preview-minicard">Velocity: 34 pts</div>
+              <div class="preview-minicard">Coverage: 94%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frame 5: Deploy (15-18s) -->
+      <div class="frame" id="frame-5" data-duration="4000">
+        <div class="deploy-panel">
+          <div class="deploy-ring">
+            <svg viewBox="0 0 100 100">
+              <circle class="ring-bg" cx="50" cy="50" r="45"/>
+              <circle class="ring-fill" cx="50" cy="50" r="45"/>
+            </svg>
+            <div class="deploy-checkmark">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+          </div>
+          <h2>Deployment Successful</h2>
+          <div class="deploy-url-text">https://team-dashboard.vercel.app</div>
+          <div class="deploy-stats-row">
+            <div class="deploy-stat-item">
+              <div class="val">34</div>
+              <div class="lbl">Files</div>
+            </div>
+            <div class="deploy-stat-item">
+              <div class="val">4,218</div>
+              <div class="lbl">Lines</div>
+            </div>
+            <div class="deploy-stat-item">
+              <div class="val">12m</div>
+              <div class="lbl">Build Time</div>
+            </div>
+            <div class="deploy-stat-item">
+              <div class="val">6/6</div>
+              <div class="lbl">Gates Passed</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="player-controls">
+      <button class="play-btn" id="playBtn" onclick="togglePlay()">
+        <svg class="play-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21"/></svg>
+        <svg class="pause-icon" viewBox="0 0 24 24"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>
+      </button>
+      <div class="progress-track" id="progressTrack" onclick="seekTo(event)">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="time-display" id="timeDisplay">0:00 / 0:21</div>
+    </div>
+
+    <div class="frame-labels">
+      <span class="frame-label active" data-frame="1" onclick="goToFrame(0)">Empty Editor</span>
+      <span class="frame-label" data-frame="2" onclick="goToFrame(1)">Type Prompt</span>
+      <span class="frame-label" data-frame="3" onclick="goToFrame(2)">Generate Code</span>
+      <span class="frame-label" data-frame="4" onclick="goToFrame(3)">Preview App</span>
+      <span class="frame-label" data-frame="5" onclick="goToFrame(4)">Deploy</span>
+    </div>
+  </div>
+</div>
+
+<!-- Info section -->
+<div class="info-section">
+  <div class="info-card">
+    <h3>Pure CSS Animation</h3>
+    <p>This entire demo is built with CSS animations and minimal JavaScript for frame control. No video files, no external dependencies.</p>
+  </div>
+  <div class="info-card">
+    <h3>Accurate Representation</h3>
+    <p>Each frame shows a real step in the Loki Mode workflow: terminal input, code generation, preview, and deployment.</p>
+  </div>
+  <div class="info-card">
+    <h3>Interactive Controls</h3>
+    <p>Use the play/pause button to control playback, click the progress bar to seek, or click frame labels to jump to specific steps.</p>
+  </div>
+</div>
+
+<footer>
+  Loki Mode by Autonomi -- Build the future, faster
+</footer>
+
+<script>
+const frames = [
+  { id: 'frame-1', duration: 3000 },
+  { id: 'frame-2', duration: 4000 },
+  { id: 'frame-3', duration: 6000 },
+  { id: 'frame-4', duration: 4000 },
+  { id: 'frame-5', duration: 4000 }
+];
+
+const totalDuration = frames.reduce((sum, f) => sum + f.duration, 0);
+let isPlaying = false;
+let currentTime = 0;
+let animationTimer = null;
+let lastTick = 0;
+
+const playBtn = document.getElementById('playBtn');
+const progressFill = document.getElementById('progressFill');
+const timeDisplay = document.getElementById('timeDisplay');
+
+function togglePlay() {
+  if (isPlaying) {
+    pause();
+  } else {
+    play();
+  }
+}
+
+function play() {
+  if (currentTime >= totalDuration) {
+    currentTime = 0;
+  }
+  isPlaying = true;
+  playBtn.classList.add('playing');
+  lastTick = performance.now();
+  tick();
+}
+
+function pause() {
+  isPlaying = false;
+  playBtn.classList.remove('playing');
+  if (animationTimer) {
+    cancelAnimationFrame(animationTimer);
+    animationTimer = null;
+  }
+}
+
+function tick() {
+  if (!isPlaying) return;
+
+  const now = performance.now();
+  const delta = now - lastTick;
+  lastTick = now;
+  currentTime += delta;
+
+  if (currentTime >= totalDuration) {
+    currentTime = totalDuration;
+    updateDisplay();
+    pause();
+    return;
+  }
+
+  updateDisplay();
+  animationTimer = requestAnimationFrame(tick);
+}
+
+function updateDisplay() {
+  // Progress bar
+  const progress = (currentTime / totalDuration) * 100;
+  progressFill.style.width = progress + '%';
+
+  // Time display
+  const currentSec = Math.floor(currentTime / 1000);
+  const totalSec = Math.floor(totalDuration / 1000);
+  timeDisplay.textContent = `${formatTime(currentSec)} / ${formatTime(totalSec)}`;
+
+  // Determine current frame
+  let elapsed = 0;
+  let activeFrame = 0;
+  for (let i = 0; i < frames.length; i++) {
+    if (currentTime >= elapsed && currentTime < elapsed + frames[i].duration) {
+      activeFrame = i;
+      break;
+    }
+    elapsed += frames[i].duration;
+    if (i === frames.length - 1) activeFrame = i;
+  }
+
+  // Update frames
+  document.querySelectorAll('.frame').forEach((f, i) => {
+    f.classList.toggle('active', i === activeFrame);
+  });
+
+  // Update frame labels
+  document.querySelectorAll('.frame-label').forEach((l, i) => {
+    l.classList.toggle('active', i === activeFrame);
+  });
+
+  // Frame 2: typing animation
+  if (activeFrame === 1) {
+    typePrompt();
+  }
+
+  // Frame 3: file generation animation
+  if (activeFrame === 2) {
+    animateGenFiles(currentTime - getFrameStart(2));
+  }
+}
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function getFrameStart(index) {
+  let start = 0;
+  for (let i = 0; i < index; i++) {
+    start += frames[i].duration;
+  }
+  return start;
+}
+
+function seekTo(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const ratio = x / rect.width;
+  currentTime = ratio * totalDuration;
+  updateDisplay();
+}
+
+function goToFrame(index) {
+  currentTime = getFrameStart(index);
+  updateDisplay();
+  if (!isPlaying) {
+    // Show the frame even when paused
+    document.querySelectorAll('.frame').forEach((f, i) => {
+      f.classList.toggle('active', i === index);
+    });
+    document.querySelectorAll('.frame-label').forEach((l, i) => {
+      l.classList.toggle('active', i === index);
+    });
+    progressFill.style.width = (currentTime / totalDuration) * 100 + '%';
+  }
+}
+
+// Frame 2: Typing effect
+const promptMessage = `Build a SaaS dashboard with:
+- User authentication (next-auth)
+- Real-time productivity charts
+- Drag-and-drop Kanban board
+- CSV data export
+Tech: Next.js + Tailwind + PostgreSQL`;
+
+let lastTypedLen = 0;
+
+function typePrompt() {
+  const frameStart = getFrameStart(1);
+  const elapsed = currentTime - frameStart;
+  const charDelay = 40;
+  const charsToShow = Math.min(Math.floor(elapsed / charDelay), promptMessage.length);
+
+  if (charsToShow !== lastTypedLen) {
+    const el = document.getElementById('promptText');
+    el.textContent = promptMessage.substring(0, charsToShow);
+    lastTypedLen = charsToShow;
+  }
+}
+
+// Frame 3: File generation stagger
+function animateGenFiles(elapsed) {
+  const fileLines = document.querySelectorAll('#genFiles .gen-file-line');
+  fileLines.forEach((line, i) => {
+    const delay = parseFloat(line.style.getPropertyValue('--delay')) * 1000;
+    line.style.opacity = elapsed > delay ? '1' : '0';
+    line.style.transform = elapsed > delay ? 'translateX(0)' : 'translateX(-10px)';
+  });
+
+  const codeLines = document.querySelectorAll('.gen-code-line');
+  codeLines.forEach((line, i) => {
+    const delay = parseFloat(line.style.getPropertyValue('--delay')) * 1000;
+    line.style.opacity = elapsed > delay ? '1' : '0';
+  });
+}
+
+// Auto-play after small delay
+setTimeout(() => {
+  play();
+}, 1000);
+</script>
+
+</body>
+</html>

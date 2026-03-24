@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Comparison -- Loki Mode vs Alternatives</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --purple: #553DE9;
+  --purple-light: #7B6BF0;
+  --purple-dark: #3D2BB5;
+  --purple-glow: rgba(85, 61, 233, 0.3);
+  --bg: #FAFAFA;
+  --bg-card: #FFFFFF;
+  --text: #1A1A2E;
+  --text-muted: #6B7280;
+  --border: #E5E7EB;
+  --success: #10B981;
+  --success-bg: rgba(16, 185, 129, 0.08);
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --accent: #EC4899;
+  --blue: #3B82F6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F0F1A;
+    --bg-card: #1A1A2E;
+    --text: #E2E8F0;
+    --text-muted: #94A3B8;
+    --border: #2D2D44;
+    --success-bg: rgba(16, 185, 129, 0.12);
+  }
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Header */
+.page-header {
+  text-align: center;
+  padding: 4rem 2rem 3rem;
+  background: linear-gradient(135deg, var(--bg) 0%, rgba(85, 61, 233, 0.06) 50%, var(--bg) 100%);
+}
+
+.page-header h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  margin-bottom: 0.8rem;
+  background: linear-gradient(135deg, var(--purple), var(--purple-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+/* Table container */
+.table-container {
+  max-width: 1200px;
+  margin: 0 auto 3rem;
+  padding: 0 1.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll-hint {
+  display: none;
+  text-align: center;
+  padding: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .table-scroll-hint { display: block; }
+}
+
+/* Comparison table */
+.comparison-table {
+  width: 100%;
+  min-width: 800px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-card);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.comparison-table thead th {
+  padding: 1.2rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+  border-bottom: 2px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 10;
+}
+
+.comparison-table thead th:first-child {
+  text-align: left;
+  width: 220px;
+  min-width: 180px;
+}
+
+/* Loki Mode column highlight */
+.comparison-table thead th.loki-col {
+  background: linear-gradient(135deg, var(--purple), var(--purple-light));
+  color: white;
+  border-bottom-color: var(--purple-dark);
+}
+
+.comparison-table tbody td.loki-col {
+  background: rgba(85, 61, 233, 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+  .comparison-table tbody td.loki-col {
+    background: rgba(85, 61, 233, 0.08);
+  }
+}
+
+.comparison-table thead .product-name {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.comparison-table thead .product-type {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.7;
+  margin-top: 0.2rem;
+}
+
+/* Category rows */
+.comparison-table .category-row td {
+  padding: 0.8rem 1rem;
+  background: var(--bg);
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.comparison-table .category-row td:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.category-arrow {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.65rem;
+}
+
+.category-row.collapsed .category-arrow {
+  transform: rotate(-90deg);
+}
+
+/* Data rows */
+.comparison-table tbody td {
+  padding: 0.8rem 1rem;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+  transition: background 0.2s;
+  vertical-align: middle;
+}
+
+.comparison-table tbody td:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+
+.comparison-table tbody tr:hover td {
+  background: rgba(85, 61, 233, 0.03);
+}
+
+.comparison-table tbody tr:hover td.loki-col {
+  background: rgba(85, 61, 233, 0.08);
+}
+
+/* Cell indicators */
+.cell-yes {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.cell-no {
+  color: var(--danger);
+  opacity: 0.6;
+}
+
+.cell-partial {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+.cell-text {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.cell-best {
+  color: var(--success);
+  font-weight: 700;
+  position: relative;
+}
+
+/* Winner badge */
+.winner-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  background: var(--success-bg);
+  color: var(--success);
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
+/* Feature detail on hover */
+.feature-detail {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-top: 0.2rem;
+}
+
+/* Category collapsible rows */
+.comparison-table .feature-row {
+  transition: opacity 0.2s;
+}
+
+.comparison-table .feature-row.hidden {
+  display: none;
+}
+
+/* Summary section */
+.summary-section {
+  max-width: 1000px;
+  margin: 3rem auto;
+  padding: 0 2rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  transition: all 0.3s;
+}
+
+.summary-card:hover {
+  border-color: var(--purple);
+  box-shadow: 0 4px 16px var(--purple-glow);
+}
+
+.summary-card h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--purple);
+}
+
+.summary-card p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.summary-card .verdict {
+  display: inline-block;
+  margin-top: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  background: rgba(85, 61, 233, 0.08);
+  color: var(--purple);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* CTA */
+.cta-section {
+  text-align: center;
+  padding: 4rem 2rem;
+  background: linear-gradient(135deg, var(--bg) 0%, rgba(85, 61, 233, 0.06) 50%, var(--bg) 100%);
+}
+
+.cta-section h2 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  margin-bottom: 0.8rem;
+}
+
+.cta-section p {
+  color: var(--text-muted);
+  margin-bottom: 2rem;
+  font-size: 1.05rem;
+}
+
+.cta-btn {
+  display: inline-block;
+  padding: 0.9rem 2.5rem;
+  background: var(--purple);
+  color: white;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: all 0.3s;
+}
+
+.cta-btn:hover {
+  background: var(--purple-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px var(--purple-glow);
+}
+
+footer {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .summary-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <h1>How Loki Mode Compares</h1>
+  <p>An honest, feature-by-feature comparison with the most popular AI-powered development tools available today.</p>
+</header>
+
+<div class="table-container">
+  <div class="table-scroll-hint">Scroll horizontally to see all products &rarr;</div>
+  <table class="comparison-table">
+    <thead>
+      <tr>
+        <th>Feature</th>
+        <th class="loki-col">
+          <span class="product-name">Loki Mode</span>
+          <span class="product-type">CLI + Autonomous</span>
+        </th>
+        <th>
+          <span class="product-name">bolt.new</span>
+          <span class="product-type">Web IDE</span>
+        </th>
+        <th>
+          <span class="product-name">Replit</span>
+          <span class="product-type">Cloud IDE</span>
+        </th>
+        <th>
+          <span class="product-name">Lovable</span>
+          <span class="product-type">Web Builder</span>
+        </th>
+        <th>
+          <span class="product-name">Claude Code</span>
+          <span class="product-type">CLI Agent</span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <!-- Autonomy -->
+      <tr class="category-row" data-category="autonomy" onclick="toggleCategory('autonomy')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Autonomy and Workflow</td>
+      </tr>
+      <tr class="feature-row" data-category="autonomy">
+        <td>Full autonomous execution<span class="feature-detail">PRD to deployed product, no intervention</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Partial</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Partial</span></td>
+      </tr>
+      <tr class="feature-row" data-category="autonomy">
+        <td>RARV iteration cycle<span class="feature-detail">Reason, Act, Reflect, Verify</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+      <tr class="feature-row" data-category="autonomy">
+        <td>Multi-provider support<span class="feature-detail">Claude, Codex, Gemini</span></td>
+        <td class="loki-col"><span class="cell-yes">3 providers</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-text">1 (Claude)</span></td>
+        <td><span class="cell-text">1 (Custom)</span></td>
+        <td><span class="cell-text">1 (Claude)</span></td>
+        <td><span class="cell-text">1 (Claude)</span></td>
+      </tr>
+      <tr class="feature-row" data-category="autonomy">
+        <td>Completion detection<span class="feature-detail">Knows when project is done</span></td>
+        <td class="loki-col"><span class="cell-yes">Council vote</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">Manual</span></td>
+        <td><span class="cell-no">Manual</span></td>
+        <td><span class="cell-no">Manual</span></td>
+        <td><span class="cell-partial">Basic</span></td>
+      </tr>
+      <tr class="feature-row" data-category="autonomy">
+        <td>Human intervention signals<span class="feature-detail">PAUSE, STOP, INPUT controls</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-partial">Stop only</span></td>
+        <td><span class="cell-partial">Stop only</span></td>
+        <td><span class="cell-partial">Stop only</span></td>
+        <td><span class="cell-partial">Stop only</span></td>
+      </tr>
+
+      <!-- Quality -->
+      <tr class="category-row" data-category="quality" onclick="toggleCategory('quality')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Quality and Review</td>
+      </tr>
+      <tr class="feature-row" data-category="quality">
+        <td>Automated code review<span class="feature-detail">Multi-reviewer with blind review</span></td>
+        <td class="loki-col"><span class="cell-yes">3 reviewers</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+      <tr class="feature-row" data-category="quality">
+        <td>Anti-sycophancy checks<span class="feature-detail">Devil's advocate on approvals</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span><span class="winner-badge">Unique</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+      <tr class="feature-row" data-category="quality">
+        <td>Quality gate pipeline<span class="feature-detail">Automated lint, test, security</span></td>
+        <td class="loki-col"><span class="cell-yes">9 gates</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-partial">Basic lint</span></td>
+        <td><span class="cell-partial">Basic lint</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+      <tr class="feature-row" data-category="quality">
+        <td>E2E testing<span class="feature-detail">Playwright browser tests</span></td>
+        <td class="loki-col"><span class="cell-yes">Playwright</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Partial</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+      <tr class="feature-row" data-category="quality">
+        <td>Security scanning<span class="feature-detail">CodeQL vulnerability detection</span></td>
+        <td class="loki-col"><span class="cell-yes">CodeQL</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+
+      <!-- Intelligence -->
+      <tr class="category-row" data-category="intelligence" onclick="toggleCategory('intelligence')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Intelligence and Memory</td>
+      </tr>
+      <tr class="feature-row" data-category="intelligence">
+        <td>Persistent memory<span class="feature-detail">Learns from past projects</span></td>
+        <td class="loki-col"><span class="cell-yes">3-tier</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Session only</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">CLAUDE.md</span></td>
+      </tr>
+      <tr class="feature-row" data-category="intelligence">
+        <td>Vector code search<span class="feature-detail">Semantic similarity search</span></td>
+        <td class="loki-col"><span class="cell-yes">ChromaDB</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+      <tr class="feature-row" data-category="intelligence">
+        <td>Model tier selection<span class="feature-detail">Right model for each task</span></td>
+        <td class="loki-col"><span class="cell-yes">Opus/Sonnet/Haiku</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-text">Fixed</span></td>
+        <td><span class="cell-text">Fixed</span></td>
+        <td><span class="cell-text">Fixed</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+      <tr class="feature-row" data-category="intelligence">
+        <td>Context management<span class="feature-detail">Token budget tracking</span></td>
+        <td class="loki-col"><span class="cell-yes">Auto</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+
+      <!-- Developer Experience -->
+      <tr class="category-row" data-category="devex" onclick="toggleCategory('devex')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Developer Experience</td>
+      </tr>
+      <tr class="feature-row" data-category="devex">
+        <td>Local development<span class="feature-detail">Run on your own machine</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-no">Cloud only</span></td>
+        <td><span class="cell-no">Cloud only</span></td>
+        <td><span class="cell-no">Cloud only</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+      </tr>
+      <tr class="feature-row" data-category="devex">
+        <td>CLI interface<span class="feature-detail">Terminal-first workflow</span></td>
+        <td class="loki-col"><span class="cell-yes">74 commands</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">Web only</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-no">Web only</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+      </tr>
+      <tr class="feature-row" data-category="devex">
+        <td>Live dashboard<span class="feature-detail">Real-time monitoring UI</span></td>
+        <td class="loki-col"><span class="cell-yes">117 endpoints</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-partial">Basic</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-partial">Basic</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+      <tr class="feature-row" data-category="devex">
+        <td>Git integration<span class="feature-detail">Native version control</span></td>
+        <td class="loki-col"><span class="cell-yes">Full</span></td>
+        <td><span class="cell-partial">Export</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-partial">Export</span></td>
+        <td><span class="cell-yes">Full</span></td>
+      </tr>
+      <tr class="feature-row" data-category="devex">
+        <td>Parallel workflows<span class="feature-detail">Git worktree parallelization</span></td>
+        <td class="loki-col"><span class="cell-yes">Worktrees</span><span class="winner-badge">Unique</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Task tool</span></td>
+      </tr>
+
+      <!-- Deployment -->
+      <tr class="category-row" data-category="deploy" onclick="toggleCategory('deploy')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Deployment and Operations</td>
+      </tr>
+      <tr class="feature-row" data-category="deploy">
+        <td>One-command deploy<span class="feature-detail">Automated deployment pipeline</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+      <tr class="feature-row" data-category="deploy">
+        <td>Custom infrastructure<span class="feature-detail">Deploy anywhere (AWS, GCP, etc.)</span></td>
+        <td class="loki-col"><span class="cell-yes">Any target</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-text">Netlify only</span></td>
+        <td><span class="cell-text">Replit only</span></td>
+        <td><span class="cell-text">Limited</span></td>
+        <td><span class="cell-yes">Any target</span></td>
+      </tr>
+      <tr class="feature-row" data-category="deploy">
+        <td>Docker support<span class="feature-detail">Container-based deployment</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+      <tr class="feature-row" data-category="deploy">
+        <td>Cost tracking<span class="feature-detail">Token and API cost monitoring</span></td>
+        <td class="loki-col"><span class="cell-yes">Auto</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-partial">Credits</span></td>
+        <td><span class="cell-partial">Credits</span></td>
+        <td><span class="cell-partial">Credits</span></td>
+        <td><span class="cell-partial">Manual</span></td>
+      </tr>
+
+      <!-- Extensibility -->
+      <tr class="category-row" data-category="extend" onclick="toggleCategory('extend')">
+        <td colspan="6"><span class="category-arrow">&#9660;</span> Extensibility</td>
+      </tr>
+      <tr class="feature-row" data-category="extend">
+        <td>MCP integration<span class="feature-detail">Model Context Protocol tools</span></td>
+        <td class="loki-col"><span class="cell-yes">15 tools</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+      </tr>
+      <tr class="feature-row" data-category="extend">
+        <td>VSCode extension<span class="feature-detail">IDE integration</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+      </tr>
+      <tr class="feature-row" data-category="extend">
+        <td>Open source<span class="feature-detail">Inspect and modify the code</span></td>
+        <td class="loki-col"><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-no">No</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+      </tr>
+      <tr class="feature-row" data-category="extend">
+        <td>PRD templates<span class="feature-detail">Pre-built project templates</span></td>
+        <td class="loki-col"><span class="cell-yes">13 templates</span><span class="winner-badge">Best</span></td>
+        <td><span class="cell-partial">Basic</span></td>
+        <td><span class="cell-yes">Yes</span></td>
+        <td><span class="cell-partial">Limited</span></td>
+        <td><span class="cell-no">No</span></td>
+      </tr>
+
+    </tbody>
+  </table>
+</div>
+
+<!-- Summary -->
+<section class="summary-section">
+  <div class="summary-grid">
+    <div class="summary-card">
+      <h3>For Full Autonomy</h3>
+      <p>Loki Mode is the only tool that can take a PRD and produce a fully deployed application without human intervention. The RARV cycle, completion council, and quality gates create a self-correcting pipeline.</p>
+      <span class="verdict">Loki Mode wins</span>
+    </div>
+    <div class="summary-card">
+      <h3>For Quick Prototyping</h3>
+      <p>If you need a simple app in minutes with zero setup, bolt.new and Lovable offer browser-based prototyping. But the output lacks quality gates and is limited to their hosting.</p>
+      <span class="verdict">Tradeoff: speed vs quality</span>
+    </div>
+    <div class="summary-card">
+      <h3>For Production Code</h3>
+      <p>Loki Mode's 9-gate quality pipeline, 3-reviewer system, and anti-sycophancy checks produce production-grade code. No other tool offers automated code review at this level.</p>
+      <span class="verdict">Loki Mode wins</span>
+    </div>
+    <div class="summary-card">
+      <h3>For Team Collaboration</h3>
+      <p>Replit excels at real-time collaboration in a browser. Loki Mode offers parallel git worktrees and a monitoring dashboard, but collaboration is file-system based.</p>
+      <span class="verdict">Depends on workflow</span>
+    </div>
+    <div class="summary-card">
+      <h3>For Custom Infrastructure</h3>
+      <p>Only Loki Mode and Claude Code let you deploy to any infrastructure. Cloud-only tools lock you into their hosting, limiting scalability and control.</p>
+      <span class="verdict">Loki Mode + Claude Code</span>
+    </div>
+    <div class="summary-card">
+      <h3>For Learning from Experience</h3>
+      <p>Loki Mode's 3-tier memory system (episodic, semantic, procedural) means it gets better over time. No other tool in this comparison offers persistent project memory.</p>
+      <span class="verdict">Loki Mode wins</span>
+    </div>
+  </div>
+</section>
+
+<section class="cta-section">
+  <h2>Ready to Try Loki Mode?</h2>
+  <p>Install in 30 seconds and build your first project autonomously.</p>
+  <a href="https://www.npmjs.com/package/loki-mode" class="cta-btn">Try Loki Mode</a>
+</section>
+
+<footer>
+  Loki Mode by Autonomi -- Build the future, faster
+</footer>
+
+<script>
+function toggleCategory(category) {
+  const rows = document.querySelectorAll(`.feature-row[data-category="${category}"]`);
+  const categoryRow = document.querySelector(`.category-row[data-category="${category}"]`);
+  const isCollapsed = categoryRow.classList.contains('collapsed');
+
+  if (isCollapsed) {
+    categoryRow.classList.remove('collapsed');
+    rows.forEach(row => row.classList.remove('hidden'));
+  } else {
+    categoryRow.classList.add('collapsed');
+    rows.forEach(row => row.classList.add('hidden'));
+  }
+}
+</script>
+
+</body>
+</html>

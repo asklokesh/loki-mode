@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Build Your First App -- Loki Mode Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --purple: #553DE9;
+  --purple-light: #7B6BF0;
+  --purple-dark: #3D2BB5;
+  --purple-glow: rgba(85, 61, 233, 0.3);
+  --bg: #FAFAFA;
+  --bg-card: #FFFFFF;
+  --bg-code: #1E1E2E;
+  --text: #1A1A2E;
+  --text-muted: #6B7280;
+  --text-code: #CDD6F4;
+  --border: #E5E7EB;
+  --success: #10B981;
+  --success-bg: rgba(16, 185, 129, 0.1);
+  --warning: #F59E0B;
+  --accent: #EC4899;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F0F1A;
+    --bg-card: #1A1A2E;
+    --text: #E2E8F0;
+    --text-muted: #94A3B8;
+    --border: #2D2D44;
+    --success-bg: rgba(16, 185, 129, 0.15);
+  }
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* Hero */
+.hero {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4rem 2rem;
+  background: linear-gradient(135deg, var(--bg) 0%, rgba(85, 61, 233, 0.08) 50%, var(--bg) 100%);
+  position: relative;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, var(--purple-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero-badge {
+  display: inline-block;
+  padding: 0.4rem 1rem;
+  background: var(--purple);
+  color: white;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  font-weight: 800;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, var(--purple) 0%, var(--purple-light) 50%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  position: relative;
+}
+
+.hero p {
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  max-width: 600px;
+  margin-bottom: 2rem;
+}
+
+.hero-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 2rem;
+  background: var(--purple);
+  color: white;
+  text-decoration: none;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.hero-cta:hover {
+  background: var(--purple-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px var(--purple-glow);
+}
+
+/* Progress bar */
+.progress-container {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 0.8rem 2rem;
+}
+
+.progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.3s;
+  white-space: nowrap;
+}
+
+.progress-step.active { color: var(--purple); }
+.progress-step.completed { color: var(--success); }
+
+.progress-step .step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: all 0.3s;
+}
+
+.progress-step.active .step-dot {
+  background: var(--purple);
+  color: white;
+}
+
+.progress-step.completed .step-dot {
+  background: var(--success);
+  color: white;
+}
+
+.progress-line {
+  flex: 1;
+  height: 2px;
+  background: var(--border);
+  margin: 0 0.3rem;
+  min-width: 12px;
+}
+
+.progress-line.completed { background: var(--success); }
+
+/* Steps */
+.steps-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.step-section {
+  margin-bottom: 5rem;
+  opacity: 0;
+  transform: translateY(30px);
+  transition: all 0.6s ease;
+}
+
+.step-section.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.step-number {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--purple), var(--purple-light));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-header h2 {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.step-description {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+  font-size: 1.05rem;
+}
+
+/* Mockup frames */
+.mockup-frame {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  margin-bottom: 1.5rem;
+}
+
+.mockup-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.mockup-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.mockup-dots span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.mockup-dots span:nth-child(1) { background: #FF5F57; }
+.mockup-dots span:nth-child(2) { background: #FFBD2E; }
+.mockup-dots span:nth-child(3) { background: #28CA41; }
+
+.mockup-title {
+  flex: 1;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mockup-body {
+  padding: 1.5rem;
+}
+
+/* Step 1: Prompt input */
+.prompt-container {
+  background: var(--bg-code);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.prompt-label {
+  color: var(--purple-light);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.8rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.prompt-text {
+  color: var(--text-code);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+
+.prompt-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--purple-light);
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.typing-text {
+  display: inline;
+  overflow: hidden;
+  border-right: none;
+  white-space: nowrap;
+  animation: typing 3s steps(60) 1s forwards;
+  max-width: 0;
+}
+
+@keyframes typing {
+  from { max-width: 0; }
+  to { max-width: 100%; }
+}
+
+/* Step 2: Planning */
+.plan-output {
+  background: var(--bg-code);
+  border-radius: 12px;
+  padding: 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--text-code);
+}
+
+.plan-output .plan-line {
+  padding: 0.15rem 0;
+  opacity: 0;
+  animation: fadeInLine 0.3s ease forwards;
+}
+
+.plan-output .plan-line:nth-child(1) { animation-delay: 0.2s; }
+.plan-output .plan-line:nth-child(2) { animation-delay: 0.4s; }
+.plan-output .plan-line:nth-child(3) { animation-delay: 0.6s; }
+.plan-output .plan-line:nth-child(4) { animation-delay: 0.8s; }
+.plan-output .plan-line:nth-child(5) { animation-delay: 1.0s; }
+.plan-output .plan-line:nth-child(6) { animation-delay: 1.2s; }
+.plan-output .plan-line:nth-child(7) { animation-delay: 1.4s; }
+.plan-output .plan-line:nth-child(8) { animation-delay: 1.6s; }
+.plan-output .plan-line:nth-child(9) { animation-delay: 1.8s; }
+.plan-output .plan-line:nth-child(10) { animation-delay: 2.0s; }
+.plan-output .plan-line:nth-child(11) { animation-delay: 2.2s; }
+.plan-output .plan-line:nth-child(12) { animation-delay: 2.4s; }
+
+@keyframes fadeInLine {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.plan-line .keyword { color: #CBA6F7; }
+.plan-line .string { color: #A6E3A1; }
+.plan-line .comment { color: #6C7086; }
+.plan-line .folder { color: #89B4FA; }
+.plan-line .file { color: #F9E2AF; }
+
+/* Step 3: Code generation */
+.code-editor {
+  background: var(--bg-code);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.code-tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0 0.5rem;
+}
+
+.code-tab {
+  padding: 0.6rem 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.code-tab.active {
+  color: var(--text-code);
+  border-bottom-color: var(--purple);
+}
+
+.code-content {
+  padding: 1rem 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text-code);
+  overflow-x: auto;
+}
+
+.code-line {
+  display: block;
+  opacity: 0;
+  animation: codeAppear 0.1s ease forwards;
+}
+
+.code-line:nth-child(1) { animation-delay: 0.3s; }
+.code-line:nth-child(2) { animation-delay: 0.5s; }
+.code-line:nth-child(3) { animation-delay: 0.7s; }
+.code-line:nth-child(4) { animation-delay: 0.9s; }
+.code-line:nth-child(5) { animation-delay: 1.1s; }
+.code-line:nth-child(6) { animation-delay: 1.3s; }
+.code-line:nth-child(7) { animation-delay: 1.5s; }
+.code-line:nth-child(8) { animation-delay: 1.7s; }
+.code-line:nth-child(9) { animation-delay: 1.9s; }
+.code-line:nth-child(10) { animation-delay: 2.1s; }
+.code-line:nth-child(11) { animation-delay: 2.3s; }
+.code-line:nth-child(12) { animation-delay: 2.5s; }
+.code-line:nth-child(13) { animation-delay: 2.7s; }
+
+@keyframes codeAppear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.code-line .ln {
+  display: inline-block;
+  width: 2.5rem;
+  text-align: right;
+  margin-right: 1rem;
+  color: #45475A;
+  user-select: none;
+}
+
+.code-line .kw { color: #CBA6F7; }
+.code-line .fn { color: #89B4FA; }
+.code-line .str { color: #A6E3A1; }
+.code-line .num { color: #FAB387; }
+.code-line .cm { color: #6C7086; }
+.code-line .op { color: #89DCEB; }
+.code-line .type { color: #F9E2AF; }
+
+/* Step 4: Quality gates */
+.gates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.gate-item {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 1rem;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  opacity: 0;
+  animation: gateAppear 0.4s ease forwards;
+}
+
+.gate-item:nth-child(1) { animation-delay: 0.3s; }
+.gate-item:nth-child(2) { animation-delay: 0.7s; }
+.gate-item:nth-child(3) { animation-delay: 1.1s; }
+.gate-item:nth-child(4) { animation-delay: 1.5s; }
+.gate-item:nth-child(5) { animation-delay: 1.9s; }
+.gate-item:nth-child(6) { animation-delay: 2.3s; }
+
+@keyframes gateAppear {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.gate-check {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--success-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.gate-check svg {
+  width: 14px;
+  height: 14px;
+  stroke: var(--success);
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+  animation: checkDraw 0.4s ease forwards;
+}
+
+.gate-item:nth-child(1) .gate-check svg { animation-delay: 0.5s; }
+.gate-item:nth-child(2) .gate-check svg { animation-delay: 0.9s; }
+.gate-item:nth-child(3) .gate-check svg { animation-delay: 1.3s; }
+.gate-item:nth-child(4) .gate-check svg { animation-delay: 1.7s; }
+.gate-item:nth-child(5) .gate-check svg { animation-delay: 2.1s; }
+.gate-item:nth-child(6) .gate-check svg { animation-delay: 2.5s; }
+
+@keyframes checkDraw {
+  to { stroke-dashoffset: 0; }
+}
+
+.gate-info { flex: 1; }
+.gate-info .gate-name { font-weight: 600; font-size: 0.9rem; }
+.gate-info .gate-detail { font-size: 0.8rem; color: var(--text-muted); }
+
+.gate-badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+/* Step 5: Preview */
+.preview-browser {
+  background: white;
+  border-radius: 8px;
+  min-height: 300px;
+}
+
+.preview-url-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #F3F4F6;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.preview-url {
+  flex: 1;
+  padding: 0.4rem 0.8rem;
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: #6B7280;
+  font-family: 'Inter', sans-serif;
+}
+
+.preview-content {
+  padding: 2rem;
+  background: linear-gradient(135deg, #553DE9 0%, #7B6BF0 50%, #EC4899 100%);
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: white;
+  text-align: center;
+}
+
+.preview-content h3 {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.preview-content p {
+  opacity: 0.9;
+  font-size: 0.95rem;
+}
+
+.preview-btn {
+  padding: 0.6rem 1.5rem;
+  background: white;
+  color: var(--purple);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.preview-features {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.preview-feature {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+/* Step 6: Deploy */
+.deploy-success {
+  text-align: center;
+  padding: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.deploy-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--success-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+  animation: scaleIn 0.5s ease 0.3s both;
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+.deploy-icon svg {
+  width: 40px;
+  height: 40px;
+  stroke: var(--success);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.deploy-success h3 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  animation: fadeUp 0.4s ease 0.5s both;
+}
+
+.deploy-success .deploy-url {
+  color: var(--purple);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+  animation: fadeUp 0.4s ease 0.7s both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.deploy-stats {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  animation: fadeUp 0.4s ease 0.9s both;
+}
+
+.deploy-stat {
+  text-align: center;
+}
+
+.deploy-stat .stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--purple);
+}
+
+.deploy-stat .stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Confetti */
+.confetti-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.confetti {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  animation: confettiFall 3s ease forwards;
+}
+
+@keyframes confettiFall {
+  0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(400px) rotate(720deg); opacity: 0; }
+}
+
+.confetti:nth-child(1) { left: 10%; background: #553DE9; animation-delay: 0.5s; animation-duration: 2.5s; }
+.confetti:nth-child(2) { left: 20%; background: #EC4899; animation-delay: 0.7s; animation-duration: 3s; }
+.confetti:nth-child(3) { left: 30%; background: #10B981; animation-delay: 0.4s; animation-duration: 2.8s; }
+.confetti:nth-child(4) { left: 40%; background: #F59E0B; animation-delay: 0.9s; animation-duration: 2.6s; }
+.confetti:nth-child(5) { left: 50%; background: #553DE9; animation-delay: 0.6s; animation-duration: 3.1s; }
+.confetti:nth-child(6) { left: 60%; background: #EC4899; animation-delay: 0.3s; animation-duration: 2.7s; }
+.confetti:nth-child(7) { left: 70%; background: #10B981; animation-delay: 0.8s; animation-duration: 2.9s; }
+.confetti:nth-child(8) { left: 80%; background: #F59E0B; animation-delay: 0.5s; animation-duration: 3.2s; }
+.confetti:nth-child(9) { left: 90%; background: #553DE9; animation-delay: 1.0s; animation-duration: 2.4s; }
+.confetti:nth-child(10) { left: 15%; background: #89B4FA; animation-delay: 0.6s; animation-duration: 2.6s; }
+.confetti:nth-child(11) { left: 45%; background: #A6E3A1; animation-delay: 0.8s; animation-duration: 3.0s; }
+.confetti:nth-child(12) { left: 75%; background: #F9E2AF; animation-delay: 0.4s; animation-duration: 2.8s; }
+
+/* Code behind the scenes */
+.behind-scenes {
+  margin-top: 1.5rem;
+}
+
+.behind-scenes-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 0.8rem;
+}
+
+.behind-scenes-toggle:hover {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+
+.behind-scenes-toggle .arrow {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.7rem;
+}
+
+.behind-scenes-toggle.open .arrow {
+  transform: rotate(90deg);
+}
+
+.behind-scenes-code {
+  background: var(--bg-code);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--text-code);
+  overflow-x: auto;
+  display: none;
+}
+
+.behind-scenes-code.open { display: block; }
+
+.behind-scenes-code .cm { color: #6C7086; }
+.behind-scenes-code .kw { color: #CBA6F7; }
+.behind-scenes-code .fn { color: #89B4FA; }
+.behind-scenes-code .str { color: #A6E3A1; }
+
+/* Next step button */
+.next-step-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.5rem;
+  background: var(--purple);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  margin-top: 1.5rem;
+  transition: all 0.3s;
+}
+
+.next-step-btn:hover {
+  background: var(--purple-dark);
+  transform: translateY(-1px);
+}
+
+.next-step-btn .arrow-right {
+  transition: transform 0.2s;
+}
+
+.next-step-btn:hover .arrow-right {
+  transform: translateX(3px);
+}
+
+/* Footer CTA */
+.footer-cta {
+  text-align: center;
+  padding: 5rem 2rem;
+  background: linear-gradient(135deg, var(--bg) 0%, rgba(85, 61, 233, 0.06) 50%, var(--bg) 100%);
+  border-top: 1px solid var(--border);
+}
+
+.footer-cta h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  margin-bottom: 0.8rem;
+}
+
+.footer-cta p {
+  color: var(--text-muted);
+  margin-bottom: 2rem;
+  font-size: 1.05rem;
+}
+
+.cta-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.cta-primary {
+  padding: 0.9rem 2rem;
+  background: var(--purple);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.3s;
+}
+
+.cta-primary:hover {
+  background: var(--purple-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px var(--purple-glow);
+}
+
+.cta-secondary {
+  padding: 0.9rem 2rem;
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.3s;
+}
+
+.cta-secondary:hover {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .progress-step span:not(.step-dot) { display: none; }
+  .deploy-stats { flex-direction: column; gap: 1rem; }
+  .preview-features { flex-direction: column; align-items: center; }
+  .steps-container { padding: 1rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<section class="hero">
+  <span class="hero-badge">Interactive Walkthrough</span>
+  <h1>Build Your First App with Loki Mode</h1>
+  <p>From idea to deployed product in 6 steps. Follow along to see how Loki Mode turns a simple prompt into a fully functional application.</p>
+  <a href="#step-1" class="hero-cta">
+    Start the Walkthrough
+    <span>&darr;</span>
+  </a>
+</section>
+
+<!-- Progress bar -->
+<nav class="progress-container" id="progress">
+  <div class="progress-bar">
+    <a class="progress-step active" href="#step-1" data-step="1">
+      <span class="step-dot">1</span>
+      <span>Describe</span>
+    </a>
+    <div class="progress-line" data-line="1"></div>
+    <a class="progress-step" href="#step-2" data-step="2">
+      <span class="step-dot">2</span>
+      <span>Plan</span>
+    </a>
+    <div class="progress-line" data-line="2"></div>
+    <a class="progress-step" href="#step-3" data-step="3">
+      <span class="step-dot">3</span>
+      <span>Code</span>
+    </a>
+    <div class="progress-line" data-line="3"></div>
+    <a class="progress-step" href="#step-4" data-step="4">
+      <span class="step-dot">4</span>
+      <span>Quality</span>
+    </a>
+    <div class="progress-line" data-line="4"></div>
+    <a class="progress-step" href="#step-5" data-step="5">
+      <span class="step-dot">5</span>
+      <span>Preview</span>
+    </a>
+    <div class="progress-line" data-line="5"></div>
+    <a class="progress-step" href="#step-6" data-step="6">
+      <span class="step-dot">6</span>
+      <span>Deploy</span>
+    </a>
+  </div>
+</nav>
+
+<!-- Steps -->
+<main class="steps-container">
+
+  <!-- Step 1: Describe Your Idea -->
+  <section class="step-section" id="step-1">
+    <div class="step-header">
+      <div class="step-number">1</div>
+      <h2>Describe Your Idea</h2>
+    </div>
+    <p class="step-description">
+      Start by describing what you want to build. Loki Mode understands natural language prompts and converts them into a full project specification.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Claude Code Terminal</div>
+      </div>
+      <div class="mockup-body">
+        <div class="prompt-container">
+          <div class="prompt-label">Your prompt</div>
+          <div class="prompt-text">
+            Build a SaaS dashboard for tracking team productivity.<br>
+            It should have user authentication, real-time charts,<br>
+            a Kanban board, and export to CSV. Use Next.js,<br>
+            Tailwind, and PostgreSQL.<span class="prompt-cursor"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># Loki Mode processes your prompt through the RARV cycle</span><br>
+        <span class="kw">loki start</span> --provider claude ./prd.md<br><br>
+        <span class="cm"># Phase 1: Reason -- analyze requirements</span><br>
+        <span class="cm"># Phase 2: Act -- generate architecture</span><br>
+        <span class="cm"># Phase 3: Reflect -- validate against best practices</span><br>
+        <span class="cm"># Phase 4: Verify -- confirm completeness</span>
+      </div>
+    </div>
+    <a href="#step-2" class="next-step-btn">
+      Next: AI Plans the Architecture
+      <span class="arrow-right">&rarr;</span>
+    </a>
+  </section>
+
+  <!-- Step 2: AI Plans the Architecture -->
+  <section class="step-section" id="step-2">
+    <div class="step-header">
+      <div class="step-number">2</div>
+      <h2>AI Plans the Architecture</h2>
+    </div>
+    <p class="step-description">
+      The AI analyzes your requirements and generates a complete project architecture, including file structure, dependencies, and data models.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Architecture Planning</div>
+      </div>
+      <div class="mockup-body">
+        <div class="plan-output">
+          <div class="plan-line"><span class="comment"># Project structure generated</span></div>
+          <div class="plan-line"><span class="folder">src/</span></div>
+          <div class="plan-line">&nbsp;&nbsp;<span class="folder">app/</span></div>
+          <div class="plan-line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">layout.tsx</span> <span class="comment">........... root layout with providers</span></div>
+          <div class="plan-line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">page.tsx</span> <span class="comment">............. dashboard home</span></div>
+          <div class="plan-line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="folder">auth/</span> <span class="comment">............... login, register, reset</span></div>
+          <div class="plan-line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="folder">dashboard/</span> <span class="comment">.......... charts, kanban, exports</span></div>
+          <div class="plan-line">&nbsp;&nbsp;&nbsp;&nbsp;<span class="folder">api/</span> <span class="comment">................ REST endpoints</span></div>
+          <div class="plan-line">&nbsp;&nbsp;<span class="folder">components/</span> <span class="comment">........... 12 reusable components</span></div>
+          <div class="plan-line">&nbsp;&nbsp;<span class="folder">lib/</span> <span class="comment">.................. db, auth, utils</span></div>
+          <div class="plan-line"><span class="keyword">Dependencies:</span> <span class="string">next, prisma, chart.js, next-auth</span></div>
+          <div class="plan-line"><span class="keyword">Estimated files:</span> <span class="string">34 files, ~4,200 lines of code</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># Opus model creates the architecture plan</span><br>
+        <span class="fn">build_prompt()</span> <span class="cm"># Injects RARV instructions + context</span><br>
+        <span class="fn">detect_complexity()</span> <span class="cm"># Returns: "standard"</span><br>
+        <span class="fn">get_rarv_tier()</span> <span class="cm"># Iteration 1 = Opus for planning</span><br><br>
+        <span class="cm"># Memory system provides relevant patterns</span><br>
+        <span class="fn">retrieve_context()</span> <span class="cm"># Loads similar past projects</span>
+      </div>
+    </div>
+    <a href="#step-3" class="next-step-btn">
+      Next: Code Generation
+      <span class="arrow-right">&rarr;</span>
+    </a>
+  </section>
+
+  <!-- Step 3: Code Generation -->
+  <section class="step-section" id="step-3">
+    <div class="step-header">
+      <div class="step-number">3</div>
+      <h2>Code Generation</h2>
+    </div>
+    <p class="step-description">
+      Loki Mode generates production-quality code across all files simultaneously, following best practices and your chosen tech stack.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Code Generation</div>
+      </div>
+      <div class="mockup-body" style="padding: 0;">
+        <div class="code-editor">
+          <div class="code-tabs">
+            <div class="code-tab active">page.tsx</div>
+            <div class="code-tab">schema.prisma</div>
+            <div class="code-tab">auth.ts</div>
+          </div>
+          <div class="code-content">
+            <span class="code-line"><span class="ln">1</span><span class="kw">import</span> { <span class="type">DashboardLayout</span> } <span class="kw">from</span> <span class="str">"@/components/layout"</span>;</span>
+            <span class="code-line"><span class="ln">2</span><span class="kw">import</span> { <span class="type">ProductivityChart</span> } <span class="kw">from</span> <span class="str">"@/components/charts"</span>;</span>
+            <span class="code-line"><span class="ln">3</span><span class="kw">import</span> { <span class="type">KanbanBoard</span> } <span class="kw">from</span> <span class="str">"@/components/kanban"</span>;</span>
+            <span class="code-line"><span class="ln">4</span></span>
+            <span class="code-line"><span class="ln">5</span><span class="kw">export default async function</span> <span class="fn">Dashboard</span>() {</span>
+            <span class="code-line"><span class="ln">6</span>&nbsp;&nbsp;<span class="kw">const</span> session = <span class="kw">await</span> <span class="fn">getSession</span>();</span>
+            <span class="code-line"><span class="ln">7</span>&nbsp;&nbsp;<span class="kw">const</span> metrics = <span class="kw">await</span> <span class="fn">fetchMetrics</span>(session.teamId);</span>
+            <span class="code-line"><span class="ln">8</span></span>
+            <span class="code-line"><span class="ln">9</span>&nbsp;&nbsp;<span class="kw">return</span> (</span>
+            <span class="code-line"><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="op">&lt;</span><span class="type">DashboardLayout</span><span class="op">&gt;</span></span>
+            <span class="code-line"><span class="ln">11</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="op">&lt;</span><span class="type">ProductivityChart</span> <span class="fn">data</span>={metrics} <span class="op">/&gt;</span></span>
+            <span class="code-line"><span class="ln">12</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="op">&lt;</span><span class="type">KanbanBoard</span> <span class="fn">teamId</span>={session.teamId} <span class="op">/&gt;</span></span>
+            <span class="code-line"><span class="ln">13</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="op">&lt;/</span><span class="type">DashboardLayout</span><span class="op">&gt;</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># Sonnet model handles implementation</span><br>
+        <span class="fn">get_rarv_tier()</span> <span class="cm"># Iterations 2+ = Sonnet for coding</span><br><br>
+        <span class="cm"># Parallel generation via Task tool</span><br>
+        <span class="cm"># -- Stream 1: Components (12 files)</span><br>
+        <span class="cm"># -- Stream 2: API routes (8 files)</span><br>
+        <span class="cm"># -- Stream 3: Database schema + migrations</span><br>
+        <span class="cm"># -- Stream 4: Auth configuration</span>
+      </div>
+    </div>
+    <a href="#step-4" class="next-step-btn">
+      Next: Quality Gates Run
+      <span class="arrow-right">&rarr;</span>
+    </a>
+  </section>
+
+  <!-- Step 4: Quality Gates Run -->
+  <section class="step-section" id="step-4">
+    <div class="step-header">
+      <div class="step-number">4</div>
+      <h2>Quality Gates Run</h2>
+    </div>
+    <p class="step-description">
+      Every piece of generated code passes through automated quality gates: linting, type checking, tests, security scans, and peer review by multiple AI agents.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Quality Gate Results</div>
+      </div>
+      <div class="mockup-body">
+        <div class="gates-list">
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">Static Analysis (ESLint + TypeScript)</div>
+              <div class="gate-detail">0 errors, 0 warnings across 34 files</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">Unit Tests</div>
+              <div class="gate-detail">47 tests passing, 94% coverage</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">Security Scan (CodeQL)</div>
+              <div class="gate-detail">No vulnerabilities detected</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">3-Reviewer Peer Review</div>
+              <div class="gate-detail">All 3 reviewers approved (blind review)</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">Anti-Sycophancy Check</div>
+              <div class="gate-detail">Devil's advocate found no issues</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+          <div class="gate-item">
+            <div class="gate-check">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="gate-info">
+              <div class="gate-name">E2E Smoke Tests (Playwright)</div>
+              <div class="gate-detail">8 scenarios passing, all browsers</div>
+            </div>
+            <span class="gate-badge">PASS</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># Quality gate pipeline (skills/quality-gates.md)</span><br>
+        <span class="fn">run_code_review()</span> <span class="cm"># 3 blind reviewers + anti-sycophancy</span><br>
+        <span class="kw">loki audit</span> lint <span class="cm"># ESLint + TypeScript strict mode</span><br>
+        <span class="kw">loki audit</span> test <span class="cm"># Unit + integration + E2E</span><br><br>
+        <span class="cm"># If any gate fails, code is automatically fixed</span><br>
+        <span class="cm"># and gates re-run until all pass</span>
+      </div>
+    </div>
+    <a href="#step-5" class="next-step-btn">
+      Next: Preview Your App
+      <span class="arrow-right">&rarr;</span>
+    </a>
+  </section>
+
+  <!-- Step 5: Preview Your App -->
+  <section class="step-section" id="step-5">
+    <div class="step-header">
+      <div class="step-number">5</div>
+      <h2>Preview Your App</h2>
+    </div>
+    <p class="step-description">
+      Your application is built and running locally. Preview it in a live browser frame before deploying to production.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Live Preview</div>
+      </div>
+      <div class="mockup-body" style="padding: 0;">
+        <div class="preview-browser">
+          <div class="preview-url-bar">
+            <div class="preview-url">localhost:3000/dashboard</div>
+          </div>
+          <div class="preview-content">
+            <h3>Team Productivity Dashboard</h3>
+            <p>Welcome back, Sarah. Your team completed 23 tasks this week.</p>
+            <button class="preview-btn">View Kanban Board</button>
+            <div class="preview-features">
+              <div class="preview-feature">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                Real-time charts
+              </div>
+              <div class="preview-feature">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                Kanban board
+              </div>
+              <div class="preview-feature">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                CSV export
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># App runner starts the development server</span><br>
+        <span class="kw">npm run</span> dev <span class="cm"># Next.js dev server on port 3000</span><br><br>
+        <span class="cm"># Playwright validates the running app</span><br>
+        <span class="fn">npx playwright test</span> --project=chromium<br><br>
+        <span class="cm"># Loki Mode dashboard shows live status</span><br>
+        <span class="kw">loki web</span> <span class="cm"># Opens dashboard at localhost:57374</span>
+      </div>
+    </div>
+    <a href="#step-6" class="next-step-btn">
+      Next: Deploy in One Click
+      <span class="arrow-right">&rarr;</span>
+    </a>
+  </section>
+
+  <!-- Step 6: Deploy in One Click -->
+  <section class="step-section" id="step-6">
+    <div class="step-header">
+      <div class="step-number">6</div>
+      <h2>Deploy in One Click</h2>
+    </div>
+    <p class="step-description">
+      Your app is production-ready. Deploy to your preferred cloud platform with a single command. Loki Mode handles CI/CD, environment variables, and DNS.
+    </p>
+    <div class="mockup-frame">
+      <div class="mockup-titlebar">
+        <div class="mockup-dots"><span></span><span></span><span></span></div>
+        <div class="mockup-title">Deployment</div>
+      </div>
+      <div class="mockup-body">
+        <div class="deploy-success">
+          <div class="confetti-container">
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+            <div class="confetti"></div>
+          </div>
+          <div class="deploy-icon">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h3>Deployment Successful</h3>
+          <div class="deploy-url">https://team-dashboard.vercel.app</div>
+          <div class="deploy-stats">
+            <div class="deploy-stat">
+              <div class="stat-value">34</div>
+              <div class="stat-label">Files Generated</div>
+            </div>
+            <div class="deploy-stat">
+              <div class="stat-value">4,218</div>
+              <div class="stat-label">Lines of Code</div>
+            </div>
+            <div class="deploy-stat">
+              <div class="stat-value">12 min</div>
+              <div class="stat-label">Total Build Time</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="behind-scenes">
+      <button class="behind-scenes-toggle" onclick="toggleCode(this)">
+        <span class="arrow">&#9654;</span> Behind the scenes
+      </button>
+      <div class="behind-scenes-code">
+        <span class="cm"># Deployment pipeline</span><br>
+        <span class="kw">git push</span> origin main <span class="cm"># Triggers CI/CD</span><br>
+        <span class="kw">vercel</span> --prod <span class="cm"># Deploy to production</span><br><br>
+        <span class="cm"># Post-deploy verification</span><br>
+        <span class="fn">curl</span> -s https://team-dashboard.vercel.app/api/health<br>
+        <span class="cm"># {"status": "healthy", "version": "1.0.0"}</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Footer CTA -->
+<section class="footer-cta">
+  <h2>Ready to Build?</h2>
+  <p>Install Loki Mode and turn your ideas into deployed applications.</p>
+  <div class="cta-buttons">
+    <a href="https://www.npmjs.com/package/loki-mode" class="cta-primary">Try Loki Mode</a>
+    <a href="https://github.com/asklokesh/loki-mode" class="cta-secondary">View on GitHub</a>
+  </div>
+</section>
+
+<footer>
+  Loki Mode by Autonomi -- Build the future, faster
+</footer>
+
+<script>
+// Toggle behind-the-scenes code
+function toggleCode(btn) {
+  btn.classList.toggle('open');
+  const code = btn.nextElementSibling;
+  code.classList.toggle('open');
+}
+
+// Intersection Observer for step animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      updateProgress(entry.target.id);
+    }
+  });
+}, { threshold: 0.2 });
+
+document.querySelectorAll('.step-section').forEach(section => {
+  observer.observe(section);
+});
+
+// Update progress bar
+function updateProgress(activeId) {
+  const stepNum = parseInt(activeId.replace('step-', ''));
+  document.querySelectorAll('.progress-step').forEach(step => {
+    const num = parseInt(step.dataset.step);
+    step.classList.remove('active', 'completed');
+    if (num === stepNum) step.classList.add('active');
+    else if (num < stepNum) step.classList.add('completed');
+  });
+  document.querySelectorAll('.progress-line').forEach(line => {
+    const num = parseInt(line.dataset.line);
+    line.classList.toggle('completed', num < stepNum);
+  });
+}
+</script>
+
+</body>
+</html>
