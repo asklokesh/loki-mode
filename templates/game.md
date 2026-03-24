@@ -88,3 +88,7 @@ A browser-based 2D game with player controls, enemy AI, scoring, levels, and per
 - Level progression increases difficulty noticeably
 - Game runs at stable 60fps on modern browsers
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a browser game with canvas rendering, game loop architecture, enemy AI, collision detection, and audio. Expect ~30-45 minutes for full execution.

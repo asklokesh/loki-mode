@@ -130,8 +130,38 @@ Options:
 }
 ```
 
+## Package Configuration
+
+### package.json (required fields)
+```json
+{
+  "name": "tidyfiles",
+  "bin": {
+    "tidyfiles": "./dist/index.js"
+  },
+  "type": "module",
+  "files": ["dist", "man"]
+}
+```
+
+### Entry Point Shebang
+The compiled entry point (`dist/index.js`) MUST include a shebang line as the first line:
+```
+#!/usr/bin/env node
+```
+Configure tsup to add this automatically via the `banner` option in `tsup.config.ts`:
+```typescript
+export default defineConfig({
+  entry: ['src/index.ts'],
+  format: ['esm', 'cjs'],
+  banner: { js: '#!/usr/bin/env node' },
+});
+```
+
 ## Requirements
 - TypeScript throughout
+- Entry point must have `#!/usr/bin/env node` shebang for global CLI usage
+- package.json must include `bin` field mapping `tidyfiles` to the compiled entry point
 - Zero-config default behavior (works without a config file)
 - Graceful error handling (permission denied, disk full, file in use)
 - Cross-platform (macOS, Linux, Windows paths)

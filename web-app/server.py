@@ -426,7 +426,7 @@ class FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
         return False
 
     def on_any_event(self, event) -> None:  # type: ignore[override]
-        if event.is_directory and event.event_type not in ("created", "deleted"):
+        if event.is_directory and event.event_type not in ("created", "deleted", "moved"):
             return
         src = getattr(event, "src_path", "")
         if not src or self._should_ignore(src):
@@ -2363,8 +2363,12 @@ async def _read_process_output() -> None:
         await _broadcast({"type": "session_end", "data": {"message": "Session ended"}})
 
 
-def _build_file_tree(root: Path, max_depth: int = 4, _depth: int = 0) -> list[dict]:
-    """Recursively build a file tree from a directory."""
+def _build_file_tree(root: Path, max_depth: int = 8, _depth: int = 0) -> list[dict]:
+    """Recursively build a file tree from a directory.
+
+    max_depth is set to 8 to support monorepo structures like
+    packages/frontend/src/components/ui/Button.tsx (6 levels deep).
+    """
     if _depth >= max_depth or not root.is_dir():
         return []
 
@@ -2374,12 +2378,27 @@ def _build_file_tree(root: Path, max_depth: int = 4, _depth: int = 0) -> list[di
     except PermissionError:
         return []
 
+    # Limit children per directory to prevent memory issues on very large projects
+    MAX_CHILDREN = 500
+    child_count = 0
+
     for item in items:
         # Skip hidden dirs and common noise
         if item.name.startswith("."):
             continue
-        if item.name in ("node_modules", "__pycache__", ".git", "venv", ".venv"):
+        if item.name in ("node_modules", "__pycache__", ".git", "venv", ".venv",
+                         "vendor", ".turbo", ".nx", "coverage", ".parcel-cache"):
             continue
+
+        child_count += 1
+        if child_count > MAX_CHILDREN:
+            entries.append({
+                "name": f"... ({len(list(root.iterdir())) - MAX_CHILDREN} more items)",
+                "path": str(root.relative_to(root)) + "/...",
+                "type": "file",
+                "size": 0,
+            })
+            break
 
         node: dict = {"name": item.name, "path": str(item.relative_to(root))}
         if item.is_dir():

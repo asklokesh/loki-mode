@@ -68,6 +68,21 @@ A production-ready RESTful API backend with CRUD operations, pagination, filteri
 └── README.md
 ```
 
+## Environment Variables
+
+### .env.example
+```bash
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Database (SQLite for dev, PostgreSQL for prod)
+DATABASE_URL=file:./dev.db
+
+# CORS
+CORS_ORIGIN=http://localhost:5173
+```
+
 ## Database Schema
 
 ```sql

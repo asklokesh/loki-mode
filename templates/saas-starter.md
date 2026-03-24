@@ -183,7 +183,7 @@ enum SubStatus {
 - `GET /api/auth/verify?token=` - Verify email address
 - `POST /api/auth/forgot-password` - Request password reset
 - `POST /api/auth/reset-password` - Reset with token
-- OAuth handled by NextAuth.js (`/api/auth/[...nextauth]`)
+- OAuth handled by NextAuth.js v5 (Auth.js) via `src/lib/auth.ts` config and `/api/auth/[...nextauth]` catch-all route
 
 ### Billing
 - `POST /api/billing/checkout` - Create Stripe Checkout session

@@ -68,6 +68,14 @@ Marketing teams needing a quick landing page.
 3. `script.js` - Minimal JS (optional)
 4. `README.md` - How to view locally
 
+## Success Criteria
+- Page loads without errors (no broken images, missing styles, or JS errors)
+- All 6 sections render correctly (hero, features, social proof, pricing, FAQ, footer)
+- FAQ accordion opens and closes on click
+- Responsive layout works on mobile (375px) and desktop (1440px)
+- Semantic HTML passes basic accessibility checks
+- Page loads in under 2 seconds on a fresh browser
+
 ---
 
-**Purpose:** Tests frontend agent, marketing agent (copy), and design patterns without backend complexity.
+**Purpose:** Tests frontend agent, marketing agent (copy), and design patterns without backend complexity. Expect ~10-15 minutes for full execution.

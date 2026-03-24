@@ -83,3 +83,7 @@ A well-structured npm package with TypeScript support, comprehensive documentati
 - Bundle size stays under defined budget
 - Changelog accurately reflects changes between versions
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a publishable npm package with TypeScript, dual ESM/CJS builds, automated documentation, and high test coverage. Expect ~30-45 minutes for full execution.

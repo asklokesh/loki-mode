@@ -85,3 +85,7 @@ A configurable web scraping tool that extracts structured data from websites, ha
 - Robots.txt rules correctly block disallowed paths
 - All export formats contain valid, complete data
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build an async Python tool with HTTP clients, HTML parsing, rate limiting, robots.txt compliance, and multi-format data export. Expect ~30-45 minutes for full execution.

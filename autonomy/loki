@@ -400,7 +400,7 @@ show_help() {
     echo "  quick \"task\"     Quick single-task mode (lightweight, 3 iterations max)"
     echo "  monitor [path]   Monitor Docker Compose services with auto-fix (v6.67.0)"
     echo "  demo             Run interactive demo (~60s simulated session)"
-    echo "  init [name]      Project scaffolding with 22 PRD templates"
+    echo "  init [name]      Project scaffolding with 21 PRD templates"
     echo "  issue <url|num>  [DEPRECATED] Use 'loki run' instead"
     echo "  watch [prd]      Auto-rerun on PRD file changes (v6.33.0)"
     echo "  export <format>  Export session data: json|markdown|csv|timeline (v6.0.0)"
@@ -7364,7 +7364,7 @@ cmd_init() {
     local list_mode=false
     local json_mode=false
 
-    # 22 built-in template names (order: simple, standard, complex)
+    # 21 built-in template names (order: simple, standard, complex)
     local TEMPLATE_NAMES=(
         simple-todo-app
         static-landing-page
@@ -7384,7 +7384,6 @@ cmd_init() {
         npm-library
         microservice
         mobile-app
-        saas-app
         saas-starter
         e-commerce
         ai-chatbot
@@ -7411,7 +7410,6 @@ cmd_init() {
             npm-library) echo "npm Library" ;;
             microservice) echo "Microservice" ;;
             mobile-app) echo "Mobile App" ;;
-            saas-app) echo "SaaS Application" ;;
             saas-starter) echo "SaaS Starter Kit" ;;
             e-commerce) echo "E-Commerce Store" ;;
             ai-chatbot) echo "AI Chatbot (RAG)" ;;
@@ -7469,7 +7467,7 @@ cmd_init() {
                 echo "  .gitignore               Git ignore rules (with git init)"
                 echo ""
                 echo "Options:"
-                echo "  --template, -t TYPE     Template name (e.g., saas-app, cli-tool)"
+                echo "  --template, -t TYPE     Template name (e.g., saas-starter, cli-tool)"
                 echo "  --no-git                Skip git init"
                 echo "  --stdout                Print PRD to stdout instead of writing files"
                 echo "  --list                  List all available templates"
@@ -7478,7 +7476,7 @@ cmd_init() {
                 echo "  --help, -h              Show this help"
                 echo ""
                 echo "Examples:"
-                echo "  loki init my-saas --template saas-app    Create my-saas/ with SaaS PRD"
+                echo "  loki init my-saas --template saas-starter    Create my-saas/ with SaaS PRD"
                 echo "  loki init --template cli-tool            Scaffold current dir with CLI PRD"
                 echo "  loki init my-app                         Create my-app/ (prompts for template)"
                 echo "  loki init --list                         Show all $template_count templates"

@@ -85,3 +85,7 @@ An ETL data pipeline that ingests data from multiple sources, transforms it thro
 - Metrics accurately reflect processing statistics
 - Pipeline resumes correctly after interruption
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a data engineering pipeline with multi-source ingestion, configurable transforms, error recovery, and monitoring. Expect ~30-45 minutes for full execution.

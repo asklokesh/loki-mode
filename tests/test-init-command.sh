@@ -104,7 +104,7 @@ fi
 ((TOTAL++))
 (
     cd "$TMPDIR_BASE"
-    "$LOKI" init myproject --template saas-app >/dev/null 2>&1
+    "$LOKI" init myproject --template saas-starter >/dev/null 2>&1
 ) || true
 if [ -d "$TMPDIR_BASE/myproject" ] && \
    [ -f "$TMPDIR_BASE/myproject/prd.md" ] && \
@@ -134,7 +134,7 @@ if python3 -c "
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert 'version' in d, 'missing version'
-assert d['template'] == 'saas-app', f'wrong template'
+assert d['template'] == 'saas-starter', f'wrong template'
 assert 'created' in d, 'missing created'
 assert 'provider' in d, 'missing provider'
 " "$config" 2>/dev/null; then
@@ -223,7 +223,7 @@ mkdir -p "$TMPDIR_BASE/existingdir"
 (
     cd "$TMPDIR_BASE"
     actual_exit=0
-    output=$("$LOKI" init existingdir --template saas-app 2>&1) || actual_exit=$?
+    output=$("$LOKI" init existingdir --template saas-starter 2>&1) || actual_exit=$?
     if [ "$actual_exit" -ne 0 ] && echo "$output" | grep -qi "already exists"; then
         exit 0
     else
@@ -236,7 +236,7 @@ mkdir -p "$TMPDIR_BASE/existingdir"
 # -------------------------------------------
 ((TOTAL++))
 if [ -f "$TMPDIR_BASE/myproject/README.md" ] && \
-   grep -q "saas-app" "$TMPDIR_BASE/myproject/README.md" && \
+   grep -q "saas-starter" "$TMPDIR_BASE/myproject/README.md" && \
    grep -q "loki start" "$TMPDIR_BASE/myproject/README.md"; then
     log_pass "README.md mentions template name and loki start"
 else

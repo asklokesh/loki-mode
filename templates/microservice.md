@@ -90,3 +90,7 @@ A containerized microservice with health checks, structured logging, graceful sh
 - Graceful shutdown drains connections without dropping requests
 - Prometheus can scrape metrics endpoint
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a production-ready containerized service with health checks, structured logging, graceful shutdown, and observability. Expect ~30-45 minutes for full execution.

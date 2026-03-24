@@ -32,12 +32,12 @@ A production-ready REST API with JWT-based authentication, user registration, lo
 
 ### Option A: Node.js (Express)
 - Runtime: Node.js 20+
-- Framework: Express.js
+- Framework: Express.js with TypeScript
 - Database: PostgreSQL with Prisma ORM
 - Validation: zod
 - Auth: jsonwebtoken, bcrypt
 - Rate Limiting: express-rate-limit
-- Testing: Jest + supertest
+- Testing: Vitest + supertest
 
 ### Option B: Python (FastAPI)
 - Runtime: Python 3.11+
@@ -50,40 +50,70 @@ A production-ready REST API with JWT-based authentication, user registration, lo
 
 Choose whichever framework the agent determines is most appropriate, or default to Express.js.
 
-### Project Structure (Express)
+### Project Structure (Express + TypeScript)
 ```
 /
 ├── src/
-│   ├── app.js                  # Express app setup
-│   ├── server.js               # Entry point
+│   ├── app.ts                  # Express app setup
+│   ├── server.ts               # Entry point
 │   ├── config/
-│   │   └── index.js            # Environment config
+│   │   └── index.ts            # Environment config
 │   ├── middleware/
-│   │   ├── auth.js             # JWT verification middleware
-│   │   ├── validate.js         # Request validation middleware
-│   │   └── rateLimiter.js      # Rate limiting middleware
+│   │   ├── auth.ts             # JWT verification middleware
+│   │   ├── validate.ts         # Request validation middleware
+│   │   └── rateLimiter.ts      # Rate limiting middleware
 │   ├── routes/
-│   │   ├── auth.js             # Auth routes (register, login, refresh, forgot, reset)
-│   │   └── users.js            # User routes (profile, update, change password)
+│   │   ├── auth.ts             # Auth routes (register, login, refresh, forgot, reset)
+│   │   └── users.ts            # User routes (profile, update, change password)
 │   ├── controllers/
-│   │   ├── authController.js   # Auth business logic
-│   │   └── userController.js   # User business logic
+│   │   ├── authController.ts   # Auth business logic
+│   │   └── userController.ts   # User business logic
 │   ├── services/
-│   │   ├── authService.js      # Token generation, password hashing
-│   │   └── emailService.js     # Email sending (console in dev)
+│   │   ├── authService.ts      # Token generation, password hashing
+│   │   └── emailService.ts     # Email sending (console in dev)
 │   └── utils/
-│       └── errors.js           # Custom error classes
+│       └── errors.ts           # Custom error classes
 ├── prisma/
 │   ├── schema.prisma           # Database schema
-│   └── seed.js                 # Seed data
+│   └── seed.ts                 # Seed data
 ├── tests/
-│   ├── auth.test.js            # Auth endpoint tests
-│   ├── users.test.js           # User endpoint tests
-│   └── middleware.test.js      # Middleware tests
+│   ├── auth.test.ts            # Auth endpoint tests
+│   ├── users.test.ts           # User endpoint tests
+│   └── middleware.test.ts      # Middleware tests
 ├── .env.example                # Environment variable template
+├── tsconfig.json
 ├── package.json
 └── README.md
 ```
+
+## Environment Variables
+
+### .env.example
+```bash
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/auth_db
+
+# JWT
+JWT_SECRET=your-jwt-secret-min-32-chars
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=7d
+
+# Email (optional, logs to console in dev)
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-email@example.com
+SMTP_PASS=your-password
+EMAIL_FROM=noreply@example.com
+
+# CORS
+CORS_ORIGIN=http://localhost:3000
+```
+
+The server MUST validate required variables (`DATABASE_URL`, `JWT_SECRET`) on startup and exit with a clear error if missing.
 
 ## Database Schema
 

@@ -64,6 +64,53 @@ Utility:
 6. Moderators use `/warn`, `/mute`, `/kick`, `/ban` as needed
 7. All actions logged to configured audit channel
 
+## Environment Variables
+
+The bot requires the following environment variables, loaded via `dotenv` from a `.env` file:
+
+### Required
+```bash
+DISCORD_TOKEN=           # Bot token from Discord Developer Portal
+DISCORD_CLIENT_ID=       # Application ID for slash command registration
+```
+
+### Optional
+```bash
+DISCORD_GUILD_ID=        # Development guild ID (for fast command registration during dev)
+LOG_CHANNEL_ID=          # Default audit log channel (can be overridden per guild via /config)
+NODE_ENV=production      # Set to "production" to disable debug logging
+DATABASE_PATH=./data/sentinel.db  # SQLite database file path (default: ./data/sentinel.db)
+```
+
+### .env.example
+```bash
+# Discord Bot Configuration
+# Get these from https://discord.com/developers/applications
+DISCORD_TOKEN=your-bot-token-here
+DISCORD_CLIENT_ID=your-client-id-here
+
+# Optional: Development guild for fast command registration
+# DISCORD_GUILD_ID=your-test-server-id
+
+# Optional: Default audit log channel
+# LOG_CHANNEL_ID=your-log-channel-id
+
+# Optional: Database path (default: ./data/sentinel.db)
+# DATABASE_PATH=./data/sentinel.db
+```
+
+### Startup Validation
+The bot MUST validate required environment variables on startup and exit with a clear error message if any are missing:
+```typescript
+const requiredEnvVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID'];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
+```
+
 ## Tech Stack
 - Runtime: Node.js 18+
 - Library: discord.js v14

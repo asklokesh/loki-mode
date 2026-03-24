@@ -85,3 +85,7 @@ A real-time analytics dashboard that visualizes key business metrics with intera
 - Drag-and-drop layout changes persist across page reloads
 - CSV and PNG exports contain accurate data
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a data visualization application with real-time updates, interactive charts, drag-and-drop layouts, and export functionality. Expect ~45-60 minutes for full execution.

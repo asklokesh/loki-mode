@@ -24,7 +24,7 @@ loki init my-project --template saas-starter
 |----------|-------------|------------|-----------|
 | [simple-todo-app.md](simple-todo-app.md) | Minimal todo app for testing Loki Mode basics | React, Express, SQLite | 15-20 min |
 | [static-landing-page.md](static-landing-page.md) | SaaS landing page with hero, features, pricing, FAQ | HTML, CSS, vanilla JS | 10-15 min |
-| [api-only.md](api-only.md) | REST API for notes with full CRUD and tests | Express, in-memory, Jest | 15-20 min |
+| [api-only.md](api-only.md) | REST API for notes with full CRUD and tests | Express, in-memory, Vitest | 15-20 min |
 
 ### Standard
 

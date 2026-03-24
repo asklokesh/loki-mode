@@ -17,6 +17,38 @@ A Slack bot that responds to commands, processes events, and integrates with ext
 6. **Help System** - Built-in help command listing all available commands and their usage
 7. **Error Reporting** - Log errors and send admin notifications when commands fail
 
+## Environment Variables
+
+### Required
+```bash
+SLACK_BOT_TOKEN=xoxb-...        # Bot User OAuth Token
+SLACK_SIGNING_SECRET=...         # Signing Secret from App Credentials
+SLACK_APP_TOKEN=xapp-...         # App-Level Token (for Socket Mode)
+```
+
+### Optional
+```bash
+PORT=3000                        # HTTP server port (default: 3000)
+ADMIN_CHANNEL_ID=C0...           # Channel for error notifications
+NODE_ENV=production              # Set to "production" for HTTP mode
+DATABASE_PATH=./data/bot.db      # SQLite database path
+```
+
+### .env.example
+```bash
+# Get these from https://api.slack.com/apps
+SLACK_BOT_TOKEN=xoxb-your-token
+SLACK_SIGNING_SECRET=your-signing-secret
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# Optional
+# PORT=3000
+# ADMIN_CHANNEL_ID=C0123456789
+# DATABASE_PATH=./data/bot.db
+```
+
+The bot MUST validate required environment variables on startup and exit with a clear error if missing.
+
 ## Technical Requirements
 - Node.js with TypeScript
 - Bolt for Slack SDK (official Slack framework)
@@ -88,3 +120,7 @@ A Slack bot that responds to commands, processes events, and integrates with ext
 - Scheduled messages fire at configured times
 - Error notifications reach admin channel
 - All tests pass
+
+---
+
+**Purpose:** Tests Loki Mode's ability to build a Slack integration with slash commands, event handling, interactive messages, and scheduled notifications. Expect ~30-45 minutes for full execution.
