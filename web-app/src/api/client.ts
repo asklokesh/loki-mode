@@ -420,6 +420,13 @@ export class PurpleLabWebSocket {
     this.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        // BUG-INT-003 fix: respond to server pings to prevent disconnection
+        // during long builds. Without this, the server disconnects after 2
+        // missed pong responses (120s).
+        if (msg.type === 'ping') {
+          this.send({ type: 'pong' });
+          return;
+        }
         this.emit(msg.type, msg.data || msg);
       } catch {
         // ignore non-JSON messages

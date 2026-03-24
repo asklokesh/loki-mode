@@ -412,8 +412,19 @@ class FileChangeHandler(FileSystemEventHandler):  # type: ignore[misc]
         self._debounce_handle: Optional[asyncio.TimerHandle] = None
 
     def _should_ignore(self, path: str) -> bool:
-        """Return True if this path should be ignored."""
-        parts = Path(path).parts
+        """Return True if this path should be ignored.
+
+        BUG-INT-004 fix: only check path components relative to the project
+        directory, not the full absolute path. Previously, a project stored
+        at e.g. /home/user/build/project/ would have all events ignored
+        because 'build' appeared in the absolute path parts.
+        """
+        # Compute relative path from project root
+        try:
+            rel = os.path.relpath(path, self.project_dir)
+        except ValueError:
+            rel = path  # different drives on Windows
+        parts = Path(rel).parts
         for part in parts:
             if part in _WATCH_IGNORE_DIRS:
                 return True
@@ -1543,6 +1554,15 @@ class DevServerManager:
                     fix_env = {**os.environ, **_load_secrets()}
                     fix_env["LOKI_MAX_ITERATIONS"] = "5"
                     fix_env["LOKI_AUTO_FIX"] = "true"
+                    # Pass provider via env
+                    _mf_prov = Path(project_dir) / ".loki" / "state" / "provider"
+                    if _mf_prov.exists():
+                        try:
+                            _mfp = _mf_prov.read_text().strip()
+                            if _mfp:
+                                fix_env["LOKI_PROVIDER"] = _mfp
+                        except OSError:
+                            pass
 
                     await asyncio.to_thread(
                         subprocess.run,
@@ -1633,6 +1653,15 @@ class DevServerManager:
         try:
             auto_fix_env = {**os.environ}
             auto_fix_env.update(_load_secrets())
+            # Pass provider via env for auto-fix commands
+            _af_prov_file = target / ".loki" / "state" / "provider"
+            if _af_prov_file.exists():
+                try:
+                    _afp = _af_prov_file.read_text().strip()
+                    if _afp:
+                        auto_fix_env["LOKI_PROVIDER"] = _afp
+                except OSError:
+                    pass
             result = await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: subprocess.run(
@@ -2023,6 +2052,15 @@ INSTRUCTIONS:
         try:
             fix_env = {**os.environ, **_load_secrets()}
             fix_env["LOKI_MAX_ITERATIONS"] = "5"  # More iterations for complex Docker fixes
+            # Pass provider via env
+            _sf_prov = Path(project_dir) / ".loki" / "state" / "provider"
+            if _sf_prov.exists():
+                try:
+                    _sfp = _sf_prov.read_text().strip()
+                    if _sfp:
+                        fix_env["LOKI_PROVIDER"] = _sfp
+                except OSError:
+                    pass
 
             proc = await asyncio.to_thread(
                 subprocess.run,
@@ -2535,6 +2573,11 @@ async def start_session(req: StartRequest) -> JSONResponse:
             build_env = {**os.environ, "LOKI_DIR": os.path.join(project_dir, ".loki")}
             build_env.update(_load_secrets())
 
+            # BUG-INT-001 fix: pass provider selection via LOKI_PROVIDER env var
+            # for quick mode (loki quick doesn't accept --provider flag)
+            if req.provider:
+                build_env["LOKI_PROVIDER"] = req.provider
+
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -2750,22 +2793,39 @@ async def get_status() -> JSONResponse:
     max_iterations = 0
     cost_usd = 0.0
 
-    state_file = loki_dir / "state" / "session.json"
-    if state_file.exists():
+    # BUG-INT-002 fix: CLI writes dashboard-state.json, not state/session.json.
+    # Read from dashboard-state.json (primary) with orchestrator.json fallback.
+    dash_state_file = loki_dir / "dashboard-state.json"
+    if dash_state_file.exists():
         try:
-            with open(state_file) as f:
+            with open(dash_state_file) as f:
                 state = json.load(f)
             phase = state.get("phase", phase)
             iteration = state.get("iteration", iteration)
             complexity = state.get("complexity", complexity)
-            current_task = state.get("current_task", current_task)
-            pending_tasks = state.get("pending_tasks", pending_tasks)
+            # Tasks are nested in dashboard-state.json
+            tasks = state.get("tasks")
+            if isinstance(tasks, dict):
+                pending_tasks = int(tasks.get("pending", 0) or 0)
+                in_progress = int(tasks.get("inProgress", 0) or 0)
+                if in_progress > 0:
+                    current_task = f"{in_progress} task(s) in progress"
             # Extract cost from tokens object if present
             tokens = state.get("tokens")
             if isinstance(tokens, dict):
                 cost_usd = float(tokens.get("cost_usd", 0) or 0)
         except (json.JSONDecodeError, OSError):
             pass
+    else:
+        # Fallback: try orchestrator.json for phase/iteration
+        orch_file = loki_dir / "state" / "orchestrator.json"
+        if orch_file.exists():
+            try:
+                with open(orch_file) as f:
+                    orch = json.load(f)
+                phase = orch.get("currentPhase", phase)
+            except (json.JSONDecodeError, OSError):
+                pass
 
     # Read max_iterations from autonomy state
     autonomy_state = loki_dir / "autonomy-state.json"
@@ -3310,8 +3370,9 @@ async def get_metrics() -> JSONResponse:
 
 def _infer_session_status(entry: Path) -> str:
     """Infer session status from project directory contents."""
-    # 1. Check .loki/state/session.json for explicit phase
-    state_file = entry / ".loki" / "state" / "session.json"
+    # 1. Check .loki/dashboard-state.json for explicit phase
+    # BUG-INT-002 fix: CLI writes dashboard-state.json, not state/session.json
+    state_file = entry / ".loki" / "dashboard-state.json"
     if state_file.exists():
         try:
             with open(state_file) as f:
@@ -3319,7 +3380,7 @@ def _infer_session_status(entry: Path) -> str:
             phase = st.get("phase", "")
             if phase and phase != "idle":
                 # Verify the session is actually still running by checking
-                # if session.json was modified recently (within last 5 min)
+                # if dashboard-state.json was modified recently (within last 5 min)
                 try:
                     mtime = state_file.stat().st_mtime
                     if time.time() - mtime > 300:  # 5 minutes stale
@@ -3914,19 +3975,34 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
                 docker_extra = "\n\n" + docker_instructions_file.read_text()
             except OSError:
                 pass
+        # Determine the active provider for this session
+        chat_provider = session.provider or "claude"
+        # Also check .loki/state/provider file in the session directory
+        provider_file = target / ".loki" / "state" / "provider"
+        if provider_file.exists():
+            try:
+                saved_prov = provider_file.read_text().strip()
+                if saved_prov:
+                    chat_provider = saved_prov
+            except OSError:
+                pass
+
         if req.mode == "max":
             # Max mode: full loki start with the message as a PRD
             prd_path = target / ".loki" / "chat-prd.md"
             prd_path.parent.mkdir(parents=True, exist_ok=True)
             prd_content = full_message + "\n\n## Deployment\nMUST include Dockerfile and docker-compose.yml for containerized execution." + docker_extra
             prd_path.write_text(prd_content)
-            cmd_args = [loki, "start", "--provider", "claude", str(prd_path)]
+            # BUG-INT-005 fix: use session's configured provider, not hardcoded "claude"
+            cmd_args = [loki, "start", "--provider", chat_provider, str(prd_path)]
         else:
             # Quick and Standard both use 'loki quick' -- fast, focused changes
             cmd_args = [loki, "quick", full_message + docker_note]
         try:
             chat_env = {**os.environ}
             chat_env.update(_load_secrets())
+            # Pass provider via env for quick mode (loki quick uses LOKI_PROVIDER env)
+            chat_env["LOKI_PROVIDER"] = chat_provider
             proc = subprocess.Popen(
                 cmd_args,
                 stdout=subprocess.PIPE,
@@ -4174,6 +4250,17 @@ async def fix_session(session_id: str) -> JSONResponse:
         try:
             fix_env = {**os.environ}
             fix_env.update(_load_secrets())
+            # Pass provider via env for fix commands (same as chat)
+            fix_provider = session.provider or "claude"
+            _fix_prov_file = target / ".loki" / "state" / "provider"
+            if _fix_prov_file.exists():
+                try:
+                    _fp = _fix_prov_file.read_text().strip()
+                    if _fp:
+                        fix_provider = _fp
+                except OSError:
+                    pass
+            fix_env["LOKI_PROVIDER"] = fix_provider
             proc = subprocess.Popen(
                 [loki, "quick", fix_message],
                 stdout=subprocess.PIPE,
@@ -5238,22 +5325,41 @@ async def _push_state_to_client(ws: WebSocket) -> None:
             _cost_usd = 0.0
             _max_iterations = 0
 
-            state_file = loki_dir / "state" / "session.json"
-            if state_file.exists():
+            # BUG-INT-002 fix: CLI writes dashboard-state.json, not state/session.json
+            dash_file = loki_dir / "dashboard-state.json"
+            if dash_file.exists():
                 try:
-                    with open(state_file) as f:
+                    with open(dash_file) as f:
                         state_data = json.load(f)
                     _phase = state_data.get("phase", _phase)
                     _iteration = state_data.get("iteration", _iteration)
                     _complexity = state_data.get("complexity", _complexity)
-                    _current_task = state_data.get("current_task", _current_task)
-                    _pending_tasks = state_data.get("pending_tasks", _pending_tasks)
+                    _tasks = state_data.get("tasks")
+                    if isinstance(_tasks, dict):
+                        _pending_tasks = int(_tasks.get("pending", 0) or 0)
+                        _in_progress = int(_tasks.get("inProgress", 0) or 0)
+                        if _in_progress > 0:
+                            _current_task = f"{_in_progress} task(s) in progress"
                     # Extract cost from tokens object if present
                     _tokens = state_data.get("tokens")
                     if isinstance(_tokens, dict):
                         _cost_usd = float(_tokens.get("cost_usd", 0) or 0)
+                    # Agents are included in dashboard-state.json
+                    _dash_agents = state_data.get("agents")
+                    if isinstance(_dash_agents, list):
+                        _agents = _dash_agents
                 except (json.JSONDecodeError, OSError):
                     pass
+            else:
+                # Fallback: try orchestrator.json for phase
+                _orch_file = loki_dir / "state" / "orchestrator.json"
+                if _orch_file.exists():
+                    try:
+                        with open(_orch_file) as f:
+                            _orch = json.load(f)
+                        _phase = _orch.get("currentPhase", _phase)
+                    except (json.JSONDecodeError, OSError):
+                        pass
 
             agents_file = loki_dir / "state" / "agents.json"
             if agents_file.exists():
