@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # Variables exported for consumers that source this library
 #===============================================================================
 # Loki Mode TUI Library
 # Rich terminal output: spinners, progress bars, tables, boxes, diffs

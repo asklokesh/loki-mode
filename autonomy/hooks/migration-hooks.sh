@@ -395,10 +395,10 @@ hook_healing_phase_gate() {
         archaeology:stabilize)
             # Require: friction map has entries, characterization tests pass
             local friction_count
-            friction_count=$(python3 -c "
-import json
+            friction_count=$(HEAL_DIR="$heal_dir" python3 -c "
+import json, os
 try:
-    with open('${heal_dir}/friction-map.json') as f:
+    with open(os.path.join(os.environ['HEAL_DIR'], 'friction-map.json')) as f:
         print(len(json.load(f).get('frictions', [])))
 except: print(0)
 " 2>/dev/null || echo 0)
