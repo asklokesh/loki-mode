@@ -396,6 +396,72 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ code, state, redirect_uri: redirectUri || `${window.location.origin}${window.location.pathname}` }),
     }),
+
+  // Git integration
+  git: {
+    status: (sessionId: string) =>
+      fetchJSON<import('../types/api').GitStatus>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/status`
+      ),
+    log: (sessionId: string, limit: number = 20) =>
+      fetchJSON<import('../types/api').GitCommit[]>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/log?limit=${limit}`
+      ),
+    branches: (sessionId: string) =>
+      fetchJSON<import('../types/api').GitBranch[]>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/branches`
+      ),
+    commit: (sessionId: string, message: string, files?: string[]) =>
+      fetchJSON<{ hash: string; message: string }>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/commit`,
+        { method: 'POST', body: JSON.stringify({ message, files }) }
+      ),
+    createBranch: (sessionId: string, name: string, checkout: boolean = true) =>
+      fetchJSON<{ branch: string; created: boolean }>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/branch`,
+        { method: 'POST', body: JSON.stringify({ name, checkout }) }
+      ),
+    checkoutBranch: (sessionId: string, name: string) =>
+      fetchJSON<{ branch: string; switched: boolean }>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/checkout`,
+        { method: 'POST', body: JSON.stringify({ name }) }
+      ),
+    push: (sessionId: string) =>
+      fetchJSON<{ pushed: boolean; message: string }>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/push`,
+        { method: 'POST' }
+      ),
+    pr: (sessionId: string, title: string, body: string) =>
+      fetchJSON<{ url: string; number: number }>(
+        `/sessions/${encodeURIComponent(sessionId)}/git/pr`,
+        { method: 'POST', body: JSON.stringify({ title, body }) }
+      ),
+  },
+
+  // Image upload for AI chat
+  chatImageUpload: async (sessionId: string, file: File): Promise<{ image_id: string; filename: string }> => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/chat/image`, {
+      method: 'POST',
+      headers: {
+        ...(() => {
+          const h: Record<string, string> = {};
+          try {
+            const token = localStorage.getItem('pl_auth_token');
+            if (token) h['Authorization'] = `Bearer ${token}`;
+          } catch { /* */ }
+          return h;
+        })(),
+      },
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`API error ${res.status}: ${res.statusText}${body ? ` - ${body}` : ''}`);
+    }
+    return res.json();
+  },
 };
 
 export class PurpleLabWebSocket {

@@ -2989,7 +2989,7 @@ async def resume_session() -> JSONResponse:
 
 @app.get("/api/templates")
 async def get_templates() -> JSONResponse:
-    """List available PRD templates with description and category."""
+    """List available PRD templates with description, category, tech stack, difficulty, and build time."""
     templates_dir = PROJECT_ROOT / "templates"
     if not templates_dir.is_dir():
         return JSONResponse(content=[])
@@ -3002,29 +3002,102 @@ async def get_templates() -> JSONResponse:
         'cli-tool': 'CLI', 'npm-library': 'CLI',
         'discord-bot': 'Bot', 'slack-bot': 'Bot', 'ai-chatbot': 'Bot',
         'data-pipeline': 'Data', 'web-scraper': 'Data',
+        'saas-starter': 'Website', 'simple-todo-app': 'Website',
+        'game': 'Other', 'chrome-extension': 'Other', 'mobile-app': 'Other',
+    }
+
+    # Tech stack detection from template content
+    _tech_keywords = {
+        'React': ['react', 'jsx', 'tsx'],
+        'Node.js': ['node.js', 'node 20', 'node 18', 'express'],
+        'Python': ['python', 'flask', 'django', 'fastapi'],
+        'TypeScript': ['typescript', '.ts'],
+        'PostgreSQL': ['postgresql', 'postgres', 'pg'],
+        'MongoDB': ['mongodb', 'mongoose'],
+        'Docker': ['docker', 'dockerfile', 'docker-compose'],
+        'Redis': ['redis', 'valkey'],
+        'Express': ['express.js', 'expressjs'],
+        'FastAPI': ['fastapi'],
+        'SQLite': ['sqlite'],
+        'Tailwind': ['tailwind', 'tailwindcss'],
+        'Discord': ['discord.js', 'discord bot'],
+        'Slack': ['slack api', 'slack bot'],
+        'Vite': ['vite'],
+        'Playwright': ['playwright'],
+    }
+
+    # Difficulty mapping based on template complexity
+    _difficulty_map = {
+        'simple-todo-app': 'beginner', 'static-landing-page': 'beginner',
+        'cli-tool': 'beginner', 'rest-api': 'beginner',
+        'blog-platform': 'intermediate', 'full-stack-demo': 'intermediate',
+        'rest-api-auth': 'intermediate', 'discord-bot': 'intermediate',
+        'slack-bot': 'intermediate', 'ai-chatbot': 'intermediate',
+        'npm-library': 'intermediate', 'web-scraper': 'intermediate',
+        'api-only': 'intermediate', 'chrome-extension': 'intermediate',
+        'game': 'intermediate', 'dashboard': 'intermediate',
+        'e-commerce': 'advanced', 'data-pipeline': 'advanced',
+        'microservice': 'advanced', 'saas-starter': 'advanced',
+        'mobile-app': 'advanced',
+    }
+
+    # Build time estimates
+    _build_time_map = {
+        'simple-todo-app': '3-5 min', 'static-landing-page': '2-4 min',
+        'cli-tool': '3-5 min', 'rest-api': '5-8 min',
+        'blog-platform': '8-12 min', 'full-stack-demo': '8-12 min',
+        'rest-api-auth': '8-12 min', 'discord-bot': '5-8 min',
+        'slack-bot': '5-8 min', 'ai-chatbot': '10-15 min',
+        'npm-library': '5-8 min', 'web-scraper': '5-8 min',
+        'api-only': '5-8 min', 'chrome-extension': '8-12 min',
+        'game': '10-15 min', 'dashboard': '10-15 min',
+        'e-commerce': '15-20 min', 'data-pipeline': '10-15 min',
+        'microservice': '10-15 min', 'saas-starter': '15-20 min',
+        'mobile-app': '15-20 min',
+    }
+
+    # Category gradients for visual preview
+    _gradient_map = {
+        'Website': 'from-violet-500/20 via-purple-500/10 to-indigo-500/20',
+        'API': 'from-emerald-500/20 via-teal-500/10 to-cyan-500/20',
+        'CLI': 'from-amber-500/20 via-orange-500/10 to-yellow-500/20',
+        'Bot': 'from-blue-500/20 via-sky-500/10 to-cyan-500/20',
+        'Data': 'from-rose-500/20 via-pink-500/10 to-fuchsia-500/20',
+        'Other': 'from-slate-500/20 via-gray-500/10 to-zinc-500/20',
     }
 
     templates = []
     for f in sorted(templates_dir.glob("*.md")):
         name = f.stem.replace("-", " ").replace("_", " ").title()
-        # Extract description: first non-heading, non-blank paragraph
         description = ""
+        tech_stack = []
         try:
             text = f.read_text(errors="replace")
+            text_lower = text.lower()
+            # Extract description: first non-heading, non-blank paragraph
             for line in text.splitlines():
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
                     continue
                 description = stripped[:200]
                 break
+            # Detect tech stack from content
+            for tech_name, keywords in _tech_keywords.items():
+                if any(kw in text_lower for kw in keywords):
+                    tech_stack.append(tech_name)
         except OSError:
             pass
+
         category = _category_map.get(f.stem, "Other")
         templates.append({
             "name": name,
             "filename": f.name,
             "description": description,
             "category": category,
+            "tech_stack": tech_stack[:6],  # Limit to 6 techs
+            "difficulty": _difficulty_map.get(f.stem, "intermediate"),
+            "build_time": _build_time_map.get(f.stem, "5-10 min"),
+            "gradient": _gradient_map.get(category, _gradient_map["Other"]),
         })
     return JSONResponse(content=templates)
 
@@ -4804,6 +4877,406 @@ async def restart_service(session_id: str, req: dict = Body(...)) -> JSONRespons
             })
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
         return JSONResponse(status_code=500, content={"error": f"Restart failed: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Git integration endpoints
+# ---------------------------------------------------------------------------
+
+
+def _validate_session_and_find_dir(session_id: str) -> tuple[Optional[Path], Optional[JSONResponse]]:
+    """Validate session ID and find directory. Returns (dir, None) or (None, error_response)."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return None, JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return None, JSONResponse(status_code=404, content={"error": "Session not found"})
+    return target, None
+
+
+def _run_git(cwd: Path, *args: str, timeout: int = 15) -> subprocess.CompletedProcess:
+    """Run a git command in the given directory."""
+    return subprocess.run(
+        ["git"] + list(args),
+        capture_output=True, text=True, cwd=str(cwd), timeout=timeout,
+    )
+
+
+@app.get("/api/sessions/{session_id}/git/status")
+async def git_status(session_id: str) -> JSONResponse:
+    """Get git status for a session's project."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    loop = asyncio.get_running_loop()
+    try:
+        # Get branch name
+        branch_result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "rev-parse", "--abbrev-ref", "HEAD")
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+
+        # Get ahead/behind counts
+        ahead, behind = 0, 0
+        try:
+            ab_result = await loop.run_in_executor(
+                None, lambda: _run_git(target, "rev-list", "--left-right", "--count", f"{branch}...origin/{branch}")
+            )
+            if ab_result.returncode == 0:
+                parts = ab_result.stdout.strip().split("\t")
+                if len(parts) == 2:
+                    ahead, behind = int(parts[0]), int(parts[1])
+        except (ValueError, subprocess.TimeoutExpired):
+            pass
+
+        # Get porcelain status
+        status_result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "status", "--porcelain=v1")
+        )
+        files = []
+        if status_result.returncode == 0:
+            for line in status_result.stdout.splitlines():
+                if len(line) < 4:
+                    continue
+                index_status = line[0]
+                worktree_status = line[1]
+                filepath = line[3:].strip()
+                # Remove quotes from paths with special characters
+                if filepath.startswith('"') and filepath.endswith('"'):
+                    filepath = filepath[1:-1]
+
+                # Determine status and staged
+                if index_status == '?' and worktree_status == '?':
+                    files.append({"path": filepath, "status": "untracked", "staged": False})
+                else:
+                    # Index status (staged)
+                    if index_status in ('M', 'A', 'D', 'R'):
+                        status_map = {'M': 'modified', 'A': 'added', 'D': 'deleted', 'R': 'renamed'}
+                        files.append({"path": filepath, "status": status_map.get(index_status, 'modified'), "staged": True})
+                    # Worktree status (unstaged)
+                    if worktree_status in ('M', 'D'):
+                        status_map = {'M': 'modified', 'D': 'deleted'}
+                        files.append({"path": filepath, "status": status_map.get(worktree_status, 'modified'), "staged": False})
+
+        return JSONResponse(content={
+            "branch": branch,
+            "clean": len(files) == 0,
+            "ahead": ahead,
+            "behind": behind,
+            "files": files,
+        })
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Git status failed: {exc}"})
+
+
+@app.get("/api/sessions/{session_id}/git/log")
+async def git_log(session_id: str, limit: int = 20) -> JSONResponse:
+    """Get commit history for a session's project."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    limit = min(limit, 100)  # Cap at 100
+    loop = asyncio.get_running_loop()
+    try:
+        # Use a format that's easy to parse: hash|short_hash|author|date|refs|message
+        fmt = "%H|%h|%an|%ar|%D|%s"
+        result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "log", f"--format={fmt}", f"-{limit}")
+        )
+        if result.returncode != 0:
+            return JSONResponse(content=[])
+
+        commits = []
+        for line in result.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("|", 5)
+            if len(parts) < 6:
+                continue
+            refs = [r.strip() for r in parts[4].split(",") if r.strip()] if parts[4] else []
+            # Clean up ref names (remove HEAD -> prefix, etc.)
+            clean_refs = []
+            for ref in refs:
+                ref = ref.replace("HEAD -> ", "").strip()
+                if ref and ref != "HEAD":
+                    clean_refs.append(ref)
+            commits.append({
+                "hash": parts[0],
+                "short_hash": parts[1],
+                "author": parts[2],
+                "date": parts[3],
+                "refs": clean_refs,
+                "message": parts[5],
+            })
+        return JSONResponse(content=commits)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Git log failed: {exc}"})
+
+
+@app.get("/api/sessions/{session_id}/git/branches")
+async def git_branches(session_id: str) -> JSONResponse:
+    """List git branches for a session's project."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "branch", "-a", "--format=%(refname:short)|%(HEAD)")
+        )
+        if result.returncode != 0:
+            return JSONResponse(content=[])
+
+        branches = []
+        for line in result.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("|", 1)
+            name = parts[0].strip()
+            is_current = len(parts) > 1 and parts[1].strip() == "*"
+            is_remote = name.startswith("origin/") or name.startswith("remotes/")
+            # Skip HEAD pointers
+            if "HEAD" in name:
+                continue
+            branches.append({
+                "name": name,
+                "current": is_current,
+                "remote": is_remote,
+            })
+        return JSONResponse(content=branches)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Git branches failed: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/git/commit")
+async def git_commit(session_id: str, req: dict = Body(...)) -> JSONResponse:
+    """Create a git commit in the session's project."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    message = req.get("message", "").strip()
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "Commit message is required"})
+
+    files = req.get("files")  # Optional: specific files to stage
+
+    loop = asyncio.get_running_loop()
+    try:
+        # Stage files
+        if files and isinstance(files, list):
+            for f in files:
+                if not isinstance(f, str) or ".." in f:
+                    continue
+                await loop.run_in_executor(None, lambda f=f: _run_git(target, "add", f))
+        else:
+            # Stage all changes
+            await loop.run_in_executor(None, lambda: _run_git(target, "add", "-A"))
+
+        # Commit
+        result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "commit", "-m", message)
+        )
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() or result.stdout.strip() or "Commit failed"
+            return JSONResponse(status_code=400, content={"error": error_msg})
+
+        # Get the commit hash
+        hash_result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "rev-parse", "--short", "HEAD")
+        )
+        commit_hash = hash_result.stdout.strip() if hash_result.returncode == 0 else "unknown"
+
+        return JSONResponse(content={"hash": commit_hash, "message": message})
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Commit failed: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/git/branch")
+async def git_create_branch(session_id: str, req: dict = Body(...)) -> JSONResponse:
+    """Create a new git branch."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    name = req.get("name", "").strip()
+    checkout = req.get("checkout", True)
+    if not name or not re.match(r"^[a-zA-Z0-9._/-]+$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid branch name"})
+
+    loop = asyncio.get_running_loop()
+    try:
+        if checkout:
+            result = await loop.run_in_executor(
+                None, lambda: _run_git(target, "checkout", "-b", name)
+            )
+        else:
+            result = await loop.run_in_executor(
+                None, lambda: _run_git(target, "branch", name)
+            )
+        if result.returncode != 0:
+            return JSONResponse(status_code=400, content={"error": result.stderr.strip() or "Branch creation failed"})
+
+        return JSONResponse(content={"branch": name, "created": True})
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Branch creation failed: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/git/checkout")
+async def git_checkout_branch(session_id: str, req: dict = Body(...)) -> JSONResponse:
+    """Switch to an existing git branch."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    name = req.get("name", "").strip()
+    if not name or not re.match(r"^[a-zA-Z0-9._/-]+$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid branch name"})
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "checkout", name)
+        )
+        if result.returncode != 0:
+            return JSONResponse(status_code=400, content={"error": result.stderr.strip() or "Checkout failed"})
+
+        return JSONResponse(content={"branch": name, "switched": True})
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Checkout failed: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/git/push")
+async def git_push(session_id: str) -> JSONResponse:
+    """Push the current branch to remote."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    loop = asyncio.get_running_loop()
+    try:
+        # Get current branch
+        branch_result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "rev-parse", "--abbrev-ref", "HEAD")
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "main"
+
+        # Push with upstream tracking
+        result = await loop.run_in_executor(
+            None, lambda: _run_git(target, "push", "-u", "origin", branch, timeout=30)
+        )
+        if result.returncode != 0:
+            return JSONResponse(status_code=400, content={
+                "error": result.stderr.strip() or "Push failed",
+                "pushed": False,
+            })
+
+        return JSONResponse(content={"pushed": True, "message": f"Pushed {branch} to origin"})
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"Push failed: {exc}"})
+
+
+@app.post("/api/sessions/{session_id}/git/pr")
+async def git_create_pr(session_id: str, req: dict = Body(...)) -> JSONResponse:
+    """Create a pull request using gh CLI."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    title = req.get("title", "").strip()
+    body = req.get("body", "").strip()
+    if not title:
+        return JSONResponse(status_code=400, content={"error": "PR title is required"})
+
+    loop = asyncio.get_running_loop()
+    try:
+        import shutil
+        gh = shutil.which("gh")
+        if not gh:
+            return JSONResponse(status_code=400, content={"error": "gh CLI not found. Install it: https://cli.github.com/"})
+
+        cmd = [gh, "pr", "create", "--title", title]
+        if body:
+            cmd.extend(["--body", body])
+        else:
+            cmd.extend(["--body", ""])
+
+        result = await loop.run_in_executor(
+            None, lambda: subprocess.run(
+                cmd, capture_output=True, text=True, cwd=str(target), timeout=30,
+            )
+        )
+        if result.returncode != 0:
+            return JSONResponse(status_code=400, content={"error": result.stderr.strip() or "PR creation failed"})
+
+        # gh pr create outputs the PR URL
+        pr_url = result.stdout.strip()
+        # Try to extract PR number from URL
+        pr_number = 0
+        if pr_url:
+            parts = pr_url.rstrip("/").split("/")
+            try:
+                pr_number = int(parts[-1])
+            except (ValueError, IndexError):
+                pass
+
+        return JSONResponse(content={"url": pr_url, "number": pr_number})
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        return JSONResponse(status_code=500, content={"error": f"PR creation failed: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Image upload for AI chat (screenshot-to-change)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/sessions/{session_id}/chat/image")
+async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
+    """Upload an image for screenshot-to-change in AI chat."""
+    if not re.match(r"^[a-zA-Z0-9._-]+$", session_id):
+        return JSONResponse(status_code=400, content={"error": "Invalid session ID"})
+    target = _find_session_dir(session_id)
+    if target is None:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+
+    # Parse multipart form data
+    try:
+        form = await request.form()
+        image_file = form.get("image")
+        if image_file is None:
+            return JSONResponse(status_code=400, content={"error": "No image file provided"})
+
+        # Read file content
+        content = await image_file.read()
+        if len(content) > 10 * 1024 * 1024:  # 10MB limit
+            return JSONResponse(status_code=400, content={"error": "Image too large (max 10MB)"})
+
+        # Save to session's .loki/images/ directory
+        images_dir = target / ".loki" / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        image_id = str(uuid.uuid4())[:8]
+        # Sanitize filename
+        original_name = getattr(image_file, 'filename', 'image.png') or 'image.png'
+        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', original_name)
+        saved_name = f"{image_id}_{safe_name}"
+        saved_path = images_dir / saved_name
+
+        with open(saved_path, "wb") as f:
+            f.write(content)
+
+        return JSONResponse(content={
+            "image_id": image_id,
+            "filename": safe_name,
+            "path": str(saved_path.relative_to(target)),
+            "size": len(content),
+        })
+    except Exception as exc:
+        logger.error("Image upload failed: %s", exc, exc_info=True)
+        return JSONResponse(status_code=500, content={"error": f"Upload failed: {exc}"})
 
 
 # ---------------------------------------------------------------------------

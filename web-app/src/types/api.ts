@@ -79,3 +79,45 @@ export interface FileNode {
   children?: FileNode[];
   size?: number;
 }
+
+// Git integration types
+export interface GitFileChange {
+  path: string;
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
+  staged: boolean;
+}
+
+export interface GitStatus {
+  branch: string;
+  clean: boolean;
+  ahead: number;
+  behind: number;
+  files: GitFileChange[];
+}
+
+export interface GitCommit {
+  hash: string;
+  short_hash: string;
+  message: string;
+  author: string;
+  date: string;
+  refs: string[];
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+}
+
+// Template metadata types
+export interface TemplateMetadata {
+  name: string;
+  filename: string;
+  description: string;
+  category: string;
+  tech_stack: string[];
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  build_time: string;
+  gradient: string;
+}

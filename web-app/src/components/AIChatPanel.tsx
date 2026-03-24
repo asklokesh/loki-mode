@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, MessageSquare, FileCode2, Terminal as TerminalIcon, Wrench } from 'lucide-react';
+import { Send, Square, MessageSquare, FileCode2, Terminal as TerminalIcon, Wrench, Image as ImageIcon, X } from 'lucide-react';
 import { api } from '../api/client';
 import { Button } from './ui/Button';
 
@@ -17,6 +17,8 @@ interface ChatMessage {
   filesChanged?: string[];
   isStreaming?: boolean;
   returncode?: number;
+  imageUrl?: string;
+  imageName?: string;
 }
 
 // Immutable update helper: replaces the last message with a new object
@@ -64,6 +66,18 @@ function ChatMessageBubble({ msg }: { msg: ChatMessage }) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-lg px-3 py-2 text-xs bg-primary/10 text-ink">
+          {msg.imageUrl && (
+            <div className="mb-2">
+              <img
+                src={msg.imageUrl}
+                alt={msg.imageName || 'Uploaded image'}
+                className="max-w-full max-h-48 rounded border border-border object-contain"
+              />
+              {msg.imageName && (
+                <span className="text-[10px] text-muted mt-0.5 block">{msg.imageName}</span>
+              )}
+            </div>
+          )}
           <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed overflow-x-auto">{msg.content}</pre>
         </div>
       </div>
@@ -170,10 +184,14 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
   const [mode, setMode] = useState<'quick' | 'standard' | 'max'>(defaultMode || 'quick');
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeTaskRef = useRef<string | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // UX-001: Restore chat history from sessionStorage on mount
   useEffect(() => {
@@ -203,8 +221,79 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
       if (abortRef.current) {
         abortRef.current.abort();
       }
+      // Revoke object URL to prevent memory leaks
+      if (pendingImage?.previewUrl) {
+        URL.revokeObjectURL(pendingImage.previewUrl);
+      }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Handle image file selection
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    // Revoke previous preview URL
+    if (pendingImage?.previewUrl) {
+      URL.revokeObjectURL(pendingImage.previewUrl);
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setPendingImage({ file, previewUrl });
+  }, [pendingImage?.previewUrl]);
+
+  const clearPendingImage = useCallback(() => {
+    if (pendingImage?.previewUrl) {
+      URL.revokeObjectURL(pendingImage.previewUrl);
+    }
+    setPendingImage(null);
+  }, [pendingImage?.previewUrl]);
+
+  // Clipboard paste handler (Ctrl+V for images)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) handleImageFile(file);
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [handleImageFile]);
+
+  // Drag-and-drop handlers
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith('image/')) {
+        handleImageFile(file);
+      }
+    }
+  }, [handleImageFile]);
 
   const handleCancel = useCallback(async () => {
     // Abort the fetch stream
@@ -390,12 +479,34 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
 
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || sending) return;
+    if ((!trimmed && !pendingImage) || sending) return;
+
+    // Upload image first if present
+    let imageUrl: string | undefined;
+    let imageName: string | undefined;
+    let imageContext = '';
+
+    if (pendingImage) {
+      setUploadingImage(true);
+      try {
+        const result = await api.chatImageUpload(sessionId, pendingImage.file);
+        imageUrl = pendingImage.previewUrl;
+        imageName = result.filename;
+        imageContext = `[Attached image: ${result.filename} (id: ${result.image_id})] Make it look like this. `;
+      } catch {
+        // Continue without image if upload fails
+      }
+      setUploadingImage(false);
+    }
+
+    const messageText = imageContext + (trimmed || 'Make changes based on this screenshot.');
 
     const userMsg: ChatMessage = {
       role: 'user',
-      content: trimmed,
+      content: trimmed || 'Make changes based on this screenshot.',
       timestamp: new Date().toISOString(),
+      imageUrl,
+      imageName,
     };
 
     // Add user message and a placeholder streaming system message
@@ -408,10 +519,11 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
 
     setMessages(prev => [...prev, userMsg, streamingMsg]);
     setInput('');
+    setPendingImage(null);
     setSending(true);
 
     try {
-      const { task_id } = await api.chatStart(sessionId, trimmed, mode);
+      const { task_id } = await api.chatStart(sessionId, messageText, mode);
       await startStreaming(task_id);
     } catch (err) {
       setMessages(prev =>
@@ -427,7 +539,23 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      ref={dropZoneRef}
+      className={`flex flex-col h-full relative ${isDragOver ? 'ring-2 ring-primary ring-inset' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-primary/5 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 text-primary">
+            <ImageIcon size={32} />
+            <span className="text-sm font-medium">Drop image here</span>
+          </div>
+        </div>
+      )}
+
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 terminal-scroll">
         {messages.length === 0 && (
@@ -435,7 +563,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
             <MessageSquare size={28} className="text-muted/30 mb-3" />
             <p className="text-xs text-muted font-medium">No messages yet</p>
             <p className="text-[11px] text-muted/70 mt-1 max-w-[200px]">
-              Ask the AI to build, modify, or explain your code.
+              Ask the AI to build, modify, or explain your code. Drop an image or paste a screenshot.
             </p>
           </div>
         )}
@@ -483,8 +611,50 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
             </button>
           ))}
         </div>
+        {/* Pending image preview */}
+        {pendingImage && (
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <div className="relative">
+              <img
+                src={pendingImage.previewUrl}
+                alt="Pending upload"
+                className="h-16 max-w-[120px] rounded border border-border object-cover"
+              />
+              <button
+                onClick={clearPendingImage}
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
+                title="Remove image"
+              >
+                <X size={10} />
+              </button>
+            </div>
+            <span className="text-[10px] text-muted truncate max-w-[150px]">{pendingImage.file.name}</span>
+            {uploadingImage && <span className="text-[10px] text-primary animate-pulse">Uploading...</span>}
+          </div>
+        )}
         {/* Input + send */}
         <div className="flex items-center gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImageFile(file);
+              e.target.value = '';
+            }}
+          />
+          {/* Image upload button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            className="p-1.5 text-muted hover:text-primary rounded transition-colors disabled:opacity-50"
+            title="Attach image (or paste/drag-and-drop)"
+          >
+            <ImageIcon size={16} />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -516,7 +686,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
               size="sm"
               icon={Send}
               onClick={handleSend}
-              disabled={sending || !input.trim()}
+              disabled={sending || (!input.trim() && !pendingImage)}
               aria-label="Send message"
             >
               Send
