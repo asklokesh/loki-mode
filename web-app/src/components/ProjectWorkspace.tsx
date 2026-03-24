@@ -35,7 +35,6 @@ import { CheckpointTimeline } from './CheckpointTimeline';
 import { ChangePreview } from './ChangePreview';
 import type { FileNode, ChangePreviewData } from '../types/api';
 import { CICDPanel } from './CICDPanel';
-import type { FileNode } from '../types/api';
 import type { SessionDetail } from '../api/client';
 
 // Wrapper to avoid inline import complexity
@@ -220,7 +219,6 @@ function flattenFiles(nodes: FileNode[], prefix = ''): { path: string; name: str
 }
 
 type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard' | 'deploy' | 'git' | 'cicd';
-type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard' | 'cicd';
 
 function SecretsPanel() {
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -1858,6 +1856,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
 
                     {activeWorkspaceTab === 'git' && (
                       <GitPanel sessionId={sessionData.id} />
+                    )}
                     {activeWorkspaceTab === 'cicd' && (
                       <div className="h-full overflow-y-auto p-4">
                         <CICDPanelLazy sessionId={session.id} />
