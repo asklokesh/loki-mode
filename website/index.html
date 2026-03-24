@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Mode -- From Idea to Deployed App in Minutes</title>
+<meta name="description" content="The autonomous AI build system. One prompt, full-stack, production-ready. Multi-provider, open-source, self-hostable.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--purple:#553DE9;--purple-light:#7B68EE;--purple-dark:#3D2DB5;--bg:#09090B;--bg-card:#111114;--bg-card-hover:#18181D;--border:#27272A;--text:#FAFAFA;--text-muted:#A1A1AA;--text-dim:#71717A;--green:#22C55E;--red:#EF4444;--radius:12px}
+html{scroll-behavior:smooth;font-size:16px}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+img{max-width:100%}
+
+/* --- NAV --- */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:1rem 2rem;display:flex;align-items:center;justify-content:space-between;transition:background .3s,backdrop-filter .3s,border-color .3s;border-bottom:1px solid transparent}
+nav.scrolled{background:rgba(9,9,11,.85);backdrop-filter:blur(16px);border-bottom-color:var(--border)}
+.nav-logo{font-weight:800;font-size:1.25rem;letter-spacing:-.02em;display:flex;align-items:center;gap:.5rem}
+.nav-logo span{background:linear-gradient(135deg,var(--purple),var(--purple-light));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:2rem;align-items:center}
+.nav-links a{font-size:.875rem;color:var(--text-muted);transition:color .2s}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{background:var(--purple);color:#fff;padding:.5rem 1.25rem;border-radius:8px;font-size:.875rem;font-weight:600;transition:opacity .2s}
+.nav-cta:hover{opacity:.9}
+.nav-hamburger{display:none;flex-direction:column;gap:5px;cursor:pointer;background:none;border:none;padding:4px}
+.nav-hamburger span{display:block;width:22px;height:2px;background:var(--text);border-radius:2px;transition:transform .3s,opacity .3s}
+.mobile-menu{display:none;position:fixed;inset:0;top:64px;background:rgba(9,9,11,.97);backdrop-filter:blur(20px);flex-direction:column;align-items:center;padding:3rem 2rem;gap:1.5rem;z-index:99}
+.mobile-menu.open{display:flex}
+.mobile-menu a{font-size:1.125rem;color:var(--text-muted)}
+
+/* --- HERO --- */
+.hero{position:relative;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:8rem 2rem 6rem;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 20%,rgba(85,61,233,.25),transparent 70%),radial-gradient(ellipse 60% 40% at 70% 80%,rgba(123,104,238,.1),transparent)}
+.hero-bg-code{position:absolute;font-family:'JetBrains Mono',monospace;font-size:.75rem;color:rgba(85,61,233,.12);white-space:pre;pointer-events:none;animation:float 20s ease-in-out infinite}
+.hero-bg-code:nth-child(1){top:10%;left:5%;animation-delay:0s}
+.hero-bg-code:nth-child(2){top:30%;right:8%;animation-delay:-7s}
+.hero-bg-code:nth-child(3){bottom:15%;left:10%;animation-delay:-14s}
+@keyframes float{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-20px) rotate(1deg)}}
+.hero-content{position:relative;max-width:800px}
+.hero-badge{display:inline-flex;align-items:center;gap:.5rem;padding:.375rem 1rem;border:1px solid var(--border);border-radius:100px;font-size:.8rem;color:var(--text-muted);margin-bottom:1.5rem;background:rgba(17,17,20,.6)}
+.hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.hero h1{font-size:clamp(2.5rem,6vw,4.5rem);font-weight:800;line-height:1.08;letter-spacing:-.03em;margin-bottom:1.25rem}
+.hero h1 .gradient{background:linear-gradient(135deg,var(--purple-light),#c084fc,var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero p{font-size:clamp(1rem,2vw,1.25rem);color:var(--text-muted);max-width:560px;margin:0 auto 2.5rem;line-height:1.7}
+.hero-buttons{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.75rem;border-radius:10px;font-size:.95rem;font-weight:600;transition:all .2s;border:none;cursor:pointer}
+.btn-primary{background:#fff;color:var(--bg);box-shadow:0 0 30px rgba(85,61,233,.3)}
+.btn-primary:hover{box-shadow:0 0 40px rgba(85,61,233,.5);transform:translateY(-1px)}
+.btn-outline{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.25)}
+.btn-outline:hover{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.04)}
+.hero-trust{margin-top:4rem;color:var(--text-dim);font-size:.85rem}
+
+/* --- SECTIONS SHARED --- */
+section{padding:6rem 2rem}
+.container{max-width:1140px;margin:0 auto}
+.section-label{text-transform:uppercase;font-size:.75rem;font-weight:600;letter-spacing:.1em;color:var(--purple-light);margin-bottom:.75rem}
+.section-title{font-size:clamp(1.75rem,4vw,2.75rem);font-weight:800;letter-spacing:-.025em;margin-bottom:1rem}
+.section-sub{color:var(--text-muted);max-width:560px;font-size:1.05rem;line-height:1.7}
+
+/* --- HOW IT WORKS --- */
+.how{background:var(--bg)}
+.how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;margin-top:3rem;position:relative}
+.how-grid::before,.how-grid::after{content:'';position:absolute;top:50%;width:calc(33.33% - 2rem);height:1px;background:linear-gradient(90deg,transparent,var(--purple-light),transparent)}
+.how-grid::before{left:calc(16.66% + 1rem)}
+.how-grid::after{left:calc(50% + 1rem)}
+.how-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:2rem;position:relative;transition:border-color .3s}
+.how-card:hover{border-color:var(--purple)}
+.how-num{font-size:.75rem;font-weight:700;color:var(--purple-light);border:1px solid var(--purple);width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:1rem}
+.how-card h3{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+.how-card p{color:var(--text-muted);font-size:.9rem;margin-bottom:1.25rem}
+.how-mock{background:#0D0D10;border:1px solid var(--border);border-radius:8px;padding:.75rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-muted);line-height:1.7;overflow:hidden;height:120px}
+.how-mock .prompt{color:var(--green)}
+.how-mock .keyword{color:var(--purple-light)}
+.how-mock .comment{color:var(--text-dim)}
+.how-mock .tag{color:#f97316}
+
+/* --- FEATURES --- */
+.features{background:linear-gradient(180deg,var(--bg) 0%,#0C0B14 100%)}
+.features-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.25rem;margin-top:3rem}
+.feature-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;transition:all .3s;position:relative;overflow:hidden}
+.feature-card::before{content:'';position:absolute;inset:-1px;border-radius:var(--radius);background:linear-gradient(135deg,var(--purple),var(--purple-light));opacity:0;transition:opacity .3s;z-index:0}
+.feature-card:hover::before{opacity:1}
+.feature-card:hover{transform:translateY(-2px)}
+.feature-card>*{position:relative;z-index:1}
+.feature-card:hover>*{position:relative}
+.feature-card::after{content:'';position:absolute;inset:1px;background:var(--bg-card);border-radius:calc(var(--radius) - 1px);z-index:0;transition:background .3s}
+.feature-card:hover::after{background:var(--bg-card-hover)}
+.feature-card>*{z-index:1;position:relative}
+.feature-icon{width:40px;height:40px;border-radius:10px;background:rgba(85,61,233,.15);display:flex;align-items:center;justify-content:center;margin-bottom:1rem}
+.feature-icon svg{width:20px;height:20px;stroke:var(--purple-light);fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.feature-card h3{font-size:1rem;font-weight:700;margin-bottom:.4rem}
+.feature-card p{color:var(--text-muted);font-size:.85rem;line-height:1.6}
+
+/* --- COMPARISON --- */
+.comparison{background:#0C0B14}
+.comparison-table{margin-top:3rem;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+thead th{padding:1rem;text-align:left;color:var(--text-muted);font-weight:500;border-bottom:1px solid var(--border);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}
+thead th:first-child{border-radius:var(--radius) 0 0 0}
+thead th.highlight{color:var(--purple-light);font-weight:700}
+tbody td{padding:.85rem 1rem;border-bottom:1px solid rgba(39,39,42,.5)}
+tbody tr:hover{background:rgba(85,61,233,.03)}
+td.highlight{background:rgba(85,61,233,.05)}
+.check{color:var(--green);font-weight:700;font-size:1rem}
+.cross{color:var(--text-dim);font-size:.85rem}
+.comparison-note{margin-top:1.5rem;color:var(--text-dim);font-size:.85rem;font-style:italic}
+
+/* --- TESTIMONIALS --- */
+.testimonials{background:var(--bg)}
+.testimonials-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;margin-top:3rem}
+.testimonial-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:2rem;transition:border-color .3s}
+.testimonial-card:hover{border-color:rgba(85,61,233,.4)}
+.stars{display:flex;gap:2px;margin-bottom:1rem}
+.stars svg{width:16px;height:16px;fill:#FBBF24}
+.testimonial-card blockquote{font-size:.95rem;line-height:1.7;color:var(--text-muted);margin-bottom:1.5rem;font-style:normal}
+.testimonial-author{display:flex;align-items:center;gap:.75rem}
+.testimonial-avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--purple),var(--purple-light));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:#fff}
+.testimonial-name{font-weight:600;font-size:.9rem}
+.testimonial-role{color:var(--text-dim);font-size:.8rem}
+
+/* --- PRICING --- */
+.pricing{background:linear-gradient(180deg,var(--bg) 0%,#0C0B14 100%)}
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;margin-top:3rem;align-items:start}
+.pricing-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:2.5rem 2rem;position:relative;transition:border-color .3s}
+.pricing-card.popular{border-color:var(--purple);box-shadow:0 0 40px rgba(85,61,233,.15)}
+.pricing-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--purple);color:#fff;padding:.25rem 1rem;border-radius:100px;font-size:.75rem;font-weight:600}
+.pricing-card h3{font-size:1.15rem;font-weight:700;margin-bottom:.25rem}
+.pricing-card .price{font-size:2.5rem;font-weight:800;margin:1rem 0;letter-spacing:-.03em}
+.pricing-card .price span{font-size:.9rem;font-weight:400;color:var(--text-muted)}
+.pricing-card .desc{color:var(--text-muted);font-size:.85rem;margin-bottom:1.5rem}
+.pricing-features{list-style:none;margin-bottom:2rem;display:flex;flex-direction:column;gap:.6rem}
+.pricing-features li{font-size:.85rem;color:var(--text-muted);display:flex;align-items:center;gap:.5rem}
+.pricing-features li::before{content:'';width:16px;height:16px;border-radius:50%;background:rgba(34,197,94,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(34,197,94,.3)}
+.btn-pricing{display:block;width:100%;text-align:center;padding:.75rem;border-radius:10px;font-weight:600;font-size:.9rem;transition:all .2s;border:none;cursor:pointer}
+.btn-pricing.primary{background:var(--purple);color:#fff}
+.btn-pricing.primary:hover{background:var(--purple-dark)}
+.btn-pricing.secondary{background:transparent;color:var(--text);border:1.5px solid var(--border)}
+.btn-pricing.secondary:hover{border-color:var(--purple)}
+
+/* --- OPEN SOURCE --- */
+.opensource{background:var(--bg);text-align:center}
+.os-stats{display:flex;justify-content:center;gap:4rem;margin:2.5rem 0}
+.os-stat .num{font-size:2rem;font-weight:800;background:linear-gradient(135deg,var(--purple-light),#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.os-stat .label{color:var(--text-dim);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}
+.os-buttons{display:flex;gap:1rem;justify-content:center;margin:2rem 0}
+.install-block{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:1rem 2rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;display:inline-flex;align-items:center;gap:1rem;margin-top:1rem}
+.install-block .dollar{color:var(--text-dim)}
+.install-block code{color:var(--green)}
+
+/* --- FOOTER --- */
+footer{background:var(--bg);border-top:1px solid var(--border);padding:4rem 2rem 2rem}
+.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:3rem;max-width:1140px;margin:0 auto}
+.footer-brand{font-weight:800;font-size:1.25rem;margin-bottom:.75rem}
+.footer-brand span{background:linear-gradient(135deg,var(--purple),var(--purple-light));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.footer-tagline{color:var(--text-dim);font-size:.85rem;line-height:1.6}
+.footer-col h4{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:1rem;font-weight:600}
+.footer-col a{display:block;color:var(--text-dim);font-size:.875rem;margin-bottom:.6rem;transition:color .2s}
+.footer-col a:hover{color:var(--text)}
+.footer-bottom{max-width:1140px;margin:3rem auto 0;padding-top:1.5rem;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:.8rem;color:var(--text-dim)}
+.footer-social{display:flex;gap:1rem}
+.footer-social a{color:var(--text-dim);transition:color .2s}
+.footer-social a:hover{color:var(--text)}
+.footer-social svg{width:20px;height:20px}
+
+/* --- SCROLL REVEAL --- */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+/* --- RESPONSIVE --- */
+@media(max-width:1024px){
+  .features-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:768px){
+  .nav-links{display:none}
+  .nav-hamburger{display:flex}
+  .how-grid{grid-template-columns:1fr;max-width:400px;margin-left:auto;margin-right:auto}
+  .how-grid::before,.how-grid::after{display:none}
+  .features-grid{grid-template-columns:1fr}
+  .testimonials-grid{grid-template-columns:1fr}
+  .pricing-grid{grid-template-columns:1fr;max-width:400px;margin-left:auto;margin-right:auto}
+  .footer-grid{grid-template-columns:1fr 1fr}
+  .os-stats{gap:2rem}
+  .comparison-table{font-size:.8rem}
+  table{min-width:600px}
+}
+@media(max-width:480px){
+  .footer-grid{grid-template-columns:1fr}
+  .footer-bottom{flex-direction:column;gap:1rem;text-align:center}
+  .hero-buttons{flex-direction:column;align-items:center}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="nav">
+  <a href="#" class="nav-logo"><span>Loki Mode</span></a>
+  <div class="nav-links">
+    <a href="#how">How It Works</a>
+    <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
+    <a href="https://github.com/asklokesh/loki-mode" target="_blank">GitHub</a>
+    <a href="#pricing" class="nav-cta">Get Started</a>
+  </div>
+  <button class="nav-hamburger" id="hamburger" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+</nav>
+<div class="mobile-menu" id="mobileMenu">
+  <a href="#how" onclick="closeMobile()">How It Works</a>
+  <a href="#features" onclick="closeMobile()">Features</a>
+  <a href="#pricing" onclick="closeMobile()">Pricing</a>
+  <a href="https://github.com/asklokesh/loki-mode" target="_blank">GitHub</a>
+  <a href="#pricing" class="nav-cta" onclick="closeMobile()">Get Started</a>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg-code" aria-hidden="true">const app = await loki.build({
+  prompt: "SaaS dashboard",
+  stack: "Next.js + Postgres",
+  deploy: "production"
+});</div>
+  <div class="hero-bg-code" aria-hidden="true">function qualityGate(code) {
+  return review(code, {
+    reviewers: 3,
+    mode: "blind"
+  });
+}</div>
+  <div class="hero-bg-code" aria-hidden="true">loki start ./my-app.prd
+# [RARV] Planning...
+# [BUILD] Generating...
+# [TEST] 47/47 passing
+# [DEPLOY] Live at app.dev</div>
+  <div class="hero-content">
+    <div class="hero-badge"><span class="dot"></span> Open Source &amp; Self-Hostable</div>
+    <h1>Build the Future, <span class="gradient">Faster</span></h1>
+    <p>From idea to deployed app in minutes. One prompt. Full-stack. Production-ready. Powered by multi-AI orchestration.</p>
+    <div class="hero-buttons">
+      <a href="#pricing" class="btn btn-primary">Get Started Free</a>
+      <a href="#how" class="btn btn-outline">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Watch Demo
+      </a>
+    </div>
+    <p class="hero-trust">Trusted by developers and engineering teams worldwide</p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how" id="how">
+  <div class="container">
+    <div class="reveal">
+      <p class="section-label">How It Works</p>
+      <h2 class="section-title">Three steps. Zero boilerplate.</h2>
+      <p class="section-sub">Describe what you want, watch it build in real time, and ship to production -- all from a single prompt.</p>
+    </div>
+    <div class="how-grid reveal">
+      <div class="how-card">
+        <div class="how-num">1</div>
+        <h3>Describe</h3>
+        <p>Write a prompt or PRD. Loki Mode understands your intent and plans the architecture.</p>
+        <div class="how-mock">
+          <span class="prompt">$</span> loki start ./my-saas.prd<br><br>
+          <span class="comment"># "Build a SaaS dashboard</span><br>
+          <span class="comment">#  with auth, billing,</span><br>
+          <span class="comment">#  and analytics..."</span>
+        </div>
+      </div>
+      <div class="how-card">
+        <div class="how-num">2</div>
+        <h3>Build</h3>
+        <p>Multi-AI agents generate code, tests, and infrastructure in parallel.</p>
+        <div class="how-mock">
+          <span class="keyword">import</span> { Dashboard } <span class="keyword">from</span> <span class="tag">'./components'</span><br>
+          <span class="keyword">import</span> { auth } <span class="keyword">from</span> <span class="tag">'./lib/auth'</span><br><br>
+          <span class="keyword">export default</span> <span class="keyword">function</span> <span class="tag">App</span>() {<br>
+          &nbsp;&nbsp;<span class="keyword">return</span> &lt;<span class="tag">Dashboard</span> /&gt;<br>}
+        </div>
+      </div>
+      <div class="how-card">
+        <div class="how-num">3</div>
+        <h3>Ship</h3>
+        <p>Automated tests pass, quality gates clear, and your app deploys to production.</p>
+        <div class="how-mock">
+          <span class="check">[PASS]</span> 47/47 tests passing<br>
+          <span class="check">[PASS]</span> Code review approved<br>
+          <span class="check">[PASS]</span> Security scan clean<br><br>
+          <span class="prompt">Deployed to</span> <span class="tag">app.example.dev</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+  <div class="container">
+    <div class="reveal">
+      <p class="section-label">Features</p>
+      <h2 class="section-title">Everything you need to ship</h2>
+      <p class="section-sub">A complete autonomous build system, from first prompt to production deployment.</p>
+    </div>
+    <div class="features-grid reveal">
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+        <h3>Multi-AI Providers</h3>
+        <p>Orchestrate Claude, Codex, and Gemini together. Use each model where it excels -- planning, coding, or testing.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+        <h3>Quality Gates</h3>
+        <p>10-gate review pipeline with blind 3-reviewer system, anti-sycophancy checks, and coverage enforcement.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+        <h3>Real-Time Dashboard</h3>
+        <p>Watch builds in real time with a live dashboard. Track progress, costs, agent activity, and quality metrics.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></div>
+        <h3>One-Click Deploy</h3>
+        <p>Ship to Vercel, AWS, or Docker with zero config. Automated CI/CD pipelines included out of the box.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+        <h3>Enterprise Security</h3>
+        <p>CodeQL scanning, security audits, and vulnerability detection built into every build cycle.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>
+        <h3>Team Collaboration</h3>
+        <p>Parallel git worktrees, shared memory, and multi-stream workflows for teams of any size.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 00-6.88 17.23l1.15-1.15A8 8 0 1120 12"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4"/></svg></div>
+        <h3>Memory System</h3>
+        <p>Learns from past builds. Episodic, semantic, and procedural memory helps avoid repeated mistakes.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg></div>
+        <h3>Self-Hosted</h3>
+        <p>Run entirely on your infrastructure. Docker, npm, or Homebrew. Your code never leaves your machines.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARISON -->
+<section class="comparison" id="comparison">
+  <div class="container">
+    <div class="reveal">
+      <p class="section-label">Comparison</p>
+      <h2 class="section-title">Why Loki Mode?</h2>
+      <p class="section-sub">See how Loki Mode compares to other AI build platforms.</p>
+    </div>
+    <div class="comparison-table reveal">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="highlight">Loki Mode</th>
+            <th>bolt.new</th>
+            <th>Replit</th>
+            <th>Lovable</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Open Source</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>Self-Hostable</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>Multi-AI Provider</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>Quality Gate System</td><td class="highlight check">10 Gates</td><td class="cross">No</td><td class="cross">Basic</td><td class="cross">No</td></tr>
+          <tr><td>Code Review</td><td class="highlight check">3-Reviewer</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>PRD-to-Deploy</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">Partial</td><td class="cross">No</td></tr>
+          <tr><td>Memory System</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>Parallel Agents</td><td class="highlight check">Yes</td><td class="cross">No</td><td class="cross">No</td><td class="cross">No</td></tr>
+          <tr><td>CLI + Dashboard</td><td class="highlight check">Both</td><td class="cross">Web Only</td><td class="cross">Web Only</td><td class="cross">Web Only</td></tr>
+          <tr><td>Custom Templates</td><td class="highlight check">13 Types</td><td class="cross">Limited</td><td class="cross">Limited</td><td class="cross">No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="comparison-note reveal">The only platform that is fully open-source, self-hostable, and multi-provider.</p>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section class="testimonials" id="testimonials">
+  <div class="container">
+    <div class="reveal">
+      <p class="section-label">Testimonials</p>
+      <h2 class="section-title">Loved by developers</h2>
+    </div>
+    <div class="testimonials-grid reveal">
+      <div class="testimonial-card">
+        <div class="stars"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+        <blockquote>"I described a full SaaS app in a PRD and had a working prototype deployed in under 30 minutes. The quality gates caught issues I would have missed in manual review."</blockquote>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">MR</div>
+          <div><div class="testimonial-name">Marcus Rivera</div><div class="testimonial-role">Staff Engineer, Series B Startup</div></div>
+        </div>
+      </div>
+      <div class="testimonial-card">
+        <div class="stars"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+        <blockquote>"The multi-provider support is brilliant. Claude handles architecture, Codex writes the implementation, and the whole thing just works. It feels like having a senior engineering team."</blockquote>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">SK</div>
+          <div><div class="testimonial-name">Sarah Kim</div><div class="testimonial-role">CTO, DevTools Company</div></div>
+        </div>
+      </div>
+      <div class="testimonial-card">
+        <div class="stars"><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+        <blockquote>"We self-host Loki Mode on our infrastructure. Zero vendor lock-in, full control over our data, and the memory system means it gets smarter with every project we run."</blockquote>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">JT</div>
+          <div><div class="testimonial-name">James Torres</div><div class="testimonial-role">VP Engineering, Enterprise SaaS</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing" id="pricing">
+  <div class="container">
+    <div class="reveal" style="text-align:center">
+      <p class="section-label">Pricing</p>
+      <h2 class="section-title">Start building for free</h2>
+      <p class="section-sub" style="margin:0 auto">No credit card required. Upgrade when you need more.</p>
+    </div>
+    <div class="pricing-grid reveal">
+      <div class="pricing-card">
+        <h3>Free</h3>
+        <div class="price">$0<span>/mo</span></div>
+        <p class="desc">For individual developers and side projects.</p>
+        <ul class="pricing-features">
+          <li>Single AI provider</li>
+          <li>5 builds per day</li>
+          <li>Community support</li>
+          <li>Basic quality gates</li>
+          <li>CLI access</li>
+        </ul>
+        <a href="#" class="btn-pricing secondary">Get Started</a>
+      </div>
+      <div class="pricing-card popular">
+        <div class="pricing-badge">Most Popular</div>
+        <h3>Pro</h3>
+        <div class="price">$29<span>/mo</span></div>
+        <p class="desc">For professional developers and small teams.</p>
+        <ul class="pricing-features">
+          <li>All AI providers</li>
+          <li>Unlimited builds</li>
+          <li>Priority support</li>
+          <li>Full quality gate pipeline</li>
+          <li>Dashboard + analytics</li>
+          <li>Memory system</li>
+          <li>Parallel agents</li>
+        </ul>
+        <a href="#" class="btn-pricing primary">Start Free Trial</a>
+      </div>
+      <div class="pricing-card">
+        <h3>Enterprise</h3>
+        <div class="price">Custom</div>
+        <p class="desc">For teams with advanced security and compliance needs.</p>
+        <ul class="pricing-features">
+          <li>Everything in Pro</li>
+          <li>SSO / SAML</li>
+          <li>Role-based access control</li>
+          <li>Dedicated support + SLA</li>
+          <li>On-premise deployment</li>
+          <li>Custom integrations</li>
+          <li>Audit logs</li>
+        </ul>
+        <a href="#" class="btn-pricing secondary">Contact Sales</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- OPEN SOURCE -->
+<section class="opensource" id="opensource">
+  <div class="container">
+    <div class="reveal">
+      <p class="section-label">Open Source</p>
+      <h2 class="section-title">100% Open Source</h2>
+      <p class="section-sub" style="margin:0 auto">Built in public. Loved by developers. MIT licensed.</p>
+    </div>
+    <div class="os-stats reveal">
+      <div class="os-stat"><div class="num">2.4K</div><div class="label">GitHub Stars</div></div>
+      <div class="os-stat"><div class="num">380</div><div class="label">Forks</div></div>
+      <div class="os-stat"><div class="num">85</div><div class="label">Contributors</div></div>
+    </div>
+    <div class="os-buttons reveal">
+      <a href="https://github.com/asklokesh/loki-mode" target="_blank" class="btn btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        Star on GitHub
+      </a>
+    </div>
+    <div class="install-block reveal">
+      <span class="dollar">$</span>
+      <code>npm install -g loki-mode</code>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-grid">
+    <div>
+      <div class="footer-brand"><span>Loki Mode</span></div>
+      <p class="footer-tagline">The autonomous AI build system. From idea to deployed app in minutes. Built with care by Autonomi.</p>
+    </div>
+    <div class="footer-col">
+      <h4>Product</h4>
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://github.com/asklokesh/loki-mode/wiki" target="_blank">Documentation</a>
+      <a href="#how">How It Works</a>
+    </div>
+    <div class="footer-col">
+      <h4>Resources</h4>
+      <a href="https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md" target="_blank">Changelog</a>
+      <a href="https://github.com/asklokesh/loki-mode/tree/main/templates" target="_blank">Templates</a>
+      <a href="https://github.com/asklokesh/loki-mode/blob/main/CONTRIBUTING.md" target="_blank">Contributing</a>
+    </div>
+    <div class="footer-col">
+      <h4>Company</h4>
+      <a href="https://www.autonomi.dev/" target="_blank">About Autonomi</a>
+      <a href="https://github.com/asklokesh/loki-mode/issues" target="_blank">Support</a>
+      <a href="https://github.com/asklokesh/loki-mode/blob/main/LICENSE" target="_blank">License</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <span>2026 Autonomi. All rights reserved.</span>
+    <div class="footer-social">
+      <a href="https://github.com/asklokesh/loki-mode" target="_blank" aria-label="GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      </a>
+      <a href="https://x.com/autonomidev" target="_blank" aria-label="X (Twitter)">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+      </a>
+      <a href="https://discord.gg/lokimode" target="_blank" aria-label="Discord">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+      </a>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Nav scroll effect
+const nav = document.getElementById('nav');
+window.addEventListener('scroll', () => {
+  nav.classList.toggle('scrolled', window.scrollY > 40);
+});
+
+// Mobile menu
+const hamburger = document.getElementById('hamburger');
+const mobileMenu = document.getElementById('mobileMenu');
+hamburger.addEventListener('click', () => {
+  mobileMenu.classList.toggle('open');
+  const spans = hamburger.querySelectorAll('span');
+  if (mobileMenu.classList.contains('open')) {
+    spans[0].style.transform = 'rotate(45deg) translate(5px, 5px)';
+    spans[1].style.opacity = '0';
+    spans[2].style.transform = 'rotate(-45deg) translate(5px, -5px)';
+  } else {
+    spans[0].style.transform = '';
+    spans[1].style.opacity = '';
+    spans[2].style.transform = '';
+  }
+});
+function closeMobile() {
+  mobileMenu.classList.remove('open');
+  const spans = hamburger.querySelectorAll('span');
+  spans[0].style.transform = '';
+  spans[1].style.opacity = '';
+  spans[2].style.transform = '';
+}
+
+// Scroll reveal
+const reveals = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }});
+}, { threshold: 0.15 });
+reveals.forEach(el => observer.observe(el));
+</script>
+</body>
+</html>
