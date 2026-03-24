@@ -411,7 +411,17 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
     setSending(true);
 
     try {
-      const { task_id } = await api.chatStart(sessionId, trimmed, mode);
+      // BUG-E2E-004: Send recent conversation history for context continuity.
+      // Extract the last 10 user/assistant messages (excluding the current one
+      // and system streaming placeholders) so the AI knows what was discussed.
+      const historyForContext = messages
+        .filter(m => (m.role === 'user' || (m.role === 'system' && !m.isStreaming && m.content)))
+        .slice(-10)
+        .map(m => ({
+          role: m.role === 'user' ? 'user' as const : 'assistant' as const,
+          content: m.content,
+        }));
+      const { task_id } = await api.chatStart(sessionId, trimmed, mode, historyForContext.length > 0 ? historyForContext : undefined);
       await startStreaming(task_id);
     } catch (err) {
       setMessages(prev =>

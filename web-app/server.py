@@ -313,10 +313,28 @@ class StartRequest(BaseModel):
     projectDir: Optional[str] = None
     mode: Optional[str] = None  # "quick" for quick mode
 
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: str) -> str:
+        # BUG-E2E-006: Validate provider to prevent injection via unknown providers
+        allowed = {"claude", "codex", "gemini", "cline", "aider"}
+        if v not in allowed:
+            raise ValueError(f"Unknown provider '{v}'. Allowed: {', '.join(sorted(allowed))}")
+        return v
+
 
 class QuickStartRequest(BaseModel):
     prompt: str
     provider: str = "claude"
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: str) -> str:
+        # BUG-E2E-006: Validate provider to prevent injection via unknown providers
+        allowed = {"claude", "codex", "gemini", "cline", "aider"}
+        if v not in allowed:
+            raise ValueError(f"Unknown provider '{v}'. Allowed: {', '.join(sorted(allowed))}")
+        return v
 
 
 class StopResponse(BaseModel):
@@ -360,6 +378,18 @@ class FileDeleteRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     mode: str = "quick"  # "quick" or "standard"
+    # BUG-E2E-004: Accept recent chat history so AI has conversation context
+    history: Optional[list[dict]] = None  # [{role: "user"|"assistant", content: str}]
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Message cannot be empty")
+        if len(stripped.encode("utf-8")) > 100_000:  # 100KB max
+            raise ValueError("Message exceeds 100KB limit")
+        return stripped
 
 
 class SecretRequest(BaseModel):
@@ -2350,9 +2380,15 @@ async def _read_process_output() -> None:
             # Keep last 5000 lines
             if len(session.log_lines) > 5000:
                 session.log_lines = session.log_lines[-5000:]
+            # BUG-E2E-002: Include sequence number so frontend can detect
+            # gaps and maintain correct ordering even under async pressure
             await _broadcast({
                 "type": "log",
-                "data": {"line": text, "timestamp": time.strftime("%H:%M:%S")},
+                "data": {
+                    "line": text,
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "seq": session.log_lines_total,
+                },
             })
     except Exception:
         logger.error("Process output reader failed", exc_info=True)
@@ -2600,6 +2636,9 @@ async def quick_start_session(req: QuickStartRequest) -> JSONResponse:
     prompt = req.prompt.strip()
     if not prompt:
         return JSONResponse(status_code=400, content={"error": "Prompt required"})
+    # BUG-E2E-001: Validate minimum prompt length to prevent degenerate builds
+    if len(prompt) < 3:
+        return JSONResponse(status_code=400, content={"error": "Prompt too short (minimum 3 characters)"})
     if len(prompt.encode()) > _MAX_PRD_BYTES:
         return JSONResponse(status_code=400, content={"error": "Prompt exceeds size limit"})
 
@@ -3860,7 +3899,28 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
         # active sessions and post-completion for iterative development.
 
         # -- Phase 1: Inject project context (dev server errors, gate failures) --
-        context_parts = [req.message]
+        context_parts = []
+
+        # BUG-E2E-004: Inject recent chat history so AI has conversation context
+        if req.history:
+            # Include last 5 exchanges max to avoid token bloat
+            recent = req.history[-10:]  # last 10 items = ~5 exchanges
+            history_lines = []
+            for entry in recent:
+                role = entry.get("role", "user")
+                content = entry.get("content", "")
+                if content and role in ("user", "assistant"):
+                    # Truncate long assistant responses to keep context manageable
+                    if role == "assistant" and len(content) > 500:
+                        content = content[:500] + "..."
+                    history_lines.append(f"[{role.upper()}]: {content}")
+            if history_lines:
+                context_parts.append(
+                    "PREVIOUS CONVERSATION CONTEXT:\n" + "\n".join(history_lines)
+                    + "\n\nNow handle the following new request:"
+                )
+
+        context_parts.append(req.message)
 
         # Inject dev server errors if the server has crashed
         ds_info = dev_server_manager.servers.get(session_id)
@@ -5367,11 +5427,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     if session.running and session.project_dir and "session" not in file_watcher._observers:
         file_watcher.start("session", session.project_dir, _broadcast, asyncio.get_running_loop())
 
-    # Send recent log lines as backfill
-    for line in session.log_lines[-100:]:
+    # Send recent log lines as backfill (with sequence numbers for ordering)
+    # BUG-E2E-002: Include seq so frontend can maintain correct order
+    backfill_lines = session.log_lines[-100:]
+    backfill_start_seq = max(1, session.log_lines_total - len(backfill_lines) + 1)
+    for i, line in enumerate(backfill_lines):
         await ws.send_text(json.dumps({
             "type": "log",
-            "data": {"line": line, "timestamp": ""},
+            "data": {"line": line, "timestamp": "", "seq": backfill_start_seq + i},
         }))
 
     # Start server-push state task for this connection

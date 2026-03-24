@@ -261,10 +261,11 @@ export const api = {
     ),
 
   // Chat (non-blocking - returns task_id)
-  chatStart: (sessionId: string, message: string, mode: string = 'quick') =>
+  // BUG-E2E-004: Accept optional history array for conversation context
+  chatStart: (sessionId: string, message: string, mode: string = 'quick', history?: Array<{ role: string; content: string }>) =>
     fetchJSON<{ task_id: string; status: string }>(
       `/sessions/${encodeURIComponent(sessionId)}/chat`,
-      { method: 'POST', body: JSON.stringify({ message, mode }) },
+      { method: 'POST', body: JSON.stringify({ message, mode, history }) },
     ),
 
   chatPoll: (sessionId: string, taskId: string) =>

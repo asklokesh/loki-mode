@@ -570,9 +570,17 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
         }
       }
 
-      // If preview tab is active and dev server is NOT running, refresh iframe
-      if (activeWorkspaceTab === 'preview' && !devServer?.running) {
-        setPreviewKey(k => k + 1);
+      // BUG-E2E-003: Refresh iframe on file changes for the preview tab.
+      // When dev server is running with HMR (react/vite/next/nuxt), the dev
+      // server handles live reload automatically. For non-HMR servers or when
+      // no dev server is running, we force an iframe key change to trigger reload.
+      if (activeWorkspaceTab === 'preview') {
+        const hmrFrameworks = ['react', 'vite', 'next', 'nuxt', 'svelte', 'remix'];
+        const hasHMR = devServer?.running && devServer?.framework &&
+          hmrFrameworks.some(f => devServer.framework!.toLowerCase().includes(f));
+        if (!hasHMR) {
+          setPreviewKey(k => k + 1);
+        }
       }
     });
 
