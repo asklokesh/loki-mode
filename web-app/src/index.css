@@ -6,7 +6,14 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-size: 15px;
+    line-height: 1.6;
   }
+
+  /* Bump small text sizes for readability */
+  .text-xs { font-size: 0.8125rem !important; line-height: 1.4 !important; }
+  .text-\[10px\] { font-size: 0.6875rem !important; }
+  .text-\[11px\] { font-size: 0.75rem !important; }
 
   /* Custom scrollbar for terminal */
   .terminal-scroll::-webkit-scrollbar {
