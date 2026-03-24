@@ -144,6 +144,8 @@ class MemoryStorage:
 
         # Clean up stale lock files from previous crashed processes
         self._cleanup_stale_locks()
+        # BUG-EP-015: Clean up orphaned temp files from kill -9 crashes
+        self._cleanup_stale_tmp_files()
 
     def _cleanup_stale_locks(self) -> None:
         """Remove stale .lock files older than 5 minutes (safe with concurrent processes).
@@ -167,10 +169,46 @@ class MemoryStorage:
         except OSError:
             pass
 
+    def _cleanup_stale_tmp_files(self) -> None:
+        """Remove orphaned .tmp files older than 5 minutes from crash recovery.
+
+        BUG-EP-015: When a process is killed with SIGKILL during an atomic
+        write, the temp file (.tmp_*.json) is left behind because the rename
+        never completes. These accumulate over time.
+        """
+        try:
+            import time
+            now_real = time.time()
+            stale_seconds = 300  # 5 minutes
+            for tmp_file in self.base_path.rglob(".tmp_*.json"):
+                try:
+                    file_mtime = tmp_file.stat().st_mtime
+                    age_seconds = now_real - file_mtime
+                    if age_seconds > stale_seconds:
+                        tmp_file.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
     def _ensure_index(self) -> None:
-        """Initialize index.json if it doesn't exist."""
+        """Initialize or repair index.json if it doesn't exist or is corrupted."""
         index_path = self.base_path / "index.json"
-        if not index_path.exists():
+        needs_init = not index_path.exists()
+
+        # BUG-EP-012: Check for corrupted index.json (exists but invalid JSON)
+        if not needs_init:
+            try:
+                text = index_path.read_text(encoding="utf-8", errors="replace")
+                json.loads(text)
+            except (json.JSONDecodeError, OSError):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Corrupted index.json detected, recreating from scratch"
+                )
+                needs_init = True
+
+        if needs_init:
             initial_index = {
                 "version": self.VERSION,
                 "last_updated": datetime.now(timezone.utc).isoformat(),
@@ -179,9 +217,23 @@ class MemoryStorage:
             self._atomic_write(index_path, initial_index)
 
     def _ensure_timeline(self) -> None:
-        """Initialize timeline.json if it doesn't exist."""
+        """Initialize or repair timeline.json if it doesn't exist or is corrupted."""
         timeline_path = self.base_path / "timeline.json"
-        if not timeline_path.exists():
+        needs_init = not timeline_path.exists()
+
+        # BUG-EP-012: Check for corrupted timeline.json (exists but invalid JSON)
+        if not needs_init:
+            try:
+                text = timeline_path.read_text(encoding="utf-8", errors="replace")
+                json.loads(text)
+            except (json.JSONDecodeError, OSError):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Corrupted timeline.json detected, recreating from scratch"
+                )
+                needs_init = True
+
+        if needs_init:
             initial_timeline = {
                 "version": self.VERSION,
                 "last_updated": datetime.now(timezone.utc).isoformat(),

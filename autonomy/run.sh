@@ -5554,20 +5554,22 @@ enforce_test_coverage() {
 
     # JavaScript/TypeScript
     if [ -f "${TARGET_DIR:-.}/package.json" ]; then
+        # BUG-EC-014: Wrap test runners with timeout to prevent hanging indefinitely
+        local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"  # 5 minutes default
         if grep -q '"vitest"' "${TARGET_DIR:-.}/package.json" 2>/dev/null; then
             test_runner="vitest"
             local output
-            output=$(cd "${TARGET_DIR:-.}" && npx vitest run --reporter=json 2>&1) || test_passed=false
+            output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" npx vitest run --reporter=json 2>&1) || test_passed=false
             details="vitest: $(echo "$output" | tail -3 | tr '\n' ' ')"
         elif grep -q '"jest"' "${TARGET_DIR:-.}/package.json" 2>/dev/null; then
             test_runner="jest"
             local output
-            output=$(cd "${TARGET_DIR:-.}" && npx jest --passWithNoTests --forceExit 2>&1) || test_passed=false
+            output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" npx jest --passWithNoTests --forceExit 2>&1) || test_passed=false
             details="jest: $(echo "$output" | tail -3 | tr '\n' ' ')"
         elif grep -q '"mocha"' "${TARGET_DIR:-.}/package.json" 2>/dev/null; then
             test_runner="mocha"
             local output
-            output=$(cd "${TARGET_DIR:-.}" && npx mocha 2>&1) || test_passed=false
+            output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" npx mocha 2>&1) || test_passed=false
             details="mocha: $(echo "$output" | tail -3 | tr '\n' ' ')"
         fi
     fi
@@ -8018,6 +8020,11 @@ EOF
 }
 
 load_state() {
+    # BUG-EP-015: Clean up orphaned temp files from kill -9 crashes
+    # These are left behind when the process is killed during atomic writes
+    find .loki/ -maxdepth 1 -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
+    find .loki/state/ -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
+
     if [ -f ".loki/autonomy-state.json" ]; then
         if command -v python3 &> /dev/null; then
             # Load retry count, iteration count, and status from previous session
@@ -9778,6 +9785,13 @@ if __name__ == "__main__":
         local duration=$((end_time - start_time))
 
         log_info "${PROVIDER_DISPLAY_NAME:-Claude} exited with code $exit_code after ${duration}s"
+
+        # BUG-EC-013: Detect empty provider output (0 bytes = no work done)
+        if [ -f "$iter_output" ] && [ ! -s "$iter_output" ] && [ $exit_code -eq 0 ]; then
+            log_warn "Provider returned empty output (0 bytes) despite exit code 0 -- treating as error"
+            exit_code=1
+        fi
+
         save_state $retry "exited" $exit_code
 
         # Auto-track iteration completion (for dashboard task queue)
