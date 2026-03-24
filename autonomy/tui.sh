@@ -393,8 +393,8 @@ display_token_cost() {
         *opus*)   input_rate=15.0;  output_rate=75.0 ;;
         *sonnet*) input_rate=3.0;   output_rate=15.0 ;;
         *haiku*)  input_rate=0.25;  output_rate=1.25 ;;
-        *gpt-4o*) input_rate=2.5;   output_rate=10.0 ;;
         *gpt-4o-mini*) input_rate=0.15; output_rate=0.6 ;;
+        *gpt-4o*) input_rate=2.5;   output_rate=10.0 ;;
         *)        input_rate=3.0;   output_rate=15.0 ;;  # default sonnet-like
     esac
 
@@ -430,7 +430,7 @@ tree_display() {
     local items=()
     while IFS= read -r item; do
         [ -n "$item" ] && items+=("$item")
-    done < <(ls -1 "$dir" 2>/dev/null | grep -v '^\.' | head -20)
+    done < <(find "$dir" -maxdepth 1 -not -name '.*' -not -name "$(basename "$dir")" -exec basename {} \; 2>/dev/null | sort | head -20)
 
     local count=${#items[@]}
     local i=0
