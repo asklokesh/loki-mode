@@ -22,6 +22,7 @@ import {
   HelpCircle,
   ShieldCheck,
   Wrench,
+  Shield,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -80,10 +81,14 @@ const navSections: NavSection[] = [
 const adminNav: NavItem[] = [
   { to: '/admin', label: 'Admin', icon: ShieldCheck },
   { to: '/admin/settings', label: 'System Settings', icon: Wrench },
+  { to: '/showcase', label: 'Showcase', icon: Sparkles },
+  { to: '/metrics', label: 'Metrics', icon: BarChart3 },
 ];
 
 const secondaryNav: NavItem[] = [
   { to: '/settings', label: 'Settings', icon: Settings2 },
+  // Admin link -- TODO: gate on admin role when RBAC is implemented
+  { to: '/admin', label: 'Admin', icon: Shield },
 ];
 
 function useIsMobile() {

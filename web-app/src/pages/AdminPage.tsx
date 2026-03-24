@@ -294,6 +294,19 @@ function AccessDenied() {
       <p className="text-sm text-[#6B6960]">
         You do not have permission to access the admin dashboard.
         Contact your organization administrator for access.
+import { Shield } from 'lucide-react';
+
+export default function AdminPage() {
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="flex items-center gap-3 mb-6">
+        <Shield size={24} className="text-[#553DE9] dark:text-[#8B7BF7]" />
+        <h1 className="text-2xl font-heading font-bold text-[#36342E] dark:text-[#F5F3EE]">
+          Admin
+        </h1>
+      </div>
+      <p className="text-[#6B6960] dark:text-[#A8A49A]">
+        System administration, user management, and configuration.
       </p>
     </div>
   );
