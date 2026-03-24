@@ -126,6 +126,7 @@ SANDBOX_SH="$SKILL_DIR/autonomy/sandbox.sh"
 EMIT_SH="$SKILL_DIR/events/emit.sh"
 LEARNING_EMIT_SH="$SKILL_DIR/learning/emit.sh"
 LOKI_DIR=".loki"
+export LOKI_DIR
 
 # Anonymous usage telemetry
 PROJECT_DIR="$SKILL_DIR"
@@ -1742,12 +1743,15 @@ cmd_status() {
     # Context window usage (token tracking)
     if [ -f "$LOKI_DIR/state/context-usage.json" ]; then
         local ctx_used ctx_total
-        ctx_total=$(python3 -c "import json; d=json.load(open('$LOKI_DIR/state/context-usage.json')); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
-        ctx_used=$(python3 -c "import json; d=json.load(open('$LOKI_DIR/state/context-usage.json')); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
+        ctx_total=$(_LOKI_CTX_FILE="$LOKI_DIR/state/context-usage.json" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
+        ctx_used=$(_LOKI_CTX_FILE="$LOKI_DIR/state/context-usage.json" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
         if type context_gauge &>/dev/null; then
             context_gauge "$ctx_used" "$ctx_total" "Context"
         else
-            local ctx_pct=$((ctx_used * 100 / ctx_total))
+            local ctx_pct=0
+            if [ "$ctx_total" -gt 0 ] 2>/dev/null; then
+                ctx_pct=$((ctx_used * 100 / ctx_total))
+            fi
             echo -e "${CYAN}Context:${NC} ${ctx_pct}% (${ctx_used} / ${ctx_total} tokens)"
         fi
     fi
@@ -3155,6 +3159,22 @@ cmd_web() {
         status)
             cmd_web_status
             ;;
+        logs)
+            shift || true
+            local log_lines="${1:-100}"
+            local log_file="${PURPLE_LAB_STATE_DIR}/logs/purple-lab.log"
+            if [ ! -f "$log_file" ]; then
+                log_file="${LOKI_DIR}/purple-lab/logs/purple-lab.log"
+            fi
+            if [ ! -f "$log_file" ]; then
+                echo -e "${YELLOW}No Purple Lab log file found${NC}"
+                return 0
+            fi
+            echo -e "${BOLD}Purple Lab Logs (last $log_lines lines)${NC}"
+            echo -e "${DIM}Use 'loki web logs <N>' to show more/fewer lines${NC}"
+            echo ""
+            tail -n "$log_lines" "$log_file"
+            ;;
         --help|-h|help)
             cmd_web_help
             ;;
@@ -3175,6 +3195,7 @@ cmd_web_help() {
     echo "  start    Start Purple Lab (default)"
     echo "  stop     Stop Purple Lab server"
     echo "  status   Show Purple Lab server status"
+    echo "  logs     Show Purple Lab server logs"
     echo "  help     Show this help"
     echo ""
     echo "Options (for start):"
@@ -3392,13 +3413,20 @@ cmd_web_stop() {
         local pid
         pid=$(cat "$pid_file" 2>/dev/null)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null
-            sleep 1
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null
+            # Verify the PID belongs to a Purple Lab/Python process (PID recycling guard)
+            local pid_cmd
+            pid_cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+            if [[ "$pid_cmd" == *python* ]] || [[ "$pid_cmd" == *uvicorn* ]] || [[ "$pid_cmd" == *Purple* ]]; then
+                kill "$pid" 2>/dev/null
+                sleep 1
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill -9 "$pid" 2>/dev/null
+                fi
+                echo -e "${GREEN}Purple Lab stopped (PID: $pid)${NC}"
+                stopped=true
+            else
+                echo -e "${YELLOW}PID $pid is not a Purple Lab process (found: $pid_cmd), skipping${NC}"
             fi
-            echo -e "${GREEN}Purple Lab stopped (PID: $pid)${NC}"
-            stopped=true
         fi
         rm -f "$PURPLE_LAB_PID_FILE"
     fi
@@ -3517,7 +3545,13 @@ cmd_web_stop() {
 
 cmd_web_status() {
     local port
-    port=$(cat "${LOKI_DIR}/purple-lab/port" 2>/dev/null || echo "$PURPLE_LAB_DEFAULT_PORT")
+    port=$(cat "${PURPLE_LAB_STATE_DIR}/port" 2>/dev/null || cat "${LOKI_DIR}/purple-lab/port" 2>/dev/null || echo "$PURPLE_LAB_DEFAULT_PORT")
+
+    # Resolve log file path (check home-based state dir first, then CWD-based)
+    local log_path="${PURPLE_LAB_STATE_DIR}/logs/purple-lab.log"
+    if [ ! -f "$log_path" ]; then
+        log_path="${LOKI_DIR}/purple-lab/logs/purple-lab.log"
+    fi
 
     # Check PID file
     if [ -f "$PURPLE_LAB_PID_FILE" ]; then
@@ -3527,7 +3561,7 @@ cmd_web_status() {
             echo -e "${GREEN}Purple Lab is running${NC}"
             echo "  PID:  $pid"
             echo "  URL:  http://${PURPLE_LAB_DEFAULT_HOST}:${port}"
-            echo "  Logs: ${LOKI_DIR}/purple-lab/logs/purple-lab.log"
+            echo "  Logs: $log_path"
             return 0
         fi
         rm -f "$PURPLE_LAB_PID_FILE"
@@ -5035,6 +5069,22 @@ cmd_export() {
     esac
 }
 
+# Guard: check if output file exists and warn before overwriting
+_export_check_overwrite() {
+    local output="$1"
+    if [ -n "$output" ] && [ -f "$output" ]; then
+        echo -e "${YELLOW}Warning: File already exists: $output${NC}"
+        echo -n "Overwrite? [y/N] "
+        local reply
+        read -r reply
+        case "$reply" in
+            [yY]|[yY][eE][sS]) return 0 ;;
+            *) echo "Export cancelled."; return 1 ;;
+        esac
+    fi
+    return 0
+}
+
 _export_json() {
     local output="$1"
 
@@ -5106,6 +5156,7 @@ EXPORT_JSON
             echo -e "${RED}Error: Output path must not contain '..'${NC}"
             return 1
         fi
+        _export_check_overwrite "$output" || return 0
         echo "$json_output" > "$output"
         echo -e "${GREEN}Exported to $output${NC}"
     else
@@ -5153,6 +5204,7 @@ MDEOF
             echo -e "${RED}Error: Output path must not contain '..'${NC}"
             return 1
         fi
+        _export_check_overwrite "$output" || return 0
         echo "$md_output" > "$output"
         echo -e "${GREEN}Exported to $output${NC}"
     else
@@ -5203,6 +5255,7 @@ EXPORT_CSV
             echo -e "${RED}Error: Output path must not contain '..'${NC}"
             return 1
         fi
+        _export_check_overwrite "$output" || return 0
         echo "$csv_output" > "$output"
         echo -e "${GREEN}Exported to $output${NC}"
     else
@@ -5256,6 +5309,7 @@ EXPORT_TIMELINE
             echo -e "${RED}Error: Output path must not contain '..'${NC}"
             return 1
         fi
+        _export_check_overwrite "$output" || return 0
         echo "$timeline_output" > "$output"
         echo -e "${GREEN}Exported to $output${NC}"
     else
@@ -5403,7 +5457,15 @@ cmd_config_set() {
             fi
             ;;
         *)
-            echo -e "${YELLOW}Warning: Unknown key '$key' - storing anyway${NC}"
+            echo -e "${RED}Unknown configuration key: '$key'${NC}"
+            echo ""
+            echo "Valid keys: maxTier, provider, issue.provider, blind_validation,"
+            echo "  adversarial_testing, spawn_timeout, spawn_retries, budget,"
+            echo "  model.planning, model.development, model.fast,"
+            echo "  notify.slack, notify.discord"
+            echo ""
+            echo "Run 'loki config' for details on each key."
+            return 1
             ;;
     esac
 
@@ -5474,7 +5536,8 @@ cmd_config_get() {
         return 0
     fi
 
-    LOKI_CFG_FILE="$config_store" LOKI_CFG_KEY="$key" \
+    local result
+    result=$(LOKI_CFG_FILE="$config_store" LOKI_CFG_KEY="$key" \
     python3 << 'GET_CONFIG'
 import json, os
 cfg_file = os.environ["LOKI_CFG_FILE"]
@@ -5494,7 +5557,11 @@ for part in parts:
 
 print(current if not isinstance(current, dict) else json.dumps(current, indent=2))
 GET_CONFIG
-    unset LOKI_CFG_FILE LOKI_CFG_KEY
+    ) 2>/dev/null || {
+        echo -e "${RED}Error reading config key '$key'${NC}"
+        return 1
+    }
+    echo "$result"
 }
 
 cmd_config_show() {
@@ -6191,7 +6258,37 @@ for name, info in result.items():
 
 # Show recent logs
 cmd_logs() {
-    local lines="${1:-50}"
+    local lines="50"
+    local follow=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tail|-n) lines="$2"; shift 2 ;;
+            --tail=*) lines="${1#--tail=}"; shift ;;
+            -n=*) lines="${1#-n=}"; shift ;;
+            --follow|-f) follow=true; shift ;;
+            --all|-a) lines="+1"; shift ;;
+            --help|-h)
+                echo "Usage: loki logs [options]"
+                echo ""
+                echo "Options:"
+                echo "  --tail, -n N   Show last N lines (default: 50)"
+                echo "  --all, -a      Show all lines"
+                echo "  --follow, -f   Follow log output (like tail -f)"
+                echo "  --help, -h     Show this help"
+                return 0
+                ;;
+            *)
+                # Legacy: treat plain number as line count
+                if [[ "$1" =~ ^[0-9]+$ ]]; then
+                    lines="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
     local log_file="$LOKI_DIR/logs/session.log"
 
     if [ ! -f "$log_file" ]; then
@@ -6199,9 +6296,16 @@ cmd_logs() {
         exit 0
     fi
 
-    echo -e "${BOLD}Recent Logs (last $lines lines)${NC}"
-    echo ""
-    tail -n "$lines" "$log_file"
+    if [ "$follow" = true ]; then
+        echo -e "${BOLD}Following logs (Ctrl+C to stop)${NC}"
+        echo ""
+        tail -f "$log_file"
+    else
+        echo -e "${BOLD}Recent Logs (last $lines lines)${NC}"
+        echo -e "${DIM}Use --all to show all lines, --follow to stream${NC}"
+        echo ""
+        tail -n "$lines" "$log_file"
+    fi
 }
 
 # API server management (delegates to unified FastAPI dashboard server)
@@ -7752,11 +7856,17 @@ ENDGITIGNORE
             echo -e "${RED}Directory already exists: $target_dir${NC}"
             exit 1
         fi
-        mkdir -p "$target_dir"
+        if ! mkdir -p "$target_dir"; then
+            echo -e "${RED}Failed to create directory: $target_dir${NC}"
+            exit 1
+        fi
     fi
 
     # Create .loki config directory
-    mkdir -p "$target_dir/.loki"
+    if ! mkdir -p "$target_dir/.loki"; then
+        echo -e "${RED}Failed to create .loki directory in: $target_dir${NC}"
+        exit 1
+    fi
 
     # Write files
     echo "$prd_content" > "$target_dir/prd.md"
@@ -9170,8 +9280,8 @@ for f in data.get('frictions', []):
         fi
         echo -e "${BOLD}Healing Report${NC}"
         echo ""
-        echo "  Friction map:               $(python3 -c "import json; print(len(json.load(open('$heal_dir/friction-map.json')).get('frictions', [])))" 2>/dev/null || echo '0') points"
-        echo "  Failure modes:              $(python3 -c "import json; print(len(json.load(open('$heal_dir/failure-modes.json')).get('modes', [])))" 2>/dev/null || echo '0') cataloged"
+        echo "  Friction map:               $(_HEAL_FILE="$heal_dir/friction-map.json" python3 -c "import json, os; print(len(json.load(open(os.environ['_HEAL_FILE'])).get('frictions', [])))" 2>/dev/null || echo '0') points"
+        echo "  Failure modes:              $(_HEAL_FILE="$heal_dir/failure-modes.json" python3 -c "import json, os; print(len(json.load(open(os.environ['_HEAL_FILE'])).get('modes', [])))" 2>/dev/null || echo '0') cataloged"
         echo "  Institutional knowledge:    $(wc -l < "$heal_dir/institutional-knowledge.md" 2>/dev/null || echo '0') lines"
         echo "  Characterization tests:     $(find "$heal_dir/characterization-tests/" -name "*.json" 2>/dev/null | wc -l | tr -d ' ') tests"
         echo ""
@@ -9891,7 +10001,7 @@ print(json.loads(p.read_text()).get('port', 7373) if p.exists() else 7373)
             local sched_file=".loki/triggers/schedules.json"
             if [[ -f "$sched_file" ]]; then
                 local count
-                count=$(python3 -c "import json; d=json.load(open('$sched_file')); print(len(d) if isinstance(d,list) else len(d.get('schedules',[])))" 2>/dev/null || echo "?")
+                count=$(_SCHED_FILE="$sched_file" python3 -c "import json, os; d=json.load(open(os.environ['_SCHED_FILE'])); print(len(d) if isinstance(d,list) else len(d.get('schedules',[])))" 2>/dev/null || echo "?")
                 echo "Schedules configured: $count"
             else
                 echo "Schedules configured: 0"
@@ -10204,7 +10314,7 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
 
                 local chain_providers="claude,codex,gemini"
                 if [ -f "$failover_file" ]; then
-                    chain_providers=$(python3 -c "import json; print(','.join(json.load(open('$failover_file')).get('chain', ['claude','codex','gemini'])))" 2>/dev/null || echo "claude,codex,gemini")
+                    chain_providers=$(_FAILOVER_FILE="$failover_file" python3 -c "import json, os; print(','.join(json.load(open(os.environ['_FAILOVER_FILE'])).get('chain', ['claude','codex','gemini'])))" 2>/dev/null || echo "claude,codex,gemini")
                 fi
 
                 local IFS=','
@@ -11516,9 +11626,10 @@ cmd_worktree() {
                         local status="running"
                         local stream_name=""
 
-                        # Check for merge signal
-                        if [[ "$branch" == loki-parallel-* ]]; then
-                            stream_name="${branch#loki-parallel-}"
+                        # Check for merge signal (branches named parallel-<stream> by run.sh)
+                        if [[ "$branch" == parallel-* ]] || [[ "$branch" == loki-parallel-* ]]; then
+                            stream_name="${branch#parallel-}"
+                            stream_name="${stream_name#loki-}"
                             if [ -f ".loki/signals/MERGE_REQUESTED_${stream_name}" ]; then
                                 status="merge-ready"
                             elif [ -f ".loki/signals/WORKTREE_FAILED_${stream_name}" ]; then
@@ -11605,6 +11716,18 @@ MERGE_VALIDATE_PY
             while read -r line; do
                 local wt="${line#worktree }"
                 if [ -n "$wt" ] && [ "$wt" != "$main_wt" ]; then
+                    # Kill any running session in this worktree before removing
+                    local wt_pid_file="$wt/.loki/loki.pid"
+                    if [ -f "$wt_pid_file" ]; then
+                        local wt_pid
+                        wt_pid=$(cat "$wt_pid_file" 2>/dev/null)
+                        if [ -n "$wt_pid" ] && kill -0 "$wt_pid" 2>/dev/null; then
+                            echo "  Stopping session in $wt (PID: $wt_pid)..."
+                            kill "$wt_pid" 2>/dev/null || true
+                            sleep 1
+                            kill -0 "$wt_pid" 2>/dev/null && kill -9 "$wt_pid" 2>/dev/null || true
+                        fi
+                    fi
                     echo "  Removing: $wt"
                     git worktree remove "$wt" --force 2>/dev/null || true
                     removed=$((removed + 1))
@@ -12925,7 +13048,7 @@ except Exception as e:
                     if ls -1 .loki/memory/vectors/*.npz 2>/dev/null | head -1 >/dev/null 2>&1; then
                         for f in .loki/memory/vectors/*.npz; do
                             if [ -f "$f" ]; then
-                                count=$(python3 -c "import numpy as np; d=np.load('$f'); print(len(d['ids']))" 2>/dev/null || echo "error")
+                                count=$(_NPZ_FILE="$f" python3 -c "import numpy as np, os; d=np.load(os.environ['_NPZ_FILE']); print(len(d['ids']))" 2>/dev/null || echo "error")
                                 echo "  $(basename "$f"): $count vectors"
                             fi
                         done
@@ -14900,7 +15023,7 @@ try {
             local config_file=".loki/config.json"
             if [ -f "$config_file" ]; then
                 local saved_endpoint
-                saved_endpoint=$(python3 -c "import json; print(json.load(open('$config_file')).get('otel_endpoint',''))" 2>/dev/null || echo "")
+                saved_endpoint=$(_CFG_FILE="$config_file" python3 -c "import json, os; print(json.load(open(os.environ['_CFG_FILE'])).get('otel_endpoint',''))" 2>/dev/null || echo "")
                 if [ -n "$saved_endpoint" ]; then
                     echo -e "  Saved:     $saved_endpoint"
                 fi
@@ -15810,17 +15933,20 @@ _context_show() {
     local ctx_file="$loki_dir/state/context-usage.json"
     if [ -f "$ctx_file" ]; then
         local total_tokens used_tokens input_tokens output_tokens cache_tokens
-        total_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
-        used_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
-        input_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('input_tokens', 0))" 2>/dev/null || echo "0")
-        output_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('output_tokens', 0))" 2>/dev/null || echo "0")
-        cache_tokens=$(python3 -c "import json; d=json.load(open('$ctx_file')); print(d.get('cache_read_tokens', 0))" 2>/dev/null || echo "0")
+        total_tokens=$(_LOKI_CTX_FILE="$ctx_file" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('window_size', 200000))" 2>/dev/null || echo "200000")
+        used_tokens=$(_LOKI_CTX_FILE="$ctx_file" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('used_tokens', 0))" 2>/dev/null || echo "0")
+        input_tokens=$(_LOKI_CTX_FILE="$ctx_file" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('input_tokens', 0))" 2>/dev/null || echo "0")
+        output_tokens=$(_LOKI_CTX_FILE="$ctx_file" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('output_tokens', 0))" 2>/dev/null || echo "0")
+        cache_tokens=$(_LOKI_CTX_FILE="$ctx_file" python3 -c "import json, os; d=json.load(open(os.environ['_LOKI_CTX_FILE'])); print(d.get('cache_read_tokens', 0))" 2>/dev/null || echo "0")
 
         # Display gauge
         if type context_gauge &>/dev/null; then
             context_gauge "$used_tokens" "$total_tokens" "Window"
         else
-            local pct=$((used_tokens * 100 / total_tokens))
+            local pct=0
+            if [ "$total_tokens" -gt 0 ] 2>/dev/null; then
+                pct=$((used_tokens * 100 / total_tokens))
+            fi
             echo -e "  ${CYAN}Context:${NC} ${pct}% used (${used_tokens} / ${total_tokens} tokens)"
         fi
         echo ""
@@ -15841,8 +15967,8 @@ _context_show() {
         echo ""
         echo -e "  ${BOLD}Cost${NC}"
         local budget_used budget_limit
-        budget_used=$(python3 -c "import json; d=json.load(open('$budget_file')); print(round(d.get('budget_used', 0), 4))" 2>/dev/null || echo "0")
-        budget_limit=$(python3 -c "import json; d=json.load(open('$budget_file')); print(d.get('budget_limit', 0))" 2>/dev/null || echo "0")
+        budget_used=$(_BUDGET_FILE="$budget_file" python3 -c "import json, os; d=json.load(open(os.environ['_BUDGET_FILE'])); print(round(d.get('budget_used', 0), 4))" 2>/dev/null || echo "0")
+        budget_limit=$(_BUDGET_FILE="$budget_file" python3 -c "import json, os; d=json.load(open(os.environ['_BUDGET_FILE'])); print(d.get('budget_limit', 0))" 2>/dev/null || echo "0")
 
         if [ "$budget_limit" != "0" ]; then
             echo -e "  ${DIM}Spent:${NC}     \$${budget_used} / \$${budget_limit}"
@@ -17222,7 +17348,7 @@ except: pass
 {
   "project": {
     "name": "$project_name",
-    "description": $(python3 -c "import json; print(json.dumps('$project_description'))" 2>/dev/null || echo "\"$project_description\""),
+    "description": $(_DESC="$project_description" python3 -c "import json, os; print(json.dumps(os.environ.get('_DESC','')))" 2>/dev/null || echo "\"$project_description\""),
     "version": "$project_version",
     "path": "$target_path"
   },
@@ -20319,7 +20445,7 @@ cmd_share() {
 
     # Upload as gist
     echo "Uploading session report..."
-    local gist_desc="Loki Mode session report ($(date +%Y-%m-%d))"
+    local gist_desc="Loki Mode session report ($(date +%Y-%m-%dT%H:%M:%S))"
     local gist_url
     gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" $visibility 2>&1)
     local gist_exit=$?
