@@ -2163,6 +2163,17 @@ create_worktree() {
         return 0
     else
         log_error "Failed to create worktree: $stream_name"
+        # BUG-PU-001: Clean up partial worktree on creation failure
+        if [ -d "$worktree_path" ]; then
+            git -C "$TARGET_DIR" worktree remove "$worktree_path" --force 2>/dev/null || \
+                rm -rf "$worktree_path" 2>/dev/null || true
+        fi
+        # Clean up any orphaned branch created during the attempt
+        if [ -n "$branch_name" ]; then
+            git -C "$TARGET_DIR" branch -D "$branch_name" 2>/dev/null || true
+        else
+            git -C "$TARGET_DIR" branch -D "parallel-${stream_name}" 2>/dev/null || true
+        fi
         return 1
     fi
 }

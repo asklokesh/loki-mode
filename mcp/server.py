@@ -74,12 +74,25 @@ def _get_learning_collector():
 
 
 def _get_mcp_state_manager():
-    """Get or create the StateManager instance for MCP server."""
+    """Get or create the StateManager instance for MCP server.
+
+    BUG-PU-002: Recreates the StateManager if the underlying .loki directory
+    has disappeared (e.g., project changed) to prevent stale file handle errors.
+    """
     global _state_manager
     if not STATE_MANAGER_AVAILABLE:
         return None
+    loki_dir = os.path.join(os.getcwd(), '.loki')
+    if _state_manager is not None:
+        # Verify the state manager's directory still matches cwd
+        existing_dir = getattr(_state_manager, 'loki_dir', None) or \
+                       getattr(_state_manager, '_loki_dir', None)
+        if existing_dir and os.path.realpath(existing_dir) != os.path.realpath(loki_dir):
+            # Project directory changed, recreate
+            if hasattr(_state_manager, 'close'):
+                _state_manager.close()
+            _state_manager = None
     if _state_manager is None:
-        loki_dir = os.path.join(os.getcwd(), '.loki')
         _state_manager = get_state_manager(
             loki_dir=loki_dir,
             enable_watch=False,  # MCP server doesn't need file watching
@@ -1312,22 +1325,39 @@ CHROMA_COLLECTION = os.environ.get("LOKI_CHROMA_COLLECTION", "loki-codebase")
 
 
 def _get_chroma_collection():
-    """Get or create ChromaDB collection (lazy connection)."""
+    """Get or create ChromaDB collection (lazy connection).
+
+    BUG-PU-002: Improved reconnection with timeout to prevent hanging
+    when ChromaDB container is stopped or unreachable after idle.
+    """
     global _chroma_client, _chroma_collection
     if _chroma_collection is not None:
         try:
             _chroma_client.heartbeat()
             return _chroma_collection
         except Exception:
+            logger.info("ChromaDB heartbeat failed, reconnecting...")
             _chroma_client = None
             _chroma_collection = None
     try:
         import chromadb
-        _chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+        from chromadb.config import Settings
+        _chroma_client = chromadb.HttpClient(
+            host=CHROMA_HOST,
+            port=CHROMA_PORT,
+            settings=Settings(
+                chroma_client_auth_provider=None,
+                anonymized_telemetry=False,
+            ),
+        )
+        # Verify connectivity before returning
+        _chroma_client.heartbeat()
         _chroma_collection = _chroma_client.get_collection(name=CHROMA_COLLECTION)
         return _chroma_collection
     except Exception as e:
         logger.warning(f"ChromaDB not available: {e}")
+        _chroma_client = None
+        _chroma_collection = None
         return None
 
 
@@ -1512,12 +1542,26 @@ async def mem_search(
         context = {"goal": query, "task_type": "exploration"}
         results = retriever.retrieve_task_aware(context, top_k=limit)
 
+        # BUG-MCP-006: Filter results by collection parameter when not "all"
+        # The retrieve_task_aware method returns all collections, but the user
+        # may have requested only a specific collection type
+        collection_type_map = {
+            "episodes": "episode",
+            "patterns": "pattern",
+            "skills": "skill",
+        }
+        filter_type = collection_type_map.get(collection)
+
         # Compact results for token efficiency
         compact = []
         for r in results:
+            result_type = r.get("_type", r.get("type", "unknown"))
+            # Apply collection filter
+            if filter_type and result_type != filter_type:
+                continue
             entry = {
                 "id": r.get("id", ""),
-                "type": r.get("_type", r.get("type", "unknown")),
+                "type": result_type,
                 "summary": (
                     r.get("goal", "") or
                     r.get("pattern", "") or

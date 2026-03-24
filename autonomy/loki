@@ -7171,8 +7171,10 @@ cmd_quick() {
     echo ""
 
     # Create quick PRD from task description
+    # BUG-PU-005: Use unique filename to prevent race conditions when
+    # multiple simultaneous `loki quick` commands run in the same project
     mkdir -p "$LOKI_DIR"
-    local quick_prd="$LOKI_DIR/quick-prd.md"
+    local quick_prd="$LOKI_DIR/quick-prd-$$.md"
     cat > "$quick_prd" << QPRDEOF
 # Quick Task
 
@@ -11790,13 +11792,27 @@ except Exception as e:
 MERGE_VALIDATE_PY
             then
                 echo -e "${RED}Invalid or corrupted merge signal file${NC}"
-                exit 1
+                return 1
             fi
 
             local branch
-            branch=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['branch'])")
+            branch=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['branch'])" 2>/dev/null)
             local worktree_path
-            worktree_path=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['worktree'])")
+            worktree_path=$(LOKI_SIGNAL_FILE="$signal_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE']))['worktree'])" 2>/dev/null)
+
+            # Validate branch was extracted successfully
+            if [ -z "$branch" ]; then
+                echo -e "${RED}Could not extract branch name from merge signal${NC}"
+                return 1
+            fi
+
+            # Verify branch exists before attempting merge
+            if ! git rev-parse --verify "$branch" &>/dev/null; then
+                echo -e "${RED}Branch '$branch' does not exist${NC}"
+                echo "The worktree may have been cleaned up already."
+                rm -f "$signal_file"
+                return 1
+            fi
 
             if git merge --no-ff "$branch" -m "merge($name): auto-merge from parallel worktree"; then
                 echo -e "${GREEN}Merge successful${NC}"
@@ -11817,26 +11833,50 @@ MERGE_VALIDATE_PY
             local removed=0
             local main_wt
             main_wt=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-            while read -r line; do
-                local wt="${line#worktree }"
-                if [ -n "$wt" ] && [ "$wt" != "$main_wt" ]; then
-                    # Kill any running session in this worktree before removing
-                    local wt_pid_file="$wt/.loki/loki.pid"
-                    if [ -f "$wt_pid_file" ]; then
-                        local wt_pid
-                        wt_pid=$(cat "$wt_pid_file" 2>/dev/null)
-                        if [ -n "$wt_pid" ] && kill -0 "$wt_pid" 2>/dev/null; then
-                            echo "  Stopping session in $wt (PID: $wt_pid)..."
-                            kill "$wt_pid" 2>/dev/null || true
-                            sleep 1
-                            kill -0 "$wt_pid" 2>/dev/null && kill -9 "$wt_pid" 2>/dev/null || true
+            # BUG-PU-001: Track branches to clean up after worktree removal
+            local branches_to_delete=()
+            local current_wt_clean=""
+            local current_branch_clean=""
+            while IFS= read -r line; do
+                case "$line" in
+                    "worktree "*)
+                        current_wt_clean="${line#worktree }"
+                        ;;
+                    "branch "*)
+                        current_branch_clean="${line#branch refs/heads/}"
+                        if [ -n "$current_wt_clean" ] && [ "$current_wt_clean" != "$main_wt" ]; then
+                            # Kill any running session in this worktree before removing
+                            local wt_pid_file="$current_wt_clean/.loki/loki.pid"
+                            if [ -f "$wt_pid_file" ]; then
+                                local wt_pid
+                                wt_pid=$(cat "$wt_pid_file" 2>/dev/null)
+                                if [ -n "$wt_pid" ] && kill -0 "$wt_pid" 2>/dev/null; then
+                                    echo "  Stopping session in $current_wt_clean (PID: $wt_pid)..."
+                                    kill "$wt_pid" 2>/dev/null || true
+                                    sleep 1
+                                    kill -0 "$wt_pid" 2>/dev/null && kill -9 "$wt_pid" 2>/dev/null || true
+                                fi
+                            fi
+                            echo "  Removing: $current_wt_clean"
+                            git worktree remove "$current_wt_clean" --force 2>/dev/null || true
+                            removed=$((removed + 1))
+                            # Queue branch for deletion (can only delete after worktree is gone)
+                            if [[ "$current_branch_clean" == loki-parallel-* ]] || \
+                               [[ "$current_branch_clean" == parallel-* ]]; then
+                                branches_to_delete+=("$current_branch_clean")
+                            fi
                         fi
-                    fi
-                    echo "  Removing: $wt"
-                    git worktree remove "$wt" --force 2>/dev/null || true
-                    removed=$((removed + 1))
-                fi
-            done < <(git worktree list --porcelain 2>/dev/null | grep "^worktree ")
+                        current_wt_clean=""
+                        current_branch_clean=""
+                        ;;
+                esac
+            done <<< "$(git worktree list --porcelain 2>/dev/null)"
+            # Prune worktree metadata for any already-removed directories
+            git worktree prune 2>/dev/null || true
+            # Clean up orphaned parallel branches
+            for branch in "${branches_to_delete[@]}"; do
+                git branch -D "$branch" 2>/dev/null || true
+            done
             rm -f .loki/signals/MERGE_REQUESTED_* .loki/signals/WORKTREE_FAILED_* 2>/dev/null || true
             echo -e "${GREEN}Cleanup complete ($removed worktrees removed)${NC}"
             ;;
@@ -12021,7 +12061,7 @@ cmd_audit() {
             if [ ! -f "$audit_file" ]; then
                 echo -e "${YELLOW}No audit log found at $audit_file${NC}"
                 echo "Agent action auditing records entries during loki sessions."
-                exit 0
+                return 0
             fi
             local lines="${2:-50}"
             echo -e "${BOLD}Agent Audit Log${NC} (last $lines entries)"
@@ -12047,7 +12087,7 @@ except: print(f'  {sys.argv[1]}')
         count)
             if [ ! -f "$audit_file" ]; then
                 echo -e "${YELLOW}No audit log found${NC}"
-                exit 0
+                return 0
             fi
             echo -e "${BOLD}Agent Action Counts${NC}"
             echo "---"
@@ -12089,15 +12129,15 @@ print(f'  {\"TOTAL\":25s} {sum(counts.values())}')
                         echo "  --preset NAME   Compliance preset (default|healthcare|fintech|government)"
                         echo "  --export        Save report to .loki/quality/report-{date}.json"
                         echo ""
-                        exit 0
+                        return 0
                         ;;
-                    *) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
+                    *) echo -e "${RED}Unknown option: $1${NC}"; return 1 ;;
                 esac
             done
 
             case "$preset" in
                 default|healthcare|fintech|government) ;;
-                *) echo -e "${RED}Error: Invalid preset '$preset'. Must be one of: default, healthcare, fintech, government${NC}"; exit 1 ;;
+                *) echo -e "${RED}Error: Invalid preset '$preset'. Must be one of: default, healthcare, fintech, government${NC}"; return 1 ;;
             esac
 
             local port="${LOKI_DASHBOARD_PORT:-57374}"
@@ -12114,12 +12154,12 @@ print(f'  {\"TOTAL\":25s} {sum(counts.values())}')
             if [ -z "$http_code" ] || [ "$http_code" = "000" ]; then
                 echo -e "${RED}Error: Could not connect to dashboard API at http://${host}:${port}${NC}"
                 echo "Make sure the dashboard is running: loki serve"
-                exit 1
+                return 1
             fi
             if [ "$http_code" -ge 400 ] 2>/dev/null; then
                 echo -e "${RED}Error: Dashboard API returned HTTP $http_code${NC}"
                 [ -n "$response" ] && echo "$response"
-                exit 1
+                return 1
             fi
 
             if ! command -v python3 &>/dev/null; then
@@ -12560,7 +12600,7 @@ if count == 0:
                 *)
                     echo -e "${RED}Unknown type: $type${NC}"
                     echo "Valid types: patterns, mistakes, successes, all"
-                    exit 1
+                    return 1
                     ;;
             esac
             ;;
@@ -12583,11 +12623,13 @@ if count == 0:
                 _search_py="python3.12"
             fi
 
-            # Try vector search first, fall back to keyword
-            $_search_py << PYEOF
+            # BUG-PU-010: Pass query via environment variable instead of embedding
+            # directly in heredoc to prevent shell/Python injection via triple-quotes
+            export LOKI_MEM_QUERY="$query"
+            $_search_py << 'PYEOF'
 import os, json, sys, glob
 
-query = """$query"""
+query = os.environ.get('LOKI_MEM_QUERY', '')
 results = []
 
 # Keyword search across all memory files
@@ -12716,7 +12758,7 @@ PYEOF
                     *)
                         echo -e "${RED}Unknown type: $type${NC}"
                         echo "Valid types: patterns, mistakes, successes"
-                        exit 1
+                        return 1
                         ;;
                 esac
             fi
@@ -15103,6 +15145,18 @@ cmd_telemetry() {
             local endpoint="${LOKI_OTEL_ENDPOINT:-}"
             if [ -n "$endpoint" ] && [ "$persistently_disabled" = false ]; then
                 echo -e "  Endpoint:  ${GREEN}$endpoint${NC}"
+                # BUG-PU-004: Actually test connectivity to the endpoint instead of
+                # failing silently when Jaeger/collector is down
+                local health_url="${endpoint}/v1/traces"
+                local health_code
+                health_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$health_url" 2>/dev/null) || health_code="000"
+                if [ "$health_code" = "000" ]; then
+                    echo -e "  Reachable: ${RED}NO (connection failed - is the collector running?)${NC}"
+                elif [ "$health_code" -ge 400 ] 2>/dev/null && [ "$health_code" -ne 405 ]; then
+                    echo -e "  Reachable: ${YELLOW}HTTP $health_code (may not be accepting traces)${NC}"
+                else
+                    echo -e "  Reachable: ${GREEN}YES${NC}"
+                fi
             elif [ "$persistently_disabled" = true ]; then
                 echo -e "  Endpoint:  ${YELLOW}ignored (opted out)${NC}"
             else
@@ -15152,7 +15206,9 @@ try {
             mkdir -p .loki
             local config_file=".loki/config.json"
             if [ -f "$config_file" ]; then
-                LOKI_TELEM_CFG="$config_file" LOKI_TELEM_ENDPOINT="$endpoint" \
+                # BUG-PU-011: Use separate if/then/fi to prevent python3 failure
+                # from falling through to else and overwriting config
+                if ! LOKI_TELEM_CFG="$config_file" LOKI_TELEM_ENDPOINT="$endpoint" \
                 python3 << 'TELEM_ENABLE_PY'
 import json, os
 cfg = os.environ['LOKI_TELEM_CFG']
@@ -15163,6 +15219,10 @@ config['otel_endpoint'] = ep
 with open(cfg, 'w') as f:
     json.dump(config, f, indent=2)
 TELEM_ENABLE_PY
+                then
+                    echo -e "${YELLOW}Warning: Could not update existing config, recreating${NC}"
+                    echo "{\"otel_endpoint\": \"$endpoint\"}" > "$config_file"
+                fi
             else
                 echo "{\"otel_endpoint\": \"$endpoint\"}" > "$config_file"
             fi
@@ -16700,7 +16760,15 @@ for a in agents:
                 return 1
             fi
 
-            local full_prompt="$persona $prompt"
+            # BUG-PU-003: Separate persona from user prompt with clear delimiter
+            # so the AI provider can distinguish role instruction from task
+            local full_prompt="You are acting as the following specialist agent:
+
+${persona}
+
+---
+
+USER TASK: ${prompt}"
             echo -e "${BOLD}Running as: $agent_type${NC}"
             echo -e "${DIM}Persona: ${persona:0:80}...${NC}"
             echo ""
@@ -16777,13 +16845,15 @@ for a in agents:
                 cmd_start "$prd"
             else
                 # Treat as inline prompt - create temp PRD
-                local tmp_prd
-                tmp_prd=$(mktemp /tmp/loki-agent-prd-XXXXXX.md)
+                # BUG-PU-003: Use .loki/ directory instead of /tmp so run.sh
+                # can find it after exec replaces this process. The temp file
+                # in /tmp was never cleaned because cmd_start uses exec.
+                mkdir -p "$LOKI_DIR"
+                local tmp_prd="$LOKI_DIR/agent-prd-$$.md"
                 echo "# Agent Task: $agent_type" > "$tmp_prd"
                 echo "" >> "$tmp_prd"
                 echo "$prd" >> "$tmp_prd"
                 cmd_start "$tmp_prd"
-                rm -f "$tmp_prd"
             fi
             ;;
 
