@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react';
 import { DollarSign, Clock, Zap } from 'lucide-react';
 import { AnimatedCounter } from './AnimatedCounter';
 import { ProgressRing } from './ProgressRing';
+import { useState, useEffect, useRef } from 'react';
+import {
+  DollarSign, Clock, Zap,
+  Compass, Hammer, TestTube2, Search, CheckCircle2, Loader2,
+} from 'lucide-react';
+
+// B21: Smooth CSS transitions between build phases
+// B22: Phase icons that animate (spin on active, checkmark on complete)
 
 interface BuildProgressBarProps {
   phase: string;       // 'planning' | 'building' | 'testing' | 'reviewing' | 'complete' | 'idle'
@@ -13,15 +21,17 @@ interface BuildProgressBarProps {
 }
 
 const phases = [
-  { id: 'planning', label: 'Plan', color: 'bg-blue-500' },
-  { id: 'building', label: 'Build', color: 'bg-primary' },
-  { id: 'testing', label: 'Test', color: 'bg-teal' },
-  { id: 'reviewing', label: 'Review', color: 'bg-warning' },
-  { id: 'complete', label: 'Done', color: 'bg-success' },
+  { id: 'planning', label: 'Plan', color: 'bg-blue-500', textColor: 'text-blue-500', icon: Compass },
+  { id: 'building', label: 'Build', color: 'bg-primary', textColor: 'text-primary', icon: Hammer },
+  { id: 'testing', label: 'Test', color: 'bg-teal', textColor: 'text-teal', icon: TestTube2 },
+  { id: 'reviewing', label: 'Review', color: 'bg-warning', textColor: 'text-warning', icon: Search },
+  { id: 'complete', label: 'Done', color: 'bg-success', textColor: 'text-success', icon: CheckCircle2 },
 ];
 
 export function BuildProgressBar({ phase, iteration, maxIterations, cost, startTime, isRunning }: BuildProgressBarProps) {
   const [elapsed, setElapsed] = useState(0);
+  const [prevPhase, setPrevPhase] = useState(phase);
+  const [transitioning, setTransitioning] = useState(false);
 
   useEffect(() => {
     if (!isRunning || !startTime) return;
@@ -30,6 +40,18 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
     }, 1000);
     return () => clearInterval(interval);
   }, [isRunning, startTime]);
+
+  // B21: Detect phase transitions for smooth animation
+  useEffect(() => {
+    if (phase !== prevPhase) {
+      setTransitioning(true);
+      const timer = setTimeout(() => {
+        setPrevPhase(phase);
+        setTransitioning(false);
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [phase, prevPhase]);
 
   if (!isRunning && phase === 'idle') return null;
 
@@ -47,11 +69,11 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
   };
 
   return (
-    <div className="flex-shrink-0">
+    <div className="flex-shrink-0 build-progress-container">
       {/* Progress bar */}
       <div className="h-1 bg-border relative overflow-hidden">
         <div
-          className="h-full bg-gradient-to-r from-primary to-teal transition-all duration-1000 ease-out"
+          className="h-full bg-gradient-to-r from-primary to-teal build-progress-bar"
           style={{ width: `${progress}%` }}
         />
         {isRunning && (
@@ -62,20 +84,47 @@ export function BuildProgressBar({ phase, iteration, maxIterations, cost, startT
       {/* D45: Phase labels + stats with glassmorphism */}
       <div className="px-4 py-1.5 flex items-center gap-4 glass-card border-b border-border text-xs rounded-none">
         {/* Phase indicators */}
+      {/* Phase labels + stats */}
+      <div className={`px-4 py-1.5 flex items-center gap-4 bg-card border-b border-border text-xs ${
+        transitioning ? 'phase-transitioning' : ''
+      }`}>
+        {/* Phase indicators with icons */}
         <div className="flex items-center gap-1">
-          {phases.map((p, i) => (
-            <div key={p.id} className="flex items-center gap-1">
-              <div className={`w-2 h-2 rounded-full transition-colors ${
-                i < currentPhaseIndex ? 'bg-success' :
-                i === currentPhaseIndex ? `${p.color} animate-pulse` :
-                'bg-border'
-              }`} />
-              <span className={`text-[11px] font-medium ${
-                i === currentPhaseIndex ? 'text-ink' : 'text-muted'
-              }`}>{p.label}</span>
-              {i < phases.length - 1 && <span className="text-border mx-0.5">--</span>}
-            </div>
-          ))}
+          {phases.map((p, i) => {
+            const isComplete = i < currentPhaseIndex;
+            const isCurrent = i === currentPhaseIndex;
+            const isPending = i > currentPhaseIndex;
+            const PhaseIcon = p.icon;
+
+            return (
+              <div key={p.id} className={`flex items-center gap-1 phase-indicator ${
+                isCurrent ? 'phase-indicator-active' : ''
+              } ${isComplete ? 'phase-indicator-complete' : ''}`}>
+                {/* B22: Phase icon with animation */}
+                <div className={`phase-icon-wrapper ${
+                  isCurrent ? 'phase-icon-active' : ''
+                } ${isComplete ? 'phase-icon-complete' : ''}`}>
+                  {isComplete ? (
+                    <CheckCircle2 size={14} className="text-success phase-check-enter" />
+                  ) : isCurrent ? (
+                    <PhaseIcon size={14} className={`${p.textColor} phase-icon-spin`} />
+                  ) : (
+                    <PhaseIcon size={14} className="text-muted/40" />
+                  )}
+                </div>
+                <span className={`text-[11px] font-medium transition-all duration-300 ${
+                  isCurrent ? 'text-ink' :
+                  isComplete ? 'text-success' :
+                  'text-muted/50'
+                }`}>{p.label}</span>
+                {i < phases.length - 1 && (
+                  <div className={`mx-1 h-px w-4 transition-all duration-500 ${
+                    isComplete ? 'bg-success' : 'bg-border'
+                  }`} />
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="flex-1" />

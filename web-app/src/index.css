@@ -667,5 +667,266 @@
   .sidebar-section-expanded {
     max-height: 500px;
     opacity: 1;
+  /* ===== B13-B14: Skeleton shimmer animation ===== */
+  @keyframes skeleton-shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      #ECEAE3 25%,
+      #F5F3EE 37%,
+      #ECEAE3 63%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  }
+  .dark .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      #2A2A30 25%,
+      #333338 37%,
+      #2A2A30 63%
+    );
+    background-size: 200% 100%;
+  }
+  .skeleton-loader-container {
+    animation: placeholder-fade-in 0.3s ease-out;
+  }
+
+  /* ===== B15: Build completion celebration ===== */
+  @keyframes celebration-scale {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes celebration-burst {
+    0% { transform: scale(0.5); opacity: 0.8; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  @keyframes celebration-fade-in {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .build-celebration-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 254, 251, 0.85);
+    backdrop-filter: blur(4px);
+    animation: celebration-fade-in 0.3s ease-out;
+  }
+  .dark .build-celebration-overlay {
+    background: rgba(15, 15, 17, 0.85);
+  }
+  .build-celebration-content {
+    text-align: center;
+    position: relative;
+  }
+  .build-celebration-icon {
+    animation: celebration-scale 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    display: inline-block;
+  }
+  .build-celebration-burst {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 48px;
+    height: 48px;
+    margin: -24px 0 0 -24px;
+    border-radius: 50%;
+    border: 2px solid #1FC5A8;
+    animation: celebration-burst 0.8s ease-out forwards;
+    pointer-events: none;
+  }
+
+  /* ===== B21: Build phase transitions ===== */
+  .build-progress-container {
+    transition: all 0.3s ease;
+  }
+  .build-progress-bar {
+    transition: width 1s ease-out;
+  }
+  .phase-transitioning {
+    animation: phase-transition-glow 0.4s ease-out;
+  }
+  @keyframes phase-transition-glow {
+    0% { box-shadow: inset 0 0 0 0 rgba(85, 61, 233, 0); }
+    50% { box-shadow: inset 0 0 8px 0 rgba(85, 61, 233, 0.08); }
+    100% { box-shadow: inset 0 0 0 0 rgba(85, 61, 233, 0); }
+  }
+  .phase-indicator {
+    transition: all 0.3s ease;
+  }
+  .phase-indicator-active {
+    transform: scale(1.05);
+  }
+  .phase-indicator-complete {
+    opacity: 0.8;
+  }
+
+  /* ===== B22: Phase icon animations ===== */
+  @keyframes phase-icon-enter {
+    0% { transform: scale(0) rotate(-45deg); opacity: 0; }
+    100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  }
+  .phase-icon-wrapper {
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .phase-icon-spin svg {
+    animation: phase-icon-slow-spin 3s linear infinite;
+  }
+  @keyframes phase-icon-slow-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .phase-check-enter {
+    animation: phase-icon-enter 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  /* ===== B17: File change dots on tabs ===== */
+  /* (applied via inline Tailwind in ProjectWorkspace.tsx -- w-1.5 h-1.5 rounded-full bg-primary already exists) */
+
+  /* ===== C25: Device frame styling ===== */
+  .device-frame-desktop {
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%;
+  }
+  .device-frame-tablet {
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 768px;
+    max-width: 100%;
+    margin: 0 auto;
+    border: 3px solid #ECEAE3;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .device-frame-mobile {
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 375px;
+    max-width: 100%;
+    margin: 0 auto;
+    border: 3px solid #ECEAE3;
+    border-radius: 20px;
+    overflow: hidden;
+    position: relative;
+  }
+  .device-frame-mobile::before {
+    content: '';
+    display: block;
+    width: 40%;
+    height: 4px;
+    background: #ECEAE3;
+    border-radius: 2px;
+    margin: 6px auto;
+  }
+  .dark .device-frame-tablet,
+  .dark .device-frame-mobile {
+    border-color: #2A2A30;
+  }
+  .dark .device-frame-mobile::before {
+    background: #2A2A30;
+  }
+
+  /* ===== C26: Zoom scaling ===== */
+  .preview-zoom-75 { transform: scale(0.75); transform-origin: top left; width: 133.33%; height: 133.33%; }
+  .preview-zoom-100 { transform: scale(1); }
+  .preview-zoom-125 { transform: scale(1.25); transform-origin: top left; width: 80%; height: 80%; }
+
+  /* ===== C29: Copy URL toast ===== */
+  @keyframes toast-enter {
+    0% { opacity: 0; transform: translateY(4px) scale(0.95); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toast-exit {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .copy-toast {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #201515;
+    color: #FFFEFB;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    z-index: 30;
+    animation: toast-enter 0.2s ease-out, toast-exit 0.2s ease-in 1.5s forwards;
+    pointer-events: none;
+  }
+  .dark .copy-toast {
+    background: #E8E6E3;
+    color: #0F0F11;
+  }
+
+  /* ===== B23: Share toast ===== */
+  .share-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #201515;
+    color: #FFFEFB;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 8px;
+    z-index: 100;
+    animation: toast-enter 0.3s ease-out, toast-exit 0.3s ease-in 2s forwards;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .dark .share-toast {
+    background: #E8E6E3;
+    color: #0F0F11;
+  }
+
+  /* ===== C30: Fullscreen preview ===== */
+  .preview-fullscreen {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 50;
+    background: white;
+  }
+  .dark .preview-fullscreen {
+    background: #0F0F11;
+  }
+
+  /* ===== C34: Refresh spin animation ===== */
+  @keyframes spin-once {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .animate-spin-once {
+    animation: spin-once 0.6s ease-in-out;
+  }
+
+  /* ===== Reduced motion: disable all custom animations ===== */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-shimmer { animation: none; }
+    .build-celebration-icon { animation: none; }
+    .build-celebration-burst { animation: none; display: none; }
+    .build-celebration-overlay { animation: none; }
+    .phase-icon-spin svg { animation: none; }
+    .phase-check-enter { animation: none; }
+    .phase-transitioning { animation: none; }
+    .animate-spin-once { animation: none; }
+    .device-frame-desktop,
+    .device-frame-tablet,
+    .device-frame-mobile { transition: none; }
+    .copy-toast, .share-toast { animation: none; }
   }
 }
