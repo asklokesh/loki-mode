@@ -15,6 +15,7 @@ import {
   RefreshCw, PanelLeftClose, PanelLeftOpen, PanelBottomClose, PanelBottomOpen, Maximize2, Minimize2,
   LayoutDashboard,
   GitBranch as CICDIcon,
+  Smartphone,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -35,6 +36,7 @@ import { CheckpointTimeline } from './CheckpointTimeline';
 import { ChangePreview } from './ChangePreview';
 import type { FileNode, ChangePreviewData } from '../types/api';
 import { CICDPanel } from './CICDPanel';
+import { useSwipeGesture } from '../hooks/useSwipeGesture';
 import type { SessionDetail } from '../api/client';
 
 // Wrapper to avoid inline import complexity
@@ -426,6 +428,23 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   const [dashboardView, setDashboardView] = useState('overview');
   const dashboardPort = 57374;
   const [dashboardAvailable, setDashboardAvailable] = useState<boolean | null>(null);
+
+  // J96: Swipe gestures to switch workspace tabs on mobile
+  const WORKSPACE_TAB_ORDER: WorkspaceTab[] = ['code', 'preview', 'config', 'secrets', 'prd', 'dashboard', 'deploy', 'git', 'cicd'];
+  const swipeRef = useSwipeGesture<HTMLDivElement>({
+    onSwipeLeft: () => {
+      const idx = WORKSPACE_TAB_ORDER.indexOf(activeWorkspaceTab);
+      if (idx < WORKSPACE_TAB_ORDER.length - 1) setActiveWorkspaceTab(WORKSPACE_TAB_ORDER[idx + 1]);
+    },
+    onSwipeRight: () => {
+      const idx = WORKSPACE_TAB_ORDER.indexOf(activeWorkspaceTab);
+      if (idx > 0) setActiveWorkspaceTab(WORKSPACE_TAB_ORDER[idx - 1]);
+    },
+    threshold: 50,
+  });
+
+  // J102: Mobile preview toggle
+  const [mobilePreview, setMobilePreview] = useState(false);
 
   const toggleZenMode = useCallback(() => {
     setZenMode(prev => {
@@ -1353,8 +1372,8 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                     ))}
                   </div>
 
-                  {/* Tab content */}
-                  <div className="flex-1 min-h-0" role="tabpanel">
+                  {/* Tab content -- swipe left/right to switch tabs on mobile */}
+                  <div ref={swipeRef} className="flex-1 min-h-0" role="tabpanel">
                     {activeWorkspaceTab === 'code' && (
                       <div className="h-full flex flex-col min-w-0">
                         {/* File tab bar */}
@@ -1490,6 +1509,19 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                                 className="flex-1 px-3 py-1 text-xs font-mono bg-card border border-border rounded-btn"
                               />
                               <IconButton icon={ExternalLink} label="Open in new tab" size="sm" onClick={() => window.open(currentPreviewUrl, '_blank')} />
+                              {/* J102: Mobile preview toggle */}
+                              <button
+                                onClick={() => setMobilePreview(v => !v)}
+                                title={mobilePreview ? 'Desktop preview' : 'Mobile preview (375px)'}
+                                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border transition-colors ${
+                                  mobilePreview
+                                    ? 'border-primary/40 bg-primary/10 text-primary'
+                                    : 'border-border bg-card text-muted hover:text-ink'
+                                }`}
+                              >
+                                <Smartphone size={12} />
+                                {mobilePreview ? 'Mobile' : ''}
+                              </button>
                               {devServer?.running && (
                                 <button
                                   onClick={handleStopDevServer}
@@ -1548,24 +1580,36 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
 
                         {/* Content: iframe when running, controls when not */}
                         {devServer?.running ? (
-                          <div className="flex-1 bg-white">
+                          <div className="flex-1 bg-white flex items-start justify-center">
+                            {mobilePreview && (
+                              <div className="text-[10px] text-muted bg-hover px-2 py-0.5 rounded absolute top-[88px] left-1/2 -translate-x-1/2 z-10 font-mono">
+                                Mobile Preview -- 375px
+                              </div>
+                            )}
                             <iframe
                               key={previewKey}
                               ref={previewRef}
                               src={currentPreviewUrl}
                               title="Project Preview"
-                              className="w-full h-full border-0"
+                              className="h-full border-0 transition-[width] duration-300 ease-in-out"
+                              style={{ width: mobilePreview ? '375px' : '100%' }}
                               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                             />
                           </div>
                         ) : previewInfo?.preview_url ? (
-                          <div className="flex-1 bg-white">
+                          <div className="flex-1 bg-white flex items-start justify-center">
+                            {mobilePreview && (
+                              <div className="text-[10px] text-muted bg-hover px-2 py-0.5 rounded absolute top-[88px] left-1/2 -translate-x-1/2 z-10 font-mono">
+                                Mobile Preview -- 375px
+                              </div>
+                            )}
                             <iframe
                               key={previewKey}
                               ref={previewRef}
                               src={currentPreviewUrl}
                               title="Project Preview"
-                              className="w-full h-full border-0"
+                              className="h-full border-0 transition-[width] duration-300 ease-in-out"
+                              style={{ width: mobilePreview ? '375px' : '100%' }}
                               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                             />
                           </div>

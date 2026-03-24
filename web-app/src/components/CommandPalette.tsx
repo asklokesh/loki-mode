@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, File, Folder, FileCode2, FileJson, FileText, FileCode, FileType } from 'lucide-react';
 import { api } from '../api/client';
+import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import type { FileSearchResult } from '../types/api';
 
 interface CommandItem {
@@ -49,6 +51,12 @@ export function CommandPalette({ isOpen, onClose, commands, sessionId, onFileSel
   const [fileSearching, setFileSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // K108: Focus trap -- Tab cycles within the palette
+  const trapRef = useFocusTrap<HTMLDivElement>(isOpen);
+
+  // K109: Global escape key handler (stack-based LIFO)
+  useEscapeKey(isOpen, onClose);
 
   useEffect(() => {
     if (isOpen) {
@@ -137,6 +145,7 @@ export function CommandPalette({ isOpen, onClose, commands, sessionId, onFileSel
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
+        ref={trapRef}
         className="relative w-full max-w-lg bg-card rounded-xl shadow-2xl border border-border overflow-hidden"
         onClick={e => e.stopPropagation()}
       >

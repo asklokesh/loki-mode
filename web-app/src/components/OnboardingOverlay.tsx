@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FileText, Terminal, Eye, MessageSquare, ArrowRight, X } from 'lucide-react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 const LS_KEY = 'pl_onboarding_complete';
 
@@ -36,6 +38,10 @@ export function OnboardingOverlay() {
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
 
+  // K108 + K109: Focus trap and escape key
+  const trapRef = useFocusTrap<HTMLDivElement>(visible);
+  useEscapeKey(visible, () => { if (visible) dismiss(); });
+
   useEffect(() => {
     try {
       if (localStorage.getItem(LS_KEY) !== '1') {
@@ -70,7 +76,7 @@ export function OnboardingOverlay() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30">
-      <div className="bg-card rounded-card shadow-card-hover border border-border w-full max-w-sm mx-4">
+      <div ref={trapRef} className="bg-card rounded-card shadow-card-hover border border-border w-full max-w-sm mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-2">
           <span className="text-[11px] font-mono text-muted-accessible">

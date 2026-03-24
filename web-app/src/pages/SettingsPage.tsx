@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Check } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { api } from '../api/client';
 
@@ -12,6 +12,7 @@ const PROVIDERS = [
 export default function SettingsPage() {
   const [selectedProvider, setSelectedProvider] = useState('claude');
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [version, setVersion] = useState('');
 
   useEffect(() => {
@@ -25,6 +26,8 @@ export default function SettingsPage() {
 
   const handleProviderChange = async (provider: string) => {
     setSelectedProvider(provider);
+    // K105: Optimistic UI -- show "Saved" immediately
+    setSaved(true);
     setSaving(true);
     try {
       await api.setProvider(provider);
@@ -32,12 +35,13 @@ export default function SettingsPage() {
       // ignore
     } finally {
       setSaving(false);
+      setTimeout(() => setSaved(false), 2000);
     }
   };
 
   return (
-    <div className="max-w-[800px] mx-auto px-6 py-8">
-      <h1 className="font-heading text-h1 text-[#36342E] mb-8">Settings</h1>
+    <div className="max-w-[800px] mx-auto px-6 max-md:px-4 py-8">
+      <h1 className="font-heading text-h1 max-md:text-h2 text-[#36342E] mb-8">Settings</h1>
 
       {/* Provider section */}
       <section className="mb-10">
@@ -76,8 +80,13 @@ export default function SettingsPage() {
             </Card>
           ))}
         </div>
-        {saving && (
+        {saving && !saved && (
           <p className="text-xs text-[#6B6960] mt-2">Saving...</p>
+        )}
+        {saved && (
+          <p className="flex items-center gap-1 text-xs text-[#1FC5A8] mt-2 font-medium">
+            <Check size={12} /> Saved
+          </p>
         )}
       </section>
 

@@ -221,12 +221,12 @@ export default function HomePage() {
     <div className="min-h-screen bg-[#FAF9F6] relative">
       <div className="pattern-nodes" />
 
-      <div className="max-w-[1920px] mx-auto px-6 py-6 relative z-10">
+      <div className="max-w-[1920px] mx-auto px-6 max-md:px-4 py-6 relative z-10">
         {!isRunning ? (
           <div className="flex flex-col items-center">
             {/* Hero section */}
-            <div className="text-center mt-12 mb-10">
-              <h2 className="font-heading text-h1 text-[#36342E]">
+            <div className="text-center mt-12 max-md:mt-6 mb-10 max-md:mb-6">
+              <h2 className="font-heading text-h1 max-md:text-h2 text-[#36342E]">
                 Describe it. Build it. Ship it.
               </h2>
               <p className="text-[#6B6960] mt-3 text-base max-w-xl mx-auto">
@@ -367,14 +367,14 @@ export default function HomePage() {
               </ErrorBoundary>
             </div>
 
-            <div className="mt-4 grid grid-cols-12 gap-6" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
-              <div className="col-span-3 flex flex-col gap-6">
+            <div className="mt-4 grid grid-cols-12 max-md:grid-cols-1 gap-6 max-md:gap-4" style={{ height: 'calc(100vh - 340px)', minHeight: '400px' }}>
+              <div className="col-span-3 max-md:col-span-1 flex flex-col gap-6">
                 <ErrorBoundary name="PhaseVisualizer">
                   <PhaseVisualizer currentPhase={status?.phase || 'idle'} iteration={status?.iteration || 0} />
                 </ErrorBoundary>
               </div>
 
-              <div className="col-span-5 flex flex-col gap-0 min-h-0">
+              <div className="col-span-5 max-md:col-span-1 flex flex-col gap-0 min-h-0">
                 <div className="flex items-center gap-1 mb-2 flex-shrink-0">
                   <button onClick={() => setActiveTab('terminal')}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${activeTab === 'terminal' ? 'bg-[#553DE9] text-white' : 'text-[#6B6960] hover:text-[#36342E] hover:bg-[#F8F4F0]'}`}>
@@ -396,7 +396,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="col-span-4 flex flex-col gap-6 overflow-y-auto">
+              <div className="col-span-4 max-md:col-span-1 flex flex-col gap-6 overflow-y-auto">
                 <ErrorBoundary name="AgentDashboard">
                   <AgentDashboard agents={agents} loading={agentsLoading} />
                 </ErrorBoundary>
@@ -406,13 +406,13 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-12 gap-6">
-              <div className="col-span-6">
+            <div className="mt-6 grid grid-cols-12 max-md:grid-cols-1 gap-6 max-md:gap-4">
+              <div className="col-span-6 max-md:col-span-1">
                 <ErrorBoundary name="FileBrowser">
                   <FileBrowser files={files} loading={filesLoading} />
                 </ErrorBoundary>
               </div>
-              <div className="col-span-6">
+              <div className="col-span-6 max-md:col-span-1">
                 <ErrorBoundary name="MemoryViewer">
                   <MemoryViewer memory={memory} loading={memoryLoading} />
                 </ErrorBoundary>

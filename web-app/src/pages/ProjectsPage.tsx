@@ -1,11 +1,12 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, MoreVertical, Trash2, FolderOpen, Copy, ExternalLink, XCircle } from 'lucide-react';
+import { Search, Plus, MoreVertical, Trash2, FolderOpen, Copy, ExternalLink, XCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { api } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import type { SessionHistoryItem } from '../api/client';
 
 type FilterTab = 'all' | 'running' | 'completed' | 'failed';
@@ -63,6 +64,12 @@ export default function ProjectsPage() {
   const fetchSessions = useCallback(() => api.getSessionsHistory(), []);
   const { data: sessions, refresh } = usePolling(fetchSessions, 15000, true);
 
+  // J99: Pull-to-refresh on project list
+  const { ref: pullRef, pulling, refreshing: pullRefreshing, pullDistance } = usePullToRefresh<HTMLDivElement>({
+    onRefresh: async () => { refresh(); },
+    enabled: true,
+  });
+
   const filtered = useMemo(() => {
     if (!sessions) return [];
     let list = sessions;
@@ -100,17 +107,31 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto px-6 py-8">
+    <div ref={pullRef} className="max-w-[1400px] mx-auto px-6 max-md:px-4 py-8 overflow-auto h-full">
+      {/* Pull-to-refresh indicator */}
+      {(pulling || pullRefreshing) && (
+        <div className="flex items-center justify-center py-3">
+          {pullRefreshing ? (
+            <div className="ptr-spinner" />
+          ) : (
+            <RefreshCw
+              size={20}
+              className="text-[#553DE9] transition-transform"
+              style={{ transform: `rotate(${Math.min(pullDistance * 3, 360)}deg)`, opacity: Math.min(pullDistance / 80, 1) }}
+            />
+          )}
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-heading text-h1 text-[#36342E]">Projects</h1>
+        <h1 className="font-heading text-h1 max-md:text-h2 text-[#36342E]">Projects</h1>
         <Button icon={Plus} onClick={() => navigate('/')}>
           New Project
         </Button>
       </div>
 
       {/* Search + Filters */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center max-md:flex-col gap-4 max-md:gap-3 mb-6">
         <div className="relative flex-1 max-w-sm">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6960]" />
           <input
@@ -150,7 +171,7 @@ export default function ProjectsPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((session) => (
             <ProjectCard
               key={session.id}

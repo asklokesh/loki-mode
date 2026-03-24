@@ -8,6 +8,7 @@
     -moz-osx-font-smoothing: grayscale;
     font-size: 15px;
     line-height: 1.6;
+    scroll-behavior: smooth;
   }
 
   /* Bump small text sizes for readability */
@@ -221,5 +222,106 @@
   }
   .quick-input-placeholder-exit {
     animation: placeholder-fade-out 0.3s ease-in forwards;
+  }
+
+  /* --- J98: Responsive Tables --- */
+  @media (max-width: 767px) {
+    .responsive-table table,
+    .responsive-table thead,
+    .responsive-table tbody,
+    .responsive-table th,
+    .responsive-table td,
+    .responsive-table tr {
+      display: block;
+    }
+    .responsive-table thead tr {
+      position: absolute;
+      top: -9999px;
+      left: -9999px;
+    }
+    .responsive-table tr {
+      margin-bottom: 0.75rem;
+      border: 1px solid #ECEAE3;
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #FFFFFF;
+    }
+    .dark .responsive-table tr {
+      border-color: #2A2A30;
+      background: #1A1A1E;
+    }
+    .responsive-table td {
+      border: none;
+      position: relative;
+      padding: 0.25rem 0.5rem 0.25rem 45%;
+      text-align: left;
+      font-size: 0.8125rem;
+    }
+    .responsive-table td::before {
+      content: attr(data-label);
+      position: absolute;
+      left: 0.5rem;
+      width: 40%;
+      padding-right: 0.5rem;
+      white-space: nowrap;
+      font-weight: 600;
+      font-size: 0.75rem;
+      color: #6B6960;
+    }
+    .dark .responsive-table td::before {
+      color: #8A8880;
+    }
+  }
+
+  /* --- J101: Responsive Grid Breakpoints --- */
+  @media (max-width: 767px) {
+    .grid-cols-12 {
+      grid-template-columns: 1fr !important;
+    }
+    .col-span-3,
+    .col-span-4,
+    .col-span-5,
+    .col-span-6 {
+      grid-column: span 1 / span 1 !important;
+    }
+  }
+
+  /* --- J99: Pull-to-Refresh --- */
+  @keyframes ptr-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .ptr-spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #ECEAE3;
+    border-top-color: #553DE9;
+    border-radius: 50%;
+    animation: ptr-spin 0.8s linear infinite;
+  }
+  .dark .ptr-spinner {
+    border-color: #2A2A30;
+    border-top-color: #7B6BEF;
+  }
+
+  /* --- K107: Smooth scroll to bottom utility --- */
+  .scroll-smooth-bottom {
+    scroll-behavior: smooth;
+  }
+
+  /* --- J97: Mobile bottom nav safe area --- */
+  @media (max-width: 767px) {
+    .mobile-bottom-spacer {
+      padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    }
+  }
+
+  /* --- K104: Image lazy loading blur-up placeholder --- */
+  .img-blur-placeholder {
+    filter: blur(10px);
+    transition: filter 0.3s ease-out;
+  }
+  .img-blur-placeholder.loaded {
+    filter: blur(0);
   }
 }

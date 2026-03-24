@@ -151,7 +151,7 @@ export default function TeamsPage() {
   );
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
+    <div className="max-w-6xl mx-auto px-6 max-md:px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -189,9 +189,9 @@ export default function TeamsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 max-md:gap-4">
         {/* Team list sidebar */}
-        <div className="lg:col-span-1">
+        <div className="md:col-span-1">
           <div className="card p-4">
             <h3 className="text-xs font-semibold text-[#6B6960] uppercase tracking-wider mb-3">
               Your Teams
@@ -223,7 +223,7 @@ export default function TeamsPage() {
         </div>
 
         {/* Team content */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="md:col-span-3 space-y-6">
           {selectedTeam && (
             <>
               {/* Team dashboard header */}
