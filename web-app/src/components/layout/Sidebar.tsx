@@ -16,6 +16,9 @@ import {
   Moon,
   Sun,
   Users,
+  Sparkles,
+  BarChart3,
+  Shield,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -38,10 +41,14 @@ const mainNav: NavItem[] = [
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/templates', label: 'Templates', icon: LayoutTemplate },
   { to: '/teams', label: 'Teams', icon: Users },
+  { to: '/showcase', label: 'Showcase', icon: Sparkles },
+  { to: '/metrics', label: 'Metrics', icon: BarChart3 },
 ];
 
 const secondaryNav: NavItem[] = [
   { to: '/settings', label: 'Settings', icon: Settings2 },
+  // Admin link -- TODO: gate on admin role when RBAC is implemented
+  { to: '/admin', label: 'Admin', icon: Shield },
 ];
 
 function useIsMobile() {
