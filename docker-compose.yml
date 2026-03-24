@@ -1,4 +1,4 @@
-# Loki Mode Docker Compose (v6.38.0)
+# Loki Mode Docker Compose (v6.71.1)
 # Usage: docker-compose run loki start
 # Note: version key removed - deprecated in Docker Compose v2+
 
@@ -28,6 +28,13 @@ services:
     ports:
       # Expose dashboard
       - "57374:57374"
+    # BUG-DK-002: Health check for dashboard API when running
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:57374/health >/dev/null 2>&1 || loki version >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start-period: 10s
+      retries: 3
     working_dir: /workspace
     stdin_open: true
     tty: true

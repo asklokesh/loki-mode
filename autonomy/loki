@@ -9200,6 +9200,21 @@ for f in data.get('frictions', []):
     local heal_dir="$codebase_path/.loki/healing"
     mkdir -p "$heal_dir"/{behavioral-baseline,characterization-tests}
 
+    # BUG-HEAL-004: Source migration hooks for healing enforcement
+    local hooks_file
+    hooks_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hooks/migration-hooks.sh"
+    if [[ -f "$hooks_file" ]]; then
+        # shellcheck source=hooks/migration-hooks.sh
+        source "$hooks_file"
+        load_migration_hook_config "$codebase_path"
+    fi
+
+    # Export healing environment variables for hooks
+    export LOKI_HEAL_MODE="true"
+    export LOKI_HEAL_PHASE="$phase"
+    export LOKI_HEAL_STRICT="$strict"
+    export LOKI_CODEBASE_PATH="$codebase_path"
+
     # Initialize healing state files if they don't exist
     [[ ! -f "$heal_dir/friction-map.json" ]] && echo '{"frictions":[]}' > "$heal_dir/friction-map.json"
     [[ ! -f "$heal_dir/failure-modes.json" ]] && echo '{"modes":[]}' > "$heal_dir/failure-modes.json"
@@ -9221,6 +9236,20 @@ progress = {
 with open('$heal_dir/healing-progress.json', 'w') as f:
     json.dump(progress, f, indent=2)
 " || true
+    fi
+
+    # BUG-HEAL-004: Validate phase gate when resuming from a previous phase
+    if [ "$do_resume" = "true" ] && [[ -f "$heal_dir/healing-progress.json" ]] && type hook_healing_phase_gate &>/dev/null; then
+        local prev_phase
+        prev_phase=$(python3 -c "import json; print(json.load(open('$heal_dir/healing-progress.json')).get('current_phase', 'archaeology'))" 2>/dev/null || echo "archaeology")
+        if [[ "$prev_phase" != "$phase" ]]; then
+            local gate_result
+            if ! gate_result=$(hook_healing_phase_gate "$prev_phase" "$phase" 2>&1); then
+                echo -e "${RED}Phase gate check failed:${NC}"
+                echo "  $gate_result"
+                return 1
+            fi
+        fi
     fi
 
     emit_event healing cli start "phase=$phase" "codebase=$codebase_path" "strict=$strict" 2>/dev/null || true
@@ -9328,6 +9357,12 @@ except Exception: pass
             local aider_flags="${LOKI_AIDER_FLAGS:-}"
             # shellcheck disable=SC2086
             (cd "$codebase_path" && aider --message "$heal_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || heal_exit=$?
+            ;;
+        # BUG-HEAL-003: Unknown provider should error, not silently succeed
+        *)
+            echo -e "${RED}Error: Unknown provider: $provider${NC}"
+            echo "Supported providers: claude, codex, gemini, cline, aider"
+            return 1
             ;;
     esac
 

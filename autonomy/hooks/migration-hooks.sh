@@ -391,6 +391,32 @@ hook_healing_phase_gate() {
 
     [[ "${LOKI_HEAL_MODE:-false}" != "true" ]] && return 0
 
+    # BUG-HEAL-002: Validate phase transition ordering
+    # Valid healing phases in order: archaeology -> stabilize -> isolate -> modernize -> validate
+    # Only forward transitions to the immediately next phase are allowed.
+    local valid_phases="archaeology stabilize isolate modernize validate"
+    local from_idx=-1
+    local to_idx=-1
+    local idx=0
+    for p in $valid_phases; do
+        [[ "$p" == "$from_phase" ]] && from_idx=$idx
+        [[ "$p" == "$to_phase" ]] && to_idx=$idx
+        idx=$((idx + 1))
+    done
+
+    if [[ "$from_idx" -eq -1 ]]; then
+        echo "GATE_BLOCKED: Unknown source phase: ${from_phase}" && return 1
+    fi
+    if [[ "$to_idx" -eq -1 ]]; then
+        echo "GATE_BLOCKED: Unknown target phase: ${to_phase}" && return 1
+    fi
+    if [[ "$to_idx" -le "$from_idx" ]]; then
+        echo "GATE_BLOCKED: Cannot transition backwards from ${from_phase} to ${to_phase}" && return 1
+    fi
+    if [[ "$to_idx" -gt $((from_idx + 1)) ]]; then
+        echo "GATE_BLOCKED: Cannot skip phases -- must transition from ${from_phase} to the next sequential phase" && return 1
+    fi
+
     case "${from_phase}:${to_phase}" in
         archaeology:stabilize)
             # Require: friction map has entries, characterization tests pass

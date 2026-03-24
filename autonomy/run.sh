@@ -3650,8 +3650,10 @@ print(json.dumps(data, indent=2))
         fi
     ) 200>"$lockfile"
 
-    # Update current-task.json
-    echo "$task_json" > .loki/queue/current-task.json
+    # BUG-ST-014: Atomic current-task.json update via temp file + mv
+    local ct_tmp=".loki/queue/current-task.json.tmp.$$"
+    echo "$task_json" > "$ct_tmp"
+    mv -f "$ct_tmp" .loki/queue/current-task.json
 }
 
 # Track iteration completion - move task to completed queue
@@ -3834,8 +3836,10 @@ except:
 " 2>/dev/null || true
     fi
 
-    # Clear current-task.json
-    echo "{}" > .loki/queue/current-task.json
+    # BUG-ST-014: Atomic current-task.json clear via temp file + mv
+    local ct_tmp=".loki/queue/current-task.json.tmp.$$"
+    echo "{}" > "$ct_tmp"
+    mv -f "$ct_tmp" .loki/queue/current-task.json
 
     # Write-back completed BMAD stories to source artifacts (v6.29.0)
     if [ "$exit_code" = "0" ]; then
@@ -7990,6 +7994,9 @@ save_state() {
     local retry_count="$1"
     local status="$2"
     local exit_code="$3"
+
+    # BUG-ST-013: Ensure .loki directory exists (defensive -- may be called from signal handler)
+    mkdir -p .loki 2>/dev/null || true
 
     # BUG-XC-004: Atomic write via temp file + mv
     local state_tmp=".loki/autonomy-state.json.tmp.$$"
