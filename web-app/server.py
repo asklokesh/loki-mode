@@ -144,6 +144,10 @@ class SessionState:
         self.ws_clients: set[WebSocket] = set()
         self._reader_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
+        # Monotonic generation counter: incremented on each new session start so
+        # that a stale _read_process_output finally-block from a previous session
+        # does not clobber the running flag of the current session.
+        self._generation: int = 0
 
     async def cleanup(self) -> None:
         """Cancel reader task and close process pipes."""
@@ -172,6 +176,7 @@ class SessionState:
         self.start_time = 0
         self.log_lines = []
         self.log_lines_total = 0
+        # NOTE: self._generation is NOT reset -- it must monotonically increase
 
 
 def _kill_tracked_child_processes() -> None:
@@ -2399,8 +2404,14 @@ async def _broadcast(msg: dict) -> None:
         session.ws_clients.discard(ws)
 
 
-async def _read_process_output() -> None:
-    """Background task: read loki stdout/stderr and broadcast lines."""
+async def _read_process_output(generation: int) -> None:
+    """Background task: read loki stdout/stderr and broadcast lines.
+
+    ``generation`` ties this reader to a specific session start.  The finally
+    block only clears ``session.running`` when the generation still matches,
+    preventing a stale reader from a previous session from clobbering the
+    running flag of a newer session (BUG-RACE-001).
+    """
     proc = session.process
     if proc is None or proc.stdout is None:
         return
@@ -2431,10 +2442,18 @@ async def _read_process_output() -> None:
     except Exception:
         logger.error("Process output reader failed", exc_info=True)
     finally:
-        # Process ended -- acquire lock before mutating state
+        # Process ended -- acquire lock before mutating state.
+        # Only clear running if this reader still owns the current session;
+        # a newer session may have bumped _generation already (BUG-RACE-001).
+        is_current = False
         async with session._lock:
-            session.running = False
-        await _broadcast({"type": "session_end", "data": {"message": "Session ended"}})
+            if session._generation == generation:
+                session.running = False
+                is_current = True
+        # Only broadcast session_end for the current session; a stale
+        # reader from a previous session must not signal the UI.
+        if is_current:
+            await _broadcast({"type": "session_end", "data": {"message": "Session ended"}})
 
 
 def _build_file_tree(root: Path, max_depth: int = 8, _depth: int = 0) -> list[dict]:
@@ -2678,11 +2697,19 @@ async def start_session(req: StartRequest) -> JSONResponse:
         session.project_dir = project_dir
         session.start_time = time.time()
 
+        # Bump generation so stale reader tasks from previous sessions
+        # cannot clobber this session's running flag (BUG-RACE-001).
+        session._generation += 1
+        current_gen = session._generation
+
         # Track this PID so loki web stop knows it's ours
         _track_child_pid(proc.pid)
 
-        # Start background output reader
-        session._reader_task = asyncio.create_task(_read_process_output())
+        # Start background output reader -- pass generation so its finally
+        # block only clears running if it still belongs to the current session.
+        session._reader_task = asyncio.create_task(
+            _read_process_output(current_gen)
+        )
 
         # Start file watcher for the project directory
         file_watcher.start(
@@ -2853,7 +2880,17 @@ async def get_status() -> JSONResponse:
     is_running = session.running
     if session.process and is_running:
         if session.process.poll() is not None:
-            is_running = False
+            # BUG-RACE-001: The process has exited, but if the session was
+            # started very recently (within 5 seconds), report "running" with
+            # a "starting" phase so the UI does not flash "stopped" before the
+            # build has had time to initialise.  The reader task's finally
+            # block will clear session.running properly once it catches up.
+            elapsed_since_start = time.time() - session.start_time
+            if elapsed_since_start < 5.0:
+                # Keep is_running True -- the reader task hasn't caught up yet
+                pass
+            else:
+                is_running = False
 
     # Try to read .loki state files for richer status
     loki_dir = _loki_dir()
@@ -2930,6 +2967,21 @@ async def get_status() -> JSONResponse:
 
     uptime = time.time() - session.start_time if is_running else 0
 
+    # BUG-RACE-001: If the session is running but no phase has been written
+    # to disk yet (the loki process is still initialising), report a
+    # "starting" phase so the UI shows meaningful feedback instead of "idle".
+    if is_running and phase == "idle" and session.start_time > 0:
+        elapsed_since_start = time.time() - session.start_time
+        if elapsed_since_start < 15.0:
+            phase = "starting"
+
+    # If process has exited, include exit code and last output for debugging
+    exit_code = None
+    last_output = []
+    if session.process and session.process.poll() is not None:
+        exit_code = session.process.returncode
+        last_output = session.log_lines[-20:] if session.log_lines else []
+
     return JSONResponse(content={
         "running": is_running,
         "paused": session.paused,
@@ -2948,6 +3000,8 @@ async def get_status() -> JSONResponse:
         "max_iterations": max_iterations,
         "cost": round(cost_usd, 4),
         "start_time": session.start_time if session.start_time > 0 else 0,
+        "exit_code": exit_code,
+        "last_output": last_output,
     })
 
 

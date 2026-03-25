@@ -570,6 +570,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
         if (newPhase !== prevPhaseRef.current && newPhase !== 'idle') {
           const now = new Date().toISOString();
           const phaseLabels: Record<string, string> = {
+            starting: 'Initialising build session',
             planning: 'Planning phase started',
             building: 'Building your project',
             testing: 'Running tests',
@@ -577,6 +578,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
             complete: 'Build complete',
           };
           const narrationMessages: Record<string, string> = {
+            starting: 'Setting up the build environment and checking prerequisites...',
             planning: 'Analyzing requirements and designing the architecture...',
             building: 'Writing code and creating project files...',
             testing: 'Running test suite to verify everything works...',
@@ -1210,6 +1212,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   const buildPhase = useMemo(() => {
     if (!isBuilding) return 'idle';
     const status = (buildStatus.phase || sessionData.status || '').toLowerCase();
+    if (status.includes('starting')) return 'planning';
     if (status.includes('plan') || status.includes('bootstrap')) return 'planning';
     if (status.includes('review') || status.includes('council')) return 'reviewing';
     if (status.includes('test') || status.includes('verify')) return 'testing';
