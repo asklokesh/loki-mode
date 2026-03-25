@@ -2729,6 +2729,23 @@ async def start_session(req: StartRequest) -> JSONResponse:
         "pid": proc.pid,
     }})
 
+    # Notify the Loki Dashboard (port 57374) about the active project so it
+    # reads state files from the correct .loki/ directory (BUG-FOCUS-001).
+    try:
+        os.makedirs(os.path.join(project_dir, ".loki"), exist_ok=True)
+        import urllib.request
+        focus_data = json.dumps({"project_dir": project_dir}).encode()
+        focus_req = urllib.request.Request(
+            "http://127.0.0.1:57374/api/focus",
+            data=focus_data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(focus_req, timeout=2)
+        logger.info("Notified dashboard of project focus: %s", project_dir)
+    except Exception:
+        logger.debug("Could not notify dashboard (may not be running)")
+
     return JSONResponse(content={
         "started": True,
         "pid": proc.pid,

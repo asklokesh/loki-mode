@@ -2164,20 +2164,25 @@ def _get_loki_dir() -> _Path:
     """Get LOKI_DIR, refreshing from env on each call for consistency.
 
     Resolution order:
-    1. LOKI_DIR env var (set by run.sh during active sessions)
-    2. _active_project_dir (set via /api/focus API for cross-directory projects)
+    1. _active_project_dir (set via /api/focus API for cross-directory projects)
+       -- takes priority because it is a runtime signal pointing to the actual
+       active project, whereas LOKI_DIR is a stale startup-time value (typically
+       the relative string ".loki" inherited from the CLI).
+    2. LOKI_DIR env var (only when it is an absolute path, to avoid resolving
+       a relative path against the dashboard's CWD which is usually wrong)
     3. .loki/ in current working directory
     4. ~/.loki/ as global fallback
     """
-    env_dir = os.environ.get("LOKI_DIR")
-    if env_dir:
-        return _Path(env_dir)
-
-    # Check API-set project directory (for AI Chat running in different CWD)
+    # Check API-set project directory first (runtime override from /api/focus
+    # or from Purple Lab / AI Chat starting a session in a different directory)
     if _active_project_dir:
         project_loki = _Path(_active_project_dir) / ".loki"
         if project_loki.is_dir():
             return project_loki
+
+    env_dir = os.environ.get("LOKI_DIR")
+    if env_dir and _Path(env_dir).is_absolute():
+        return _Path(env_dir)
 
     # Check CWD first
     cwd_loki = _Path.cwd() / ".loki"

@@ -125,7 +125,7 @@ RUN_SH="$SKILL_DIR/autonomy/run.sh"
 SANDBOX_SH="$SKILL_DIR/autonomy/sandbox.sh"
 EMIT_SH="$SKILL_DIR/events/emit.sh"
 LEARNING_EMIT_SH="$SKILL_DIR/learning/emit.sh"
-LOKI_DIR=".loki"
+LOKI_DIR="${LOKI_DIR:-.loki}"
 export LOKI_DIR
 
 # Anonymous usage telemetry
