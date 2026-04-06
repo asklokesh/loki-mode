@@ -540,6 +540,7 @@ cmd_start() {
                 echo "  --complex             Force complex complexity tier (8 phases)"
                 echo "  --github              Enable GitHub issue import"
                 echo "  --no-dashboard        Disable web dashboard"
+                echo "  --api                 Start dashboard API server alongside the build"
                 echo "  --sandbox             Run in Docker sandbox"
                 echo "  --skip-memory         Skip loading memory context at startup"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
@@ -652,6 +653,10 @@ cmd_start() {
                 ;;
             --no-dashboard)
                 export LOKI_DASHBOARD=false
+                shift
+                ;;
+            --api)
+                export LOKI_START_API=true
                 shift
                 ;;
             --sandbox)
@@ -1110,6 +1115,14 @@ cmd_start() {
         echo ""
         echo "Check your environment: loki doctor"
         exit 1
+    fi
+
+    # --api flag: start the dashboard API server in background before the build
+    if [ "${LOKI_START_API:-false}" = "true" ]; then
+        local dash_port="${LOKI_DASHBOARD_PORT:-57374}"
+        echo -e "${GREEN}Starting dashboard API on port $dash_port...${NC}"
+        cmd_dashboard_start 2>/dev/null &
+        sleep 2
     fi
 
     exec "$RUN_SH" "${args[@]}"
