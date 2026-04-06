@@ -625,6 +625,33 @@ export const api = {
       ),
   },
 
+  // Documentation generation
+  generateDocs: (sessionId: string) =>
+    fetchJSON<{ task_id: string; message: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/docs/generate`,
+      { method: 'POST' },
+    ),
+
+  getDocsStatus: (sessionId: string) =>
+    fetchJSON<{ has_docs: boolean; coverage_pct: number; doc_files: string[]; commits_behind: number; last_generated: string | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/docs/status`,
+    ),
+
+  getDocFiles: (sessionId: string) =>
+    fetchJSON<{ files: { name: string; size: number; generated_at: string }[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/docs/files`,
+    ),
+
+  getDocFileContent: async (sessionId: string, filename: string): Promise<string> => {
+    const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/docs/files/${encodeURIComponent(filename)}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      throw new Error(`API error ${res.status}: ${res.statusText}`);
+    }
+    return res.text();
+  },
+
   // Image upload for AI chat
   chatImageUpload: async (sessionId: string, file: File): Promise<{ image_id: string; filename: string }> => {
     const formData = new FormData();

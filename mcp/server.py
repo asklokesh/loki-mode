@@ -1740,6 +1740,183 @@ async def mem_get(
 
 
 # ============================================================
+# GIT INTELLIGENCE TOOLS (Phase 4 - Repowise native equivalent)
+# ============================================================
+
+@mcp.tool()
+async def loki_get_hotspots(
+    limit: int = 10,
+) -> str:
+    """Get the most frequently changed files in the repository.
+
+    Identifies code hotspots based on git commit frequency analysis.
+    These files deserve extra care during changes (higher risk of regressions).
+
+    Args:
+        limit: Number of top hotspot files to return (default 10, max 30)
+    """
+    _emit_tool_event_async('loki_get_hotspots', 'start',
+                           parameters={'limit': limit})
+
+    limit = min(max(1, limit), 30)
+
+    try:
+        hotspots_path = safe_path_join('.loki', 'intelligence', 'hotspots.txt')
+    except PathTraversalError:
+        _emit_tool_event_async('loki_get_hotspots', 'complete',
+                               result_status='error', error='Access denied')
+        return json.dumps({"error": "Access denied"})
+
+    if not os.path.exists(hotspots_path):
+        _emit_tool_event_async('loki_get_hotspots', 'complete',
+                               result_status='error', error='Not available')
+        return json.dumps({
+            "error": "Git intelligence not yet generated",
+            "hint": "Run 'loki start' or wait for the next autonomous iteration"
+        })
+
+    try:
+        results = []
+        with open(hotspots_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # Format: "  42 path/to/file.py"
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    try:
+                        changes = int(parts[0])
+                    except ValueError:
+                        continue
+                    results.append({"file": parts[1], "changes": changes})
+                if len(results) >= limit:
+                    break
+
+        _emit_tool_event_async('loki_get_hotspots', 'complete',
+                               result_status='success', result_count=len(results))
+        return json.dumps({"hotspots": results, "total": len(results)})
+    except Exception as e:
+        logger.error(f"loki_get_hotspots failed: {e}")
+        _emit_tool_event_async('loki_get_hotspots', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_get_co_changes(
+    file_path: str,
+) -> str:
+    """Find files that frequently change together with a given file.
+
+    Uses git co-change analysis to identify coupling between files.
+    Useful for understanding hidden dependencies and ensuring related
+    files are updated together.
+
+    Args:
+        file_path: Path to the file to find co-change partners for
+    """
+    _emit_tool_event_async('loki_get_co_changes', 'start',
+                           parameters={'file_path': file_path})
+
+    try:
+        co_changes_path = safe_path_join('.loki', 'intelligence', 'co-changes.json')
+    except PathTraversalError:
+        _emit_tool_event_async('loki_get_co_changes', 'complete',
+                               result_status='error', error='Access denied')
+        return json.dumps({"error": "Access denied"})
+
+    if not os.path.exists(co_changes_path):
+        _emit_tool_event_async('loki_get_co_changes', 'complete',
+                               result_status='error', error='Not available')
+        return json.dumps({
+            "error": "Git intelligence not yet generated",
+            "hint": "Run 'loki start' or wait for the next autonomous iteration"
+        })
+
+    try:
+        with open(co_changes_path, 'r') as f:
+            pairs = json.load(f)
+
+        # Filter pairs involving the requested file
+        results = []
+        for pair_files, count in pairs:
+            if file_path in pair_files:
+                partner = pair_files[0] if pair_files[1] == file_path else pair_files[1]
+                results.append({"partner": partner, "co_changes": count})
+
+        # Sort by co-change count descending
+        results.sort(key=lambda x: x["co_changes"], reverse=True)
+
+        _emit_tool_event_async('loki_get_co_changes', 'complete',
+                               result_status='success', result_count=len(results))
+        return json.dumps({
+            "file": file_path,
+            "co_changed_with": results,
+            "total": len(results)
+        })
+    except Exception as e:
+        logger.error(f"loki_get_co_changes failed: {e}")
+        _emit_tool_event_async('loki_get_co_changes', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_get_doc_coverage() -> str:
+    """Get documentation coverage status for the project.
+
+    Reads from the docs manifest to report which files are documented,
+    which have stale documentation, and which are missing docs entirely.
+    Useful for prioritizing documentation work.
+    """
+    _emit_tool_event_async('loki_get_doc_coverage', 'start')
+
+    try:
+        manifest_path = safe_path_join('.loki', 'docs', 'docs-manifest.json')
+    except PathTraversalError:
+        _emit_tool_event_async('loki_get_doc_coverage', 'complete',
+                               result_status='error', error='Access denied')
+        return json.dumps({"error": "Access denied"})
+
+    if not os.path.exists(manifest_path):
+        _emit_tool_event_async('loki_get_doc_coverage', 'complete',
+                               result_status='error', error='Not available')
+        return json.dumps({
+            "error": "Documentation manifest not found",
+            "hint": "Create .loki/docs/docs-manifest.json with file documentation status"
+        })
+
+    try:
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+
+        total_files = manifest.get("total_files", 0)
+        documented_files = manifest.get("documented_files", 0)
+        coverage_pct = round((documented_files / total_files * 100) if total_files > 0 else 0, 1)
+
+        stale_docs = manifest.get("stale_docs", [])
+        missing_docs = manifest.get("missing_docs", [])
+
+        result = {
+            "coverage_pct": coverage_pct,
+            "total_files": total_files,
+            "documented_files": documented_files,
+            "stale_docs": stale_docs[:20],  # Limit to avoid huge responses
+            "missing_docs": missing_docs[:20],
+        }
+
+        _emit_tool_event_async('loki_get_doc_coverage', 'complete',
+                               result_status='success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_get_doc_coverage failed: {e}")
+        _emit_tool_event_async('loki_get_doc_coverage', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================
 # PROMPTS - Pre-built prompt templates
 # ============================================================
 

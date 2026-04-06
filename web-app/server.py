@@ -7040,6 +7040,14 @@ async def github_import_repo(session_id: str, req: GitHubImportRequest) -> JSONR
         )
         default_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else req.branch
 
+        # After successful clone, trigger doc generation in background
+        try:
+            loki_cli = _find_loki_cli()
+            if loki_cli:
+                asyncio.create_task(_run_doc_generation(str(target), loki_cli))
+        except Exception:
+            logger.debug("Auto-doc generation skipped")
+
         return JSONResponse(content={
             "success": True,
             "files_count": files_count,
@@ -8320,6 +8328,194 @@ async def github_actions_cancel_run(session_id: str, run_id: int) -> JSONRespons
         return JSONResponse(status_code=504, content={"error": "Cancel request timed out"})
     except OSError as exc:
         return JSONResponse(status_code=500, content={"error": f"Failed to cancel run: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Documentation generation endpoints
+# ---------------------------------------------------------------------------
+
+
+async def _run_doc_generation(project_dir: str, loki_cli: str) -> None:
+    """Run loki docs generate in background after repo import."""
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, lambda: subprocess.run(
+            [loki_cli, "docs", "generate"],
+            cwd=project_dir,
+            capture_output=True,
+            timeout=300,
+        ))
+        logger.info("Auto-generated documentation for %s", project_dir)
+    except Exception as e:
+        logger.warning("Doc generation failed: %s", e)
+
+
+@app.post("/api/sessions/{session_id}/docs/generate")
+async def docs_generate(session_id: str) -> JSONResponse:
+    """Trigger loki docs generate in the session's project directory."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    _cleanup_chat_tasks()
+    task = ChatTask()
+    _chat_tasks[task.id] = task
+
+    async def run_docs() -> None:
+        loki = _find_loki_cli()
+        if loki is None:
+            task.output_lines = ["loki CLI not found"]
+            task.returncode = 1
+            task.complete = True
+            return
+        proc: Optional[subprocess.Popen] = None
+        try:
+            proc = subprocess.Popen(
+                [loki, "docs", "generate"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                cwd=str(target),
+                start_new_session=True,
+            )
+            task.process = proc
+            _track_child_pid(proc.pid)
+            loop = asyncio.get_running_loop()
+
+            def _read() -> None:
+                assert proc.stdout is not None
+                for raw_line in proc.stdout:
+                    if task.cancelled:
+                        break
+                    clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_line.rstrip("\n"))
+                    stripped = clean.strip()
+                    if not stripped:
+                        continue
+                    task.output_lines.append(stripped)
+                proc.wait()
+
+            await loop.run_in_executor(None, _read)
+            task.returncode = proc.returncode or 0
+        except Exception as exc:
+            task.output_lines.append(f"Doc generation failed: {exc}")
+            task.returncode = 1
+        finally:
+            task.complete = True
+            if proc and proc.pid:
+                _untrack_child_pid(proc.pid)
+
+    asyncio.create_task(run_docs())
+    return JSONResponse(content={"task_id": task.id, "message": "Documentation generation started"})
+
+
+@app.get("/api/sessions/{session_id}/docs/status")
+async def docs_status(session_id: str) -> JSONResponse:
+    """Read .loki/docs/docs-manifest.json from the project directory."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    docs_dir = target / ".loki" / "docs"
+    manifest_path = docs_dir / "docs-manifest.json"
+
+    if not manifest_path.exists():
+        return JSONResponse(content={
+            "has_docs": False,
+            "coverage_pct": 0,
+            "doc_files": [],
+            "last_generated": None,
+            "commits_behind": 0,
+        })
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return JSONResponse(content={
+            "has_docs": False,
+            "coverage_pct": 0,
+            "doc_files": [],
+            "last_generated": None,
+            "commits_behind": 0,
+        })
+
+    # List doc files
+    doc_files = []
+    if docs_dir.exists():
+        doc_files = [
+            f.name for f in docs_dir.iterdir()
+            if f.is_file() and f.suffix in (".md", ".txt", ".html") and f.name != "docs-manifest.json"
+        ]
+
+    # Count commits behind (compare HEAD to last_generated commit if available)
+    commits_behind = 0
+    last_commit = manifest.get("last_commit")
+    if last_commit:
+        try:
+            result = subprocess.run(
+                ["git", "rev-list", "--count", f"{last_commit}..HEAD"],
+                cwd=str(target),
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                commits_behind = int(result.stdout.strip())
+        except (subprocess.TimeoutExpired, ValueError, OSError):
+            pass
+
+    return JSONResponse(content={
+        "has_docs": True,
+        "coverage_pct": manifest.get("coverage_pct", 0),
+        "doc_files": doc_files,
+        "last_generated": manifest.get("last_generated"),
+        "commits_behind": commits_behind,
+    })
+
+
+@app.get("/api/sessions/{session_id}/docs/files")
+async def docs_list_files(session_id: str) -> JSONResponse:
+    """List all generated doc files in .loki/docs/."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    docs_dir = target / ".loki" / "docs"
+    if not docs_dir.exists():
+        return JSONResponse(content={"files": []})
+
+    files = []
+    for f in sorted(docs_dir.iterdir()):
+        if f.is_file() and f.name != "docs-manifest.json":
+            stat = f.stat()
+            files.append({
+                "name": f.name,
+                "size": stat.st_size,
+                "generated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+
+    return JSONResponse(content={"files": files})
+
+
+@app.get("/api/sessions/{session_id}/docs/files/{filename}")
+async def docs_get_file(session_id: str, filename: str) -> Response:
+    """Return the content of a specific generated doc file."""
+    target, err = _validate_session_and_find_dir(session_id)
+    if err:
+        return err
+
+    # Sanitize filename to prevent directory traversal
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return JSONResponse(status_code=400, content={"error": "Invalid filename"})
+
+    doc_path = target / ".loki" / "docs" / filename
+    if not doc_path.exists() or not doc_path.is_file():
+        return JSONResponse(status_code=404, content={"error": "Doc file not found"})
+
+    try:
+        content = doc_path.read_text()
+    except OSError:
+        return JSONResponse(status_code=500, content={"error": "Cannot read doc file"})
+
+    return Response(content=content, media_type="text/markdown")
 
 
 if __name__ == "__main__":

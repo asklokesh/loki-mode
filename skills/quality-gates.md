@@ -2,7 +2,7 @@
 
 **Never ship code without passing all quality gates.**
 
-## The 10 Quality Gates
+## The 11 Quality Gates
 
 1. **Input Guardrails** - Validate scope, detect injection, check constraints (OpenAI SDK)
 2. **Static Analysis** - CodeQL, ESLint/Pylint, type checking
@@ -14,6 +14,7 @@
 8. **Mock Detector** - Classifies internal vs external mocks; flags tests that never import source code, tautological assertions, and high internal mock ratios
 9. **Test Mutation Detector** - Detects assertion value changes alongside implementation changes (test fitting), low assertion density, and missing pass/fail tracking
 10. **Backward Compatibility** - Behavioral preservation, friction safety, institutional knowledge retention (healing mode)
+11. **Documentation Coverage** - README exists, docs freshness within 10 commits, API docs for packages
 
 ## Gate 10: Backward Compatibility & Behavioral Preservation (v6.67.0)
 
@@ -38,6 +39,29 @@
 **Disabling (not recommended for healing mode):**
 ```bash
 LOKI_GATE_BACKWARD_COMPAT=false  # Disable gate 10
+```
+
+---
+
+## Gate 11: Documentation Coverage (v6.75.0)
+
+**Triggers when:** Diff touches public APIs, new files added, library/package releases
+
+**Checks:**
+- Every exported function/class/endpoint has a doc entry in `.loki/docs/`
+- README.md exists and is non-empty in project root
+- Documentation SHA is within 10 commits of HEAD
+- CLAUDE.md (if exists) references current key files
+
+**Severity:**
+- Missing API docs = Medium (BLOCK for npm/pip packages)
+- Stale docs = Low (TODO)
+
+**Skip:** Internal-only changes, test-only changes, config changes
+
+**Disabling (not recommended for packages):**
+```bash
+LOKI_GATE_DOC_COVERAGE=false  # Disable gate 11
 ```
 
 ---

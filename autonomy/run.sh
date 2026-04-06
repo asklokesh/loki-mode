@@ -2545,7 +2545,8 @@ merge_feature() {
     # Delete branch
     git -C "$TARGET_DIR" branch -d "$branch" 2>/dev/null || true
 
-    # Signal for docs update
+    # DOCS_NEEDED signal: triggers the parallel docs worktree to run `loki docs update`
+    # and regenerate documentation for recently changed files.
     mkdir -p "$TARGET_DIR/.loki/signals"
     touch "$TARGET_DIR/.loki/signals/DOCS_NEEDED"
 }
@@ -2655,7 +2656,7 @@ run_parallel_orchestrator() {
 
     # Spawn docs session
     if [ "$PARALLEL_DOCS" = "true" ] && [ -n "${WORKTREE_PATHS[docs]:-}" ]; then
-        spawn_worktree_session "docs" "Monitor for DOCS_NEEDED signal. Update documentation for recent changes. Check git log."
+        spawn_worktree_session "docs" "Documentation maintenance stream. Steps: 1) Run 'loki docs generate' if .loki/docs/ does not exist. 2) Watch for .loki/signals/DOCS_NEEDED file. When found, run 'loki docs update' and remove the signal file. 3) After each doc update, run 'loki docs check' and report coverage. 4) Focus on documenting new files, changed APIs, and architectural decisions."
     fi
 
     # Main orchestrator loop
@@ -5693,6 +5694,93 @@ TREOF
         log_warn "Test coverage gate: $test_runner FAILED"
         return 1
     fi
+}
+
+# ============================================================================
+# Documentation Staleness Check (v6.75.0)
+# Checks if generated documentation is stale relative to HEAD
+# ============================================================================
+
+run_doc_staleness_check() {
+    local manifest="$TARGET_DIR/.loki/docs/docs-manifest.json"
+    if [ ! -f "$manifest" ]; then
+        log_info "Documentation: No docs generated yet (run 'loki docs generate')"
+        return 0
+    fi
+
+    local doc_sha
+    doc_sha=$(python3 -c "import json; print(json.load(open('$manifest')).get('git_sha', ''))" 2>/dev/null)
+    if [ -z "$doc_sha" ]; then
+        return 0
+    fi
+
+    local commits_behind
+    commits_behind=$(git -C "${TARGET_DIR:-.}" rev-list --count "$doc_sha..HEAD" 2>/dev/null || echo "0")
+
+    if [ "$commits_behind" -gt 10 ]; then
+        log_warn "Documentation is $commits_behind commits behind. Consider running 'loki docs update'."
+        # Emit DOCS_NEEDED signal for the parallel docs worktree
+        mkdir -p "$TARGET_DIR/.loki/signals"
+        touch "$TARGET_DIR/.loki/signals/DOCS_NEEDED"
+    else
+        log_info "Documentation: up to date ($commits_behind commits since last update)"
+    fi
+}
+
+# ============================================================================
+# Documentation Quality Gate - Gate 11 (v6.75.0)
+# Checks README, documentation freshness, and package API docs
+# ============================================================================
+
+run_doc_quality_gate() {
+    local project_dir="${1:-${TARGET_DIR:-.}}"
+    local score=100
+    local issues=()
+
+    # Check 1: README.md exists
+    if [ ! -f "$project_dir/README.md" ] || [ ! -s "$project_dir/README.md" ]; then
+        score=$((score - 20))
+        issues+=("README.md missing or empty")
+    fi
+
+    # Check 2: Documentation freshness
+    local manifest="$project_dir/.loki/docs/docs-manifest.json"
+    if [ -f "$manifest" ]; then
+        local doc_sha
+        doc_sha=$(python3 -c "import json; print(json.load(open('$manifest')).get('git_sha', ''))" 2>/dev/null)
+        if [ -n "$doc_sha" ]; then
+            local behind
+            behind=$(git -C "$project_dir" rev-list --count "$doc_sha..HEAD" 2>/dev/null || echo "0")
+            if [ "$behind" -gt 10 ]; then
+                score=$((score - 15))
+                issues+=("Documentation is $behind commits behind HEAD")
+            fi
+        fi
+    else
+        score=$((score - 10))
+        issues+=("No generated documentation found (run 'loki docs generate')")
+    fi
+
+    # Check 3: Package documentation (for npm/pip packages)
+    if [ -f "$project_dir/package.json" ] || [ -f "$project_dir/setup.py" ] || [ -f "$project_dir/pyproject.toml" ]; then
+        if [ ! -f "$project_dir/.loki/docs/API.md" ]; then
+            score=$((score - 15))
+            issues+=("Package detected but no API documentation generated")
+        fi
+    fi
+
+    # Report
+    if [ ${#issues[@]} -gt 0 ]; then
+        log_warn "Documentation Gate: Score $score/100"
+        for issue in "${issues[@]}"; do
+            log_warn "  - $issue"
+        done
+    else
+        log_info "Documentation Gate: PASS (Score $score/100)"
+    fi
+
+    # Gate passes if score >= 70
+    [ "$score" -ge 70 ]
 }
 
 # ============================================================================
@@ -9980,6 +10068,22 @@ if __name__ == "__main__":
                         gate_failures="${gate_failures}code_review,"
                         log_warn "Code review BLOCKED ($cr_count consecutive) - Critical/High findings"
                     fi
+                fi
+            fi
+            # Documentation staleness check (v6.75.0)
+            if [ "$ITERATION_COUNT" -gt 0 ]; then
+                run_doc_staleness_check
+            fi
+            # Documentation quality gate - Gate 11 (v6.75.0)
+            if [ "${LOKI_GATE_DOC_COVERAGE:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: documentation coverage..."
+                if run_doc_quality_gate; then
+                    clear_gate_failure "doc_coverage"
+                else
+                    local dc_count
+                    dc_count=$(track_gate_failure "doc_coverage")
+                    gate_failures="${gate_failures}doc_coverage,"
+                    log_warn "Documentation coverage gate: Score below threshold ($dc_count consecutive)"
                 fi
             fi
             # Store gate failures for prompt injection

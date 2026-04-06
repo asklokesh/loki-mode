@@ -29,6 +29,7 @@
 | Multi-provider (Codex, Gemini) | `providers.md` |
 | OpenSpec delta context, brownfield modifications | `openspec-integration.md` |
 | MiroFish market validation, `--mirofish` flag | `mirofish-integration.md` |
+| Writing/updating documentation, `loki docs` | `documentation.md` |
 | Legacy healing, modernization, archaeology | `healing.md` |
 | Plan deepening, knowledge extraction | `compound-learning.md` |
 
@@ -126,6 +127,14 @@
 - Sentiment-aware feature prioritization
 - Risk-driven task ordering
 - Advisory-only (never gates RARV or Completion Council)
+
+### documentation.md
+**When:** Writing/updating documentation, `loki docs` commands, Repowise MCP available
+- Documentation types (README, ARCHITECTURE, API, DECISIONS, etc.)
+- Model selection for doc generation (Sonnet/Haiku/Opus)
+- Repowise MCP integration for codebase intelligence
+- Documentation quality criteria and prompts
+- Fallback to native git analysis when Repowise unavailable
 
 ### compound-learning.md (v5.30.0)
 **When:** After architecture phase (deepen plan), after verification (extract learnings)

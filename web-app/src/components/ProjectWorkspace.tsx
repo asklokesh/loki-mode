@@ -236,7 +236,7 @@ function flattenFiles(nodes: FileNode[], prefix = ''): { path: string; name: str
   return result;
 }
 
-type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard' | 'deploy' | 'git' | 'cicd' | 'insights';
+type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard' | 'deploy' | 'git' | 'cicd' | 'insights' | 'docs';
 
 function SecretsPanel() {
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -409,6 +409,195 @@ function SecretsPanel() {
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DocsPanel({ sessionId }: { sessionId: string }) {
+  const [status, setStatus] = useState<{
+    has_docs: boolean;
+    coverage_pct: number;
+    doc_files: string[];
+    commits_behind: number;
+    last_generated: string | null;
+  } | null>(null);
+  const [files, setFiles] = useState<{ name: string; size: number; generated_at: string }[]>([]);
+  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  const [docContent, setDocContent] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const data = await api.getDocsStatus(sessionId);
+      setStatus(data);
+      if (data.has_docs) {
+        const filesData = await api.getDocFiles(sessionId);
+        setFiles(filesData.files);
+      }
+    } catch {
+      // ignore
+    }
+    setLoading(false);
+  }, [sessionId]);
+
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setError(null);
+    try {
+      await api.generateDocs(sessionId);
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const data = await api.getDocsStatus(sessionId);
+          if (data.has_docs) {
+            setStatus(data);
+            const filesData = await api.getDocFiles(sessionId);
+            setFiles(filesData.files);
+            setGenerating(false);
+            clearInterval(poll);
+          }
+        } catch {
+          // keep polling
+        }
+      }, 3000);
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(poll);
+        setGenerating(false);
+      }, 300000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start doc generation');
+      setGenerating(false);
+    }
+  };
+
+  const handleViewDoc = async (filename: string) => {
+    try {
+      const content = await api.getDocFileContent(sessionId, filename);
+      setSelectedDoc(filename);
+      setDocContent(content);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load doc file');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 space-y-4">
+        <Skeleton variant="text" width="180px" height="16px" />
+        <Skeleton variant="block" width="100%" height="60px" />
+      </div>
+    );
+  }
+
+  if (selectedDoc) {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-hover">
+          <button
+            onClick={() => { setSelectedDoc(null); setDocContent(''); }}
+            className="text-xs text-muted hover:text-ink flex items-center gap-1"
+          >
+            <PreviewBack size={14} />
+            Back to docs
+          </button>
+          <span className="text-xs font-mono text-ink">{selectedDoc}</span>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          <pre className="text-sm text-ink whitespace-pre-wrap font-mono leading-relaxed">{docContent}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-6 overflow-y-auto">
+        <h3 className="text-h3 font-heading text-ink mb-2">Documentation</h3>
+
+        {error && (
+          <div className="px-4 py-3 rounded-btn border border-error/30 bg-error/5 mb-4">
+            <p className="text-xs text-error">{error}</p>
+          </div>
+        )}
+
+        {status?.has_docs && status.coverage_pct > 0 && (
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Coverage:</span>
+              <div className="w-32 h-2 bg-border rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all"
+                  style={{ width: `${Math.min(100, status.coverage_pct)}%` }}
+                />
+              </div>
+              <span className="text-xs font-mono text-ink">{status.coverage_pct}%</span>
+            </div>
+            {status.commits_behind > 0 && (
+              <span className="text-xs text-warning">
+                {status.commits_behind} commit{status.commits_behind !== 1 ? 's' : ''} behind
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2 mb-6">
+          {!status?.has_docs ? (
+            <Button
+              onClick={handleGenerate}
+              disabled={generating}
+              size="sm"
+            >
+              {generating ? 'Generating...' : 'Generate Documentation'}
+            </Button>
+          ) : (
+            <Button
+              onClick={handleGenerate}
+              disabled={generating}
+              size="sm"
+              variant="secondary"
+            >
+              <RefreshCw size={14} className={generating ? 'animate-spin' : ''} />
+              {generating ? 'Updating...' : 'Update Docs'}
+            </Button>
+          )}
+        </div>
+
+        {files.length > 0 ? (
+          <div className="space-y-1">
+            {files.map(f => (
+              <button
+                key={f.name}
+                onClick={() => handleViewDoc(f.name)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-btn hover:bg-hover text-left transition-colors group"
+              >
+                <FileText size={14} className="text-muted group-hover:text-ink flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-ink font-mono truncate block">{f.name}</span>
+                  <span className="text-xs text-muted">
+                    {f.size < 1024 ? `${f.size} B` : `${(f.size / 1024).toFixed(1)} KB`}
+                  </span>
+                </div>
+                <span className="text-xs text-muted opacity-0 group-hover:opacity-100">View</span>
+              </button>
+            ))}
+          </div>
+        ) : !status?.has_docs ? (
+          <p className="text-sm text-muted">
+            No documentation generated yet. Click "Generate Documentation" to create docs for this project.
+          </p>
+        ) : null}
+
+        {status?.last_generated && (
+          <p className="text-xs text-muted mt-4">
+            Last generated: {new Date(status.last_generated).toLocaleString()}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1205,6 +1394,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     { id: 'sidebar', label: 'Toggle File Tree', category: 'setting' as const, icon: PanelLeftClose, action: () => setSidebarVisible(v => !v) },
     { id: 'preview-changes', label: 'Preview Pending Changes', category: 'command' as const, icon: GitBranch, action: () => handlePreviewChanges() },
     { id: 'insights', label: 'Build Insights', category: 'command' as const, icon: BarChart3, action: () => setActiveWorkspaceTab('insights') },
+    { id: 'docs', label: 'Documentation', category: 'command' as const, icon: BookOpen, action: () => setActiveWorkspaceTab('docs') },
     { id: 'nl-search', label: 'Natural Language Search', category: 'command' as const, icon: SearchIcon, action: () => setShowNLSearch(true) },
   ], [setActiveWorkspaceTab, toggleZenMode, handlePreviewChanges]);
 
@@ -1488,6 +1678,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                       { id: 'git' as const, label: 'Git', icon: GitBranch },
                       { id: 'cicd' as const, label: 'CI/CD', icon: CICDIcon },
                       { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
+                      { id: 'docs' as const, label: 'Docs', icon: BookOpen },
                     ]).map(tab => (
                       <button
                         key={tab.id}
@@ -2085,6 +2276,11 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                     {activeWorkspaceTab === 'cicd' && (
                       <div className="h-full overflow-y-auto p-4">
                         <CICDPanelLazy sessionId={session.id} />
+                      </div>
+                    )}
+                    {activeWorkspaceTab === 'docs' && (
+                      <div className="h-full overflow-y-auto p-4">
+                        <DocsPanel sessionId={sessionData.id} />
                       </div>
                     )}
                     {activeWorkspaceTab === 'insights' && (

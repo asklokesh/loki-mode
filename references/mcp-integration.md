@@ -93,6 +93,60 @@ Model Context Protocol (MCP) servers extend Claude Code's capabilities with spec
 
 ---
 
+### 3. Repowise - Codebase Intelligence (Recommended)
+
+**Purpose:** Deep codebase intelligence through 8 MCP tools. When installed, Loki Mode automatically uses its tools for richer context during builds.
+
+**When to use:**
+- First encounter with an unfamiliar codebase
+- Before modifying files with many dependents
+- Architecture documentation and decision history
+- Semantic code search (natural language)
+
+**Setup:**
+```bash
+pip install repowise
+repowise init .  # One-time indexing (~25 min)
+```
+
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "repowise": {
+      "command": "repowise",
+      "args": ["mcp", "--path", "."]
+    }
+  }
+}
+```
+
+**Tools provided:**
+
+| Tool | Purpose | Use Case |
+|------|---------|----------|
+| `get_overview()` | Architecture summary | First call on unfamiliar codebase |
+| `get_context(targets)` | Docs, ownership, decisions | Before modifying files |
+| `get_risk(targets)` | Hotspots, dependents, co-changes | Before modifying files |
+| `get_why(query)` | Decision history | Before architectural changes |
+| `search_codebase(query)` | Natural language code search | Finding code semantically |
+| `get_dependency_path(from, to)` | Trace connections between files | Dependency analysis |
+| `get_dead_code()` | Find unreachable code | Cleanup and refactoring |
+| `get_architecture_diagram(module)` | Generate Mermaid diagrams | Documentation generation |
+
+**SDLC Phases:** Bootstrap (overview), Development (context/risk), Documentation (diagrams)
+
+**Integration with Loki Mode:**
+When Repowise MCP is detected (via `.claude/mcp.json`), Loki Mode automatically:
+1. Calls `get_overview()` during the BOOTSTRAP phase
+2. Calls `get_risk()` before modifying hotspot files
+3. Calls `get_context()` when loading relevant file context
+4. Uses `search_codebase()` instead of manual grep for semantic code search
+
+See `skills/documentation.md` for documentation generation using Repowise.
+
+---
+
 ## MCP Configuration Location
 
 Claude Code reads MCP configuration from:
@@ -114,6 +168,10 @@ Example full configuration:
       "env": {
         "PARALLEL_API_KEY": "${PARALLEL_API_KEY}"
       }
+    },
+    "repowise": {
+      "command": "repowise",
+      "args": ["mcp", "--path", "."]
     }
   }
 }
@@ -184,3 +242,4 @@ When evaluating new MCP servers for Loki Mode integration, assess:
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [Parallel AI Documentation](https://docs.parallel.ai/)
 - [Playwright MCP](https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-playwright)
+- [Repowise](https://repowise.dev/)
