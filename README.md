@@ -7,7 +7,7 @@
 **Describe what you want. Get production-ready code.**
 
 [![npm version](https://img.shields.io/npm/v/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=553DE9)](https://www.npmjs.com/package/loki-mode)
-[![npm downloads](https://img.shields.io/npm/dw/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=1FC5A8)](https://www.npmjs.com/package/loki-mode)
+[![npm downloads](https://img.shields.io/npm/dt/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=1FC5A8&label=downloads)](https://www.npmjs.com/package/loki-mode)
 [![GitHub stars](https://img.shields.io/github/stars/asklokesh/loki-mode?style=for-the-badge&logo=github&color=553DE9)](https://github.com/asklokesh/loki-mode)
 [![Docker Pulls](https://img.shields.io/docker/pulls/asklokesh/loki-mode?style=for-the-badge&logo=docker&logoColor=white&color=2F71E3)](https://hub.docker.com/r/asklokesh/loki-mode)
 [![License](https://img.shields.io/badge/License-BUSL--1.1-36342E?style=for-the-badge)](LICENSE)

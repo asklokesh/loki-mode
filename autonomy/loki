@@ -18480,21 +18480,27 @@ _docs_invoke_provider() {
 
     local result=""
     local exit_code=0
+    local timeout_cmd="timeout"
+    command -v gtimeout &>/dev/null && timeout_cmd="gtimeout"
+    command -v $timeout_cmd &>/dev/null || timeout_cmd=""
+    local t_prefix=""
+    [ -n "$timeout_cmd" ] && t_prefix="$timeout_cmd 120"
+
     case "$provider" in
         claude)
-            result=$(claude -p "$prompt" 2>/dev/null) || exit_code=$?
+            result=$($t_prefix claude -p "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         codex)
-            result=$(codex exec --full-auto "$prompt" 2>/dev/null) || exit_code=$?
+            result=$($t_prefix codex exec --full-auto "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         gemini)
-            result=$(gemini --approval-mode=yolo "$prompt" 2>/dev/null) || exit_code=$?
+            result=$($t_prefix gemini --approval-mode=yolo "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         cline)
-            result=$(cline -y "$prompt" 2>/dev/null) || exit_code=$?
+            result=$($t_prefix cline -y "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         aider)
-            result=$(aider --message "$prompt" --yes-always --no-auto-commits < /dev/null 2>/dev/null) || exit_code=$?
+            result=$($t_prefix aider --message "$prompt" --yes-always --no-auto-commits < /dev/null 2>/dev/null) || exit_code=$?
             ;;
         *)
             log_error "Unknown provider: $provider"

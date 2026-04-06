@@ -5733,6 +5733,7 @@ run_doc_staleness_check() {
 # ============================================================================
 
 run_doc_quality_gate() {
+    # shellcheck disable=SC2120
     local project_dir="${1:-${TARGET_DIR:-.}}"
     local score=100
     local issues=()
