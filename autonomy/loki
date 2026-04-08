@@ -908,6 +908,10 @@ cmd_start() {
         # Export for run.sh to access
         export OPENSPEC_CHANGE_PATH="$openspec_change_path"
 
+        # NOTE: Do NOT delete the sentinel here. On crash-restart of the same
+        # change, the sentinel preserves progress (run.sh skips repopulation).
+        # run.sh's scoped comparison handles change-switching correctly.
+
         # Ensure .loki directory exists for adapter output
         mkdir -p "$LOKI_DIR"
 
@@ -939,6 +943,11 @@ cmd_start() {
             echo -e "${CYAN}Using normalized OpenSpec PRD: $prd_file${NC}"
         fi
     fi
+
+    # When --openspec is not provided, leave existing OpenSpec state untouched.
+    # OpenSpec tasks in the queue are only purged when --openspec is passed with
+    # a different change or different content (handled by run.sh sentinel logic).
+    # Not passing --openspec does not imply "undo previous openspec work."
 
     # MiroFish market validation (optional, non-blocking)
     if [[ -z "$mirofish_url" ]] && [[ -n "${LOKI_MIROFISH_URL:-}" ]] && [[ "$mirofish_disabled" != "true" ]]; then

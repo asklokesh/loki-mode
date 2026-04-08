@@ -76,7 +76,7 @@ Tasks are generated from OpenSpec `tasks.md` and loaded into `.loki/queue/pendin
 
 ```json
 {
-  "id": "openspec-1.3",
+  "id": "openspec-session-hardening-1.3",
   "title": "Implement session timeout change",
   "description": "[OpenSpec] Authentication: Implement session timeout change",
   "priority": "medium",
@@ -88,6 +88,38 @@ Tasks are generated from OpenSpec `tasks.md` and loaded into `.loki/queue/pendin
   }
 }
 ```
+
+---
+
+## Queue State Management
+
+The sentinel file `.loki/queue/.openspec-populated` tracks which change was loaded and its content hash to prevent stale task contamination across runs.
+
+### Sentinel Format
+
+```
+/path/to/openspec/change       <- line 1: change directory path
+a3f8b2c1d4e5f6789012345678    <- line 2: md5 hash of openspec-tasks.json
+```
+
+### State Transitions
+
+| Scenario | Sentinel | Action |
+|----------|----------|--------|
+| First run with `--openspec A` | Missing | Populate queue, write sentinel |
+| Crash-restart, same `--openspec A` | Path + hash match | Skip (progress preserved) |
+| Switch to `--openspec B` | Path mismatch | Purge all queues, repopulate |
+| Edit tasks.md, re-run same `--openspec A` | Hash mismatch | Purge all queues, repopulate |
+| Run without `--openspec` | Untouched | No action (state left intact) |
+
+### Purge Behavior
+
+When a change switch or content edit is detected, OpenSpec tasks (`source: "openspec"`) are purged from all three queue files:
+- `.loki/queue/pending.json`
+- `.loki/queue/completed.json`
+- `.loki/queue/in-progress.json`
+
+Non-OpenSpec tasks (prd, bmad, mirofish) are preserved during purge.
 
 ---
 
@@ -143,9 +175,9 @@ The verification map tracks each scenario with `"verified": false` initially. Af
 
 ```json
 {
-  "openspec-1.1": { "file": "tasks.md", "line": 3, "group": "Authentication" },
-  "openspec-1.2": { "file": "tasks.md", "line": 4, "group": "Authentication" },
-  "openspec-2.1": { "file": "tasks.md", "line": 7, "group": "Dashboard" }
+  "openspec-session-hardening-1.1": { "file": "tasks.md", "line": 3, "group": "Authentication" },
+  "openspec-session-hardening-1.2": { "file": "tasks.md", "line": 4, "group": "Authentication" },
+  "openspec-session-hardening-2.1": { "file": "tasks.md", "line": 7, "group": "Dashboard" }
 }
 ```
 
@@ -159,7 +191,7 @@ The adapter classifies complexity based on task count, spec file count, and desi
 
 | Level | Condition | Agent Strategy |
 |-------|-----------|----------------|
-| enterprise | 20+ tasks OR 10+ spec files | Full agent team |
+| enterprise | 21+ tasks OR 11+ spec files | Full agent team |
 | complex | 11-20 tasks OR 6-10 spec files | Task tool parallelization |
 | standard | 4-10 tasks OR 2-5 spec files OR design.md present | Parallel where possible |
 | simple | 1-3 tasks, 1 spec file, no design | Single agent, sequential |

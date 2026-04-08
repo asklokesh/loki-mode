@@ -8821,18 +8821,66 @@ bmad_write_back() {
 # OpenSpec Task Queue Population
 #===============================================================================
 
+# Purge all tasks with source=="openspec" from a queue JSON file.
+# Usage: purge_openspec_from_queue <queue_file>
+# Returns: 0 on success (or file doesn't exist), 1 on error
+purge_openspec_from_queue() {
+    local queue_file="$1"
+    [[ -f "$queue_file" ]] || return 0
+
+    local tmp_file="${queue_file}.tmp"
+    local err_file="${queue_file}.err"
+    if jq '[.[] | select(.source != "openspec")]' "$queue_file" > "$tmp_file" 2>"$err_file"; then
+        local before after
+        before=$(jq 'length' "$queue_file" 2>/dev/null || echo 0)
+        after=$(jq 'length' "$tmp_file" 2>/dev/null || echo 0)
+        mv "$tmp_file" "$queue_file"
+        rm -f "$err_file"
+        if [[ "$before" -ne "$after" ]]; then
+            log_info "Purged $((before - after)) OpenSpec tasks from $(basename "$queue_file")"
+        fi
+        return 0
+    else
+        log_warn "Failed to purge OpenSpec tasks from $(basename "$queue_file"): $(cat "$err_file" 2>/dev/null)"
+        rm -f "$tmp_file" "$err_file"
+        return 1
+    fi
+}
+
 # Populate the task queue from OpenSpec task artifacts
 # Only runs once -- skips if queue was already populated from OpenSpec
 populate_openspec_queue() {
+    # If --openspec was not passed this session, leave existing state untouched
+    if [[ -z "${OPENSPEC_CHANGE_PATH:-}" ]]; then
+        return 0
+    fi
+
     # Skip if no OpenSpec tasks file
     if [[ ! -f ".loki/openspec-tasks.json" ]]; then
         return 0
     fi
 
-    # Skip if already populated (marker file)
+    # Skip if already populated for the SAME change with SAME content
+    # Sentinel stores: line 1 = change path, line 2 = content hash
     if [[ -f ".loki/queue/.openspec-populated" ]]; then
-        log_info "OpenSpec queue already populated, skipping"
-        return 0
+        local stored_change stored_hash current_hash
+        stored_change="$(sed -n '1p' ".loki/queue/.openspec-populated")"
+        stored_hash="$(sed -n '2p' ".loki/queue/.openspec-populated")"
+        current_hash="$(md5sum ".loki/openspec-tasks.json" 2>/dev/null | cut -d' ' -f1 || md5 -q ".loki/openspec-tasks.json" 2>/dev/null || echo "none")"
+        if [[ "$stored_change" == "$OPENSPEC_CHANGE_PATH" ]] && [[ "$stored_hash" == "$current_hash" ]]; then
+            log_info "OpenSpec queue already populated for this change (path and content match), skipping"
+            return 0
+        else
+            if [[ "$stored_change" != "$OPENSPEC_CHANGE_PATH" ]]; then
+                log_info "OpenSpec change switched (was: $stored_change, now: $OPENSPEC_CHANGE_PATH) -- purging stale tasks"
+            else
+                log_info "OpenSpec tasks.md content changed (hash mismatch) -- purging and reloading"
+            fi
+            # Purge stale OpenSpec tasks from all queue files before re-populating
+            purge_openspec_from_queue ".loki/queue/pending.json"
+            purge_openspec_from_queue ".loki/queue/completed.json"
+            purge_openspec_from_queue ".loki/queue/in-progress.json"
+        fi
     fi
 
     log_step "Populating task queue from OpenSpec tasks..."
@@ -8905,8 +8953,11 @@ OPENSPEC_QUEUE_EOF
         return 0
     fi
 
-    # Mark as populated so we don't re-add on restart
-    touch ".loki/queue/.openspec-populated"
+    # Mark as populated for this specific change so we don't re-add on restart
+    # Sentinel stores: line 1 = change path, line 2 = content hash of tasks file
+    local content_hash
+    content_hash="$(md5sum ".loki/openspec-tasks.json" 2>/dev/null | cut -d' ' -f1 || md5 -q ".loki/openspec-tasks.json" 2>/dev/null || echo "none")"
+    printf '%s\n%s\n' "$OPENSPEC_CHANGE_PATH" "$content_hash" > ".loki/queue/.openspec-populated"
     log_info "OpenSpec queue population complete"
 }
 

@@ -163,16 +163,19 @@ class TestTasksParser:
         assert len(groups) >= 3, f"Expected at least 3 groups, got {groups}"
 
     def test_task_ids_hierarchical(self, output_dir):
-        """Task IDs should be in openspec-N.M format."""
+        """Task IDs should be in openspec-{change_name}-N.M format."""
         rc, stdout, _ = run_adapter(FIXTURES_DIR / "simple-feature", output_dir, "--json")
         assert rc == 0
         data = json.loads(stdout)
         for task in data["tasks"]:
             assert task["id"].startswith("openspec-"), f"ID {task['id']} should start with openspec-"
-            # Should match openspec-N.M pattern
-            suffix = task["id"].replace("openspec-", "")
-            parts = suffix.split(".")
-            assert len(parts) == 2, f"ID suffix {suffix} should be N.M"
+            # Should match openspec-{change_name}-N.M pattern
+            prefix = "openspec-simple-feature-"
+            assert task["id"].startswith(prefix), \
+                f"ID {task['id']} should start with {prefix}"
+            num_part = task["id"][len(prefix):]  # e.g., "1.1"
+            parts = num_part.split(".")
+            assert len(parts) == 2, f"Numeric suffix {num_part} should be N.M"
             assert parts[0].isdigit() and parts[1].isdigit()
 
     def test_malformed_tasks_no_checkboxes(self, output_dir):
