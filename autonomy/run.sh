@@ -9740,7 +9740,15 @@ def process_stream():
                         elif tool == "Bash":
                             tool_desc = tool_input.get("description", tool_input.get("command", "")[:60])
                         elif tool == "Grep":
-                            tool_desc = f"pattern: {tool_input.get('pattern', '')}"
+                            # NOTE: This Python block runs as the argument of
+                            # bash `python3 -u -c`, wrapped in a bash single-
+                            # quoted string. Any single-quoted Python literal
+                            # here would close bash SQ mid-code and Python
+                            # would receive `tool_input.get(pattern, )`, a
+                            # bare identifier instead of a string literal,
+                            # crashing with NameError. Use double quotes and
+                            # string concatenation to stay SQ-safe.
+                            tool_desc = "pattern: " + tool_input.get("pattern", "")
                         elif tool == "Glob":
                             tool_desc = tool_input.get("pattern", "")
 

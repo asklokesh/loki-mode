@@ -350,13 +350,46 @@ test_source "BUG-GH-011: gh status has space before version" \
     'installed \$\(gh --version'
 
 # -------------------------------------------
+# BUG-RUN-004: Claude stream processor Grep branch used a single-quoted
+# Python literal inside a bash single-quoted heredoc (python3 -u -c '...'),
+# silently breaking bash SQ and making Python see a bare identifier instead
+# of the "pattern" string, crashing with NameError on every Grep tool call.
+# Fix: use double quotes and concatenation, no single-quoted literals in
+# the Python block.
+# -------------------------------------------
+RUN_SH="$SCRIPT_DIR/../autonomy/run.sh"
+
+((TOTAL++))
+if grep -qE 'tool_input\.get\("pattern", ""\)' "$RUN_SH"; then
+    log_pass "BUG-RUN-004: Grep branch reads pattern with double quotes"
+else
+    log_fail "BUG-RUN-004: Grep branch reads pattern with double quotes" \
+        "expected double-quoted .get(\"pattern\", \"\")"
+fi
+
+((TOTAL++))
+if grep -qE "tool_input\.get\('pattern'" "$RUN_SH"; then
+    log_fail "BUG-RUN-004: no single-quoted 'pattern' literal in run.sh" \
+        "single-quoted literal reintroduced -- breaks bash SQ in python3 -u -c"
+else
+    log_pass "BUG-RUN-004: no single-quoted 'pattern' literal in run.sh"
+fi
+
+# -------------------------------------------
 # Syntax validation
 # -------------------------------------------
 ((TOTAL++))
 if bash -n "$LOKI" 2>/dev/null; then
-    log_pass "bash -n syntax validation passes"
+    log_pass "bash -n syntax validation passes (loki)"
 else
-    log_fail "bash -n syntax validation" "script has syntax errors"
+    log_fail "bash -n syntax validation (loki)" "script has syntax errors"
+fi
+
+((TOTAL++))
+if bash -n "$RUN_SH" 2>/dev/null; then
+    log_pass "bash -n syntax validation passes (run.sh)"
+else
+    log_fail "bash -n syntax validation (run.sh)" "script has syntax errors"
 fi
 
 # -------------------------------------------
