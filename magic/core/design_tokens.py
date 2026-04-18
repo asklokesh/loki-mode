@@ -28,20 +28,39 @@ _SPACING_BUCKETS = [
 ]
 
 # Files/globs we scan during codebase extraction.
+# Generic patterns so this works for any frontend project layout,
+# not just loki-mode's (web-app/, dashboard-ui/).
 _CSS_GLOBS = [
-    "web-app/src/index.css",
-    "web-app/src/**/*.css",
-    "dashboard-ui/**/*.css",
-    "dashboard-ui/loki-unified-styles.js",
-    "dashboard/static/**/*.css",
+    "**/*.css",
+    "**/*.scss",
+    "**/loki-unified-styles.js",
 ]
 
 _TSX_GLOBS = [
-    "web-app/src/**/*.tsx",
-    "web-app/src/**/*.jsx",
-    "dashboard-ui/**/*.tsx",
-    "dashboard-ui/**/*.jsx",
+    "**/*.tsx",
+    "**/*.jsx",
 ]
+
+# Paths to skip during extraction (build outputs, deps, VCS, caches).
+_EXCLUDE_PARTS = {
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "out",
+    "coverage",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".cache",
+    ".parcel-cache",
+    ".turbo",
+    ".vercel",
+    ".svelte-kit",
+    "target",
+}
 
 
 class DesignTokens:
@@ -354,11 +373,26 @@ class DesignTokens:
 
     # --------------------------------------------------------------- helpers
     def _glob(self, pattern: str):
-        """Return matching files inside the project dir for a glob pattern."""
+        """Return matching files inside the project dir for a glob pattern.
+
+        Skips build outputs, dependency dirs, caches, and VCS metadata so
+        generic patterns like ``**/*.tsx`` don't pull in vendored code.
+        """
         try:
-            return sorted(self.project_dir.glob(pattern))
+            matches = self.project_dir.glob(pattern)
         except (ValueError, OSError):
             return []
+        results = []
+        for path in matches:
+            try:
+                rel = path.relative_to(self.project_dir)
+            except ValueError:
+                rel = path
+            if any(part in _EXCLUDE_PARTS for part in rel.parts):
+                continue
+            results.append(path)
+        results.sort()
+        return results
 
     @staticmethod
     def _read(path: Path) -> str:

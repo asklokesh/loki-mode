@@ -163,20 +163,42 @@ def _extract_compound_name(sentence: str, keyword: str, default: str) -> str:
     # Look at 1-3 words before the keyword
     before = sentence[:idx].strip()
     tokens = re.findall(r"[A-Za-z]+", before)
-    # Filter out stop words
+    # Filter out stop words. Verb forms of intent markers ("includes",
+    # "contains", "built", etc.) are stops -- otherwise phrases like
+    # "dashboard includes navigation" produce "DashboardIncludesNavigation".
     stop = {
         "a", "an", "the", "with", "and", "or", "of", "for", "to", "in",
-        "add", "build", "create", "need", "include", "should", "have",
+        "on", "at", "by", "from", "into", "as",
+        "add", "adds", "added", "adding",
+        "build", "builds", "built", "building",
+        "create", "creates", "created", "creating",
+        "need", "needs", "needed", "needing",
+        "include", "includes", "included", "including",
+        "contain", "contains", "contained", "containing",
+        "have", "has", "had", "having",
+        "require", "requires", "required", "requiring",
+        "should", "must", "will", "can", "may",
         "our", "my", "their", "its", "this", "that", "these", "those",
         "new", "simple", "basic", "complex", "main", "primary", "user",
+        "also", "plus", "along",
     }
-    # Take last 2 non-stop tokens
+    # Another UI component keyword in the modifier slot means we're spanning
+    # two separate components (e.g. "navigation sidebar search bar" produces
+    # name "NavigationSidebarSearchBar"). Stop before that token.
+    other_component_keywords = {
+        k.replace(" ", "") for k in UI_COMPONENT_VOCAB.keys() if k != keyword
+    } | set(UI_COMPONENT_VOCAB.keys())
+    # Take last 1-2 non-stop, non-component tokens
     modifiers = []
     for tok in reversed(tokens):
-        if tok.lower() in stop:
+        tok_low = tok.lower()
+        if tok_low in stop:
             if modifiers:
                 break
             continue
+        if tok_low in other_component_keywords:
+            # Another distinct component name -- stop scanning modifiers.
+            break
         modifiers.append(tok)
         if len(modifiers) >= 2:
             break

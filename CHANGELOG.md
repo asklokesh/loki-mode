@@ -5,6 +5,61 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.77.0] - Claude Opus 4.7 + dynamic model catalog + magic extractor fixes
+
+Two areas of progress this release: (1) Claude Opus 4.7 becomes the default
+Opus-tier model with 1M context and adaptive thinking, and a single catalog
+file replaces hardcoded dated model IDs across providers. (2) Magic Modules
+extractors now work on arbitrary project layouts (not just loki-mode's) and
+the memory bridge's happy path works end-to-end against the real memory API.
+
+### Added
+- **Dynamic model catalog** (`providers/model_catalog.json`, `providers/models.sh`):
+  single source of truth for provider/tier -> model ID mapping. New releases
+  update one JSON file; every provider, doc, and dashboard picks it up.
+  Resolution order: `LOKI_<PROVIDER>_MODEL_<TIER>` env > `LOKI_<PROVIDER>_MODEL` >
+  catalog `latest_<tier>` entry.
+- **Opus 4.7 defaults** (`providers/claude.sh`): 1M context at standard pricing,
+  xhigh default effort, adaptive thinking. Claude CLI aliases `opus`/`sonnet`/
+  `haiku` always resolve to the latest model -- no dated suffixes in shell.
+- **Regression tests** (`tests/test_magic_extractors.py`): 10 unit tests covering
+  design token extraction on generic layouts, PRD compound-name rules, MCP
+  tool registration/callability, and the memory bridge store-then-recall path.
+
+### Fixed
+- **Design token extractor** (`magic/core/design_tokens.py`): previously only
+  scanned loki-mode-specific paths (`web-app/src/`, `dashboard-ui/`) and
+  returned 0 colors / 0 spacing for any other project. Now uses generic
+  `**/*.css`, `**/*.tsx`, etc. patterns with an exclusion list
+  (node_modules, dist, build, caches, VCS).
+- **PRD scanner compound names** (`magic/core/prd_scanner.py`): phrases like
+  "dashboard includes navigation" produced noisy compound names like
+  `DashboardIncludesNavigation`, and "navigation sidebar search bar" spanned
+  two unrelated components into `NavigationSidebarSearchBar`. Stop-word list
+  now covers verb forms (includes, contains, built, ...) and modifier
+  scanning stops at another UI component keyword.
+- **Memory bridge API mismatch** (`magic/core/memory_bridge.py`): previously
+  called `MemoryEngine(project_dir=...)` and `store_episode(content=..., tags=...)`
+  which do not exist. Now correctly uses `MemoryEngine(base_path=...)`,
+  constructs `EpisodeTrace` / `SemanticPattern` dataclasses, and calls
+  `retrieve_relevant(context=..., top_k=...)`.
+
+### Changed
+- `providers/cline.sh` and `providers/aider.sh` default model now resolves
+  from the catalog instead of a hardcoded dated ID.
+- `web-app/src/pages/SettingsPage.tsx` + `SystemSettingsPage.tsx`: default
+  Claude model is `claude-opus-4-7`; undated model IDs throughout.
+- `wiki/Providers.md`, `references/multi-provider.md`, `skills/production.md`,
+  `benchmarks/submission-template/metadata.yaml`: updated to Opus 4.7 and
+  Sonnet 4.6 references.
+
+### Verification
+- `python3 tests/test_magic_extractors.py` -- 10/10 PASS
+- `bash -n providers/{claude,cline,aider,models}.sh autonomy/run.sh` -- all clean
+- `bash -c 'source providers/models.sh; loki_latest_model claude planning'` -> `claude-opus-4-7`
+- Design token extraction on loki-mode itself: 69 colors, 19 spacing, 3 radii,
+  6 typography (previously 0/0 on any non-loki layout).
+
 ## [6.76.1] - Magic Modules embedded in RARV-C (autonomous, no CLI invocation needed)
 
 Magic Modules is now woven into the autonomous orchestrator. Users do not run

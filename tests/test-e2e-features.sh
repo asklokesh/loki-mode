@@ -407,12 +407,15 @@ echo ""
 # ===================================================================
 echo "--- Section 8: Provider Configs ---"
 
-echo "Test 8.1: Aider default model is current"
-default_model=$(grep -o 'LOKI_AIDER_MODEL:-[^}]*' "$PROJECT_DIR/autonomy/run.sh" | head -1 | sed 's/LOKI_AIDER_MODEL:-//')
-if [[ "$default_model" == "claude-sonnet-4-5-20250929" ]]; then
-    pass "aider default model is claude-sonnet-4-5-20250929"
+echo "Test 8.1: Aider default model reads from catalog"
+# Dynamic: resolves via providers/model_catalog.json (single source of truth).
+source "$PROJECT_DIR/providers/models.sh" 2>/dev/null || true
+expected=$(loki_latest_model aider development 2>/dev/null || echo "")
+source "$PROJECT_DIR/providers/aider.sh" 2>/dev/null || true
+if [[ -n "$expected" ]] && [[ "$AIDER_DEFAULT_MODEL" == "$expected" ]]; then
+    pass "aider default model resolves to catalog entry: $AIDER_DEFAULT_MODEL"
 else
-    fail "aider model" "got: $default_model"
+    fail "aider model" "catalog says $expected, got: $AIDER_DEFAULT_MODEL"
 fi
 
 echo "Test 8.2: No deprecated model references"

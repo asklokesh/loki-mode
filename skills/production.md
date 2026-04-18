@@ -226,7 +226,7 @@ def batch_code_review(files: list[str]) -> str:
         Request(
             custom_id=f"review-{i}-{file.replace('/', '-')}",
             params=MessageCreateParamsNonStreaming(
-                model="claude-sonnet-4-5",
+                model="claude-sonnet-4-6",
                 max_tokens=2048,
                 messages=[{
                     "role": "user",
@@ -275,7 +275,7 @@ requests = [
     Request(
         custom_id=f"review-{file}",
         params=MessageCreateParamsNonStreaming(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system=SHARED_SYSTEM,  # Identical across all requests
             messages=[{"role": "user", "content": f"Review: {code}"}]

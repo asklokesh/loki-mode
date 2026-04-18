@@ -1,0 +1,82 @@
+{
+  "_comment": "Canonical model catalog. Update this single file when a provider ships a new model. Providers/web-app/docs read from here.",
+  "schema_version": 1,
+  "updated": "2026-04-18",
+  "providers": {
+    "claude": {
+      "latest_planning": "claude-opus-4-7",
+      "latest_development": "claude-opus-4-7",
+      "latest_fast": "claude-sonnet-4-6",
+      "cli_aliases": {
+        "opus": "claude-opus-4-7",
+        "sonnet": "claude-sonnet-4-6",
+        "haiku": "claude-haiku-4-5"
+      },
+      "models": [
+        {
+          "id": "claude-opus-4-7",
+          "alias": "opus",
+          "tier": "planning",
+          "context_window": 1000000,
+          "max_output": 128000,
+          "notes": "Adaptive thinking, xhigh effort for agentic coding"
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "alias": "sonnet",
+          "tier": "development",
+          "context_window": 1000000,
+          "max_output": 64000
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "alias": "haiku",
+          "tier": "fast",
+          "context_window": 200000,
+          "max_output": 64000
+        }
+      ]
+    },
+    "codex": {
+      "latest_planning": "gpt-5.3-codex",
+      "latest_development": "gpt-5.3-codex",
+      "latest_fast": "gpt-5.3-codex",
+      "models": [
+        { "id": "gpt-5.3-codex", "tier": "planning" },
+        { "id": "o3", "tier": "planning" },
+        { "id": "o4-mini", "tier": "fast" }
+      ],
+      "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation"
+    },
+    "gemini": {
+      "latest_planning": "gemini-3-pro-preview",
+      "latest_development": "gemini-3-pro-preview",
+      "latest_fast": "gemini-3-flash-preview",
+      "models": [
+        { "id": "gemini-3-pro-preview", "tier": "planning", "context_window": 1000000 },
+        { "id": "gemini-3-flash-preview", "tier": "fast", "context_window": 1000000 }
+      ]
+    },
+    "cline": {
+      "latest_planning": "claude-opus-4-7",
+      "latest_development": "claude-opus-4-7",
+      "latest_fast": "claude-sonnet-4-6",
+      "models": [
+        { "id": "claude-opus-4-7", "tier": "planning" },
+        { "id": "claude-sonnet-4-6", "tier": "development" },
+        { "id": "gpt-4.1", "tier": "development" }
+      ]
+    },
+    "aider": {
+      "latest_planning": "claude-opus-4-7",
+      "latest_development": "claude-opus-4-7",
+      "latest_fast": "claude-sonnet-4-6",
+      "models": [
+        { "id": "claude-opus-4-7", "tier": "planning" },
+        { "id": "claude-sonnet-4-6", "tier": "development" },
+        { "id": "gpt-4.1", "tier": "development" },
+        { "id": "ollama_chat/deepseek-coder", "tier": "fast" }
+      ]
+    }
+  }
+}

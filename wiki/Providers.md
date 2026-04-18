@@ -34,9 +34,9 @@ claude login
 
 | Tier | Model | Use Case |
 |------|-------|----------|
-| **Planning** | claude-opus-4-5 | Architecture, system design |
-| **Development** | claude-sonnet-4-5 | Implementation, testing |
-| **Fast** | claude-haiku-4-5 | Simple tasks, monitoring |
+| **Planning** | claude-opus-4-7 | Architecture, system design (1M context, adaptive thinking) |
+| **Development** | claude-sonnet-4-6 | Implementation, testing (1M context) |
+| **Fast** | claude-haiku-4-5 | Simple tasks, monitoring (200K context) |
 
 ### Invocation
 
@@ -208,9 +208,9 @@ loki provider info claude
 # Output:
 # Provider: claude
 # Status: Full features
-# Model: claude-sonnet-4-5
-# Context: 200K tokens
-# Capabilities: Task tool, parallel, MCP
+# Model: claude-opus-4-7
+# Context: 1M tokens
+# Capabilities: Task tool, parallel, MCP, adaptive thinking
 ```
 
 ### Set Default Provider

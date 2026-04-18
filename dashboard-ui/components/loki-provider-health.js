@@ -101,7 +101,7 @@ export class LokiProviderHealth extends LokiElement {
     return [
       {
         name: 'claude', status: 'healthy', latency_ms: 245,
-        tokens_used: 125400, model: 'claude-opus-4-6',
+        tokens_used: 125400, model: 'claude-opus-4-7',
         api_version: 'v1', rate_limit: { remaining: 45, limit: 50 },
         cost_usd: 3.42,
       },

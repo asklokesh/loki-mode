@@ -93,9 +93,9 @@ const PROVIDERS: ProviderDef[] = [
   {
     id: 'claude',
     name: 'Claude',
-    description: 'Anthropic Claude Code -- full features',
-    models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-20250514'],
-    defaultModel: 'claude-sonnet-4-20250514',
+    description: 'Anthropic Claude Code -- full features (Opus 4.7 default, 1M context)',
+    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    defaultModel: 'claude-opus-4-7',
   },
   {
     id: 'codex',
@@ -115,15 +115,15 @@ const PROVIDERS: ProviderDef[] = [
     id: 'cline',
     name: 'Cline',
     description: 'VS Code extension -- sequential mode',
-    models: ['claude-sonnet-4-20250514', 'gpt-4.1'],
-    defaultModel: 'claude-sonnet-4-20250514',
+    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-4.1'],
+    defaultModel: 'claude-opus-4-7',
   },
   {
     id: 'aider',
     name: 'Aider',
     description: 'Terminal-based pair programming',
-    models: ['claude-sonnet-4-20250514', 'gpt-4.1', 'ollama_chat/deepseek-coder'],
-    defaultModel: 'claude-sonnet-4-20250514',
+    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-4.1', 'ollama_chat/deepseek-coder'],
+    defaultModel: 'claude-opus-4-7',
   },
 ];
 

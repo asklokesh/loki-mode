@@ -72,7 +72,7 @@ interface DataRetentionConfig {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PROVIDERS: ProviderConfig[] = [
-  { id: 'claude', name: 'Claude', apiKeySet: true, model: 'claude-sonnet-4-20250514', fallbackOrder: 1, enabled: true },
+  { id: 'claude', name: 'Claude', apiKeySet: true, model: 'claude-opus-4-7', fallbackOrder: 1, enabled: true },
   { id: 'codex', name: 'Codex', apiKeySet: false, model: 'gpt-5.3-codex', fallbackOrder: 2, enabled: true },
   { id: 'gemini', name: 'Gemini', apiKeySet: false, model: 'gemini-3-pro-medium', fallbackOrder: 3, enabled: false },
 ];

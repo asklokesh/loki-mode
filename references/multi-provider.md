@@ -57,15 +57,15 @@ PROVIDER_MAX_PARALLEL=10       # Maximum concurrent agents
 
 #### Model Configuration
 ```bash
-PROVIDER_MODEL_PLANNING="claude-opus-4-6-20260201"
-PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-5-20250929"
+PROVIDER_MODEL_PLANNING="claude-opus-4-7"
+PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-6"
 PROVIDER_MODEL_FAST="claude-haiku-4-5-20251001"
 ```
 
 #### Rate Limiting
 ```bash
-PROVIDER_RATE_LIMIT_RPM=50     # Requests per minute
-PROVIDER_CONTEXT_WINDOW=200000 # Max context tokens
+PROVIDER_RATE_LIMIT_RPM=50      # Requests per minute
+PROVIDER_CONTEXT_WINDOW=1000000 # Max context tokens (Opus 4.7: 1M at standard pricing)
 PROVIDER_MAX_OUTPUT_TOKENS=128000
 ```
 

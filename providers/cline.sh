@@ -51,7 +51,20 @@ PROVIDER_MAX_PARALLEL=1
 # Cline supports 12+ providers; model configured via LOKI_CLINE_MODEL env var
 # or `cline auth` one-time setup. Defaults are placeholders.
 # NOTE: Cline uses its own model routing, so full model strings are needed (not CLI aliases)
-CLINE_DEFAULT_MODEL="${LOKI_CLINE_MODEL:-${LOKI_MODEL_DEVELOPMENT:-claude-sonnet-4-5-20250929}}"
+# Cline default model -- reads from providers/model_catalog.json via models.sh when
+# available so new model releases only require updating that single catalog file.
+_cline_default_from_catalog() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    if [ -f "${script_dir}/models.sh" ]; then
+        # shellcheck source=./models.sh
+        source "${script_dir}/models.sh"
+        loki_latest_model cline development 2>/dev/null || echo "claude-opus-4-7"
+    else
+        echo "claude-opus-4-7"
+    fi
+}
+CLINE_DEFAULT_MODEL="${LOKI_CLINE_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$(_cline_default_from_catalog)}}"
 PROVIDER_MODEL_PLANNING="$CLINE_DEFAULT_MODEL"
 PROVIDER_MODEL_DEVELOPMENT="$CLINE_DEFAULT_MODEL"
 PROVIDER_MODEL_FAST="$CLINE_DEFAULT_MODEL"

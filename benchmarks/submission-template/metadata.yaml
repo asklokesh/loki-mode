@@ -5,7 +5,7 @@
 model:
   name: "loki-mode"
   version: "2.25.0"
-  base_model: "claude-opus-4-5-20251101"
+  base_model: "claude-opus-4-7"
   type: "multi-agent-system"
 
 # System Architecture
@@ -14,11 +14,11 @@ architecture:
   agents:
     - name: "Architect"
       role: "Analyze issue and design fix approach"
-      model: "claude-opus-4.5"
+      model: "claude-opus-4-7"
       timeout: 120
     - name: "Engineer"
       role: "Generate patch based on architect's analysis"
-      model: "claude-opus-4.5"
+      model: "claude-opus-4-7"
       timeout: 300
     - name: "QA"
       role: "Validate patch format"
@@ -26,7 +26,7 @@ architecture:
       timeout: 5
     - name: "Reviewer"
       role: "Analyze issues and suggest fixes"
-      model: "claude-opus-4.5"
+      model: "claude-opus-4-7"
       timeout: 60
 
   # RARV Cycle (Reason-Act-Reflect-Verify)
