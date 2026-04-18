@@ -1955,6 +1955,19 @@ Use loki_state_get and loki_task_queue_list to gather data."""
 
 
 # ============================================================
+# MAGIC MODULES TOOLS (spec-driven component generation)
+# ============================================================
+
+try:
+    from mcp.magic_tools import register_magic_tools
+    register_magic_tools(mcp)
+except Exception as _magic_err:
+    # Magic Modules is optional; log and continue if unavailable
+    import sys as _sys
+    print(f"[warn] magic_tools registration skipped: {_magic_err}", file=_sys.stderr)
+
+
+# ============================================================
 # MAIN
 # ============================================================
 

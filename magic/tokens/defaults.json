@@ -1,0 +1,59 @@
+{
+  "colors": {
+    "primary": "#553DE9",
+    "primary-hover": "#4832c7",
+    "primary-foreground": "#FFFFFF",
+    "success": "#1FC5A8",
+    "warning": "#D4A03C",
+    "danger": "#C45B5B",
+    "info": "#2F71E3",
+    "background": "#FFFEFB",
+    "card": "#FFFFFF",
+    "border": "#ECEAE3",
+    "muted": "#939084",
+    "ink": "#36342E",
+    "dark-background": "#0F0F11",
+    "dark-card": "#1A1A1E",
+    "dark-border": "#2A2A30",
+    "dark-ink": "#E8E6E3"
+  },
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "12px",
+    "lg": "16px",
+    "xl": "24px",
+    "2xl": "32px",
+    "3xl": "48px"
+  },
+  "typography": {
+    "font-sans": "Inter, -apple-system, sans-serif",
+    "font-mono": "JetBrains Mono, monospace",
+    "font-serif": "DM Serif Display, serif",
+    "size-xs": "11px",
+    "size-sm": "13px",
+    "size-base": "14px",
+    "size-lg": "16px",
+    "size-xl": "20px",
+    "size-h1": "28px"
+  },
+  "radii": {
+    "sm": "4px",
+    "md": "6px",
+    "lg": "8px",
+    "xl": "12px",
+    "full": "9999px"
+  },
+  "shadows": {
+    "sm": "0 1px 2px rgba(0,0,0,0.05)",
+    "md": "0 4px 6px -1px rgba(0,0,0,0.1)",
+    "lg": "0 8px 25px rgba(0,0,0,0.1)",
+    "focus-ring": "0 0 0 3px rgba(85,61,233,0.15)"
+  },
+  "motion": {
+    "duration-fast": "100ms",
+    "duration-normal": "200ms",
+    "duration-slow": "300ms",
+    "ease-default": "cubic-bezier(0.4, 0, 0.2, 1)"
+  }
+}

@@ -7743,6 +7743,126 @@ async def serve_spa(full_path: str) -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
+# Magic Modules API (/api/magic/*)
+# ---------------------------------------------------------------------------
+
+
+def _magic_registry_path() -> Path:
+    """Locate the magic registry for the active project (cwd-based)."""
+    return Path.cwd() / ".loki" / "magic" / "registry.json"
+
+
+@app.get("/api/magic/components")
+async def magic_list_components() -> JSONResponse:
+    """Return the current magic component registry."""
+    reg_path = _magic_registry_path()
+    if not reg_path.exists():
+        return JSONResponse(content={"count": 0, "components": []})
+    try:
+        data = json.loads(reg_path.read_text())
+        components = data.get("components", [])
+        return JSONResponse(content={"count": len(components), "components": components})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/magic/generate")
+async def magic_generate(req: dict = Body(...)) -> JSONResponse:
+    """Generate a new component via `loki magic generate`."""
+    name = (req.get("name") or "").strip()
+    description = (req.get("description") or "").strip()
+    target = (req.get("target") or "react").strip()
+    tags = req.get("tags") or []
+
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid component name"})
+    if target not in ("react", "webcomponent", "both"):
+        return JSONResponse(status_code=400, content={"error": "target must be react|webcomponent|both"})
+
+    loki_cli = _find_loki_cli()
+    if not loki_cli:
+        return JSONResponse(status_code=500, content={"error": "loki CLI not found"})
+
+    cmd = [str(loki_cli), "magic", "generate", name, "--target", target]
+    if description:
+        cmd.extend(["--description", description])
+    if tags:
+        cmd.extend(["--tags", ",".join(str(t) for t in tags)])
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(Path.cwd())),
+        )
+        if result.returncode == 0:
+            return JSONResponse(content={"success": True, "name": name, "stdout": result.stdout[-2000:]})
+        return JSONResponse(status_code=500, content={"error": result.stderr[-2000:] or "generation failed"})
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=504, content={"error": "generation timed out"})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/magic/components/{name}/spec")
+async def magic_get_spec(name: str) -> JSONResponse:
+    """Return the markdown spec for a component."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid component name"})
+    spec_path = Path.cwd() / ".loki" / "magic" / "specs" / f"{name}.md"
+    if not spec_path.exists():
+        return JSONResponse(status_code=404, content={"error": "spec not found"})
+    return JSONResponse(content={"name": name, "markdown": spec_path.read_text()})
+
+
+@app.post("/api/magic/components/{name}/debate")
+async def magic_run_debate(name: str, req: dict = Body(default={})) -> JSONResponse:
+    """Trigger a multi-persona debate on an existing component."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid component name"})
+    rounds = int(req.get("rounds", 3))
+    loki_cli = _find_loki_cli()
+    if not loki_cli:
+        return JSONResponse(status_code=500, content={"error": "loki CLI not found"})
+    cmd = [str(loki_cli), "magic", "debate", name, "--rounds", str(rounds)]
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=str(Path.cwd())),
+        )
+        return JSONResponse(content={"success": result.returncode == 0, "stdout": result.stdout[-4000:], "stderr": result.stderr[-2000:]})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.delete("/api/magic/components/{name}")
+async def magic_deprecate(name: str) -> JSONResponse:
+    """Deprecate a component (does not delete files)."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
+        return JSONResponse(status_code=400, content={"error": "Invalid component name"})
+    reg_path = _magic_registry_path()
+    if not reg_path.exists():
+        return JSONResponse(status_code=404, content={"error": "no registry"})
+    try:
+        data = json.loads(reg_path.read_text())
+        found = False
+        for comp in data.get("components", []):
+            if comp.get("name") == name:
+                comp["deprecated"] = True
+                found = True
+                break
+        if not found:
+            return JSONResponse(status_code=404, content={"error": "component not found"})
+        tmp = reg_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(reg_path)
+        return JSONResponse(content={"success": True, "name": name})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 

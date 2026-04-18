@@ -25,6 +25,7 @@ const AdminPage = lazy(() => import('./pages/AdminPage'));
 const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
 const MetricsPage = lazy(() => import('./pages/MetricsPage'));
 const ShowcasePage = lazy(() => import('./pages/ShowcasePage'));
+const MagicPage = lazy(() => import('./pages/MagicPage'));
 const ComparePage = lazy(() => import('./pages/ComparePage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/teams" element={<Suspense fallback={<LoadingFallback />}><TeamsPage /></Suspense>} />
           <Route path="/metrics" element={<Suspense fallback={<LoadingFallback />}><MetricsPage /></Suspense>} />
           <Route path="/showcase" element={<Suspense fallback={<LoadingFallback />}><ShowcasePage /></Suspense>} />
+          <Route path="/magic" element={<Suspense fallback={<LoadingFallback />}><MagicPage /></Suspense>} />
           <Route path="/compare" element={<Suspense fallback={<LoadingFallback />}><ComparePage /></Suspense>} />
           <Route path="/admin" element={<Suspense fallback={<LoadingFallback />}><AdminPage /></Suspense>} />
           <Route path="/admin/settings" element={<Suspense fallback={<LoadingFallback />}><SystemSettingsPage /></Suspense>} />

@@ -450,6 +450,7 @@ show_help() {
     echo "  onboard [path]   Analyze a repo and generate CLAUDE.md (structure, conventions, commands)"
     echo '  explain [path]   Analyze any codebase and explain its architecture in plain English'
     echo "  docs [cmd]       Generate, update, check project documentation"
+    echo "  magic [cmd]      Spec-driven component generation (MagicModules + MoMoA)"
     echo "  plan <PRD>       Dry-run PRD analysis: complexity, cost, and execution plan"
     echo "  ci [opts]        CI/CD quality gate integration (--pr, --report, --github-comment)"
     echo "  test [opts]      AI-powered test generation (--file, --dir, --changed, --dry-run)"
@@ -11212,6 +11213,9 @@ main() {
         docs)
             cmd_docs "$@"
             ;;
+        magic)
+            cmd_magic "$@"
+            ;;
         ci)
             cmd_ci "$@"
             ;;
@@ -19328,6 +19332,661 @@ _docs_human_size() {
     else
         echo "${bytes}B"
     fi
+}
+
+#===============================================================================
+# Magic: Spec-driven component generation (MagicModules + MoMoA)
+#
+# Storage layout:
+#   .loki/magic/specs/<name>.md                - Canonical component specs
+#   .loki/magic/generated/react/<name>.tsx     - React output
+#   .loki/magic/generated/webcomponent/<name>.js - Web Component output
+#   .loki/magic/generated/tests/<name>.test.tsx - Generated tests
+#   .loki/magic/registry.json                  - Component registry
+#===============================================================================
+
+_magic_help() {
+    echo -e "${BOLD}loki magic${NC} - Spec-driven component generation"
+    echo ""
+    echo "Usage: loki magic <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  generate <name>    Generate a component from a spec or screenshot"
+    echo "  update             Regenerate components from their specs"
+    echo "  list               List registered components"
+    echo "  remove <name>      Remove a component and its artifacts"
+    echo "  registry <op>      Registry operations (show|prune|stats)"
+    echo "  debate <name>      Run multi-persona debate on an existing component"
+    echo "  help               Show this help"
+    echo ""
+    echo "Options for 'generate':"
+    echo "  --from-spec PATH           Generate from existing spec file"
+    echo "  --from-screenshot PATH     Generate from a screenshot (vision-based)"
+    echo "  --target TARGET            Output target: react|webcomponent|both (default: react)"
+    echo "  --placement PATH           Where to place final component in project"
+    echo ""
+    echo "Options for 'update':"
+    echo "  --name NAME                Update a specific component (default: all)"
+    echo "  --force                    Overwrite local edits if any"
+    echo ""
+    echo "Options for 'list':"
+    echo "  --format FMT               Output format: json|table (default: table)"
+    echo ""
+    echo "Options for 'remove':"
+    echo "  --force                    Skip confirmation"
+    echo ""
+    echo "Options for 'debate':"
+    echo "  --rounds N                 Number of debate rounds (default: 3)"
+    echo ""
+    echo "Examples:"
+    echo "  loki magic generate LoginForm --from-spec specs/login.md"
+    echo "  loki magic generate Navbar --from-screenshot shots/nav.png --target both"
+    echo "  loki magic update --name LoginForm"
+    echo "  loki magic list --format json"
+    echo "  loki magic registry stats"
+    echo "  loki magic debate LoginForm --rounds 5"
+}
+
+_magic_ensure_dirs() {
+    mkdir -p ".loki/magic/specs" \
+             ".loki/magic/generated/react" \
+             ".loki/magic/generated/webcomponent" \
+             ".loki/magic/generated/tests" 2>/dev/null || true
+    if [ ! -f ".loki/magic/registry.json" ]; then
+        # Schema matches magic/registry/schema.json: components as array
+        echo '{"version": "1", "updated_at": "", "components": []}' > ".loki/magic/registry.json"
+    fi
+}
+
+_magic_python() {
+    # Prefer python3.12 if present (matches the rest of the project), fall back to python3
+    if [ -x "/opt/homebrew/bin/python3.12" ]; then
+        echo "/opt/homebrew/bin/python3.12"
+    elif command -v python3.12 &>/dev/null; then
+        command -v python3.12
+    else
+        echo "python3"
+    fi
+}
+
+# Export PYTHONPATH so magic/* modules shipped with Loki are importable
+# no matter which project directory the user runs from.
+_magic_pypath() {
+    local sk="${SKILL_DIR:-}"
+    if [ -z "$sk" ]; then
+        sk="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "$0")")")"
+    fi
+    # Preserve any existing PYTHONPATH
+    if [ -n "${PYTHONPATH:-}" ]; then
+        echo "${sk}:${PYTHONPATH}"
+    else
+        echo "$sk"
+    fi
+}
+
+_magic_valid_name() {
+    local name="$1"
+    [[ "$name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]
+}
+
+_magic_generate() {
+    local name=""
+    local from_spec=""
+    local from_screenshot=""
+    local target="react"
+    local placement=""
+    local description=""
+    local tags=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from-spec)
+                from_spec="${2:-}"
+                shift 2
+                ;;
+            --from-screenshot)
+                from_screenshot="${2:-}"
+                shift 2
+                ;;
+            --target)
+                target="${2:-}"
+                shift 2
+                ;;
+            --placement)
+                placement="${2:-}"
+                shift 2
+                ;;
+            --description|--desc)
+                description="${2:-}"
+                shift 2
+                ;;
+            --tags)
+                tags="${2:-}"
+                shift 2
+                ;;
+            --help|-h)
+                _magic_help
+                return 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        log_error "Component name is required"
+        echo "Usage: loki magic generate <name> [--from-spec PATH] [--from-screenshot PATH] [--target react|webcomponent|both] [--placement PATH]"
+        return 1
+    fi
+
+    if ! _magic_valid_name "$name"; then
+        log_error "Invalid component name: '$name' (must start with a letter, contain only letters, digits, _ or -)"
+        return 1
+    fi
+
+    case "$target" in
+        react|webcomponent|both) ;;
+        *)
+            log_error "Invalid target: '$target' (must be react, webcomponent, or both)"
+            return 1
+            ;;
+    esac
+
+    if [ -n "$from_spec" ] && [ ! -f "$from_spec" ]; then
+        log_error "Spec file not found: $from_spec"
+        return 1
+    fi
+    if [ -n "$from_screenshot" ] && [ ! -f "$from_screenshot" ]; then
+        log_error "Screenshot file not found: $from_screenshot"
+        return 1
+    fi
+
+    _magic_ensure_dirs
+    local py
+    py=$(_magic_python)
+
+    log_info "Generating component '$name' (target: $target)"
+
+    # 1. Build/load the canonical spec
+    local spec_path=".loki/magic/specs/${name}.md"
+    if [ -n "$from_spec" ]; then
+        cp "$from_spec" "$spec_path"
+        log_info "Copied spec from $from_spec"
+    else
+        log_info "Synthesizing spec via magic.core.spec"
+        PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import sys
+try:
+    from magic.core.spec import generate_spec
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] magic.core.spec not available: {exc}\n')
+    sys.exit(2)
+generate_spec(
+    name='$name',
+    out_path='$spec_path',
+    from_spec='${from_spec}' or None,
+    from_screenshot='${from_screenshot}' or None,
+)
+" || {
+            log_error "Spec generation failed (module magic.core.spec missing or errored)"
+            return 1
+        }
+    fi
+
+    # 2. Load design tokens (optional; module may not yet exist)
+    log_info "Loading design tokens"
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+try:
+    from magic.core.design_tokens import load_tokens
+    load_tokens()
+except Exception as exc:
+    import sys
+    sys.stderr.write(f'[WARN] design tokens unavailable: {exc}\n')
+" 2>&1 | grep -v '^$' || true
+
+    # 3. Generate component(s)
+    log_info "Generating component via magic.core.generator"
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import sys
+try:
+    from magic.core.generator import generate_component
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] magic.core.generator not available: {exc}\n')
+    sys.exit(2)
+generate_component(
+    name='$name',
+    spec_path='$spec_path',
+    target='$target',
+    react_out='.loki/magic/generated/react/${name}.tsx',
+    wc_out='.loki/magic/generated/webcomponent/${name}.js',
+    test_out='.loki/magic/generated/tests/${name}.test.tsx',
+    placement='${placement}' or None,
+)
+" || {
+        log_error "Component generation failed"
+        return 1
+    }
+
+    # 4. Register in registry
+    log_info "Registering component"
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import sys
+try:
+    from magic.core.registry import register_component
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] magic.core.registry not available: {exc}\n')
+    sys.exit(2)
+register_component(
+    registry_path='.loki/magic/registry.json',
+    name='$name',
+    spec_path='$spec_path',
+    target='$target',
+    react_path='.loki/magic/generated/react/${name}.tsx' if '$target' in ('react','both') else '',
+    webcomponent_path='.loki/magic/generated/webcomponent/${name}.js' if '$target' in ('webcomponent','both') else '',
+    test_path='.loki/magic/generated/tests/${name}.test.tsx',
+    description='''$description'''.strip(),
+    tags=[t.strip() for t in '''$tags'''.split(',') if t.strip()],
+    placement='${placement}' or None,
+)
+" || {
+        log_warn "Registry update failed; component files are still present"
+    }
+
+    log_info "Component '$name' generated successfully"
+    echo "  Spec:   $spec_path"
+    case "$target" in
+        react)        echo "  React:  .loki/magic/generated/react/${name}.tsx" ;;
+        webcomponent) echo "  WC:     .loki/magic/generated/webcomponent/${name}.js" ;;
+        both)
+            echo "  React:  .loki/magic/generated/react/${name}.tsx"
+            echo "  WC:     .loki/magic/generated/webcomponent/${name}.js"
+            ;;
+    esac
+    echo "  Tests:  .loki/magic/generated/tests/${name}.test.tsx"
+}
+
+_magic_update() {
+    local name=""
+    local force="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="${2:-}"
+                shift 2
+                ;;
+            --force)
+                force="true"
+                shift
+                ;;
+            --help|-h)
+                _magic_help
+                return 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    _magic_ensure_dirs
+    local py
+    py=$(_magic_python)
+
+    log_info "Updating components from specs (name=${name:-<all>}, force=$force)"
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import sys
+try:
+    from magic.core.generator import update_components
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] magic.core.generator not available: {exc}\n')
+    sys.exit(2)
+update_components(
+    registry_path='.loki/magic/registry.json',
+    name='${name}' or None,
+    force=$([ "$force" = "true" ] && echo True || echo False),
+)
+" || {
+        log_error "Update failed"
+        return 1
+    }
+
+    log_info "Update complete"
+}
+
+_magic_list() {
+    local format="table"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --format)
+                format="${2:-}"
+                shift 2
+                ;;
+            --help|-h)
+                _magic_help
+                return 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    case "$format" in
+        json|table) ;;
+        *)
+            log_error "Invalid format: '$format' (must be json or table)"
+            return 1
+            ;;
+    esac
+
+    _magic_ensure_dirs
+    local py
+    py=$(_magic_python)
+
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import json, sys
+try:
+    with open('.loki/magic/registry.json') as fh:
+        data = json.load(fh)
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] could not read registry: {exc}\n')
+    sys.exit(1)
+
+components_raw = data.get('components', [])
+# Normalize: registry schema uses list of entries; legacy format was dict
+if isinstance(components_raw, dict):
+    components = [{'name': k, **(v or {})} for k, v in components_raw.items()]
+else:
+    components = components_raw
+
+fmt = '$format'
+
+if fmt == 'json':
+    print(json.dumps(components, indent=2, sort_keys=True))
+else:
+    if not components:
+        print('No components registered. Use: loki magic generate <name>')
+        sys.exit(0)
+    print(f'{\"NAME\":<24} {\"VERSION\":<10} {\"TARGETS\":<24} {\"TAGS\"}')
+    print('-' * 100)
+    for entry in sorted(components, key=lambda e: e.get('name', '')):
+        name = entry.get('name', '-')
+        version = entry.get('version', '-')
+        tgts = entry.get('targets', [])
+        targets = ','.join(tgts) if isinstance(tgts, list) else str(tgts)
+        tags = entry.get('tags', [])
+        tags_str = ','.join(tags) if isinstance(tags, list) else str(tags)
+        print(f'{name:<24} {version:<10} {targets:<24} {tags_str}')
+"
+}
+
+_magic_remove() {
+    local name=""
+    local force="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force)
+                force="true"
+                shift
+                ;;
+            --help|-h)
+                _magic_help
+                return 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        log_error "Component name is required"
+        echo "Usage: loki magic remove <name> [--force]"
+        return 1
+    fi
+
+    if ! _magic_valid_name "$name"; then
+        log_error "Invalid component name: '$name'"
+        return 1
+    fi
+
+    _magic_ensure_dirs
+
+    if [ "$force" != "true" ]; then
+        echo -n "Remove component '$name' and all its artifacts? [y/N] "
+        local reply
+        read -r reply || reply=""
+        case "$reply" in
+            y|Y|yes|YES) ;;
+            *)
+                log_info "Aborted"
+                return 0
+                ;;
+        esac
+    fi
+
+    rm -f ".loki/magic/specs/${name}.md" \
+          ".loki/magic/generated/react/${name}.tsx" \
+          ".loki/magic/generated/webcomponent/${name}.js" \
+          ".loki/magic/generated/tests/${name}.test.tsx" 2>/dev/null || true
+
+    local py
+    py=$(_magic_python)
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import json, sys
+try:
+    with open('.loki/magic/registry.json') as fh:
+        data = json.load(fh)
+except Exception:
+    data = {'components': {}, 'version': 1}
+components = data.setdefault('components', {})
+if '$name' in components:
+    del components['$name']
+with open('.loki/magic/registry.json', 'w') as fh:
+    json.dump(data, fh, indent=2, sort_keys=True)
+" || log_warn "Could not update registry.json"
+
+    log_info "Removed component '$name'"
+}
+
+_magic_registry() {
+    local op="${1:-show}"
+    shift 2>/dev/null || true
+
+    case "$op" in
+        --help|-h|help)
+            _magic_help
+            return 0
+            ;;
+    esac
+
+    _magic_ensure_dirs
+    local py
+    py=$(_magic_python)
+
+    case "$op" in
+        show)
+            PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import json
+with open('.loki/magic/registry.json') as fh:
+    data = json.load(fh)
+print(json.dumps(data, indent=2, sort_keys=True))
+"
+            ;;
+        prune)
+            log_info "Pruning registry entries with missing artifacts"
+            PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import json, os, sys
+try:
+    from magic.core.registry import prune_registry
+    removed = prune_registry('.loki/magic/registry.json')
+    print(f'Pruned {removed} stale entries')
+except Exception as exc:
+    # Fallback prune: drop entries whose spec file is missing
+    with open('.loki/magic/registry.json') as fh:
+        data = json.load(fh)
+    comps = data.get('components', {})
+    removed = 0
+    for name in list(comps.keys()):
+        spec = (comps[name] or {}).get('spec_path')
+        if not spec or not os.path.isfile(spec):
+            del comps[name]
+            removed += 1
+    with open('.loki/magic/registry.json', 'w') as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+    print(f'Pruned {removed} stale entries (fallback)')
+"
+            ;;
+        stats)
+            PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import json, os
+with open('.loki/magic/registry.json') as fh:
+    data = json.load(fh)
+raw = data.get('components', []) or []
+# Accept both array (new) and dict (legacy) shapes
+if isinstance(raw, dict):
+    comps = [{'name': k, **(v or {})} for k, v in raw.items()]
+else:
+    comps = raw
+total = len(comps)
+targets = {}
+missing = 0
+for entry in comps:
+    entry = entry or {}
+    for t in entry.get('targets', [entry.get('target', 'unknown')]):
+        targets[t] = targets.get(t, 0) + 1
+    spec = entry.get('spec_path')
+    if not spec or not os.path.isfile(spec):
+        missing += 1
+print(f'Components:        {total}')
+print(f'Missing specs:     {missing}')
+print('By target:')
+for t in sorted(targets):
+    print(f'  {t:<14} {targets[t]}')
+"
+            ;;
+        *)
+            log_error "Unknown registry op: $op"
+            echo "Available: show, prune, stats"
+            return 1
+            ;;
+    esac
+}
+
+_magic_debate() {
+    local name=""
+    local rounds="3"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --rounds)
+                rounds="${2:-}"
+                shift 2
+                ;;
+            --help|-h)
+                _magic_help
+                return 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        log_error "Component name is required"
+        echo "Usage: loki magic debate <name> --rounds N"
+        return 1
+    fi
+
+    if ! _magic_valid_name "$name"; then
+        log_error "Invalid component name: '$name'"
+        return 1
+    fi
+
+    if ! [[ "$rounds" =~ ^[0-9]+$ ]] || [ "$rounds" -lt 1 ]; then
+        log_error "--rounds must be a positive integer"
+        return 1
+    fi
+
+    _magic_ensure_dirs
+    local spec_path=".loki/magic/specs/${name}.md"
+    if [ ! -f "$spec_path" ]; then
+        log_error "No spec found for '$name' at $spec_path"
+        return 1
+    fi
+
+    local py
+    py=$(_magic_python)
+
+    log_info "Running debate on '$name' ($rounds rounds)"
+    PYTHONPATH="$(_magic_pypath)" "$py" -c "
+import sys
+try:
+    from magic.core.debate import run_debate
+except Exception as exc:
+    sys.stderr.write(f'[ERROR] magic.core.debate not available: {exc}\n')
+    sys.exit(2)
+run_debate(
+    name='$name',
+    spec_path='$spec_path',
+    rounds=$rounds,
+    react_path='.loki/magic/generated/react/${name}.tsx',
+    wc_path='.loki/magic/generated/webcomponent/${name}.js',
+)
+" || {
+        log_error "Debate failed"
+        return 1
+    }
+
+    log_info "Debate complete"
+}
+
+cmd_magic() {
+    local subcmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$subcmd" in
+        generate|gen)    _magic_generate "$@" ;;
+        update|up)       _magic_update "$@" ;;
+        list|ls)         _magic_list "$@" ;;
+        remove|rm)       _magic_remove "$@" ;;
+        registry|reg)    _magic_registry "$@" ;;
+        debate)          _magic_debate "$@" ;;
+        help|--help|-h)  _magic_help ;;
+        *)
+            log_error "Unknown magic subcommand: $subcmd"
+            _magic_help
+            return 1
+            ;;
+    esac
 }
 
 # CI/CD quality gate integration (v6.22.0)

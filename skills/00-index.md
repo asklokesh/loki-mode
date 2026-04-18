@@ -30,6 +30,7 @@
 | OpenSpec delta context, brownfield modifications | `openspec-integration.md` |
 | MiroFish market validation, `--mirofish` flag | `mirofish-integration.md` |
 | Writing/updating documentation, `loki docs` | `documentation.md` |
+| Component generation, `loki magic`, spec-driven UI | `magic-modules.md` |
 | Legacy healing, modernization, archaeology | `healing.md` |
 | Plan deepening, knowledge extraction | `compound-learning.md` |
 

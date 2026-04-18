@@ -5,13 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [6.75.3] - 2026-03-24 - AI Chat sidebar UX, ProjectWorkspace improvements
+## [6.76.0] - Magic Modules: spec-driven component generation with multi-persona debate
 
-### Fixed
-- **AI Chat UX**: Moved AI Chat from bottom panel to left sidebar tab toggle (Files / Chat icons)
-- **ActivityPanel**: Removed Chat tab from bottom panel (Terminal + Activity only remain); cleaner layout
-- **AI Chat layout**: Full-height chat in sidebar with SmartSuggestions rendered inside chat area (ChatGPT-style)
-- **ProjectWorkspace**: Refactored component for improved layout and stability
+Inspired by [MagicModules](https://github.com/romannurik/MagicModules-Experiment)
+(Roman Nurik, Google Labs) and [MoMoA](https://github.com/retomeier/MoMoA)
+(Reto Meier, Google Labs). Combines spec-first generation (MagicModules) with
+multi-persona debate (MoMoA) into a native Loki subsystem.
+
+### Added
+- **`loki magic` CLI**: New command family with 6 subcommands
+  - `magic generate <name>` -- create React + Web Component from description, spec, or screenshot
+  - `magic update` -- incremental regen via SHA256 freshness check
+  - `magic list` / `registry stats|prune|show` -- browse component inventory
+  - `magic debate <name>` -- run multi-persona quality review
+  - `magic remove` -- deregister a component
+- **Generation engine** (`magic/core/generator.py`): TypeScript React + Custom Element
+  (LokiElement base class) + Vitest/Playwright tests. Claude Vision path for
+  screenshot-to-spec. Deterministic template fallback when no provider available.
+- **Spec + freshness** (`magic/core/spec.py`, `freshness.py`): markdown specs as
+  source of truth; `LOKI-MAGIC-HASH` SHA256 header on generated files triggers
+  regeneration when spec changes.
+- **Design tokens** (`magic/core/design_tokens.py`): colors, spacing, typography,
+  radii, shadows, motion defaults extracted from existing Loki UI; project-level
+  overrides at `.loki/magic/tokens.json`; `to_prompt_context()` injects tokens
+  into generation prompts.
+- **Multi-persona debate** (`magic/core/debate.py`): 4 conflicting expert
+  personas -- Creative Developer, Conservative Engineer, A11y Advocate,
+  Performance Engineer. 3-round debate with parallel round-1/2 review and
+  synthesis round 3. Severity ladder `info | suggestion | warning | block`;
+  block severity escalates to HITL.
+- **Registry** (`magic/core/registry.py`): atomic JSON registry with semver
+  auto-bump, tag search, per-target filtering, deprecation lifecycle,
+  corruption recovery.
+- **Testing** (`magic/testing/test_generator.py`, `snapshot.py`): auto-generated
+  Vitest + RTL tests (React), Playwright tests (Web Components), Storybook
+  stories, HTML snapshot management.
+- **MCP tools** (`mcp/magic_tools.py`): 7 MCP tools (`loki_magic_generate`,
+  `loki_magic_list`, `loki_magic_get`, `loki_magic_update`, `loki_magic_debate`,
+  `loki_magic_tokens_extract`, `loki_magic_stats`) registered via
+  `register_magic_tools(mcp)` at MCP server startup.
+- **Purple Lab UI**: new `/magic` page with generator form and component
+  registry grid/list views (`web-app/src/pages/MagicPage.tsx`,
+  `MagicGeneratorPanel.tsx`, `MagicComponentCard.tsx`).
+- **Backend API**: `/api/magic/components`, `/api/magic/generate`,
+  `/api/magic/components/{name}/spec`, `/api/magic/components/{name}/debate`,
+  `DELETE /api/magic/components/{name}`.
+- **Documentation**: `skills/magic-modules.md` (skill module with credits),
+  `references/magic-modules-patterns.md` (10-section reference with examples
+  and competitor comparison), `magic/tokens/README.md`, `magic/debate/personas/*.md`.
+- **Integration tests**: `tests/test-magic.sh` -- 6-case end-to-end test suite.
+
+### Fixed (carried forward from 6.75.x)
+- AI Chat sidebar UX; ProjectWorkspace refactor; ShellCheck green.
 
 ## [6.72.0] - 2026-03-24 - Dark Mode, RBAC/Teams, GitPanel, Template Gallery, CI/CD Pipeline, NotificationSystem
 
