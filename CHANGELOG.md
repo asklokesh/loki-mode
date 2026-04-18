@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.77.1] - Orchestrator robustness: unbound var, Grep quoting, OpenSpec sentinel scoping
+
+Three independent bugs that affected the autonomous loop. All three were first
+surfaced by external contributors (thank you @alilxxey for reports feeding into
+#152 and #153, and @vishnujayvel for #151); the fixes are re-implemented here
+under the maintainer's release cadence so version-bump and CHANGELOG cadence
+stay consistent.
+
+### Fixed
+- **`track_iteration_start` unbound-variable crash** (`autonomy/run.sh:3598`):
+  under `set -uo pipefail`, `local task_json` without an initializer becomes
+  unset. When the pending queue is empty (iteration 2+ on many runs), the
+  enrichment block is skipped and the subsequent `[[ -z "$task_json" ]]`
+  check fires "unbound variable" and kills the run. Fix: initialize
+  `local task_json=""`, guard the intermediate reads with `${var:-}`, and
+  fall back cleanly if `python3` exits non-zero.
+- **Claude stream processor `NameError` on every Grep tool call**
+  (`autonomy/run.sh:9843`): the Grep branch used an f-string containing a
+  single-quoted Python literal (`tool_input.get('pattern', '')`) inside a
+  `python3 -u -c '...'` heredoc that is itself wrapped in bash single
+  quotes. The inner single quote closed bash SQ mid-code, Python saw a bare
+  identifier, and every Grep tool call crashed with `NameError`. Fix: use
+  double quotes and string concatenation so no SQ appears in the Python
+  block. Matches the style already used by the neighbouring Glob branch.
+- **OpenSpec sentinel leaks tasks across changes**
+  (`autonomy/run.sh populate_openspec_queue`, `autonomy/openspec-adapter.py
+  parse_tasks`): the sentinel `.loki/queue/.openspec-populated` was a
+  single-touch marker, so switching `--openspec A` to `--openspec B` left
+  change A's tasks in the pending queue and silently skipped loading B.
+  Fix: sentinel now stores change path + content hash (two lines); same
+  change + same content preserves progress on crash-restart; different
+  path purges OpenSpec tasks from all three queue files and repopulates;
+  different hash does the same. `parse_tasks()` gains an optional
+  `change_name` argument that scopes task IDs as
+  `openspec-<change>-<num>` so tasks from different changes cannot
+  collide. Legacy single-line sentinels are safely treated as stale and
+  trigger a clean reload.
+
+### Added
+- `tests/test-openspec-sentinel.sh` — 10 focused integration tests covering
+  the six state transitions (fresh run, crash-restart, change switch,
+  content edit, non-OpenSpec task preservation, legacy-sentinel upgrade).
+  All 10 pass.
+- `purge_openspec_from_queue()` helper in `autonomy/run.sh` that uses `jq`
+  to atomically rewrite queue files keeping only `source != "openspec"`
+  tasks.
+- `_openspec_content_hash()` helper using Python `hashlib.md5` so hashing
+  is identical on macOS and Linux (no `md5sum` vs `md5 -q` fork).
+
+### Closed
+- PR #152 (@alilxxey) — `task_json` init. Rolled into this release.
+- PR #153 (@alilxxey) — Grep branch quoting. Rolled into this release.
+- PR #151 (@vishnujayvel) — OpenSpec sentinel scope. Rolled into this release.
+
 ## [6.77.0] - Claude Opus 4.7 + dynamic model catalog + magic extractor fixes
 
 Two areas of progress this release: (1) Claude Opus 4.7 becomes the default

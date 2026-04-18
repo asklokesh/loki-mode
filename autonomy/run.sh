@@ -3594,9 +3594,13 @@ except: pass
     local prd_escaped
     prd_escaped=$(printf '%s' "${prd:-Codebase Analysis}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g')
 
-    # Build enriched task JSON with pending task context
-    local task_json
-    if [[ -n "$next_task_context" ]]; then
+    # Build enriched task JSON with pending task context.
+    # Must initialize to empty: this script runs under `set -u` (line 152),
+    # so `local task_json` without a value leaves it unset. When the pending
+    # queue is empty, the enrichment `if` is skipped and the `-z` check below
+    # would fire on an unset variable and kill the run.
+    local task_json=""
+    if [[ -n "${next_task_context:-}" ]]; then
         task_json=$(python3 -c "
 import json, sys
 ctx = json.loads('''$next_task_context''')
@@ -3619,11 +3623,11 @@ if ctx.get('source'):
 if ctx.get('project'):
     task['project'] = ctx['project']
 print(json.dumps(task, indent=2))
-" 2>/dev/null)
+" 2>/dev/null) || task_json=""
     fi
 
     # Fallback to basic task JSON if enrichment failed
-    if [[ -z "$task_json" ]]; then
+    if [[ -z "${task_json:-}" ]]; then
         task_json=$(cat <<EOF
 {
   "id": "$task_id",
@@ -8901,18 +8905,68 @@ bmad_write_back() {
 # OpenSpec Task Queue Population
 #===============================================================================
 
-# Populate the task queue from OpenSpec task artifacts
-# Only runs once -- skips if queue was already populated from OpenSpec
+# Compute a content hash for a file (cross-platform: uses Python hashlib so
+# behavior is identical on macOS and Linux, no md5/md5sum fork).
+_openspec_content_hash() {
+    local file="$1"
+    [[ -f "$file" ]] || { echo "none"; return 0; }
+    python3 -c "import hashlib,sys; print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest())" "$file" 2>/dev/null || echo "none"
+}
+
+# Remove all tasks with source=="openspec" from a queue JSON file, preserving
+# every other source (prd, bmad, mirofish). Atomic: writes tmp + renames.
+purge_openspec_from_queue() {
+    local queue_file="$1"
+    [[ -f "$queue_file" ]] || return 0
+    local tmp="${queue_file}.tmp.$$"
+    if jq '[.[] | select(.source != "openspec")]' "$queue_file" > "$tmp" 2>/dev/null; then
+        local before after
+        before=$(jq 'length' "$queue_file" 2>/dev/null || echo 0)
+        after=$(jq 'length' "$tmp" 2>/dev/null || echo 0)
+        mv "$tmp" "$queue_file"
+        if [[ "$before" != "$after" ]]; then
+            log_info "Purged $((before - after)) OpenSpec tasks from $(basename "$queue_file")"
+        fi
+    else
+        rm -f "$tmp"
+        log_warn "Could not purge OpenSpec tasks from $(basename "$queue_file") (jq failed)"
+        return 1
+    fi
+}
+
+# Populate the task queue from OpenSpec task artifacts.
+# The sentinel .loki/queue/.openspec-populated is scoped per change:
+#   line 1 = change path, line 2 = content hash of openspec-tasks.json.
+# Same path + same hash -> skip (crash-restart preserves progress).
+# Different path -> change switched, purge stale tasks and repopulate.
+# Same path + different hash -> tasks.md edited, purge and repopulate.
 populate_openspec_queue() {
     # Skip if no OpenSpec tasks file
     if [[ ! -f ".loki/openspec-tasks.json" ]]; then
         return 0
     fi
 
-    # Skip if already populated (marker file)
-    if [[ -f ".loki/queue/.openspec-populated" ]]; then
-        log_info "OpenSpec queue already populated, skipping"
-        return 0
+    local sentinel=".loki/queue/.openspec-populated"
+    local current_path="${OPENSPEC_CHANGE_PATH:-}"
+    local current_hash
+    current_hash="$(_openspec_content_hash ".loki/openspec-tasks.json")"
+
+    if [[ -f "$sentinel" ]]; then
+        local stored_path stored_hash
+        stored_path="$(sed -n '1p' "$sentinel")"
+        stored_hash="$(sed -n '2p' "$sentinel")"
+        if [[ "$stored_path" == "$current_path" ]] && [[ "$stored_hash" == "$current_hash" ]]; then
+            log_info "OpenSpec queue already populated for this change (path + hash match), skipping"
+            return 0
+        fi
+        if [[ "$stored_path" != "$current_path" ]]; then
+            log_info "OpenSpec change switched (was: ${stored_path:-<legacy>}, now: ${current_path:-<unset>}) -- purging stale OpenSpec tasks"
+        else
+            log_info "OpenSpec tasks.md content changed (hash mismatch) -- purging and reloading"
+        fi
+        purge_openspec_from_queue ".loki/queue/pending.json"
+        purge_openspec_from_queue ".loki/queue/in-progress.json"
+        purge_openspec_from_queue ".loki/queue/completed.json"
     fi
 
     log_step "Populating task queue from OpenSpec tasks..."
@@ -8985,8 +9039,9 @@ OPENSPEC_QUEUE_EOF
         return 0
     fi
 
-    # Mark as populated so we don't re-add on restart
-    touch ".loki/queue/.openspec-populated"
+    # Mark as populated for this specific change + content hash so we don't
+    # re-add on restart but DO repopulate when change-switching or tasks.md edits.
+    printf '%s\n%s\n' "${OPENSPEC_CHANGE_PATH:-}" "$current_hash" > ".loki/queue/.openspec-populated"
     log_info "OpenSpec queue population complete"
 }
 
@@ -9836,7 +9891,13 @@ def process_stream():
                         elif tool == "Bash":
                             tool_desc = tool_input.get("description", tool_input.get("command", "")[:60])
                         elif tool == "Grep":
-                            tool_desc = f"pattern: {tool_input.get('pattern', '')}"
+                            # This Python block runs inside bash `python3 -u -c '...'`,
+                            # wrapped in a bash single-quoted string. A single-quoted
+                            # Python literal here would close bash SQ mid-code and
+                            # Python would receive a bare identifier instead of the
+                            # "pattern" string, crashing with NameError on every Grep
+                            # tool call. Use double quotes + concatenation only.
+                            tool_desc = "pattern: " + tool_input.get("pattern", "")
                         elif tool == "Glob":
                             tool_desc = tool_input.get("pattern", "")
 

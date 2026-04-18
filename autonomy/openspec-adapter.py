@@ -345,8 +345,15 @@ def _parse_scenario(name: str, body: str) -> Dict[str, Any]:
 
 # -- Tasks Parsing ------------------------------------------------------------
 
-def parse_tasks(tasks_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+def parse_tasks(tasks_path: Path, change_name: str = "") -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Parse tasks.md into structured task list and source map.
+
+    Args:
+        tasks_path: path to the change's tasks.md
+        change_name: OpenSpec change name, used to scope task IDs so that IDs
+            from different changes cannot collide in the pending queue. Default
+            empty string preserves backward compatibility with any caller that
+            does not pass the argument.
 
     Returns:
         (tasks_list, source_map)
@@ -373,7 +380,9 @@ def parse_tasks(tasks_path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[
             checked = task_match.group(1).lower() == "x"
             task_id_num = task_match.group(2)
             description = task_match.group(3).strip()
-            task_id = f"openspec-{task_id_num}"
+            task_id = (
+                f"openspec-{change_name}-{task_id_num}" if change_name else f"openspec-{task_id_num}"
+            )
 
             task = {
                 "id": task_id,
@@ -696,7 +705,7 @@ def run(
     source_map: Dict[str, Dict[str, Any]] = {}
     tasks_path = change_dir / "tasks.md"
     if tasks_path.exists():
-        tasks_list, source_map = parse_tasks(tasks_path)
+        tasks_list, source_map = parse_tasks(tasks_path, change_name=change_name)
 
     # -- Parse design.md (optional) --
     design_data: Optional[Dict[str, str]] = None
