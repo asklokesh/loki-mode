@@ -1,0 +1,116 @@
+name: Model Catalog Probe
+
+# Weekly probe of provider documentation pages. If a model ID appears in the
+# upstream docs that is not in providers/model_catalog.json, this workflow opens
+# (or updates) a draft PR with the report so a maintainer can decide whether to
+# adopt the model. We never auto-rewrite the catalog -- model adoption is a
+# human decision (cost, capability, behavioural changes).
+
+on:
+  schedule:
+    # Mondays at 14:00 UTC. Avoids weekend rate limits on doc pages.
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run probe
+        id: probe
+        run: |
+          python3 tools/probe-model-catalog.py --json > probe-report.json
+          # Keep an exit-status marker we can branch on
+          if python3 -c "import json,sys; r=json.load(open('probe-report.json')); sys.exit(0 if any(v['new_candidates'] for v in r.values()) else 1)"; then
+            echo "new_models=true" >> $GITHUB_OUTPUT
+          else
+            echo "new_models=false" >> $GITHUB_OUTPUT
+          fi
+          echo "--- human-readable report ---"
+          python3 tools/probe-model-catalog.py
+
+      - name: Build report markdown
+        if: steps.probe.outputs.new_models == 'true'
+        run: |
+          {
+            echo "# Model Catalog Probe Report"
+            echo
+            echo "Automated weekly probe of provider docs found new model IDs that"
+            echo "are not yet in \`providers/model_catalog.json\`. Review and decide"
+            echo "whether to adopt each candidate."
+            echo
+            echo "## Findings"
+            echo
+            python3 -c "
+          import json
+          r = json.load(open('probe-report.json'))
+          for provider, info in r.items():
+              print(f'### {provider}')
+              print()
+              new = info.get('new_candidates') or []
+              if new:
+                  for m in new:
+                      print(f'- \`{m}\`')
+              else:
+                  print('- (none)')
+              if info.get('errors'):
+                  print()
+                  print('Errors during probe:')
+                  for e in info['errors']:
+                      print(f'- {e}')
+              print()
+          "
+            echo "## How to adopt"
+            echo
+            echo "1. Edit \`providers/model_catalog.json\` -- bump the relevant"
+            echo "   \`latest_<tier>\` entry and add the model to the \`models[]\` array."
+            echo "2. Verify with: \`python3 tools/probe-model-catalog.py\` -- the"
+            echo "   candidate should disappear."
+            echo "3. Test the new model end-to-end before merging."
+          } > report.md
+          cat report.md
+
+      - name: Create or update PR
+        if: steps.probe.outputs.new_models == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="auto/model-catalog-probe"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Park the report under .github/automation-reports/ so it's reviewable
+          mkdir -p .github/automation-reports
+          mv report.md .github/automation-reports/model-catalog-probe.md
+          mv probe-report.json .github/automation-reports/model-catalog-probe.json
+
+          git checkout -B "$BRANCH"
+          git add .github/automation-reports/model-catalog-probe.md \
+                  .github/automation-reports/model-catalog-probe.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit; report identical to last week."
+            exit 0
+          fi
+          git commit -m "chore(probe): weekly model catalog probe found new candidates"
+          git push -f origin "$BRANCH"
+
+          # Idempotent PR creation -- update if one already exists.
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --body-file .github/automation-reports/model-catalog-probe.md
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Model catalog probe: new model candidates found" \
+              --body-file .github/automation-reports/model-catalog-probe.md \
+              --label "automation,models"
+          fi

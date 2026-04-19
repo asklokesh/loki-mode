@@ -196,7 +196,7 @@ Source: `get_rarv_tier()` at `run.sh:1325-1347`, `get_rarv_phase_name()` at `run
 
 The `loki` CLI manages session lifecycle through signal files.
 
-Source: `autonomy/loki:485` (cmd_start), `autonomy/run.sh:8059` (check_human_intervention)
+Source: `autonomy/loki:485` (cmd_start), `autonomy/run.sh:10419` (check_human_intervention)
 
 ```
                    +----------+
@@ -245,7 +245,7 @@ Interrupt handling (Ctrl+C): `run.sh:8261` (cleanup function)
 
 ### 2.4 Human Intervention
 
-Source: `autonomy/run.sh:8059` (check_human_intervention)
+Source: `autonomy/run.sh:10419` (check_human_intervention)
 
 ```
   check_human_intervention()
@@ -276,7 +276,7 @@ Source: `autonomy/completion-council.sh`
 
 ### 3.1 Council Voting Pipeline
 
-Source: `completion-council.sh:1311` (council_should_stop), `completion-council.sh:1260` (council_evaluate)
+Source: `completion-council.sh:1359` (council_should_stop), `completion-council.sh:1308` (council_evaluate)
 
 ```
   council_should_stop()  [line 1311]
@@ -381,7 +381,7 @@ Source: `completion-council.sh` (council_circuit_breaker, council_track_iteratio
 
 Based on CONSENSAGENT (ACL 2025). Runs when council votes are unanimous.
 
-Source: `completion-council.sh:1156` (council_devils_advocate_review)
+Source: `completion-council.sh:1204` (council_devils_advocate_review)
 
 ```
   Unanimous COMPLETE vote detected
@@ -994,7 +994,7 @@ Source: `skills/model-selection.md`
 
 ### 7.3 Code Review (3-Reviewer Blind)
 
-Source: `run.sh:5039` (run_code_review)
+Source: `run.sh:5844` (run_code_review)
 
 ```
   Code changes committed
@@ -1164,7 +1164,7 @@ Written atomically every 2 seconds by `run.sh` to `.loki/dashboard-state.json`.
 
 ### 8.6 Dashboard Crash Recovery
 
-Source: `autonomy/run.sh:5949` (handle_dashboard_crash)
+Source: `autonomy/run.sh:6809` (handle_dashboard_crash)
 
 ```
   Dashboard process exits unexpectedly
@@ -1564,7 +1564,7 @@ same trigger for same iteration.
 
 ### 11.3 Budget Limit
 
-Source: `autonomy/run.sh:6249` (check_budget_limit)
+Source: `autonomy/run.sh:7418` (check_budget_limit)
 
 ```
   Before each iteration
@@ -1651,7 +1651,7 @@ Source: `skills/parallel-workflows.md`
 
 ### 13.1 Checkpoint Creation/Rollback
 
-Source: `autonomy/run.sh:5607` (create_checkpoint)
+Source: `autonomy/run.sh:6464` (create_checkpoint)
 
 ```
   create_checkpoint(description, tag)
@@ -1689,8 +1689,8 @@ Rollback via MCP tool `loki_checkpoint_restore` or CLI.
 
 ### 14.1 Auto-Detected Tiers
 
-Source: `autonomy/run.sh:1196` (detect_complexity), `run.sh:1275` (get_complexity_phases),
-`run.sh:1293` (get_phase_names)
+Source: `autonomy/run.sh:1229` (detect_complexity), `run.sh:1322` (get_complexity_phases),
+`run.sh:1340` (get_phase_names)
 
 ```
   detect_complexity(prd_path)  [line 1196]

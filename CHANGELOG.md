@@ -5,6 +5,59 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.79.0] - Release-gate dep fix, contributor docs, state-machine doc auto-regen, providers/models endpoint, model-catalog probe cron
+
+v6.78.0 introduced a `gate` job in the Release workflow that successfully blocked
+the publish jobs -- but the gate itself failed because its pip install was
+narrower than the matrix Tests workflow, so v6.78.0 never reached npm/Docker
+despite passing the full Tests matrix. This release fixes the gate and adds the
+remaining Release 2 work: contributor policy, doc-staleness automation, the
+backend half of the dynamic model catalog wiring, and a weekly cron that surfaces
+new provider models for review.
+
+### Fixed
+- **Release gate dependency install** (`.github/workflows/release.yml`):
+  the gate now installs the same package set as `python-tests` in
+  `test.yml` (`fastapi httpx pydantic sqlalchemy[asyncio] aiosqlite uvicorn`).
+  Previously it pip-installed only `pytest`, so the test collection failed
+  with `ModuleNotFoundError: httpx / sqlalchemy` and blocked the publish.
+
+### Added
+- **`/api/providers/models` endpoint** (`dashboard/server.py`): returns
+  `providers/model_catalog.json` verbatim with a degraded fallback if the
+  file is missing. Future frontend rebuilds can drop hardcoded model lists
+  in favour of this endpoint -- this release ships the backend half only,
+  so the change is purely additive.
+- **`tools/regen-state-machine-refs.py`**: scans
+  `docs/architecture/STATE-MACHINES.md` for ``<file>:<line> (func_name)``
+  patterns, locates each named function in the source, and reports or fixes
+  any drift. Run `--fix` to rewrite, `--strict` for CI gating. Initial run
+  on this commit corrected 12 stale line references (run.sh and
+  completion-council.sh have grown since v6.6.1).
+- **`tools/probe-model-catalog.py`**: probes Anthropic / OpenAI / Google
+  docs pages for model IDs not yet in `model_catalog.json` and emits a
+  human or `--json` report. Conservative regex set, no auto-rewrite.
+- **`.github/workflows/model-catalog-probe.yml`**: weekly cron (Mondays
+  14:00 UTC) runs the probe. If new candidates appear, opens or updates a
+  draft PR on `auto/model-catalog-probe` with the report. Idempotent.
+- **`CONTRIBUTING.md` updates**: documents the pre-push hook installer,
+  the fact that `claude-review` is intentionally skipped on fork PRs, the
+  no-version-bump-in-PR rule, and the maintainer-may-re-implement
+  convention with explicit credit. Spells out when a PR is closed
+  vs. merged so contributor expectations are clear up front.
+
+### Changed
+- `docs/architecture/STATE-MACHINES.md`: 12 line-number references updated
+  by `regen-state-machine-refs.py --fix`. Function names are unchanged;
+  only the trailing line numbers moved as the source files grew.
+
+### Verification
+- Pre-push hook: 567/567 pytest pass.
+- `python3 tools/regen-state-machine-refs.py` -> "OK -- no drift".
+- `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/model-catalog-probe.yml'))"`: valid.
+- Endpoint smoke-tested: `dashboard/server.py` imports cleanly, catalog
+  file resolves to 5 providers (`claude codex gemini cline aider`).
+
 ## [6.78.0] - CI hardening: pre-push hook, Release gated on tests, claude-review scoped to internal PRs, Pydantic v2 config migration
 
 After v6.77.1 shipped a test-suite-red commit to main (caught only because I

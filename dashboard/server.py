@@ -650,6 +650,40 @@ async def health_check() -> dict[str, str]:
     return {"status": "healthy", "service": "loki-dashboard"}
 
 
+# Provider model catalog endpoint
+# Reads providers/model_catalog.json (single source of truth) and exposes it
+# to the web app so model dropdowns / defaults stay in sync without a frontend
+# rebuild on every model release. Falls back to a minimal hardcoded structure
+# if the catalog file is missing (degraded but functional).
+@app.get("/api/providers/models")
+async def get_provider_models() -> dict:
+    """Return the canonical provider/model catalog."""
+    candidates = [
+        _Path(__file__).resolve().parent.parent / "providers" / "model_catalog.json",
+        _Path("providers/model_catalog.json"),
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    return json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                continue
+    # Degraded fallback so the dashboard never breaks if catalog is missing
+    return {
+        "schema_version": 1,
+        "providers": {
+            "claude": {
+                "latest_planning": "claude-opus-4-7",
+                "latest_development": "claude-opus-4-7",
+                "latest_fast": "claude-sonnet-4-6",
+                "models": [],
+            }
+        },
+        "_fallback": True,
+    }
+
+
 # A2A Agent Card - advertises agent capabilities per the A2A spec
 @app.get("/.well-known/agent.json", include_in_schema=False)
 async def agent_card() -> dict:

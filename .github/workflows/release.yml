@@ -21,11 +21,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install minimal deps
+        # Mirror python-tests installs in test.yml exactly so the gate has the
+        # same import surface as the matrix jobs (httpx, sqlalchemy, etc.).
         run: |
           python3 -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install pytest pytest-asyncio
+          python3 -m pip install pytest pytest-asyncio
+          python3 -m pip install fastapi httpx pydantic sqlalchemy[asyncio] aiosqlite uvicorn
       - name: Bash syntax validation
         run: |
           bash -n autonomy/run.sh
