@@ -163,17 +163,26 @@ class TestTasksParser:
         assert len(groups) >= 3, f"Expected at least 3 groups, got {groups}"
 
     def test_task_ids_hierarchical(self, output_dir):
-        """Task IDs should be in openspec-N.M format."""
+        """Task IDs should be in openspec-<change>-N.M format.
+
+        Change-scoping was added in v6.77.1 so tasks from different OpenSpec
+        changes cannot collide in the pending queue. The ID suffix is still
+        hierarchical N.M at the end; the change name sits between.
+        """
         rc, stdout, _ = run_adapter(FIXTURES_DIR / "simple-feature", output_dir, "--json")
         assert rc == 0
         data = json.loads(stdout)
         for task in data["tasks"]:
             assert task["id"].startswith("openspec-"), f"ID {task['id']} should start with openspec-"
-            # Should match openspec-N.M pattern
+            # The hierarchical N.M portion is the tail of the id (e.g. 1.1, 2.3).
+            # Anything between "openspec-" and the trailing N.M is the change name.
             suffix = task["id"].replace("openspec-", "")
-            parts = suffix.split(".")
-            assert len(parts) == 2, f"ID suffix {suffix} should be N.M"
-            assert parts[0].isdigit() and parts[1].isdigit()
+            trailing = suffix.rsplit("-", 1)[-1] if "-" in suffix else suffix
+            parts = trailing.split(".")
+            assert len(parts) == 2, f"trailing segment {trailing!r} should be N.M"
+            assert parts[0].isdigit() and parts[1].isdigit(), (
+                f"trailing N.M must be numeric, got {trailing!r} from id {task['id']!r}"
+            )
 
     def test_malformed_tasks_no_checkboxes(self, output_dir):
         """malformed tasks.md has no checkbox items -- should produce 0 tasks."""

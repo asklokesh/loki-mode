@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.77.2] - Test fix: update test_task_ids_hierarchical for scoped IDs
+
+v6.77.1 added change-scoping to OpenSpec task IDs (`openspec-<change>-N.M`),
+but the pre-existing `tests/test_openspec_adapter.py::TestTasksParser::
+test_task_ids_hierarchical` still asserted the old unscoped `openspec-N.M`
+format and started failing on CI. Fix: rewrite the assertion to recognize
+the scoped form while still verifying the trailing `N.M` is numeric.
+Local full suite: 567/567 pass.
+
 ## [6.77.1] - Orchestrator robustness: unbound var, Grep quoting, OpenSpec sentinel scoping
 
 Three independent bugs that affected the autonomous loop. All three were first
