@@ -5,6 +5,61 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.80.0] - Magic Modules distribution fix (real bug found by running it) + A/B benchmark with first honest results
+
+This release ships from a real end-to-end execution of `loki start` against
+the Claude provider, not just unit tests. That run uncovered a previously
+silent shipping bug and produced the first measured A/B comparison of the
+magic debate gate.
+
+### Fixed (real-world bug surfaced by actually running the orchestrator)
+- **`magic/` Python package was missing from npm tarball**
+  (`package.json` `files` field) and from both Docker images
+  (`Dockerfile`, `Dockerfile.sandbox`). Every `npm install -g loki-mode`
+  user since v6.76.0 silently skipped Magic Modules with the log line
+  `[magic] Token extraction skipped: No module named 'magic'`. The
+  feature compiled, the tests passed, but the package didn't ship the
+  code. Found by running `loki start` end-to-end on a real PRD and
+  noticing the skip message. Adding `"magic/"` to `files` and
+  `COPY --chown=loki:loki magic/ ./magic/` to both Dockerfiles
+  restores the feature for all distribution channels.
+
+### Added
+- **`benchmarks/magic-ab/`**: A/B benchmark harness (`run.sh`,
+  `compare.py`, `prd.md`, `README.md`) that runs the same PRD twice
+  -- once with `LOKI_GATE_MAGIC_DEBATE=true` and once with `false`
+  -- and emits a side-by-side metrics report.
+- **`benchmarks/magic-ab/RESULTS-2026-04-18.md`**: first measurement
+  results with full honest interpretation. Headline: at 1-iteration
+  scale on a small (single-component) PRD the gate did **not**
+  visibly differentiate output -- both arms produced clean,
+  accessible Counter implementations of comparable quality.
+  Probable reasons documented (PRD scanner did not seed any specs;
+  council declared completion in 1 iter; SDLC ACCESSIBILITY phase
+  already pushes a11y in both arms). Worth re-running on a larger
+  multi-component PRD over more iterations.
+
+### Verification (executed live, not just static)
+- `loki start --provider claude` ran twice end-to-end (gate ON and
+  gate OFF arms). Both completed cleanly in 1 iteration with status
+  `completion_promise_fulfilled`.
+- BOOTSTRAP hook fired: `[magic] Extracted design tokens: 0 colors,
+  0 spacing` -- confirming `magic/core/design_tokens.py` is reachable
+  and runs (the 0/0 is the correct empty-codebase result, not a bug).
+- `npm pack --dry-run | grep magic/ | wc -l` -> 20 files now in
+  tarball (was 0 before this commit).
+- Pre-push hook 567/567 pass.
+
+### Known follow-ups (not blocking this release)
+- Multi-iteration A/B (5-10 iters per arm) on a multi-component PRD
+  to surface the gate's effect under realistic conditions.
+- PRD scanner vocab does not match "Counter" -- the seeded specs were
+  empty in both arms. Either widen `UI_COMPONENT_VOCAB` or document
+  the contract more explicitly.
+- Token cost tracking: `.loki/metrics/efficiency/` was empty after
+  both runs, so cost-side comparison was not possible. Investigate
+  whether the cost recorder is wired in for non-Cline providers.
+
 ## [6.79.0] - Release-gate dep fix, contributor docs, state-machine doc auto-regen, providers/models endpoint, model-catalog probe cron
 
 v6.78.0 introduced a `gate` job in the Release workflow that successfully blocked
