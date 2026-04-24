@@ -10,7 +10,7 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$REPO"
+cd "$REPO" || exit 1
 
 echo "Scanning for 'import anthropic' outside memory/managed_memory/ ..."
 

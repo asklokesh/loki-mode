@@ -14,7 +14,7 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$REPO"
+cd "$REPO" || exit 1
 
 PASS=0
 FAIL=0

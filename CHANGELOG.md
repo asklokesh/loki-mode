@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.83.1] - 2026-04-24
+
+### Fixes
+
+- **Shellcheck SC2164 in managed memory test scripts.** v6.83.0 shipped with
+  unguarded `cd "$REPO"` in `tests/managed_memory/test_flag_matrix.sh`,
+  `test_sdk_isolation.sh`, and `test_kill_switch.sh`. CI shell-tests job
+  failed on shellcheck. All three now use `cd "$REPO" || exit 1`.
+- No runtime behavior change; tests still pass identically.
+
 ## [6.83.0] - 2026-04-24
 
 ### Added

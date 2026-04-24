@@ -7,7 +7,7 @@
 set -u
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$REPO"
+cd "$REPO" || exit 1
 
 TMPDIR="$(mktemp -d -t loki-killswitch-XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
