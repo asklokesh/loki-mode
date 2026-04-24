@@ -403,6 +403,7 @@ jobs:
             asklokesh/loki-mode:latest
 
       - name: Update Docker Hub description
+        continue-on-error: true  # Cosmetic step; image publish already succeeded above. PATs without admin scope return Forbidden here.
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

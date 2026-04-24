@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.81.1] - 2026-04-24
+
+### Fixes
+
+- **loki plan estimator honors LOKI_SESSION_MODEL.** The cost/iteration estimator in `autonomy/loki` was still computing the old per-iteration tier rotation even after v6.81.0 pinned the main-loop model. With the default LOKI_SESSION_MODEL=sonnet, real cost is ~60% lower than the old estimate quoted. LOKI_LEGACY_TIER_SWITCHING=true restores the legacy rotation display for users who override.
+
+### UX improvement
+
+- **Plan auto-shown in `loki start` and `loki run`.** Users no longer need to invoke `loki plan` separately. The PRD analysis (complexity, iterations, token and cost estimate, time estimate) prints automatically at the start of `loki start` and `loki run`. Opt out with `--no-plan`. `loki plan` remains available as a standalone command for explicit analysis.
+- Plan-analysis logic extracted to a reusable shell function -- no duplicated code.
+
+### CI
+
+- **Release workflow: Docker Hub description update is non-blocking.** Image publish and description-update are now independent; PATs lacking admin scope no longer fail the release. Image push still fully gates the workflow.
+
 ## [6.81.0] - 2026-04-23
 
 ### Tier 0 deletions — stop compensating for native Claude capabilities

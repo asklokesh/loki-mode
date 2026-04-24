@@ -522,6 +522,7 @@ cmd_start() {
     local mirofish_docker_image=""
     local mirofish_bg=false
     local mirofish_disabled=false
+    local no_plan=false  # v6.81.1: --no-plan opts out of auto-plan display
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -554,6 +555,7 @@ cmd_start() {
                 echo "  --mirofish-timeout S  Max pipeline wait in seconds (default: 3600)"
                 echo "  --mirofish-bg         Run MiroFish pipeline in background"
                 echo "  --no-mirofish         Disable MiroFish even if env var is set"
+                echo "  --no-plan             Skip auto-shown PRD analysis at startup"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
                 echo ""
                 echo "Environment Variables:"
@@ -774,6 +776,10 @@ cmd_start() {
                 ;;
             --no-mirofish)
                 mirofish_disabled=true
+                shift
+                ;;
+            --no-plan)
+                no_plan=true
                 shift
                 ;;
             --budget)
@@ -1030,6 +1036,13 @@ cmd_start() {
                 exit 0
             fi
         fi
+    fi
+
+    # v6.81.1: auto-show PRD analysis so users see complexity / cost / time
+    # up front without needing a separate `loki plan` invocation. Skipped via
+    # --no-plan or in non-TTY contexts (CI/pipe). No-op when PRD is absent.
+    if [ -n "$prd_file" ]; then
+        maybe_show_auto_plan "$prd_file" "$no_plan" || true
     fi
 
     # Load saved provider if not specified on command line
@@ -4083,6 +4096,7 @@ cmd_run() {
                 echo "  --complex          Force complex complexity tier"
                 echo "  --no-dashboard     Disable web dashboard"
                 echo "  --sandbox          Run in Docker sandbox"
+                echo "  --no-plan          Skip auto-shown PRD analysis at startup"
                 echo "  --budget USD       Set cost budget limit"
                 echo ""
                 echo "Progressive Isolation:"
@@ -4155,7 +4169,7 @@ cmd_run() {
                 start_args+=("--provider" "$provider_override")
                 shift
                 ;;
-            --parallel|--bg|--background|--simple|--complex|--no-dashboard|--sandbox)
+            --parallel|--bg|--background|--simple|--complex|--no-dashboard|--sandbox|--no-plan)
                 start_args+=("$1")
                 shift
                 ;;
@@ -4393,6 +4407,29 @@ INNER_SCRIPT_EOF
     # Write PRD file
     echo "$prd_content" > "$output_file"
     echo -e "${GREEN}PRD generated:${NC} $output_file"
+
+    # v6.81.1: auto-show PRD analysis once the issue-derived PRD is on disk,
+    # so users see cost / complexity / time before execution begins. When the
+    # user will continue into `cmd_start` below, cmd_start also has its own
+    # auto-plan call -- but that second call respects --no-plan / TTY checks
+    # and would typically re-emit the same analysis. We therefore pass
+    # --no-plan along in start_args to prevent duplicate output. Passing
+    # --no-plan here is safe because `cmd_run` itself already displayed the
+    # plan.
+    local _run_no_plan=false
+    for _arg in "${start_args[@]+"${start_args[@]}"}"; do
+        if [[ "$_arg" == "--no-plan" ]]; then
+            _run_no_plan=true
+            break
+        fi
+    done
+    if [ -f "$output_file" ]; then
+        maybe_show_auto_plan "$output_file" "$_run_no_plan" || true
+    fi
+    # Ensure cmd_start does not re-show the plan now that we just did.
+    if [[ "$_run_no_plan" != "true" ]]; then
+        start_args+=("--no-plan")
+    fi
 
     # Start Loki Mode unless --no-start
     if [[ "$no_start" == "true" ]]; then
@@ -10524,57 +10561,24 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
     done
 }
 
-# Dry-run PRD analysis and cost estimation (v6.18.0)
-cmd_plan() {
-    local prd_file=""
-    local show_json=false
-    local show_verbose=false
+# Reusable PRD plan analysis (v6.81.1)
+# Shared by `loki plan`, `loki start` (auto-plan), and `loki run` (auto-plan).
+# Arguments:
+#   $1 - absolute PRD path
+#   $2 - show_json (true|false)
+#   $3 - show_verbose (true|false)
+# Respects:
+#   LOKI_SESSION_MODEL          - Pins ALL iterations to one tier (default: sonnet)
+#   LOKI_LEGACY_TIER_SWITCHING  - When 'true', restores per-iteration rotation
+show_prd_plan() {
+    local prd_path="$1"
+    local show_json="${2:-false}"
+    local show_verbose="${3:-false}"
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --help|-h)
-                echo -e "${BOLD}loki plan${NC} - Dry-run PRD analysis and cost estimation"
-                echo ""
-                echo "Usage: loki plan <PRD> [options]"
-                echo ""
-                echo "Analyzes a PRD file without executing anything. Outputs complexity,"
-                echo "estimated iterations, token usage, cost, and execution plan."
-                echo ""
-                echo "Options:"
-                echo "  --json        Machine-readable JSON output"
-                echo "  --verbose     Show detailed per-iteration breakdown"
-                echo "  --help, -h    Show this help"
-                echo ""
-                echo "Examples:"
-                echo "  loki plan ./prd.md"
-                echo "  loki plan ./prd.md --json"
-                echo "  loki plan ./prd.md --verbose"
-                return 0
-                ;;
-            --json) show_json=true; shift ;;
-            --verbose) show_verbose=true; shift ;;
-            *)
-                if [ -z "$prd_file" ]; then
-                    prd_file="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    if [ -z "$prd_file" ]; then
-        echo -e "${RED}Usage: loki plan <PRD file>${NC}"
-        echo "Run 'loki plan --help' for usage."
+    if [ -z "$prd_path" ] || [ ! -f "$prd_path" ]; then
+        echo -e "${RED}show_prd_plan: PRD file not found: $prd_path${NC}" >&2
         return 1
     fi
-
-    if [ ! -f "$prd_file" ]; then
-        echo -e "${RED}PRD file not found: $prd_file${NC}"
-        return 1
-    fi
-
-    local prd_path
-    prd_path="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
 
     python3 -c "
 import json, sys, os, re, math
@@ -10582,6 +10586,22 @@ import json, sys, os, re, math
 prd_path = sys.argv[1]
 show_json = sys.argv[2] == 'true'
 show_verbose = sys.argv[3] == 'true'
+
+# v6.81.1: Respect LOKI_SESSION_MODEL (pinned by v6.81.0) so the estimate
+# matches what the main loop actually invokes. LOKI_LEGACY_TIER_SWITCHING=true
+# restores the legacy per-iteration Opus/Sonnet/Haiku rotation for users who
+# explicitly opt out.
+session_model_env = (os.environ.get('LOKI_SESSION_MODEL', 'sonnet') or 'sonnet').strip().lower()
+legacy_tier_switching = (os.environ.get('LOKI_LEGACY_TIER_SWITCHING', 'false') or 'false').strip().lower() == 'true'
+
+# Map session model name to tier key used in tokens_per_tier below.
+# Unknown models fall through to 'development' (Sonnet) as a safe default.
+_session_tier_map = {
+    'opus': 'planning',
+    'sonnet': 'development',
+    'haiku': 'fast',
+}
+session_tier = _session_tier_map.get(session_model_env, 'development')
 
 # Colors (disabled for JSON mode)
 if show_json:
@@ -10770,17 +10790,27 @@ tier_iterations = {'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
 for i in range(estimated_iterations):
     rarv_step = i % 4
     if rarv_step == 0:
-        tier = 'planning'
         phase_label = 'Reason (Planning)'
     elif rarv_step == 1:
-        tier = 'development'
         phase_label = 'Act (Implementation)'
     elif rarv_step == 2:
-        tier = 'development'
         phase_label = 'Reflect (Review)'
     else:
-        tier = 'fast'
         phase_label = 'Verify (Testing)'
+
+    if legacy_tier_switching:
+        # Legacy pre-v6.81.0 behavior: rotate tier per RARV step.
+        if rarv_step == 0:
+            tier = 'planning'
+        elif rarv_step in (1, 2):
+            tier = 'development'
+        else:
+            tier = 'fast'
+    else:
+        # v6.81.0+: main loop is pinned to LOKI_SESSION_MODEL. Estimate
+        # MUST use the same tier for all iterations to avoid quoting a
+        # cost higher than the user will actually pay.
+        tier = session_tier
 
     info = tokens_per_tier[tier]
     model = info['model']
@@ -10957,7 +10987,20 @@ print(f'  RARV cycles: {cycle_count} (4 iterations per cycle)')
 opus_n = tier_iterations.get('Opus', 0)
 sonnet_n = tier_iterations.get('Sonnet', 0)
 haiku_n = tier_iterations.get('Haiku', 0)
-print(f'  Model distribution: Opus x{opus_n} | Sonnet x{sonnet_n} | Haiku x{haiku_n}')
+if legacy_tier_switching:
+    print(f'  Model distribution: Opus x{opus_n} | Sonnet x{sonnet_n} | Haiku x{haiku_n}')
+    print(f'  {DIM}(legacy rotation: LOKI_LEGACY_TIER_SWITCHING=true){NC}')
+else:
+    # Session-pinned: exactly one tier has all iterations.
+    pinned_parts = []
+    if opus_n > 0:
+        pinned_parts.append(f'Opus x{opus_n}')
+    if sonnet_n > 0:
+        pinned_parts.append(f'Sonnet x{sonnet_n}')
+    if haiku_n > 0:
+        pinned_parts.append(f'Haiku x{haiku_n}')
+    print('  Model distribution: ' + (' | '.join(pinned_parts) if pinned_parts else '(none)'))
+    print(f'  {DIM}(pinned via LOKI_SESSION_MODEL={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
 
 # Tokens
 total_tok = total_input_tokens + total_output_tokens
@@ -10971,6 +11014,11 @@ ds = chr(36)  # dollar sign
 print(f'\n{CYAN}Cost Estimate{NC}')
 print(f'  {BOLD}Total: {ds}{total_cost:.2f}{NC}')
 for model in ['Opus', 'Sonnet', 'Haiku']:
+    # v6.81.1: suppress zero-cost tiers (e.g. session-pinned runs). Keeps
+    # the breakdown focused on models actually used. Legacy mode still
+    # shows all three because each tier has non-zero iterations.
+    if tier_iterations.get(model, 0) == 0 and tier_totals.get(model, 0) == 0:
+        continue
     pct = (tier_totals[model] / total_cost * 100) if total_cost > 0 else 0
     bar_len = int(pct / 5)
     bar = '#' * bar_len + '.' * (20 - bar_len)
@@ -11023,6 +11071,99 @@ print(f'\n{DIM}This is an estimate. Actual usage depends on PRD complexity,')
 print(f'code review cycles, and test failures.{NC}')
 print()
 " "$prd_path" "$show_json" "$show_verbose"
+}
+
+# Dry-run PRD analysis and cost estimation (v6.18.0; refactored v6.81.1)
+# Thin wrapper around show_prd_plan() so the same analysis is reusable from
+# `loki start`, `loki run`, and other commands without duplicated code.
+cmd_plan() {
+    local prd_file=""
+    local show_json=false
+    local show_verbose=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki plan${NC} - Dry-run PRD analysis and cost estimation"
+                echo ""
+                echo "Usage: loki plan <PRD> [options]"
+                echo ""
+                echo "Analyzes a PRD file without executing anything. Outputs complexity,"
+                echo "estimated iterations, token usage, cost, and execution plan."
+                echo ""
+                echo "Options:"
+                echo "  --json        Machine-readable JSON output"
+                echo "  --verbose     Show detailed per-iteration breakdown"
+                echo "  --help, -h    Show this help"
+                echo ""
+                echo "Environment Variables:"
+                echo "  LOKI_SESSION_MODEL            Pin cost estimate to a single tier"
+                echo "                                (opus|sonnet|haiku, default: sonnet)"
+                echo "  LOKI_LEGACY_TIER_SWITCHING    Set to 'true' to restore the legacy"
+                echo "                                Opus/Sonnet/Haiku per-iteration rotation"
+                echo ""
+                echo "Examples:"
+                echo "  loki plan ./prd.md"
+                echo "  loki plan ./prd.md --json"
+                echo "  loki plan ./prd.md --verbose"
+                return 0
+                ;;
+            --json) show_json=true; shift ;;
+            --verbose) show_verbose=true; shift ;;
+            *)
+                if [ -z "$prd_file" ]; then
+                    prd_file="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$prd_file" ]; then
+        echo -e "${RED}Usage: loki plan <PRD file>${NC}"
+        echo "Run 'loki plan --help' for usage."
+        return 1
+    fi
+
+    if [ ! -f "$prd_file" ]; then
+        echo -e "${RED}PRD file not found: $prd_file${NC}"
+        return 1
+    fi
+
+    local prd_path
+    prd_path="$(cd "$(dirname "$prd_file")" && pwd)/$(basename "$prd_file")"
+
+    show_prd_plan "$prd_path" "$show_json" "$show_verbose"
+}
+
+# Helper: decide whether to auto-show the plan from a major command.
+# v6.81.1: default ON, opt-out via --no-plan. Also auto-skipped when stdout is
+# not a TTY and --no-plan was not explicitly set (CI/automation contexts),
+# logging a one-line "plan skipped: non-interactive" to stderr for visibility.
+maybe_show_auto_plan() {
+    local prd_path="$1"
+    local no_plan_flag="${2:-false}"  # user passed --no-plan explicitly
+
+    # Explicit opt-out wins.
+    if [[ "$no_plan_flag" == "true" ]]; then
+        return 0
+    fi
+
+    # PRD missing: silently skip (other commands will emit their own errors).
+    if [ -z "$prd_path" ] || [ ! -f "$prd_path" ]; then
+        return 0
+    fi
+
+    # Non-TTY heuristic: keep CI / pipe output clean. Log to stderr so it is
+    # still surfaced in logs without corrupting stdout parsers.
+    if [ ! -t 1 ]; then
+        echo "plan skipped: non-interactive (pass --no-plan to silence, or run 'loki plan <PRD>' explicitly)" >&2
+        return 0
+    fi
+
+    local abs_prd
+    abs_prd="$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")"
+    show_prd_plan "$abs_prd" "false" "false"
 }
 
 # Main command dispatcher
