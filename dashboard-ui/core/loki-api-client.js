@@ -562,6 +562,19 @@ export class LokiApiClient extends EventTarget {
     return this._request(endpoint, { method: 'DELETE' });
   }
 
+  /**
+   * Public GET for arbitrary endpoints not covered by typed helpers.
+   * Mirrors _get() (no caching) so components can call new endpoints
+   * without requiring an api-client extension for every one-off panel.
+   *
+   * @param {string} endpoint - Path beginning with '/'.
+   * @returns {Promise<any>} Parsed JSON response.
+   * @throws {Error} If the response is not OK.
+   */
+  async get(endpoint) {
+    return this._get(endpoint);
+  }
+
   // ============================================
   // Status API
   // ============================================

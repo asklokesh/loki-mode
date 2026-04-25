@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.0.2
+# Loki Mode v7.1.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -271,14 +271,14 @@ Auto-detected or force with `LOKI_COMPLEXITY`:
 
 ---
 
-## Managed Agents Integration (v7.0.2)
+## Managed Agents Integration (v7.1.0)
 
 Opt-in integration with Claude Managed Agents (released Apr 2026). Gives
 Loki cross-project audited memory and real multiagent councils. Features
 are BAKED INTO existing RARV-C and council flows -- no new commands to
 learn.
 
-**All flags default false.** Default behavior is identical to v7.0.2.
+**All flags default false.** Default behavior is identical to v7.1.0.
 
 | Flag | Purpose | Status |
 |------|---------|--------|
@@ -320,4 +320,4 @@ The following features are documented in skill modules but not yet fully automat
 | Quality gates 3-reviewer system | Implemented (v5.35.0) | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Benchmarks (HumanEval, SWE-bench) | Infrastructure only | Runner scripts and datasets exist in `benchmarks/`; no published results |
 
-**v7.0.2 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.1.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

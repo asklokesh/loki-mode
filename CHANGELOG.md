@@ -5,6 +5,106 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.1.0] - 2026-04-24
+
+MINOR release closing every gap surfaced by the v7.0.2 audit cycle. New
+dashboard UI panel for managed memory + 4 quality fixes. Default behavior
+unchanged from v7.0.2; every new feature is opt-in or additive.
+
+Shipped via full SDLC: 1 product owner, 5 dev teams in worktrees, 15 blind
+reviewers (3 per item), integration tester, release manager. 14 SHIP
+verdicts + 1 false-positive cleared.
+
+### Added
+
+- **Dashboard managed-memory panel.** New Web Component
+  `dashboard-ui/components/loki-managed-memory-panel.js` (~580 lines).
+  Fetches `/api/managed/status` first, gates further calls on `enabled=true`,
+  renders events table + memory-version lookup. Status-disabled state shows
+  informational notice. Uses CSS custom properties + LokiElement base class
+  matching existing panel conventions. Registered in `dashboard-ui/index.js`
+  + componentModules array. Backed by new public `get(endpoint)` method on
+  `loki-api-client.js`. E2E test added to `dashboard-ui/tests/e2e/dashboard.spec.js`.
+
+- **Live-API gated test infrastructure.** New `tests/live/` directory with
+  `__init__.py`, `conftest.py`, `README.md`, and 3 test modules:
+  `test_memory_roundtrip.py` (3 tests), `test_retrieve.py` (2 tests),
+  `test_shadow_write.py` (2 tests). 7 tests total. Skip guard requires
+  BOTH `LOKI_LIVE_TESTS=1` AND `ANTHROPIC_API_KEY` -- default `pytest tests/`
+  reports them all SKIPPED, zero API calls made. Tests delete created
+  resources in tearDown using `loki-livetest-` prefix for traceability.
+  README documents opt-in semantics + zero-network guarantee.
+
+- **Auto-stamped correlation IDs in `emit_managed_event`.** Every managed
+  event payload now includes `loki_version` (from VERSION file, cached at
+  module load), and `iteration_id` / `session_id` when their respective env
+  vars (`LOKI_ITERATION_COUNT`, `LOKI_SESSION_ID`) are set. Caller-supplied
+  keys WIN over auto-stamp (no clobber). Missing env vars OMIT the key
+  (not null). Single-writer invariant preserved -- no new file handles.
+  Operators tailing `.loki/managed/events.ndjson` can now correlate
+  fallbacks back to specific iterations + sessions.
+
+### Fixes
+
+- **Bare SDK calls in `memory/managed_memory/client.py` now wrapped.**
+  All 5 SDK call sites (`stores.list`, `stores.create`, `memories.create`,
+  `memories.retrieve`, `memories.list`) wrapped in `try/except Exception
+  as e: raise ManagedDisabled(...) from e`. Pre-existing `ManagedDisabled`
+  re-raised first to avoid double-wrapping. Original exception message
+  embedded in the new message + chained via `from e`. Defensively
+  consistent with the rest of the codebase. New unit test
+  `tests/managed_memory/test_client_error_translation.py` (8 tests, all
+  pass) injects a fake SDK that raises on each method.
+
+- **Test setUp tightening for 3 vulnerable test files.** v7.0.2's pytest
+  test-isolation fix (snapshot+restore env vars) now applied to
+  `tests/managed/test_registry_lazy.py`,
+  `tests/managed_memory/test_shadow_write_mock.py`, and
+  `tests/managed_memory/test_retrieve_mock.py`. Eliminates the remaining
+  vulnerable surface to env-stripper tests landing in the future. All
+  three files now match the v7.0.2 reference pattern in
+  `test_providers_managed_mock.py`. Stress test verified: pytest run with
+  council strippers AND registry tests in same invocation = all green.
+
+### Documentation
+
+- `skills/memory.md` updated to v7.1.0 header. Honestly notes that the
+  previously-documented `loki_memory_promote` MCP tool is on the roadmap
+  but NOT shipped (continues v7.0.2's cleanup of the hallucinated
+  reference; documents manual-promotion-via-API workflow instead).
+
+### Verification
+
+- `bash -n` clean on autonomy/run.sh, autonomy/loki, autonomy/completion-council.sh
+- `python3 -m pytest tests/` = **644 passed, 7 skipped** (was 624 passed in v7.0.2; +20 new tests for T1/T3 + 7 live tests skip)
+- `npm test` = 7/7 pass
+- `npm run test:integration` = 7/7 pass
+- `cd dashboard-ui && npm run build` = clean (ESM 513KB + IIFE 514KB)
+- `node dashboard-ui/scripts/check-parity.js` = PASS
+- SDK isolation invariant: PASS (only `memory/managed_memory/client.py` and `providers/managed.py` import anthropic)
+- Kill-switch test: PASS, fallback events now include `loki_version` correlation field
+- Pre-push hook fired and ran `bash -n` + `pytest -q` (644 pass) before push allowed
+- CLAUDE.md section 3a: `loki version` returns 7.1.0 after fresh install (verified post-publish)
+
+### Still NOT tested locally end-to-end (honest disclosure, unchanged from v7.0.2)
+
+- Live Anthropic Managed Agents API roundtrip (no beta access in this env)
+  -- `tests/live/` infrastructure now ready for users with access
+- Multiagent `callable_agents` happy path against real session
+- Docker container actual boot from inside the image (daemon not running)
+- Homebrew install on a fresh Mac
+- VSCode extension load in actual VSCode UI
+- Dashboard UI managed panel render in actual browser (component code +
+  build verified; manual browser smoke deferred)
+
+### Statistics
+
+23 files changed: ~1,100 lines added (panel component, live test infra,
+correlation IDs, SDK wrapping, test fixtures, CHANGELOG, version bumps).
+14 version locations bumped to 7.1.0. 5 dev teams + 15 blind reviewers
+ran in parallel via worktree isolation. Single-release SDLC cycle wall
+time: ~2 hours from gap-list to ship.
+
 ## [7.0.2] - 2026-04-24
 
 Quality patch closing gaps surfaced by 5 deep-audit agent teams + CLAUDE.md

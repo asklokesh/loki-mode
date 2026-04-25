@@ -63,6 +63,24 @@ class RegistryLazinessTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp(prefix="loki-registry-")
         os.environ["LOKI_TARGET_DIR"] = self.tmp
+        # Snapshot prior env state so tearDown can restore (None -> pop, value -> set).
+        # Re-assert flags in setUp in case a prior test module stripped them;
+        # providers.managed._flags_on() reads env fresh on every is_enabled() call.
+        self._prev_managed_agents = os.environ.get("LOKI_MANAGED_AGENTS")
+        self._prev_experimental = os.environ.get("LOKI_EXPERIMENTAL_MANAGED_AGENTS")
+        os.environ["LOKI_MANAGED_AGENTS"] = "true"
+        os.environ["LOKI_EXPERIMENTAL_MANAGED_AGENTS"] = "true"
+
+    def tearDown(self) -> None:
+        # v7.0.2: unconditional restore (None -> pop, value -> set).
+        if self._prev_managed_agents is None:
+            os.environ.pop("LOKI_MANAGED_AGENTS", None)
+        else:
+            os.environ["LOKI_MANAGED_AGENTS"] = self._prev_managed_agents
+        if self._prev_experimental is None:
+            os.environ.pop("LOKI_EXPERIMENTAL_MANAGED_AGENTS", None)
+        else:
+            os.environ["LOKI_EXPERIMENTAL_MANAGED_AGENTS"] = self._prev_experimental
 
     # ---------- invariant 1: module import is cold --------------------------
 

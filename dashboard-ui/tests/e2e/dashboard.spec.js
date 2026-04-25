@@ -408,3 +408,28 @@ test.describe('Completion Council', () => {
     await expect(tabs).toHaveCount(4);
   });
 });
+
+// =============================================================================
+// Managed Memory Panel
+// =============================================================================
+test.describe('Managed Memory Panel', () => {
+  test('component is registered and renders without crashing', async ({ page }) => {
+    await page.goto('/');
+
+    // The component may not be wired into the default dashboard layout yet,
+    // so inject one and verify the custom element resolves and renders.
+    await page.evaluate(() => {
+      if (!document.querySelector('loki-managed-memory-panel')) {
+        const el = document.createElement('loki-managed-memory-panel');
+        el.id = 'test-managed-memory-panel';
+        document.body.appendChild(el);
+      }
+    });
+
+    const panel = page.locator('loki-managed-memory-panel#test-managed-memory-panel');
+    await expect(panel).toBeVisible({ timeout: 10000 });
+
+    // Title renders inside the shadow DOM regardless of API status
+    await expect(panel.locator('.panel-title')).toHaveText('Managed Memory', { timeout: 10000 });
+  });
+});

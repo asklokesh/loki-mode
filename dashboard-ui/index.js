@@ -95,6 +95,7 @@ export { LokiPipelineView } from './components/loki-pipeline-view.js';
 export { LokiMemoryGraph } from './components/loki-memory-graph.js';
 export { LokiCostWaterfall } from './components/loki-cost-waterfall.js';
 export { LokiAgentLeaderboard } from './components/loki-agent-leaderboard.js';
+export { LokiManagedMemoryPanel } from './components/loki-managed-memory-panel.js';
 
 // Version
 export const VERSION = '1.4.0';
@@ -161,6 +162,7 @@ const componentModules = [
   './components/loki-memory-graph.js',
   './components/loki-cost-waterfall.js',
   './components/loki-agent-leaderboard.js',
+  './components/loki-managed-memory-panel.js',
 ];
 
 // Components are registered via customElements.define in their respective files

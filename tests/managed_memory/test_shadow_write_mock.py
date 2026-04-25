@@ -38,6 +38,13 @@ class ShadowWriteTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="loki-managed-")
         os.environ["LOKI_TARGET_DIR"] = self.tmp
 
+        # Snapshot prior env state so tearDown can restore (None -> pop, value -> set).
+        # Re-assert flags in setUp in case a prior test module stripped them.
+        self._prev_managed_agents = os.environ.get("LOKI_MANAGED_AGENTS")
+        self._prev_managed_memory = os.environ.get("LOKI_MANAGED_MEMORY")
+        os.environ["LOKI_MANAGED_AGENTS"] = "true"
+        os.environ["LOKI_MANAGED_MEMORY"] = "true"
+
         # Lazy-import after env setup so modules see the flags.
         from memory.managed_memory import client as _client_mod
         from memory.managed_memory.fakes import FakeManagedClient
@@ -51,6 +58,15 @@ class ShadowWriteTests(unittest.TestCase):
     def tearDown(self):
         # Drop the fake singleton so other tests start clean.
         self._client_mod.reset_client()
+        # v7.0.2: unconditional restore (None -> pop, value -> set).
+        if self._prev_managed_agents is None:
+            os.environ.pop("LOKI_MANAGED_AGENTS", None)
+        else:
+            os.environ["LOKI_MANAGED_AGENTS"] = self._prev_managed_agents
+        if self._prev_managed_memory is None:
+            os.environ.pop("LOKI_MANAGED_MEMORY", None)
+        else:
+            os.environ["LOKI_MANAGED_MEMORY"] = self._prev_managed_memory
 
     # ---------- envelope + happy path ---------------------------------------
 

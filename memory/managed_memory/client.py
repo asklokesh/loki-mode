@@ -101,7 +101,12 @@ class ManagedClient:
         stores = getattr(beta, "memory_stores", None) or getattr(beta, "stores", None)
         if stores is None or not hasattr(stores, "list"):
             raise ManagedDisabled("memory_stores API not available in SDK")
-        result = stores.list()
+        try:
+            result = stores.list()
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"stores_list failed: {e!s}") from e
         # SDK returns a pydantic model; normalize to list of dicts.
         data = getattr(result, "data", result)
         return [self._to_dict(x) for x in (data or [])]
@@ -117,7 +122,12 @@ class ManagedClient:
         stores = getattr(beta, "memory_stores", None) or getattr(beta, "stores", None)
         if stores is None or not hasattr(stores, "create"):
             raise ManagedDisabled("memory_stores.create not available in SDK")
-        created = stores.create(name=name, description=description, scope=scope)
+        try:
+            created = stores.create(name=name, description=description, scope=scope)
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"stores_get_or_create failed: {e!s}") from e
         return self._to_dict(created)
 
     # ---------- memories ------------------------------------------------
@@ -148,7 +158,12 @@ class ManagedClient:
         }
         if sha256_precondition:
             kwargs["if_match_sha256"] = sha256_precondition
-        created = memories.create(**kwargs)
+        try:
+            created = memories.create(**kwargs)
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"memory_create failed: {e!s}") from e
         return self._to_dict(created)
 
     def memory_read(self, store_id: str, memory_id: str) -> Dict[str, Any]:
@@ -156,7 +171,12 @@ class ManagedClient:
         memories = getattr(beta, "memories", None)
         if memories is None or not hasattr(memories, "retrieve"):
             raise ManagedDisabled("memories.retrieve not available in SDK")
-        got = memories.retrieve(store_id=store_id, memory_id=memory_id)
+        try:
+            got = memories.retrieve(store_id=store_id, memory_id=memory_id)
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"memory_read failed: {e!s}") from e
         return self._to_dict(got)
 
     def memories_list(
@@ -169,7 +189,12 @@ class ManagedClient:
         kwargs: Dict[str, Any] = {"store_id": store_id}
         if path_prefix:
             kwargs["path_prefix"] = path_prefix
-        result = memories.list(**kwargs)
+        try:
+            result = memories.list(**kwargs)
+        except ManagedDisabled:
+            raise
+        except Exception as e:
+            raise ManagedDisabled(f"memories_list failed: {e!s}") from e
         data = getattr(result, "data", result)
         return [self._to_dict(x) for x in (data or [])]
 
