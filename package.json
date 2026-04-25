@@ -59,7 +59,7 @@
   "license": "BUSL-1.1",
   "author": "Lokesh",
   "bin": {
-    "loki": "autonomy/loki",
+    "loki": "bin/loki",
     "loki-mode": "bin/loki-mode.js"
   },
   "files": [

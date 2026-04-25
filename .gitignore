@@ -36,6 +36,10 @@ wiki-repo/
 dashboard-ui/.loki/
 vscode-extension/.loki/
 
+# Hermetic test fixtures under loki-ts/ are intentionally tracked
+!loki-ts/tests/fixtures/**/.loki/
+!loki-ts/tests/fixtures/**/.loki/**
+
 # Test artifacts
 **/test-results/
 .aider*

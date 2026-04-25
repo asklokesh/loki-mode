@@ -1,0 +1,6 @@
+{
+  "input_tokens": 1500,
+  "output_tokens": 500,
+  "cost_usd": 0.05,
+  "duration_seconds": 45
+}

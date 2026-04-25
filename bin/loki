@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#===============================================================================
+# Loki Mode shim
+#
+# Routes commands ported in Phase 2 (bash->Bun migration) to the Bun CLI;
+# everything else falls through to autonomy/loki (bash).
+#
+# Set LOKI_LEGACY_BASH=1 to force bash for every command (rollback flag).
+# See docs/architecture/ADR-001-runtime-migration.md and
+# /Users/lokesh/.claude/plans/polished-waddling-stardust.md.
+#===============================================================================
+set -euo pipefail
+
+# Resolve script directory (handles symlinks like the bash CLI does).
+_resolve_path() {
+    local script="$1"
+    if command -v realpath &>/dev/null; then
+        realpath "$script" 2>/dev/null || echo "$script"
+    else
+        while [ -L "$script" ]; do
+            local dir
+            dir=$(dirname "$script")
+            script=$(readlink "$script")
+            [[ "$script" != /* ]] && script="$dir/$script"
+        done
+        echo "$script"
+    fi
+}
+
+SCRIPT_PATH=$(_resolve_path "$0")
+SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
+BASH_CLI="$REPO_ROOT/autonomy/loki"
+BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+
+# Force-fall-through to bash when the rollback flag is set.
+if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
+    exec "$BASH_CLI" "$@"
+fi
+
+# Bun must be installed for the new path; if it isn't, fall through to bash
+# silently rather than fail. This keeps users on systems without Bun working.
+if ! command -v bun &>/dev/null; then
+    exec "$BASH_CLI" "$@"
+fi
+
+# Commands ported in Phase 2 -- route to Bun. Everything else goes to bash.
+# Two-token routes (provider show/list, memory list/index) match on the first
+# token only; the Bun dispatcher handles subcommand routing internally.
+case "${1:-}" in
+    version|--version|-v|status|stats|doctor|provider|memory)
+        exec bun "$BUN_CLI" "$@"
+        ;;
+    *)
+        exec "$BASH_CLI" "$@"
+        ;;
+esac
