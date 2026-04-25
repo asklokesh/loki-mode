@@ -162,7 +162,12 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   // NOTE: required-key lists encode the contract this loop expects. Sibling
   // modules under loki-ts/src/runner/ that don't yet expose the listed
   // functions are treated as missing until they conform. See types.ts.
-  const stateMod = await tryImport<StateMod>("./state.ts", ["loadStateForRunner", "saveStateForRunner"]);
+  // v7.4.4 (BUG-24) regression guard: prefer test injection over dynamic
+  // import. Tests use this to instrument saveCallCount/loadCallCount and
+  // prove the adapter path was taken (not the no-op fallback throw).
+  const stateMod: StateMod | null = opts.stateOverride
+    ? (opts.stateOverride as StateMod)
+    : await tryImport<StateMod>("./state.ts", ["loadStateForRunner", "saveStateForRunner"]);
   // build_prompt.ts in tree (Phase4 B-agent) accepts BuildPromptOpts (different
   // shape from RunnerContext). Until an adapter exposes a runner-shaped
   // wrapper, gate on a marker key the adapter will publish.

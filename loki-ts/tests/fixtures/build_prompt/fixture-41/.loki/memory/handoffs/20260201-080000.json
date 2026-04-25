@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "timestamp": "2026-02-01T08:00:00Z",
+  "reason": "rate_limit",
+  "iteration": 12,
+  "files_modified": ["src/api/users.ts", "src/api/auth.ts", "src/db/schema.ts"],
+  "recent_commits": ["d4f2a9 feat: user CRUD", "b7c8e1 fix: schema migration"],
+  "task_status": {"pending": 7, "completed": 8, "in_progress": 2},
+  "open_questions": ["should we paginate at 25 or 50?"],
+  "key_decisions": ["use cursor-based pagination"],
+  "blockers": ["waiting on prod DB credentials"]
+}

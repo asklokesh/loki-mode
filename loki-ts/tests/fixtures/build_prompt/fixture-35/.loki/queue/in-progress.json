@@ -1,0 +1,5 @@
+[
+  {"id": "ip-a", "title": "In progress alpha", "started_at": "2026-01-01T10:00:00Z"},
+  {"id": "ip-b", "title": "In progress beta", "started_at": "2026-01-01T10:05:00Z"},
+  {"id": "ip-c", "title": "In progress gamma", "started_at": "2026-01-01T10:10:00Z"}
+]

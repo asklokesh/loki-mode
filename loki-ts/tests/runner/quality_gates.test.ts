@@ -12,18 +12,23 @@
 // state is touched. Env overrides are scrubbed in afterEach.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   clearGateFailure,
   getGateFailureCount,
+  runCodeReview,
+  runDocQualityGate,
+  runMagicDebateGate,
   runQualityGates,
   runStaticAnalysis,
   runTestCoverage,
+  selectReviewers,
   trackGateFailure,
 } from "../../src/runner/quality_gates.ts";
+import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 
 let scratch = "";
@@ -213,6 +218,14 @@ describe("escalation ladder boundaries", () => {
 // --- Orchestrator behavior ------------------------------------------------
 
 describe("runQualityGates orchestration", () => {
+  beforeEach(() => {
+    // Force the real doc + magic gates into stub mode so this orchestration
+    // block stays focused on aggregation logic rather than filesystem state.
+    // Individual cases below override these as needed.
+    process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
+    process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "pass";
+  });
+
   it("returns all gates in passed[] when stubs default to pass", async () => {
     const r = await runQualityGates(makeCtx());
     expect(r.failed).toEqual([]);
@@ -370,5 +383,302 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
     const r = await runTestCoverage(makeCtx());
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("skipping");
+  });
+});
+
+// --- Doc quality gate (real Phase 5 implementation) -----------------------
+
+describe("runDocQualityGate (real Phase 5 implementation)", () => {
+  // Helper: write the three required top-level docs with a header + body so
+  // each case can selectively damage one of them.
+  function writeRequiredDocs(
+    overrides?: Partial<Record<"README.md" | "CLAUDE.md" | "SKILL.md", string>>,
+  ) {
+    const def = "# Heading\n\nThis is a long enough body to clear the minimum length threshold easily.\n";
+    for (const name of ["README.md", "CLAUDE.md", "SKILL.md"] as const) {
+      writeFileSync(join(scratch, name), overrides?.[name] ?? def);
+    }
+  }
+
+  it("fails when CLAUDE.md is missing", async () => {
+    writeFileSync(join(scratch, "README.md"), "# R\n\nbody body body body body body body body body.\n");
+    writeFileSync(join(scratch, "SKILL.md"), "# S\n\nbody body body body body body body body body.\n");
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("CLAUDE.md");
+    expect(r.detail ?? "").toContain("missing");
+  });
+
+  it("passes when all required docs are present and well-formed", async () => {
+    writeRequiredDocs();
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("clean");
+  });
+
+  it("fails when a markdown link target does not resolve on disk", async () => {
+    writeRequiredDocs({
+      "README.md": "# R\n\nSee [missing](./does-not-exist.md) for details, body padding here.\n",
+    });
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("broken link");
+    expect(r.detail ?? "").toContain("does-not-exist.md");
+  });
+
+  it("fails when a doc has no markdown header", async () => {
+    writeRequiredDocs({
+      "SKILL.md": "Just a wall of prose with no header line at all, padded out to clear length minimum.\n",
+    });
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("no markdown header");
+  });
+
+  it("fails when a doc is below the minimum length threshold", async () => {
+    writeRequiredDocs({ "CLAUDE.md": "# x\n" });
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("below minimum length");
+  });
+
+  it("ignores external links and in-doc anchors", async () => {
+    writeRequiredDocs({
+      "README.md":
+        "# R\n\n[external](https://example.com) and [anchor](#section) and [mailto](mailto:x@y.z) -- all fine padding.\n",
+    });
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(true);
+  });
+
+  it("honors the LOKI_STUB_GATE_DOC_COVERAGE escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "fail";
+    // Even with valid docs the stub override must win.
+    writeRequiredDocs();
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
+  });
+});
+
+// --- Magic debate gate (real Phase 5 implementation) ----------------------
+
+describe("runMagicDebateGate (real Phase 5 implementation)", () => {
+  function writeSpec(name: string, body: string) {
+    const dir = join(scratch, ".loki", "magic", "specs");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), body);
+  }
+
+  it("passes (skipped) when LOKI_GATE_MAGIC_DEBATE is not 'true'", async () => {
+    // Default off per Phase 5 spec -- env unset means skip.
+    writeSpec("comp.md", "# Comp\n\nNo pros or cons but gate must skip when env is off.\n");
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("disabled");
+  });
+
+  it("passes when no specs directory exists (opt-in but empty)", async () => {
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "true";
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("no specs dir");
+  });
+
+  it("fails when a spec is missing the 'Pros' section", async () => {
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "true";
+    writeSpec("comp.md", "# Comp\n\n## Cons\n- one\n- two\n");
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("Pros");
+  });
+
+  it("fails when a spec is missing the 'Cons' section", async () => {
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "true";
+    writeSpec("comp.md", "# Comp\n\n## Pros\n- one\n- two\n");
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("Cons");
+  });
+
+  it("passes when each spec has both Pros and Cons sections", async () => {
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "true";
+    writeSpec("a.md", "# A\n\n## Pros\n- good\n\n## Cons\n- bad\n");
+    writeSpec("b.md", "# B\n\n### PROS\n- great\n\n### cons\n- meh\n");
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("2 spec(s) clean");
+  });
+
+  it("honors the LOKI_STUB_GATE_MAGIC_DEBATE escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "fail";
+    // Stub wins even though env-off would otherwise return pass.
+    const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
+  });
+});
+
+// --- runCodeReview (real Phase 5 selection + dispatch + aggregation) ------
+//
+// The reviewer dispatch itself remains stubbed (real provider wiring lands
+// in v7.5.0+); these tests verify the SELECTION + AGGREGATION pipeline by
+// injecting a deterministic ReviewerFn through opts.reviewer so no Claude /
+// Codex / Gemini subprocess is ever spawned.
+
+describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
+  const passReviewer: ReviewerFn = async () => "VERDICT: PASS\nFINDINGS:\n- None";
+
+  function reviewDirs(): string[] {
+    const root = join(scratch, "quality", "reviews");
+    if (!existsSync(root)) return [];
+    return readdirSync(root);
+  }
+
+  it("skips when there is no diff to review", async () => {
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "", files: "" },
+      reviewer: passReviewer,
+    });
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("no diff");
+    // No review directory should be created on a no-op skip.
+    expect(reviewDirs()).toEqual([]);
+  });
+
+  it("keyword scoring picks security-sentinel for security-related diffs", () => {
+    const diff =
+      "+ const password = req.body.password;\n+ if (auth(token)) {\n+   db.query(`SELECT * FROM u WHERE id=${id}`);\n+ }\n";
+    const files = "src/auth/login.ts\n";
+    const sel = selectReviewers(diff, files);
+    // First reviewer is always architecture-strategist.
+    expect(sel.reviewers[0]?.name).toBe("architecture-strategist");
+    // Security must outrank others on this diff.
+    const names = sel.reviewers.map((r) => r.name);
+    expect(names).toContain("security-sentinel");
+    expect(names.length).toBe(3);
+  });
+
+  it("always selects exactly 3 reviewers (architecture + 2 specialists)", () => {
+    // Empty-keyword case still selects 3 (default fallback path).
+    const sel = selectReviewers("only whitespace diff", "README.md\n");
+    expect(sel.reviewers.length).toBe(3);
+    expect(sel.reviewers[0]?.name).toBe("architecture-strategist");
+    // Default fallback: security-sentinel + test-coverage-auditor.
+    expect(sel.reviewers.slice(1).map((r) => r.name)).toEqual([
+      "security-sentinel",
+      "test-coverage-auditor",
+    ]);
+    expect(sel.pool_size).toBe(5);
+  });
+
+  it("writes aggregate.json with the documented shape on a clean review", async () => {
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ console.log('hi');\n", files: "src/x.ts\n" },
+      reviewer: passReviewer,
+    });
+    expect(r.passed).toBe(true);
+
+    const dirs = reviewDirs();
+    expect(dirs.length).toBe(1);
+    const reviewId = dirs[0]!;
+    const aggPath = join(scratch, "quality", "reviews", reviewId, "aggregate.json");
+    const agg = JSON.parse(readFileSync(aggPath, "utf-8")) as Record<string, unknown>;
+    expect(agg["review_id"]).toBe(reviewId);
+    expect(agg["iteration"]).toBe(1);
+    expect(agg["pass_count"]).toBe(3);
+    expect(agg["fail_count"]).toBe(0);
+    expect(agg["has_blocking"]).toBe(false);
+    expect(typeof agg["verdicts"]).toBe("string");
+    expect(agg["verdicts"] as string).toContain("architecture-strategist:PASS");
+  });
+
+  it("writes per-reviewer .txt outputs alongside the prompt and selection", async () => {
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },
+      reviewer: passReviewer,
+    });
+    expect(r.passed).toBe(true);
+    const reviewId = reviewDirs()[0]!;
+    const dir = join(scratch, "quality", "reviews", reviewId);
+    // architecture-strategist is always present.
+    const txt = readFileSync(join(dir, "architecture-strategist.txt"), "utf-8");
+    expect(txt).toContain("VERDICT:");
+    expect(txt).toContain("FINDINGS:");
+    // selection.json mirrors selectReviewers() output shape.
+    const selection = JSON.parse(readFileSync(join(dir, "selection.json"), "utf-8")) as {
+      reviewers: Array<{ name: string; focus: string; checks: string }>;
+      scores: Record<string, number>;
+      pool_size: number;
+    };
+    expect(selection.reviewers.length).toBe(3);
+    expect(selection.pool_size).toBe(5);
+    // Anti-sycophancy file written on unanimous pass.
+    expect(existsSync(join(dir, "anti-sycophancy.txt"))).toBe(true);
+  });
+
+  it("blocks the gate when any reviewer reports [Critical] or [High]", async () => {
+    let call = 0;
+    const mixedReviewer: ReviewerFn = async () => {
+      call += 1;
+      if (call === 2) {
+        return "VERDICT: FAIL\nFINDINGS:\n- [Critical] hardcoded secret in src/x.ts:3";
+      }
+      return "VERDICT: PASS\nFINDINGS:\n- None";
+    };
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const token = 'abc';\n", files: "src/x.ts\n" },
+      reviewer: mixedReviewer,
+    });
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("blocking severity");
+
+    const reviewId = reviewDirs()[0]!;
+    const agg = JSON.parse(
+      readFileSync(join(scratch, "quality", "reviews", reviewId, "aggregate.json"), "utf-8"),
+    ) as Record<string, unknown>;
+    expect(agg["has_blocking"]).toBe(true);
+    expect(agg["fail_count"]).toBe(1);
+    expect(agg["pass_count"]).toBe(2);
+  });
+
+  it("does not block on FAIL with only Medium/Low severity findings", async () => {
+    const lowFailReviewer: ReviewerFn = async ({ reviewer }) => {
+      if (reviewer.name === "architecture-strategist") {
+        return "VERDICT: FAIL\nFINDINGS:\n- [Medium] consider extracting helper";
+      }
+      return "VERDICT: PASS\nFINDINGS:\n- None";
+    };
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const a = 2;\n", files: "src/y.ts\n" },
+      reviewer: lowFailReviewer,
+    });
+    expect(r.passed).toBe(true);
+    const reviewId = reviewDirs()[0]!;
+    const agg = JSON.parse(
+      readFileSync(join(scratch, "quality", "reviews", reviewId, "aggregate.json"), "utf-8"),
+    ) as Record<string, unknown>;
+    expect(agg["has_blocking"]).toBe(false);
+    expect(agg["fail_count"]).toBe(1);
+    expect(agg["pass_count"]).toBe(2);
+  });
+
+  it("captures reviewer exceptions as a Critical FAIL (gate blocks)", async () => {
+    const throwingReviewer: ReviewerFn = async ({ reviewer }) => {
+      if (reviewer.name === "security-sentinel") throw new Error("provider down");
+      return "VERDICT: PASS\nFINDINGS:\n- None";
+    };
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const auth = true;\n", files: "src/auth.ts\n" },
+      reviewer: throwingReviewer,
+    });
+    expect(r.passed).toBe(false);
+    const reviewId = reviewDirs()[0]!;
+    const txt = readFileSync(
+      join(scratch, "quality", "reviews", reviewId, "security-sentinel.txt"),
+      "utf-8",
+    );
+    expect(txt).toContain("[Critical]");
+    expect(txt).toContain("provider down");
   });
 });

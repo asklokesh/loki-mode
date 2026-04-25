@@ -6,8 +6,13 @@ of `build_prompt()`.
 
 ## Overview
 
-30 fixture scenarios exercise `build_prompt()` (autonomy/run.sh:8912) across
-the major code paths:
+60 fixture scenarios exercise `build_prompt()` (autonomy/run.sh:8912) across
+the major code paths. Fixtures 1-30 cover the original baseline scenarios.
+Fixtures 31-60 extend coverage to edge cases (empty PRD, unicode, > 50 gate
+failures, BMAD/OpenSpec/MiroFish contexts, > 20 magic specs, multi-line human
+directives, > 16KB ledger truncation, missing PRD path, binary PRD body,
+boundary retry/iteration counts, completion-promise variants, and provider
+opacity checks):
 
 | ID | Scenario |
 |----|----------|
@@ -41,6 +46,36 @@ the major code paths:
 | 28 | Checklist verification results present |
 | 29 | Degraded provider with PRD + human directive |
 | 30 | Legacy prompt ordering rollback flag |
+| 31 | Empty PRD body (degraded mode read) |
+| 32 | PRD with 100 features (large PRD) |
+| 33 | PRD with unicode (Chinese + Japanese) |
+| 34 | Queue with only failed tasks |
+| 35 | Mixed in-progress + pending queues |
+| 36 | Gate failures > 50 |
+| 37 | All SDLC phases disabled |
+| 38 | Degraded provider + perpetual mode |
+| 39 | Human directive with multi-line content |
+| 40 | Memory ledger > 16KB (truncation cap) |
+| 41 | Handoff JSON (rate_limit reason) |
+| 42 | BMAD context populated |
+| 43 | OpenSpec delta context populated |
+| 44 | MiroFish market validation context |
+| 45 | Magic Modules with > 20 specs |
+| 46 | Checklist 50% pass / 50% fail |
+| 47 | Iteration > 1000 |
+| 48 | Retry boundary (retry=99) |
+| 49 | PRD path set but file missing |
+| 50 | PRD path with binary content |
+| 51 | Legacy prompt ordering, cold start |
+| 52 | Cold start with no .loki/ directory |
+| 53 | Warm restart with .loki/STATUS.txt |
+| 54 | Completion promise present (matched) |
+| 55 | Completion promise unmatched |
+| 56 | sessionModel=opus (env opaque) |
+| 57 | sessionModel=sonnet (env opaque) |
+| 58 | sessionModel=haiku (env opaque) |
+| 59 | PROVIDER_NAME=codex with degraded |
+| 60 | PROVIDER_NAME=gemini with degraded |
 
 ## Fixture Layout
 

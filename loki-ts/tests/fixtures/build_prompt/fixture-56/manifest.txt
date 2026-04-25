@@ -1,0 +1,1 @@
+sessionModel=opus (env should be opaque to build_prompt)

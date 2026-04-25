@@ -14,10 +14,14 @@
 // Contract: autonomous.ts:167 dynamically imports this module and invokes
 // `resolveProvider(name)` to obtain a `ProviderInvoker` (see runner/types.ts:90).
 //
-// Phase 5 first iteration: Claude is implemented in full. Codex, Gemini,
-// Cline, Aider are stubbed and throw on resolveProvider so the runner can
-// surface a clear error rather than silently degrading. Subsequent Phase 5
-// iterations port the remaining four (BUG-22 stub-discipline rule).
+// Phase 5 progress:
+//   - claude is ported in full (Tier 1).
+//   - cline, aider are ported (Tier 2 / Tier 3 degraded).
+//   - gemini is ported (Tier 3 degraded + API-key rotation + flash fallback).
+//   - codex is still stubbed pending parallel work by other agents.
+// The dispatch table always returns an invoker; stubs throw with a
+// discoverable "STUB: Phase 5" marker so failures surface loudly instead
+// of silently degrading (BUG-22 stub-discipline rule).
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -205,41 +209,288 @@ export function codexProvider(): ProviderInvoker {
   };
 }
 
-// STUB: Phase 5 next iteration -- port gemini.sh:195-298 (positional prompt,
-// --approval-mode=yolo, rate-limit fallback to flash, API key rotation).
+// ---------------------------------------------------------------------------
+// Gemini provider (gemini.sh:1-343)
+//
+// Maps to provider_invoke_with_tier() at gemini.sh:300-343:
+//   gemini --approval-mode=yolo --model <model> "<prompt>"
+//
+// Two recovery behaviors are ported from bash:
+//   1. API key rotation (gemini.sh:146-176, _gemini_rotate_api_key). When the
+//      first invocation fails with an auth error (401/403/unauthorized/...),
+//      the next key from LOKI_GEMINI_API_KEYS is selected and the call is
+//      retried once with the same model.
+//   2. Rate-limit fallback to the flash model (gemini.sh:335-338). When the
+//      invocation fails with a 429/quota signal in stderr, the call is retried
+//      once with PROVIDER_MODEL_FALLBACK (gemini.sh:77).
+//
+// At most ONE recovery retry happens per .invoke() to avoid retry loops; this
+// is stricter than the bash script (which can chain auth-rotation + flash-
+// fallback) and is the explicit Phase 5 contract.
+// ---------------------------------------------------------------------------
+
+const GEMINI_DEFAULT_PRO = "gemini-3-pro-preview";
+const GEMINI_DEFAULT_FLASH = "gemini-3-flash-preview";
+const GEMINI_AUTH_ERROR_RE =
+  /(401|403|unauthorized|forbidden|invalid.?api.?key|permission.?denied)/i;
+const GEMINI_RATE_LIMIT_RE = /(rate.?limit|429|quota|resource.?exhausted)/i;
+
+// Resolve tier -> Gemini model. Mirrors gemini.sh:74-76 +
+// provider_get_tier_param at gemini.sh:243-251. The "thinking" level is
+// informational only -- the bash script does not pass a thinking flag to
+// the CLI, it only selects pro vs flash.
+function geminiTierToModel(tier: SessionTier): string {
+  const planning =
+    process.env["LOKI_GEMINI_MODEL_PLANNING"] ??
+    process.env["LOKI_MODEL_PLANNING"] ??
+    GEMINI_DEFAULT_PRO;
+  const development =
+    process.env["LOKI_GEMINI_MODEL_DEVELOPMENT"] ??
+    process.env["LOKI_MODEL_DEVELOPMENT"] ??
+    GEMINI_DEFAULT_PRO;
+  const fast =
+    process.env["LOKI_GEMINI_MODEL_FAST"] ??
+    process.env["LOKI_MODEL_FAST"] ??
+    GEMINI_DEFAULT_FLASH;
+  switch (tier) {
+    case "planning":
+      return planning;
+    case "development":
+      return development;
+    case "fast":
+      return fast;
+    default:
+      return development;
+  }
+}
+
+// Apply LOKI_MAX_TIER ceiling. Mirrors gemini.sh:277-290.
+//   haiku|flash -> always fast model
+//   sonnet|pro  -> cap planning down to development model
+//   opus        -> no cap
+function applyGeminiMaxTier(tier: SessionTier, model: string): string {
+  const maxTier = process.env["LOKI_MAX_TIER"];
+  if (!maxTier) return model;
+  switch (maxTier) {
+    case "haiku":
+    case "flash":
+      return geminiTierToModel("fast");
+    case "sonnet":
+    case "pro":
+      if (tier === "planning") return geminiTierToModel("development");
+      return model;
+    default:
+      return model;
+  }
+}
+
+// Resolve the fallback (flash) model used on rate-limit retries.
+// Mirrors PROVIDER_MODEL_FALLBACK at gemini.sh:77.
+function geminiFallbackModel(): string {
+  return process.env["LOKI_GEMINI_MODEL_FALLBACK"] ?? GEMINI_DEFAULT_FLASH;
+}
+
+// Parse LOKI_GEMINI_API_KEYS into a clean list (drop empty / whitespace-only).
+function parseGeminiKeyPool(): string[] {
+  const raw = process.env["LOKI_GEMINI_API_KEYS"];
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+}
+
+// Pick the next API key after `current` from the pool. Mirrors
+// _gemini_rotate_api_key (gemini.sh:146-176) including the wrap-around: if
+// `current` is unset or not found in the pool, return the first key; if the
+// pool has only one entry that equals `current`, return null (exhausted).
+function rotateGeminiApiKey(current: string | undefined): string | null {
+  const pool = parseGeminiKeyPool();
+  if (pool.length === 0) return null;
+  if (!current) return pool[0] ?? null;
+  const idx = pool.indexOf(current);
+  if (idx === -1) {
+    // Current key not in the pool -- fall through to the first entry rather
+    // than declaring exhaustion (matches the bash "first_key != current"
+    // branch at gemini.sh:170-173).
+    return pool[0] ?? null;
+  }
+  if (idx === pool.length - 1) return null; // exhausted, no wrap-around
+  return pool[idx + 1] ?? null;
+}
+
+// Resolve the initial API key for the invocation. Order matches
+// _gemini_resolve_api_key (gemini.sh:127-142) but returns the value rather
+// than mutating process.env -- the value is injected via shellRun's `env`
+// option so test isolation is preserved.
+function resolveInitialGeminiKey(): string | undefined {
+  const direct = process.env["GOOGLE_API_KEY"];
+  if (direct && direct.length > 0) return direct;
+  const alias = process.env["GEMINI_API_KEY"];
+  if (alias && alias.length > 0) return alias;
+  // ADC path is left to the gemini CLI. If a key pool is set, seed with the
+  // first entry so the invocation has credentials even on a fresh shell.
+  const pool = parseGeminiKeyPool();
+  return pool[0];
+}
+
+// Build the gemini argv. Positional prompt -- gemini.sh:34-36 documents -p as
+// DEPRECATED. The prompt MUST be the last argument.
+function buildGeminiArgv(cli: string, model: string, prompt: string): string[] {
+  return [cli, "--approval-mode=yolo", "--model", model, prompt];
+}
+
 export function geminiProvider(): ProviderInvoker {
+  const cli = resolveCli("LOKI_GEMINI_CLI", "gemini");
   return {
-    async invoke(_call: ProviderInvocation): Promise<ProviderResult> {
-      // STUB: Phase 5 -- gemini.sh:195 provider_invoke not yet ported.
-      throw new Error(
-        "gemini provider not yet implemented -- STUB: Phase 5 next iteration (gemini.sh:195)",
-      );
+    async invoke(call: ProviderInvocation): Promise<ProviderResult> {
+      const baseModel = geminiTierToModel(call.tier);
+      const model = applyGeminiMaxTier(call.tier, baseModel);
+
+      let activeKey = resolveInitialGeminiKey();
+      const env: Record<string, string> = {};
+      if (activeKey) env["GOOGLE_API_KEY"] = activeKey;
+
+      // First attempt.
+      let r = await shellRun(buildGeminiArgv(cli, model, call.prompt), {
+        cwd: call.cwd,
+        env,
+      });
+
+      // Recovery: at most ONE retry per .invoke(). Auth error wins over
+      // rate-limit if both somehow appear in stderr -- it is the cheaper
+      // recovery (no model downgrade) and matches the bash ordering at
+      // gemini.sh:323-332 (auth branch runs before rate-limit branch).
+      if (r.exitCode !== 0 && GEMINI_AUTH_ERROR_RE.test(r.stderr)) {
+        const next = rotateGeminiApiKey(activeKey);
+        if (next && next !== activeKey) {
+          activeKey = next;
+          r = await shellRun(buildGeminiArgv(cli, model, call.prompt), {
+            cwd: call.cwd,
+            env: { GOOGLE_API_KEY: activeKey },
+          });
+        }
+      } else if (r.exitCode !== 0 && GEMINI_RATE_LIMIT_RE.test(r.stderr)) {
+        const fallbackModel = geminiFallbackModel();
+        if (fallbackModel !== model) {
+          r = await shellRun(
+            buildGeminiArgv(cli, fallbackModel, call.prompt),
+            { cwd: call.cwd, env },
+          );
+        }
+      }
+
+      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+      return {
+        exitCode: r.exitCode,
+        capturedOutputPath: call.iterationOutputPath,
+      };
     },
   };
 }
 
-// STUB: Phase 5 next iteration -- port cline.sh:108-131 (positional prompt
-// with -y YOLO flag, single-model dispatch).
+// ---------------------------------------------------------------------------
+// Cline provider (cline.sh:1-139)
+// ---------------------------------------------------------------------------
+
+// Build the Cline provider invoker. Maps to provider_invoke() at
+// cline.sh:108-115:
+//   cline -y [-m <model>] <prompt>
+//
+// Notes:
+//   - Tier is informational only -- Cline uses a single externally-configured
+//     model gateway. cline.sh:117-128 returns CLINE_DEFAULT_MODEL for every
+//     tier; we mirror that by ignoring the tier argument here.
+//   - Capabilities: subagents + MCP, but no parallelization
+//     (cline.sh:42-48). Parallel-mode callers fan out at the orchestrator
+//     layer, not here.
+//   - LOKI_CLINE_MODEL is optional. When unset we omit -m and let the CLI
+//     fall back to its `cline auth` configured default -- matches bash
+//     behavior at cline.sh:111-113 (empty model_args array).
 export function clineProvider(): ProviderInvoker {
+  const cli = resolveCli("LOKI_CLINE_CLI", "cline");
   return {
-    async invoke(_call: ProviderInvocation): Promise<ProviderResult> {
-      // STUB: Phase 5 -- cline.sh:108 provider_invoke not yet ported.
-      throw new Error(
-        "cline provider not yet implemented -- STUB: Phase 5 next iteration (cline.sh:108)",
-      );
+    async invoke(call: ProviderInvocation): Promise<ProviderResult> {
+      const model = process.env["LOKI_CLINE_MODEL"] ?? "";
+
+      // cline.sh:33 PROVIDER_AUTONOMOUS_FLAG = "-y" (YOLO mode).
+      const argv: string[] = [cli, "-y"];
+      if (model.length > 0) {
+        // cline.sh:113-114: build -m <model> as a separate pair so model
+        // names with spaces survive without word-splitting.
+        argv.push("-m", model);
+      }
+      // cline.sh:35,114: PROVIDER_PROMPT_POSITIONAL=true -- prompt last.
+      argv.push(call.prompt);
+
+      const r = await shellRun(argv, { cwd: call.cwd });
+      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+
+      return {
+        exitCode: r.exitCode,
+        capturedOutputPath: call.iterationOutputPath,
+      };
     },
   };
 }
 
-// STUB: Phase 5 next iteration -- port aider.sh:110-122 (--yes-always,
-// --message <prompt>, LOKI_AIDER_FLAGS pass-through, --no-auto-commits).
+// ---------------------------------------------------------------------------
+// Aider provider (aider.sh:1-145)
+// ---------------------------------------------------------------------------
+
+// Build the Aider provider invoker. Maps to provider_invoke() at
+// aider.sh:110-121:
+//   aider --message <prompt> --yes-always --no-auto-commits \
+//         --model <model> [LOKI_AIDER_FLAGS...]
+//
+// Notes:
+//   - Tier is informational only -- Aider routes through litellm with a
+//     single externally-configured model. aider.sh:124-135 returns
+//     AIDER_DEFAULT_MODEL for every tier; we mirror that by ignoring tier.
+//   - Degraded provider: no subagents, no MCP, sequential only
+//     (aider.sh:88-94). Multi-agent callers must serialize.
+//   - --no-auto-commits is mandatory: loki manages git itself, including
+//     branch state for healing mode (aider.sh:108-109,118).
+//   - Default model falls back to "claude-opus-4-7" hard-coded here. The
+//     bash side reads from providers/model_catalog.json via models.sh; we
+//     keep the TS provider hermetic and let LOKI_AIDER_MODEL override.
+//   - LOKI_AIDER_FLAGS is whitespace-split pass-through, mirroring bash
+//     word-splitting at aider.sh:114,120 ($extra_flags) without invoking
+//     a shell.
 export function aiderProvider(): ProviderInvoker {
+  const cli = resolveCli("LOKI_AIDER_CLI", "aider");
   return {
-    async invoke(_call: ProviderInvocation): Promise<ProviderResult> {
-      // STUB: Phase 5 -- aider.sh:110 provider_invoke not yet ported.
-      throw new Error(
-        "aider provider not yet implemented -- STUB: Phase 5 next iteration (aider.sh:110)",
-      );
+    async invoke(call: ProviderInvocation): Promise<ProviderResult> {
+      const model = process.env["LOKI_AIDER_MODEL"] ?? "claude-opus-4-7";
+
+      const argv: string[] = [
+        cli,
+        // aider.sh:34,116: PROVIDER_PROMPT_FLAG = --message (single-shot).
+        "--message",
+        call.prompt,
+        // aider.sh:33,117: PROVIDER_AUTONOMOUS_FLAG = --yes-always.
+        "--yes-always",
+        // aider.sh:118: loki owns git -- never let aider auto-commit.
+        "--no-auto-commits",
+        // aider.sh:119: model selected via litellm string.
+        "--model",
+        model,
+      ];
+
+      const extraFlags = process.env["LOKI_AIDER_FLAGS"] ?? "";
+      if (extraFlags.length > 0) {
+        for (const tok of extraFlags.split(/\s+/)) {
+          if (tok.length > 0) argv.push(tok);
+        }
+      }
+
+      const r = await shellRun(argv, { cwd: call.cwd });
+      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
+
+      return {
+        exitCode: r.exitCode,
+        capturedOutputPath: call.iterationOutputPath,
+      };
     },
   };
 }

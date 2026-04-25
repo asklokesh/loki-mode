@@ -1,0 +1,6 @@
+{"results": [
+  {"id": "c1", "status": "pass"},
+  {"id": "c2", "status": "pass"},
+  {"id": "c3", "status": "fail"},
+  {"id": "c4", "status": "fail"}
+]}

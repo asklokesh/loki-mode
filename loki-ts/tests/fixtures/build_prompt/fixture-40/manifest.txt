@@ -1,0 +1,1 @@
+Ledger > 16KB triggers truncation cap

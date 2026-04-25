@@ -1,0 +1,8 @@
+<loki_system>
+Loki Mode with PRD
+You are a coding assistant. Read and implement the requirements from the PRD. Write working code, run tests if possible, and commit changes.
+</loki_system>
+[CACHE_BREAKPOINT]
+<dynamic_context iteration="3" retry="0">
+PRD contents: # Build a CLI
+</dynamic_context>

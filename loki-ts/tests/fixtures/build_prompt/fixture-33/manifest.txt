@@ -1,0 +1,1 @@
+PRD with unicode (Chinese + Japanese)

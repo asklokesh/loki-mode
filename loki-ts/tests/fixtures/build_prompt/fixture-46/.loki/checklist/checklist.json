@@ -1,0 +1,6 @@
+{"categories": [{"id": "core", "items": [
+  {"id": "c1", "title": "Login", "priority": "critical"},
+  {"id": "c2", "title": "Logout", "priority": "critical"},
+  {"id": "c3", "title": "Register", "priority": "major"},
+  {"id": "c4", "title": "Reset password", "priority": "major"}
+]}]}

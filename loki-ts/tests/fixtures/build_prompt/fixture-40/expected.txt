@@ -1,0 +1,113 @@
+<loki_system>
+Loki Mode with PRD at ./prd.md
+RALPH WIGGUM MODE ACTIVE. Use Reason-Act-Reflect-VERIFY cycle: 1) REASON - READ .loki/CONTINUITY.md including 'Mistakes & Learnings' section to avoid past errors. CHECK .loki/state/relevant-learnings.json for cross-project learnings from previous projects (mistakes to avoid, patterns to apply). Check .loki/state/ and .loki/queue/, identify next task. CHECK .loki/state/resources.json for system resource warnings - if CPU or memory is high, reduce parallel agent spawning or pause non-critical tasks. Limit to MAX_PARALLEL_AGENTS=10. If queue empty, find new improvements. 2) ACT - Execute task, write code, commit changes atomically (git checkpoint). 3) REFLECT - Update .loki/CONTINUITY.md with progress, update state, identify NEXT improvement. Save valuable learnings for future projects. 4) VERIFY - Run automated tests (unit, integration, E2E), check compilation/build, verify against spec. IF VERIFICATION FAILS: a) Capture error details (stack trace, logs), b) Analyze root cause, c) UPDATE 'Mistakes & Learnings' in CONTINUITY.md with what failed, why, and how to prevent, d) Rollback to last good git checkpoint if needed, e) Apply learning and RETRY from REASON. If verification passes, mark task complete and continue. This self-verification loop achieves 2-3x quality improvement. CRITICAL: There is NEVER a 'finished' state - always find the next improvement, optimization, test, or feature.
+SDLC_PHASES_ENABLED: [UNIT_TESTS]. Execute ALL enabled phases. Log results to .loki/logs/. See .loki/SKILL.md for phase details. Skill modules at .loki/skills/.
+CRITICAL AUTONOMY RULES: 1) NEVER ask questions - just decide. 2) NEVER wait for confirmation - just act. 3) When all PRD requirements are implemented and tests pass, invoke the loki_complete_task MCP tool (completion_statement='' plus evidence + confidence). Do not emit completion prose. 4) If out of tasks but PRD is not fully implemented, continue working on remaining requirements. 5) Focus on completing PRD scope, not endless improvements.
+MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory.
+</loki_system>
+[CACHE_BREAKPOINT]
+<dynamic_context iteration="5" retry="1">
+Resume iteration #5 (retry #1). PRD: ./prd.md
+PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every 5 iterations.
+CONTEXT: PREVIOUS_LEDGER_STATE: # Massive Ledger
+
+## Decisions
+- Decision 1: We chose option-1 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 2: We chose option-2 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 3: We chose option-3 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 4: We chose option-4 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 5: We chose option-5 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 6: We chose option-6 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 7: We chose option-7 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 8: We chose option-8 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 9: We chose option-9 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 10: We chose option-10 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 11: We chose option-11 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 12: We chose option-12 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 13: We chose option-13 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 14: We chose option-14 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 15: We chose option-15 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 16: We chose option-16 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 17: We chose option-17 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 18: We chose option-18 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 19: We chose option-19 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 20: We chose option-20 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 21: We chose option-21 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 22: We chose option-22 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 23: We chose option-23 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 24: We chose option-24 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 25: We chose option-25 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 26: We chose option-26 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 27: We chose option-27 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 28: We chose option-28 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 29: We chose option-29 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 30: We chose option-30 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 31: We chose option-31 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 32: We chose option-32 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 33: We chose option-33 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 34: We chose option-34 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 35: We chose option-35 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 36: We chose option-36 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 37: We chose option-37 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 38: We chose option-38 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 39: We chose option-39 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 40: We chose option-40 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 41: We chose option-41 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 42: We chose option-42 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 43: We chose option-43 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 44: We chose option-44 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 45: We chose option-45 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 46: We chose option-46 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 47: We chose option-47 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 48: We chose option-48 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 49: We chose option-49 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 50: We chose option-50 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 51: We chose option-51 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 52: We chose option-52 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 53: We chose option-53 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 54: We chose option-54 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 55: We chose option-55 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 56: We chose option-56 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 57: We chose option-57 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 58: We chose option-58 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 59: We chose option-59 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 60: We chose option-60 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 61: We chose option-61 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 62: We chose option-62 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 63: We chose option-63 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 64: We chose option-64 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 65: We chose option-65 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 66: We chose option-66 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 67: We chose option-67 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 68: We chose option-68 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 69: We chose option-69 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 70: We chose option-70 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 71: We chose option-71 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 72: We chose option-72 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 73: We chose option-73 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 74: We chose option-74 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 75: We chose option-75 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 76: We chose option-76 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 77: We chose option-77 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 78: We chose option-78 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 79: We chose option-79 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 80: We chose option-80 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 81: We chose option-81 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 82: We chose option-82 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 83: We chose option-83 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 84: We chose option-84 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 85: We chose option-85 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 86: We chose option-86 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 87: We chose option-87 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 88: We chose option-88 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 89: We chose option-89 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 90: We chose option-90 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 91: We chose option-91 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 92: We chose option-92 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 93: We chose option-93 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 94: We chose option-94 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 95: We chose option-95 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 96: We chose option-96 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+- Decision 97: We chose option-97 after careful evaluation of alternatives and trade-offs to ensure long-term maintainability and operability of the system.
+NO COMPLETION PROMISE SET. Continue finding improvements. The Completion Council will evaluate your progress periodically. Iteration 5 of max 1000. If you do decide the task is complete, invoke the loki_complete_task MCP tool with a structured statement and evidence rather than emitting prose.
+</dynamic_context>

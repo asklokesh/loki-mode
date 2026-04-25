@@ -1,0 +1,1 @@
+Queue with only failed tasks (no pending)

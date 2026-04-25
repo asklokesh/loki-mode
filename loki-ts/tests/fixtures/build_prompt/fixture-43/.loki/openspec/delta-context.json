@@ -1,0 +1,10 @@
+{
+  "deltas": {
+    "auth": {
+      "added": [{"name": "OAuth2 flow"}],
+      "modified": [{"name": "session-tokens", "previously": "JWT only"}],
+      "removed": [{"name": "basic-auth", "reason": "deprecated"}]
+    }
+  },
+  "complexity": "moderate"
+}

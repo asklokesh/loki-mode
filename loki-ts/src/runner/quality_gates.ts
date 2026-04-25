@@ -19,11 +19,13 @@
 //   count >= GATE_ESCALATE_LIMIT  -> write signals/GATE_ESCALATION (no pause)
 //   count >= GATE_CLEAR_LIMIT     -> log warning, treat as passing this round
 //
-// Phase 5 status: runStaticAnalysis and runTestCoverage are real ports of the
-// shell+JS / npm-test branches of the bash gates. runCodeReview,
-// runDocQualityGate, and runMagicDebateGate remain stubs pending their
-// respective ports (council, doc scorer, debate). The orchestration logic,
-// escalation ladder, and failure-count persistence are real and final.
+// Phase 5 status: runStaticAnalysis, runTestCoverage, runDocQualityGate,
+// runMagicDebateGate, and runCodeReview are real ports of the corresponding
+// bash gates. The reviewer dispatcher used by runCodeReview is still a stub
+// (returns "VERDICT: PASS\nFINDINGS:\n- (stub)") pending the providers.ts
+// integration in v7.5.0+; the SELECTION + AGGREGATION orchestration around
+// it is real. The escalation ladder and failure-count persistence are real
+// and final.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -312,19 +314,489 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
   return { passed: false, detail: `test_coverage: npm test exit ${r.exitCode} -- ${tail}` };
 }
 
-// STUB: Phase 5 next iteration -- replace with the 3-reviewer parallel council port.
-export async function runCodeReview(): Promise<GateResult> {
-  return stubResult("code_review");
+// --- Code review: 3-reviewer parallel council ----------------------------
+//
+// Bash source: autonomy/run.sh:6234-6646 (run_code_review, ~413 LOC).
+//
+// Faithful TS port of the SELECTION + DISPATCH + AGGREGATION pipeline. The
+// reviewer dispatch itself remains stubbed pending the providers.ts
+// integration (v7.5.0+); the orchestration around it is real.
+//
+// Pipeline:
+//   1. git diff HEAD~1 (fall back to git diff --cached, then "")
+//   2. If diff is empty, skip (return passed=true)
+//   3. Score 5 specialist reviewers by keyword presence in diff+filenames
+//   4. Always select architecture-strategist + top 2 specialists
+//   5. Dispatch all 3 reviewers in parallel via Promise.all
+//   6. Write per-reviewer .txt outputs under .loki/quality/reviews/<id>/
+//   7. Aggregate verdicts; any [Critical] or [High] -> BLOCK
+//   8. Write aggregate.json + selection.json
+
+export type Reviewer = {
+  name: string;
+  focus: string;
+  checks: string;
+};
+
+export type ReviewerVerdict = {
+  reviewer: string;
+  verdict: "PASS" | "FAIL" | "UNKNOWN" | "NO_OUTPUT";
+  blocking: boolean;
+  output: string;
+};
+
+export type ReviewerInput = {
+  reviewer: Reviewer;
+  diff: string;
+  files: string;
+  prompt: string;
+};
+
+// Dispatcher contract: the orchestrator hands a built prompt to this fn and
+// expects the raw reviewer output text back. Production wiring (v7.5.0+)
+// calls the active provider; tests inject deterministic stubs.
+export type ReviewerFn = (input: ReviewerInput) => Promise<string>;
+
+type Specialist = {
+  keywords: readonly string[];
+  focus: string;
+  checks: string;
+  priority: number;
+};
+
+// Mirror of SPECIALISTS dict in autonomy/run.sh:6318-6349. Order preserved so
+// the priority field acts as the same tie-breaker the bash code uses.
+const SPECIALISTS: Readonly<Record<string, Specialist>> = {
+  "security-sentinel": {
+    keywords: ["auth", "login", "password", "token", "api", "sql", "query", "cookie", "cors", "csrf"],
+    focus: "OWASP Top 10, injection, auth, secrets, input validation",
+    checks: "injection (SQL, XSS, command, template), auth bypass, secrets in code, missing input validation, OWASP Top 10, insecure defaults",
+    priority: 0,
+  },
+  "test-coverage-auditor": {
+    keywords: ["test", "spec", "coverage", "assert", "mock", "fixture", "expect", "describe"],
+    focus: "Missing tests, edge cases, error paths, boundary conditions",
+    checks: "missing test cases, uncovered error paths, boundary conditions, mock correctness, test isolation, flaky test patterns",
+    priority: 1,
+  },
+  "performance-oracle": {
+    keywords: ["database", "query", "cache", "render", "loop", "fetch", "load", "index", "join", "pool"],
+    focus: "N+1 queries, memory leaks, caching, bundle size, lazy loading",
+    checks: "N+1 queries, unbounded loops, memory leaks, missing caching, excessive re-renders, large bundle imports, missing pagination",
+    priority: 2,
+  },
+  "dependency-analyst": {
+    keywords: ["package", "import", "require", "dependency", "npm", "pip", "yarn", "lock"],
+    focus: "Outdated packages, CVEs, bloat, unused deps, license issues",
+    checks: "outdated dependencies, known CVEs, unnecessary imports, dependency bloat, license compatibility, unused packages",
+    priority: 3,
+  },
+  "legacy-healing-auditor": {
+    keywords: ["legacy", "heal", "migrate", "cobol", "fortran", "refactor", "modernize", "deprecat", "adapter", "friction", "characterization"],
+    focus: "Behavioral preservation, friction safety, institutional knowledge retention",
+    checks: "behavioral change without characterization test, removal of quirky code without friction map check, missing adapter layer for replaced components, institutional knowledge loss (deleted comments, removed error messages), breaking changes to undocumented APIs",
+    priority: 4,
+  },
+};
+
+const ARCHITECTURE_STRATEGIST: Reviewer = {
+  name: "architecture-strategist",
+  focus: "SOLID, coupling, cohesion, patterns, abstraction, dependency direction",
+  checks: "SOLID violations, excessive coupling, wrong patterns, missing abstractions, dependency direction issues, god classes/functions",
+};
+
+// Port of the Python keyword scorer at autonomy/run.sh:6396-6409. Returns
+// architecture-strategist always first, then 2 specialists. When no keywords
+// match, defaults to security-sentinel + test-coverage-auditor to match the
+// bash behavior.
+export type SelectionResult = {
+  reviewers: Reviewer[];
+  scores: Record<string, number>;
+  pool_size: number;
+};
+
+export function selectReviewers(diff: string, files: string): SelectionResult {
+  const search = `${diff} ${files}`.toLowerCase();
+  const scores: Record<string, number> = {};
+  for (const [name, spec] of Object.entries(SPECIALISTS)) {
+    let s = 0;
+    for (const kw of spec.keywords) if (search.includes(kw)) s += 1;
+    scores[name] = s;
+  }
+
+  const allZero = Object.values(scores).every((v) => v === 0);
+  let selected: string[];
+  if (allZero) {
+    selected = ["security-sentinel", "test-coverage-auditor"];
+  } else {
+    selected = Object.keys(SPECIALISTS)
+      .slice()
+      .sort((a, b) => {
+        const sa = scores[a] ?? 0;
+        const sb = scores[b] ?? 0;
+        if (sb !== sa) return sb - sa;
+        return SPECIALISTS[a]!.priority - SPECIALISTS[b]!.priority;
+      })
+      .slice(0, 2);
+  }
+
+  const reviewers: Reviewer[] = [
+    ARCHITECTURE_STRATEGIST,
+    ...selected.map((name) => {
+      const spec = SPECIALISTS[name]!;
+      return { name, focus: spec.focus, checks: spec.checks };
+    }),
+  ];
+
+  return { reviewers, scores, pool_size: Object.keys(SPECIALISTS).length };
 }
 
-// STUB: Phase 5 next iteration -- replace with documentation coverage scorer.
-export async function runDocQualityGate(): Promise<GateResult> {
-  return stubResult("doc_coverage");
+// Port of the BUILD_PROMPT block at autonomy/run.sh:6486-6505.
+export function buildReviewerPrompt(reviewer: Reviewer, diff: string, files: string): string {
+  return `You are ${reviewer.name}. Your SOLE focus is: ${reviewer.focus}.
+
+Review ONLY for: ${reviewer.checks}.
+
+Files changed:
+${files.trim()}
+
+Diff:
+${diff.trim()}
+
+Output format (STRICT - follow exactly):
+VERDICT: PASS or FAIL
+FINDINGS:
+- [severity] description (file:line)
+Severity levels: Critical, High, Medium, Low
+
+If no issues found, output:
+VERDICT: PASS
+FINDINGS:
+- None`;
 }
 
-// STUB: Phase 5 next iteration -- replace with Magic Modules debate council.
-export async function runMagicDebateGate(): Promise<GateResult> {
-  return stubResult("magic_debate");
+// STUB: Phase 5 next iteration -- real provider dispatch pending.
+// Default reviewer that returns a deterministic PASS so the orchestration is
+// exercisable end-to-end before providers.ts wiring lands. Tests inject their
+// own ReviewerFn to drive specific verdicts.
+export const stubReviewer: ReviewerFn = async () => "VERDICT: PASS\nFINDINGS:\n- (stub)";
+
+// Parse a reviewer output blob into a structured verdict. Mirrors the bash
+// `grep -i "^VERDICT:"` + `grep -qiE "\[(Critical|High)\]"` checks at
+// autonomy/run.sh:6577-6594.
+export function parseVerdict(reviewer: string, output: string): ReviewerVerdict {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) {
+    return { reviewer, verdict: "NO_OUTPUT", blocking: false, output };
+  }
+  const verdictLine = output
+    .split(/\r?\n/)
+    .find((line) => /^VERDICT:/i.test(line));
+  let verdict: ReviewerVerdict["verdict"] = "UNKNOWN";
+  if (verdictLine !== undefined) {
+    const raw = verdictLine.replace(/^VERDICT:/i, "").trim().toUpperCase();
+    if (raw === "PASS" || raw === "FAIL") verdict = raw;
+  }
+  const hasBlockingSeverity = /\[(Critical|High)\]/i.test(output);
+  return {
+    reviewer,
+    verdict,
+    blocking: verdict === "FAIL" && hasBlockingSeverity,
+    output,
+  };
+}
+
+// Port of the diff-fetching block at autonomy/run.sh:6243. Tries `git diff
+// HEAD~1` first; falls back to `git diff --cached`; returns "" on both
+// failures (matches the bash `2>/dev/null || ... || echo ""` chain).
+async function readDiffAndFiles(cwd: string): Promise<{ diff: string; files: string }> {
+  const tryGit = async (args: readonly string[]): Promise<string | null> => {
+    const r = await run(["git", "-C", cwd, ...args], { timeoutMs: 30_000 });
+    if (r.exitCode !== 0) return null;
+    return r.stdout;
+  };
+  const diff = (await tryGit(["diff", "HEAD~1"])) ?? (await tryGit(["diff", "--cached"])) ?? "";
+  const files = (await tryGit(["diff", "--name-only", "HEAD~1"])) ?? (await tryGit(["diff", "--name-only", "--cached"])) ?? "";
+  return { diff, files };
+}
+
+export type CodeReviewOpts = {
+  // Allow tests to inject a deterministic ReviewerFn instead of calling the
+  // real provider. Production callers omit this and get the stub for now.
+  reviewer?: ReviewerFn;
+  // Allow tests to inject pre-computed diff/files instead of shelling out to
+  // git. When omitted the runner reads from `git -C ctx.cwd diff HEAD~1`.
+  diffOverride?: { diff: string; files: string };
+};
+
+// Aggregated artifact written to .loki/quality/reviews/<id>/aggregate.json.
+// Shape mirrors the bash AGG_SCRIPT block (autonomy/run.sh:6605-6617).
+export type AggregateArtifact = {
+  review_id: string;
+  iteration: number;
+  pass_count: number;
+  fail_count: number;
+  has_blocking: boolean;
+  verdicts: string;
+};
+
+export async function runCodeReview(
+  ctx?: RunnerContext,
+  opts: CodeReviewOpts = {},
+): Promise<GateResult> {
+  // Honor stub override first so existing orchestration tests (which set
+  // LOKI_STUB_GATE_CODE_REVIEW=fail/pass) keep working without hitting git.
+  const stubKey = "LOKI_STUB_GATE_CODE_REVIEW";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("code_review");
+
+  if (ctx === undefined) {
+    return { passed: true, detail: "code_review: no ctx, skipped" };
+  }
+
+  const cwd = ctx.cwd;
+  const base = ctx.lokiDir;
+  const reviewer = opts.reviewer ?? stubReviewer;
+
+  const { diff, files } = opts.diffOverride ?? (await readDiffAndFiles(cwd));
+  if (diff.trim().length === 0) {
+    return { passed: true, detail: "code_review: no diff to review" };
+  }
+
+  const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "Z");
+  const reviewId = `review-${ts}-${ctx.iterationCount}`;
+  const reviewDir = join(base, "quality", "reviews", reviewId);
+  mkdirSync(reviewDir, { recursive: true });
+
+  writeFileSync(join(reviewDir, "diff.txt"), diff);
+  writeFileSync(join(reviewDir, "files.txt"), files);
+
+  const selection = selectReviewers(diff, files);
+  atomicWrite(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
+
+  // Dispatch all reviewers in parallel via Promise.all (parity with the bash
+  // backgrounding-and-wait loop at run.sh:6516-6556).
+  const results = await Promise.all(
+    selection.reviewers.map(async (rv): Promise<ReviewerVerdict> => {
+      const prompt = buildReviewerPrompt(rv, diff, files);
+      writeFileSync(join(reviewDir, `${rv.name}-prompt.txt`), prompt);
+      let output: string;
+      try {
+        output = await reviewer({ reviewer: rv, diff, files, prompt });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        output = `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer threw: ${msg}`;
+      }
+      writeFileSync(join(reviewDir, `${rv.name}.txt`), output);
+      return parseVerdict(rv.name, output);
+    }),
+  );
+
+  let passCount = 0;
+  let failCount = 0;
+  let hasBlocking = false;
+  const verdictTokens: string[] = [];
+  for (const v of results) {
+    if (v.verdict === "PASS") passCount += 1;
+    else if (v.verdict === "FAIL") failCount += 1;
+    if (v.blocking) hasBlocking = true;
+    verdictTokens.push(`${v.reviewer}:${v.verdict}`);
+  }
+  const verdictsSummary = verdictTokens.join(" ");
+
+  const aggregate: AggregateArtifact = {
+    review_id: reviewId,
+    iteration: ctx.iterationCount,
+    pass_count: passCount,
+    fail_count: failCount,
+    has_blocking: hasBlocking,
+    verdicts: verdictsSummary,
+  };
+  atomicWrite(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
+
+  // Anti-sycophancy note (autonomy/run.sh:6629-6635).
+  if (passCount === selection.reviewers.length && failCount === 0) {
+    writeFileSync(
+      join(reviewDir, "anti-sycophancy.txt"),
+      `UNANIMOUS_PASS: All reviewers approved - potential sycophancy risk\n`,
+    );
+  }
+
+  if (hasBlocking) {
+    return {
+      passed: false,
+      detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail, blocking severity present (${reviewId})`,
+    };
+  }
+  return {
+    passed: true,
+    detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail (${reviewId})`,
+  };
+}
+
+// Phase 5 real implementation. Doc quality gate scans the canonical project
+// docs (README.md, CLAUDE.md, SKILL.md, docs/**/*.md) for three classes of
+// problem mirrored from `run_doc_quality_gate` (autonomy/run.sh:5884-5933):
+//
+//   1. Minimum length -- a doc that is empty / near-empty is treated the same
+//      as the bash gate's "README missing or empty" check.
+//   2. Header presence -- every scanned doc must contain at least one ATX
+//      header line (`# ...`) so it is not a wall of prose.
+//   3. Broken local links -- markdown links of the form `[text](path)` whose
+//      target is a relative on-disk path that does not exist. External (http,
+//      mailto, ftp, tel), in-document anchors (`#section`), and template
+//      placeholders are skipped.
+//
+// The gate is intentionally cheap (no subprocesses, no git lookups) so it
+// can run on every iteration without slowing the loop. It honors
+// LOKI_STUB_GATE_DOC_COVERAGE so orchestration tests keep their escape hatch.
+//
+// README.md, CLAUDE.md, and SKILL.md are required (parity with the bash
+// README check). When a required file is missing the gate fails with a
+// single clear error so the reviewer prompt has actionable feedback.
+const DOC_MIN_BYTES = 64;
+
+function listDocFiles(root: string): { path: string; required: boolean }[] {
+  const out: { path: string; required: boolean }[] = [];
+  // Required top-level docs. README is the user-facing entry, CLAUDE.md
+  // carries the rules, SKILL.md is the skill manifest -- all first-class
+  // artifacts of this repo.
+  for (const name of ["README.md", "CLAUDE.md", "SKILL.md"]) {
+    out.push({ path: join(root, name), required: true });
+  }
+  // docs/**/*.md -- best-effort, optional. Missing dir is fine.
+  const docsDir = join(root, "docs");
+  for (const f of listFilesBySuffix(docsDir, ".md")) {
+    out.push({ path: f, required: false });
+  }
+  return out;
+}
+
+// Match `[text](target)` -- non-greedy on text, stop on `)` or whitespace in
+// target so we do not gobble across multiple links on one line.
+const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+function findBrokenLinks(filePath: string, body: string): string[] {
+  const broken: string[] = [];
+  const dir = dirname(filePath);
+  for (const m of body.matchAll(LINK_RE)) {
+    const target = m[2];
+    if (target === undefined) continue;
+    // Skip external schemes, in-doc anchors, and template placeholders.
+    if (/^(https?:|mailto:|ftp:|tel:)/i.test(target)) continue;
+    if (target.startsWith("#")) continue;
+    if (target.startsWith("<") || target.includes("{{")) continue;
+    // Strip query/fragment before existence check.
+    const cleaned = target.split("#")[0]?.split("?")[0] ?? "";
+    if (cleaned === "") continue;
+    const resolved = cleaned.startsWith("/") ? cleaned : join(dir, cleaned);
+    if (!existsSync(resolved)) {
+      broken.push(`${filePath}: broken link -> ${target}`);
+    }
+  }
+  return broken;
+}
+
+export async function runDocQualityGate(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_DOC_COVERAGE";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("doc_coverage");
+
+  const root = ctx?.cwd ?? process.cwd();
+  const docs = listDocFiles(root);
+  const errors: string[] = [];
+  let scanned = 0;
+
+  for (const { path: p, required } of docs) {
+    if (!existsSync(p)) {
+      if (required) errors.push(`${p}: required doc missing`);
+      continue;
+    }
+    let body = "";
+    try {
+      body = readFileSync(p, "utf-8");
+    } catch (e) {
+      errors.push(`${p}: unreadable (${e instanceof Error ? e.message : String(e)})`);
+      continue;
+    }
+    scanned += 1;
+    if (body.trim().length < DOC_MIN_BYTES) {
+      errors.push(`${p}: below minimum length (${body.trim().length} < ${DOC_MIN_BYTES} bytes)`);
+    }
+    // Require at least one ATX header line. /m so `^` matches per-line.
+    if (!/^#{1,6}\s+\S/m.test(body)) {
+      errors.push(`${p}: no markdown header found`);
+    }
+    for (const b of findBrokenLinks(p, body)) errors.push(b);
+  }
+
+  if (errors.length > 0) {
+    return {
+      passed: false,
+      detail: `doc_coverage: ${errors.length} issue(s) across ${scanned} doc(s) -- ${errors.slice(0, 3).join("; ")}`,
+    };
+  }
+  return { passed: true, detail: `doc_coverage: ${scanned} doc(s) clean` };
+}
+
+// Phase 5 real implementation. Magic-modules debate gate, modeled after
+// `run_magic_debate_gate` (autonomy/run.sh:5941-5979) but specialized to a
+// cheap structural heuristic instead of spawning the `loki magic debate`
+// subprocess: every spec under .loki/magic/specs/*.md must contain at least
+// one "Pros" header and one "Cons" header (case-insensitive ATX header).
+//
+// The gate is opt-in: it short-circuits to pass unless LOKI_GATE_MAGIC_DEBATE
+// is explicitly set to "true" (per Phase 5 spec, default off). The
+// orchestrator's PHASE/LOKI_GATE_* toggles still control whether the gate is
+// *invoked*, but even when invoked the gate self-skips unless the operator
+// has opted in, so a fresh checkout never trips it.
+//
+// When no specs directory exists the gate also passes (parity with bash).
+function hasDebateHeader(body: string, kind: "pros" | "cons"): boolean {
+  const re = new RegExp(`^#{1,6}\\s+${kind}\\b`, "im");
+  return re.test(body);
+}
+
+export async function runMagicDebateGate(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_MAGIC_DEBATE";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("magic_debate");
+
+  // Opt-in: default off per Phase 5 spec.
+  if (process.env["LOKI_GATE_MAGIC_DEBATE"] !== "true") {
+    return { passed: true, detail: "magic_debate: disabled (LOKI_GATE_MAGIC_DEBATE!=true)" };
+  }
+
+  const root = ctx?.cwd ?? process.cwd();
+  const specsDir = join(root, ".loki", "magic", "specs");
+  if (!existsSync(specsDir)) {
+    return { passed: true, detail: "magic_debate: no specs dir -- skipping" };
+  }
+  const specs = listFilesBySuffix(specsDir, ".md");
+  if (specs.length === 0) {
+    return { passed: true, detail: "magic_debate: no specs found -- skipping" };
+  }
+
+  const errors: string[] = [];
+  for (const p of specs) {
+    let body = "";
+    try {
+      body = readFileSync(p, "utf-8");
+    } catch (e) {
+      errors.push(`${p}: unreadable (${e instanceof Error ? e.message : String(e)})`);
+      continue;
+    }
+    if (!hasDebateHeader(body, "pros")) errors.push(`${p}: missing 'Pros' section header`);
+    if (!hasDebateHeader(body, "cons")) errors.push(`${p}: missing 'Cons' section header`);
+  }
+
+  if (errors.length > 0) {
+    return {
+      passed: false,
+      detail: `magic_debate: ${errors.length} issue(s) across ${specs.length} spec(s) -- ${errors.slice(0, 3).join("; ")}`,
+    };
+  }
+  return { passed: true, detail: `magic_debate: ${specs.length} spec(s) clean` };
 }
 
 // --- Orchestrator ---------------------------------------------------------
@@ -453,7 +925,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   if (!toggles.hardGates) {
     if (toggles.codeReview) {
       try {
-        const r = await runCodeReview();
+        const r = await runCodeReview(ctx);
         if (r.passed) passed.push("code_review");
         else failed.push("code_review");
       } catch {
@@ -468,9 +940,9 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   const sequence: Array<{ name: GateName; enabled: boolean; run: () => Promise<GateResult> }> = [
     { name: "static_analysis", enabled: toggles.staticAnalysis, run: () => runStaticAnalysis(ctx) },
     { name: "test_coverage", enabled: toggles.testCoverage, run: () => runTestCoverage(ctx) },
-    { name: "code_review", enabled: toggles.codeReview, run: runCodeReview },
-    { name: "doc_coverage", enabled: toggles.docCoverage, run: runDocQualityGate },
-    { name: "magic_debate", enabled: toggles.magicDebate, run: runMagicDebateGate },
+    { name: "code_review", enabled: toggles.codeReview, run: () => runCodeReview(ctx) },
+    { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
+    { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },
   ];
 
   for (const gate of sequence) {

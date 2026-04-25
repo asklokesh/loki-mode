@@ -6,33 +6,91 @@
 //   populate_mirofish_queue()  autonomy/run.sh:9730
 //   populate_prd_queue()       autonomy/run.sh:9817-10162
 //
-// Phase 5 first iteration scope:
+// Phase 5 second iteration scope:
 //   - populatePrdQueue: lean checklist/feature extraction from a markdown PRD,
-//     written atomically to .loki/queue/pending.json. Mirrors the bash output
-//     shape (bare list of task dicts) and the .prd-populated sentinel file.
-//   - The other three populators are stubs that return without throwing so
-//     the autonomous loop's tryImport contract is satisfied. Full ports of
-//     the BMAD / OpenSpec / MiroFish adapters land in later Phase 5 iters.
+//     written atomically to .loki/queue/pending.json.
+//   - populateBmadQueue: scans .loki/bmad/ for *.md story files; one task per
+//     file (or per `## heading` for multi-story files). Idempotent via
+//     .bmad-populated sentinel.
+//   - populateOpenspecQueue: scans .loki/openspec/ for spec-*.md files; one
+//     task per spec. Idempotent via .openspec-populated sentinel.
+//   - populateMirofishQueue: still a stub (other agent owns it).
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import type { RunnerContext } from "./types.ts";
 
-// --- Stubs (Phase 5) -------------------------------------------------------
+// --- MiroFish queue (real) ------------------------------------------------
+//
+// Source: autonomy/run.sh:9730-9817 (populate_mirofish_queue).
+// Reads .loki/mirofish-tasks.json (advisory data from the MiroFish market-
+// validation step), converts each entry into the shared queue task shape,
+// merges into pending.json (deduping by id), and drops a .mirofish-populated
+// sentinel so subsequent calls are no-ops -- all idempotent and atomic.
+export async function populateMirofishQueue(ctx: RunnerContext): Promise<void> {
+  const queueDir = resolve(ctx.lokiDir, "queue");
+  const sentinel = resolve(queueDir, ".mirofish-populated");
+  const advisoryPath = resolve(ctx.lokiDir, "mirofish-tasks.json");
 
-// STUB: Phase 5 -- BMAD adapter port pending. See run.sh:9390.
-export async function populateBmadQueue(_ctx: RunnerContext): Promise<void> {
-  return;
-}
+  if (!existsSync(advisoryPath)) return;
+  if (existsSync(sentinel)) return;
 
-// STUB: Phase 5 -- OpenSpec adapter port pending. See run.sh:9619.
-export async function populateOpenspecQueue(_ctx: RunnerContext): Promise<void> {
-  return;
-}
+  let advisories: unknown;
+  try {
+    advisories = JSON.parse(readFileSync(advisoryPath, "utf8"));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(advisories) || advisories.length === 0) return;
 
-// STUB: Phase 5 -- MiroFish adapter port pending. See run.sh:9730.
-export async function populateMirofishQueue(_ctx: RunnerContext): Promise<void> {
-  return;
+  if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
+  const pendingPath = resolve(queueDir, "pending.json");
+  const { tasks: existing, wrapper } = readExisting(pendingPath);
+  const existingIds = new Set(existing.map((t) => t.id));
+
+  let added = 0;
+  for (let i = 0; i < advisories.length; i++) {
+    const raw = advisories[i];
+    if (!raw || typeof raw !== "object") continue;
+    const a = raw as Record<string, unknown>;
+    const idVal = typeof a["id"] === "string" ? a["id"] : `mirofish-${String(i + 1).padStart(3, "0")}`;
+    if (existingIds.has(idVal)) continue;
+    const titleVal = typeof a["title"] === "string" ? a["title"] : `MiroFish Advisory ${i + 1}`;
+    const descVal = typeof a["description"] === "string" ? a["description"] : "";
+    const priorityVal: "high" | "medium" | "low" =
+      a["priority"] === "high" || a["priority"] === "low" ? a["priority"] : "medium";
+    const entry: PrdTask & { category?: string } = {
+      id: idVal,
+      title: titleVal,
+      description: descVal,
+      priority: priorityVal,
+      status: "pending",
+      source: "mirofish",
+    };
+    if (typeof a["category"] === "string") entry.category = a["category"];
+    existing.push(entry);
+    existingIds.add(idVal);
+    added++;
+  }
+
+  if (added === 0) {
+    // Drop sentinel anyway -- avoids re-scanning a stable advisory file when
+    // every advisory already lives in pending.json (matches BMAD/OpenSpec idiom).
+    writeFileSync(sentinel, "");
+    return;
+  }
+
+  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+  atomicWriteJson(pendingPath, out);
+  writeFileSync(sentinel, "");
 }
 
 // --- PRD queue (real) ------------------------------------------------------
@@ -43,7 +101,7 @@ interface PrdTask {
   description: string;
   priority: "high" | "medium" | "low";
   status: "pending";
-  source: "prd";
+  source: "prd" | "bmad" | "openspec" | "mirofish";
 }
 
 // Read existing pending.json, supporting both bare-list and {tasks: [...]}
@@ -164,6 +222,211 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
       status: "pending",
       source: "prd",
     });
+  }
+
+  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+  atomicWriteJson(pendingPath, out);
+  writeFileSync(sentinel, "");
+}
+
+// --- Markdown directory helpers (shared by BMAD + OpenSpec) ---------------
+
+// List markdown files in `dir` matching `predicate(name)`. Non-recursive,
+// sorted, deterministic. Hidden entries (leading dot) are skipped. Returns
+// [] if the directory is missing or unreadable.
+function listMarkdownFiles(dir: string, predicate: (name: string) => boolean): string[] {
+  if (!existsSync(dir)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const name of entries) {
+    if (name.startsWith(".")) continue;
+    if (!name.toLowerCase().endsWith(".md")) continue;
+    if (!predicate(name)) continue;
+    const full = resolve(dir, name);
+    try {
+      if (!statSync(full).isFile()) continue;
+    } catch {
+      continue;
+    }
+    out.push(full);
+  }
+  out.sort();
+  return out;
+}
+
+function basenameNoExt(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base.replace(/\.md$/i, "");
+}
+
+// Extract the first H1 (`# heading`) title from a markdown body, falling back
+// to the supplied default (typically the file basename without extension).
+function titleFromBody(body: string, fallback: string): string {
+  for (const line of body.split("\n")) {
+    const m = line.match(/^#\s+(.+?)\s*$/);
+    if (m && m[1]) return m[1].trim();
+  }
+  return fallback;
+}
+
+interface StoryStub {
+  title: string;
+  description: string;
+}
+
+// Split a markdown file into per-`## heading` story stubs. Files with no
+// `##` headings collapse to a single story (title = H1 or filename).
+// Description is the first non-empty, non-heading line in the section.
+function splitStories(body: string, fallbackTitle: string): StoryStub[] {
+  const lines = body.split("\n");
+  const headings: { idx: number; title: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const m = line.match(/^##\s+(.+?)\s*$/);
+    if (m && m[1]) headings.push({ idx: i, title: m[1].trim() });
+  }
+  if (headings.length === 0) {
+    const title = titleFromBody(body, fallbackTitle);
+    return [{ title, description: title }];
+  }
+  const out: StoryStub[] = [];
+  for (let h = 0; h < headings.length; h++) {
+    const cur = headings[h]!;
+    const nextIdx = h + 1 < headings.length ? headings[h + 1]!.idx : lines.length;
+    const sectionLines = lines.slice(cur.idx + 1, nextIdx);
+    let description = cur.title;
+    for (const sl of sectionLines) {
+      const trimmed = sl.trim();
+      if (trimmed.length === 0) continue;
+      if (trimmed.startsWith("#")) continue;
+      description = trimmed;
+      break;
+    }
+    out.push({ title: cur.title, description });
+  }
+  return out;
+}
+
+// --- BMAD queue (real) -----------------------------------------------------
+
+export async function populateBmadQueue(ctx: RunnerContext): Promise<void> {
+  const bmadDir = resolve(ctx.lokiDir, "bmad");
+  const queueDir = resolve(ctx.lokiDir, "queue");
+  const sentinel = resolve(queueDir, ".bmad-populated");
+
+  if (existsSync(sentinel)) return;
+  const files = listMarkdownFiles(bmadDir, () => true);
+  if (files.length === 0) return;
+
+  const stories: StoryStub[] = [];
+  for (const file of files) {
+    let body: string;
+    try {
+      body = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const stub of splitStories(body, basenameNoExt(file))) {
+      if (stub.title.length === 0) continue;
+      stories.push(stub);
+    }
+  }
+  if (stories.length === 0) return;
+
+  if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
+  const pendingPath = resolve(queueDir, "pending.json");
+  const { tasks: existing, wrapper } = readExisting(pendingPath);
+  const existingIds = new Set(existing.map((t) => t.id));
+
+  let added = 0;
+  for (let i = 0; i < stories.length; i++) {
+    const id = `bmad-${String(i + 1).padStart(3, "0")}`;
+    if (existingIds.has(id)) continue;
+    const stub = stories[i]!;
+    existing.push({
+      id,
+      title: stub.title,
+      description: stub.description,
+      priority: priorityFor(i, stories.length),
+      status: "pending",
+      source: "bmad",
+    });
+    existingIds.add(id);
+    added++;
+  }
+
+  if (added === 0) {
+    // Drop sentinel anyway -- avoids re-scanning a stable .loki/bmad/ when
+    // every story already lives in pending.json (e.g. crash-restart).
+    writeFileSync(sentinel, "");
+    return;
+  }
+
+  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+  atomicWriteJson(pendingPath, out);
+  writeFileSync(sentinel, "");
+}
+
+// --- OpenSpec queue (real) -------------------------------------------------
+
+export async function populateOpenspecQueue(ctx: RunnerContext): Promise<void> {
+  const specDir = resolve(ctx.lokiDir, "openspec");
+  const queueDir = resolve(ctx.lokiDir, "queue");
+  const sentinel = resolve(queueDir, ".openspec-populated");
+
+  if (existsSync(sentinel)) return;
+  const files = listMarkdownFiles(specDir, (name) => name.toLowerCase().startsWith("spec-"));
+  if (files.length === 0) return;
+
+  interface SpecStub {
+    title: string;
+    description: string;
+  }
+  const specs: SpecStub[] = [];
+  for (const file of files) {
+    let body: string;
+    try {
+      body = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const fallback = basenameNoExt(file);
+    const title = titleFromBody(body, fallback);
+    if (title.length === 0) continue;
+    specs.push({ title, description: `[OpenSpec] ${title}` });
+  }
+  if (specs.length === 0) return;
+
+  if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
+  const pendingPath = resolve(queueDir, "pending.json");
+  const { tasks: existing, wrapper } = readExisting(pendingPath);
+  const existingIds = new Set(existing.map((t) => t.id));
+
+  let added = 0;
+  for (let i = 0; i < specs.length; i++) {
+    const id = `openspec-${String(i + 1).padStart(3, "0")}`;
+    if (existingIds.has(id)) continue;
+    const stub = specs[i]!;
+    existing.push({
+      id,
+      title: stub.title,
+      description: stub.description,
+      priority: priorityFor(i, specs.length),
+      status: "pending",
+      source: "openspec",
+    });
+    existingIds.add(id);
+    added++;
+  }
+
+  if (added === 0) {
+    writeFileSync(sentinel, "");
+    return;
   }
 
   const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;

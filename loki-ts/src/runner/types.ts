@@ -30,6 +30,10 @@ export type RunnerOpts = {
   council?: CouncilHook;
   signals?: SignalSource;
   clock?: Clock;
+  // Hermetic test override for the state-persistence adapter. When set,
+  // autonomous.ts uses this object instead of dynamically importing
+  // ./state.ts. Production code leaves this undefined.
+  stateOverride?: RunnerStateMod;
   // Pre-iteration policy gate. Returning false maps to POLICY_BLOCKED state
   // and skips the iteration after a brief backoff. Phase 4+ port; the real
   // policy engine integration lands in Phase 5.
@@ -119,6 +123,20 @@ export interface SignalSource {
 export interface Clock {
   now(): number;
   sleep(ms: number): Promise<void>;
+}
+
+// State-persistence adapter contract. Mirrors the StateMod shape inside
+// autonomous.ts (kept private there for clarity) but re-exported here so
+// tests can inject a hermetic FakeStateMod via RunnerOpts.stateOverride
+// instead of mocking dynamic imports.
+//
+// v7.4.4 (BUG-24) regression guard: the runner ALWAYS uses these adapter
+// functions, never the bare saveState() in state.ts. Tests assert that
+// saveCallCount > 0 and loadCallCount === 1 to prove the adapter path
+// fired and the no-op fallback throw did NOT.
+export interface RunnerStateMod {
+  loadStateForRunner(ctx: RunnerContext): Promise<void>;
+  saveStateForRunner(ctx: RunnerContext, status: string, exitCode: number): Promise<void>;
 }
 
 // Default Clock backed by Date.now / setTimeout. Tests override with a

@@ -1,0 +1,4 @@
+[
+  {"id": "f-1", "title": "Failed task one", "error": "compile error", "attempts": 3},
+  {"id": "f-2", "title": "Failed task two", "error": "test failure", "attempts": 5}
+]

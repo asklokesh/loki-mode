@@ -1,0 +1,11 @@
+{
+  "analysis": {
+    "overall_sentiment": "positive",
+    "sentiment_score": 0.78,
+    "confidence": "high",
+    "recommendation": "ship",
+    "key_concerns": ["onboarding friction", "pricing clarity"],
+    "feature_rankings": [{"feature": "search", "reception_score": 0.91}, {"feature": "export", "reception_score": 0.62}],
+    "notable_quotes": ["Love the speed.", "Pricing page is unclear."]
+  }
+}

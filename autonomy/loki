@@ -31,6 +31,13 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# v7.4.5 (BUG-15 bash route): honor NO_COLOR convention (https://no-color.org/)
+# Mirrors the equivalent fix in loki-ts/src/util/colors.ts. Required for parity
+# when the shim falls through to the bash route (e.g., when bun is missing).
+if [ -n "${NO_COLOR:-}" ]; then
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; BOLD=''; DIM=''; NC=''
+fi
+
 # Logging functions (portable across bash/zsh)
 log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }

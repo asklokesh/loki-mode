@@ -1,0 +1,20 @@
+<loki_system>
+Loki Mode with PRD
+You are a coding assistant. Read and implement the requirements from the PRD. Write working code, run tests if possible, and commit changes.
+</loki_system>
+[CACHE_BREAKPOINT]
+<dynamic_context iteration="1" retry="0">
+PRD contents: # 项目需求文档
+
+## 概要
+这是一个测试系统的需求文档。需要支持中文和日本語の両方。
+
+## 機能
+1. ユーザー認証
+2. データベース接続
+3. レポート生成
+
+## 非功能性需求
+- パフォーマンス: 100ms以内
+- 可用性: 99.9%
+</dynamic_context>
