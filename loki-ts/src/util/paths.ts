@@ -28,6 +28,21 @@ function findRepoRoot(): string {
 
 export const REPO_ROOT = findRepoRoot();
 
+// Public marker-walk helper for callers that need to start from a specific
+// HERE (e.g., version.ts handles its own import.meta.url for deferred lookup).
+export function findRepoRootForVersion(here: string): string {
+  let dir = here;
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(resolve(dir, "VERSION")) && existsSync(resolve(dir, "autonomy/run.sh"))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(here, "..", "..", "..");
+}
+
 // Honor LOKI_DIR env var; default to ./.loki relative to cwd (bash idiom).
 export function lokiDir(): string {
   return process.env["LOKI_DIR"] ?? resolve(process.cwd(), ".loki");

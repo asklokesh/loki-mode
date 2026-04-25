@@ -80,7 +80,10 @@ export async function runOrThrow(
 // data into a shell.
 export async function commandExists(name: string): Promise<string | null> {
   const safe = shEscape(name); // throws on injection attempt -- intentional
-  const r = await run(["sh", "-c", `command -v ${safe}`]);
+  // v7.4.3 (BUG-14): cap at 5s. `command -v` is fast on healthy systems but
+  // can stall if /etc/profile or shell init does heavy work; without a
+  // timeout doctor's dependency probes could hang the CLI.
+  const r = await run(["sh", "-c", `command -v ${safe}`], { timeoutMs: 5000 });
   if (r.exitCode === 0) {
     const path = r.stdout.trim();
     return path || null;

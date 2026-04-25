@@ -9,7 +9,7 @@
 // Bash citations are kept inline next to each ported block so reviewers can
 // diff against the source while the integration is wired up.
 
-import { existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   realClock,
@@ -223,6 +223,9 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
     const intervention = await signals.checkHumanIntervention(ctx);
     if (intervention === 1) {
       log("[runner] PAUSE signal -- waiting and re-checking");
+      // v7.4.3 (BUG-18): persist "paused" state so loadState resume sees
+      // the correct status instead of stale "running".
+      await persistState(stateMod, ctx, "paused", 0);
       await clock.sleep(50); // tests use virtual clock; real value lives in run.sh
       continue;
     }
@@ -317,6 +320,37 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
       capturedOutputPath: result.capturedOutputPath,
     };
 
+    // v7.4.3 (BUG-17): persist "exited" state immediately after the provider
+    // returns, so dashboard sees the per-iteration transition (was missing
+    // -- only terminal states were persisted).
+    await persistState(stateMod, ctx, "exited", outcome.exitCode);
+
+    // v7.4.3 (BUG-20): create a checkpoint after each successful iteration
+    // (sec 13 of STATE-MACHINES.md). Wrapped so checkpoint failure doesn't
+    // abort the loop -- the checkpoint is recovery aid, not control flow.
+    if (outcome.exitCode === 0) {
+      try {
+        const ckptMod = await tryImport<{
+          createCheckpoint(opts: {
+            iteration: number;
+            taskId: string;
+            taskDescription?: string;
+            forceCreate?: boolean;
+          }): Promise<unknown>;
+        }>("./checkpoint.ts", ["createCheckpoint"]);
+        if (ckptMod) {
+          await ckptMod.createCheckpoint({
+            iteration: ctx.iterationCount,
+            taskId: ctx.prdPath ?? "codebase-analysis",
+            taskDescription: `iteration ${ctx.iterationCount} success`,
+            forceCreate: true,
+          });
+        }
+      } catch (err) {
+        log(`[runner] createCheckpoint failed (non-fatal): ${(err as Error).message}`);
+      }
+    }
+
     // Quality gates (run.sh:10845-10980).
     if (gatesMod) await gatesMod.runQualityGates(ctx, outcome.exitCode);
     else logStub(ctx, "gates.runQualityGates");
@@ -366,7 +400,32 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
     }
 
     // Failure branch (run.sh:11057-11096) ---------------------------------
-    const wait = computeBackoffSeconds(ctx);
+    let wait = computeBackoffSeconds(ctx);
+
+    // v7.4.3 (BUG-19): integrate isRateLimited from budget.ts. When the
+    // captured output looks rate-limited, override the exponential backoff
+    // with the rate-limit-aware backoff (clamped 60-300s per bash idiom).
+    try {
+      const captured = result.capturedOutputPath;
+      const txt =
+        captured && existsSync(captured)
+          ? readFileSyncSafeForRunner(captured)
+          : "";
+      if (txt) {
+        const budgetMod2 = await tryImport<{
+          isRateLimited(text: string): boolean;
+          calculateRateLimitBackoff(retryAfter?: number, providerRpm?: number): number;
+        }>("./budget.ts", ["isRateLimited", "calculateRateLimitBackoff"]);
+        if (budgetMod2 && budgetMod2.isRateLimited(txt)) {
+          const rl = budgetMod2.calculateRateLimitBackoff();
+          wait = Math.max(wait, rl);
+          log(`[runner] rate-limit detected; backoff bumped to ${wait}s`);
+        }
+      }
+    } catch (err) {
+      log(`[runner] rate-limit probe failed (non-fatal): ${(err as Error).message}`);
+    }
+
     log(`[runner] iteration failed (exit=${outcome.exitCode}); retry in ${wait}s`);
     await clock.sleep(wait * 1000);
     ctx.retryCount += 1;
@@ -380,6 +439,17 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
 // ---------------------------------------------------------------------------
 // Helpers.
 // ---------------------------------------------------------------------------
+
+// v7.4.3 (BUG-19): tail-read a file safely; cap at 64KB to avoid OOM on big logs.
+function readFileSyncSafeForRunner(path: string): string {
+  try {
+    const buf = readFileSync(path);
+    const cap = 65536;
+    return buf.byteLength <= cap ? buf.toString("utf8") : buf.subarray(buf.byteLength - cap).toString("utf8");
+  } catch {
+    return "";
+  }
+}
 
 function makeContext(opts: RunnerOpts): RunnerContext {
   const cwd = opts.cwd ?? process.cwd();

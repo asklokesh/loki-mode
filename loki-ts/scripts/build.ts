@@ -17,13 +17,27 @@
  */
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rm, stat } from "node:fs/promises";
+import { rm, stat, readFile } from "node:fs/promises";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");
+const REPO_ROOT = resolve(PKG_ROOT, "..");
 const ENTRY = resolve(PKG_ROOT, "src", "cli.ts");
 const OUTDIR = resolve(PKG_ROOT, "dist");
 const OUTFILE = resolve(OUTDIR, "loki.js");
+
+// v7.4.3 (BUG-8): read the canonical version from VERSION at build time so
+// `bun build --compile` standalone binaries print the real version instead
+// of "unknown" (the runtime version.ts reads VERSION from disk via
+// import.meta.url, which doesn't resolve inside a compiled binary).
+async function readVersion(): Promise<string> {
+  try {
+    const raw = await readFile(resolve(REPO_ROOT, "VERSION"), "utf-8");
+    return raw.trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -38,6 +52,7 @@ async function main(): Promise<number> {
   await rm(OUTDIR, { recursive: true, force: true });
 
   const t0 = performance.now();
+  const version = await readVersion();
 
   const result = await Bun.build({
     entrypoints: [ENTRY],
@@ -47,6 +62,11 @@ async function main(): Promise<number> {
     format: "esm",
     minify: true,
     sourcemap: "external",
+    // v7.4.3 (BUG-8): inject the version at build time so the standalone
+    // compiled binary (bun build --compile) doesn't print "unknown".
+    define: {
+      "globalThis.__LOKI_BUILD_VERSION__": JSON.stringify(version),
+    },
     // Bun automatically treats `node:*` and `bun:*` specifiers as externals
     // when target is "bun"; declaring them here is belt-and-suspenders so
     // the intent is obvious to future maintainers.

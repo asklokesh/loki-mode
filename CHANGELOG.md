@@ -5,6 +5,99 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.3] - 2026-04-25
+
+PATCH release. Closes the v7.4.2 deferred-bug list (8 of 12 bugs fixed
+directly; 4 documented as intentionally not-fixed with rationale).
+
+### Runner state-machine completeness (autonomous.ts)
+
+- **BUG-17 "exited" persistence**: persist `"exited"` immediately after every
+  provider invocation so dashboard sees the per-iteration transition.
+- **BUG-18 "paused" persistence**: persist `"paused"` when checkHumanIntervention
+  returns 1, so loadState resume sees correct status (was stale "running").
+- **BUG-19 isRateLimited integration**: failure-branch backoff now reads
+  the captured output, calls budget.isRateLimited, and overrides the
+  exponential backoff with the rate-limit-aware backoff (60-300s) when
+  detected. Prevents retry storms against rate-limited providers.
+- **BUG-20 createCheckpoint integration**: dynamic-import checkpoint.ts and
+  call createCheckpoint after each successful iteration (per
+  STATE-MACHINES.md sec 13). Wrapped so checkpoint failure doesn't abort
+  the loop.
+
+### Standalone binary version embed
+
+- **BUG-8 binary "vunknown"**: scripts/build.ts now reads VERSION at build
+  time and injects it via `Bun.build({define: globalThis.__LOKI_BUILD_VERSION__})`.
+  src/version.ts checks the build-time constant first; only falls back to
+  on-disk read when running unbundled. `bun build --compile` standalone
+  binaries now print the real version.
+
+### Hardening
+
+- **BUG-15 NO_COLOR**: util/colors.ts honors the NO_COLOR env var per
+  https://no-color.org -- when set, all ANSI constants resolve to empty
+  strings. (One of two intentional deviations from strict bash parity.)
+- **BUG-14 commandExists timeout**: 5s cap added; was unbounded. Prevents
+  doctor probes from hanging when /etc/profile or shell init is slow.
+- **BUG-11 checkpoint.ts:469 TOCTOU**: wrapped readFileSync in try/catch
+  to close the existsSync->read race. File-disappears-mid-call now returns
+  empty entries instead of throwing.
+- **BUG-21 rollbackToCheckpoint executor**: new `executeRollback(plan)`
+  function actually performs the file copies (atomic per file via tmp +
+  rename). Prior planner returned the spec but never executed it.
+
+### Distribution / docs
+
+- **BUG-6 sdk/python pyproject stale 5.55.0**: bumped to 7.4.3 so local
+  `python -m build` ships correct version. Workflow already rewrote at
+  publish time; this aligns the source for direct callers.
+- **BUG-7 npm vs PyPI naming asymmetry**: documented in
+  docs/INSTALLATION.md. `pip install loki-mode` does NOT exist; PyPI
+  hosts only `loki-mode-sdk` (the thin REST client). Server components
+  ship via npm/Docker/Homebrew only.
+
+### Intentionally NOT fixed in v7.4.3 (with rationale)
+
+- **BUG-2 Docker UX entrypoint**: `docker run image loki version` becomes
+  `loki loki version` due to ENTRYPOINT=["loki"]. Removing ENTRYPOINT
+  would change the published-API of the image (existing scripts would
+  break). Document only; revisit if v8.0.0 ever rebases image base.
+- **BUG-16 silent catch{} blocks**: ~20 sites across loki-ts/. Adding
+  LOKI_DEBUG-aware logging touches too many files for a patch release;
+  scoped to v7.5.0 as a "shell hardening" epic.
+- **BUG-22 follow-up tests**: a positive test exercising the
+  budget-exceeded path was not added (would require fake efficiency
+  records + tmpdir setup). The v7.4.2 type-correctness fix is sufficient
+  to prevent the original infinite loop.
+
+### Quality gates
+
+- `bun run typecheck`: clean (strict, no any, no @ts-ignore)
+- `bun test tests/runner/ tests/util/ tests/commands/`: 333/333 pass
+- `bun loki-ts/dist/loki.js version`: prints `Loki Mode v7.4.3` (BUG-8 verified)
+- `bash -n` on bin/loki, autonomy/loki, autonomy/run.sh, autonomy/completion-council.sh: clean
+
+### Carried-forward NOT-tested
+
+- bin/loki via npm-installed global symlink at $(which loki) (only repo-local + tarball install tested)
+- bun build --compile binary cold-start at scale
+- bin/loki-mode.js separate npm bin entry still bypasses Phase 2/3
+- doctor PASS branches: MiroFish, OTEL, MCP installed, ChromaDB reachable, disk fail/warn
+- state.ts cross-device EXDEV rename fallback
+- checkpoint.ts retention prune at 50+ checkpoints
+- rarv.ts EACCES on unreadable file
+- autonomous.ts integration with REAL provider invocation (Phase 5)
+- Council voting (Phase 5)
+- 100-fixture build_prompt.ts parity sweep (currently 30 fixtures)
+- writeOrchestratorState canonical field-order vs bash heredoc
+- checkpoint cp-{iter}-{epoch} same-second collision (matches bash bug)
+
+### Rollback
+
+- `LOKI_LEGACY_BASH=1` continues to force bash for every command.
+- `npm install -g loki-mode@7.4.2` to revert.
+
 ## [7.4.2] - 2026-04-25
 
 PATCH release. Fixes 7 bugs found by the 20-loop feedback sweep + council

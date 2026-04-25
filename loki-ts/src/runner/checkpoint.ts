@@ -460,13 +460,43 @@ export function rollbackToCheckpoint(
   return { id, metadata, restore: plan };
 }
 
+// v7.4.3 (BUG-21): execute a rollback plan. Previously the planner returned
+// `restore` entries but never copied them; callers had to do it themselves.
+// This now actually performs the restore, atomically per file (tmp + rename).
+export function executeRollback(plan: RollbackPlan): { restored: number; errors: string[] } {
+  const errors: string[] = [];
+  let restored = 0;
+  for (const entry of plan.restore) {
+    try {
+      const tmp = `${entry.to}.tmp.${process.pid}.${++_tmpCounter}`;
+      copyFileSync(entry.from, tmp);
+      renameSync(tmp, entry.to);
+      restored += 1;
+    } catch (err) {
+      errors.push(`${entry.from} -> ${entry.to}: ${(err as Error).message}`);
+    }
+  }
+  return { restored, errors };
+}
+
 // Test/debug helper: read the index.jsonl and parse each line.
+//
+// v7.4.3 (BUG-11): wrap the readFileSync in try/catch to close the TOCTOU
+// race -- if the file is deleted between existsSync and readFileSync, the
+// previous code would throw synchronously into the caller. Now we treat
+// "file disappeared" as "no entries".
 export function readIndex(lokiDirOverride?: string): CheckpointIndexEntry[] {
   const base = lokiDirOverride ?? lokiDir();
   const path = indexPath(base);
   if (!existsSync(path)) return [];
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
   const out: CheckpointIndexEntry[] = [];
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
+  for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
       out.push(JSON.parse(line) as CheckpointIndexEntry);
