@@ -38,8 +38,12 @@ import { run as shellRun } from "../util/shell.ts";
 // ---------------------------------------------------------------------------
 
 type StateMod = {
-  loadState(ctx: RunnerContext): Promise<void>;
-  saveState(ctx: RunnerContext, status: string, exitCode: number): Promise<void>;
+  // v7.4.4 (BUG-24): runner-shaped adapters. The plain `saveState(ctx)` in
+  // state.ts takes a single SaveStateContext; calling it with the runner's
+  // RunnerContext + extra args silently wrote malformed JSON. The adapters
+  // bridge the shapes; tryImport gates on these marker keys.
+  loadStateForRunner(ctx: RunnerContext): Promise<void>;
+  saveStateForRunner(ctx: RunnerContext, status: string, exitCode: number): Promise<void>;
 };
 
 type PromptMod = {
@@ -158,7 +162,7 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   // NOTE: required-key lists encode the contract this loop expects. Sibling
   // modules under loki-ts/src/runner/ that don't yet expose the listed
   // functions are treated as missing until they conform. See types.ts.
-  const stateMod = await tryImport<StateMod>("./state.ts", ["loadState", "saveState"]);
+  const stateMod = await tryImport<StateMod>("./state.ts", ["loadStateForRunner", "saveStateForRunner"]);
   // build_prompt.ts in tree (Phase4 B-agent) accepts BuildPromptOpts (different
   // shape from RunnerContext). Until an adapter exposes a runner-shaped
   // wrapper, gate on a marker key the adapter will publish.
@@ -183,7 +187,7 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   ]);
   const gatesMod = await tryImport<GatesMod>("./gates.ts", ["runQualityGates"]);
 
-  if (stateMod) await stateMod.loadState(ctx);
+  if (stateMod) await stateMod.loadStateForRunner(ctx);
   else logStub(ctx, "state.loadState");
 
   if (councilMod) await councilMod.councilInit(ctx.prdPath);
@@ -512,7 +516,7 @@ async function persistState(
 ): Promise<void> {
   if (mod) {
     try {
-      await mod.saveState(ctx, status, exitCode);
+      await mod.saveStateForRunner(ctx, status, exitCode);
     } catch (err) {
       ctx.log(`[runner] saveState failed: ${(err as Error).message}`);
     }

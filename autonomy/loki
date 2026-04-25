@@ -2529,7 +2529,8 @@ if reviews_total > 0:
 if gate_failures:
     failure_parts = [f'{k} ({v})' for k, v in gate_failures.items() if v > 0]
     if failure_parts:
-        print(f'  Gate failures: {', '.join(failure_parts)}')
+        sep = ', '
+        print(f'  Gate failures: {sep.join(failure_parts)}')
 print()
 
 # Efficiency

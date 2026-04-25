@@ -19,14 +19,16 @@
 //   count >= GATE_ESCALATE_LIMIT  -> write signals/GATE_ESCALATION (no pause)
 //   count >= GATE_CLEAR_LIMIT     -> log warning, treat as passing this round
 //
-// Phase 4 first cut: every gate runner is a stub. Real implementations land in
-// Phase 5 once the underlying analyzers (eslint, codeql, vitest harness,
-// debate council, etc.) are themselves ported. The orchestration logic, the
-// escalation ladder, and the failure-count persistence are real and final.
+// Phase 5 status: runStaticAnalysis and runTestCoverage are real ports of the
+// shell+JS / npm-test branches of the bash gates. runCodeReview,
+// runDocQualityGate, and runMagicDebateGate remain stubs pending their
+// respective ports (council, doc scorer, debate). The orchestration logic,
+// escalation ladder, and failure-count persistence are real and final.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
+import { run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 
 // --- Public types ----------------------------------------------------------
@@ -166,27 +168,161 @@ function stubResult(name: GateName): GateResult {
   return { passed: true, detail: "stub" };
 }
 
-// STUB: Phase 5 -- replace with real eslint/codeql runner port.
-export async function runStaticAnalysis(): Promise<GateResult> {
-  return stubResult("static_analysis");
+// Recursively list files under `dir` whose name ends with `suffix`.
+// Returns absolute paths. Returns [] if `dir` is missing -- callers treat
+// that as "nothing to check" (see runStaticAnalysis below).
+function listFilesBySuffix(dir: string, suffix: string): string[] {
+  if (!existsSync(dir)) return [];
+  let st;
+  try {
+    st = statSync(dir);
+  } catch {
+    return [];
+  }
+  if (!st.isDirectory()) return [];
+  const out: string[] = [];
+  const stack: string[] = [dir];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = join(cur, e.name);
+      if (e.isDirectory()) {
+        // Skip node_modules and dotdirs to keep the scan bounded.
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        stack.push(p);
+      } else if (e.isFile() && e.name.endsWith(suffix)) {
+        out.push(p);
+      }
+    }
+  }
+  return out;
 }
 
-// STUB: Phase 5 -- replace with real vitest/jest/coverage detector.
-export async function runTestCoverage(): Promise<GateResult> {
-  return stubResult("test_coverage");
+// Phase 5 real implementation. Mirrors the bash `enforce_static_analysis`
+// shell-script + JS branches at autonomy/run.sh:5572-5593 and 5516-5543, but
+// scoped to the directory layout the spec calls out (autonomy/*.sh +
+// scripts/*.js). Both subprocess wrappers honor a 30s timeout per file so a
+// hung interpreter cannot stall the iteration.
+//
+// Honors LOKI_STUB_GATE_STATIC_ANALYSIS for tests that prefer to drive the
+// orchestrator without spawning real subprocesses (the stub override wins).
+export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_STATIC_ANALYSIS";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("static_analysis");
+
+  const root = ctx?.cwd ?? process.cwd();
+  const shFiles = listFilesBySuffix(join(root, "autonomy"), ".sh");
+  const jsFiles = listFilesBySuffix(join(root, "scripts"), ".js");
+
+  const errors: string[] = [];
+  const TIMEOUT_MS = 30_000;
+
+  for (const f of shFiles) {
+    const r = await run(["bash", "-n", f], { timeoutMs: TIMEOUT_MS });
+    if (r.exitCode !== 0) {
+      const msg = (r.stderr || r.stdout || `exit ${r.exitCode}`).trim().split(/\r?\n/).slice(0, 3).join(" | ");
+      errors.push(`bash -n ${f}: ${msg}`);
+    }
+  }
+  for (const f of jsFiles) {
+    const r = await run(["node", "--check", f], { timeoutMs: TIMEOUT_MS });
+    if (r.exitCode !== 0) {
+      const msg = (r.stderr || r.stdout || `exit ${r.exitCode}`).trim().split(/\r?\n/).slice(0, 3).join(" | ");
+      errors.push(`node --check ${f}: ${msg}`);
+    }
+  }
+
+  const total = shFiles.length + jsFiles.length;
+  if (errors.length > 0) {
+    return {
+      passed: false,
+      detail: `static_analysis: ${errors.length}/${total} failed -- ${errors.slice(0, 3).join("; ")}`,
+    };
+  }
+  return { passed: true, detail: `static_analysis: ${total} files clean` };
 }
 
-// STUB: Phase 5 -- replace with the 3-reviewer parallel council port.
+// Shape the bash gate writes to .loki/quality/test-results.json (see
+// enforce_test_coverage at autonomy/run.sh:5704). When that artifact is
+// already present we trust it -- this lets the bash gate (still running in
+// production) hand off to the TS orchestrator without re-running the suite.
+type TestResultsArtifact = {
+  pass?: boolean;
+  passed?: number;
+  failed?: number;
+  runner?: string;
+  summary?: string;
+};
+
+function readTestResultsArtifact(base: string): TestResultsArtifact | null {
+  const p = join(base, "quality", "test-results.json");
+  if (!existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, "utf-8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as TestResultsArtifact;
+  } catch {
+    return null;
+  }
+}
+
+// Phase 5 real implementation. First checks .loki/quality/test-results.json
+// (written by the bash gate or any prior TS run); falls back to `npm test
+// --silent` with the 5-minute timeout the bash gate uses (autonomy/run.sh:5718).
+//
+// Honors LOKI_STUB_GATE_TEST_COVERAGE so existing orchestration tests can keep
+// using the stub escape hatch.
+export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_TEST_COVERAGE";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("test_coverage");
+
+  const base = ctx?.lokiDir ?? lokiDir();
+  const artifact = readTestResultsArtifact(base);
+  if (artifact !== null) {
+    // Treat explicit pass=false or any failed>0 as a failure. When pass is
+    // missing we infer from failed count (defaulting to 0 -> pass).
+    const failed = typeof artifact.failed === "number" ? artifact.failed : 0;
+    const passed = typeof artifact.passed === "number" ? artifact.passed : 0;
+    const explicitPass = artifact.pass === true;
+    const explicitFail = artifact.pass === false;
+    const ok = explicitFail ? false : explicitPass || failed === 0;
+    const detail = `test_coverage(artifact:${artifact.runner ?? "unknown"}): passed=${passed} failed=${failed}`;
+    return { passed: ok, detail };
+  }
+
+  // No artifact -- fall back to running `npm test --silent` if package.json exists.
+  const cwd = ctx?.cwd ?? process.cwd();
+  if (!existsSync(join(cwd, "package.json"))) {
+    return { passed: true, detail: "test_coverage: no test-results.json and no package.json -- skipping" };
+  }
+
+  const r = await run(["npm", "test", "--silent"], { cwd, timeoutMs: 300_000 });
+  if (r.exitCode === 0) {
+    return { passed: true, detail: "test_coverage: npm test exit 0" };
+  }
+  const tail = (r.stderr || r.stdout || "").trim().split(/\r?\n/).slice(-3).join(" | ");
+  return { passed: false, detail: `test_coverage: npm test exit ${r.exitCode} -- ${tail}` };
+}
+
+// STUB: Phase 5 next iteration -- replace with the 3-reviewer parallel council port.
 export async function runCodeReview(): Promise<GateResult> {
   return stubResult("code_review");
 }
 
-// STUB: Phase 5 -- replace with documentation coverage scorer.
+// STUB: Phase 5 next iteration -- replace with documentation coverage scorer.
 export async function runDocQualityGate(): Promise<GateResult> {
   return stubResult("doc_coverage");
 }
 
-// STUB: Phase 5 -- replace with Magic Modules debate council.
+// STUB: Phase 5 next iteration -- replace with Magic Modules debate council.
 export async function runMagicDebateGate(): Promise<GateResult> {
   return stubResult("magic_debate");
 }
@@ -327,10 +463,11 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     return { passed, failed, blocked: false, escalated: false };
   }
 
-  // Hard-gates path -- mirror the bash ordering exactly.
+  // Hard-gates path -- mirror the bash ordering exactly. Real runners take
+  // ctx so they can resolve repo + .loki paths without leaking env globals.
   const sequence: Array<{ name: GateName; enabled: boolean; run: () => Promise<GateResult> }> = [
-    { name: "static_analysis", enabled: toggles.staticAnalysis, run: runStaticAnalysis },
-    { name: "test_coverage", enabled: toggles.testCoverage, run: runTestCoverage },
+    { name: "static_analysis", enabled: toggles.staticAnalysis, run: () => runStaticAnalysis(ctx) },
+    { name: "test_coverage", enabled: toggles.testCoverage, run: () => runTestCoverage(ctx) },
     { name: "code_review", enabled: toggles.codeReview, run: runCodeReview },
     { name: "doc_coverage", enabled: toggles.docCoverage, run: runDocQualityGate },
     { name: "magic_debate", enabled: toggles.magicDebate, run: runMagicDebateGate },

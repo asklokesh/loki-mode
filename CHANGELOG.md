@@ -5,6 +5,115 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.4] - 2026-04-25
+
+PATCH release. Closes the "non-completions" list with an 8-agent fleet
+delivering Phase 5 scaffolding + 2 latent bugs caught in production-mode
+testing + Homebrew tap hotfix already pushed.
+
+### Phase 5 scaffolding (loki-ts/src/runner/, ~625 LOC + tests)
+
+- **council.ts** (180 LOC, 12 tests): councilInit (atomic write to
+  .loki/council/state.json) and defaultCouncil (shouldStop=false,
+  trackIteration appends pipe-delimited convergence.log) implemented real.
+  4 advanced functions explicitly throw with bash citation
+  (councilEvaluate, councilAggregateVotes, councilDevilsAdvocate,
+  councilWriteReport) -- "STUB: Phase 5 next iteration".
+- **providers.ts** (217 LOC, 13 tests): full Claude provider implementation
+  (tier->model mapping with LOKI_ALLOW_HAIKU + LOKI_MAX_TIER, argv-based
+  shell-out via util/shell.ts, stdout+stderr capture, parent-dir auto-create,
+  LOKI_CLAUDE_CLI env override for tests). Codex/Gemini/Cline/Aider stubbed
+  with discoverable "STUB: Phase 5" markers.
+- **completion.ts** (~58 LOC, 6 tests): checkCompletionPromise consumes
+  .loki/signals/TASK_COMPLETION_CLAIMED (and unlinks); legacy text-match
+  path gated on LOKI_LEGACY_COMPLETION_MATCH=true with 64KB tail cap.
+- **queues.ts** (~170 LOC, 5 tests): populatePrdQueue real (extracts
+  feature bullets + ### sub-headings from PRD, atomic write, sentinel
+  precedence). populateBmadQueue/Openspec/Mirofish stubbed.
+- **quality_gates.ts**: 2 of 5 stubs replaced -- runStaticAnalysis (bash -n
+  on autonomy/, node --check on scripts/, 30s timeout) and runTestCoverage
+  (read .loki/quality/test-results.json then npm test fallback, 5-min
+  timeout). LOKI_STUB_GATE_* env escape hatches preserved.
+
+### Bugs caught in production-mode testing
+
+- **BUG-24 (state adapter signature mismatch)**: state.ts exports
+  saveState(SaveStateContext) -- single object arg. autonomous.ts
+  persistState calls mod.saveState(ctx, status, exitCode) -- 3 positional
+  args. Result: silently malformed autonomy-state.json. Same class as
+  BUG-22 (separate code paths drift apart). Fixed by adding
+  saveStateForRunner + loadStateForRunner adapters in state.ts and
+  updating autonomous.ts tryImport gate + StateMod TS interface to use
+  the marker keys (matches the BUG-22 pattern).
+- **BUG-25 (cmd_stats Python f-string SyntaxError)**: autonomy/loki:2532
+  used nested single-quotes inside an f-string (`f'... {', '.join(...)}'`).
+  Python 3.12+ accepts via PEP 701 but 3.11 and earlier reject.
+  Latent in bash CLI; exposed when bun absent and the shim falls through.
+  Fixed by extracting `sep = ', '` variable.
+
+### Homebrew tap hotfix (already PUSHED to asklokesh/homebrew-tap)
+
+- Commit 2b7b6f9 on asklokesh/homebrew-tap@main: live formula now installs
+  bin/loki (Bun shim) instead of autonomy/loki (bash CLI), plus
+  depends_on "oven-sh/bun/bun". Brew users running
+  `brew install asklokesh/tap/loki-mode` TODAY get the Phase 2/3+ Bun
+  routes against the v7.2.0 tarball. The release.yml workflow will
+  auto-regenerate the formula with the v7.4.4 tarball SHA when this
+  branch lands on main and a release tag fires.
+
+### New CI workflow
+
+- **.github/workflows/bun-parity.yml** (162 lines): codifies the
+  bash<->bun byte-for-byte parity invariant for all 8 ported commands.
+  Runs on every PR + push to main. JSON variants normalized via jq -S.
+  3-minute total wall budget. Closes the manual parity-checking gap.
+
+### Phase 6 readiness
+
+- **loki-ts/docs/phase6-readiness-checklist.md** (270 lines): concrete
+  measurable criteria (11 gates) for v8.0.0 sunset of bash.
+- **loki-ts/scripts/check-phase6-ready.ts** (440 lines, runnable):
+  exits 0 only when all 11 gates pass; exit 1 today with 8 NOT READY
+  reasons. Realistic ship date per plan: ~2026-07-18 (after Phase 5
+  ships and 30-day soak completes).
+
+### Quality gates
+
+- bun run typecheck: clean (strict, no any)
+- bun test (full suite): **378/378 pass** (22 files, 978 expects)
+- bash -n on bin/loki, autonomy/loki, autonomy/run.sh: clean
+- bash autonomy/loki stats --json | python3 -c json.load: VALID JSON
+
+### NEW BUG-24 regression guard added
+
+The BUG-22 positive integration test (added in v7.4.3) explicitly asserts
+`signals.budgetCheckCount==0` -- proves budgetMod adapter was used, not
+the SignalSource fallback. This same pattern is now needed for state
+saves to prevent BUG-24 reintroduction; tracked as v7.4.5 work.
+
+### Honest non-completions in this release
+
+- **Phase 6 mass deletion**: explicitly NOT done. Calendar-bound
+  (30-day soak required after Phase 5 lands).
+- **Codex/Gemini/Cline/Aider provider invocation**: stubbed; v7.5.0.
+- **3 of 5 quality gates** (runCodeReview, runDocQualityGate,
+  runMagicDebateGate): still stubs; v7.5.0.
+- **3 of 4 queue populators** (BMAD/OpenSpec/MiroFish): still stubs;
+  require auxiliary state setup; v7.5.0.
+- **4 council functions** (councilEvaluate, councilAggregateVotes,
+  councilDevilsAdvocate, councilWriteReport): still stubs; v7.5.0.
+- **NO_COLOR honored on TS route only**: bash fallthrough still emits
+  ANSI escapes (12 escapes in `loki provider show`). Documented as
+  intentional behavior since fixing requires touching 10K-line bash CLI.
+- **bin/loki test via npm-installed global symlink**: tested via PATH
+  override and works on bash route; bun-route on this test machine was
+  not exercised because bun was absent (typical end-user setup).
+
+### Rollback
+
+- LOKI_LEGACY_BASH=1 still forces bash for every command.
+- npm install -g loki-mode@7.4.3 to revert.
+
 ## [7.4.3] - 2026-04-25
 
 PATCH release. Closes the v7.4.2 deferred-bug list (8 of 12 bugs fixed

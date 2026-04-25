@@ -1,0 +1,162 @@
+name: Bun Parity
+
+# Verifies bash-vs-bun byte-for-byte parity for the commands ported in
+# Phase 2/3 of the bash->Bun migration (ADR-001). Codifies the parity
+# invariant that has been hand-checked since v7.3.0.
+#
+# For every command in the matrix below this job:
+#   1. Captures stdout from the Bun route   (bin/loki <cmd>)
+#   2. Captures stdout from the bash route  (LOKI_LEGACY_BASH=1 bin/loki <cmd>)
+#   3. For --json variants: jq -S sort then diff
+#      For text variants:   direct diff
+#   4. Fails the job if ANY command differs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bun-parity:
+    name: bun-parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Setup Python (for bash route fallthroughs)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install jq
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
+          jq --version
+
+      - name: Build loki-ts (Bun)
+        working-directory: loki-ts
+        run: |
+          bun install
+          bun run build
+
+      - name: Verify both routes are invokable
+        run: |
+          test -x bin/loki || { echo "FATAL: bin/loki missing or not executable"; exit 1; }
+          test -x autonomy/loki || { echo "FATAL: autonomy/loki missing or not executable"; exit 1; }
+          test -f loki-ts/dist/loki.js || { echo "FATAL: loki-ts/dist/loki.js missing after build"; exit 1; }
+
+      - name: Run parity matrix
+        id: parity
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # Command matrix. JSON variants get jq -S normalization; text
+          # variants get straight diff.
+          # Format: "<label>|<args>|<mode:text|json>"
+          MATRIX=(
+            "version|--version|text"
+            "provider-show|provider show|text"
+            "provider-list|provider list|text"
+            "memory-list|memory list|text"
+            "status|status|text"
+            "status-json|status --json|json"
+            "stats|stats|text"
+            "stats-json|stats --json|json"
+            "doctor|doctor|text"
+            "doctor-json|doctor --json|json"
+          )
+
+          mkdir -p /tmp/parity
+          FAILED=()
+          PASSED=()
+
+          for entry in "${MATRIX[@]}"; do
+            label="${entry%%|*}"
+            rest="${entry#*|}"
+            args="${rest%%|*}"
+            mode="${rest##*|}"
+
+            bun_out="/tmp/parity/${label}.bun"
+            bash_out="/tmp/parity/${label}.bash"
+            diff_out="/tmp/parity/${label}.diff"
+
+            # Capture both routes. Do not let a non-zero exit kill the job
+            # before we can diff -- record exit codes separately.
+            set +e
+            bin/loki $args >"$bun_out" 2>/dev/null
+            bun_ec=$?
+            LOKI_LEGACY_BASH=1 bin/loki $args >"$bash_out" 2>/dev/null
+            bash_ec=$?
+            set -e
+
+            if [ "$mode" = "json" ]; then
+              # Sort keys recursively before diffing so key-order changes
+              # do not register as parity violations.
+              if ! jq -S . "$bun_out" >"${bun_out}.sorted" 2>/dev/null; then
+                echo "FAIL [$label]: bun output is not valid JSON"
+                FAILED+=("$label (invalid bun JSON)")
+                continue
+              fi
+              if ! jq -S . "$bash_out" >"${bash_out}.sorted" 2>/dev/null; then
+                echo "FAIL [$label]: bash output is not valid JSON"
+                FAILED+=("$label (invalid bash JSON)")
+                continue
+              fi
+              if diff -u "${bash_out}.sorted" "${bun_out}.sorted" >"$diff_out"; then
+                PASSED+=("$label")
+              else
+                echo "FAIL [$label]: JSON parity diff (bash exit=$bash_ec, bun exit=$bun_ec):"
+                cat "$diff_out"
+                FAILED+=("$label")
+              fi
+            else
+              if diff -u "$bash_out" "$bun_out" >"$diff_out"; then
+                PASSED+=("$label")
+              else
+                echo "FAIL [$label]: text parity diff (bash exit=$bash_ec, bun exit=$bun_ec):"
+                cat "$diff_out"
+                FAILED+=("$label")
+              fi
+            fi
+          done
+
+          echo ""
+          echo "================================================================"
+          echo "Bun Parity Summary"
+          echo "================================================================"
+          printf '%-20s %s\n' "COMMAND" "RESULT"
+          printf '%-20s %s\n' "-------" "------"
+          for p in "${PASSED[@]}"; do
+            printf '%-20s %s\n' "$p" "PASS"
+          done
+          for f in "${FAILED[@]}"; do
+            printf '%-20s %s\n' "$f" "FAIL"
+          done
+          echo "================================================================"
+          echo "Passed: ${#PASSED[@]}  Failed: ${#FAILED[@]}  Total: ${#MATRIX[@]}"
+          echo "================================================================"
+
+          if [ "${#FAILED[@]}" -gt 0 ]; then
+            echo "Bun parity check FAILED for ${#FAILED[@]} command(s)."
+            exit 1
+          fi
+          echo "All commands parity-verified."

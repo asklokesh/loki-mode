@@ -20,6 +20,8 @@ import {
   clearGateFailure,
   getGateFailureCount,
   runQualityGates,
+  runStaticAnalysis,
+  runTestCoverage,
   trackGateFailure,
 } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -277,5 +279,96 @@ describe("runQualityGates orchestration", () => {
     expect(r.escalated).toBe(true);
     expect(getGateFailureCount("static_analysis", scratch)).toBe(1);
     expect(getGateFailureCount("test_coverage", scratch)).toBe(0);
+  });
+});
+
+// --- Real Phase 5 gate runners --------------------------------------------
+//
+// These exercise the actual subprocess-driven implementations of
+// runStaticAnalysis and runTestCoverage. The fixture layout is built under
+// `scratch` so the runners scan a hermetic directory tree instead of the
+// real loki-mode repo.
+
+describe("runStaticAnalysis (real Phase 5 implementation)", () => {
+  it("flags the invalid .sh file and leaves the valid one alone", async () => {
+    // Build fixture: autonomy/{ok.sh,bad.sh}, scripts/ok.js
+    mkdirSync(join(scratch, "autonomy"), { recursive: true });
+    mkdirSync(join(scratch, "scripts"), { recursive: true });
+    writeFileSync(join(scratch, "autonomy", "ok.sh"), "#!/bin/bash\necho hello\n");
+    // Unterminated quote -- bash -n must exit non-zero.
+    writeFileSync(join(scratch, "autonomy", "bad.sh"), "#!/bin/bash\necho \"oops\n");
+    writeFileSync(join(scratch, "scripts", "ok.js"), "const x = 1;\n");
+
+    const ctx = makeCtx();
+    const r = await runStaticAnalysis(ctx);
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("bad.sh");
+    // Valid file should not appear in the failure summary.
+    expect(r.detail ?? "").not.toContain("ok.sh:");
+  });
+
+  it("passes when all .sh and .js files are syntactically valid", async () => {
+    mkdirSync(join(scratch, "autonomy"), { recursive: true });
+    mkdirSync(join(scratch, "scripts"), { recursive: true });
+    writeFileSync(join(scratch, "autonomy", "a.sh"), "#!/bin/bash\nls\n");
+    writeFileSync(join(scratch, "autonomy", "b.sh"), "true\n");
+    writeFileSync(join(scratch, "scripts", "a.js"), "const x = 2;\n");
+
+    const r = await runStaticAnalysis(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("3 files clean");
+  });
+
+  it("returns pass with zero files when neither directory exists", async () => {
+    // scratch is fresh -- no autonomy/ or scripts/ subdir exists.
+    const r = await runStaticAnalysis(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("0 files clean");
+  });
+});
+
+describe("runTestCoverage (real Phase 5 implementation)", () => {
+  it("parses an existing .loki/quality/test-results.json (pass case)", async () => {
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(
+      join(scratch, "quality", "test-results.json"),
+      JSON.stringify({ pass: true, runner: "vitest", passed: 42, failed: 0 }),
+    );
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("vitest");
+    expect(r.detail ?? "").toContain("passed=42");
+  });
+
+  it("parses an existing test-results.json (fail case via failed>0)", async () => {
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(
+      join(scratch, "quality", "test-results.json"),
+      JSON.stringify({ runner: "jest", passed: 10, failed: 3 }),
+    );
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("failed=3");
+  });
+
+  it("preserves the LOKI_STUB_GATE_TEST_COVERAGE=fail escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_TEST_COVERAGE"] = "fail";
+    // Even with a passing artifact present the stub override must win so
+    // existing orchestration tests can short-circuit subprocess execution.
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(
+      join(scratch, "quality", "test-results.json"),
+      JSON.stringify({ pass: true, passed: 1, failed: 0 }),
+    );
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
+  });
+
+  it("skips cleanly when no artifact and no package.json exist", async () => {
+    // Fresh scratch -- no .loki/quality/test-results.json, no package.json.
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("skipping");
   });
 });

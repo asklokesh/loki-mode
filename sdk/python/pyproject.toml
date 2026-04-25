@@ -1,6 +1,6 @@
 [project]
 name = "loki-mode-sdk"
-version = "7.4.3"
+version = "7.4.4"
 description = "Python SDK for Loki Mode - autonomous multi-agent development platform"
 readme = "README.md"
 license = "BUSL-1.1"

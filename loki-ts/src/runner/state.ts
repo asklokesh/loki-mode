@@ -184,6 +184,41 @@ export function saveState(ctx: SaveStateContext): string {
   return target;
 }
 
+// v7.4.4 (BUG-24): runner-shaped adapter for autonomous.ts persistState.
+// autonomous.ts:42 declares saveState(ctx, status, exitCode) but state.ts's
+// public saveState takes a single SaveStateContext. Calling the public one
+// with extra args silently produced malformed JSON (positional args ignored,
+// the `ctx` arg was a RunnerContext lacking SaveStateContext fields). This
+// adapter bridges the two shapes and is the marker key autonomous.ts now
+// gates on via tryImport.
+import type { RunnerContext as LoopRunnerContext } from "./types.ts";
+
+export async function saveStateForRunner(
+  ctx: LoopRunnerContext,
+  status: string,
+  exitCode: number,
+): Promise<void> {
+  saveState({
+    retryCount: ctx.retryCount,
+    iterationCount: ctx.iterationCount,
+    status,
+    exitCode,
+    prdPath: ctx.prdPath,
+    pid: process.pid,
+    maxRetries: ctx.maxRetries,
+    baseWait: ctx.baseWaitSeconds,
+    lokiDirOverride: ctx.lokiDir,
+  });
+}
+
+export async function loadStateForRunner(ctx: LoopRunnerContext): Promise<void> {
+  // Read the on-disk state and re-hydrate the runner counters. Idempotent:
+  // missing file -> no-op; corrupt -> backed-up + counters reset to 0.
+  const result = loadState({ lokiDirOverride: ctx.lokiDir });
+  ctx.retryCount = result.retryCount;
+  ctx.iterationCount = result.iterationCount;
+}
+
 // --- load_state ------------------------------------------------------------
 
 // Result mirrors the side-effects bash sets globally
