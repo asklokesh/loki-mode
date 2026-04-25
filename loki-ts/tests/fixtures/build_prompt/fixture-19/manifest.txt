@@ -1,0 +1,3 @@
+Fixture 19: Resume with structured handoff context
+- retry=2, JSON handoff present, fresh mtime via harness touch
+- Verifies: RECENT_HANDOFF in context_injection; open_questions surfaces

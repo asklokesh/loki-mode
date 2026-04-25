@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "checks": {
+    "page_loads": true,
+    "navigation": true,
+    "forms": true
+  }
+}

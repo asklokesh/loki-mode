@@ -1,0 +1,3 @@
+Fixture 13: Complex project (5 SDLC phases on)
+- Iteration 10, PRD, MAX_PARALLEL_AGENTS=20, MAX_ITERATIONS=2000
+- Verifies: SDLC phase list contains 5 phases; MAX_PARALLEL_AGENTS=20 in RARV

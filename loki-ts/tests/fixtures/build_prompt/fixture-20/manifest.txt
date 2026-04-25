@@ -1,0 +1,2 @@
+Fixture 20: Gate failures only (no static-analysis or test-results sidecars)
+- Verifies: bare gate_failure_context emission without summaries

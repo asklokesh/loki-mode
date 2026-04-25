@@ -134,3 +134,60 @@ jobs:
             echo "ERROR: Build output smaller than expected (${size} < 100000 bytes)"
             exit 1
           fi
+
+  bun-tests:
+    name: Bun tests (loki-ts + dual-route CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Setup Python (for bash route fallthroughs)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js (for shim fallthroughs to bash CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Python deps used by bash CLI tests
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pydantic httpx fastapi uvicorn
+
+      - name: Install Node deps used by bash CLI tests
+        run: npm install --no-package-lock
+
+      - name: Install loki-ts dependencies
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Typecheck loki-ts
+        working-directory: loki-ts
+        run: bun run typecheck
+
+      - name: Run loki-ts unit tests
+        working-directory: loki-ts
+        run: bun test
+
+      - name: Run CLI tests via bash route (LOKI_LEGACY_BASH=1)
+        env:
+          LOKI_LEGACY_BASH: "1"
+        run: bash tests/test-cli-commands.sh
+
+      - name: Run CLI tests via Bun shim route
+        run: PATH="$PWD/bin:$PATH" bash tests/test-cli-commands.sh
+
+      - name: Install hyperfine (for bench-suite)
+        run: sudo apt-get update && sudo apt-get install -y hyperfine
+
+      - name: Sanity bench-suite (hyperfine, 5 runs, 1 warmup)
+        working-directory: loki-ts
+        run: bun run scripts/bench-suite.ts --runs 5 --warmup 1

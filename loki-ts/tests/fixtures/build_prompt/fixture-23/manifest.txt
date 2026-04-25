@@ -1,0 +1,2 @@
+Fixture 23: App runner running
+- Verifies: APP_RUNNING_AT injected with url + method

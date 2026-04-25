@@ -1,0 +1,11 @@
+Fixture 1: Cold Start (Iteration 1)
+- Scenario: First iteration, no PRD provided
+- Invocation: build_prompt(0, "", 1)
+- Expected Behavior: Codebase analysis mode, full SDLC instruction, no resume context, no queue
+- Key Variables:
+  - analysis_instruction: Present (no PRD)
+  - prd_anchor: "Loki Mode"
+  - memory_context_section: Empty (no prior context)
+  - checklist_status: Empty (no PRD file)
+  - queue_tasks: Empty (no queue)
+- Test: Verify analysis_instruction appears in static prefix

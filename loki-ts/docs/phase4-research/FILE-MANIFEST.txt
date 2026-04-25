@@ -1,0 +1,139 @@
+PHASE 4 RESEARCH B2 - build_prompt() ANALYSIS
+FILE MANIFEST
+Generated: 2025-04-25
+
+DOCUMENTATION FILES
+===================
+
+/Users/lokesh/git/loki-mode/loki-ts/docs/phase4-research/
+  - build_prompt.md (325 lines)
+    Comprehensive analysis of build_prompt() function
+    Sections: Location/Size, Signature, Env Vars, Input Files, Queue Format,
+              Prompt Structure, Variable Substitution, Output, Side Effects, Length
+
+  - DELIVERABLE-SUMMARY.md (200+ lines)
+    Executive summary for Phase 4 dev and reviewers
+    Contains critical findings, parity hazards, how-to-use, sign-off
+
+  - FILE-MANIFEST.txt (this file)
+    Index of all delivered files
+
+FIXTURE CORPUS
+==============
+
+/Users/lokesh/git/loki-mode/loki-ts/tests/fixtures/build_prompt/
+
+  README.md (15.7 KB)
+    Complete fixture guide with 10 detailed specifications
+    Implementation notes for TS port, testing strategy
+
+  fixture-runner.sh (executable)
+    Bash script to run individual fixtures
+
+  FIXTURE 1: Cold Start (No PRD)
+  ------
+  fixture-1/env.sh
+  fixture-1/manifest.txt
+  fixture-1/output.txt
+  fixture-1/.loki/skills/ (directory)
+  fixture-1/.loki/logs/ (directory)
+  
+  FIXTURE 2: Mid-run with Queue (Iteration 5, PRD)
+  ------
+  fixture-2/env.sh
+  fixture-2/manifest.txt
+  fixture-2/output.txt
+  fixture-2/test-prd.md
+  fixture-2/.loki/queue/pending.json
+  fixture-2/.loki/skills/ (directory)
+
+  FIXTURE 3: Quality Gates + Checklist (Iteration 10)
+  ------
+  fixture-3/env.sh
+  fixture-3/manifest.txt
+  fixture-3/output.txt
+  fixture-3/prd.md
+  fixture-3/.loki/quality/gate-failures.txt
+  fixture-3/.loki/quality/test-results.json
+  fixture-3/.loki/checklist/verification-results.json
+  fixture-3/.loki/skills/ (directory)
+
+  FIXTURE 4: Resume After PAUSE (Retry > 0)
+  ------
+  fixture-4/env.sh
+  fixture-4/manifest.txt
+  fixture-4/output.txt
+  fixture-4/prd.md
+  fixture-4/.loki/memory/ledgers/LEDGER-20250424T120000Z.md
+  fixture-4/.loki/skills/ (directory)
+
+  FIXTURE 5: Post-STOP Recovery with Human Directive
+  ------
+  fixture-5/env.sh
+  fixture-5/manifest.txt
+  fixture-5/output.txt
+  fixture-5/prd.md
+  fixture-5/.loki/skills/ (directory)
+
+  FIXTURE 6: Active Intervention (Human + Queue + Retry)
+  ------
+  fixture-6/env.sh
+  fixture-6/manifest.txt
+  fixture-6/output.txt
+  fixture-6/prd.md
+  fixture-6/.loki/queue/in-progress.json
+  fixture-6/.loki/skills/ (directory)
+
+  FIXTURE 7: Empty Queue
+  ------
+  fixture-7/env.sh
+  fixture-7/manifest.txt
+  fixture-7/output.txt
+  fixture-7/prd.md
+  fixture-7/.loki/queue/pending.json
+  fixture-7/.loki/queue/in-progress.json
+  fixture-7/.loki/skills/ (directory)
+
+  FIXTURE 8: Budget Alarm (High Iteration Count)
+  ------
+  fixture-8/env.sh
+  fixture-8/manifest.txt
+  fixture-8/output.txt
+  fixture-8/prd.md
+  fixture-8/.loki/skills/ (directory)
+
+  FIXTURE 9: Degraded Provider (PROVIDER_DEGRADED=true)
+  ------
+  fixture-9/env.sh
+  fixture-9/manifest.txt
+  fixture-9/output.txt
+  fixture-9/prd.md
+  fixture-9/.loki/skills/ (directory)
+
+  FIXTURE 10: Perpetual Mode + All Optional Contexts
+  ------
+  fixture-10/env.sh
+  fixture-10/manifest.txt
+  fixture-10/output.txt
+  fixture-10/prd.md
+  fixture-10/.loki/queue/pending.json
+  fixture-10/.loki/magic/specs/Button.md
+  fixture-10/.loki/magic/specs/Modal.md
+  fixture-10/.loki/verification/playwright-results.json
+  fixture-10/.loki/skills/ (directory)
+
+TOTALS
+======
+Documentation files: 3
+Fixture directories: 10
+Fixture output lines: 156 (combined)
+Report lines: 325 (build_prompt.md)
+Documentation lines: 15,760 (fixture README)
+Total deliverable size: ~32 KB
+
+VERIFICATION
+============
+All fixtures have been executed through bash build_prompt() and outputs
+captured as gold standard for parity verification against TypeScript port.
+
+File listing verified: 2025-04-25

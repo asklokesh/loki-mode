@@ -1,0 +1,3 @@
+Fixture 18: Resume with ledger memory
+- retry=1, ledger present at .loki/memory/ledgers/
+- Verifies: PREVIOUS_LEDGER_STATE in context_injection; CONTEXT section emitted

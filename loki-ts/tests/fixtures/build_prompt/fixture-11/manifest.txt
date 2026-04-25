@@ -1,0 +1,3 @@
+Fixture 11: Cold start, codebase analysis mode, single phase
+- Iteration 1, no PRD, no queue, no memory
+- Verifies: analysis_instruction present in static prefix; SDLC phase list = UNIT_TESTS only

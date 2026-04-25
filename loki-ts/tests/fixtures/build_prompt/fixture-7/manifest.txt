@@ -1,0 +1,8 @@
+Fixture 7: Empty Queue
+- Scenario: Queue files exist but are empty arrays
+- Invocation: build_prompt(0, "./prd.md", 4) with empty queue files
+- Expected Behavior: queue_tasks variable is empty, not injected in dynamic context
+- Key Variables:
+  - queue_tasks: Empty string (no tasks to extract)
+  - Dynamic context: No QUEUED_TASKS section
+- Test: Verify QUEUED_TASKS does NOT appear in output

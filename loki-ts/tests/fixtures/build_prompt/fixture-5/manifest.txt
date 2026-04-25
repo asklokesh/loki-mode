@@ -1,0 +1,8 @@
+Fixture 5: Post-STOP Recovery with Human Directive
+- Scenario: Resume after STOP, human directive priority override
+- Invocation: build_prompt(0, "./prd.md", 2) with LOKI_HUMAN_INPUT set
+- Expected Behavior: Human directive injected at PRIORITY level
+- Key Variables:
+  - human_directive: "HUMAN_DIRECTIVE (PRIORITY): URGENT: Fix critical security issue..."
+  - human_directive appears before queue_tasks in dynamic context
+- Test: Verify human_directive appears and comes before other dynamic contexts

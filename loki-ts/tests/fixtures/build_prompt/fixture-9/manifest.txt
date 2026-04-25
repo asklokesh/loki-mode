@@ -1,0 +1,9 @@
+Fixture 9: Degraded Provider (Codex/Gemini)
+- Scenario: PROVIDER_DEGRADED=true, simplified prompt format
+- Invocation: build_prompt(0, "./prd.md", 2) with PROVIDER_DEGRADED=true
+- Expected Behavior: Uses simplified degraded-provider path (line 9304+)
+- Key Variables:
+  - PROVIDER_DEGRADED: "true"
+  - Output format: Simpler wording, no cache markers
+  - No loki_system/dynamic_context tags
+- Test: Verify output uses printf simple format without XML tags

@@ -1,0 +1,14 @@
+<loki_system>
+Loki Mode with PRD
+You are a coding assistant. Read and implement the requirements from the PRD. Write working code, run tests if possible, and commit changes.
+</loki_system>
+[CACHE_BREAKPOINT]
+<dynamic_context iteration="4" retry="1">
+Priority: HUMAN_DIRECTIVE (PRIORITY): Switch to gpt-5.3-codex configuration Execute this directive BEFORE continuing normal tasks.
+PRD contents: # Codex Provider PRD
+This PRD will be passed inline (first 4000 chars) to a degraded provider.
+
+## Goals
+- Verify degraded path renders human directive and queue.
+- Verify resume context is omitted (degraded ignores retry > 0 in dynamic prefix).
+</dynamic_context>

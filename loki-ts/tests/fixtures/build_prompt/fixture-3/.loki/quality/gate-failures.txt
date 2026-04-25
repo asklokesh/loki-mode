@@ -1,0 +1,3 @@
+CRITICAL: TypeScript compilation failed in src/index.ts:15
+ERROR: Test coverage below 50% threshold
+WARNING: ESLint found 3 style violations

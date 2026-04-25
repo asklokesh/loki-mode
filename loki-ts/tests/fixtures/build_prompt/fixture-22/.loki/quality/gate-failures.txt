@@ -1,0 +1,2 @@
+ERROR: 3 unit tests failing
+WARNING: coverage at 65%

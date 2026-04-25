@@ -1,0 +1,9 @@
+Fixture 3: Iteration 10 with Quality Gates
+- Scenario: 10th iteration, PRD, quality failures, checklist status
+- Invocation: build_prompt(0, "./prd.md", 10)
+- Expected Behavior: Shows gate failures and checklist status
+- Key Variables:
+  - gate_failure_context: Present (from gate-failures.txt)
+  - checklist_status: Present (from verification-results.json)
+  - phases: "SECURITY"
+- Test: Verify gate_failure_context and test_summary appear in dynamic context

@@ -33,7 +33,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Bun runtime (pinned) for the TypeScript CLI shipped under loki-ts/.
+# Copied into the runtime stage below so build tools stay out of the final image.
+ARG BUN_VERSION=1.3.13
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
+    && mv /root/.bun/bin/bun /usr/local/bin/bun \
+    && rm -rf /root/.bun \
+    && bun --version
 
 # Install Node.js 20 LTS (required for Claude CLI and npm packages)
 # Security: Use official NodeSource repository with GPG verification
@@ -74,7 +83,7 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.2.0"
+LABEL version="7.3.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
@@ -126,6 +135,9 @@ COPY --from=builder /usr/bin/npx /usr/bin/npx
 # Copy GitHub CLI from builder
 COPY --from=builder /usr/bin/gh /usr/bin/gh
 
+# Copy Bun runtime from builder (pinned via BUN_VERSION above)
+COPY --from=builder /usr/local/bin/bun /usr/local/bin/bun
+
 # Copy installed CLI tools from builder (global node_modules)
 # Note: npm -g with NodeSource installs to /usr/lib/node_modules, binaries to /usr/bin
 # The /usr/local paths may not exist if CLIs aren't available on npm
@@ -175,6 +187,11 @@ COPY --chown=loki:loki templates/ ./templates/
 COPY --chown=loki:loki integrations/ ./integrations/
 COPY --chown=loki:loki completions/ ./completions/
 
+# Bun runtime artifacts: shim + pre-built TypeScript bundle.
+# loki-ts/dist/loki.js is built by `bun run build` and committed to the repo.
+COPY --chown=loki:loki bin/ ./bin/
+COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
+
 # Copy docs
 COPY --chown=loki:loki docs/ ./docs/
 
@@ -183,7 +200,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     -r dashboard/requirements.txt
 
 # Make scripts executable
-RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh 2>/dev/null || true \
+RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki 2>/dev/null || true \
     && chmod +x providers/*.sh 2>/dev/null || true
 
 # Create necessary directories with proper permissions
@@ -192,9 +209,11 @@ RUN mkdir -p /home/loki/.claude/skills \
     && mkdir -p /home/loki/.ssh \
     && chown -R loki:loki /home/loki
 
-# Set up symlinks for loki user
+# Set up symlinks for loki user. /usr/local/bin/loki points at the bin/loki
+# shim so ported commands route through Bun while unported commands fall
+# through to autonomy/loki (bash).
 RUN ln -sf /opt/loki-mode /home/loki/.claude/skills/loki-mode \
-    && ln -sf /opt/loki-mode/autonomy/loki /usr/local/bin/loki
+    && ln -sf /opt/loki-mode/bin/loki /usr/local/bin/loki
 
 #-------------------------------------------------------------------------------
 # Configure workspace
@@ -236,7 +255,7 @@ RUN echo "umask 022" >> /home/loki/.bashrc
 #-------------------------------------------------------------------------------
 # Security: Use exec form to avoid shell injection
 # Default command shows help; sandbox.sh overrides with actual command
-ENTRYPOINT ["/opt/loki-mode/autonomy/loki"]
+ENTRYPOINT ["/opt/loki-mode/bin/loki"]
 CMD ["help"]
 
 #===============================================================================

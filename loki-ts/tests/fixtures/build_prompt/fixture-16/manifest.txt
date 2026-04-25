@@ -1,0 +1,3 @@
+Fixture 16: Queue with 20 legacy-format tasks
+- Tests: load_queue_tasks output truncation/limits and rendering of 20 entries
+- All tasks use legacy api/enhancement format (no PRD shape)

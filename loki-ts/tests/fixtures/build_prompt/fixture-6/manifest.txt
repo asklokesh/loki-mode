@@ -1,0 +1,9 @@
+Fixture 6: Active Intervention
+- Scenario: Human directive + in-progress queue + retry resume
+- Invocation: build_prompt(1, "./prd.md", 7) with LOKI_HUMAN_INPUT and in-progress queue
+- Expected Behavior: Human directive, in-progress tasks shown, retry context
+- Key Variables:
+  - human_directive: Present (from LOKI_HUMAN_INPUT)
+  - queue_tasks: Present (in-progress shown first)
+  - Resume context: Present (retry == 1)
+- Test: Verify IN-PROGRESS TASKS label appears before PENDING in queue output

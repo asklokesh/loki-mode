@@ -1,0 +1,2 @@
+Fixture 24: App runner crashed
+- Verifies: APP_CRASHED message with crash_count

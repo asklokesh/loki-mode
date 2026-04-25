@@ -1,0 +1,13 @@
+node_modules/
+.bun-build*
+*.log
+src/
+tests/
+scripts/
+tsconfig.json
+bun.lock
+README.md
+docs/
+# Source maps reveal full TypeScript source -- exclude from npm tarball
+# (security audit finding 2026-04-25). Devs can rebuild locally for debugging.
+dist/*.map

@@ -12,7 +12,7 @@
     "typecheck": "bun run --bun tsc --noEmit",
     "test": "bun test",
     "bench": "bun run scripts/bench.ts",
-    "build": "bun build src/cli.ts --target=bun --outdir=dist",
+    "build": "bun run scripts/build.ts",
     "build:binary": "bun build --compile src/cli.ts --outfile=dist/loki-ts"
   },
   "devDependencies": {

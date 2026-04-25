@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "timestamp": "2026-01-01T12:00:00Z",
+  "reason": "session_end",
+  "iteration": 5,
+  "files_modified": ["src/auth.ts", "src/router.ts"],
+  "recent_commits": ["abc123 feat: auth"],
+  "task_status": {"pending": 3, "completed": 2},
+  "open_questions": ["how to handle refresh tokens"],
+  "key_decisions": [],
+  "blockers": []
+}

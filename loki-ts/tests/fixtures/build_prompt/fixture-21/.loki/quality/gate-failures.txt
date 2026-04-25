@@ -1,0 +1,1 @@
+CRITICAL: TypeScript compilation failed

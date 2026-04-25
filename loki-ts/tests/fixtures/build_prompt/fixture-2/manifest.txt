@@ -1,0 +1,10 @@
+Fixture 2: Mid-run with Queue (Iteration 5)
+- Scenario: 5th iteration, PRD provided, 3 queued tasks
+- Invocation: build_prompt(0, "./test-prd.md", 5)
+- Expected Behavior: PRD mode, queue injection, phases list
+- Key Variables:
+  - prd_anchor: "Loki Mode with PRD at ./test-prd.md"
+  - analysis_instruction: Not present (PRD provided)
+  - queue_tasks: Present (3 tasks, rich format for prd-*, legacy for api-*)
+  - phases: "UNIT_TESTS,CODE_REVIEW"
+- Test: Verify queue_tasks appears in dynamic context with correct formatting

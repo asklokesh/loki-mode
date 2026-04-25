@@ -1,0 +1,9 @@
+Fixture 4: Resume (Retry #2)
+- Scenario: Resuming after pause, retry count > 0
+- Invocation: build_prompt(2, "./prd.md", 3)
+- Expected Behavior: Resume message, ledger context injection, prior context
+- Key Variables:
+  - context_injection: Present (from ledger)
+  - memory_context_section: Present (wrapped around context_injection)
+  - Resume text: "Resume iteration #3 (retry #2). PRD: ./prd.md"
+- Test: Verify "Resume iteration" message appears and ledger context injected

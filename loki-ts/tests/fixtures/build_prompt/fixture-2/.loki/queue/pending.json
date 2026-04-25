@@ -1,0 +1,24 @@
+[
+  {
+    "id": "prd-001",
+    "source": "prd",
+    "title": "Parse command-line arguments",
+    "description": "Implement argument parser using available libraries",
+    "acceptance_criteria": ["Parser accepts --help", "Parser accepts --output", "Errors on invalid args"],
+    "user_story": "As a user, I want to pass arguments so that I can configure the tool"
+  },
+  {
+    "id": "prd-002",
+    "source": "prd",
+    "title": "Add file logging",
+    "description": "Write logs to ./output.log",
+    "acceptance_criteria": ["Log file created", "Timestamp on each line"],
+    "user_story": "As a developer, I want logs so that I can debug"
+  },
+  {
+    "id": "prd-003",
+    "source": "api",
+    "type": "enhancement",
+    "payload": { "action": "Add unit tests for parser" }
+  }
+]

@@ -1,0 +1,8 @@
+Fixture 8: Budget Alarm (High Iteration Count)
+- Scenario: Approaching MAX_ITERATIONS limit, budget constraints
+- Invocation: build_prompt(0, "./prd.md", 25) with MAX_ITERATIONS=30
+- Expected Behavior: Completion instruction mentions iteration budget
+- Key Variables:
+  - completion_instruction: Includes "Iteration 25 of max 30"
+  - COMPLETION_PROMISE: Not set
+- Test: Verify iteration count appears in completion instruction

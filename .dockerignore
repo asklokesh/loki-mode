@@ -5,6 +5,9 @@
 # Build artifacts
 node_modules
 dist
+# Exception: loki-ts/dist is the pre-built Bun bundle shipped to containers.
+!loki-ts/dist
+!loki-ts/dist/**
 *.log
 
 # Local state

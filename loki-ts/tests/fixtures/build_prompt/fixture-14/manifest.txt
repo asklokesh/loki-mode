@@ -1,0 +1,3 @@
+Fixture 14: All-phases-on at iteration 20
+- 10 SDLC phases enabled (every phase except WEB_RESEARCH)
+- Verifies: full SDLC list rendering, exact comma-separated order

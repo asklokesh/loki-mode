@@ -31,7 +31,22 @@ SCRIPT_PATH=$(_resolve_path "$0")
 SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
-BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+
+# Resolve which Bun entry to use:
+#   1. LOKI_TS_ENTRY=...   -- explicit override (custom builds, tests)
+#   2. BUN_FROM_SOURCE=1   -- force src/cli.ts (used by bench --compare-dist
+#                             and during Phase 3 development before dist ships)
+#   3. dist/loki.js exists -- production path (npm/Docker/Homebrew artifact)
+#   4. fall back to src    -- in-repo development before first build
+if [ -n "${LOKI_TS_ENTRY:-}" ]; then
+    BUN_CLI="$LOKI_TS_ENTRY"
+elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
+    BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
+    BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
+else
+    BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+fi
 
 # Force-fall-through to bash when the rollback flag is set.
 if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then

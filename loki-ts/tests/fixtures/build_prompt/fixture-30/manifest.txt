@@ -1,0 +1,4 @@
+Fixture 30: Legacy prompt ordering rollback flag
+- LOKI_LEGACY_PROMPT_ORDERING=true; retry=1 with PRD
+- Verifies: pre-v6.82.0 dynamic-first concatenation path (single echo line)
+- No <loki_system> tags, no [CACHE_BREAKPOINT] marker

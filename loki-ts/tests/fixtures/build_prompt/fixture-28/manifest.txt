@@ -1,0 +1,3 @@
+Fixture 28: Checklist verification results present
+- Verifies: PRD_CHECKLIST_STATUS rendered (not the INIT message)
+- Requires checklist_summary helper function in run.sh

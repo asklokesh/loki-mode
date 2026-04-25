@@ -1,0 +1,2 @@
+Fixture 21: Gate failures + static-analysis sidecar
+- Verifies: gate_failure_context appends Static analysis summary

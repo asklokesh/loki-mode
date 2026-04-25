@@ -275,6 +275,15 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Setup Bun
+        # Required so the npm prepack hook can build the loki-ts dist artifact
+        # before publishing. Without bun on PATH the prepack falls back to the
+        # committed dist (if any) and emits a WARN, which is not desirable for
+        # release builds.
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
       - name: Build dashboard frontend
         working-directory: dashboard-ui
         run: |

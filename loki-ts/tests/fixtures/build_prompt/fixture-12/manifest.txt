@@ -1,0 +1,3 @@
+Fixture 12: High iteration count
+- Iteration 50 of 1000, PRD present, no queue
+- Verifies: dynamic_context iteration=50; completion message references max iterations

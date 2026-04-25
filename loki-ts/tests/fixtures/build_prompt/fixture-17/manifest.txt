@@ -1,0 +1,3 @@
+Fixture 17: In-progress + pending queue
+- 2 in-progress tasks, 3 pending tasks
+- Verifies: IN-PROGRESS section rendered before PENDING section

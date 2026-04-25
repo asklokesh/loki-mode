@@ -1,0 +1,4 @@
+Fixture 29: Degraded provider (codex/gemini) with PRD + human directive
+- PROVIDER_DEGRADED=true; LOKI_HUMAN_INPUT set
+- Verifies: simplified prompt path; Priority line; PRD contents inline
+- No <loki_system> static-prefix RARV/SDLC blocks

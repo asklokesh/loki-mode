@@ -1,0 +1,10 @@
+{
+  "total": 8,
+  "passed": 5,
+  "failed": 3,
+  "items": [
+    {"id": "req-1", "status": "passed"},
+    {"id": "req-2", "status": "failed"},
+    {"id": "req-3", "status": "passed"}
+  ]
+}

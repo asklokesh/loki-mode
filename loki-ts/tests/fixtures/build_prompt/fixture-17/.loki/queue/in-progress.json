@@ -1,0 +1,4 @@
+[
+  {"id": "ip-1", "source": "api", "type": "hotfix", "payload": {"action": "Fix in-progress one"}},
+  {"id": "ip-2", "source": "api", "type": "hotfix", "payload": {"action": "Fix in-progress two"}}
+]

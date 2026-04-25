@@ -5,6 +5,87 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.3.0] - 2026-04-25
+
+MINOR release. Phase 2+3 of the bash-to-Bun migration on `feat/bun-migration`.
+8 read-only commands ported to TypeScript on Bun with byte-for-byte parity vs
+bash; build/publish pipeline + CI matrix for both routes; LOKI_LEGACY_BASH=1
+rolls back any user to bash. Default behavior unchanged for users on previous
+versions; the new shim auto-detects Bun and falls through to bash if missing.
+
+### Added
+
+- **TypeScript ports of 8 read-only commands** (loki version, status [--json],
+  stats [--json] [--efficiency], provider show/list, memory list/index, doctor
+  [--json]). Routed via `bin/loki` shim; falls through to bash for unported
+  commands. Verified byte-for-byte parity vs bash on every command via diff.
+- **bin/loki shim** with `LOKI_LEGACY_BASH=1` rollback flag and `BUN_FROM_SOURCE=1`
+  source-vs-dist override. Falls through to bash transparently when bun missing.
+- **loki-ts/dist/ build artifact** via `bun run build` (Bun.build wrapper at
+  loki-ts/scripts/build.ts). 36KB minified, ~3ms cold-start. Shipped in npm
+  tarball via `prepack` lifecycle hook (graceful skip if Bun absent).
+- **CI matrix coverage** in .github/workflows/test.yml: new `bun-tests` job
+  runs typecheck + bun test + both bash and shim routes for tests/test-cli-commands.sh
+  + hyperfine sanity bench. release.yml gains setup-bun for prepack.
+- **Docker images** (Dockerfile, Dockerfile.sandbox) install pinned Bun 1.3.13
+  and COPY loki-ts/dist so `loki <ported>` runs Bun inside container.
+- **Phase 4-5 research deliverables** under loki-ts/docs/{phase4,phase5}-research/:
+  inventories of run_autonomous (941 LOC), build_prompt (471 LOC), state machine,
+  checkpoint+budget, RARV tier mapping, completion-council (1771 LOC),
+  run_code_review (413 LOC), provider system (1203 LOC), dashboard schema
+  contract, existing test coverage. Fixture corpus for build_prompt parity at
+  loki-ts/tests/fixtures/build_prompt/ (10 scenarios).
+
+### Quality gates (verified on this Mac, M-series)
+
+- `bun run typecheck`: clean (0 errors, strict mode, no `any`)
+- `bun test`: 106/106 pass (10 files, 359 expects, ~17s)
+- `bash tests/test-cli-commands.sh`: 14/14 pass (bash route)
+- `PATH=bin:$PATH tests/test-cli-commands.sh`: 14/14 pass (Bun shim route)
+- Hyperfine geomean speedup vs bash: **3.23x across 7 commands** (12 runs).
+  Per-command: version 4.25x, provider show 4.27x, provider list 3.32x,
+  memory list 4.40x, status 3.21x, stats 3.95x, doctor 1.08x (network-bound).
+  Plan target was 5x; honest gap is bash-shim baseline overhead (~10ms)
+  plus doctor's network probes dominating wall clock.
+- Source vs dist cold-start: dist is faster on all 7 commands (no regression).
+- byte-for-byte parity diff empty on every ported command in both text + JSON modes.
+
+### Reviewer council
+
+3 blind reviewers + Devil's Advocate per phase. Reviewer 1 (Phase 2) caught
+4 doctor text-mode bugs (min-version annotation, ~ substitution, extra Skill
+repo line, disk float) — all fixed. Reviewer 3 caught a doctor JSON regression
+caused by R1's text fix (TOOL_SPECS name conflated text + JSON) — decoupled
+displayName from jsonName and float vs floor disk. Devil's Advocate caught
+cost_usd integer-vs-float JSON drift (10 vs 10.0) and SIGINT orphan processes
+in the Bun process — fixed by Python-style `.0` suffix substitution and
+explicit SIGINT handler in cli.ts. Phase 3 reviewers verified npm pack ships
+loki-ts/dist (no src/tests leakage), CI YAML valid, Dockerfiles install Bun
+pinned, dist preferred over source in shim.
+
+### NOT tested in this release (honest disclosure)
+
+- per-session loki.pid subtrees, ISO-8601 start_time in status JSON
+- bare-array quality gates form, banker's rounding edges in stats
+- doctor MiroFish PASS branch, OTEL set PASS, MCP installed PASS, ChromaDB
+  reachable PASS, disk fail/warn (host has 71GB free)
+- bin/loki via npm-installed global symlink at $(which loki) (only repo-local
+  shim invocation tested)
+- Docker container actual boot (Docker daemon not running this session;
+  Dockerfile syntax verified, build not exercised)
+- bin/loki-mode.js shim still bypasses Phase 2 (separate npm bin entry,
+  routes directly to bash; documented gap)
+- Homebrew formula update (release.yml installs a symlink to autonomy/loki
+  rather than bin/loki; future formula edit needed for Bun routes via brew)
+- Phase 4 ports (run_autonomous, build_prompt, state, checkpoint) — research
+  done, implementation deferred to v7.4.0+
+
+### Rollback
+
+- `LOKI_LEGACY_BASH=1 loki <cmd>` forces bash for every command
+- `BUN_FROM_SOURCE=1 loki <cmd>` runs Bun source instead of dist
+- Previous version: `npm install -g loki-mode@7.2.0`
+
 ## [7.2.0] - 2026-04-25
 
 MINOR release. VSCode extension deprecated, dashboard rebuild fixes a

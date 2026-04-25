@@ -1,0 +1,13 @@
+<loki_system>
+Loki Mode with PRD
+You are a coding assistant. Read and implement the requirements from the PRD. Write working code, run tests if possible, and commit changes.
+</loki_system>
+[CACHE_BREAKPOINT]
+<dynamic_context iteration="2" retry="0">
+PRD contents: # CLI Tool
+Simple command-line tool.
+
+## Features
+1. Parse arguments
+2. Process input
+</dynamic_context>

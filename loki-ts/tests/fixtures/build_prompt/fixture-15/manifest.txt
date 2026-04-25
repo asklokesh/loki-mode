@@ -1,0 +1,2 @@
+Fixture 15: Queue with 5 PRD tasks
+- Verifies: PENDING[1..5] rendered with description, acceptance, user_story

@@ -1,0 +1,3 @@
+Fixture 22: Gate failures + test-results + checklist
+- Verifies: gate_failure_context with Tests summary AND checklist_status
+- Both sidecars populated; verification-results triggers checklist_summary path

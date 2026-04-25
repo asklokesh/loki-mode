@@ -1,0 +1,1 @@
+{"passed": false, "checks": {"loads": true, "no_console_errors": false, "title_present": false}, "errors": ["TypeError in app.js:34", "404 on /api/health"]}

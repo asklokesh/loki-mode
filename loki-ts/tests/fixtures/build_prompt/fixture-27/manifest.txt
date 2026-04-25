@@ -1,0 +1,2 @@
+Fixture 27: Magic Modules with 5 specs
+- Verifies: MAGIC_MODULES line lists all 5 component names

@@ -1,0 +1,12 @@
+Fixture 10: Perpetual Mode + Multiple Optional Contexts
+- Scenario: Perpetual mode, magic modules, playwright results, queue, completion promise
+- Invocation: build_prompt(0, "./prd.md", 8) with multiple optional contexts
+- Expected Behavior: All optional sections present, perpetual autonomy suffix
+- Key Variables:
+  - AUTONOMY_MODE: "perpetual"
+  - autonomous_suffix: Contains "CRITICAL AUTONOMY RULES" with "always find the next improvement"
+  - completion_instruction: References COMPLETION_PROMISE
+  - magic_context: Lists Button, Modal specs
+  - playwright_info: PLAYWRIGHT_SMOKE_TEST: PASSED
+  - queue_tasks: Present
+- Test: Verify perpetual mode instructions appear and all contexts are injected

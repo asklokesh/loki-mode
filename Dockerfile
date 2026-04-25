@@ -6,7 +6,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.2.0"
+LABEL version="7.3.0"
 LABEL description="Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI"
 LABEL url="https://www.autonomi.dev/"
 
@@ -43,6 +43,17 @@ RUN ARCH=$(dpkg --print-architecture) && \
     mv /tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh && \
     rm -rf /tmp/gh* && \
     gh --version
+
+# Install Bun runtime (pinned) for the TypeScript CLI shipped under loki-ts/.
+# bin/loki shim routes ported commands to `bun loki-ts/dist/loki.js`; unported
+# commands fall through to autonomy/loki (bash). See ADR-001.
+ARG BUN_VERSION=1.3.13
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
+    && mv /root/.bun/bin/bun /usr/local/bin/bun \
+    && rm -rf /root/.bun \
+    && bun --version
 
 # Upgrade Python packages to fix setuptools/wheel CVEs
 # Remove old debian-managed packages first, then install fixed versions
@@ -88,17 +99,25 @@ COPY --chown=loki:loki templates/ ./templates/
 COPY --chown=loki:loki integrations/ ./integrations/
 COPY --chown=loki:loki completions/ ./completions/
 
+# Bun runtime artifacts: shim + pre-built TypeScript bundle.
+# loki-ts/dist/loki.js is built by `bun run build` (see loki-ts/scripts/build.ts)
+# and committed to the repo; ~37 KiB minified.
+COPY --chown=loki:loki bin/ ./bin/
+COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
+
 # Install dashboard Python dependencies
 RUN pip3 install --no-cache-dir --break-system-packages \
     -r dashboard/requirements.txt
 
 # Make scripts executable
-RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh
+RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki
 
-# Set up symlinks for loki user
+# Set up symlinks for loki user. /usr/local/bin/loki points at the bin/loki
+# shim so ported commands route through Bun while unported commands fall
+# through to autonomy/loki (bash).
 RUN mkdir -p /home/loki/.claude/skills && \
     ln -sf /opt/loki-mode /home/loki/.claude/skills/loki-mode && \
-    ln -sf /opt/loki-mode/autonomy/loki /usr/local/bin/loki
+    ln -sf /opt/loki-mode/bin/loki /usr/local/bin/loki
 
 # Security: Set ownership and switch to non-root user
 RUN mkdir -p /workspace && \
