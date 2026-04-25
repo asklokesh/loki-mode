@@ -41,8 +41,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **PRD to Production** - Just provide a PRD, Loki handles the rest
 - **Multi-Provider Support** - Use Claude, Codex, or Gemini
 - **Cross-Project Learning** - AI improves from every session
-- **VS Code Extension** - Integrated IDE experience
-- **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation
+- **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
 
 ### For Enterprises
 
@@ -92,13 +91,12 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 | **npm** | `npm install -g loki-mode` |
 | **Homebrew** | `brew install asklokesh/tap/loki-mode` |
 | **Docker** | `docker pull asklokesh/loki-mode` |
-| **VS Code** | Search "Loki Mode" in Extensions |
 
 ---
 
 ## Version History
 
-Current Version: **7.1.0**
+Current Version: **7.2.0**
 
 See [[Changelog]] for detailed release notes.
 

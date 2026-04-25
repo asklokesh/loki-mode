@@ -1,4 +1,4 @@
-# Memory Integration (v7.1.0+)
+# Memory Integration (v7.2.0+)
 
 Loki Mode ships two memory layers:
 
@@ -184,4 +184,4 @@ Dashboard endpoints (read-only, view-layer merge):
 
 ---
 
-**v7.1.0** | Opt-in, additive, rollback-safe. Default behavior unchanged.
+**v7.2.0** | Opt-in, additive, rollback-safe. Default behavior unchanged.

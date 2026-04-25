@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.1.0
+**Version:** v7.2.0
 
 ---
 
@@ -34,7 +34,7 @@ The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installa
 - [Quick Start](#quick-start)
 - [Verify Installation](#verify-installation)
 - [Other Methods](#other-methods)
-- [VS Code Extension](#vs-code-extension)
+- [VS Code Extension (Deprecated)](#vs-code-extension-deprecated)
 - [Sandbox Mode](#sandbox-mode)
 - [Multi-Provider Support](#multi-provider-support)
 - [Claude Code (CLI)](#claude-code-cli)
@@ -117,79 +117,33 @@ loki doctor       # Check skill symlinks, providers, and system prerequisites
 
 ## Other Methods
 
-Git clone, Docker, GitHub Action, and VS Code Extension are also available. See [alternative-installations.md](alternative-installations.md) for details and trade-offs.
+Git clone and Docker installation methods are also available. See
+[alternative-installations.md](alternative-installations.md) for details and
+trade-offs.
 
 ---
 
-## VS Code Extension
+## VS Code Extension (Deprecated)
 
-The easiest way to use Loki Mode with a visual interface.
+> **DEPRECATED as of v7.2.0.** The Loki Mode VS Code extension is no longer
+> maintained. Use the dashboard at `loki dashboard start` instead.
+>
+> The marketplace listing remains for users on v7.2.0 and earlier but will
+> not receive further updates. The `vscode-extension/` source remains in the
+> repository for contributors who want to build the extension locally; it is
+> no longer published to the VS Code Marketplace and is not included in npm
+> tarballs.
 
-### Installation
-
-**From VS Code:**
-1. Open Extensions (`Cmd+Shift+X` / `Ctrl+Shift+X`)
-2. Search for "loki-mode"
-3. Click **Install**
-
-**From Command Line:**
-```bash
-code --install-extension asklokesh.loki-mode
-```
-
-**From Marketplace:**
-Visit [marketplace.visualstudio.com/items?itemName=asklokesh.loki-mode](https://marketplace.visualstudio.com/items?itemName=asklokesh.loki-mode)
-
-### Features
-
-- **Activity Bar Icon**: Dedicated Loki Mode panel in the sidebar
-- **Session View**: Real-time session status, provider, phase, and duration
-- **Task View**: Tasks grouped by status (In Progress, Pending, Completed)
-- **Status Bar**: Current state and progress at a glance
-- **Quick Actions**: Start/Stop/Pause/Resume from command palette
-- **Keyboard Shortcut**: `Cmd+Shift+L` (Mac) / `Ctrl+Shift+L` (Windows/Linux)
-
-### Usage
-
-1. Open a project folder in VS Code
-2. Click the Loki Mode icon in the activity bar (or press `Cmd+Shift+L`)
-3. Click "Start Session" and select your PRD file
-4. Choose your AI provider (Claude, Codex, or Gemini)
-5. Watch progress in the sidebar and status bar
-
-### Configuration
-
-Open VS Code Settings and search for "loki":
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `loki.provider` | `claude` | Default AI provider |
-| `loki.apiPort` | `57374` | API server port |
-| `loki.apiHost` | `localhost` | API server host |
-| `loki.autoConnect` | `true` | Auto-connect on activation |
-| `loki.showStatusBar` | `true` | Show status bar item |
-| `loki.pollingInterval` | `2000` | Status polling interval (ms) |
-
-### Requirements
-
-**The VS Code extension requires the Loki Mode API server to be running.**
-
-Before using the extension, start the server:
+### Recommended replacement: the dashboard
 
 ```bash
-# Option A: Using Loki CLI (if installed via npm or Homebrew)
-loki start
-
-# Option B: Using the autonomous runner (from source)
-./autonomy/run.sh
-
-# Option C: Direct API server start
-loki serve
+loki dashboard start
+# Then open http://localhost:57374 in your browser.
 ```
 
-The extension will automatically connect when it detects the server is running at `localhost:57374`.
-
-**Troubleshooting:** If you see "API server is not running" errors, make sure you started the server first using one of the commands above.
+The dashboard provides session monitoring, task views, the completion
+council, log streaming, and the managed-memory panel -- the same surface
+the extension exposed, plus everything added since v7.2.0.
 
 ---
 
@@ -507,13 +461,13 @@ Loki Mode uses two network ports for different services:
 
 | Port | Service | Description |
 |------|---------|-------------|
-| **57374** | Dashboard + API (FastAPI) | Unified server serving both the web dashboard UI (real-time monitoring, task board, Completion Council, memory browser, log streaming) and the REST API (used by VS Code extension, CLI tools, programmatic access). Served by `dashboard/server.py`. |
+| **57374** | Dashboard + API (FastAPI) | Unified server serving both the web dashboard UI (real-time monitoring, task board, Completion Council, memory browser, log streaming) and the REST API (used by CLI tools, programmatic access, and the deprecated VS Code extension). Served by `dashboard/server.py`. |
 
 ### When to Use Which Port
 
 - **Browser access** (dashboard, monitoring): Use port **57374** -- `http://localhost:57374`
 - **API calls** (REST, programmatic): Use port **57374** -- `http://localhost:57374`
-- **VS Code extension**: Connects to API on port **57374** automatically (configurable via `loki.apiPort` setting)
+- **VS Code extension** (deprecated as of v7.2.0): Connects to API on port **57374** automatically (configurable via `loki.apiPort` setting). No new releases will be published; see the deprecation notice above.
 - The server is started automatically when you run `loki start` or `./autonomy/run.sh`. No manual configuration is needed.
 
 ### Port Configuration

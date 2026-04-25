@@ -5,6 +5,81 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.2.0] - 2026-04-25
+
+MINOR release. VSCode extension deprecated, dashboard rebuild fixes a
+v7.1.0 packaging miss, full E2E gap closure run with honest disclosure.
+Default behavior unchanged for non-VSCode users.
+
+### Deprecated
+
+- VSCode extension. The `publish-vscode` workflow job is removed; the
+  extension marketplace listing remains for legacy users on v7.1.0 and
+  earlier but will not receive updates. `vscode-extension/` source stays
+  in the repo for users who want to build locally; it is excluded from
+  the npm tarball. Use `loki dashboard start` instead.
+
+### Fixes
+
+- **Dashboard frontend rebuilt: v7.1.0's managed-memory panel now
+  actually ships in the served HTML.** v7.1.0 added the new
+  `loki-managed-memory-panel.js` Web Component but did not run
+  `cd dashboard-ui && npm run build:all`, so `dashboard/static/index.html`
+  remained on the Apr 18 build that pre-dated the panel. v7.2.0 includes
+  the rebuilt 563KB `dashboard/static/index.html` (+1.6KB
+  `dashboard-ui/dist/loki-dashboard-standalone.html`) with the panel
+  registered. Verified via `grep -c "loki-managed-memory-panel"
+  dashboard/static/index.html` = 2 (was 0). Lesson: CLAUDE.md release
+  workflow step 2 (build dashboard) is mandatory before EVERY release;
+  missed in v7.1.0, added explicitly to release-day checklist via
+  `cd dashboard-ui && npm run build:all` invocation.
+
+### Verified gap closures (E2E run on this machine)
+
+- **Docker container actually boots from inside the image.**
+  `docker run --rm asklokesh/loki-mode:7.1.0 version` returned
+  `Loki Mode v7.1.0`. `--help` returned full command list. Mounted PRD
+  at `/workspace/prd.md` produced complete `loki plan` output (Sonnet x4
+  cost estimate). The v7.0.2 NOT-tested entry "Docker container actual
+  boot" is now CLOSED.
+- **Homebrew install works (with correct tap name).** `brew tap
+  asklokesh/tap` (NOT `asklokesh/loki-mode` as I misremembered),
+  `brew upgrade loki-mode` -> v7.1.0 live in `/opt/homebrew/bin/loki`.
+  Old v6.82.0 cleanup verified. Documentation update added correct tap
+  name to `docs/INSTALLATION.md`.
+- **CLI user scenarios E2E.** Stream 1 (fresh user `loki version`,
+  `loki --help`), Stream 2 (PRD analysis + missing-PRD fail-fast),
+  Stream 3 (issue routing + deprecated `loki run` notice), Stream 4
+  (managed flag fail-fast: `LOKI_MANAGED_MEMORY=true` without parent ->
+  exit 2 with clear error), Stream 5 (provider/status). All passed
+  on the locally-installed npm v7.1.0 binary.
+- **Dashboard browser smoke.** `loki dashboard start`,
+  `curl /api/status` -> 200 JSON with `version: "7.1.0"`,
+  `curl /api/managed/status` -> `{enabled: false}` (correct default-off
+  behavior), `curl /api/managed/events` -> `{events: [], count: 0}`.
+  Discovered the dashboard-rebuild gap above during this smoke and
+  fixed it.
+
+### Verification
+
+- `bash -n` clean on autonomy/run.sh, autonomy/loki, autonomy/completion-council.sh
+- `python3 -m pytest tests/` = 644 passed, 7 skipped (unchanged from v7.1.0)
+- `npm test` = 7/7 pass
+- `npm run test:integration` = 7/7 pass
+- `cd dashboard-ui && npm run build:all` = clean
+- SDK isolation invariant: still PASS (only allowlisted files import anthropic)
+- Pre-push hook fired and ran 644 pytest before push allowed
+
+### Still NOT tested (honest, unchanged)
+
+- Live Anthropic Managed Agents API (no beta access in this env)
+- Multiagent `callable_agents` happy path against real session
+- Long-horizon multi-hour autonomous session with managed flags on
+- Beta header rotation behavior
+
+These remain explicit limitations. `tests/live/` infrastructure is ready
+for users with beta access.
+
 ## [7.1.0] - 2026-04-24
 
 MINOR release closing every gap surfaced by the v7.0.2 audit cycle. New

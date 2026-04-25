@@ -16,9 +16,12 @@ __pycache__/
 
 # Build artifacts
 dashboard-ui/dist/
-vscode-extension/dist/
 **/.next/
 **/build/
+
+# vscode-extension/ is deprecated as of v7.2.0 and excluded from npm tarballs.
+# Source remains in the repo for users who want to build locally.
+vscode-extension/
 
 # IDE and editor
 .vscode/

@@ -1,5 +1,14 @@
 # Loki Mode for VS Code
 
+> **DEPRECATED as of v7.2.0.** The Loki Mode VSCode extension is no longer
+> maintained. Use the dashboard at `loki dashboard start` instead. Last
+> published: v7.1.0. The marketplace listing remains for users on older
+> versions but will not receive updates.
+>
+> The `vscode-extension/` source remains in the repository so contributors
+> who want to build and install the extension locally can still do so, but
+> no further releases will be published to the VS Code Marketplace.
+
 Multi-agent autonomous development powered by Claude Code, OpenAI Codex, and Google Gemini.
 
 ## Features

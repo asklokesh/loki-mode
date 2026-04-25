@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Gate: every downstream job (release, npm, docker, homebrew, vscode, ...) waits
+  # Gate: every downstream job (release, npm, docker, homebrew, ...) waits
   # for this job to pass. Prevents publishing artifacts when the test suite is red.
   # Mirrors the checks in .github/workflows/test.yml at minimum cost (single Python
   # version, no matrix) -- the full Tests workflow still runs separately on push.
@@ -412,53 +412,12 @@ jobs:
           readme-filepath: ./DOCKER_README.md
           short-description: "Multi-agent autonomous development system for Claude Code, Codex CLI, and Gemini CLI"
 
-  publish-vscode:
-    needs: release
-    if: needs.release.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Sync version from VERSION file
-        working-directory: vscode-extension
-        run: |
-          VERSION=$(cat ../VERSION | tr -d '\n')
-          echo "Syncing version to $VERSION"
-          npm pkg set version="$VERSION"
-
-      - name: Build dashboard-ui
-        working-directory: dashboard-ui
-        run: |
-          npm ci
-          npm run build:all
-
-      - name: Install extension dependencies
-        working-directory: vscode-extension
-        run: npm ci
-
-      - name: Compile
-        working-directory: vscode-extension
-        run: npm run compile
-
-      - name: Package extension
-        working-directory: vscode-extension
-        run: |
-          npx vsce package
-          echo "VSIX_FILE=$(ls *.vsix)" >> $GITHUB_ENV
-
-      - name: Publish to VS Code Marketplace
-        working-directory: vscode-extension
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx vsce publish -p "$VSCE_PAT"
+  # The VS Code marketplace publishing job was removed in v7.2.0. The
+  # Loki Mode VSCode extension is deprecated and no longer maintained. The
+  # marketplace listing remains for legacy users on v7.1.0 and earlier but
+  # receives no further updates. The vscode-extension/ source remains in the
+  # repo for users who want to build locally. See vscode-extension/README.md
+  # for details.
 
   update-homebrew:
     needs: [release, publish-npm, publish-docker]
