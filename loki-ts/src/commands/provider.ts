@@ -144,7 +144,12 @@ async function execLegacyBash(args: readonly string[]): Promise<number> {
   const { resolve: resolvePath } = await import("node:path");
   const { REPO_ROOT } = await import("../util/paths.ts");
   const bashCmd = resolvePath(REPO_ROOT, "autonomy", "loki");
-  const r = await run([bashCmd, ...args], { env: { LOKI_LEGACY_BASH: "1" } });
+  // v7.4.2 fix (BUG-9): 1h cap on legacy bash fall-through; without it a
+  // hung legacy bash command would hang the Bun CLI indefinitely.
+  const r = await run([bashCmd, ...args], {
+    env: { LOKI_LEGACY_BASH: "1" },
+    timeoutMs: 3600000,
+  });
   process.stdout.write(r.stdout);
   process.stderr.write(r.stderr);
   return r.exitCode;

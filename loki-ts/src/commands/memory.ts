@@ -92,8 +92,11 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     default: {
       // Defer all other subcommands (show, consolidate, timeline, ...) to bash.
       const bashCmd = resolve(REPO_ROOT, "autonomy", "loki");
+      // v7.4.2 fix (BUG-9): cap legacy bash fall-through at 1h. Without this
+      // a hung legacy bash command would hang the Bun CLI indefinitely.
       const r = await run([bashCmd, "memory", ...argv], {
         env: { LOKI_LEGACY_BASH: "1" },
+        timeoutMs: 3600000,
       });
       process.stdout.write(r.stdout);
       process.stderr.write(r.stderr);

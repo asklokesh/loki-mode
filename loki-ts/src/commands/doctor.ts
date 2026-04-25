@@ -153,10 +153,16 @@ export async function httpReachable(url: string, timeoutMs = 2000): Promise<bool
 
 // Returns true if `python3 -c "import <mod>"` exits 0. Uses runInline (which
 // honors the python detection priority in src/util/python.ts).
+//
+// v7.4.2 fix (BUG-23): the previous 5s timeout was tighter than a cold
+// sentence_transformers import (~3.3s) under parallel load, causing
+// probabilistic divergence vs bash (which has no timeout). ML imports get
+// 30s; non-ML imports keep 5s.
 async function pythonImportOk(module: string, useMlPython = false): Promise<boolean> {
   const source = `import ${module}`;
+  const timeoutMs = useMlPython ? 30000 : 5000;
   if (!useMlPython) {
-    const r = await runInline(source, { timeoutMs: 5000 });
+    const r = await runInline(source, { timeoutMs });
     return r.exitCode === 0;
   }
   // For numpy / sentence_transformers, prefer the ML python (3.12) since 3.14
@@ -165,7 +171,7 @@ async function pythonImportOk(module: string, useMlPython = false): Promise<bool
   // findPython3(), so this is the same behavior. Keep the flag for clarity.
   const py = await findPython3();
   if (!py) return false;
-  const r = await run([py, "-c", source], { timeoutMs: 5000 });
+  const r = await run([py, "-c", source], { timeoutMs });
   return r.exitCode === 0;
 }
 

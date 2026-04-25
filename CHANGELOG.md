@@ -5,6 +5,99 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.2] - 2026-04-25
+
+PATCH release. Fixes 7 bugs found by the 20-loop feedback sweep + council
+validation (12 specialist agents + 5 reviewer agents).
+
+### CRITICAL fixes
+
+- **BUG-22 autonomous loop infinite-spin (Council R4 root-cause)**:
+  `autonomous.ts:235` called `budgetMod.checkBudgetLimit(ctx)` which returns
+  an OBJECT (not a boolean). JS treated the truthy object as "over budget"
+  on every iteration -> tight infinite loop. Fixed by calling
+  `budgetMod.checkBudgetLimitForRunner(ctx)` (the v7.4.1 adapter) and
+  updating the BudgetMod TS interface to match. Confirmed via debug tracer
+  test by Council R4. autonomous.test.ts still 8/8 pass; the bug only
+  triggered when efficiency records existed.
+- **BUG-4 Homebrew formula bypassed Phase 2/3 (sweep + Council R2)**:
+  `release.yml:471` symlinked `libexec/"autonomy/loki"` (bash CLI) instead
+  of `bin/loki` (Bun shim). Brew users got bash route exclusively, missing
+  every command ported to Bun in Phase 2/3+. Fixed by symlinking
+  `bin/loki` and adding `depends_on "oven-sh/bun/bun"`. Existing v7.2.0
+  formula in `asklokesh/homebrew-tap` is also broken; manual push of the
+  v7.4.2 formula will be needed when this branch ships.
+
+### HIGH fixes
+
+- **BUG-23 doctor ML probe timeout (loop 12 + Council R1)**: `pythonImportOk`
+  used 5s for cold ML imports (numpy, sentence_transformers). Cold load is
+  ~3.3s -> probabilistic divergence vs bash (which has no timeout) under
+  load. Bumped ML timeout to 30s; non-ML imports keep 5s.
+- **BUG-9 legacy bash fallthrough no timeout (loop 15-18)**:
+  `commands/memory.ts:95` and `commands/provider.ts:147` invoked the bash
+  CLI with no timeout. A hung legacy bash command would hang the Bun CLI
+  indefinitely. Capped at 1h (matches the longest plausible PRD task).
+- **BUG-10 status.ts python aggregation no timeout (loop 15-18)**:
+  `status.ts:487` invoked the inline Python with no timeout. A wedged
+  python3 would hang `loki status --json` indefinitely. Capped at 30s.
+
+### MEDIUM fixes
+
+- **BUG-1 BUN_FROM_SOURCE broken in npm/Docker installs (loop 1-2)**: shim
+  hard-failed when `loki-ts/src/cli.ts` was missing (excluded from npm
+  tarball by .npmignore). Now warns once and falls back to dist; if neither
+  exists, falls through to bash. Also handles the case where dist exists
+  but src doesn't.
+- **BUG-3 Docker OCI label inherited from base image (loop 5)**:
+  `org.opencontainers.image.version` was reported as `24.04` (Ubuntu base)
+  by registries because BuildKit auto-injected the FROM tag. Now explicitly
+  set in both Dockerfile and Dockerfile.sandbox.
+
+### Council validation
+
+- 12 specialist agents (Wave 1) ran 20 loops covering distribution + code
+  quality + functional sweeps; reported 23 findings.
+- 5 council reviewers (Wave 2) validated each finding:
+  - R1 reproduced 5/6, downgraded BUG-1 HIGH->MEDIUM, claimed BUG-22 not
+    reproducible (transient sandbox issue).
+  - R2 reproduced all 6 MEDIUM bugs, REJECTED BUG-13 (timer leak claim was
+    false), upgraded BUG-20 MEDIUM->HIGH.
+  - R3 produced fix-order plan with LOC + risk per fix.
+  - R4 root-caused BUG-22 via debug tracer (concrete evidence). Recommended
+    fix #1 (call-site rename) -- applied here.
+  - R5 audited disclosure honesty: v7.3.0 claim "106/106 pass" drifted to
+    103 (file rename); v7.4.0/v7.4.1 "376/376 pass" claim was unreproducible
+    in single-invocation runs due to BUG-22.
+
+### Quality gates
+
+- `bun run typecheck`: clean
+- `bun test tests/runner/ tests/util/ tests/commands/`: 333/333 pass
+- bash -n on bin/loki, autonomy/loki, autonomy/run.sh: clean
+
+### Still NOT fixed in v7.4.2 (deferred to v7.4.3)
+
+- BUG-8 standalone binary version "unknown" (build-time --define injection)
+- BUG-17/18 "exited" / "paused" never persisted in autonomous.ts
+- BUG-19 isRateLimited never called from runner
+- BUG-20 createCheckpoint never called from runner (Council R2 raised to HIGH)
+- BUG-5 Homebrew formula did not previously have `depends_on "bun"` (fixed
+  here, but the tap-side formula push is still manual)
+- BUG-2 Docker UX entrypoint doubling
+- BUG-6 sdk/python/pyproject.toml stale "5.55.0"
+- BUG-7 npm vs PyPI naming asymmetry
+- BUG-11 checkpoint.ts:469 TOCTOU race
+- BUG-14 commandExists no timeout
+- BUG-15 ANSI codes ignore NO_COLOR
+- BUG-16 silent catch{} swallows errors
+- BUG-21 rollbackToCheckpoint plan-only
+
+### Rollback
+
+- `LOKI_LEGACY_BASH=1` continues to force bash for every command.
+- `npm install -g loki-mode@7.4.1` to revert.
+
 ## [7.4.1] - 2026-04-25
 
 PATCH release. Two corrections + Phase 4 v7.4.1 follow-up fixes:

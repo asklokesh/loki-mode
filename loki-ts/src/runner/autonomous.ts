@@ -63,7 +63,11 @@ type QueueMod = {
 };
 
 type BudgetMod = {
-  checkBudgetLimit(ctx: RunnerContext): Promise<boolean>;
+  // v7.4.2 fix (BUG-22): the runner-shaped adapter returns boolean.
+  // The plain `checkBudgetLimit(opts)` returns an object and is for direct
+  // callers; using it via this interface caused an infinite loop because JS
+  // treated the truthy object as "over budget" on every iteration.
+  checkBudgetLimitForRunner(ctx: RunnerContext): Promise<boolean>;
 };
 
 type CompletionMod = {
@@ -231,8 +235,13 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
     // Budget check (run.sh:10316). When over-budget we sleep briefly before
     // re-checking; without the sleep the loop spins on a stale signal until
     // the operator clears the PAUSE marker. (Reviewer A3 finding 2026-04-25.)
+    //
+    // v7.4.2 fix (BUG-22): the previous call to `checkBudgetLimit(ctx)`
+    // returned the OBJECT shape (not boolean), and JS treated the truthy
+    // object as "over budget" on every iteration -> infinite loop hung
+    // autonomous.test.ts. Use the adapter that returns boolean.
     const overBudget = budgetMod
-      ? await budgetMod.checkBudgetLimit(ctx)
+      ? await budgetMod.checkBudgetLimitForRunner(ctx)
       : await signals.isBudgetExceeded(ctx);
     if (overBudget) {
       log("[runner] budget limit exceeded -- pausing");

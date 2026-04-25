@@ -34,18 +34,33 @@ BASH_CLI="$REPO_ROOT/autonomy/loki"
 
 # Resolve which Bun entry to use:
 #   1. LOKI_TS_ENTRY=...   -- explicit override (custom builds, tests)
-#   2. BUN_FROM_SOURCE=1   -- force src/cli.ts (used by bench --compare-dist
+#   2. BUN_FROM_SOURCE=1   -- prefer src/cli.ts (used by bench --compare-dist
 #                             and during Phase 3 development before dist ships)
 #   3. dist/loki.js exists -- production path (npm/Docker/Homebrew artifact)
 #   4. fall back to src    -- in-repo development before first build
+#
+# v7.4.2 fix (BUG-1): BUN_FROM_SOURCE=1 used to hard-fail on npm/Docker/brew
+# installs because src/ is excluded by .npmignore. Now we warn once and fall
+# back to dist if src/cli.ts is missing.
 if [ -n "${LOKI_TS_ENTRY:-}" ]; then
     BUN_CLI="$LOKI_TS_ENTRY"
 elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
-    BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+    if [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
+        BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+    elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
+        echo "WARN: BUN_FROM_SOURCE set but loki-ts/src/cli.ts missing (typical for npm/Docker/brew installs); using dist/loki.js" >&2
+        BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
+    else
+        echo "ERROR: BUN_FROM_SOURCE set but neither src/cli.ts nor dist/loki.js found; falling through to bash" >&2
+        exec "$BASH_CLI" "$@"
+    fi
 elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
-else
+elif [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+else
+    # Neither dist nor src available; fall through to bash silently.
+    exec "$BASH_CLI" "$@"
 fi
 
 # Force-fall-through to bash when the rollback flag is set.

@@ -484,7 +484,11 @@ async function runStatusJson(): Promise<number> {
   const dashboardPort = process.env["LOKI_DASHBOARD_PORT"] || "57374";
   const envProvider = process.env["LOKI_PROVIDER"] || "claude";
 
-  const r = await run([py, "-c", STATUS_JSON_PY, skillDir, dir, dashboardPort, envProvider]);
+  // v7.4.2 fix (BUG-10): cap Python aggregation at 30s. Without this a wedged
+  // python3 would hang `loki status --json` indefinitely.
+  const r = await run([py, "-c", STATUS_JSON_PY, skillDir, dir, dashboardPort, envProvider], {
+    timeoutMs: 30000,
+  });
   if (r.exitCode !== 0) {
     process.stderr.write(`{"error": "Failed to generate JSON status. Ensure python3 is available."}\n`);
     return 1;
