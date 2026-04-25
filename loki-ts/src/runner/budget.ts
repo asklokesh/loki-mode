@@ -307,3 +307,20 @@ export function calculateRateLimitBackoff(retryAfter?: number, providerRpm?: num
   if (wait > 300) wait = 300;
   return wait;
 }
+
+// ---------------------------------------------------------------------------
+// Runner adapter (Phase 4 v7.4.1). Marker key for autonomous.ts tryImport.
+// ---------------------------------------------------------------------------
+import type { RunnerContext as LoopRunnerContext } from "./types.ts";
+
+export async function checkBudgetLimitForRunner(ctx: LoopRunnerContext): Promise<boolean> {
+  const result = checkBudgetLimit({
+    budgetLimit: ctx.budgetLimit,
+    iteration: ctx.iterationCount,
+    efficiencyDir: `${ctx.lokiDir}/metrics/efficiency`,
+    budgetFile: `${ctx.lokiDir}/metrics/budget.json`,
+    pauseFile: `${ctx.lokiDir}/PAUSE`,
+    signalsDir: `${ctx.lokiDir}/signals`,
+  });
+  return result.exceeded;
+}

@@ -228,14 +228,33 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
       return 0;
     }
 
-    // Budget check (run.sh:10316).
+    // Budget check (run.sh:10316). When over-budget we sleep briefly before
+    // re-checking; without the sleep the loop spins on a stale signal until
+    // the operator clears the PAUSE marker. (Reviewer A3 finding 2026-04-25.)
     const overBudget = budgetMod
       ? await budgetMod.checkBudgetLimit(ctx)
       : await signals.isBudgetExceeded(ctx);
     if (overBudget) {
       log("[runner] budget limit exceeded -- pausing");
       await persistState(stateMod, ctx, "budget_exceeded", 0);
+      await clock.sleep(60_000); // 60s backoff matches bash autonomy/run.sh:7910
       continue;
+    }
+
+    // Policy check (run.sh:10447 check_policy). Phase 4 ships the state
+    // transition; the actual policy engine port lives in Phase 5+.
+    if (opts.policyCheck) {
+      try {
+        const allowed = await opts.policyCheck(ctx);
+        if (!allowed) {
+          log("[runner] policy engine denied iteration -- continuing without invoke");
+          await persistState(stateMod, ctx, "policy_blocked", 0);
+          await clock.sleep(5_000);
+          continue;
+        }
+      } catch (err) {
+        log(`[runner] policy check threw: ${(err as Error).message}`);
+      }
     }
 
     ctx.iterationCount += 1;
@@ -246,11 +265,20 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
       return 0;
     }
 
-    // Build prompt (run.sh:10342).
-    const prompt = promptMod
-      ? await promptMod.buildPrompt(ctx)
-      : `[stub-prompt iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
-    if (!promptMod) logStub(ctx, "build_prompt.buildPrompt");
+    // Build prompt (run.sh:10342). Wrap in try/catch -- a thrown buildPrompt
+    // would otherwise abort the whole loop with no retry. (Reviewer A3 + DA
+    // findings 2026-04-25.) On failure we use the stub-prompt so the loop
+    // can advance and surface the failure via provider invocation logs.
+    let prompt: string;
+    try {
+      prompt = promptMod
+        ? await promptMod.buildPrompt(ctx)
+        : `[stub-prompt iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
+      if (!promptMod) logStub(ctx, "build_prompt.buildPrompt");
+    } catch (err) {
+      log(`[runner] buildPrompt threw: ${(err as Error).message} -- using stub`);
+      prompt = `[stub-prompt-fallback iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
+    }
 
     log(`[runner] Attempt ${ctx.retryCount + 1}/${ctx.maxRetries} iteration=${ctx.iterationCount}`);
     await persistState(stateMod, ctx, "running", 0);

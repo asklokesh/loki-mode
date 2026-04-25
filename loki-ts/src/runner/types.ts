@@ -30,6 +30,10 @@ export type RunnerOpts = {
   council?: CouncilHook;
   signals?: SignalSource;
   clock?: Clock;
+  // Pre-iteration policy gate. Returning false maps to POLICY_BLOCKED state
+  // and skips the iteration after a brief backoff. Phase 4+ port; the real
+  // policy engine integration lands in Phase 5.
+  policyCheck?: (ctx: RunnerContext) => Promise<boolean>;
 };
 
 // Live mutable context threaded through the loop. Mirrors the bash globals

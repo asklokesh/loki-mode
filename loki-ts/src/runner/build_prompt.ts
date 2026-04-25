@@ -1060,3 +1060,41 @@ export const _internals = {
   buildMagicContext,
   buildChecklistStatus,
 };
+
+// ---------------------------------------------------------------------------
+// Runner adapter (Phase 4 v7.4.1).
+//
+// autonomous.ts uses a different RunnerContext shape than this module's
+// internal one (the runner threads iterationCount/retryCount/prdPath via the
+// loop; this module's internal RunnerContext only carries cwd/projectDir/env).
+// This adapter pulls the necessary fields off the runner ctx and synthesizes
+// the BuildPromptOpts the implementation expects. Resolves the v7.4.0 DA
+// finding "autonomous.ts <-> build_prompt.ts signature mismatch".
+//
+// The named export `buildPromptForRunner` is the marker key autonomous.ts
+// gates on via tryImport.
+// ---------------------------------------------------------------------------
+import type { RunnerContext as LoopRunnerContext } from "./types.ts";
+
+export async function buildPromptForRunner(ctx: LoopRunnerContext): Promise<string> {
+  let prdContent: string | null = null;
+  if (ctx.prdPath) {
+    try {
+      if (existsSync(ctx.prdPath)) {
+        prdContent = readFileSync(ctx.prdPath, "utf8");
+      }
+    } catch {
+      prdContent = null;
+    }
+  }
+  return buildPrompt({
+    retry: ctx.retryCount,
+    iteration: ctx.iterationCount,
+    prd: prdContent,
+    ctx: {
+      cwd: ctx.cwd,
+      projectDir: ctx.cwd,
+      env: process.env,
+    },
+  });
+}

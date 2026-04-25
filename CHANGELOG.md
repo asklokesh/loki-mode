@@ -5,6 +5,178 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.1] - 2026-04-25
+
+PATCH release. Two corrections + Phase 4 v7.4.1 follow-up fixes:
+
+### Corrective
+
+- **v7.4.0 commit (85e5c31c) shipped Phase 4 source code WITHOUT the
+  14-location version bumps.** A `git add` argument with a typo caused the
+  first staging command to fail silently; the second `git add` only included
+  the runner sources. Detected post-commit via `git diff --stat HEAD` showing
+  uncommitted version edits. v7.4.1 corrects this honestly: jumps the
+  user-facing version from 7.3.0 directly to 7.4.1 (skipping 7.4.0 strings)
+  to stay monotonic. The 7.4.0 commit remains in git history with its source
+  changes intact; users who installed v7.4.0 from npm/Docker would see
+  v7.3.0 strings everywhere and should upgrade to v7.4.1.
+
+### Phase 4 v7.4.1 follow-up fixes (Devil's Advocate findings from v7.4.0)
+
+- **autonomous.ts BUDGET_EXCEEDED spin-loop**: Reviewer A3 found `continue`
+  with no backoff would tight-loop on stale signal. Added `clock.sleep(60000)`
+  matching bash autonomy/run.sh:7910.
+- **POLICY_BLOCKED state added**: A3 noted 1 of 8 documented states missing.
+  New `RunnerOpts.policyCheck` hook + state transition + 5s backoff. Phase
+  5 wires the real policy engine.
+- **buildPrompt try/catch**: A3+DA noted thrown buildPrompt would abort the
+  loop without retry. Wrapped in try/catch with stub-prompt fallback so
+  iteration advances and surfaces the failure via provider invocation logs.
+- **Integration adapters**: Devil's Advocate REJECTed v7.4.0 because
+  `autonomous.ts` and `build_prompt.ts`/`budget.ts` had incompatible
+  signatures. Added named exports `buildPromptForRunner(ctx)` (in
+  build_prompt.ts) and `checkBudgetLimitForRunner(ctx)` (in budget.ts) that
+  adapt the runner's `RunnerContext` to each module's internal options
+  shape. The autonomous.ts tryImport gates on these marker keys, so the
+  loop now actually integrates with real B1/C3 modules instead of using
+  stubs.
+
+### Quality gates
+
+- `bun run typecheck`: clean (strict mode)
+- `bun test tests/runner/autonomous.test.ts`: 8/8 pass
+- `bash -n bin/loki && bash -n autonomy/loki`: clean
+
+### Still NOT tested in v7.4.1 (carried forward from v7.4.0)
+
+- state.ts cross-device EXDEV rename fallback
+- checkpoint.ts retention prune at 50+
+- rarv.ts EACCES on unreadable file
+- Real provider invocation (Phase 5)
+- Council voting (Phase 5)
+- state.ts/budget.ts atomic-write tmp naming pid+counter parity (advisory)
+- writeOrchestratorState field-order canonical sort (advisory)
+- checkpoint.ts cp-{iter}-{epoch} same-second collision (matches bash bug)
+
+### Rollback
+
+- Same as v7.4.0: `LOKI_LEGACY_BASH=1` forces bash; `npm install -g loki-mode@7.3.0`
+
+## [7.4.0] - 2026-04-25
+
+MINOR release. Phase 4 of the bash-to-Bun migration on `feat/bun-migration`.
+Ships the RARV-C runner foundation as TypeScript modules: state, intervention,
+checkpoint, budget, rarv, build_prompt (parity-critical), build_prompt_helpers,
+quality_gates, plus an autonomous loop SKELETON gated on contract markers.
+Default behavior unchanged for users on previous versions.
+
+### Added (loki-ts/src/runner/, ~4,275 LOC)
+
+- **build_prompt.ts** (1054 LOC) -- parity port of bash build_prompt() at
+  autonomy/run.sh:8912-9382. **30/30 sha256 fixture parity verified** by both
+  the dev (B1) and an independent peer reviewer (B3). Caught the bash
+  `$(...)` trailing-newline strip subtlety that would have failed 4/30.
+- **build_prompt_helpers.ts** (286 LOC) -- 7 file-loaders (queue, ledger,
+  handoff, validation, BMAD arch, gate failures, magic specs) with byte
+  truncation caps (16000/8000) matching bash `head -c`.
+- **state.ts** (432 LOC) + **intervention.ts** (397 LOC) -- atomic save/load
+  for autonomy-state.json + orchestrator.json + STATUS.txt; 5-signal human
+  intervention state machine (PAUSE/PAUSE_AT_CHECKPOINT/HUMAN_INPUT/COUNCIL/STOP)
+  with symlink rejection + 1MiB cap on HUMAN_INPUT.md.
+- **checkpoint.ts** (478 LOC) -- create/list/read/rollback-plan with
+  Python json.dumps separator parity for index.jsonl; 10x concurrent
+  Promise.all stress test produced 0 duplicates.
+- **budget.ts** (309 LOC) -- pricing dict byte-matched to bash, atomic
+  budget.json writes, PAUSE + signals/BUDGET_EXCEEDED on overspend.
+- **rarv.ts** (386 LOC) -- iter%4 tier mapping (planning/development/fast),
+  PRD-aware complexity detection (simple/standard/complex), env overrides.
+- **quality_gates.ts** (380 LOC) -- escalation ladder (CLEAR/ESCALATE/PAUSE)
+  with persistent failure counts; 5 gate runners explicitly stubbed
+  (`// STUB: Phase 5`) honoring `LOKI_STUB_GATE_<NAME>=fail|pass` for tests.
+- **autonomous.ts** (428 LOC) + **types.ts** (125 LOC) -- iteration loop
+  SKELETON. Uses tryImport with required-key markers; sibling modules
+  (build_prompt, state, budget, council, providers, queues, completion,
+  gates) integrate when they expose runner-shaped contract functions
+  (`buildPromptForRunner`, `checkBudgetLimitForRunner`, etc.). The integration
+  adapter wiring is deferred to v7.4.1.
+
+### Bug fixes from reviewer council
+
+- **rarv.ts external-scan OOM**: Devil's Advocate C6 found rarv.ts:249's
+  comment claimed 256KB cap but readFileSync read entire files. Fixed via
+  openSync + readSync + 256KB head buffer. Could have OOM'd on multi-GB
+  lockfiles in working dirs near `/`.
+- **autonomous.ts persistState stub schema drift**: Reviewer X2 caught a
+  fallback path writing snake_case fields (`exit_code`, `iteration_count`)
+  contradicting the dashboard contract. Removed the fallback; now throws
+  loudly if state.ts is unloadable rather than silently corrupting.
+
+### Quality gates (verified on this Mac)
+
+- `bun run typecheck`: clean (strict mode, no `any`)
+- `bun test` (full suite): **376/376 pass** (20 files, 910 expects, ~18s)
+- `bun test tests/runner/`: 240/240 pass (9 files, 521 expects)
+- `bun test tests/parity/`: 40/40 pass (build_prompt 30 sha256 + 10 Phase 2)
+- bash `tests/test-cli-commands.sh`: 14/14 (bash route)
+- `PATH=bin:$PATH tests/test-cli-commands.sh`: 14/14 (Bun shim route)
+
+### 20-agent SDLC fleet -- council outcome
+
+Dev wave: B1 (build_prompt), B2 (helpers), C1 (state+intervention), C2
+(checkpoint), C3 (budget+rarv), A1 (autonomous skeleton + types), A2
+(quality_gates) -- all SHIPPED.
+
+Reviewer wave: C4 (atomic invariants) APPROVE w/ advisory; C5 (dashboard
+contract) APPROVE -- 4 endpoints HTTP 200 against TS-written state; C6
+(state/checkpoint/budget DA) REQUEST_CHANGES on rarv OOM (FIXED); X1
+(CLAUDE.md compliance) APPROVE -- no emojis, strict TS, no SDK leaks; X2
+(dashboard contract) APPROVE w/ caveat (FIXED); X3 (release manager)
+drafts written; B3 (build_prompt parity) APPROVE -- independently verified
+30/30; B4 (build_prompt integration) PARITY OK on 5 stress fixtures, flagged
+adapter gap; B5 (build_prompt DA) ran early (before B1 landed -- output
+re-evaluated post-landing).
+
+Devil's Advocate (cross-team): REJECT pending integration adapter --
+documented as known v7.4.1 follow-up.
+
+A3 (autonomous reviewer): REQUEST_CHANGES on POLICY_BLOCKED state (missing,
+deferred), BUDGET_EXCEEDED spin (no backoff), missing try/catch around
+buildPrompt (deferred). All flagged in NOT-tested below.
+
+### NOT tested in this release (honest disclosure)
+
+- autonomous.ts integration with REAL build_prompt/state/budget modules --
+  uses skeleton stubs via tryImport contract markers. Adapter wiring is the
+  v7.4.1 deliverable.
+- POLICY_BLOCKED state in autonomous.ts (1 of 8 documented states unimplemented)
+- BUDGET_EXCEEDED loop spin (no sleep between checks; will tight-loop until
+  signal cleared) -- v7.4.1 fix
+- buildPrompt() call in autonomous.ts not wrapped in try/catch -- a thrown
+  buildPrompt aborts the loop with no retry; v7.4.1 fix
+- state.ts cross-device EXDEV rename fallback path
+- checkpoint.ts retention prune at 50+ checkpoints
+- rarv.ts EACCES path on unreadable file
+- Real provider invocation (claude/codex/gemini/cline/aider) -- providers.ts
+  port deferred to Phase 5
+- Council voting integration -- council.ts port deferred to Phase 5
+- queue/in-progress.json flock equivalent (bash uses flock; TS skipped per
+  C4 review since orchestrator.json is last-write-wins by design)
+
+### Reviewer Devil's Advocate findings (acknowledged, deferred)
+
+- autonomous.ts <-> build_prompt.ts signature mismatch (intentional skeleton
+  design via tryImport gating)
+- state.ts/budget.ts atomic-write tmp naming uses pid only (checkpoint.ts
+  uses pid+counter; recommended to align in v7.4.1)
+- writeOrchestratorState field-order drift vs bash heredoc -- v7.4.1
+- checkpoint.ts cp-{iter}-{epoch} same-second collision (matches bash bug)
+
+### Rollback
+
+- `LOKI_LEGACY_BASH=1 loki <cmd>` continues to force bash for every command
+- `BUN_FROM_SOURCE=1 loki <cmd>` runs Bun from source instead of dist
+- Previous version: `npm install -g loki-mode@7.3.0`
+
 ## [7.3.0] - 2026-04-25
 
 MINOR release. Phase 2+3 of the bash-to-Bun migration on `feat/bun-migration`.
