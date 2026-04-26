@@ -63,6 +63,22 @@ else
     exec "$BASH_CLI" "$@"
 fi
 
+# v7.4.13: one-shot first-run telemetry, MOVED from autonomy/loki main()
+# into the shim because the 8 ported commands (version, status, doctor,
+# stats, provider, memory) bypass main() entirely -- only unported
+# commands triggered the original hook. Now fires regardless of route.
+# Fire-and-forget; opt-out via LOKI_TELEMETRY_DISABLED=true or
+# DO_NOT_TRACK=1 (mirrors autonomy/telemetry.sh contract).
+if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ ! -f "${HOME}/.loki-first-run" ] 2>/dev/null; then
+    touch "${HOME}/.loki-first-run" 2>/dev/null || true
+    if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+        # Source telemetry helpers + fire installed event in background
+        # so the user does not pay latency on first invocation.
+        ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) &
+        disown 2>/dev/null || true
+    fi
+fi
+
 # Force-fall-through to bash when the rollback flag is set.
 if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
     exec "$BASH_CLI" "$@"

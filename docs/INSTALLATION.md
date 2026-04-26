@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.4.12
+**Version:** v7.4.13
 
 ---
 
@@ -94,7 +94,7 @@ loki setup-skill
 ## PyPI / Python SDK
 
 **The `loki` CLI is NOT available via `pip install loki-mode`.** PyPI hosts only the
-Python REST client SDK at `loki-mode-sdk` (v7.4.12+). The dashboard, MCP server,
+Python REST client SDK at `loki-mode-sdk` (v7.4.13+). The dashboard, MCP server,
 and orchestrator components ship via npm, Docker, and Homebrew only.
 
 ```bash

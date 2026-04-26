@@ -11536,18 +11536,9 @@ main() {
     local command="$1"
     shift
 
-    # v7.4.12: one-shot install/first-run telemetry. Replaces the
-    # bin/postinstall.js install event (postinstall removed because Bun
-    # blocks postinstalls by default and the prompt was confusing).
-    # Creates ~/.loki-first-run on first invocation; fires "installed"
-    # event ONCE per install with channel attribution. Idempotent + silent.
-    if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ]; then
-        if [ ! -f "${HOME}/.loki-first-run" ] 2>/dev/null; then
-            touch "${HOME}/.loki-first-run" 2>/dev/null || true
-            loki_telemetry "installed" "first_command=$command" 2>/dev/null || true
-        fi
-    fi
-
+    # v7.4.13: first-run telemetry moved to bin/loki shim so it fires for
+    # both Bun-routed and bash-routed commands (autonomy/loki main() never
+    # runs for the 8 ported commands). Marker file: ~/.loki-first-run.
     loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
 
     case "$command" in

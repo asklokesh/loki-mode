@@ -5,6 +5,47 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.13] - 2026-04-26
+
+PATCH release. Fixes a real production bug found in the v7.4.12
+post-release validation cycle.
+
+### Fixed
+
+- **First-run telemetry never fired for Bun-route users.** v7.4.12
+  moved the install-event hook into `autonomy/loki main()`. But the
+  8 ported commands (`version`, `status`, `doctor`, `stats`,
+  `provider`, `memory`) bypass main() entirely -- bin/loki shim
+  routes them straight to `bun loki-ts/dist/loki.js`. So fresh
+  installs whose first command was a ported one (very likely --
+  `loki version` is the obvious first thing to type) never created
+  `~/.loki-first-run` and never fired the "installed" event. The
+  v7.4.12 CHANGELOG claim that telemetry was "preserved" was
+  partially wrong.
+
+  v7.4.13 moves the hook into bin/loki shim itself (bash, runs
+  before the route decision) so it fires regardless of which
+  command + which route. Marker file unchanged
+  (`~/.loki-first-run`); opt-out unchanged
+  (`LOKI_TELEMETRY_DISABLED`, `DO_NOT_TRACK`); fire-and-forget
+  contract preserved.
+
+  Verified by `rm ~/.loki-first-run && bash bin/loki version` --
+  marker is created.
+
+### Process honesty note
+
+This bug was found by manual production smoke after the v7.4.12
+release shipped. It would NOT have been caught by local-ci because
+the parity matrix doesn't exercise telemetry side effects. Adding
+a telemetry-fires test is queued for v7.5.x once we have a stub
+PostHog endpoint.
+
+The user-mandated "monitor/test/fix/find bugs/fix/release/repeat"
+loop caught this on iteration 1, before any user reported it.
+
+14 version locations bumped 7.4.12 -> 7.4.13.
+
 ## [7.4.12] - 2026-04-26
 
 PATCH release. Drops the npm `postinstall` script (was confusing
