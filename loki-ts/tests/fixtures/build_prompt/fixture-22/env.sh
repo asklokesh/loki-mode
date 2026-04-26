@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2148
 export RETRY=0
 export PRD="./prd.md"
 export ITERATION=11

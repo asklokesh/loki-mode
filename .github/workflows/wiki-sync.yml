@@ -67,7 +67,8 @@ jobs:
       - name: Push to wiki
         run: |
           cd wiki-repo
-          git add -A
+          # CLAUDE.md hard rule: never `git add -A`. Stage every .md file by name.
+          git add -- $(ls *.md 2>/dev/null || true)
           if git diff --staged --quiet; then
             echo "No changes to push"
           else
@@ -201,7 +202,8 @@ jobs:
       - name: Push enhanced wiki
         run: |
           cd wiki-repo
-          git add -A
+          # CLAUDE.md hard rule: never `git add -A`. Stage every .md file by name.
+          git add -- $(ls *.md 2>/dev/null || true)
           if ! git diff --staged --quiet; then
             git commit -m "AI-enhanced wiki for v${{ steps.version.outputs.version }}"
             git push origin HEAD:master 2>/dev/null || git push origin HEAD:main 2>/dev/null || true
