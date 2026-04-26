@@ -255,7 +255,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.4.10
+- Current: v7.4.11
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
@@ -267,9 +267,38 @@ Follows semantic versioning: MAJOR.MINOR.PATCH
 - Clear, concise comments only when necessary
 - Follow existing patterns in codebase
 
+## Local CI Before Every Push (MANDATORY -- 2026-04-26 user mandate)
+
+**Every change must pass `bash scripts/local-ci.sh` on this Mac before
+`git push`.** No exceptions. The script mirrors every GitHub Actions
+workflow: bun typecheck/test, bash CLI 14/14 dual-route, bun-parity
+matrix (catches doctor text drift like the v7.4.11 Bun-probe-not-rendered
+bug), npm pack contents, SBOM cyclonedx-npm, license-audit, npm audit
+(with overrides), shellcheck, YAML parse, no-emoji, no-`git add -A`,
+cleanup probe.
+
+If `local-ci.sh` reports "DO NOT PUSH", do not push. Fix the failures
+and re-run. The Mac is the canonical pre-push gate; GitHub Actions is
+the post-push verifier, not the discovery channel.
+
+After a release ships, run the post-release distribution validation:
+- npm: `npm pack loki-mode@<VERSION>`, untar, run `bash package/bin/loki version`
+- Docker: `docker pull asklokesh/loki-mode:<VERSION>`, `docker run --rm <img> version`,
+  `docker run --rm <img> doctor --json`, `docker run --rm <img> status --json`
+- Brew: WebFetch the live formula, verify version + sha256
+- Both routes (Bun + LOKI_LEGACY_BASH=1) on each channel
+
+Cleanup after every local-ci run AND post-release validation:
+```bash
+lsof -ti:57374 | xargs kill -9 2>/dev/null || true
+rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
+```
+
 ## Release Workflow (CRITICAL - Follow Every Step)
 
 When releasing a new version, follow ALL steps below. Nothing should be skipped.
+
+**Step 0 (always first): `bash scripts/local-ci.sh`** -- pre-push gate.
 
 ### 1. Version Bump - ALL Files
 

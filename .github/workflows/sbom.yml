@@ -59,7 +59,13 @@ jobs:
       - name: Generate SBOM (JSON) for the published package
         working-directory: /tmp/published/package
         run: |
+          # --omit dev: published tarball declares devDependencies in
+          # package.json but doesn't ship them; cyclonedx-npm calls
+          # `npm ls --all` which errors with ELSPROBLEMS on missing devs.
+          # We're describing what users actually receive (production tree
+          # only), so omit dev is correct semantically too.
           npx --yes @cyclonedx/cyclonedx-npm \
+            --omit dev \
             --output-format JSON \
             --output-file "$GITHUB_WORKSPACE/sbom.cdx.json" \
             --spec-version 1.5
@@ -70,6 +76,7 @@ jobs:
         working-directory: /tmp/published/package
         run: |
           npx --yes @cyclonedx/cyclonedx-npm \
+            --omit dev \
             --output-format XML \
             --output-file "$GITHUB_WORKSPACE/sbom.cdx.xml" \
             --spec-version 1.5

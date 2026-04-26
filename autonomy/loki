@@ -6309,6 +6309,9 @@ cmd_doctor() {
             bash)
                 version=$("$cmd" --version 2>/dev/null | head -1 | sed 's/.*version \([0-9.]*\).*/\1/')
                 ;;
+            bun)
+                version=$(bun --version 2>/dev/null | head -1 | tr -d 'v ')
+                ;;
             jq)
                 version=$(jq --version 2>/dev/null | tr -d 'jq-')
                 ;;

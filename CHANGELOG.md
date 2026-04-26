@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.11] - 2026-04-26
+
+PATCH release. Closes the 3 v7.4.10 post-push CI failures locally before
+re-pushing. Introduces strict pre-push local-CI gating per user mandate.
+
+### Fixed (workflow failures from v7.4.10)
+
+- **doctor text mode now renders Bun line.** v7.4.9 added `bun` to
+  `TOOL_SPECS` (so JSON had it) but the text-mode System section was
+  hand-rolled and still only rendered `bash`. Fix at
+  `loki-ts/src/commands/doctor.ts:518` adds the Bun line to the System
+  section. Closes the v7.4.10 bun-parity workflow failure.
+- **bash `doctor_check` now extracts Bun version.** Mirror fix at
+  `autonomy/loki:6313`: case statement that knows how to pull
+  `bun --version` (was empty -> printed "Bun (>= 1.3)" without
+  "(v1.3.13)" suffix). Both routes now print identical lines.
+- **SBOM cyclonedx-npm now passes `--omit dev`.** Pre-fix the
+  workflow failed with `ELSPROBLEMS` because the published tarball
+  declares devDependencies in package.json but doesn't ship them.
+  cyclonedx-npm strict mode bailed on the missing tree. Closes
+  the v7.4.10 SBOM workflow failure.
+
+### Added
+
+- **`scripts/local-ci.sh`** -- mirrors EVERY GitHub Actions workflow
+  check on this Mac. Runs in ~1.5 minutes (full mode with SBOM):
+  - bash syntax (autonomy/run.sh + autonomy/loki + completion-council.sh)
+  - shellcheck on scripts/ + fixtures (errors only)
+  - python3.12 pytest
+  - JSON + YAML validation
+  - no-emoji + no-`git add -A` policy enforcement
+  - bun typecheck + bun test (full suite)
+  - bash CLI 14/14 dual-route
+  - bun-parity matrix (10 commands x text/json) -- catches doctor
+    text drift like the v7.4.10 Bun-line bug before push
+  - npm pack tarball contents
+  - SBOM cyclonedx-npm against npm pack output
+  - license-audit (direct + transitive)
+  - npm audit with overrides
+  - cleanup probe
+  Use `--fast` to skip SBOM, `--verbose` to see full output.
+  Exit code 0 = safe to push; nonzero = "DO NOT PUSH".
+
+### CLAUDE.md mandate
+
+Added "Local CI Before Every Push (MANDATORY -- 2026-04-26 user
+mandate)" section. Release Workflow Step 0 is now `local-ci.sh`.
+Memory updated at
+`feedback_local_ci_before_push.md` so this rule survives across
+sessions.
+
+### Verification
+
+- `bash scripts/local-ci.sh` (full mode): **20 PASS / 0 FAIL** (1m59s)
+- `bun run typecheck`: clean
+- `bun test`: 549 pass / 0 fail
+- `bash tests/test-cli-commands.sh`: 14/14 (Bun route)
+- `LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh`: 14/14
+- `bash bin/loki doctor` byte-identical between bash + Bun routes
+- npm pack: 506 files / 7.4.11 / Bun + bash routes verified
+
 ## [7.4.10] - 2026-04-26
 
 PATCH release. Closes every closeable gap from the v7.4.9 honest audit.

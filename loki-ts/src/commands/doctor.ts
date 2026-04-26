@@ -510,6 +510,16 @@ async function runText(): Promise<number> {
   process.stdout.write(formatToolLine(bashCheck) + "\n");
   bump(tally, bashCheck.status);
 
+  // v7.4.10 fix: Bun probe was added to TOOL_SPECS in v7.4.9 but never
+  // wired into the text-mode System section, so doctor text-mode dropped
+  // the Bun line + the summary count was off-by-one vs bash. JSON output
+  // already included Bun via the generic loop. Restore parity here.
+  const bunCheck = byCmd.get("bun");
+  if (bunCheck) {
+    process.stdout.write(formatToolLine(bunCheck) + "\n");
+    bump(tally, bunCheck.status);
+  }
+
   const disk = checkDisk();
   // Bash text uses `df -g` (integer GB, floored). JSON uses round(_, 1).
   // checkDisk() returns the JSON-friendly float; floor it here for text-mode parity.
