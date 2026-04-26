@@ -6513,11 +6513,15 @@ cmd_doctor() {
     # Disk space check
     local disk_avail
     if command -v df &> /dev/null; then
-        # Get available space in GB (works on macOS and Linux)
-        disk_avail=$(df -g "$HOME" 2>/dev/null | tail -1 | awk '{print $4}')
+        # Get available space in GB (works on macOS and Linux).
+        # v7.4.12: || true on the pipes so set -euo pipefail doesn't exit
+        # the whole doctor when df -g fails on Linux (which doesn't support
+        # the -g flag). Pre-v7.4.12 bash route truncated after the System
+        # section on Linux because of this exact early exit.
+        disk_avail=$(df -g "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' || true)
         if [ -z "$disk_avail" ]; then
             # Linux fallback (df -g may not work)
-            disk_avail=$(df -BG "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+            disk_avail=$(df -BG "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G' || true)
         fi
         if [ -n "$disk_avail" ] && [ "$disk_avail" -gt 0 ] 2>/dev/null; then
             if [ "$disk_avail" -lt 1 ]; then
@@ -11531,6 +11535,18 @@ main() {
 
     local command="$1"
     shift
+
+    # v7.4.12: one-shot install/first-run telemetry. Replaces the
+    # bin/postinstall.js install event (postinstall removed because Bun
+    # blocks postinstalls by default and the prompt was confusing).
+    # Creates ~/.loki-first-run on first invocation; fires "installed"
+    # event ONCE per install with channel attribution. Idempotent + silent.
+    if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ]; then
+        if [ ! -f "${HOME}/.loki-first-run" ] 2>/dev/null; then
+            touch "${HOME}/.loki-first-run" 2>/dev/null || true
+            loki_telemetry "installed" "first_command=$command" 2>/dev/null || true
+        fi
+    fi
 
     loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
 

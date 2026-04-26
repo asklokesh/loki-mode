@@ -182,6 +182,14 @@ if (
       licenses="${licenses//\"/}"
       [[ "$module" == "module name" ]] && continue
       [[ -z "$module" ]] && continue
+      # v7.4.12 R2 fix: skip the host package itself. license-checker
+      # includes loki-mode@<version> in the tree (it's the package being
+      # audited) and would falsely flag our own BUSL-1.1 as a transitive
+      # offender. Match the bare name -- we are loki-mode regardless of
+      # version suffix.
+      case "$module" in
+        loki-mode|loki-mode@*) continue ;;
+      esac
       TRANSITIVE_COUNT=$((TRANSITIVE_COUNT + 1))
       if ! is_permissive "$licenses"; then
         OFFENDERS+=("${module} :: ${licenses} (transitive)")

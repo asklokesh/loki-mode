@@ -5,6 +5,83 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.12] - 2026-04-26
+
+PATCH release. Drops the npm `postinstall` script (was confusing
+Bun users with "blocked 2 postinstalls" messages and arcane
+`bun pm trust` instructions). Drops the redundant `loki-mode`
+binary. Both done WITHOUT breaking any existing user.
+
+### Council-blocked rot fixed before push
+
+A 5-agent review (Judge + R1 correctness + R2 CLAUDE.md + R3 UX +
+Devil's Advocate) caught and BLOCKED the v7.4.12 first attempt
+because it shipped a CALL to an undefined function
+(`auto_skill_setup_if_needed`) -- the entire lazy-symlink feature
+would have been a silent no-op. The "rot" was reverted before this
+commit. This release ships only the changes verified end-to-end by
+local-ci.
+
+### Removed (carefully, without breaking anyone)
+
+- **`postinstall` script** removed from `package.json`. Bun will
+  no longer block on it; npm install no longer runs it. Existing
+  users' skill symlinks created by previous postinstalls remain
+  on disk untouched. New users run `loki setup-skill` to create
+  them (the existing command, unchanged).
+- **`loki-mode` binary** removed from `package.json` `bin` map.
+  `bin/loki-mode.js` remains on disk and now prints a TTY-only
+  deprecation banner pointing users at `loki`. Existing installs
+  with the symlinked binary keep working through the next
+  `npm/bun update`. v8.0.0 will delete the file entirely.
+
+### Replaced (preserved behaviour through different mechanism)
+
+- **Anonymous install telemetry** moved out of `bin/postinstall.js`
+  into `autonomy/loki` first-run hook. Creates `~/.loki-first-run`
+  marker on first invocation and fires one-shot `installed` event
+  with channel attribution (npm/bun/brew/docker). Identical
+  privacy posture: opt-out via `LOKI_TELEMETRY_DISABLED=true` or
+  `DO_NOT_TRACK=1`. **npm registry download counts are NOT
+  affected** -- those count every fetch from `registry.npmjs.org`
+  regardless of which client (npm, Bun, pnpm, yarn) made the request.
+
+### Fixed
+
+- **bash doctor truncated on Linux.** `set -euo pipefail` plus
+  `df -g` (which doesn't exist on Linux) caused the script to
+  exit silently after the System section. Added `|| true` to the
+  pipeline at autonomy/loki:6522,6526. Closes the v7.4.11
+  bun-parity Ubuntu workflow failure.
+- **license-audit.sh self-reference**. Was flagging our own
+  `loki-mode@<version>` BUSL-1.1 license as a "transitive
+  offender" because license-checker includes the host package
+  in the resolved tree. Skip rule added at scripts/license-audit.sh.
+
+### Verification
+
+- `bash scripts/local-ci.sh`: 20 PASS / 0 FAIL / 0 SKIP
+- `bun run typecheck`: clean
+- `bun test`: 549 pass / 0 fail
+- `bash tests/test-cli-commands.sh`: 14/14 (Bun route)
+- `LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh`: 14/14
+- doctor parity (bash vs Bun): byte-identical
+- `bash bin/loki version` works without LOKI_SKIP_AUTO_SETUP
+  bypass (no undefined function call)
+- License audit: PASS direct + transitive (no self-reference)
+
+### Roadmap (NOT in v7.4.12 -- avoid the v7.4.6 fabrication trap)
+
+- **`loki self-update`** auto-detect-manager command -- design
+  agreed; not yet implemented; will land in v7.4.13.
+- **README Bun-first rewrite** -- still leads with npm; will land
+  in v7.4.13 alongside `loki self-update`.
+- **`loki migrate` for npm->Bun** -- name collides with the
+  existing `cmd_migrate_help` codebase-migration tool. Will pick
+  a different name (`loki upgrade --to bun`?) in v7.4.13.
+
+14 version locations bumped 7.4.11 -> 7.4.12.
+
 ## [7.4.11] - 2026-04-26
 
 PATCH release. Closes the 3 v7.4.10 post-push CI failures locally before
