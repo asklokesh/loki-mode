@@ -7,6 +7,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_republish:
+        description: 'Re-run publish jobs even if the GitHub release already exists (for fixing failed Docker/brew jobs)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   # Gate: every downstream job (release, npm, docker, homebrew, ...) waits
@@ -180,7 +189,7 @@ jobs:
 
   notify-slack:
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for changelog)
@@ -263,7 +272,7 @@ jobs:
 
   publish-npm:
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -301,7 +310,7 @@ jobs:
 
   publish-python-sdk:
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -335,7 +344,7 @@ jobs:
 
   publish-ts-sdk:
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -367,7 +376,7 @@ jobs:
 
   publish-docker:
     needs: release
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -443,7 +452,7 @@ jobs:
 
   update-homebrew:
     needs: [release, publish-npm, publish-docker]
-    if: needs.release.outputs.release_created == 'true'
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Compute SHA256
