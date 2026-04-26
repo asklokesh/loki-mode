@@ -9224,7 +9224,11 @@ except Exception:
         spec_count=$(find "$magic_specs_dir" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
         if [ "$spec_count" -gt 0 ]; then
             local spec_list
-            spec_list=$(find "$magic_specs_dir" -maxdepth 1 -name "*.md" -exec basename {} .md \; 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+            # v7.4.9: pipe through `sort` so output is filesystem-independent.
+            # Pre-v7.4.9 this was raw `find` order which varies between macOS
+            # (APFS creation order) and Linux (ext4 hash-table order). Sorting
+            # alphabetically here matches the TS port which now also sorts.
+            spec_list=$(find "$magic_specs_dir" -maxdepth 1 -name "*.md" -exec basename {} .md \; 2>/dev/null | sort | tr '\n' ',' | sed 's/,$//')
             magic_context="MAGIC_MODULES: ${spec_count} component specs exist: ${spec_list}. To add or update a component: write markdown to ${magic_specs_dir}/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run."
         else
             magic_context="MAGIC_MODULES: available. To create UI components, write spec at ${magic_specs_dir}/<Name>.md and run 'loki magic update'. Spec-driven generation produces React + Web Component variants with auto-generated tests. Debate gate runs in VERIFY."

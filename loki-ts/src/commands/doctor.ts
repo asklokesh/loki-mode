@@ -255,6 +255,11 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   { displayName: "git", jsonName: "git", cmd: "git", required: "required" },
   { displayName: "curl", jsonName: "curl", cmd: "curl", required: "required" },
   { displayName: "bash (>= 4.0)", jsonName: "bash", cmd: "bash", required: "recommended", min: "4.0" },
+  // v7.4.9: Bun powers the routed commands (version, status, stats, doctor,
+  // provider show/list, memory list/index). Marked recommended -- if missing,
+  // bin/loki silently falls through to bash autonomy/loki, but users miss the
+  // ~3-5x speedup.
+  { displayName: "Bun (>= 1.3)", jsonName: "Bun", cmd: "bun", required: "recommended", min: "1.3" },
   { displayName: "Claude CLI", jsonName: "Claude CLI", cmd: "claude", required: "optional" },
   { displayName: "Codex CLI", jsonName: "Codex CLI", cmd: "codex", required: "optional" },
   { displayName: "Gemini CLI", jsonName: "Gemini CLI", cmd: "gemini", required: "optional" },

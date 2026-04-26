@@ -6493,6 +6493,9 @@ cmd_doctor() {
 
     echo -e "${CYAN}System:${NC}"
     doctor_check "bash (>= 4.0)"      bash     recommended  4.0  || true
+    # v7.4.9: Bun powers ported commands; warn if missing so users notice the
+    # speedup is unavailable (bin/loki falls through to bash silently).
+    doctor_check "Bun (>= 1.3)"       bun      recommended  1.3  || true
 
     # Disk space check
     local disk_avail
@@ -6589,6 +6592,7 @@ checks.append(check_tool('jq', 'jq', 'required'))
 checks.append(check_tool('git', 'git', 'required'))
 checks.append(check_tool('curl', 'curl', 'required'))
 checks.append(check_tool('bash', 'bash', 'recommended', '4.0'))
+checks.append(check_tool('Bun', 'bun', 'recommended', '1.3'))
 checks.append(check_tool('Claude CLI', 'claude', 'optional'))
 checks.append(check_tool('Codex CLI', 'codex', 'optional'))
 checks.append(check_tool('Gemini CLI', 'gemini', 'optional'))

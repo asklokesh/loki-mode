@@ -11,7 +11,7 @@ QUEUED_TASKS (PRIORITY): PENDING:
 PENDING[1] queue-1: Pending task 1
   Description: Long task description
   Acceptance: Criteria 1. Execute these tasks BEFORE finding new improvements.
-MAGIC_MODULES: 2 component specs exist: Modal,Button. To add or update a component: write markdown to ./.loki/magic/specs/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run.
+MAGIC_MODULES: 2 component specs exist: Button,Modal. To add or update a component: write markdown to ./.loki/magic/specs/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run.
 PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every 5 iterations.
 PLAYWRIGHT_SMOKE_TEST: PASSED - App loads correctly.
 COMPLETION_PROMISE: [Never ending improvement cycle]. When all PRD requirements are implemented, tests pass, and the PRD checklist is at or near 100%, invoke the loki_complete_task MCP tool with your completion_statement and evidence (cite tests that passed, checklist items verified, files created/modified). Do NOT emit a completion string in prose -- use the tool call.

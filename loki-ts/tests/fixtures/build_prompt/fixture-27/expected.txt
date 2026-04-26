@@ -7,7 +7,7 @@ MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Y
 </loki_system>
 [CACHE_BREAKPOINT]
 <dynamic_context iteration="12" retry="0">
-MAGIC_MODULES: 5 component specs exist: Accordion,Modal,Card,Button,Tabs. To add or update a component: write markdown to ./.loki/magic/specs/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run.
+MAGIC_MODULES: 5 component specs exist: Accordion,Button,Card,Modal,Tabs. To add or update a component: write markdown to ./.loki/magic/specs/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run.
 PRD_CHECKLIST_INIT: Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items. Each item needs: id, title, description, priority (critical|major|minor), and verification checks (file_exists, file_contains, tests_pass, grep_codebase, command). This checklist will be auto-verified every 5 iterations.
 NO COMPLETION PROMISE SET. Continue finding improvements. The Completion Council will evaluate your progress periodically. Iteration 12 of max 1000. If you do decide the task is complete, invoke the loki_complete_task MCP tool with a structured statement and evidence rather than emitting prose.
 </dynamic_context>

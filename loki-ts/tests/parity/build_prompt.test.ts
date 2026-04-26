@@ -36,18 +36,12 @@ function sha256Of(s: string): string {
 
 const idx = loadIndex();
 
-// v7.4.6: build_prompt.ts fixes brought 60/60 passing on macOS (the OS the
-// fixtures were generated on).
-// v7.4.8: fixtures 27 and 45 (Magic Modules variants) skipped on non-darwin
-// because they depend on filesystem readdir order. macOS APFS returns the
-// 5 / 23 spec files in creation order; Linux ext4 returns them in hash-table
-// order. The bash baseline that produced expected.sha256 was recorded on
-// macOS, so the TS port matches on macOS but not on Linux. Proper fix is to
-// either (a) regenerate fixtures with sorted order in both bash + TS, or
-// (b) accept any-order match in the test harness. Tracked for v7.5.x.
-const KNOWN_FAILING_FIXTURES = new Set<number>(
-  process.platform === "darwin" ? [] : [27, 45],
-);
+// v7.4.9: 60/60 passing on both macOS and Linux. Fixtures 27 and 45 (Magic
+// Modules) used to fail on Linux because readdir order differs by filesystem;
+// build_prompt.ts now sorts entries alphabetically (matching the bash side
+// which also pipes through `sort` in autonomy/run.sh:9227), and the two
+// fixtures were regenerated with the deterministic sorted output.
+const KNOWN_FAILING_FIXTURES = new Set<number>([]);
 
 describe("build_prompt parity", () => {
   for (const fx of idx.fixtures) {

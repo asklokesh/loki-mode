@@ -167,7 +167,9 @@ describe("doctor.buildDoctorJson", () => {
     expect(typeof json.summary.ok).toBe("boolean");
   });
 
-  it("contains all 11 expected tool checks in order", () => {
+  it("contains all 12 expected tool checks in order", () => {
+    // v7.4.9: added "bun" probe (recommended) so users can see whether the
+    // ported-command speedup is available on their system.
     const expected = [
       "node",
       "python3",
@@ -175,6 +177,7 @@ describe("doctor.buildDoctorJson", () => {
       "git",
       "curl",
       "bash",
+      "bun",
       "claude",
       "codex",
       "gemini",
@@ -228,7 +231,8 @@ describe("doctor.runDoctor (end-to-end)", () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--json"]));
     expect(result).toBe(0);
     const parsed = JSON.parse(cap.out) as DoctorJson;
-    expect(parsed.checks.length).toBe(11);
+    // v7.4.9: 11 -> 12 with the new "bun" probe.
+    expect(parsed.checks.length).toBe(12);
     expect(parsed.summary).toBeDefined();
   });
 

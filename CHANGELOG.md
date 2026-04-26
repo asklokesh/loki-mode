@@ -5,6 +5,70 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.9] - 2026-04-26
+
+PATCH release. Closes the gaps surfaced by the v7.4.8 post-merge review:
+filesystem-order parity flake, missing Bun probe in doctor, and the
+cross-runtime singleton hole.
+
+### Fixed
+
+- **Magic Modules spec ordering is now deterministic across filesystems.**
+  Both `loki-ts/src/runner/build_prompt.ts` (TS) and `autonomy/run.sh`
+  (bash) now sort the spec list alphabetically. Pre-v7.4.9 used raw
+  `find` / `readdir` order, which differs between macOS APFS (creation
+  order) and Linux ext4 (hash-table order). Fixtures 10, 27, 45
+  regenerated with sorted output. The `KNOWN_FAILING_FIXTURES`
+  per-platform skip introduced in v7.4.8 is now empty -- 60/60 pass on
+  both macOS and Linux without conditionals.
+
+- **`loki doctor` now probes for Bun.** Both bash `cmd_doctor`
+  (autonomy/loki) and TS `runDoctor` (loki-ts/src/commands/doctor.ts)
+  list Bun as a "recommended" tool with min version 1.3. Users who
+  installed via npm without Bun will see a clear warning that the
+  ported-command speedup is unavailable; bin/loki silently falls
+  through to bash regardless, so functionality is identical.
+  TOOL_SPECS count: 11 -> 12.
+
+- **Cross-runtime session singleton.** `runAutonomous` now writes
+  `.loki/loki.pid` and `.loki/runner-route` at startup, mirroring the
+  bash convention at `autonomy/run.sh:3013-3060`. If a live PID is
+  already there (bash or Bun), the second runner refuses to start with
+  a clear error pointing at how to clear the lock. Closes the
+  W2-R3/C4 cross-runtime race window opened in v7.4.x. Lock cleanup
+  registered on `exit`, `SIGINT`, and `SIGTERM`.
+
+### npm-without-bun guarantee (re-confirmed)
+
+Verified end-to-end after the above changes: `npm install -g loki-mode`
+on a system without Bun continues to work for every command. bin/loki
+shim falls through to autonomy/loki when bun is not on PATH; users
+get the v7.2.0-equivalent experience, just without the speedup on the
+8 ported commands. Bun is never a hard prereq for npm/pip/curl/wget
+installs. Docker + Homebrew bundle Bun for environments we control.
+
+### Verification
+
+- `bun run typecheck`: clean
+- `bun test`: **549 pass / 0 fail / 0 skip** (1482 expects, 43s)
+- `bash tests/test-cli-commands.sh`: 14/14 (Bun route)
+- `LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh`: 14/14
+- All 60 build_prompt fixtures sha256 match on macOS (Linux to be
+  re-confirmed in CI; the platform-conditional skip is removed)
+- `PATH=/usr/bin:/bin bash bin/loki version` (no bun on PATH)
+  returns "Loki Mode v7.4.9" (bash fallthrough verified)
+
+### Outstanding (deferred, not user-blocking)
+
+- v7.3.0 Homebrew tag was never updated (publish-npm-republish failed
+  in dependency chain on v7.3.0 force-republish). v7.4.8 + v7.4.9
+  brew tags supersede; no action needed since users only ever see
+  the latest brew formula.
+- Doctor text-mode parity in CI still skips the doctor command in
+  bun-parity.yml because Bun route adds Disk space + Summary trailer
+  that bash route omits. JSON contract is still parity-checked.
+  Restore work tracked for v7.5.x.
+
 ## [7.4.8] - 2026-04-26
 
 PATCH release on `feat/bun-migration`. Closes one of the C5 merge-readiness

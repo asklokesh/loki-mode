@@ -9,7 +9,7 @@
 // Bash citations are kept inline next to each ported block so reviewers can
 // diff against the source while the integration is wired up.
 
-import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, statSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   realClock,
@@ -157,6 +157,9 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   log(`[runner] max_retries=${ctx.maxRetries} max_iterations=${ctx.maxIterations}`);
 
   ensureLokiDirs(ctx);
+  // v7.4.9: refuse to start if a bash runner (or another Bun runner) is
+  // already holding the session lock. Mirrors autonomy/run.sh:3013-3060.
+  acquireSessionSingleton(ctx);
 
   // -- Initialization (run.sh:10231-10302) ---------------------------------
   // NOTE: required-key lists encode the contract this loop expects. Sibling
@@ -500,6 +503,77 @@ function ensureLokiDirs(ctx: RunnerContext): void {
       // best-effort; downstream writes will surface real errors
     }
   }
+}
+
+// v7.4.9: cross-runtime session singleton.
+// The bash runner (autonomy/run.sh:3013-3060) writes `.loki/loki.pid` and
+// `.loki/session.lock` at startup and refuses to start if the existing PID
+// is alive. The Bun runner now uses the same convention so two runners
+// (one bash, one Bun) cannot race on `.loki/` state -- the second one to
+// start gets a clear error and exits cleanly. Also writes a sibling
+// `.loki/runner-route` so `loki status` / `loki doctor` can report which
+// runtime owns the session.
+//
+// Returns a release function the caller invokes on exit.
+function acquireSessionSingleton(ctx: RunnerContext): () => void {
+  const pidFile = resolve(ctx.lokiDir, "loki.pid");
+  const routeFile = resolve(ctx.lokiDir, "runner-route");
+
+  if (existsSync(pidFile)) {
+    let existingPid = 0;
+    try {
+      existingPid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+    } catch { /* unreadable - treat as stale */ }
+    if (existingPid > 0 && existingPid !== process.pid) {
+      let alive = false;
+      try {
+        process.kill(existingPid, 0);
+        alive = true;
+      } catch { /* ESRCH -> dead */ }
+      if (alive) {
+        let route = "unknown";
+        try { route = readFileSync(routeFile, "utf8").trim() || "unknown"; } catch { /* missing */ }
+        const msg =
+          `Another loki session is already running (PID ${existingPid}, route: ${route}).\n` +
+          `Stop it first with 'loki stop' or wait for it to finish.\n` +
+          `If you believe the lock is stale, remove '${pidFile}' manually.`;
+        ctx.log(`[runner] ERROR: ${msg}`);
+        process.stderr.write(`${msg}\n`);
+        throw new Error("session-singleton: another loki runner is active");
+      }
+      // Stale -- fall through and overwrite.
+      ctx.log(`[runner] reaping stale ${pidFile} (PID ${existingPid} not alive)`);
+    }
+  }
+
+  try {
+    writeFileSync(pidFile, `${process.pid}\n`);
+    writeFileSync(routeFile, "bun\n");
+  } catch (err) {
+    ctx.log(`[runner] WARN: could not write ${pidFile}: ${(err as Error).message}`);
+    // Don't fail the run for a write error -- bash runner has the same
+    // best-effort pattern. Singleton enforcement is opportunistic.
+  }
+
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    try { unlinkSync(pidFile); } catch { /* may have been stolen */ }
+    try { unlinkSync(routeFile); } catch { /* same */ }
+  };
+
+  // Register exit hooks so kill -TERM and clean exit both clean up.
+  const signalCleanup = (signal: NodeJS.Signals): void => {
+    release();
+    // Re-raise so the caller's exit code reflects the signal.
+    process.kill(process.pid, signal);
+  };
+  process.once("exit", release);
+  process.once("SIGINT", () => signalCleanup("SIGINT"));
+  process.once("SIGTERM", () => signalCleanup("SIGTERM"));
+
+  return release;
 }
 
 function makeIterationOutputPath(ctx: RunnerContext): string {

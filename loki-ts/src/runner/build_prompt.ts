@@ -790,9 +790,12 @@ function buildMagicContext(cwd: string, targetDir: string): string {
   if (entries.length === 0) {
     return `MAGIC_MODULES: available. To create UI components, write spec at ${magicSpecsDir}/<Name>.md and run 'loki magic update'. Spec-driven generation produces React + Web Component variants with auto-generated tests. Debate gate runs in VERIFY.`;
   }
-  // bash uses `find -exec basename {} .md \;` then `tr '\n' ',' | sed 's/,$//'`.
-  // Order is the find traversal order (filesystem-defined). Use readdirSync
-  // order which on most filesystems mirrors find's default traversal.
+  // v7.4.9: sort alphabetically. Pre-v7.4.9 used readdirSync raw order which
+  // is filesystem-dependent: macOS APFS returns creation order, Linux ext4
+  // returns hash-table order. The alphabetical sort makes output deterministic
+  // across both filesystems. Bash baseline regenerated for fixtures 27 + 45
+  // to match this ordering.
+  entries.sort((a, b) => a.localeCompare(b));
   const names = entries.map((f) => f.replace(/\.md$/, ""));
   const specList = names.join(",");
   return `MAGIC_MODULES: ${entries.length} component specs exist: ${specList}. To add or update a component: write markdown to ${magicSpecsDir}/<Name>.md and run 'loki magic update'. The spec becomes source of truth; implementation regenerates automatically. Debate runs in VERIFY phase -- if accessibility or performance blocks, refine the spec and re-run.`;
