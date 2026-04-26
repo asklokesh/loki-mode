@@ -83,8 +83,8 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.4.7"
-LABEL org.opencontainers.image.version="7.4.7"
+LABEL version="7.4.8"
+LABEL org.opencontainers.image.version="7.4.8"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"

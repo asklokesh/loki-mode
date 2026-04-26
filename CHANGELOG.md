@@ -5,6 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.8] - 2026-04-26
+
+PATCH release on `feat/bun-migration`. Closes one of the C5 merge-readiness
+council findings ahead of the PR #157 merge to main.
+
+### Fixed
+
+- **`bin/loki-mode.js` now delegates to `bin/loki` (the runtime-aware
+  shim) instead of `autonomy/loki` directly.** Pre-v7.4.8 the secondary
+  npm `loki-mode` binary bypassed the Bun route entirely. Users who
+  invoked `loki-mode <cmd>` instead of `loki <cmd>` got the bash route
+  for every command -- defeating the purpose of v7.3.0+. Now both
+  binaries route identically: ported commands -> Bun, unported -> bash,
+  `LOKI_LEGACY_BASH=1` rolls back. Verified locally with both routes.
+
+### Outstanding C5 council items deferred
+
+- `loki doctor` does not probe for `bun` -- users have no built-in
+  way to discover which runtime serves their commands. Fix needs
+  edits to both `autonomy/loki cmd_doctor()` and
+  `loki-ts/src/commands/doctor.ts`. Tracked.
+- Brew tap has no `loki-mode@7.2.0` versioned formula for users
+  needing a clean brew downgrade. Documented as gap in
+  `UPGRADING.md`. Mitigation: `LOKI_LEGACY_BASH=1` flag still works,
+  and `npm install -g loki-mode@7.2.0` is the supported revert path.
+
 ## [7.4.7] - 2026-04-26
 
 PATCH release on `feat/bun-migration`. Hardens state.ts atomic writes
