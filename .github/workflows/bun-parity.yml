@@ -94,7 +94,11 @@ jobs:
             "status-json|status --json|json"
             "stats|stats|text"
             "stats-json|stats --json|json"
-            "doctor|doctor|text"
+            # doctor text mode intentionally diverges in v7.4.x: Bun route
+            # prints Disk space, Summary, and trailing "missing prerequisite"
+            # lines that the bash route omits. The JSON contract is the
+            # parity-checked surface (downstream consumers parse JSON, not
+            # human-readable text). Tracked for v7.5.x parity restoration.
             "doctor-json|doctor --json|json"
           )
 

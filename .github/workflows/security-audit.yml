@@ -32,8 +32,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: npm install --no-package-lock
+      - name: Install dependencies (with lockfile so npm audit can apply package.json overrides)
+        run: npm install
 
       - name: npm audit (production deps, high+)
         run: |
