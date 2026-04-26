@@ -127,12 +127,17 @@ jobs:
             if [ "$mode" = "json" ]; then
               # Sort keys recursively before diffing so key-order changes
               # do not register as parity violations.
-              if ! jq -S . "$bun_out" >"${bun_out}.sorted" 2>/dev/null; then
+              # v7.4.12 also floors disk.available_gb because Python
+              # json.dumps emits 58.0 while JS JSON.stringify emits 58 --
+              # plus the underlying df read can drift by 1GB between two
+              # near-simultaneous calls on a busy CI runner.
+              JQ_NORM='if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end'
+              if ! jq -S "$JQ_NORM" "$bun_out" >"${bun_out}.sorted" 2>/dev/null; then
                 echo "FAIL [$label]: bun output is not valid JSON"
                 FAILED+=("$label (invalid bun JSON)")
                 continue
               fi
-              if ! jq -S . "$bash_out" >"${bash_out}.sorted" 2>/dev/null; then
+              if ! jq -S "$JQ_NORM" "$bash_out" >"${bash_out}.sorted" 2>/dev/null; then
                 echo "FAIL [$label]: bash output is not valid JSON"
                 FAILED+=("$label (invalid bash JSON)")
                 continue
@@ -145,7 +150,15 @@ jobs:
                 FAILED+=("$label")
               fi
             else
-              if diff -u "$bash_out" "$bun_out" >"$diff_out"; then
+              # v7.4.12+ -- before diff, normalize jittery numeric values
+              # that drift between two near-simultaneous reads on busy CI:
+              #   - Disk space: 88GB available -> Disk space: NGB available
+              # bash + Bun read `df` independently a few ms apart; on a CI
+              # runner where logs are being written, the value can drift by
+              # 1GB between the two reads and trigger a false parity fail.
+              sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/g' "$bash_out" > "${bash_out}.norm"
+              sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/g' "$bun_out"  > "${bun_out}.norm"
+              if diff -u "${bash_out}.norm" "${bun_out}.norm" >"$diff_out"; then
                 PASSED+=("$label")
               else
                 echo "FAIL [$label]: text parity diff (bash exit=$bash_ec, bun exit=$bun_ec):"

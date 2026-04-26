@@ -165,11 +165,19 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
       LOKI_LEGACY_BASH=1 bash bin/loki $args > "$PARITY_TMP/$label.bash" 2>&1 || true
       bash bin/loki $args > "$PARITY_TMP/$label.bun" 2>&1 || true
       if [ "$mode" = "json" ]; then
-        jq -S . "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.s" 2>/dev/null || true
-        jq -S . "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.s"  2>/dev/null || true
+        # v7.4.12: also floor the disk.available_gb value because Python
+        # json.dumps emits 58.0 while JS JSON.stringify emits 58 -- same
+        # number, different representation -- and the underlying df read
+        # can drift by 1GB between two near-simultaneous calls.
+        jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.s" 2>/dev/null || true
+        jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.s"  2>/dev/null || true
         diff -q "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
       else
-        diff -q "$PARITY_TMP/$label.bash" "$PARITY_TMP/$label.bun" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
+        # v7.4.12: normalize jittery disk-space values (1GB drift can
+        # happen between bash and Bun reads on busy systems).
+        sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.norm"
+        sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.norm"
+        diff -q "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
       fi
     done
     [ "$BAD" = "0" ]
