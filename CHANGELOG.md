@@ -5,6 +5,69 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.17] - 2026-04-26
+
+PATCH release. Fixes 3 real bugs surfaced by a `loki quick "build a
+landing page with a signup form"` user run, plus enriches the dashboard
+task-detail modal so it actually shows what we have.
+
+### Fixed
+
+- **pytest gate fired on JS-only projects** with a `tests/` directory
+  containing `*.test.js` files. The mere existence of `tests/` was
+  treated as a Python project signal -> pytest collected 0 tests ->
+  gate FAILED -> next iteration's prompt got "QUALITY GATE FAILURES:
+  test_coverage" injected, telling the LLM to "fix" non-existent
+  Python tests. v7.4.17 now requires `setup.py` / `pyproject.toml` /
+  `setup.cfg` / `pytest.ini` / `conftest.py` OR actual `test_*.py` /
+  `*_test.py` / `conftest.py` files inside `tests/`. Closes the
+  user-reproduced "false test_coverage gate FAILED" cycle.
+
+- **Completion was never recognized when `loki_complete_task` MCP
+  tool wasn't surfaced.** User's run showed the LLM say "the
+  loki_complete_task MCP tool isn't loaded in this environment, so
+  completion is signaled via the checklist". The runner kept
+  iterating because no `.loki/signals/TASK_COMPLETION_CLAIMED`
+  file got written. v7.4.17 adds a file-based fallback at
+  `.loki/signals/COMPLETION_REQUESTED` -- the LLM can simply
+  `touch` that file (optionally with a statement); the runner
+  synthesizes a completion payload with confidence=medium. The
+  prompt now tells the LLM about this fallback explicitly.
+
+- **Dashboard task-detail modal was empty for #todo-* tasks** (and
+  hid the User Story for #prd-* tasks even though the backend was
+  sending it). Two fixes:
+  (a) `autonomy/run.sh` now enriches TodoWrite items with title,
+      description, source tag, and activeForm. The modal at least
+      explains "this is the LLM's internal scratch list, not a
+      PRD-derived work item".
+  (b) `dashboard-ui/components/loki-task-board.js` now renders
+      `User Story` and `Source` modal sections (both gated on
+      data presence). PRD-derived tasks have user_story populated
+      from the parser; TodoWrite items have source="claude_code_
+      todowrite". Both were silently dropped before.
+
+### Added (dashboard frontend rebuild)
+
+- `dashboard/static/index.html` regenerated with the new modal
+  sections (514.3 KB; written to both `dashboard-ui/dist/` and
+  `dashboard/static/`).
+
+### Process honesty note
+
+This release is reactive: the user shipped real production traffic
+(`loki quick`, then `loki start docs/PRD.md`) and surfaced 4 bugs
+in 2 sessions. The user-mandated monitor/test/fix loop is the only
+way these get caught -- synthetic CI doesn't run pytest gate against
+JS-only fixtures, doesn't simulate missing MCP tools, and clicks
+no dashboard modals.
+
+Codex / Gemini integration upgrades (latest CLI features documented
+in providers/codex.sh + gemini.sh) deferred to v7.4.18 -- they need
+their own scoping and a Codex stub-binary test harness expansion.
+
+14 version locations bumped 7.4.16 -> 7.4.17.
+
 ## [7.4.16] - 2026-04-26
 
 PATCH release. Production-blocking bug reported by a Bun-installed user:

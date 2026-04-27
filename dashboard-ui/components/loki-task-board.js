@@ -389,6 +389,20 @@ export class LokiTaskBoard extends LokiElement {
             </div>
           ` : ''}
 
+          ${task.user_story ? `
+            <div class="modal-section">
+              <h3 class="modal-section-title">User Story</h3>
+              <div class="modal-prose">${this._escapeHtml(task.user_story)}</div>
+            </div>
+          ` : ''}
+
+          ${task.source ? `
+            <div class="modal-section">
+              <h3 class="modal-section-title">Source</h3>
+              <div class="modal-prose"><code>${this._escapeHtml(task.source)}</code></div>
+            </div>
+          ` : ''}
+
           ${task.type ? `
             <div class="modal-footer">
               <span class="task-type">${this._escapeHtml(task.type)}</span>

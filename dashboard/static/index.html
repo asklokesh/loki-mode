@@ -1539,6 +1539,20 @@ var LokiDashboard=(()=>{var xt=Object.defineProperty;var Qt=Object.getOwnPropert
             </div>
           `:""}
 
+          ${t.user_story?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">User Story</h3>
+              <div class="modal-prose">${this._escapeHtml(t.user_story)}</div>
+            </div>
+          `:""}
+
+          ${t.source?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Source</h3>
+              <div class="modal-prose"><code>${this._escapeHtml(t.source)}</code></div>
+            </div>
+          `:""}
+
           ${t.type?`
             <div class="modal-footer">
               <span class="task-type">${this._escapeHtml(t.type)}</span>
