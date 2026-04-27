@@ -255,7 +255,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.4.15
+- Current: v7.4.16
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
@@ -272,7 +272,7 @@ Follows semantic versioning: MAJOR.MINOR.PATCH
 **Every change must pass `bash scripts/local-ci.sh` on this Mac before
 `git push`.** No exceptions. The script mirrors every GitHub Actions
 workflow: bun typecheck/test, bash CLI 14/14 dual-route, bun-parity
-matrix (catches doctor text drift like the v7.4.15 Bun-probe-not-rendered
+matrix (catches doctor text drift like the v7.4.16 Bun-probe-not-rendered
 bug), npm pack contents, SBOM cyclonedx-npm, license-audit, npm audit
 (with overrides), shellcheck, YAML parse, no-emoji, no-`git add -A`,
 cleanup probe.

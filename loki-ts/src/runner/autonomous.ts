@@ -503,6 +503,42 @@ function ensureLokiDirs(ctx: RunnerContext): void {
       // best-effort; downstream writes will surface real errors
     }
   }
+  cleanStaleSignalFiles(ctx);
+}
+
+// v7.4.16: parity with autonomy/run.sh:3052 cleanup. Only invoked at
+// runner startup (after singleton lock is acquired), so we know no other
+// runner is alive to need these files. Cleaning on startup prevents the
+// user-reported regression where a stale PAUSE_AT_CHECKPOINT from a
+// previous Ctrl+C-in-checkpoint-mode session caused fresh `loki start`
+// to pause immediately.
+//
+// Files cleaned:
+//   PAUSE                   -- explicit pause request from prior session
+//   PAUSE_AT_CHECKPOINT     -- deferred pause from Ctrl+C in prior session
+//   PAUSED.md               -- pause-state metadata sibling
+//   STOP                    -- explicit stop from prior session
+//   COMPLETED               -- prior-session completion sentinel
+//   HUMAN_INPUT.md          -- prompt injection from prior session
+function cleanStaleSignalFiles(ctx: RunnerContext): void {
+  const stale = [
+    "PAUSE",
+    "PAUSE_AT_CHECKPOINT",
+    "PAUSED.md",
+    "STOP",
+    "COMPLETED",
+    "HUMAN_INPUT.md",
+  ];
+  for (const name of stale) {
+    const p = resolve(ctx.lokiDir, name);
+    if (!existsSync(p)) continue;
+    try {
+      unlinkSync(p);
+    } catch {
+      // best-effort -- if unlink fails (read-only fs, perms), we'll see
+      // the symptoms downstream and the orphan-sweep will clean later.
+    }
+  }
 }
 
 // v7.4.9: cross-runtime session singleton.

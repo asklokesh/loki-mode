@@ -5,6 +5,71 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.16] - 2026-04-26
+
+PATCH release. Production-blocking bug reported by a Bun-installed user:
+`loki start docs/PRD.md` paused immediately after the first action with
+"Checkpoint pause requested - pausing now" -- without the user pressing
+Ctrl+C.
+
+### Fixed (CRITICAL)
+
+- **Stale `PAUSE_AT_CHECKPOINT` survived across sessions** and triggered
+  immediate pause on next `loki start`. Root cause: the init cleanup at
+  `autonomy/run.sh:3052` cleaned `PAUSE`, `STOP`, `HUMAN_INPUT.md` but
+  was never updated when `PAUSE_AT_CHECKPOINT` (and siblings `PAUSED.md`
+  + `COMPLETED`) were added to the signal-file family later. Classic
+  regression -- new files added without updating cleanup.
+
+  The user's reproduction:
+  1. Prior session: user pressed Ctrl+C in checkpoint mode
+     -> `.loki/PAUSE_AT_CHECKPOINT` created (run.sh:11467)
+     -> session exited normally
+  2. Next session: `loki start docs/PRD.md`
+     -> init_loki_dir cleaned PAUSE/STOP/HUMAN_INPUT only
+     -> PAUSE_AT_CHECKPOINT survived
+     -> PRD-driven mode auto-switched to checkpoint (run.sh:10276)
+     -> first intervention check saw PAUSE_AT_CHECKPOINT + checkpoint mode
+     -> "Checkpoint pause requested - pausing now"
+
+  v5.20.13 originally added stale-control-file cleanup
+  ("Clean stale control files on start"); this PATCH extends it to the
+  3 signal files added since then.
+
+  Verified by reproducer: seeded `.loki/PAUSE_AT_CHECKPOINT`, ran
+  `init_loki_dir`, confirmed file is gone.
+
+### Fixed (parity, prevents same bug on Bun route)
+
+- **TS runner (autonomous.ts) had ZERO stale-signal cleanup** at
+  startup. `ensureLokiDirs` only `mkdir`'d directories. Added
+  `cleanStaleSignalFiles` mirroring the bash list (PAUSE,
+  PAUSE_AT_CHECKPOINT, PAUSED.md, STOP, COMPLETED, HUMAN_INPUT.md).
+  Without this, the Bun-route runner would have suffered the EXACT
+  same bug -- and worse, since it had nothing to begin with.
+
+### Verification
+
+- Reproducer: seed all 3 stale signal files in `.loki/`, run
+  `init_loki_dir`, confirm cleanup
+- `bash scripts/local-ci.sh --fast`: all checks pass
+- `bash -n autonomy/run.sh`: clean
+- `bun run typecheck` + `bun test`: 549 pass / 0 fail
+
+### Process honesty note
+
+This bug was reported by a real user running the Bun-installed copy
+in production. It would NOT have been caught by local-ci or the parity
+matrix because both run in fresh `.loki/` dirs (no stale state). The
+user's "monitor/test/fix/repeat" loop at the project level worked --
+real signal from real users surfaced what synthetic tests missed.
+
+Discord-reported items (Codex state, parallel BMAD sessions, BMAD
+per-story scoping, awesome-agent-orchestrators PR submission) are
+queued for v7.4.17 to keep this fix atomic and shippable now.
+
+14 version locations bumped 7.4.15 -> 7.4.16.
+
 ## [7.4.15] - 2026-04-26
 
 PATCH release. Fixes a real bug found in the v7.4.14 post-release

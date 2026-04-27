@@ -3049,7 +3049,16 @@ init_loki_dir() {
             fi
         fi
         if [ "$can_cleanup" = "true" ]; then
+            # v7.4.16: extended stale-signal cleanup. Pre-v7.4.16 only
+            # PAUSE / STOP / HUMAN_INPUT.md were cleaned -- but
+            # PAUSE_AT_CHECKPOINT, PAUSED.md, and COMPLETED were added
+            # to the signal-file family later without updating this
+            # cleanup. A stale PAUSE_AT_CHECKPOINT from a prior session
+            # (created by Ctrl+C in checkpoint mode) caused fresh
+            # `loki start` to pause immediately when PRD-driven mode
+            # auto-switched to checkpoint. User-reported regression.
             rm -f .loki/PAUSE .loki/STOP .loki/HUMAN_INPUT.md 2>/dev/null
+            rm -f .loki/PAUSE_AT_CHECKPOINT .loki/PAUSED.md .loki/COMPLETED 2>/dev/null
             rm -f .loki/loki.pid 2>/dev/null
             rm -f .loki/session.lock 2>/dev/null
         fi
