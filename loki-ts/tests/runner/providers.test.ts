@@ -167,12 +167,40 @@ describe("codexProvider invocation", () => {
     const r = await p.invoke(makeCall({ provider: "codex", prompt: "build x" }));
     expect(r.exitCode).toBe(0);
     const argv = readFileSync(codexArgvLog, "utf8").split("\n").filter(Boolean);
-    // Note: process.argv[0] (the cli path) is NOT in argv recorded by the
-    // stub -- the stub uses "$@" which is positional args only. The contract
-    // shape we verify is: positional 1 = "exec", 2 = "--full-auto", 3 = prompt.
+    // v7.4.18: switched argv shape from --full-auto preset to the
+    // explicit flags it expands to in codex CLI v0.125.0.
+    // Stub records positional args only ("$@" excludes argv[0] cli path).
     expect(argv[0]).toBe("exec");
-    expect(argv[1]).toBe("--full-auto");
-    expect(argv[2]).toBe("build x");
+    expect(argv[1]).toBe("--ask-for-approval");
+    expect(argv[2]).toBe("never");
+    expect(argv[3]).toBe("--sandbox");
+    expect(argv[4]).toBe("danger-full-access");
+    // --output-last-message <path> is on by default; the prompt is the
+    // last positional. Verify the prompt is present somewhere after the
+    // approval/sandbox flags rather than asserting an exact index.
+    expect(argv).toContain("build x");
+    // --output-last-message defaults ON. Verify it is emitted.
+    expect(argv).toContain("--output-last-message");
+  });
+
+  it("LOKI_CODEX_OUTPUT_LAST=false disables --output-last-message (v7.4.18)", async () => {
+    process.env["LOKI_CODEX_OUTPUT_LAST"] = "false";
+    writeCodexStub({ stdout: "ok" });
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", prompt: "no-last" }));
+    delete process.env["LOKI_CODEX_OUTPUT_LAST"];
+    const argv = readFileSync(codexArgvLog, "utf8").split("\n").filter(Boolean);
+    expect(argv).not.toContain("--output-last-message");
+  });
+
+  it("LOKI_CODEX_WEB_SEARCH=true appends --search (v7.4.18)", async () => {
+    process.env["LOKI_CODEX_WEB_SEARCH"] = "true";
+    writeCodexStub({ stdout: "ok" });
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", prompt: "with web" }));
+    delete process.env["LOKI_CODEX_WEB_SEARCH"];
+    const argv = readFileSync(codexArgvLog, "utf8").split("\n").filter(Boolean);
+    expect(argv).toContain("--search");
   });
 
   it("tier=planning maps to effort=xhigh (codex.sh:128)", async () => {

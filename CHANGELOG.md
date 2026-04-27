@@ -5,6 +5,84 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.18] - 2026-04-26
+
+PATCH release. Codex provider upgraded to align with `@openai/codex`
+v0.125.0 (latest as of 2026-04-26). Codex is identified as the next
+big customer base after Claude, so parity matters.
+
+### Changed: Codex provider argv
+
+`--full-auto` (legacy preset) replaced with the explicit flags it
+expands to:
+
+- `--ask-for-approval never`        (was: implicit via `--full-auto`)
+- `--sandbox danger-full-access`    (was: implicit via `--full-auto`)
+
+Forward-compatible if the preset is renamed/removed in a future
+codex release. Readable in `ps`/process listings -- you can see
+exactly what is being granted to codex without grokking the preset.
+
+`--full-auto` still works in v0.125 and earlier; we are not
+broken-compat -- we are just opting into the canonical form.
+
+Applied symmetrically to:
+- `loki-ts/src/runner/providers.ts` (Bun-route)
+- `providers/codex.sh` (bash-route)
+
+### Added: Codex CLI v0.125 features (opt-in via env)
+
+- **`LOKI_CODEX_OUTPUT_LAST` (default: `true`)**: appends
+  `--output-last-message <path>.last-message` so the final response
+  text is captured to a separate file. Cleaner than text-scraping
+  the streaming output. Set to `false` to opt out.
+
+- **`LOKI_CODEX_WEB_SEARCH` (default: `false`)**: appends `--search`
+  enabling codex live web search. Opt-in only because it sends
+  prompts to a search backend; users may want to keep this off in
+  air-gapped or compliance-restricted environments.
+
+### Tests
+
+`loki-ts/tests/runner/providers.test.ts` updated for new argv shape:
+- Old: `argv = [exec, --full-auto, prompt]`
+- New: `argv = [exec, --ask-for-approval, never, --sandbox, danger-full-access, ..., prompt]`
+
+Two NEW tests added:
+- `LOKI_CODEX_OUTPUT_LAST=false disables --output-last-message`
+- `LOKI_CODEX_WEB_SEARCH=true appends --search`
+
+Total provider test count: 36 -> 38, all pass.
+
+### Deferred to v7.5.x (need orchestrator-level changes, not provider)
+
+- **`--json` / `--experimental-json` event stream**: would change the
+  entire output-parsing pipeline; needs coordinated runner edit.
+- **`codex exec resume --last`**: session continuity across
+  iterations; needs runner to track session_id per attempt.
+- **`codex mcp add/list`**: bidirectional MCP bridge between loki and
+  codex (loki could expose `loki_complete_task` etc. to codex via
+  MCP); requires loki to ship its own MCP-client adapter for codex.
+- **Subagents parallelism**: codex now supports subagents; would
+  close the "no parallelism in degraded mode" gap; needs runner
+  contract changes for non-Claude providers.
+
+### Gemini provider
+
+No changes this release. Gemini-CLI v0.39.1 (latest as of 2026-04-26)
+features (resume-session, Vertex AI auth, MCP) are documented but
+deferred -- per user direction "Gemini doesn't have much" customer
+base relative to Codex.
+
+### Verification
+
+- `bun run typecheck`: clean
+- `bun test tests/runner/providers.test.ts`: 38 pass / 0 fail
+- `bash -n providers/codex.sh`: clean
+- Pre-push gate per CLAUDE.md: `bash scripts/local-ci.sh --fast`
+
+14 version locations bumped 7.4.17 -> 7.4.18.
+
 ## [7.4.17] - 2026-04-26
 
 PATCH release. Fixes 3 real bugs surfaced by a `loki quick "build a

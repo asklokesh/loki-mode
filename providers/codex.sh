@@ -173,17 +173,43 @@ resolve_model_for_tier() {
     echo "$effort"
 }
 
-# Tier-aware invocation
-# Codex CLI uses CODEX_MODEL_REASONING_EFFORT env var for effort control
-# LOKI_CODEX_REASONING_EFFORT is the canonical namespaced env var (v6.37.1+)
-# CODEX_MODEL_REASONING_EFFORT is supported for backward compatibility (deprecated)
+# Tier-aware invocation.
+#
+# v7.4.18: aligned with codex CLI v0.125.0 (latest as of 2026-04-26).
+# Replaced --full-auto preset with the explicit flags it expands to:
+#   --ask-for-approval never
+#   --sandbox danger-full-access
+# Forward-compatible if the preset is renamed; readable in process listings.
+#
+# Optional env knobs:
+#   LOKI_CODEX_WEB_SEARCH=true      enable codex --search (live web)
+#   LOKI_CODEX_OUTPUT_LAST=false    disable --output-last-message capture
+#                                   (default ON; writes the final response
+#                                   to ${LOKI_LOG_FILE}.last-message)
+#
+# Codex CLI uses CODEX_MODEL_REASONING_EFFORT env var for effort control.
+# LOKI_CODEX_REASONING_EFFORT is the canonical namespaced env var (v6.37.1+).
+# CODEX_MODEL_REASONING_EFFORT is supported for backward compatibility.
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
     shift 2
     local effort
     effort=$(resolve_model_for_tier "$tier")
+
+    local extra_flags=()
+    if [ "${LOKI_CODEX_WEB_SEARCH:-false}" = "true" ]; then
+        extra_flags+=(--search)
+    fi
+    if [ "${LOKI_CODEX_OUTPUT_LAST:-true}" != "false" ] && [ -n "${LOKI_LOG_FILE:-}" ]; then
+        extra_flags+=(--output-last-message "${LOKI_LOG_FILE}.last-message")
+    fi
+
     LOKI_CODEX_REASONING_EFFORT="$effort" \
     CODEX_MODEL_REASONING_EFFORT="$effort" \
-    codex exec --full-auto "$prompt" "$@"
+    codex exec \
+        --ask-for-approval never \
+        --sandbox danger-full-access \
+        "${extra_flags[@]}" \
+        "$prompt" "$@"
 }

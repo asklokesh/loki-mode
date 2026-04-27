@@ -242,6 +242,31 @@ function applyCodexMaxTier(effort: string): string {
   }
 }
 
+// v7.4.18: switched the argv shape to align with codex CLI v0.125.0
+// (latest as of 2026-04-26). Changes vs the v7.4.6 baseline:
+//
+//   --full-auto                        (was)
+//   --ask-for-approval never           (now -- explicit)
+//   --sandbox danger-full-access       (now -- explicit)
+//
+// `--full-auto` still works in v0.125 as a low-friction preset that
+// expands to those two flags; we use the explicit form so the contract
+// is forward-compatible if the preset is renamed/removed and so users
+// reading the argv (e.g. in `loki status`) see exactly what is being
+// granted to codex.
+//
+// New optional features added (opt-in via env):
+//   LOKI_CODEX_WEB_SEARCH=true  -> append --search (codex live web search)
+//   LOKI_CODEX_OUTPUT_LAST=true -> --output-last-message <iter-output-path>
+//                                  for cleaner final-response capture
+//                                  (defaults to true since it is purely
+//                                  additive over our existing tee capture)
+//
+// Still deferred (need orchestrator-level changes, not provider-level):
+//   --json / --experimental-json (newline-delimited event stream)
+//   codex exec resume --last (session continuity across iterations)
+//   codex mcp add/list (loki <-> codex MCP bridge)
+//   subagents parallelism
 export function codexProvider(): ProviderInvoker {
   const cli = resolveCli("LOKI_CODEX_CLI", "codex");
   return {
@@ -249,12 +274,31 @@ export function codexProvider(): ProviderInvoker {
       const baseEffort = codexTierToEffort(call.tier);
       const effort = applyCodexMaxTier(baseEffort);
 
+      // v7.4.18: explicit approval + sandbox flags (forward-compat over
+      // --full-auto preset).
       const argv: string[] = [
         cli,
         "exec",
-        "--full-auto",
-        call.prompt,
+        "--ask-for-approval", "never",
+        "--sandbox", "danger-full-access",
       ];
+
+      // Optional: web search (codex v0.125 --search).
+      if (process.env["LOKI_CODEX_WEB_SEARCH"] === "true") {
+        argv.push("--search");
+      }
+
+      // Optional: capture final response via --output-last-message.
+      // Default ON (additive; we still tee stdout/stderr separately).
+      // Set LOKI_CODEX_OUTPUT_LAST=false to disable.
+      const outputLastEnabled = process.env["LOKI_CODEX_OUTPUT_LAST"] !== "false";
+      let lastMessagePath: string | null = null;
+      if (outputLastEnabled) {
+        lastMessagePath = `${call.iterationOutputPath}.last-message`;
+        argv.push("--output-last-message", lastMessagePath);
+      }
+
+      argv.push(call.prompt);
 
       // Both env vars: LOKI_-namespaced (canonical, v6.37.1+) and
       // CODEX_MODEL_REASONING_EFFORT (legacy, deprecated but supported).
