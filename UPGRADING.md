@@ -6,6 +6,46 @@ The Bash runtime under `autonomy/` remains the source of truth through Phase 5. 
 
 ---
 
+## Running parallel BMAD stories
+
+By default Loki uses `.loki/` in the current working directory as a singleton state directory. Two `loki start` invocations in the same repo will collide on `.loki/loki.pid`, `.loki/STATUS.txt`, and the queue files.
+
+To run multiple stories in parallel, give each session its own state directory via `LOKI_DIR`:
+
+```bash
+# Terminal 1
+LOKI_DIR=.loki-story-A loki start prd-story-A.md
+
+# Terminal 2
+LOKI_DIR=.loki-story-B loki start prd-story-B.md
+```
+
+Each `LOKI_DIR` gets its own pid lock, queue, checkpoints, memory, and event stream. The dashboard reads whichever `LOKI_DIR` you point it at via the same env var.
+
+For stronger isolation (separate working trees as well as state), pair `LOKI_DIR` with `git worktree add` so each session also has its own checkout. See `skills/parallel-workflows.md` for the worktree pattern.
+
+---
+
+## BMAD per-epic / per-story scope (v7.4.19+)
+
+When a BMAD plan contains many epics or stories, Loki injects the full tree into every iteration prompt by default. To narrow the working scope to a single epic or story, set `LOKI_BMAD_STORY_ID`:
+
+```bash
+# Match by story id, key, name, story_id, or epic_id (case-insensitive substring)
+LOKI_BMAD_STORY_ID=epic-2 loki start prd.md
+LOKI_BMAD_STORY_ID="story-3.1" loki start prd.md
+```
+
+Behavior:
+
+- The match is a case-insensitive substring against `id`, `key`, `name`, `story_id`, and `epic_id` on every node in the BMAD tree (epics, stories, tasks, items, children).
+- If a node matches, that subtree is kept in the prompt and its siblings are pruned.
+- If nothing matches, Loki falls back to the full tree rather than silently emptying the plan, so a typo in the env var never hides all work.
+
+This pairs with `LOKI_DIR` for running independent BMAD stories in parallel from the same repo.
+
+---
+
 ## From v7.2.0 to v7.3.0
 
 ### What changed

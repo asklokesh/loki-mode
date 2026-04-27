@@ -5,6 +5,63 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.19] - 2026-04-26
+
+PATCH release. Two Discord-reported workflow gaps closed: parallel
+BMAD stories and per-epic/per-story BMAD scope. No runtime behavior
+changes outside the documented env vars.
+
+### Added: BMAD per-epic / per-story scope filter
+
+New env var `LOKI_BMAD_STORY_ID` narrows the BMAD context injected
+into each iteration prompt to a single epic, story, or task subtree.
+
+- Case-insensitive substring match against `id`, `key`, `name`,
+  `story_id`, and `epic_id` on every node in the BMAD tree.
+- Walks `epics`, `stories`, `tasks`, `items`, and `children` arrays
+  so it works with both flat and deeply nested BMAD plans.
+- If the filter matches nothing, Loki falls back to the full tree
+  rather than silently injecting an empty plan -- a typo in the env
+  var never hides all the work.
+
+Implemented in `loki-ts/src/runner/build_prompt.ts`:
+- `filterBmadTreeByStory(tree, storyId)` (new)
+- `buildBmadContext()` and `formatBmadTasks()` honor the filter
+
+Existing 551 Bun tests still pass after the change.
+
+### Documented: parallel BMAD stories via `LOKI_DIR`
+
+`UPGRADING.md` now documents the supported pattern for running two
+or more BMAD stories in parallel from the same repo. Each session
+needs its own state directory:
+
+```bash
+LOKI_DIR=.loki-story-A loki start prd-story-A.md
+LOKI_DIR=.loki-story-B loki start prd-story-B.md
+```
+
+Each `LOKI_DIR` gets its own pid lock, queue, checkpoints, memory,
+and event stream. For stronger isolation, pair `LOKI_DIR` with
+`git worktree add`.
+
+This is documentation only -- the underlying `LOKI_DIR` plumbing
+already worked; users just had no canonical place to find it.
+
+### Verified locally before push
+
+- `bun test` -> 551 pass / 0 fail
+- 14 version locations bumped in this commit
+- `tests/test-cli-commands.sh` not touched (no CLI surface change)
+
+### NOT tested in this release
+
+- Two real concurrent `loki start` runs in the same repo with
+  different `LOKI_DIR` values. Documentation mirrors the existing
+  state-directory contract; integration test deferred.
+- BMAD filter against a real published BMAD plan (only unit-tested
+  against synthetic trees). Manual smoke test deferred.
+
 ## [7.4.18] - 2026-04-26
 
 PATCH release. Codex provider upgraded to align with `@openai/codex`

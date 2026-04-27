@@ -575,15 +575,24 @@ function buildBmadContext(cwd: string): string {
   const tasksPath = resolve(cwd, ".loki/bmad-tasks.json");
   const validPath = resolve(cwd, ".loki/bmad-validation.md");
 
-  let bmad =
-    "BMAD_CONTEXT: This project uses BMAD Method structured artifacts. Architecture decisions and epic/story breakdown are provided below.";
+  // v7.4.19: per-story scope. When LOKI_BMAD_STORY_ID is set, only the
+  // matching epic/story is injected into the prompt; the rest of the
+  // BMAD task tree is omitted to keep the agent focused on that story
+  // only. Use an empty string or unset to load the full tree (default).
+  // Discord ask: "BMAD support is for the whole PRD and not specific
+  // epic or story" -- this is the fix.
+  const storyFilter = process.env["LOKI_BMAD_STORY_ID"] ?? "";
+
+  let bmad = storyFilter.length > 0
+    ? `BMAD_CONTEXT (scoped to story=${storyFilter}): This project uses BMAD Method structured artifacts. Only the requested epic/story is shown below; sibling stories are intentionally hidden so the agent stays focused on this scope.`
+    : "BMAD_CONTEXT: This project uses BMAD Method structured artifacts. Architecture decisions and epic/story breakdown are provided below.";
 
   if (existsSync(archPath)) {
     const arch = readBytesSafe(archPath, 16000) ?? "";
     if (arch.length > 0) bmad += ` ARCHITECTURE DECISIONS: ${arch}`;
   }
   if (existsSync(tasksPath)) {
-    const tasks = formatBmadTasks(tasksPath);
+    const tasks = formatBmadTasks(tasksPath, storyFilter);
     if (tasks.length > 0) bmad += ` EPIC/STORY TASKS (from BMAD): ${tasks}`;
   }
   if (existsSync(validPath)) {
@@ -593,12 +602,22 @@ function buildBmadContext(cwd: string): string {
   return bmad;
 }
 
-function formatBmadTasks(path: string): string {
+function formatBmadTasks(path: string, storyFilter: string = ""): string {
   const raw = readFileSafe(path);
   if (raw === null) return "";
   try {
     const data: unknown = JSON.parse(raw);
     let working: unknown = data;
+
+    // v7.4.19: when storyFilter is set, walk the structure and keep only
+    // the matching story (or epic). Matches against object id/key/name
+    // fields. Falls through to full tree if no match (so a typo doesn't
+    // silently hide everything).
+    if (storyFilter.length > 0) {
+      const filtered = filterBmadTreeByStory(working, storyFilter);
+      if (filtered !== null) working = filtered;
+    }
+
     // Bash uses `json.dumps(data, indent=None)` which emits Python's default
     // separators `(', ', ': ')` -- NOT JS JSON.stringify's compact `,` `:`.
     let out = pythonJsonDumps(working);
@@ -612,6 +631,50 @@ function formatBmadTasks(path: string): string {
   } catch {
     return "";
   }
+}
+
+// Walk the BMAD task tree and keep only entries whose `id`, `key`, or `name`
+// equals the storyFilter (case-insensitive substring match). Returns null
+// if no match is found anywhere -- caller falls back to the full tree.
+function filterBmadTreeByStory(node: unknown, storyFilter: string): unknown {
+  if (storyFilter.length === 0) return node;
+  const want = storyFilter.toLowerCase();
+
+  const matches = (obj: Record<string, unknown>): boolean => {
+    for (const k of ["id", "key", "name", "story_id", "epic_id"]) {
+      const v = obj[k];
+      if (typeof v === "string" && v.toLowerCase().includes(want)) return true;
+    }
+    return false;
+  };
+
+  if (Array.isArray(node)) {
+    const kept: unknown[] = [];
+    for (const item of node) {
+      if (item && typeof item === "object" && matches(item as Record<string, unknown>)) {
+        kept.push(item);
+      } else if (item && typeof item === "object") {
+        const sub = filterBmadTreeByStory(item, storyFilter);
+        if (sub !== null) kept.push(sub);
+      }
+    }
+    return kept.length > 0 ? kept : null;
+  }
+
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>;
+    if (matches(obj)) return obj;
+    // Walk known children.
+    for (const childKey of ["epics", "stories", "tasks", "items", "children"]) {
+      const child = obj[childKey];
+      if (Array.isArray(child)) {
+        const sub = filterBmadTreeByStory(child, storyFilter);
+        if (sub !== null) return { ...obj, [childKey]: sub };
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
