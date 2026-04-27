@@ -35,12 +35,18 @@
 
 ## Get Started in 30 Seconds
 
+**Recommended (Bun, fastest):**
+
 ```bash
-npm install -g loki-mode
-loki doctor                        # verify environment
+# Install Bun once (skip if you already have it)
+curl -fsSL https://bun.sh/install | bash      # macOS / Linux
+# or: brew install oven-sh/bun/bun
+
+bun install -g loki-mode
+loki doctor                                   # verify environment
 loki init my-app --template simple-todo-app
 cd my-app
-loki start prd.md                  # autonomous build starts
+loki start prd.md                             # autonomous build starts
 ```
 
 Or skip scaffolding and go straight to a quick task:
@@ -48,6 +54,27 @@ Or skip scaffolding and go straight to a quick task:
 ```bash
 loki quick "build a landing page with a signup form"
 ```
+
+**Other install methods (all work, all keep working):**
+
+| Method | Command | Notes |
+|--------|---------|-------|
+| **Bun (recommended)** | `bun install -g loki-mode` | Fastest. v8 will be Bun-only. |
+| **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
+| **Docker** | `docker pull asklokesh/loki-mode && docker run --rm asklokesh/loki-mode start prd.md` | Bun pre-installed in image |
+| **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
+
+**Upgrading:**
+
+```bash
+loki self-update                  # upgrade in place via current manager
+loki self-update --to bun         # switch from npm/brew to Bun
+loki self-update --check          # show current install path + manager
+```
+
+`loki self-update` auto-detects which package manager installed loki and runs the right upgrade. If you installed via npm and want to switch to Bun (recommended for v8.0.0 forward-compat), `loki self-update --to bun` does the migration in one command (installs via Bun first, then uninstalls the npm copy).
+
+See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 
 ---
 

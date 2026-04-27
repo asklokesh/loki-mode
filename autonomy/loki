@@ -457,6 +457,7 @@ show_help() {
     echo "  reset [target]   Reset session state (all|retries|failed)"
     echo "  doctor [--json]  Check system prerequisites and skill symlinks"
     echo "  setup-skill      Create skill symlinks for all providers"
+    echo "  self-update      Upgrade loki via current manager (use --to bun|npm|brew to switch)"
     echo "  watchdog [cmd]   Process health monitoring (status|help)"
     echo "  telemetry [cmd]  OpenTelemetry management (status|enable|disable)"
     echo "  worktree [cmd]   Parallel worktree management (list|merge|clean|status)"
@@ -6230,6 +6231,198 @@ cmd_setup_skill() {
     return 0
 }
 
+# v7.4.14: cmd_self_update -- one upgrade command for everyone.
+#
+# Auto-detects which package manager installed `loki` (npm, bun, brew) by
+# resolving the binary path, and runs the right upgrade command.
+#
+# `--to <mgr>` switches managers (installs via the new one, then uninstalls
+# the old). Useful for npm users wanting to migrate to Bun (the v8.0.0
+# direction).
+#
+# Usage:
+#   loki self-update                Upgrade in-place via current manager
+#   loki self-update --to bun       Switch from current to Bun
+#   loki self-update --to npm       Switch from current to npm
+#   loki self-update --to brew      Switch from current to Homebrew
+#   loki self-update --check        Print detection result + exit 0
+#
+cmd_self_update() {
+    local target_manager=""
+    local check_only=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --to)
+                if [ -z "${2:-}" ]; then
+                    echo -e "${RED}--to requires an argument: bun|npm|brew${NC}" >&2
+                    return 1
+                fi
+                target_manager="$2"
+                shift 2
+                ;;
+            --check)
+                check_only=true
+                shift
+                ;;
+            --help|-h)
+                cat <<'EOF'
+loki self-update -- detect manager and upgrade in place, or switch managers
+
+Usage:
+  loki self-update                    Upgrade via current manager
+  loki self-update --to bun           Switch to Bun (recommended for v8)
+  loki self-update --to npm           Switch to npm
+  loki self-update --to brew          Switch to Homebrew
+  loki self-update --check            Print detected manager and exit
+  loki self-update --help             Show this help
+
+Auto-detection looks at the resolved path of the `loki` binary:
+  ~/.bun/bin/loki                  -> bun
+  /opt/homebrew/Cellar/loki-mode   -> brew (also /usr/local/Cellar)
+  npm prefix + /bin/loki           -> npm
+  anywhere else                    -> unknown
+
+Switching managers installs via the new one first (so a failed install
+does not leave you with no loki), then uninstalls the old one.
+EOF
+                return 0
+                ;;
+            *)
+                echo -e "${RED}Unknown argument: $1${NC}" >&2
+                echo "Run 'loki self-update --help' for usage." >&2
+                return 1
+                ;;
+        esac
+    done
+
+    # Detect current install path
+    local resolved current_mgr=""
+    if ! resolved=$(command -v loki 2>/dev/null); then
+        echo -e "${RED}loki is not on PATH. Cannot self-update.${NC}" >&2
+        return 1
+    fi
+
+    # Follow symlinks to find the real binary location
+    local resolved_real
+    if command -v realpath >/dev/null 2>&1; then
+        resolved_real=$(realpath "$resolved" 2>/dev/null || echo "$resolved")
+    else
+        resolved_real="$resolved"
+    fi
+
+    case "$resolved_real" in
+        */.bun/bin/*|*/.bun/install/global/*)
+            current_mgr="bun"
+            ;;
+        */Cellar/*|*/homebrew/Cellar/*|*/linuxbrew/Cellar/*)
+            current_mgr="brew"
+            ;;
+        *)
+            # Try matching against npm global prefix
+            if command -v npm >/dev/null 2>&1; then
+                local npm_prefix
+                npm_prefix=$(npm prefix -g 2>/dev/null || true)
+                if [ -n "$npm_prefix" ] && [[ "$resolved_real" == "$npm_prefix"/* ]]; then
+                    current_mgr="npm"
+                fi
+            fi
+            ;;
+    esac
+
+    [ -z "$current_mgr" ] && current_mgr="unknown"
+
+    if [ "$check_only" = "true" ]; then
+        echo "loki binary:    $resolved"
+        echo "resolved path:  $resolved_real"
+        echo "current mgr:    $current_mgr"
+        return 0
+    fi
+
+    # Default target: same as current (in-place upgrade)
+    [ -z "$target_manager" ] && target_manager="$current_mgr"
+
+    echo -e "${BOLD}loki self-update${NC}"
+    echo "  current: $current_mgr ($resolved_real)"
+    echo "  target:  $target_manager"
+    echo
+
+    # Same-manager upgrade
+    if [ "$target_manager" = "$current_mgr" ]; then
+        case "$current_mgr" in
+            npm)
+                echo "Running: npm install -g loki-mode@latest"
+                npm install -g loki-mode@latest
+                ;;
+            bun)
+                echo "Running: bun update -g loki-mode (falling back to install if not present)"
+                bun update -g loki-mode 2>/dev/null || bun install -g loki-mode@latest
+                ;;
+            brew)
+                echo "Running: brew upgrade loki-mode"
+                brew upgrade loki-mode
+                ;;
+            unknown)
+                echo -e "${RED}Cannot detect package manager from path: $resolved_real${NC}" >&2
+                echo "Run 'loki self-update --to bun' (or npm/brew) to install fresh via that manager." >&2
+                return 1
+                ;;
+        esac
+        local rc=$?
+        if [ "$rc" -eq 0 ]; then
+            echo
+            echo -e "${GREEN}Upgrade complete.${NC} Verify with: loki version"
+        fi
+        return "$rc"
+    fi
+
+    # Cross-manager switch: install new, then uninstall old
+    case "$target_manager" in
+        bun)
+            if ! command -v bun >/dev/null 2>&1; then
+                echo -e "${RED}bun is not installed.${NC} Install it first:" >&2
+                echo "  brew install oven-sh/bun/bun  # macOS via Homebrew" >&2
+                echo "  curl -fsSL https://bun.sh/install | bash  # any platform" >&2
+                return 1
+            fi
+            echo "Installing via Bun: bun install -g loki-mode@latest"
+            bun install -g loki-mode@latest || return 1
+            ;;
+        npm)
+            command -v npm >/dev/null 2>&1 || { echo -e "${RED}npm not found${NC}" >&2; return 1; }
+            echo "Installing via npm: npm install -g loki-mode@latest"
+            npm install -g loki-mode@latest || return 1
+            ;;
+        brew)
+            command -v brew >/dev/null 2>&1 || { echo -e "${RED}brew not found${NC}" >&2; return 1; }
+            echo "Tapping + installing via Homebrew"
+            brew tap asklokesh/tap 2>/dev/null || true
+            brew install loki-mode || brew upgrade loki-mode || return 1
+            ;;
+        *)
+            echo -e "${RED}Unknown target manager: $target_manager${NC} (use bun, npm, or brew)" >&2
+            return 1
+            ;;
+    esac
+
+    # New install succeeded -- uninstall old. Best-effort; failures are
+    # non-fatal because the user already has the new binary working.
+    if [ "$current_mgr" != "unknown" ]; then
+        echo
+        echo "Removing old install via $current_mgr..."
+        case "$current_mgr" in
+            npm) npm uninstall -g loki-mode 2>/dev/null || true ;;
+            bun) bun remove -g loki-mode 2>/dev/null || true ;;
+            brew) brew uninstall loki-mode 2>/dev/null || true ;;
+        esac
+    fi
+
+    echo
+    echo -e "${GREEN}Switched from $current_mgr to $target_manager.${NC}"
+    echo "New binary: $(command -v loki 2>/dev/null || echo 'restart your shell to pick up new PATH')"
+    return 0
+}
+
 # Check system prerequisites
 cmd_doctor() {
     local json_output=false
@@ -11656,6 +11849,9 @@ main() {
             ;;
         setup-skill)
             cmd_setup_skill "$@"
+            ;;
+        self-update|self_update|update)
+            cmd_self_update "$@"
             ;;
         watchdog)
             cmd_watchdog "$@"

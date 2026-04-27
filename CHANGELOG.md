@@ -5,6 +5,62 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.14] - 2026-04-26
+
+PATCH release. Ships the deferred items v7.4.12 promised "v7.4.13":
+the `loki self-update` command + a Bun-first README rewrite.
+
+### Added
+
+- **`loki self-update`** -- one upgrade command for everyone.
+  Auto-detects which package manager installed loki by resolving the
+  `loki` binary path: `~/.bun/bin/...` -> bun;
+  `*/Cellar/loki-mode/...` -> brew; `npm prefix/bin/loki` -> npm.
+  Then runs the right upgrade command without you having to remember
+  which one applies.
+
+  - `loki self-update`            -- upgrade in place via current manager
+  - `loki self-update --to bun`   -- switch to Bun (recommended for v8)
+  - `loki self-update --to npm`   -- switch to npm
+  - `loki self-update --to brew`  -- switch to Homebrew
+  - `loki self-update --check`    -- print detected manager and exit
+  - `loki self-update --help`     -- show usage
+
+  Cross-manager switches install via the new manager FIRST (so a
+  failed install does not leave you with no loki), then uninstall
+  the old one (best-effort; failures non-fatal because you already
+  have the new binary).
+
+  Combines what was originally planned as TWO commands (`loki
+  self-update` for in-place + a separate `loki migrate` for npm->Bun)
+  into one. `loki migrate` is taken (codebase migration tool); the
+  cross-manager switch is now `loki self-update --to <mgr>`.
+
+  Aliases: `loki update` and `loki self_update` both work.
+
+### Changed
+
+- **README install section rewritten Bun-first.** Quick Start now
+  leads with `bun install -g loki-mode`. Other methods (Homebrew,
+  Docker, npm) follow in a comparison table. Adds `loki self-update`
+  as the canonical upgrade path. Sets the v8.0.0 direction
+  explicitly: "v8 will be Bun-only".
+  npm install still works without Bun (bash fallback), still gets
+  feature parity, still works for everyone -- just no longer the
+  recommended default.
+
+### Verification
+
+- `bash -n autonomy/loki`: clean
+- `bash bin/loki self-update --check`: detects current manager
+  correctly (verified bun: `~/.bun/install/global/...`, brew:
+  Cellar paths)
+- `bash bin/loki self-update --help`: prints usage
+- `bash scripts/local-ci.sh`: per CLAUDE.md "Local CI Before Every
+  Push" gate; results below
+
+14 version locations bumped 7.4.13 -> 7.4.14.
+
 ## [7.4.13] - 2026-04-26
 
 PATCH release. Fixes a real production bug found in the v7.4.12
