@@ -6296,34 +6296,42 @@ EOF
         esac
     done
 
-    # Detect current install path
-    local resolved current_mgr=""
-    if ! resolved=$(command -v loki 2>/dev/null); then
-        echo -e "${RED}loki is not on PATH. Cannot self-update.${NC}" >&2
-        return 1
-    fi
-
-    # Follow symlinks to find the real binary location
-    local resolved_real
+    # Detect current install path. v7.4.15 fix: use BASH_SOURCE (the
+    # running script's own path) instead of `command -v loki`. The latter
+    # depended on the caller's PATH, which fails when the user invokes
+    # loki via absolute path or a symlink directory that isn't on PATH.
+    # BASH_SOURCE always resolves to the actual installed location.
+    local current_mgr=""
+    local script_real pkg_dir
     if command -v realpath >/dev/null 2>&1; then
-        resolved_real=$(realpath "$resolved" 2>/dev/null || echo "$resolved")
+        script_real=$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
     else
-        resolved_real="$resolved"
+        script_real="${BASH_SOURCE[0]}"
     fi
+    # autonomy/loki sits at <pkg_dir>/autonomy/loki -- walk two up to get pkg_dir.
+    pkg_dir=$(dirname "$(dirname "$script_real")")
 
-    case "$resolved_real" in
-        */.bun/bin/*|*/.bun/install/global/*)
+    # Also resolve the public binary path (what the user types). We try
+    # `command -v loki` but tolerate failure -- $pkg_dir is sufficient.
+    local resolved=""
+    resolved=$(command -v loki 2>/dev/null || echo "${BASH_SOURCE[0]}")
+
+    case "$pkg_dir" in
+        */.bun/install/global/*|*/.bun/*)
             current_mgr="bun"
             ;;
-        */Cellar/*|*/homebrew/Cellar/*|*/linuxbrew/Cellar/*)
+        */Cellar/loki-mode/*|*/homebrew/Cellar/loki-mode/*|*/linuxbrew/Cellar/loki-mode/*)
             current_mgr="brew"
             ;;
+        */node_modules/loki-mode*|*/lib/node_modules/loki-mode*)
+            current_mgr="npm"
+            ;;
         *)
-            # Try matching against npm global prefix
+            # Last resort: ask npm if it knows about a global loki-mode
             if command -v npm >/dev/null 2>&1; then
-                local npm_prefix
-                npm_prefix=$(npm prefix -g 2>/dev/null || true)
-                if [ -n "$npm_prefix" ] && [[ "$resolved_real" == "$npm_prefix"/* ]]; then
+                local npm_root
+                npm_root=$(npm root -g 2>/dev/null || true)
+                if [ -n "$npm_root" ] && [[ "$pkg_dir" == "$npm_root"/* ]]; then
                     current_mgr="npm"
                 fi
             fi
@@ -6334,7 +6342,7 @@ EOF
 
     if [ "$check_only" = "true" ]; then
         echo "loki binary:    $resolved"
-        echo "resolved path:  $resolved_real"
+        echo "package dir:    $pkg_dir"
         echo "current mgr:    $current_mgr"
         return 0
     fi
@@ -6343,7 +6351,7 @@ EOF
     [ -z "$target_manager" ] && target_manager="$current_mgr"
 
     echo -e "${BOLD}loki self-update${NC}"
-    echo "  current: $current_mgr ($resolved_real)"
+    echo "  current: $current_mgr ($pkg_dir)"
     echo "  target:  $target_manager"
     echo
 
@@ -6363,8 +6371,16 @@ EOF
                 brew upgrade loki-mode
                 ;;
             unknown)
-                echo -e "${RED}Cannot detect package manager from path: $resolved_real${NC}" >&2
-                echo "Run 'loki self-update --to bun' (or npm/brew) to install fresh via that manager." >&2
+                echo -e "${YELLOW}Cannot auto-detect package manager from: $pkg_dir${NC}" >&2
+                if [ -d "$pkg_dir/.git" ]; then
+                    echo "This looks like a git clone. To upgrade:" >&2
+                    echo "  cd $pkg_dir && git pull && (cd loki-ts && bun install && bun run build)" >&2
+                else
+                    echo "Specify the target manager explicitly:" >&2
+                    echo "  loki self-update --to bun" >&2
+                    echo "  loki self-update --to npm" >&2
+                    echo "  loki self-update --to brew" >&2
+                fi
                 return 1
                 ;;
         esac

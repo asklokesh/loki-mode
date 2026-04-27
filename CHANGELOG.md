@@ -5,6 +5,47 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.15] - 2026-04-26
+
+PATCH release. Fixes a real bug found in the v7.4.14 post-release
+smoke test (the "monitor/test/fix/release/repeat" loop, iteration 2).
+
+### Fixed
+
+- **`loki self-update --check` failed when loki was invoked via
+  absolute path or via a symlink directory not on PATH.** The v7.4.14
+  detection logic used `command -v loki` which searches the caller's
+  PATH; users running `~/.bun/bin/loki self-update` (the literal path
+  they just typed) saw "loki is not on PATH. Cannot self-update."
+  even though they were obviously running loki.
+
+  v7.4.15 uses `${BASH_SOURCE[0]}` (the running script's actual path)
+  to derive the package install dir, then matches that against
+  manager-specific path patterns. PATH no longer matters for
+  detection; whatever path you used to invoke loki, self-update
+  works.
+
+  Verified against three scenarios:
+    - Bun-installed via `~/.bun/install/global/...`: detects "bun"
+    - Source-tree clone: detects "unknown" + suggests `git pull`
+    - Direct invocation by absolute path: works (was broken in v7.4.14)
+
+- **Better "unknown manager" error message.** Old message was
+  "Cannot detect package manager"; new one detects whether the
+  install dir contains `.git` (= source clone) and suggests
+  `git pull` + rebuild instead of pointing at npm/bun/brew which
+  don't apply.
+
+### Process honesty note
+
+This bug was found by the loop's iteration-2 smoke test of v7.4.14,
+not by a user report. The fix shipped within minutes of the bug
+discovery. local-ci pre-push gate caught nothing (the parity matrix
+doesn't exercise self-update edge cases yet); a self-update e2e test
+is queued for v7.5.x.
+
+14 version locations bumped 7.4.14 -> 7.4.15.
+
 ## [7.4.14] - 2026-04-26
 
 PATCH release. Ships the deferred items v7.4.12 promised "v7.4.13":
