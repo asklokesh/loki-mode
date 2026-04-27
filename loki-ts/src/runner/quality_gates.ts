@@ -415,10 +415,58 @@ export type SelectionResult = {
   pool_size: number;
 };
 
-export function selectReviewers(diff: string, files: string): SelectionResult {
+// v7.4.20: gate legacy-healing-auditor on actual healing-mode signals.
+// skills/quality-gates.md:21 documents it as conditional ("triggered when
+// LOKI_HEAL_MODE=true or .loki/healing/friction-map.json exists"), but the
+// pre-v7.4.20 code unconditionally included it in the keyword pool. Common
+// tokens like "refactor" or "adapter" routinely appear in greenfield diffs
+// and the auditor would BLOCK on missing characterization tests / missing
+// adapters that the project never agreed to maintain. Observed in the
+// agentbudget run where it pinned 9 of 10 iterations to a forced PAUSE.
+export function isHealingActive(cwd: string, diff?: string): boolean {
+  if (process.env.LOKI_HEAL_MODE === "true" || process.env.LOKI_HEAL_MODE === "1") {
+    return true;
+  }
+  const healingDir = join(cwd, ".loki", "healing");
+  const frictionMap = join(healingDir, "friction-map.json");
+  if (existsSync(frictionMap)) {
+    if (!diff) return true;
+    try {
+      const raw = readFileSync(frictionMap, "utf8");
+      const parsed = JSON.parse(raw) as { entries?: Array<{ file?: string }> };
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      const lower = diff.toLowerCase();
+      for (const e of entries) {
+        const f = (e.file ?? "").toLowerCase().trim();
+        if (f && lower.includes(f)) return true;
+      }
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type SelectReviewersOpts = {
+  healingActive?: boolean;
+};
+
+export function selectReviewers(
+  diff: string,
+  files: string,
+  opts: SelectReviewersOpts = {},
+): SelectionResult {
+  const healingActive = opts.healingActive === true;
+  const pool: Record<string, Specialist> = {};
+  for (const [name, spec] of Object.entries(SPECIALISTS)) {
+    if (name === "legacy-healing-auditor" && !healingActive) continue;
+    pool[name] = spec;
+  }
+
   const search = `${diff} ${files}`.toLowerCase();
   const scores: Record<string, number> = {};
-  for (const [name, spec] of Object.entries(SPECIALISTS)) {
+  for (const [name, spec] of Object.entries(pool)) {
     let s = 0;
     for (const kw of spec.keywords) if (search.includes(kw)) s += 1;
     scores[name] = s;
@@ -429,13 +477,13 @@ export function selectReviewers(diff: string, files: string): SelectionResult {
   if (allZero) {
     selected = ["security-sentinel", "test-coverage-auditor"];
   } else {
-    selected = Object.keys(SPECIALISTS)
+    selected = Object.keys(pool)
       .slice()
       .sort((a, b) => {
         const sa = scores[a] ?? 0;
         const sb = scores[b] ?? 0;
         if (sb !== sa) return sb - sa;
-        return SPECIALISTS[a]!.priority - SPECIALISTS[b]!.priority;
+        return pool[a]!.priority - pool[b]!.priority;
       })
       .slice(0, 2);
   }
@@ -443,12 +491,12 @@ export function selectReviewers(diff: string, files: string): SelectionResult {
   const reviewers: Reviewer[] = [
     ARCHITECTURE_STRATEGIST,
     ...selected.map((name) => {
-      const spec = SPECIALISTS[name]!;
+      const spec = pool[name]!;
       return { name, focus: spec.focus, checks: spec.checks };
     }),
   ];
 
-  return { reviewers, scores, pool_size: Object.keys(SPECIALISTS).length };
+  return { reviewers, scores, pool_size: Object.keys(pool).length };
 }
 
 // Port of the BUILD_PROMPT block at autonomy/run.sh:6486-6505.
@@ -571,7 +619,9 @@ export async function runCodeReview(
   writeFileSync(join(reviewDir, "diff.txt"), diff);
   writeFileSync(join(reviewDir, "files.txt"), files);
 
-  const selection = selectReviewers(diff, files);
+  const selection = selectReviewers(diff, files, {
+    healingActive: isHealingActive(cwd, diff),
+  });
   atomicWrite(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
 
   // Dispatch all reviewers in parallel via Promise.all (parity with the bash

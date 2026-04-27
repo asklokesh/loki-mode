@@ -6331,6 +6331,15 @@ MANAGED_SELECTION
 
     # Select specialists via keyword scoring (python3 reads files, not env vars)
     # Loads from agents/types.json when available, falls back to hardcoded pool (v6.7.0)
+    # v7.4.20: gate legacy-healing-auditor on healing-mode signals to match
+    # the documented contract in skills/quality-gates.md (Gate 10).
+    local healing_active="false"
+    if [ "${LOKI_HEAL_MODE:-}" = "true" ] || [ "${LOKI_HEAL_MODE:-}" = "1" ]; then
+        healing_active="true"
+    elif [ -f "${PROJECT_DIR}/.loki/healing/friction-map.json" ]; then
+        healing_active="true"
+    fi
+    export LOKI_REVIEW_HEALING_ACTIVE="$healing_active"
     export LOKI_REVIEW_DIFF_FILE="$diff_file"
     export LOKI_REVIEW_FILES_FILE="$files_file"
     export LOKI_AGENTS_TYPES_FILE="${PROJECT_DIR}/agents/types.json"
@@ -6418,6 +6427,16 @@ if files_path and os.path.exists(files_path):
 
 search_text = diff_text + " " + files_text
 
+# v7.4.20: gate legacy-healing-auditor on healing-mode signals to match
+# skills/quality-gates.md (Gate 10) which documents it as conditional. The
+# auditor BLOCKs on missing characterization tests / missing adapters, which
+# is a contract a greenfield project never agreed to maintain. agentbudget
+# regression: the auditor pinned 9 of 10 iterations to forced PAUSE because
+# common tokens like "refactor"/"adapter" landed it in the keyword pool.
+healing_active = os.environ.get("LOKI_REVIEW_HEALING_ACTIVE", "false") == "true"
+if not healing_active and "legacy-healing-auditor" in SPECIALISTS:
+    del SPECIALISTS["legacy-healing-auditor"]
+
 # Score each specialist by keyword matches
 scores = {}
 for name, spec in SPECIALISTS.items():
@@ -6455,7 +6474,7 @@ result = {
 print(json.dumps(result))
 SPECIALIST_SELECT
     )
-    unset LOKI_REVIEW_DIFF_FILE LOKI_REVIEW_FILES_FILE LOKI_AGENTS_TYPES_FILE
+    unset LOKI_REVIEW_DIFF_FILE LOKI_REVIEW_FILES_FILE LOKI_AGENTS_TYPES_FILE LOKI_REVIEW_HEALING_ACTIVE
 
     if [ -z "$selected_specialists" ]; then
         log_error "Code review: Specialist selection failed"

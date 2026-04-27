@@ -26,6 +26,7 @@ import {
   runStaticAnalysis,
   runTestCoverage,
   selectReviewers,
+  isHealingActive,
   trackGateFailure,
 } from "../../src/runner/quality_gates.ts";
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
@@ -569,7 +570,66 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
       "security-sentinel",
       "test-coverage-auditor",
     ]);
+    // v7.4.20: legacy-healing-auditor is excluded from the default pool
+    // unless healing mode is active; documented in skills/quality-gates.md.
+    expect(sel.pool_size).toBe(4);
+  });
+
+  it("excludes legacy-healing-auditor by default even when 'refactor' or 'adapter' appears in diff", () => {
+    // agentbudget regression: common tokens like "refactor"/"adapter" used to
+    // trigger the auditor on greenfield projects, BLOCKing iterations on
+    // missing characterization tests the project never agreed to maintain.
+    const diff =
+      "+ // refactor: extract the storage adapter\n+ class StorageAdapter { upload() {} }\n";
+    const files = "src/storage/adapter.ts\n";
+    const sel = selectReviewers(diff, files);
+    const names = sel.reviewers.map((r) => r.name);
+    expect(names).not.toContain("legacy-healing-auditor");
+    expect(sel.pool_size).toBe(4);
+  });
+
+  it("includes legacy-healing-auditor when healingActive=true and keywords match", () => {
+    const diff =
+      "+ // refactor: extract the storage adapter\n+ class StorageAdapter { upload() {} }\n";
+    const files = "src/storage/adapter.ts\n";
+    const sel = selectReviewers(diff, files, { healingActive: true });
+    const names = sel.reviewers.map((r) => r.name);
+    expect(names).toContain("legacy-healing-auditor");
     expect(sel.pool_size).toBe(5);
+  });
+
+  it("isHealingActive returns true when LOKI_HEAL_MODE=true env is set", () => {
+    const prev = process.env.LOKI_HEAL_MODE;
+    process.env.LOKI_HEAL_MODE = "true";
+    try {
+      expect(isHealingActive(scratch)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.LOKI_HEAL_MODE;
+      else process.env.LOKI_HEAL_MODE = prev;
+    }
+  });
+
+  it("isHealingActive returns false on a clean greenfield project", () => {
+    const prev = process.env.LOKI_HEAL_MODE;
+    delete process.env.LOKI_HEAL_MODE;
+    try {
+      expect(isHealingActive(scratch)).toBe(false);
+    } finally {
+      if (prev !== undefined) process.env.LOKI_HEAL_MODE = prev;
+    }
+  });
+
+  it("isHealingActive returns true when .loki/healing/friction-map.json exists", () => {
+    const prev = process.env.LOKI_HEAL_MODE;
+    delete process.env.LOKI_HEAL_MODE;
+    try {
+      const healingDir = join(scratch, ".loki", "healing");
+      mkdirSync(healingDir, { recursive: true });
+      writeFileSync(join(healingDir, "friction-map.json"), JSON.stringify({ entries: [] }));
+      expect(isHealingActive(scratch)).toBe(true);
+    } finally {
+      if (prev !== undefined) process.env.LOKI_HEAL_MODE = prev;
+    }
   });
 
   it("writes aggregate.json with the documented shape on a clean review", async () => {
@@ -612,7 +672,8 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
       pool_size: number;
     };
     expect(selection.reviewers.length).toBe(3);
-    expect(selection.pool_size).toBe(5);
+    // v7.4.20: default pool excludes legacy-healing-auditor.
+    expect(selection.pool_size).toBe(4);
     // Anti-sycophancy file written on unanimous pass.
     expect(existsSync(join(dir, "anti-sycophancy.txt"))).toBe(true);
   });

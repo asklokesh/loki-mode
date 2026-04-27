@@ -5,6 +5,59 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.20] - 2026-04-27
+
+PATCH release. Fixes a code-review gate regression observed in the wild
+on `agentbudget`: the `legacy-healing-auditor` reviewer pinned 9 of 10
+iterations to a forced PAUSE on a greenfield project that has no
+healing artifacts.
+
+### Fixed: legacy-healing-auditor now gated on healing-mode signals
+
+`skills/quality-gates.md` documents Gate 10 as conditional ("triggered
+when `LOKI_HEAL_MODE=true` or `.loki/healing/friction-map.json`
+exists"), but the reviewer-selection code unconditionally included
+`legacy-healing-auditor` in the keyword pool. Common diff tokens like
+`refactor`, `adapter`, and `migrate` routinely landed it in the top-2
+slots on greenfield projects, where it would BLOCK on missing
+characterization tests / missing adapter layers that the project never
+agreed to maintain.
+
+The auditor is now excluded from the selection pool unless one of:
+
+- `LOKI_HEAL_MODE=true` (or `1`) env var is set, OR
+- `.loki/healing/friction-map.json` exists in the project root
+
+Effect on agentbudget-class projects: pool_size drops from 5 to 4 and
+the auditor never fires. Healing projects (`loki heal ...`) get the
+unchanged pre-v7.4.20 behavior.
+
+Implemented symmetrically:
+- `loki-ts/src/runner/quality_gates.ts` -- new `isHealingActive(cwd)`
+  helper + `selectReviewers(diff, files, { healingActive })` opt
+- `autonomy/run.sh:6332` -- new `LOKI_REVIEW_HEALING_ACTIVE` env var
+  threaded into the SPECIALIST_SELECT python heredoc
+
+### Verified locally before push
+
+- `bun test`: 556 pass / 0 fail (4 new tests for the gating)
+- `bun run typecheck`: clean
+- `bash -n autonomy/run.sh`: clean
+- Bash heredoc smoke test: confirmed pool_size=4 with healing OFF and
+  pool_size=5 with `LOKI_REVIEW_HEALING_ACTIVE=true`
+
+### NOT tested in this release
+
+- End-to-end re-run of the agentbudget PRD with v7.4.20 to confirm the
+  10-iteration PAUSE is gone. The fix is mechanically verified
+  (auditor never reaches the reviewer-dispatch loop on a greenfield
+  project) but a full PRD re-run is deferred.
+- Counter-evidence override path (the broader fix discussed in chat)
+  is NOT in this release. Reviewers can still BLOCK on findings the
+  developer agent has factual evidence against. Tracked separately.
+
+14 version locations bumped 7.4.19 -> 7.4.20.
+
 ## [7.4.19] - 2026-04-26
 
 PATCH release. Two Discord-reported workflow gaps closed: parallel
