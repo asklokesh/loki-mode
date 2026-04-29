@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.8
+# Loki Mode v7.5.9
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -89,7 +89,7 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 ## Model Selection
 
-**Default since v5.3.0 (reaffirmed in v7.5.8):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
+**Default since v5.3.0 (reaffirmed in v7.5.9):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
 | Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
 |-----------|------|------------------|------------------------|------------------|--------|
@@ -365,4 +365,4 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
-**v7.5.8 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.9 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

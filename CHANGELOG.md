@@ -5,6 +5,90 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.9] - 2026-04-29
+
+PATCH release. Closes the remaining low/medium-severity items from the
+v7.5.8 council (R4#1 incomplete `in` migration; R4#3 control-char regex
+extension), reconciles the gate-count documentation across files, and
+hardens checkpoint event emission against cross-process append races.
+No behavior changes for users on the default flow.
+
+### Code
+
+- **R4#1 follow-up: `in` operator hardening** in two remaining sites
+  (the v7.5.8 R4 reviewer flagged these as inconsistent with the
+  council.ts switch). Replaced `"tasks" in parsed`
+  (`loki-ts/src/runner/build_prompt.ts:398`) and `"iteration" in o`
+  (`loki-ts/src/runner/checkpoint.ts:512`) with
+  `Object.prototype.hasOwnProperty.call(...)`. JSON-parsed objects
+  inherit from `Object.prototype`, so the bare `in` operator could
+  match prototype-walk hits if the global prototype were ever
+  polluted. No exploit today; defense-in-depth only.
+
+- **R4#3 follow-up: control-char regex extended**
+  (`loki-ts/src/runner/checkpoint.ts:464`). The
+  `validateCheckpointMetadata` rejection regex was
+  `[\x00-\x08\x0a-\x1f]` -- whitelisting tab (\x09). Extended to
+  `[\x00-\x08\x0a-\x1f\x7f-\x9f]` so DEL (\x7f) and the C1 control
+  range (\x80-\x9f) are also rejected. DEL on a TTY can erase prior
+  output; C1 controls in dashboard / log shippers can be
+  misinterpreted as control sequences. Tab still allowed.
+
+- **events.jsonl cross-process append serialization**
+  (`loki-ts/src/runner/checkpoint.ts:emitMetadataDroppedEvent`). The
+  v7.5.8 structured event emit used a bare `appendFileSync`. POSIX
+  append is atomic only for writes <PIPE_BUF and not all platforms
+  honor it; under parallel-worktree contention the JSONL lines could
+  interleave. Wrapped the append in `withFileLockSync(eventsPath,
+  ...)` matching the index.jsonl serialization added in v7.5.5.
+
+### Documentation
+
+- **Gate-count reconciliation**: `skills/quality-gates.md` is the
+  source of truth and documents 11 gates (Gate 10 = backward
+  compatibility, v6.67.0; Gate 11 = documentation coverage,
+  v6.75.0). Updated `CLAUDE.md:41` ("10-gate" -> "11-gate") and
+  `skills/00-index.md:51` ("10-gate quality system" -> "11-gate
+  quality system" with both gate-10 and gate-11 names cited).
+  README.md and SKILL.md were already at 11.
+
+### Tests
+
+- All 703 bun tests still pass (no new tests required; the regex
+  extension and `in`->`hasOwnProperty` swaps are behavior-preserving
+  for valid input). Existing checkpoint metadata tests cover the
+  control-char path.
+
+### Verified false positives (not changed)
+
+- L19#6 "LOKI_CODEX_OUTPUT_LAST default inverted between routes":
+  re-checked both routes. Bash (`providers/codex.sh:204`) uses
+  `[ "${LOKI_CODEX_OUTPUT_LAST:-true}" != "false" ]` -- defaults to
+  ON when unset. Bun (`loki-ts/src/runner/providers.ts:316`) uses
+  `process.env["LOKI_CODEX_OUTPUT_LAST"] !== "false"` -- also
+  defaults to ON when unset (undefined !== "false" is true). Both
+  routes default ON. Original L19 hunt finding was a misread; no
+  fix needed.
+
+- L11#1 "infinite loop in status flag parsing":
+  `loki-ts/src/commands/status.ts` flag parser uses an early-return
+  per-flag pattern, not a popping loop. No infinite-loop path
+  exists; original L11 finding was a misread.
+
+- L17#1 "doctor parallelize tool checks": v7.5.8 already
+  parallelized the python imports leg (the slow path). The tool
+  checks themselves are already wrapped in `Promise.all` at
+  `doctor.ts:274`. No remaining sequential bottleneck.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.9 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow completes).
+- Telemetry SDK integration for the phase1 status fields.
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- Sandbox direct unit-test coverage (still transitive via
+  app-runner-injection.sh).
+
 ## [7.5.8] - 2026-04-29
 
 PATCH release. Mega-batch: closes ALL deferred items from v7.5.7 council

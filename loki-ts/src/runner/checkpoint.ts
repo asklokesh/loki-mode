@@ -396,9 +396,15 @@ function emitMetadataDroppedEvent(
     reason,
     field,
   };
+  // v7.5.9: serialize cross-process appends. Multiple parallel-worktree
+  // checkpoint operations could otherwise interleave partial JSONL lines
+  // (POSIX append is atomic only for <PIPE_BUF and not all platforms
+  // honor it). Lock target = events.jsonl itself; sentinel at .lock.
   try {
     mkdirSync(dirname(eventsPath), { recursive: true });
-    appendFileSync(eventsPath, `${JSON.stringify(event)}\n`);
+    withFileLockSync(eventsPath, () => {
+      appendFileSync(eventsPath, `${JSON.stringify(event)}\n`);
+    });
   } catch {
     // Swallow -- event emission is observability, never load-bearing.
   }
@@ -461,7 +467,11 @@ type ValidationResult =
 // CR, LF, and other non-printable bytes from leaking into rebuilt index
 // lines (which would corrupt the JSONL stream) and from being silently
 // accepted by readCheckpoint / listCheckpoints.
-const CONTROL_CHAR_RE = /[\x00-\x08\x0a-\x1f]/;
+// v7.5.9 (council R4#3 follow-up): extended to reject 0x7f (DEL) and the
+// C1 control range 0x80-0x9f. DEL on a TTY can erase prior output;
+// C1 controls in dashboard / log shippers can be misinterpreted as
+// control sequences. Tab (0x09) intentionally allowed.
+const CONTROL_CHAR_RE = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/;
 
 // Subset of stringFields where control chars are forbidden. We exclude
 // task_description because it is user-supplied free text and the bash
@@ -509,7 +519,9 @@ function validateCheckpointMetadataDetailed(
       return { ok: false, reason: "invalid_type", field: f };
     }
   }
-  if (!("iteration" in o)) {
+  // v7.5.9 (council R4#1 follow-up): use hasOwnProperty.call to avoid
+  // walking Object.prototype chain on JSON-parsed input.
+  if (!Object.prototype.hasOwnProperty.call(o, "iteration")) {
     console.warn(
       `[checkpoint] invalid metadata at ${source}: field "iteration" missing`,
     );

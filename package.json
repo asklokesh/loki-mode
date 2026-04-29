@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "7.5.8",
+  "version": "7.5.9",
   "description": "Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
   "keywords": [
     "agent",
@@ -124,7 +124,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.0"
   },
   "overrides": {
-    "protobufjs": ">=7.5.8"
+    "protobufjs": ">=7.5.9"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

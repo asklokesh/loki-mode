@@ -395,7 +395,13 @@ function extractQueueTasks(path: string, prefix: string): string {
   let tasks: unknown;
   if (Array.isArray(parsed)) {
     tasks = parsed;
-  } else if (parsed !== null && typeof parsed === "object" && "tasks" in parsed) {
+  } else if (
+    parsed !== null &&
+    typeof parsed === "object" &&
+    Object.prototype.hasOwnProperty.call(parsed, "tasks")
+  ) {
+    // v7.5.9 (council R4#1 follow-up): use hasOwnProperty.call to avoid
+    // walking Object.prototype chain on JSON-parsed input.
     tasks = (parsed as Record<string, unknown>)["tasks"];
   } else {
     tasks = parsed;
