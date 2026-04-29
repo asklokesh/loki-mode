@@ -459,7 +459,6 @@ show_help() {
     echo "  setup-skill      Create skill symlinks for all providers"
     echo "  self-update      Upgrade loki via current manager (use --to bun|npm|brew to switch)"
     echo "  watchdog [cmd]   Process health monitoring (status|help)"
-    echo "  telemetry [cmd]  OpenTelemetry management (status|enable|disable)"
     echo "  worktree [cmd]   Parallel worktree management (list|merge|clean|status)"
     echo "  agent [cmd]      Agent type dispatch (list|info|run|start|review)"
     echo "  remote [PRD]     Start remote session (connect from phone/browser, Claude Pro/Max)"
@@ -6747,6 +6746,23 @@ cmd_doctor() {
             echo -e "  ${YELLOW}WARN${NC}  Disk space: unable to determine"
             warn_count=$((warn_count + 1))
         fi
+    fi
+    echo ""
+
+    # v7.5.1 fix B23: Runtime route -- mirror loki-ts/src/commands/doctor.ts.
+    # Informational only; does NOT contribute to pass/fail/warn counts so
+    # the bun-parity matrix can normalize it without reconciling summary
+    # totals across routes.
+    echo -e "${CYAN}Runtime route:${NC}"
+    echo -e "  ${GREEN}PASS${NC}  Active runtime: Bash (autonomy/loki)"
+    if [ "${LOKI_LEGACY_BASH:-}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
+        echo -e "  ${YELLOW}WARN${NC}  LOKI_LEGACY_BASH set: shim routes every command to autonomy/loki (bash)"
+    fi
+    if [ -n "${LOKI_TS_ENTRY:-}" ]; then
+        echo -e "  ${GREEN}PASS${NC}  LOKI_TS_ENTRY override: ${LOKI_TS_ENTRY}"
+    fi
+    if [ "${BUN_FROM_SOURCE:-}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
+        echo -e "  ${GREEN}PASS${NC}  BUN_FROM_SOURCE set: shim prefers loki-ts/src/ over dist/"
     fi
     echo ""
 

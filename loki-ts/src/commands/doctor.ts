@@ -545,6 +545,29 @@ async function runText(): Promise<number> {
   }
   process.stdout.write(`\n`);
 
+  // v7.5.1 fix B23: report which runtime route the user's `loki` invocation
+  // is actually taking. Pre-v7.5.1 doctor only reported whether bun/bash were
+  // installed, not which path was active -- users couldn't tell if their flag
+  // overrides (LOKI_LEGACY_BASH=1, LOKI_TS_ENTRY=...) were taking effect.
+  //
+  // Informational only: this section does NOT contribute to the pass/fail/
+  // warn tally so the bun-parity matrix can normalize it to nothing without
+  // also having to reconcile the summary counts across routes.
+  process.stdout.write(`${CYAN}Runtime route:${NC}\n`);
+  const isBun = (process.versions as Record<string, string | undefined>)["bun"] !== undefined;
+  const argv0 = process.argv[0] ?? "(unknown)";
+  process.stdout.write(`  ${badge("pass")}  Active runtime: ${isBun ? "Bun" : "Node"} (${argv0})\n`);
+  if (process.env["LOKI_LEGACY_BASH"] === "1" || process.env["LOKI_LEGACY_BASH"] === "true") {
+    process.stdout.write(`  ${badge("warn")}  LOKI_LEGACY_BASH set: shim routes every command to autonomy/loki (bash)\n`);
+  }
+  if (process.env["LOKI_TS_ENTRY"]) {
+    process.stdout.write(`  ${badge("pass")}  LOKI_TS_ENTRY override: ${process.env["LOKI_TS_ENTRY"]}\n`);
+  }
+  if (process.env["BUN_FROM_SOURCE"] === "1" || process.env["BUN_FROM_SOURCE"] === "true") {
+    process.stdout.write(`  ${badge("pass")}  BUN_FROM_SOURCE set: shim prefers loki-ts/src/ over dist/\n`);
+  }
+  process.stdout.write(`\n`);
+
   // Summary
   process.stdout.write(
     `${BOLD}Summary:${NC} ${GREEN}${tally.pass} passed${NC}, ${RED}${tally.fail} failed${NC}, ${YELLOW}${tally.warn} warnings${NC}\n\n`,

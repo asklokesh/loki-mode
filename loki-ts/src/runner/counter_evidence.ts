@@ -70,6 +70,20 @@ export type OverrideJudgeFn = (input: {
   judge: string;
 }) => Promise<OverrideVote>;
 
+// v7.5.1 bug-hunt fix B2: validate proofType against the documented union.
+// Pre-v7.5.1 the cast accepted any string, which then flowed into judges,
+// learnings, and audit transcripts. Untrusted strings are now silently
+// dropped at the boundary -- the override council cannot be fooled by a
+// hand-edited counter-evidence file with a made-up proofType.
+const VALID_PROOF_TYPES = new Set<OverrideProofType>([
+  "file-exists",
+  "test-passes",
+  "grep-miss",
+  "reviewer-misread",
+  "duplicate-code-path",
+  "out-of-scope",
+]);
+
 export function loadCounterEvidence(lokiDir: string, iter: number): CounterEvidenceFile | null {
   const path = join(lokiDir, "state", `counter-evidence-${iter}.json`);
   if (!existsSync(path)) return null;
@@ -86,11 +100,14 @@ export function loadCounterEvidence(lokiDir: string, iter: number): CounterEvide
       if (typeof e["findingId"] !== "string") continue;
       if (typeof e["claim"] !== "string") continue;
       if (typeof e["proofType"] !== "string") continue;
+      // v7.5.1 B2: enum validation. Drop entries with unknown proofType.
+      const proofType = e["proofType"] as OverrideProofType;
+      if (!VALID_PROOF_TYPES.has(proofType)) continue;
       const artifacts = Array.isArray(e["artifacts"]) ? e["artifacts"] : [];
       cleaned.push({
         findingId: e["findingId"],
         claim: e["claim"],
-        proofType: e["proofType"] as OverrideProofType,
+        proofType,
         artifacts: artifacts.filter((a): a is string => typeof a === "string"),
       });
     }

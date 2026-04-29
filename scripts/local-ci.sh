@@ -175,8 +175,22 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
       else
         # v7.4.12: normalize jittery disk-space values (1GB drift can
         # happen between bash and Bun reads on busy systems).
-        sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.norm"
-        sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.norm"
+        # v7.5.1: also strip the Runtime route block (added in v7.5.1 fix
+        # B23). The block is intentionally environment-dependent (reports
+        # "Bash" on the bash route and "Bun" on the Bun route, plus any
+        # active LOKI_LEGACY_BASH / LOKI_TS_ENTRY / BUN_FROM_SOURCE env)
+        # so it can never be byte-identical across the two routes. We
+        # use sed range deletion: from the Runtime route header line to
+        # the next empty line. Substring match handles ANSI color codes.
+        # Also normalize doctor Summary counts which shift slightly when
+        # LOKI_LEGACY_BASH is set vs not.
+        for src in "$PARITY_TMP/$label.bash" "$PARITY_TMP/$label.bun"; do
+          dst="${src}.norm"
+          sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
+            | sed -E "/Runtime route:/,/^$/d" \
+            | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
+            > "$dst"
+        done
         diff -q "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
       fi
     done

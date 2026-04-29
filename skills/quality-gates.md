@@ -36,10 +36,10 @@
 - Missing adapter for replaced component = **High** (BLOCK)
 - Behavioral baseline mismatch without documentation = **Medium** (BLOCK)
 
-**Disabling (not recommended for healing mode):**
-```bash
-LOKI_GATE_BACKWARD_COMPAT=false  # Disable gate 10
-```
+**Disabling**: gate 10 only fires when `LOKI_HEAL_MODE=true` or
+`.loki/healing/friction-map.json` exists in the project root (v7.4.20).
+Greenfield projects skip the auditor entirely. To suppress on a healing
+project, set `LOKI_HEAL_MODE=false`.
 
 ---
 
@@ -76,11 +76,71 @@ Gates 8 (Mock Detector) and 9 (Test Mutation Detector) run during the VERIFY pha
 - Both produce findings at HIGH/MEDIUM/LOW severity levels
 - HIGH findings = automatic FAIL (same as other blocking gates)
 
-**Disabling (not recommended):**
+**Disabling**: gates 8 and 9 are baked into the test pipeline (the bash
+scripts at `tests/detect-mock-problems.sh` and
+`tests/detect-test-mutations.sh`); they have no env-var toggle today.
+Skip the gate by not running the script in your CI.
+
+---
+
+## v7.5.0 Phase 1 environment flags
+
+These four flags activate the override council and structured-findings
+pipeline added in v7.5.0. All default off; behavior is byte-identical
+when unset.
+
 ```bash
-LOKI_GATE_MOCK_DETECTOR=false    # Disable gate 8
-LOKI_GATE_MUTATION_DETECTOR=false # Disable gate 9
+LOKI_INJECT_FINDINGS=1     # inject structured per-finding records into the
+                           # next iteration's prompt (instead of just the
+                           # comma-separated gate-failure tokens)
+
+LOKI_OVERRIDE_COUNCIL=1    # enable the 3-judge override council on BLOCK
+                           # when .loki/state/counter-evidence-<iter>.json
+                           # exists. Requires LOKI_INJECT_FINDINGS=1.
+
+LOKI_AUTO_LEARNINGS=1      # auto-write structured learnings to
+                           # .loki/state/relevant-learnings.json on every
+                           # code_review gate failure
+
+LOKI_HANDOFF_MD=1          # write a structured handoff doc to
+                           # .loki/escalations/handoff-*.md before PAUSE
+                           # (in addition to the bare PAUSE signal)
 ```
+
+Optional: `LOKI_AUTO_LEARNINGS_EPISODE=1` also writes the learning into
+the Python episodic memory layer via `memory.engine.save_episode`.
+
+**Reachability note (v7.5.0/v7.5.1)**: these flags activate inside the
+Bun runtime. Today `loki start <prd>` routes through the bash runner via
+`bin/loki` shim fall-through, so the flags do not yet trigger on a real
+`loki start`. They DO activate in any code path that calls
+`loki-ts/src/runner/runQualityGates` directly (e.g. tests, programmatic
+integration). End-to-end activation lands when Part A Phase 4 wires the
+Bun `start` route. See CHANGELOG v7.5.0 NOT-tested section.
+
+### Counter-evidence file format (`.loki/state/counter-evidence-<iter>.json`)
+
+```json
+{
+  "iteration": 7,
+  "evidence": [
+    {
+      "findingId": "eng-qa::- [Critical] dead code path bug at sdk/python/...",
+      "claim": "this code path is dead duplicate; live code is at sdk/src/gauge/",
+      "proofType": "duplicate-code-path",
+      "artifacts": ["sdk/python/ is excluded by pyproject.toml"]
+    }
+  ]
+}
+```
+
+`findingId` is `canonicalFindingId(finding)` -- `<reviewer>::<first 80 chars
+of the finding's raw text>`. `proofType` MUST be one of:
+`file-exists`, `test-passes`, `grep-miss`, `reviewer-misread`,
+`duplicate-code-path`, `out-of-scope`. Entries with any other proofType
+are silently dropped at load time. The override council uses a stub
+judge in v7.5.x that approves any of those six trusted proofTypes;
+real provider-backed judges land in Phase 2 of Part B.
 
 ---
 

@@ -110,6 +110,67 @@ export LOKI_LEGACY_BASH=1
 
 ---
 
+## From v7.4.x to v7.5.0
+
+### What changed
+
+Phase 1 of the RARV-C closure plan added five new opt-in feature flags
+to the Bun runtime. Defaults are unchanged: the system behaves exactly
+like v7.4.x unless you set the flags explicitly.
+
+| Flag | Effect |
+|------|--------|
+| `LOKI_INJECT_FINDINGS=1` | Inject structured per-finding records (severity, file, line, reviewer) into the next iteration's prompt instead of the bare comma-separated `gate-failures.txt` token. |
+| `LOKI_OVERRIDE_COUNCIL=1` | Enable the 3-judge override council on BLOCK. Requires `LOKI_INJECT_FINDINGS=1`. Reads `.loki/state/counter-evidence-<iter>.json`; 2-of-3 approval lifts the BLOCK. |
+| `LOKI_AUTO_LEARNINGS=1` | Auto-write structured learnings to `.loki/state/relevant-learnings.json` on every code_review failure. |
+| `LOKI_HANDOFF_MD=1` | Write a structured handoff doc to `.loki/escalations/handoff-*.md` before the bare `.loki/PAUSE` signal. |
+| `LOKI_AUTO_LEARNINGS_EPISODE=1` | Also write the learning into the Python episodic memory layer via `memory.engine.save_episode`. Optional companion to `LOKI_AUTO_LEARNINGS=1`. |
+
+### Reachability
+
+These flags activate inside the Bun runtime. Today `loki start <prd>`
+routes through the bash runner via the `bin/loki` shim's fall-through,
+so the flags do not yet trigger on a real `loki start` invocation. They
+DO activate in any code path that calls `runQualityGates` directly
+(tests, programmatic integration, future Bun `start` route). End-to-end
+activation lands when Part A Phase 4 wires the Bun `start` route. See
+the v7.5.0 CHANGELOG entry's "NOT tested" section for the honest gap.
+
+### Counter-evidence file format (`.loki/state/counter-evidence-<iter>.json`)
+
+```json
+{
+  "iteration": 7,
+  "evidence": [
+    {
+      "findingId": "eng-qa::- [Critical] dead code path bug at sdk/python/...",
+      "claim": "this code path is dead duplicate; live code is at sdk/src/gauge/",
+      "proofType": "duplicate-code-path",
+      "artifacts": ["sdk/python/ is excluded by pyproject.toml"]
+    }
+  ]
+}
+```
+
+`findingId` is `<reviewer>::<first 80 chars of the finding's raw text>`.
+`proofType` MUST be one of: `file-exists`, `test-passes`, `grep-miss`,
+`reviewer-misread`, `duplicate-code-path`, `out-of-scope`. Entries with
+any other value are silently dropped at load time. The override council
+uses a stub judge in v7.5.x that approves these six trusted proofTypes;
+real provider-backed judges land in Part B Phase 2 (target v7.6.0).
+
+### How to roll back
+
+Unset the flags or:
+
+```bash
+export LOKI_LEGACY_BASH=1
+```
+
+The bash runner is unchanged from v7.4.x and ignores all five new flags.
+
+---
+
 ## From v7.x to v8.0.0 (planned)
 
 ### What is planned
@@ -172,3 +233,29 @@ LOKI_LEGACY_BASH=1 loki <command>
 ```
 
 This is the supported escape hatch for any regression discovered on the Bun route through Phase 5. Please file an issue with reproduction steps so the regression can be fixed before v8.0.0.
+
+### Suppressing the `loki-mode` deprecation banner in scripts
+
+The legacy `loki-mode` binary alias was dropped from `package.json` `bin`
+in v7.4.12. The on-disk wrapper (`bin/loki-mode.js`) still works for
+already-symlinked installs and prints a one-time deprecation banner to
+stderr per invocation. Set `LOKI_NO_BANNER=1` (or `NO_COLOR=1`) to
+suppress the banner in non-interactive scripts. Pipe-detection also
+suppresses it automatically.
+
+```bash
+LOKI_NO_BANNER=1 loki-mode version    # silent
+loki-mode version | cat                # silent (piped)
+```
+
+### `LOKI_TS_ENTRY` typo handling (v7.5.1+)
+
+Pre-v7.5.1, setting `LOKI_TS_ENTRY=/typo/path` produced a raw Bun
+`Module not found` error. As of v7.5.1 the shim validates the file and
+warns + falls through to the bash CLI when the path does not exist:
+
+```bash
+$ LOKI_TS_ENTRY=/nonexistent loki version
+ERROR: LOKI_TS_ENTRY=/nonexistent does not exist; falling through to bash CLI. Unset the variable or fix the path.
+Loki Mode v7.5.1
+```

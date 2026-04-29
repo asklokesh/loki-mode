@@ -1,6 +1,6 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, Google Gemini CLI, Cline, and Aider.**
 
 > Transform a Product Requirements Document (PRD) into a fully deployed, production-ready application with minimal human intervention.
 
@@ -12,7 +12,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
-- **Supports multiple providers** - Claude Code (full), Codex CLI, Gemini CLI
+- **Supports five providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Gemini / Aider (Tier 3 degraded)
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
@@ -39,7 +39,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Zero Configuration** - Works out of the box with sensible defaults
 - **PRD to Production** - Just provide a PRD, Loki handles the rest
-- **Multi-Provider Support** - Use Claude, Codex, or Gemini
+- **Multi-Provider Support** - Use Claude, Cline, Codex, Gemini, or Aider
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
 
@@ -70,12 +70,12 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 |   PRD / Issue    | --> |   Loki Mode      | --> |   Deployed App   |
 +------------------+     +------------------+     +------------------+
                                |
-         +---------------------+---------------------+
-         |                     |                     |
-    +---------+          +---------+          +---------+
-    | Claude  |          | Codex   |          | Gemini  |
-    | (Full)  |          |(Degraded)|         |(Degraded)|
-    +---------+          +---------+          +---------+
+         +-----------+-------------+-------------+-----------+
+         |           |             |             |           |
+    +---------+ +---------+ +---------+ +---------+ +---------+
+    | Claude  | | Cline   | | Codex   | | Gemini  | | Aider   |
+    |(Tier 1) | |(Tier 2) | |(Tier 3) | |(Tier 3) | |(Tier 3) |
+    +---------+ +---------+ +---------+ +---------+ +---------+
          |
     +----+----+----+----+
     |    |    |    |    |
@@ -96,7 +96,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.5.0**
+Current Version: **7.5.1**
 
 See [[Changelog]] for detailed release notes.
 

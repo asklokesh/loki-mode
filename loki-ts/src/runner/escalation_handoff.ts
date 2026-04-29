@@ -20,8 +20,8 @@
 // intentionally NOT touched -- they remain on the legacy bare-PAUSE path
 // under LOKI_LEGACY_BASH=1. That is a Phase 6-of-Part-A concern.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { Finding } from "./findings_injector.ts";
 import { loadPreviousFindings } from "./findings_injector.ts";
@@ -108,8 +108,23 @@ export type WriteHandoffOpts = {
   now?: () => Date;
 };
 
+// v7.5.1 bug-hunt fix B5: filename collision + non-atomic write.
+// Pre-v7.5.1 stripped milliseconds (.replace(/\..*/, "Z")) so two PAUSE
+// escalations of the same gate within one wall-clock second silently
+// overwrote each other; also writeFileSync direct (no tmp+rename) so a
+// crash mid-write left a truncated handoff -- the operator's only post-
+// mortem artifact. Now: keep millisecond resolution + per-process counter
+// in the filename, and write via tmp+rename (atomic POSIX semantics).
+let _handoffCounter = 0;
+function _atomicWrite(target: string, body: string): void {
+  mkdirSync(dirname(target), { recursive: true });
+  const tmp = `${target}.tmp.${process.pid}.${++_handoffCounter}`;
+  writeFileSync(tmp, body);
+  renameSync(tmp, target);
+}
+
 // Produce + write the handoff doc. Returns the path so callers can log it.
-// File name: .loki/escalations/handoff-<iso>-<gate>.md.
+// File name: .loki/escalations/handoff-<iso-ms>-<pid>-<n>-<gate>.md.
 export function writeEscalationHandoff(
   lokiDir: string,
   input: HandoffInput,
@@ -124,14 +139,17 @@ export function writeEscalationHandoff(
 
   const body = renderHandoff(input, findings, learnings);
 
+  // ISO with millisecond precision retained; only `-`/`:`/`.` stripped.
   const ts = (opts.now?.() ?? new Date())
     .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\..*/, "Z");
+    .replace(/[-:.]/g, "");
   const dir = join(lokiDir, "escalations");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, `handoff-${ts}-${input.gateName}.md`);
-  writeFileSync(path, body);
+  const counter = ++_handoffCounter;
+  const path = join(
+    dir,
+    `handoff-${ts}-${process.pid}-${counter}-${input.gateName}.md`,
+  );
+  _atomicWrite(path, body);
   return { path, bytes: body.length };
 }
 

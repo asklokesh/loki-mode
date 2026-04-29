@@ -43,6 +43,15 @@ BASH_CLI="$REPO_ROOT/autonomy/loki"
 # installs because src/ is excluded by .npmignore. Now we warn once and fall
 # back to dist if src/cli.ts is missing.
 if [ -n "${LOKI_TS_ENTRY:-}" ]; then
+    # v7.5.1 fix B18: validate that the explicit override actually exists.
+    # Pre-v7.5.1 a typo (LOKI_TS_ENTRY=/nonexistent) produced a raw Bun
+    # "Module not found" error with no hint about the env var. Now we warn
+    # to stderr and fall through to the bash CLI so the user can still
+    # invoke commands while they fix the path.
+    if [ ! -f "$LOKI_TS_ENTRY" ]; then
+        echo "ERROR: LOKI_TS_ENTRY=$LOKI_TS_ENTRY does not exist; falling through to bash CLI. Unset the variable or fix the path." >&2
+        exec "$BASH_CLI" "$@"
+    fi
     BUN_CLI="$LOKI_TS_ENTRY"
 elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
     if [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then

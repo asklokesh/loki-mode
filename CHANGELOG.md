@@ -5,6 +5,121 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.1] - 2026-04-28
+
+PATCH release. Fixes 17 bugs uncovered by a 10-parallel-hunter audit
+of v7.5.0 + 3-reviewer consolidation council. All fixes ship behind the
+existing v7.5.0 feature flags; no new flags.
+
+### Fixed -- code (loki-ts/src/runner/)
+
+- **B1 memory leak in `learnings_writer.ts:withAppendLock`**: the GC
+  identity check `_appendChains.get(target) === prev.then(() => next)`
+  was always false because `prev.then(...)` returns a fresh Promise on
+  each call. Map grew unbounded, the chained promise also lengthened
+  forever. Captured the chained promise into a local so the equality
+  check matches.
+- **B2 unvalidated `proofType` cast in `counter_evidence.ts:loadCounterEvidence`**:
+  a counter-evidence file with `"proofType": "made-up"` was accepted
+  and flowed into judges/audit transcripts. Now validated against the
+  documented union (`file-exists, test-passes, grep-miss,
+  reviewer-misread, duplicate-code-path, out-of-scope`); unknown values
+  are silently dropped at load time.
+- **B3 unvalidated learnings entries in `learnings_writer.ts:loadOrInit`**:
+  a corrupt `relevant-learnings.json` with `null` or `{}` array entries
+  crashed `findIndex(l => l.id === id)` downstream. Added per-element
+  validation; invalid entries are filtered out.
+- **B4 poisoned chain in `withAppendLock`**: a single rejected `fn()`
+  propagated through `prev.then(...)` and poisoned every subsequent
+  append for the same target until process restart. Switched to
+  `prev.catch(() => {}).then(...)` so rejection does not block the
+  next caller.
+- **B5 escalation handoff filename collision + non-atomic write**: the
+  pre-v7.5.1 timestamp stripped milliseconds and `writeFileSync` wrote
+  the target directly. Two PAUSE escalations of the same gate within
+  one wall-clock second silently overwrote each other; a crash
+  mid-write left a truncated handoff doc. Now: ms preserved + per-pid
+  + per-process counter in the filename, atomic tmp+rename write.
+  Added test proving same-millisecond writes do not collide.
+
+### Fixed -- UX (bin/loki, autonomy/loki, loki-ts/src/commands/doctor.ts)
+
+- **B18 `LOKI_TS_ENTRY=/typo` raw Bun error**: `bin/loki` now validates
+  the override file exists; if not, warns to stderr and falls through
+  to the bash CLI so the user can still invoke commands while they fix
+  the path. Mirrors the existing `BUN_FROM_SOURCE` validation.
+- **B21 `loki help` listed `telemetry` twice**: removed the duplicate
+  entry at `autonomy/loki:462`; the canonical entry at line 439 stays.
+- **B23 `loki doctor` did not report active runtime route**: added a
+  Runtime route section showing the active runtime (Bun vs Node), the
+  argv0 path, and any of `LOKI_LEGACY_BASH` / `LOKI_TS_ENTRY` /
+  `BUN_FROM_SOURCE` env that are set. Closes the "I can't tell which
+  route my flag overrides took" diagnostic gap noted in
+  `UPGRADING.md` Troubleshooting.
+
+### Fixed -- documentation
+
+- **B6 three documented gate-disable env flags did not exist in code**:
+  `skills/quality-gates.md` advertised `LOKI_GATE_BACKWARD_COMPAT`,
+  `LOKI_GATE_MOCK_DETECTOR`, and `LOKI_GATE_MUTATION_DETECTOR` but
+  none had any reader. Removed the misleading "Disabling" snippets
+  and replaced with accurate gate-suppression instructions (gate 10
+  via `LOKI_HEAL_MODE=false`; gates 8/9 by skipping the test scripts
+  in your CI).
+- **B7 v7.5.0 env flags only in CHANGELOG**: added a complete
+  "v7.5.0 Phase 1 environment flags" section to
+  `skills/quality-gates.md` with each flag, default, and effect. Same
+  content cross-linked from `UPGRADING.md` new "From v7.4.x to v7.5.0"
+  section.
+- **B8 `docs/INSTALLATION.md` falsely claimed postinstall sets up
+  skills**: v7.4.12 dropped the postinstall script. Rewrote the npm
+  section to instruct `loki setup-skill` after install.
+- **B8b `docs/INSTALLATION.md` "What's New in v6.7.0" headline at v7.5.0**:
+  rewrote the headline + bullets for v7.5.0.
+- **B9 `UPGRADING.md` had no v7.4.x->v7.5.0 section**: added one with
+  the 5 new flags, reachability note, counter-evidence file format,
+  and rollback instructions.
+- **B11 3-provider claims when 5 are supported**: updated
+  `docs/INSTALLATION.md` Multi-Provider Support section and
+  `wiki/Home.md` (header, bullet, ASCII diagram, Key Features) to
+  reflect Claude (Tier 1) + Cline (Tier 2) + Codex/Gemini/Aider
+  (Tier 3 degraded).
+- **B17 counter-evidence file format undocumented**: schema, sample
+  JSON, and the trusted `proofType` enum are now in
+  `skills/quality-gates.md` and `UPGRADING.md`.
+- **B19 `LOKI_NO_BANNER` undocumented**: documented the suppression
+  flag for `bin/loki-mode.js` deprecation banner in `UPGRADING.md`
+  Troubleshooting.
+
+### Verified locally before push
+
+- `bun test` from `loki-ts/`: **622 pass / 0 fail** (1 new collision-
+  safety test for B5).
+- `bun run typecheck`: clean.
+- `scripts/local-ci.sh --fast`: 19/19 pass.
+
+### Council outcome
+
+10 parallel bug-hunter agents + 3 consolidation reviewers. 17 valid
+bugs landed, 2 false positives identified and dropped (CLAUDE.md was
+already bumped in v7.5.0; `simple-todo-app` template does exist),
+several nice-to-haves explicitly deferred (shell.ts SIGKILL escalation,
+shell.ts timer-leak on rejection, `loki start` no-arg prompt wording,
+deprecation banner sunset throttle, dead modules `rarv.ts` /
+`intervention.ts` / checkpoint rollback CLI -- those are scope for
+Part A Phase 4).
+
+### NOT tested in this release
+
+- End-to-end `loki start <prd>` with the Phase 1 flags active. Same
+  reachability gap as v7.5.0; `bin/loki` shim still routes `start` to
+  bash. The new doctor "Runtime route" section now surfaces this so
+  users can verify which path their invocation took.
+- Real provider-backed override judges (Phase 2 of Part B; v7.6.0).
+- Bash route. Phase 1 / 1.1 fixes are Bun route only.
+
+14 version locations bumped 7.5.0 -> 7.5.1.
+
 ## [7.5.0] - 2026-04-28
 
 MINOR release. Part B Phase 1 of the plan at

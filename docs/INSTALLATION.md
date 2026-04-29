@@ -2,28 +2,33 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.5.0
+**Version:** v7.5.1
 
 ---
 
-## What's New in v6.7.0
+## What's New in v7.5.0
 
-### Dual-Mode Architecture (v6.0.0)
-- `loki run` command for direct autonomous execution
-- Dual-mode: skill mode (inside Claude Code) and standalone mode
-- Dynamic model resolution across all providers
-- Multi-provider issue fixes and stability improvements
+### Phase 1 RARV-C closure (Bun route, default-off feature flags)
+- `findings_injector.ts` -- structured per-finding records (severity, file,
+  line, reviewer) injected into the next iteration's prompt instead of bare
+  comma-separated tokens. Enable with `LOKI_INJECT_FINDINGS=1`.
+- `counter_evidence.ts` -- 3-judge override council. Drop a
+  `.loki/state/counter-evidence-<iter>.json` to dispute reviewer findings;
+  2-of-3 approval lifts the BLOCK. Enable with `LOKI_OVERRIDE_COUNCIL=1`
+  (requires `LOKI_INJECT_FINDINGS=1`).
+- `learnings_writer.ts` -- automatic structured learnings to
+  `.loki/state/relevant-learnings.json` on every code_review failure.
+  Enable with `LOKI_AUTO_LEARNINGS=1`.
+- `escalation_handoff.ts` -- structured human-handoff doc to
+  `.loki/escalations/handoff-*.md` before PAUSE. Enable with
+  `LOKI_HANDOFF_MD=1`.
+- See `skills/quality-gates.md` for full schema and reachability notes.
 
-### ChromaDB Semantic Code Search (v6.1.0)
-- Semantic code search via ChromaDB vector database
-- MCP integration with `loki_code_search` and `loki_code_search_stats` tools
-- Automatic codebase indexing with `tools/index-codebase.py`
-
-### Memory System (v5.15.0+)
-- Episodic, semantic, and procedural memory layers
-- Progressive disclosure with 3-layer loading
-- Token economics tracking for discovery vs read tokens
-- Optional vector search with sentence-transformers
+### Earlier highlights still in scope
+- Bash-to-Bun runtime migration in progress (see `UPGRADING.md`)
+- 5-provider support: Claude (full), Codex, Gemini, Cline, Aider
+- Memory system (episodic / semantic / procedural)
+- ChromaDB semantic code search via MCP
 
 ---
 
@@ -52,14 +57,18 @@ The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installa
 npm install -g loki-mode
 ```
 
-Installs the `loki` CLI and automatically sets up the skill for Claude Code, Codex CLI, and Gemini CLI via the postinstall script.
+Installs the `loki` CLI. As of v7.4.12 there is no postinstall step; run
+`loki setup-skill` once after install to create the per-provider skill
+symlinks (Claude Code, Codex CLI, Gemini CLI). The `loki` shim auto-routes
+read-only commands to the Bun runtime when `bun` is on `PATH` and falls
+back to the bash CLI otherwise.
 
-**Prerequisites:** Node.js 18+
+**Prerequisites:** Node.js 18+. Bun 1.3+ optional but recommended for the
+faster routed commands and forward-compat with v8.0.0.
 
 **What it does:**
-- Installs the `loki` CLI binary to your PATH
-- Creates skill symlinks at `~/.claude/skills/loki-mode`, `~/.codex/skills/loki-mode`, and `~/.gemini/skills/loki-mode`
-- Each provider auto-discovers skills in its respective directory
+- Installs the `loki` CLI binary to your PATH (`bin/loki` shim)
+- Subsequent `loki setup-skill` creates symlinks at `~/.claude/skills/loki-mode`, `~/.codex/skills/loki-mode`, `~/.gemini/skills/loki-mode`
 
 **Opt out of anonymous install telemetry:**
 ```bash
@@ -222,15 +231,17 @@ The `HUMAN_INPUT.md` file has security controls:
 
 ## Multi-Provider Support
 
-Loki Mode v5.0.0 introduces support for multiple AI providers beyond Claude.
+Loki Mode supports five providers across three tiers. Pick by capability + cost.
 
 ### Supported Providers
 
-| Provider | Status | Notes |
-|----------|--------|-------|
-| `claude` | Full Support | Default provider, all features available |
-| `codex` | Degraded Mode | Core functionality only, some features unavailable |
-| `gemini` | Degraded Mode | Core functionality only, some features unavailable |
+| Provider | Tier | Notes |
+|----------|------|-------|
+| `claude` | Tier 1 (full) | Default. All features incl. Task subagents, MCP, council. |
+| `cline`  | Tier 2 | Full feature set; small models (<13B) may fail tool-use. |
+| `codex`  | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
+| `gemini` | Tier 3 (degraded) | Sequential only, no Task tool; uses `--approval-mode=yolo`. |
+| `aider`  | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
 
 ### Configuration
 

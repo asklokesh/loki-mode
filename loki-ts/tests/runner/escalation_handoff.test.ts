@@ -171,7 +171,7 @@ describe("renderHandoff", () => {
 // --- writeEscalationHandoff -----------------------------------------------
 
 describe("writeEscalationHandoff", () => {
-  it("writes to .loki/escalations/, filename handoff-<iso-flat>-<gate>.md, returns {path,bytes}", () => {
+  it("writes to .loki/escalations/, filename pattern handoff-<iso-ms>-<pid>-<n>-<gate>.md (v7.5.1: collision-safe), returns {path,bytes}", () => {
     const fixedNow = new Date("2026-04-28T12:34:56.789Z");
     const result = writeEscalationHandoff(scratch, baseInput, {
       findings: [],
@@ -180,9 +180,12 @@ describe("writeEscalationHandoff", () => {
     });
     // Path lives under the escalations subdir.
     expect(result.path.startsWith(join(scratch, "escalations"))).toBe(true);
-    // Filename pattern: handoff-<iso flattened to YYYYMMDDTHHMMSSZ>-<gate>.md
+    // v7.5.1 fix B5: filename keeps millisecond resolution and adds
+    // <pid>-<counter> to defeat sub-second collisions.
     const fname = result.path.split("/").pop()!;
-    expect(fname).toBe("handoff-20260428T123456Z-static_analysis.md");
+    expect(fname).toMatch(
+      /^handoff-20260428T123456789Z-\d+-\d+-static_analysis\.md$/,
+    );
     // bytes equals body length (UTF-8 ASCII here).
     const body = readFileSync(result.path, "utf-8");
     expect(result.bytes).toBe(body.length);
@@ -236,7 +239,27 @@ describe("writeEscalationHandoff", () => {
       now: () => stubNow,
     });
     const fname = result.path.split("/").pop()!;
-    expect(fname).toBe("handoff-20270102T030405Z-static_analysis.md");
+    // v7.5.1 fix B5: ms preserved (.000 here -> "000"), pid + counter inserted.
+    expect(fname).toMatch(
+      /^handoff-20270102T030405000Z-\d+-\d+-static_analysis\.md$/,
+    );
+  });
+
+  it("v7.5.1 fix B5: two handoffs in the same wall-clock millisecond do not collide", () => {
+    const fixedNow = new Date("2026-04-28T12:34:56.789Z");
+    const r1 = writeEscalationHandoff(scratch, baseInput, {
+      findings: [],
+      learnings: [],
+      now: () => fixedNow,
+    });
+    const r2 = writeEscalationHandoff(scratch, baseInput, {
+      findings: [],
+      learnings: [],
+      now: () => fixedNow,
+    });
+    expect(r1.path).not.toBe(r2.path);
+    expect(existsSync(r1.path)).toBe(true);
+    expect(existsSync(r2.path)).toBe(true);
   });
 });
 
