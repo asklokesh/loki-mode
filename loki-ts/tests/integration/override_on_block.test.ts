@@ -24,10 +24,15 @@ const ENV_KEYS = [
   "LOKI_INJECT_FINDINGS",
   "LOKI_OVERRIDE_COUNCIL",
   "LOKI_AUTO_LEARNINGS",
+  "LOKI_OVERRIDE_REAL_JUDGE",
 ];
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "loki-override-block-"));
+  // v7.5.4: force the stub-judge path so this test is hermetic. With
+  // real-judges default-on, the test would otherwise spawn a provider
+  // CLI and either hang (no provider configured) or cost real tokens.
+  process.env["LOKI_OVERRIDE_REAL_JUDGE"] = "0";
 });
 
 afterEach(() => {

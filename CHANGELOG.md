@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.4] - 2026-04-29
+
+PATCH release. Wires real provider-backed override council judges
+(replaces the deterministic stub from v7.5.0-v7.5.3) and dispatches a
+3-LLM panel by default for blind-review-style consensus on disputed
+findings.
+
+### Code
+
+- **Real provider-backed override judges** (closes the v7.5.3
+  CHANGELOG-deferred item): the override council now resolves a panel
+  of provider-backed judges via the existing `providers.ts`
+  abstraction. Each judge is a fast-tier provider invocation with a
+  deterministic prompt asking APPROVE_OVERRIDE / REJECT_OVERRIDE. On
+  any infrastructure failure (provider CLI missing, invoke threw,
+  response unparseable) the slot fails-safe to REJECT_OVERRIDE so a
+  hung provider cannot silently approve a bypass.
+- **3-LLM panel by default**: panel composition is `[claude, gemini,
+  codex]` so a model-specific bias does not sweep the panel. Override
+  council aggregates votes via the existing 2-of-3 majority rule.
+  Set `LOKI_OVERRIDE_JUDGES=claude,gemini` (csv) to customize, or
+  `LOKI_OVERRIDE_PANEL_SIZE=1` for single-judge mode (cost control).
+- **Stub-judge fallback preserved**: `LOKI_OVERRIDE_REAL_JUDGE=0`
+  forces stub-only execution. Used by the integration tests for
+  hermeticity. Stub also fires automatically when no providers
+  resolve (e.g. a fresh install with no CLIs configured).
+
+### Process
+
+- **Stash residue cleared**: the mid-session `git stash` from v7.5.3
+  authoring was inspected (just my own WIP, no upstream changes) and
+  dropped. `git stash list` no longer contains my session entries.
+
+### Verified locally
+
+- `bun test` (loki-ts/, with bunfig.toml repo-root scope): 654/0.
+- `bun run typecheck`: clean.
+- `bash -n autonomy/run.sh autonomy/loki`: clean.
+
+### Honest pending (not in v7.5.4, deferred to v7.5.5+)
+
+- Cross-process flock on `gate-failure-count.json` (parallel
+  worktrees) -- needs flock/sqlite primitive.
+- End-to-end `loki start <prd>` against a synthetic PRD with stub
+  provider, verifying bash phase1-hooks fire correctly under real
+  autonomous-loop conditions. The unit test exercises `runCodeReview`
+  directly, not the full bash code path.
+- Tests for the 3 new MCP tools and 4 new dashboard endpoints from
+  v7.5.3 (currently zero coverage).
+- `loki status --json` Phase 1 artifact integration (text mode has it
+  since v7.5.3; JSON mode does not).
+- `loki internal` help text -- currently absent from `loki help`.
+- Documentation drift fixes (SKILL.md "New in v5.0.0", CLAUDE.md
+  outdated line counts, wiki/Home.md changelog cross-link).
+- Dead code removal (`findSkillDir` in `loki-ts/src/util/paths.ts`).
+- Real-user UAT (agentbudget-user re-run) -- requires external action.
+- Cursor agent-kanban dashboard parity audit -- next-cycle scope.
+- Phase 6 bash sunset (multi-week Part A plan).
+
+14 version locations bumped 7.5.3 -> 7.5.4.
+
 ## [7.5.3] - 2026-04-29
 
 MINOR-impact patch. **Embedded-by-default UX**: per the explicit user

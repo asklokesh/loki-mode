@@ -745,10 +745,190 @@ export async function runCodeReview(
   };
 }
 
-// Phase 1 (v7.5.0) helper -- runs the override council using a stub judge
-// today (deterministic APPROVE_OVERRIDE iff proofType is one of the
-// trusted classes). Real provider-backed judge wiring lands in v7.6.0
-// (Phase 2 of Part B). Returns null when no override path is taken.
+// v7.5.4: build a 3-LLM judge panel for the override council.
+// Each panel slot is a provider-backed judge function that fires one
+// fast-tier provider call against (finding, evidence) and returns a
+// classified verdict. Panel composition controlled by:
+//   - LOKI_OVERRIDE_JUDGES (csv): provider names (claude, codex, gemini, cline, aider)
+//   - LOKI_OVERRIDE_PANEL_SIZE (int, default 3): clamp panel to N judges
+//
+// Returns null when:
+//   - LOKI_OVERRIDE_REAL_JUDGE=0
+//   - No providers resolve (CLIs missing)
+//   - resolveProvider throws for every name
+type RealJudgeFn = (input: {
+  finding: import("./findings_injector.ts").Finding;
+  evidence: import("./counter_evidence.ts").CounterEvidence;
+  judge: string;
+}) => Promise<{
+  judge: string;
+  verdict: "APPROVE_OVERRIDE" | "REJECT_OVERRIDE";
+  reasoning: string;
+}>;
+
+async function tryBuildRealJudgePanel(
+  log: (s: string) => void,
+): Promise<{ judges: Array<{ name: string; fn: RealJudgeFn }> } | null> {
+  const csv = process.env["LOKI_OVERRIDE_JUDGES"] ?? "";
+  let names = csv
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  if (names.length === 0) {
+    // Default trio: distinct providers so a model-specific bias does not
+    // sweep the panel. Each is the fastest tier of its provider.
+    names = ["claude", "gemini", "codex"];
+  }
+  const sizeRaw = process.env["LOKI_OVERRIDE_PANEL_SIZE"];
+  const size = sizeRaw && Number.parseInt(sizeRaw, 10) > 0
+    ? Math.min(Math.max(1, Number.parseInt(sizeRaw, 10)), 5)
+    : 3;
+  names = names.slice(0, size);
+
+  let provMod: typeof import("./providers.ts");
+  try {
+    provMod = await import("./providers.ts");
+  } catch (err) {
+    log(`Override council: providers.ts unloadable (${(err as Error).message})`);
+    return null;
+  }
+
+  const judges: Array<{ name: string; fn: RealJudgeFn }> = [];
+  for (const name of names) {
+    let invoker: import("./types.ts").ProviderInvoker;
+    try {
+      invoker = await provMod.resolveProvider(
+        name as "claude" | "codex" | "gemini" | "cline" | "aider",
+      );
+    } catch (err) {
+      log(`Override council: provider ${name} unresolved (${(err as Error).message})`);
+      continue;
+    }
+    judges.push({
+      name: `judge-${name}`,
+      fn: makeProviderJudge(invoker, name as "claude" | "codex" | "gemini" | "cline" | "aider"),
+    });
+  }
+
+  if (judges.length === 0) return null;
+  return { judges };
+}
+
+function makeProviderJudge(
+  invoker: import("./types.ts").ProviderInvoker,
+  providerName: "claude" | "codex" | "gemini" | "cline" | "aider",
+): RealJudgeFn {
+  return async (input) => {
+    const prompt = buildJudgePrompt(input.finding, input.evidence);
+    const tmpOut = `${process.cwd()}/.loki/state/override-judge-${providerName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`;
+    let result: import("./types.ts").ProviderResult;
+    try {
+      result = await invoker.invoke({
+        provider: providerName,
+        prompt,
+        tier: "fast",
+        cwd: process.cwd(),
+        iterationOutputPath: tmpOut,
+      });
+    } catch (err) {
+      // Provider invoke failed: fail-safe to REJECT (preserves the BLOCK)
+      // rather than silently approving on infrastructure issues.
+      return {
+        judge: input.judge,
+        verdict: "REJECT_OVERRIDE",
+        reasoning: `provider ${providerName} invoke threw: ${(err as Error).message}`,
+      };
+    }
+    let body = "";
+    try {
+      const fs = await import("node:fs");
+      if (fs.existsSync(result.capturedOutputPath)) {
+        body = fs.readFileSync(result.capturedOutputPath, "utf-8");
+      }
+    } catch {
+      // best effort
+    }
+    return classifyJudgeResponse(body, input.judge, providerName);
+  };
+}
+
+function buildJudgePrompt(
+  finding: import("./findings_injector.ts").Finding,
+  evidence: import("./counter_evidence.ts").CounterEvidence,
+): string {
+  return `You are an override-council judge for the Loki Mode autonomous orchestrator.
+
+A code-review finding has BLOCKED an iteration. The dev agent has supplied counter-evidence claiming the finding is a false positive. Your job is to decide whether the counter-evidence justifies lifting the BLOCK.
+
+FINDING (severity ${finding.severity}):
+  ${finding.description}
+  reviewer: ${finding.reviewer}
+  file:     ${finding.file ?? "(none)"}
+  line:     ${finding.line ?? "(none)"}
+
+COUNTER-EVIDENCE supplied by dev agent:
+  proofType: ${evidence.proofType}
+  claim:     ${evidence.claim}
+  artifacts: ${evidence.artifacts.join(" | ") || "(none)"}
+
+Respond with EXACTLY one line in this format and nothing else:
+VERDICT: APPROVE_OVERRIDE
+or
+VERDICT: REJECT_OVERRIDE
+
+Then on a new line, one short sentence (<= 240 chars) explaining your reasoning.
+
+Approve when the counter-evidence is concrete and falsifiable (file existence, test pass, grep miss, scope-out). Reject when the evidence is vague, hand-wavy, or fails to address the specific finding.`;
+}
+
+function classifyJudgeResponse(
+  body: string,
+  judge: string,
+  providerName: string,
+): {
+  judge: string;
+  verdict: "APPROVE_OVERRIDE" | "REJECT_OVERRIDE";
+  reasoning: string;
+} {
+  const verdictLine = body.split(/\r?\n/).find((l) => /^\s*VERDICT:/i.test(l)) ?? "";
+  const isApprove = /APPROVE_OVERRIDE/i.test(verdictLine);
+  const isReject = /REJECT_OVERRIDE/i.test(verdictLine);
+  const reasoning = body
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0 && !/^\s*VERDICT:/i.test(l))
+    .slice(0, 1)
+    .join(" ")
+    .slice(0, 240) || "(no reasoning extracted)";
+  if (isApprove) {
+    return { judge, verdict: "APPROVE_OVERRIDE", reasoning };
+  }
+  if (isReject) {
+    return { judge, verdict: "REJECT_OVERRIDE", reasoning };
+  }
+  // Unparseable -- fail-safe REJECT.
+  return {
+    judge,
+    verdict: "REJECT_OVERRIDE",
+    reasoning: `${providerName} response unparseable (first 80 chars): ${body.slice(0, 80)}`,
+  };
+}
+
+// Phase 1 (v7.5.0/v7.5.4) helper -- runs the override council.
+//
+// v7.5.4: provider-backed judges with 3-LLM panel by default.
+// Three judge slots fan out across whichever providers are configured:
+//   - LOKI_OVERRIDE_JUDGES env (comma-separated provider names) overrides.
+//   - Default: ["claude", "gemini", "codex"] -- 3 distinct providers so a
+//     model-specific bias does not sweep the panel.
+//   - Falls back to the deterministic stub-judge (TRUSTED_PROOFS check)
+//     when LOKI_OVERRIDE_REAL_JUDGE=0 OR a provider's CLI is missing OR
+//     the panel cannot reach quorum.
+//
+// Cost: at most 3 fast-tier provider calls per blocking finding per
+// iteration. Skipped entirely when no counter-evidence file exists.
+//
+// Set LOKI_OVERRIDE_REAL_JUDGE=0 to force stub-only (hermetic CI, cost
+// control). Set LOKI_OVERRIDE_PANEL_SIZE=1 for single-judge mode.
 async function maybeRunOverrideCouncil(args: {
   lokiDir: string;
   reviewDir: string;
@@ -765,9 +945,10 @@ async function maybeRunOverrideCouncil(args: {
     const evidenceFile = ce.loadCounterEvidence(args.lokiDir, args.iteration);
     if (evidenceFile === null || evidenceFile.evidence.length === 0) return null;
 
-    // Stub judge: APPROVE_OVERRIDE iff the operator-supplied proofType is
-    // one of the trusted classes. Real judge wiring (provider-backed) is
-    // Phase 2 of Part B per the plan.
+    // Stub judge: deterministic, used as fallback when real judges
+    // are disabled / unreachable. Trusted proofType classes are
+    // mechanically falsifiable (file-exists -> grep, test-passes ->
+    // npm test) so accepting them with no LLM call is safe.
     const TRUSTED_PROOFS = new Set([
       "duplicate-code-path",
       "file-exists",
@@ -775,7 +956,7 @@ async function maybeRunOverrideCouncil(args: {
       "grep-miss",
       "out-of-scope",
     ]);
-    const judge = async (input: {
+    const stubJudge = async (input: {
       finding: import("./findings_injector.ts").Finding;
       evidence: import("./counter_evidence.ts").CounterEvidence;
       judge: string;
@@ -785,10 +966,36 @@ async function maybeRunOverrideCouncil(args: {
         judge: input.judge,
         verdict: trusted ? ("APPROVE_OVERRIDE" as const) : ("REJECT_OVERRIDE" as const),
         reasoning: trusted
-          ? `proofType=${input.evidence.proofType} is in the trusted-proof set`
-          : `proofType=${input.evidence.proofType} requires manual review`,
+          ? `[stub] proofType=${input.evidence.proofType} trusted`
+          : `[stub] proofType=${input.evidence.proofType} requires manual review`,
       };
     };
+
+    // v7.5.4: try to build a real-provider panel. Returns the configured
+    // judge functions + judge names. On any failure returns null and we
+    // fall back to a single-judge stub run.
+    let judgeFn = stubJudge;
+    let judgeNames: readonly string[] = ce.DEFAULT_OVERRIDE_JUDGES;
+    if (process.env["LOKI_OVERRIDE_REAL_JUDGE"] !== "0") {
+      const panel = await tryBuildRealJudgePanel(args.log).catch(() => null);
+      if (panel !== null && panel.judges.length > 0) {
+        // Each judge slot gets its own provider-backed function. The
+        // override council fans out across them via runOverrideCouncil's
+        // `opts.judges` list. We map judge name -> function via closure.
+        const fnByName = new Map<string, typeof stubJudge>();
+        for (const j of panel.judges) fnByName.set(j.name, j.fn);
+        judgeNames = panel.judges.map((j) => j.name);
+        judgeFn = async (input) => {
+          const fn = fnByName.get(input.judge) ?? stubJudge;
+          return fn(input);
+        };
+        args.log(
+          `Override council: real-judge panel = [${judgeNames.join(", ")}]`,
+        );
+      } else {
+        args.log("Override council: no real judges available, using stub");
+      }
+    }
 
     // Filter findings to just the blocking severities (Critical/High) --
     // mirrors the parseVerdict regex at line 548.
@@ -797,7 +1004,9 @@ async function maybeRunOverrideCouncil(args: {
     );
     if (blockers.length === 0) return null;
 
-    const outcome = await ce.runOverrideCouncil(blockers, evidenceFile, judge);
+    const outcome = await ce.runOverrideCouncil(blockers, evidenceFile, judgeFn, {
+      judges: judgeNames,
+    });
     await ce.recordOverrideOutcome(args.lokiDir, args.iteration, outcome, blockers);
 
     // Persist the override transcript next to the review for audit.
