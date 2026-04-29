@@ -96,6 +96,24 @@ describe("_parseReviewerOutputForTests", () => {
     expect(out[2]!.file).toBe("src/c.ts");
   });
 
+  it("v7.5.8: skips matches with empty or missing capture groups (no findings emitted)", () => {
+    // v7.5.8 replaced `m[1]!`/`m[2]!` non-null assertions with explicit
+    // `!m[1] || !m[2]` guards. The current SEVERITY_RE requires `.+` in
+    // group 2 so a stripped "[High]" with no trailing body fails the regex
+    // outright (m === null). A line like "[High]   " has only whitespace
+    // after the bracket, but `\s*` is greedy and `.+` then needs >=1 char,
+    // so trailing-whitespace-only also fails to match. Both code paths must
+    // produce zero findings -- if a future regex tweak ever lets group 2
+    // be empty, the explicit `!m[2]` guard is the last line of defense.
+    const text = [
+      "[High]",         // no body at all -- m === null
+      "[Critical]   ",  // only whitespace body -- m === null
+      "[Medium] ",      // single trailing space -- m === null (\.+ needs >=1 non-eol)
+    ].join("\n");
+    const out = _parseReviewerOutputForTests(text, "rv");
+    expect(out.length).toBe(0);
+  });
+
   it("ignores lines without a [Severity] marker", () => {
     const text = [
       "VERDICT: FAIL",

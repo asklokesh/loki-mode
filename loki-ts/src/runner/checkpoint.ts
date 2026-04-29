@@ -340,16 +340,25 @@ function enforceRetention(base: string): void {
   rebuildIndex(base);
 }
 
-function rebuildIndex(base: string): void {
+// Exported for tests; also used internally by enforceRetention.
+export function rebuildIndex(base: string): void {
   const remaining = sortByEpoch(listCheckpointDirs(base));
   const lines: string[] = [];
   for (const id of remaining) {
     const metaPath = join(checkpointsRoot(base), id, "metadata.json");
-    if (!existsSync(metaPath)) continue;
+    const cpDir = join(checkpointsRoot(base), id);
+    if (!existsSync(metaPath)) {
+      emitMetadataDroppedEvent(base, cpDir, "missing_field", "metadata.json");
+      continue;
+    }
     try {
       const parsed: unknown = JSON.parse(readFileSync(metaPath, "utf-8"));
-      const m = validateCheckpointMetadata(parsed, metaPath);
-      if (!m) continue; // warning already logged
+      const result = validateCheckpointMetadataDetailed(parsed, metaPath);
+      if (!result.ok) {
+        emitMetadataDroppedEvent(base, cpDir, result.reason, result.field);
+        continue;
+      }
+      const m = result.value;
       lines.push(
         serializeIndexLine({
           id: m.id,
@@ -360,12 +369,39 @@ function rebuildIndex(base: string): void {
         }),
       );
     } catch {
-      // Skip corrupt metadata, mirror bash `|| true`.
+      // Skip corrupt metadata (JSON parse failure), mirror bash `|| true`.
+      emitMetadataDroppedEvent(base, cpDir, "invalid_type", "metadata.json");
     }
   }
   const target = indexPath(base);
   const contents = lines.length > 0 ? `${lines.join("\n")}\n` : "";
   atomicWriteFile(target, contents);
+}
+
+// v7.5.8: structured event emission for dropped checkpoint metadata.
+// Replaces bare console.warn so on-call dashboards / log shippers can pick
+// up corruption signals from .loki/events.jsonl. Best-effort: a write
+// failure here must not break checkpoint creation.
+function emitMetadataDroppedEvent(
+  base: string,
+  cpDir: string,
+  reason: "missing_field" | "invalid_type" | "control_chars",
+  field: string,
+): void {
+  const eventsPath = join(base, "events.jsonl");
+  const event = {
+    timestamp: new Date().toISOString(),
+    type: "checkpoint.metadata.dropped",
+    checkpoint_dir: cpDir,
+    reason,
+    field,
+  };
+  try {
+    mkdirSync(dirname(eventsPath), { recursive: true });
+    appendFileSync(eventsPath, `${JSON.stringify(event)}\n`);
+  } catch {
+    // Swallow -- event emission is observability, never load-bearing.
+  }
 }
 
 // Public: list checkpoints by reading metadata.json for each cp-* directory.
@@ -405,9 +441,48 @@ function validateCheckpointMetadata(
   raw: unknown,
   source: string,
 ): CheckpointMetadata | null {
+  const r = validateCheckpointMetadataDetailed(raw, source);
+  return r.ok ? r.value : null;
+}
+
+// v7.5.8: detailed variant returns structured failure reasons so callers
+// (rebuildIndex) can emit precise events. Same validation logic as
+// validateCheckpointMetadata, but returns reason/field on failure.
+type ValidationResult =
+  | { ok: true; value: CheckpointMetadata }
+  | {
+      ok: false;
+      reason: "missing_field" | "invalid_type" | "control_chars";
+      field: string;
+    };
+
+// v7.5.8: control-character whitelist. Tab (\x09) is allowed in
+// task_description; everything else < 0x20 is rejected. This blocks NUL,
+// CR, LF, and other non-printable bytes from leaking into rebuilt index
+// lines (which would corrupt the JSONL stream) and from being silently
+// accepted by readCheckpoint / listCheckpoints.
+const CONTROL_CHAR_RE = /[\x00-\x08\x0a-\x1f]/;
+
+// Subset of stringFields where control chars are forbidden. We exclude
+// task_description because it is user-supplied free text and the bash
+// implementation does not sanitize it; tightening that field would break
+// existing checkpoints.
+const CONTROL_CHAR_GUARDED_FIELDS: ReadonlyArray<keyof CheckpointMetadata> = [
+  "id",
+  "task_id",
+  "git_sha",
+  "git_branch",
+  "provider",
+  "phase",
+];
+
+function validateCheckpointMetadataDetailed(
+  raw: unknown,
+  source: string,
+): ValidationResult {
   if (raw === null || typeof raw !== "object") {
     console.warn(`[checkpoint] invalid metadata at ${source}: not an object`);
-    return null;
+    return { ok: false, reason: "invalid_type", field: "<root>" };
   }
   const o = raw as Record<string, unknown>;
   const stringFields: Array<keyof CheckpointMetadata> = [
@@ -421,29 +496,56 @@ function validateCheckpointMetadata(
     "phase",
   ];
   for (const f of stringFields) {
+    if (!(f in o)) {
+      console.warn(
+        `[checkpoint] invalid metadata at ${source}: field "${f}" missing`,
+      );
+      return { ok: false, reason: "missing_field", field: f };
+    }
     if (typeof o[f] !== "string") {
       console.warn(
         `[checkpoint] invalid metadata at ${source}: field "${f}" not a string`,
       );
-      return null;
+      return { ok: false, reason: "invalid_type", field: f };
     }
+  }
+  if (!("iteration" in o)) {
+    console.warn(
+      `[checkpoint] invalid metadata at ${source}: field "iteration" missing`,
+    );
+    return { ok: false, reason: "missing_field", field: "iteration" };
   }
   if (typeof o["iteration"] !== "number" || !Number.isFinite(o["iteration"])) {
     console.warn(
       `[checkpoint] invalid metadata at ${source}: field "iteration" not a finite number`,
     );
-    return null;
+    return { ok: false, reason: "invalid_type", field: "iteration" };
+  }
+  // v7.5.8: control-character rejection on a whitelist of fields. NUL/CR/LF
+  // in id or git_sha could break the cp-* directory listing, the JSONL
+  // index, or downstream shell consumers (logging, dashboard).
+  for (const f of CONTROL_CHAR_GUARDED_FIELDS) {
+    const v = o[f] as string;
+    if (CONTROL_CHAR_RE.test(v)) {
+      console.warn(
+        `[checkpoint] invalid metadata at ${source}: field "${f}" contains control characters`,
+      );
+      return { ok: false, reason: "control_chars", field: f };
+    }
   }
   return {
-    id: o["id"] as string,
-    timestamp: o["timestamp"] as string,
-    iteration: o["iteration"] as number,
-    task_id: o["task_id"] as string,
-    task_description: o["task_description"] as string,
-    git_sha: o["git_sha"] as string,
-    git_branch: o["git_branch"] as string,
-    provider: o["provider"] as string,
-    phase: o["phase"] as string,
+    ok: true,
+    value: {
+      id: o["id"] as string,
+      timestamp: o["timestamp"] as string,
+      iteration: o["iteration"] as number,
+      task_id: o["task_id"] as string,
+      task_description: o["task_description"] as string,
+      git_sha: o["git_sha"] as string,
+      git_branch: o["git_branch"] as string,
+      provider: o["provider"] as string,
+      phase: o["phase"] as string,
+    },
   };
 }
 

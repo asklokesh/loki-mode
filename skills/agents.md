@@ -93,11 +93,11 @@ Success: Endpoint works, tests pass, matches OpenAPI spec.
 
 ## Specialist Review Pattern (v5.30.0)
 
-**Code review uses 3 specialist reviewers selected from a pool of 5 named experts.**
+**Code review uses 3 specialist reviewers selected from a pool of 6 named experts.**
 
 See `quality-gates.md` for full specialist definitions, selection rules, and prompt templates.
 
-**Pool:** security-sentinel, performance-oracle, architecture-strategist, test-coverage-auditor, dependency-analyst
+**Pool:** security-sentinel, performance-oracle, architecture-strategist, test-coverage-auditor, dependency-analyst, legacy-healing-auditor
 
 **Selection:** architecture-strategist always included + top 2 by trigger keyword match against diff.
 

@@ -50,6 +50,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **Docker Sandbox** - Isolated secure execution environment
 - **Project Registry** - Multi-project orchestration
 - **Staged Autonomy** - Approval gates for sensitive operations
+- **10-Gate Quality System** - Static analysis, 3-reviewer parallel review, anti-sycophancy, severity blocking, coverage gates, mutation detection, and Gate 10 backward-compatibility (healing mode)
 - **Completion Council** - 3-member voting system with anti-sycophancy checks
 - **Security Hardening** - Path traversal, XSS, injection, and memory leak protections
 - **TLS/HTTPS Dashboard** - Encrypted API and dashboard connections
@@ -96,7 +97,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.5.7** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **7.5.8** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

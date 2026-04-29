@@ -1320,7 +1320,19 @@ sandbox_run() {
     fi
 
     log_info "Running command in sandbox: $cmd"
-    docker exec -it "$CONTAINER_NAME" bash -c "cd /workspace && $cmd"
+    # Trust contract: $cmd is the operator's CLI argv (`loki sandbox run <cmd>`),
+    # and the operator is the same person who is running the sandbox container
+    # on their own machine. Shell metacharacters are intentionally allowed so
+    # the operator can run pipelines, redirects, etc. inside the sandbox -- but
+    # the sandbox is the security boundary, not this shell-out. We:
+    #   1. set the working dir via `docker exec -w` instead of `cd && $cmd`,
+    #      so the user command cannot break out of the cd via metacharacters
+    #      that confuse the wrapper (e.g. unmatched quotes affecting cd);
+    #   2. pass `--` to bash so the user string cannot be re-interpreted as a
+    #      bash flag if it begins with `-`;
+    #   3. pass the user string as a separate argv element to bash -lc so it
+    #      is treated as the script body, not concatenated into a wrapper.
+    docker exec -it -w /workspace "$CONTAINER_NAME" bash -lc -- "$cmd"
 }
 
 # Start a dev server inside the sandbox

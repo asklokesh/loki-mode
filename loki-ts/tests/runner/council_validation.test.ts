@@ -191,3 +191,95 @@ describe("councilDevilsAdvocate -- events.jsonl resilience (v7.5.7 fix B)", () =
     expect(errIssue?.description).toBe("2 recent error events");
   });
 });
+
+describe("v7.5.8 hardening", () => {
+  it("hasOwnProperty: prototype-pollution payload with __proto__.id is NOT counted (fix A)", async () => {
+    const queueDir = join(tmpBase, "queue");
+    mkdirSync(queueDir, { recursive: true });
+    // Crafted JSON: an object whose own keys are only "__proto__" (treated as
+    // a regular property by JSON.parse, not an actual prototype mutator).
+    // Under the old `"id" in entry` check this would still NOT match because
+    // JSON.parse creates a plain own property "__proto__", but objects with
+    // *inherited* id via Object.prototype could leak. We assert that an
+    // entry without own task/id is ignored regardless of prototype chain.
+    const polluted: unknown[] = [
+      JSON.parse('{"__proto__":{"id":"injected"}}'),
+      JSON.parse('{"__proto__":{"task":"injected"}}'),
+      { other: "field" },
+    ];
+    writeFileSync(join(queueDir, "failed.json"), JSON.stringify(polluted));
+
+    // Defense-in-depth: also pollute the actual Object.prototype to prove
+    // hasOwnProperty.call rejects inherited keys. Restore in finally.
+    const proto = Object.prototype as unknown as Record<string, unknown>;
+    const hadId = Object.prototype.hasOwnProperty.call(proto, "id");
+    proto["id"] = "polluted-id";
+    try {
+      const ctx = makeCtx();
+      const voter = DEFAULT_VOTERS[0];
+      if (!voter) throw new Error("default voter missing");
+      const verdict = await voter(makeCec(ctx));
+      // None of the entries have own "task" or "id" -> APPROVE, no issues.
+      expect(verdict.verdict).toBe("APPROVE");
+      expect(verdict.issues.length).toBe(0);
+    } finally {
+      if (!hadId) delete proto["id"];
+    }
+  });
+
+  it("test log >5MB is skipped, not read (fix B)", async () => {
+    const logsDir = join(tmpBase, "logs");
+    mkdirSync(logsDir, { recursive: true });
+    // Synthesize a 6MB log file. Fill with non-pass content so that, if the
+    // size guard regresses and the file IS read, hasPassMarker stays false
+    // anyway -- but the trailing 30 lines DO contain "passed" to make the
+    // assertion sharp: with the guard, file is skipped -> hasPassMarker
+    // stays false -> HIGH issue "test logs lack a pass marker" is absent
+    // (because hasTestLog is true but the file was skipped before tail
+    // inspection, so we get the "no test result logs found" path? No --
+    // hasTestLog is set BEFORE the size check. So we expect HIGH
+    // "test logs lack a pass marker").
+    //
+    // Cleaner assertion: write a 6MB file whose tail says "all tests passed".
+    // Without guard -> hasPassMarker=true -> no test-log issue.
+    // With guard -> file skipped -> hasPassMarker=false -> HIGH issue
+    // "test logs lack a pass marker" present.
+    const bigFile = join(logsDir, "big-test.log");
+    const sixMB = 6 * 1024 * 1024;
+    const filler = "x".repeat(1024); // 1KB of filler
+    const lines: string[] = [];
+    let written = 0;
+    while (written < sixMB - 2048) {
+      lines.push(filler);
+      written += filler.length + 1;
+    }
+    lines.push("all tests passed");
+    writeFileSync(bigFile, lines.join("\n"));
+
+    // Capture console.warn to assert the skip warning fires.
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+
+    let result: AgentVerdict;
+    try {
+      result = await councilDevilsAdvocate(
+        [
+          { role: "r1", verdict: "APPROVE", reason: "ok", issues: [] },
+          { role: "r2", verdict: "APPROVE", reason: "ok", issues: [] },
+          { role: "r3", verdict: "APPROVE", reason: "ok", issues: [] },
+        ],
+        { lokiDir: tmpBase },
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(warnings.some((w) => w.includes("[council] skipping large log"))).toBe(true);
+    // File was skipped, so pass marker was never observed -> HIGH issue.
+    const lacksPass = result.issues.some((i) => i.description === "test logs lack a pass marker");
+    expect(lacksPass).toBe(true);
+  });
+});

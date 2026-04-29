@@ -191,13 +191,45 @@ class Phase1EndpointTests(unittest.TestCase):
             r2 = client.get("/api/escalations/foo%5Cbar.md")
             self.assertEqual(r2.status_code, 400)
 
-        # Direct handler call to verify the '/' guard at server.py:5885.
+        # Direct handler call: a literal '/' in filename is no longer
+        # rejected by an explicit guard (FastAPI's router strips '/' before
+        # the handler runs). Instead, the realpath check now resolves the
+        # candidate inside the escalations directory; foo/bar.md stays
+        # within base, so the handler proceeds to a 404.
         import asyncio
         from fastapi import HTTPException
         from dashboard import server as _server
         with _ForceLokiDir(self.tmp):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(_server.get_escalation("foo/bar.md"))
+            # 404 because the file does not exist in the resolved location.
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_escalation_400_on_symlink_traversal(self):
+        """Symlink whose target escapes the escalations dir must 400.
+
+        This is the case the router-level '/' rejection cannot catch:
+        a single-segment filename whose realpath escapes the base.
+        """
+        import asyncio
+        from fastapi import HTTPException
+        from dashboard import server as _server
+
+        esc_dir = Path(self.tmp) / "escalations"
+        esc_dir.mkdir(parents=True, exist_ok=True)
+        # Create a file outside the escalations dir.
+        outside = Path(self.tmp) / "outside.md"
+        outside.write_text("secret", encoding="utf-8")
+        # Create a symlink inside escalations pointing outside.
+        link = esc_dir / "evil.md"
+        try:
+            os.symlink(str(outside), str(link))
+        except OSError:
+            self.skipTest("symlink unsupported on this filesystem")
+
+        with _ForceLokiDir(self.tmp):
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(_server.get_escalation("evil.md"))
             self.assertEqual(ctx.exception.status_code, 400)
             self.assertIn("invalid", ctx.exception.detail.lower())
 
@@ -219,6 +251,83 @@ class Phase1EndpointTests(unittest.TestCase):
             resp = self._client().get("/api/escalations/missing.md")
         self.assertEqual(resp.status_code, 404)
         self.assertIn("not found", resp.json()["detail"].lower())
+
+    # ---------- v7.5.8: auth scope guards on memory/learning endpoints -------
+
+    def test_memory_summary_requires_auth_when_enterprise_enabled(self):
+        """GET /api/memory/summary must return 401 when enterprise auth is on
+        and no token is supplied. Representative test for the v7.5.8
+        unauth-gated endpoints (memory + learning reads + memory/retrieve)."""
+        from dashboard import auth as _auth
+        prev_enterprise = _auth.ENTERPRISE_AUTH_ENABLED
+        _auth.ENTERPRISE_AUTH_ENABLED = True
+        try:
+            with _ForceLokiDir(self.tmp):
+                resp = self._client().get("/api/memory/summary")
+            # 401 == no token supplied while auth is required
+            self.assertEqual(resp.status_code, 401)
+            self.assertIn("authentication", resp.json()["detail"].lower())
+        finally:
+            _auth.ENTERPRISE_AUTH_ENABLED = prev_enterprise
+
+
+class CorsProductionGuardTests(unittest.TestCase):
+    """v7.5.8: wildcard CORS in production must fail startup."""
+
+    def test_wildcard_cors_in_production_raises(self):
+        """LOKI_DASHBOARD_CORS='*' + LOKI_ENV='production' must raise on
+        module reload (the CORS check runs at import/startup time)."""
+        import importlib
+        import sys
+
+        prev_cors = os.environ.get("LOKI_DASHBOARD_CORS")
+        prev_env = os.environ.get("LOKI_ENV")
+        os.environ["LOKI_DASHBOARD_CORS"] = "*"
+        os.environ["LOKI_ENV"] = "production"
+        try:
+            # Drop cached module so the import-time CORS guard re-runs.
+            sys.modules.pop("dashboard.server", None)
+            with self.assertRaises(RuntimeError) as ctx:
+                importlib.import_module("dashboard.server")
+            self.assertIn("Wildcard CORS", str(ctx.exception))
+            self.assertIn("production", str(ctx.exception).lower())
+        finally:
+            # Restore env and reload module so subsequent tests see a
+            # working dashboard.server.
+            if prev_cors is None:
+                os.environ.pop("LOKI_DASHBOARD_CORS", None)
+            else:
+                os.environ["LOKI_DASHBOARD_CORS"] = prev_cors
+            if prev_env is None:
+                os.environ.pop("LOKI_ENV", None)
+            else:
+                os.environ["LOKI_ENV"] = prev_env
+            sys.modules.pop("dashboard.server", None)
+            importlib.import_module("dashboard.server")
+
+    def test_wildcard_cors_in_dev_only_warns(self):
+        """LOKI_DASHBOARD_CORS='*' without LOKI_ENV=production must NOT
+        raise -- the existing warning behaviour stays in dev/test."""
+        import importlib
+        import sys
+
+        prev_cors = os.environ.get("LOKI_DASHBOARD_CORS")
+        prev_env = os.environ.get("LOKI_ENV")
+        os.environ["LOKI_DASHBOARD_CORS"] = "*"
+        os.environ.pop("LOKI_ENV", None)
+        try:
+            sys.modules.pop("dashboard.server", None)
+            mod = importlib.import_module("dashboard.server")
+            self.assertTrue(hasattr(mod, "app"))
+        finally:
+            if prev_cors is None:
+                os.environ.pop("LOKI_DASHBOARD_CORS", None)
+            else:
+                os.environ["LOKI_DASHBOARD_CORS"] = prev_cors
+            if prev_env is not None:
+                os.environ["LOKI_ENV"] = prev_env
+            sys.modules.pop("dashboard.server", None)
+            importlib.import_module("dashboard.server")
 
 
 if __name__ == "__main__":

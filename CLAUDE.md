@@ -16,12 +16,15 @@ claude --dangerously-skip-permissions
 
 ```
 SKILL.md                    # Slim core skill (~266 lines) - progressive disclosure
-providers/                  # Multi-provider support (v5.0.0)
-  claude.sh                 # Claude Code - full features
-  codex.sh                  # OpenAI Codex CLI - degraded mode
-  gemini.sh                 # Google Gemini CLI - degraded mode
+providers/                  # Multi-provider support (5 providers)
+  claude.sh                 # Claude Code - full features (Tier 1)
+  cline.sh                  # Cline - Tier 2
+  codex.sh                  # OpenAI Codex CLI - degraded mode (Tier 3)
+  gemini.sh                 # Google Gemini CLI - degraded mode (Tier 3)
+  aider.sh                  # Aider - degraded mode (Tier 3)
   loader.sh                 # Provider loader utility
-memory/                     # Complete memory system (v5.15.0)
+  models.sh                 # Model name registry
+memory/                     # Memory system (core v5.15.0; cross-project + RAG injector v7.1.0+; 15 modules)
   engine.py                 # Core memory engine
   schemas.py                # Pydantic schemas
   storage.py                # Storage backend
@@ -89,10 +92,12 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 - **Sonnet**: Development and functional testing (implementation, integration tests)
 - **Haiku**: Unit tests, monitoring, and simple tasks - use extensively for parallelization
 
-### Multi-Provider Support (v5.0.0)
-- **Claude Code**: Full features (subagents, parallel, Task tool, MCP)
-- **OpenAI Codex CLI**: Degraded mode (sequential only, no Task tool)
-- **Google Gemini CLI**: Degraded mode (sequential only, no Task tool)
+### Multi-Provider Support (5 providers, see `providers/*.sh`)
+- **Claude Code** (Tier 1): Full features (subagents, parallel, Task tool, MCP)
+- **Cline** (Tier 2): Reduced parallelism
+- **OpenAI Codex CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
+- **Google Gemini CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
+- **Aider** (Tier 3): Degraded mode
 
 ```bash
 # Provider selection
@@ -109,31 +114,45 @@ LOKI_PROVIDER=codex loki start ./prd.md
 5. Test coverage gates (>80% unit, 100% pass)
 6. Backward compatibility gate (healing mode - behavioral preservation, v6.67.0)
 
-### Legacy System Healing (v6.67.0)
+### Legacy System Healing (introduced v6.67.0)
+- **Current in v7.5.8**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
 - **Inspired by**: Amazon AGI Lab's "How Agentic AI Helps Heal Systems We Can't Replace"
-- **CLI**: `loki heal <path> [--phase archaeology|stabilize|isolate|modernize|validate]`
+- **CLI**: `loki heal <path> [--phase archaeology|stabilize|isolate|modernize|validate]` (`autonomy/loki:9916`)
 - **Principles**: Friction-as-semantics, failure-first learning, universal adapters, incremental healing, institutional knowledge preservation
 - **Artifacts**: `.loki/healing/` (friction-map.json, failure-modes.json, institutional-knowledge.md)
-- **Review**: `legacy-healing-auditor` specialist added to code review pool
+- **Review**: `legacy-healing-auditor` specialist added to code review pool (gated)
 - **Gate**: Gate 10 backward compatibility check (blocks removal of unclassified friction)
-- **Hooks**: `hook_pre_healing_modify()`, `hook_post_healing_modify()`, `hook_healing_phase_gate()`
+- **Hooks**: `hook_pre_healing_modify()` (`autonomy/hooks/migration-hooks.sh:283`), `hook_post_healing_modify()` (`:328`), `hook_healing_phase_gate()` (`:386`)
 - **Memory**: `FrictionPoint` and `FailureMode` schemas for healing-specific memory entries
 - **Skill**: `skills/healing.md` | **Reference**: `references/legacy-healing-patterns.md`
 
-### Memory System (v5.15.0 - Complete Implementation)
+### Memory System (core complete v5.15.0; managed-memory + RAG injector v7.1.0+)
 - **Episodic**: Specific interaction traces (`.loki/memory/episodic/`)
 - **Semantic**: Generalized patterns (`.loki/memory/semantic/`)
 - **Procedural**: Learned skills (`.loki/memory/skills/`)
 - **Progressive Disclosure**: 3-layer loading (index, timeline, full details)
 - **Token Economics**: Discovery vs read token tracking
 - **Vector Search**: Optional embedding-based similarity (sentence-transformers)
+- **Cross-project + RAG injection**: `memory/cross_project.py`, `memory/rag_injector.py`, `memory/knowledge_graph.py` (added v7.x)
+- **Managed memory client**: `memory/managed_memory/` -- gated on `LOKI_MANAGED_MEMORY=true`. See `skills/memory.md`.
 - **CLI**: `loki memory index|timeline|consolidate|economics|retrieve|episode|pattern|skill|vectors`
 - **API**: REST endpoints at `/api/memory/*`
-- **Implementation**: `memory/` Python package with RARV integration
+- **Implementation**: `memory/` Python package (15 modules) with RARV integration
 
 ### Metrics System (ToolOrchestra-inspired)
 - **Efficiency**: Task cost tracking (`.loki/metrics/efficiency/`)
 - **Rewards**: Outcome/efficiency/preference signals (`.loki/metrics/rewards/`)
+
+### Phase 1 / RARV-C Closure Env Vars
+
+Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `skills/quality-gates.md:88-110`). Set to `0` to disable; set to `1` to force-enable on the bash route.
+
+- `LOKI_INJECT_FINDINGS` -- inject structured per-finding records into the next-iteration prompt; persists `.loki/state/findings-<iter>.json` after aggregation.
+- `LOKI_OVERRIDE_COUNCIL` -- enable the 3-judge override council on a BLOCK verdict. Requires `LOKI_INJECT_FINDINGS=1` (operator setting only this var alone is a no-op).
+- `LOKI_AUTO_LEARNINGS` -- auto-write structured learnings per code_review cycle. Optional `LOKI_AUTO_LEARNINGS_EPISODE=1` also writes the learning into the episode store.
+- `LOKI_HANDOFF_MD` -- write a structured handoff doc before iteration close.
+
+These knobs together implement the RARV-C (closure) loop: findings -> override council -> learnings -> handoff. Reference: `skills/quality-gates.md`, `CHANGELOG.md` entries from v7.x for default-on flip and override-council semantics.
 
 ## Codebase Knowledge Graph (Quick Reference)
 
@@ -141,7 +160,7 @@ LOKI_PROVIDER=codex loki start ./prd.md
 
 | File | Lines | Role |
 |---|---|---|
-| `autonomy/loki` | 23,049 | CLI (74 cmd_ functions, dispatch at line 7400) |
+| `autonomy/loki` | 23,109 | CLI (102 cmd_ functions, dispatch at `loki:11828`) |
 | `autonomy/run.sh` | 12,170 | Orchestration engine (RARV loop) |
 | `autonomy/completion-council.sh` | 1,771 | Completion detection (council voting) |
 | `dashboard/server.py` | 5,952 | FastAPI (100+ endpoints, WebSocket) |
@@ -149,36 +168,41 @@ LOKI_PROVIDER=codex loki start ./prd.md
 | `memory/storage.py` | 1,521 | File-based memory backend |
 | `memory/engine.py` | 1,401 | Memory orchestrator |
 | `memory/consolidation.py` | 999 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | 2,282 | MCP server (15 tools) |
+| `mcp/server.py` | 2,288 | MCP server (15 tools) |
 | `providers/loader.sh` | 185 | Provider loader |
 
 ### Key Function Lookup
 
+Verified against v7.5.8 source on 2026-04-29. Line numbers drift; re-verify with `grep -n` before relying on them.
+
 | Function | Location | Purpose |
 |---|---|---|
-| `cmd_start()` | `loki:485` | Start autonomous execution |
-| `main()` (CLI) | `loki:7400` | CLI dispatch |
-| `main()` (runner) | `run.sh:8234` | Runner entry point |
-| `run_autonomous()` | `run.sh:7233` | Main iteration loop |
-| `build_prompt()` | `run.sh:6899` | Prompt construction |
-| `save_state()` | `run.sh:6787` | Persist state |
-| `council_should_stop()` | `completion-council.sh:1283` | Completion decision |
-| `run_code_review()` | `run.sh:4935` | 3-reviewer code review |
-| `create_checkpoint()` | `run.sh:5483` | Snapshot state |
-| `store_episode_trace()` | `run.sh:6626` | Memory storage bridge |
-| `check_human_intervention()` | `run.sh:7897` | PAUSE/STOP/INPUT signals |
-| `detect_complexity()` | `run.sh:1182` | Auto-detect project complexity |
-| `get_rarv_tier()` | `run.sh:1311` | Map iteration to model tier |
-| `check_budget_limit()` | `run.sh:6125` | Budget circuit breaker |
-| `is_rate_limited()` | `run.sh:5940` | Rate limit detection |
-| `cmd_heal()` | `loki:8603` | Legacy system healing |
-| `hook_pre_healing_modify()` | `migration-hooks.sh:280` | Friction safety gate |
-| `hook_post_healing_modify()` | `migration-hooks.sh:320` | Characterization test verification |
-| `hook_healing_phase_gate()` | `migration-hooks.sh:375` | Healing phase transition gate |
+| `cmd_start()` | `autonomy/loki:622` | Start autonomous execution |
+| `main()` (CLI) | `autonomy/loki:11828` | CLI dispatch |
+| `main()` (runner) | `autonomy/run.sh:11633` | Runner entry point |
+| `run_autonomous()` | `autonomy/run.sh:10253` | Main iteration loop |
+| `build_prompt()` | `autonomy/run.sh:8987` | Prompt construction |
+| `save_state()` | `autonomy/run.sh:8806` | Persist state |
+| `council_should_stop()` | `autonomy/completion-council.sh:1605` | Completion decision |
+| `run_code_review()` | `autonomy/run.sh:6259` | 3-reviewer code review |
+| `create_checkpoint()` | `autonomy/run.sh:6943` | Snapshot state |
+| `store_episode_trace()` | `autonomy/run.sh:8504` | Memory storage bridge |
+| `check_human_intervention()` | `autonomy/run.sh:11262` | PAUSE/STOP/INPUT signals |
+| `detect_complexity()` | `autonomy/run.sh:1338` | Auto-detect project complexity |
+| `get_rarv_tier()` | `autonomy/run.sh:1484` | Map iteration to model tier |
+| `check_budget_limit()` | `autonomy/run.sh:7897` | Budget circuit breaker |
+| `is_rate_limited()` | `autonomy/run.sh:7712` | Rate limit detection |
+| `cmd_heal()` | `autonomy/loki:9916` | Legacy system healing |
+| `hook_pre_healing_modify()` | `autonomy/hooks/migration-hooks.sh:283` | Friction safety gate |
+| `hook_post_healing_modify()` | `autonomy/hooks/migration-hooks.sh:328` | Characterization test verification |
+| `hook_healing_phase_gate()` | `autonomy/hooks/migration-hooks.sh:386` | Healing phase transition gate |
 
 ### Critical Data Flow
 
-A PRD enters via `loki start` (line 485), which execs `run.sh`. The `run_autonomous()` loop (line 7233) builds prompts via `build_prompt()` (line 6899) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at completion-council.sh:1283), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `run_autonomous()` loop (`autonomy/run.sh:10253`) builds prompts via `build_prompt()` (`autonomy/run.sh:8987`) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at `autonomy/completion-council.sh:1605`), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+
+**Deprecated entrypoints:**
+- `loki run <issue-ref>` is a deprecated alias for `loki start <issue-ref>` since v6.84.0. Emits a `cli_command_deprecated` telemetry event. See `autonomy/loki:4436-4456`. Prefer `loki start`.
 
 See `.claude/projects/-Users-lokesh-git-loki-mode/memory/CODEBASE-KNOWLEDGE-GRAPH.md` for complete reference.
 
@@ -255,7 +279,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.5.7 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.5.8 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
@@ -311,7 +335,7 @@ package.json                             # "version": "X.Y.Z"
 SKILL.md                                 # Header (line ~6) AND footer (last line)
 Dockerfile                               # LABEL version="X.Y.Z"
 Dockerfile.sandbox                       # LABEL version="X.Y.Z"
-vscode-extension/package.json            # "version": "X.Y.Z"
+vscode-extension/package.json            # "version": "X.Y.Z" (DEPRECATED in v7.2.0 -- see CHANGELOG L2525-2533; publish-vscode workflow removed; source kept for reference, no longer published. Bump only if vendoring; otherwise skip.)
 CLAUDE.md                                # Version Numbering section (Current: vX.Y.Z)
 ```
 
@@ -412,7 +436,7 @@ git push origin main
 - Publishes to npm (includes `dashboard/static/index.html`)
 - Builds and pushes Docker image (includes `dashboard/` with deps)
 - Updates Homebrew tap
-- Publishes VSCode extension (includes dashboard IIFE bundle)
+- (VSCode extension publish removed in v7.2.0 -- no longer part of release pipeline)
 
 ### 5. Verify ALL Distribution Channels
 
@@ -432,8 +456,7 @@ docker run --rm asklokesh/loki-mode:X.Y.Z loki version
 # Homebrew
 brew update && brew info loki-mode
 
-# VSCode extension
-# Check marketplace or: code --list-extensions --show-versions | grep loki
+# VSCode extension -- DEPRECATED in v7.2.0, no marketplace verification needed
 
 # GitHub Release
 gh release view vX.Y.Z
@@ -448,7 +471,7 @@ Every release MUST include these artifacts across ALL channels:
 | npm     | `dashboard/*.py`         | `dashboard/static/index.html`| `memory/`     | `skills/`, `references/` |
 | Docker  | `COPY dashboard/`        | Built in Dockerfile or committed | `memory/` | `skills/`, `references/` |
 | Homebrew| Full tarball             | Full tarball                 | Full tarball  | Full tarball |
-| VSCode  | N/A (connects to API)    | `media/loki-dashboard.js` (IIFE bundle) | N/A | N/A |
+| VSCode  | DEPRECATED v7.2.0 -- no longer published | -- | -- | -- |
 | Release | Skill-only zip           | N/A                          | N/A           | `references/` |
 
 ### Credentials (GitHub Secrets)

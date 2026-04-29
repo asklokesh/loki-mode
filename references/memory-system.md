@@ -4,7 +4,7 @@ Enhanced memory architecture based on 2025 research (MIRIX, A-Mem, MemGPT, AriGr
 
 ---
 
-## Implementation Status (v5.15.0)
+## Implementation Status (introduced v5.15.0, current as of v7.5.x)
 
 | Feature | Status | Location |
 |---------|--------|----------|

@@ -5,6 +5,182 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.8] - 2026-04-29
+
+PATCH release. Mega-batch: closes ALL deferred items from v7.5.7 council
+(R1#1, R3#1, R4#1, R4#2) PLUS 8 additional verified high-severity bugs
+from the original 20-agent hunt that were triaged into this batch (MCP
+path-traversal, dashboard auth, bash quoting, doctor parallelization).
+Plus a parallel documentation audit team refreshed all top-level + skill
++ reference + wiki + architecture docs against v7.5.8 reality. No
+behavior changes for users on the default flow.
+
+### Code
+
+- **council.ts hardening**: replaced the `"task" in entry || "id" in entry`
+  check with `Object.prototype.hasOwnProperty.call(...)` to defend against
+  prototype-pollution payloads (R4#1). Added a 5 MB log-file size cap on
+  the test-log tail-read inside the council voter to prevent OOM on
+  runaway logs (senior-owner R1 surface).
+- **checkpoint.ts hardening**: `validateCheckpointMetadata` now rejects
+  control characters (\x00..\x08, \x0a..\x1f -- whitelisting tab \x09)
+  in id, task_id, git_sha, git_branch, provider, phase fields (R4#2).
+  `rebuildIndex` now emits a structured `checkpoint.metadata.dropped`
+  event to `.loki/events.jsonl` with `{timestamp, type, checkpoint_dir,
+  reason, field}` (R3#1) instead of just a console.warn -- dashboards
+  can now surface corruption.
+- **autonomous.ts safety**: replaced `as unknown as T` cast in the
+  dynamic module loader with a per-key validator that throws a clear
+  error naming the missing required export. Module-not-found still
+  returns null (preserves Phase-4 stub fallback); only contract
+  violations now surface loudly. Behavior change: agents loading
+  modules with missing required keys will fail-fast instead of
+  silently degrading to stubs.
+- **counter_evidence.ts safety**: replaced cast-then-validate with
+  validate-then-narrow on `proofType`. Equivalent rejection set; the
+  type narrowing now happens after membership check.
+- **findings_injector.ts safety**: replaced non-null assertions
+  (`m[1]!`, `m[2]!`, `fileLine[1]!`, `fileLine[2]!`) with explicit
+  group-existence checks. Defensive against future regex-shape
+  changes.
+- **doctor.ts**: parallelized the 3 sequential python module probes
+  (`mcp`, `numpy`, `sentence_transformers`) via `Promise.all`. Worst-
+  case wall time drops from ~75s to ~30s on a cold environment.
+  Replaced 3 non-null assertions on `byCmd.get(...)!.found` with
+  `?.found ?? false` so a removed TOOL_SPECS entry no longer crashes
+  doctor.
+
+### MCP server safety
+
+- **safe_open migration in 4 functions**: `loki_get_hotspots:1885`,
+  `loki_get_co_changes:1943`, `loki_get_doc_coverage:1996`, and
+  `loki_findings:2080` (also switched `os.path.join(review_path,
+  entry)` to `safe_path_join` so a malicious `os.listdir` entry can
+  no longer escape the validated `review_path`).
+- **error envelope normalization**: `loki_code_search` and
+  `loki_code_search_stats` no longer leak raw exception strings on
+  ChromaDB failures. Returns `{"error": "Code search failed",
+  "code": "CHROMA_QUERY_ERROR", "hint": "..."}` (and the stats
+  variant) -- raw exception logged server-side via the existing
+  logger.
+- **loki_learnings corrupt-JSON envelope**: corruption is no longer
+  silently masked as an empty array. Returns `{"error": "Learning
+  file corrupted", "code": "LEARNINGS_CORRUPT", "path": <path>,
+  "entries": []}` so callers can detect data corruption.
+
+### Dashboard hardening
+
+- **Auth scopes added to 13 endpoints** (none previously gated):
+  POST /api/memory/retrieve (control), GET /api/memory/{summary,
+  episodes/{id}, patterns/{id}, skills/{id}} (read), and 8
+  /api/learning/* endpoints (read). Behavior preserved when
+  ENTERPRISE_AUTH_ENABLED=False (default); 401 returned when
+  enterprise auth is on and token is missing/invalid.
+- **CORS production fail-fast**: if `LOKI_DASHBOARD_CORS="*"` AND
+  `LOKI_ENV="production"`, the server now raises `RuntimeError` at
+  import time. Wildcard CORS in dev/test still allowed with the
+  existing warning.
+- **/api/escalations/{filename} realpath check**: replaced the
+  unreachable `if "/" in filename` guard (FastAPI rejects "/" at the
+  router-converter level) with a `realpath` containment check that
+  catches symlink traversal.
+
+### Bash hardening
+
+- **autonomy/sandbox.sh:1323**: switched `docker exec ... bash -c "cd
+  /workspace && $cmd"` to `docker exec -w /workspace ... bash -lc --
+  "$cmd"`. The `-w /workspace` decouples the workdir from `$cmd` so a
+  malformed value cannot corrupt the `cd`; the `--` enforces argv
+  positioning. Trust contract documented in a comment.
+- **autonomy/app-runner.sh:443/459**: tightened the
+  `_validate_app_command` whitelist to `^[A-Za-z0-9_./=\\ -]+$` (no
+  tabs, newlines, glob chars, quotes, parens, braces, tildes,
+  backslashes), and switched `bash -c "$_APP_RUNNER_METHOD"` to `bash
+  -lc -- "$_APP_RUNNER_METHOD"`. Validator now rejects 21 attack
+  classes; legitimate templates (npm/cargo/python/etc.) still
+  accepted (28 tests covering both directions).
+- **autonomy/run.sh:4065-4067**: pre-escaped `$project_name` and
+  `$project_path` for sed RHS using a `printf | sed` pipeline so a
+  project name containing `|`, `&`, or `\` no longer breaks the
+  dashboard HTML template substitution (XSS-into-served-HTML class
+  was theoretically reachable).
+- **autonomy/run.sh:5762**: added a strict whitelist + grep guard
+  before `eval "$LOKI_MONOREPO_TEST_CMD"`. Failing values are
+  treated as inconclusive (gate skipped) instead of executed.
+- **autonomy/run.sh:4434-4435 emoji sweep**: removed two glyphs
+  (U+23F1 stopwatch, U+2713 check) from the runner's status HTML
+  per the CLAUDE.md no-emoji rule (caught by the v7.5.8 R2
+  reviewer).
+
+### Tests
+
+- council_validation: +2 (prototype check, 5MB cap)
+- checkpoint: +2 (control-char rejection, structured event emit)
+- autonomous: +1 (missing required export throws with key name)
+- counter_evidence_validation: +1 (malicious proofType filtered)
+- findings_injector: +1 (regex with empty groups)
+- doctor: +2 (parallel python imports, non-null fallback)
+- mcp/test_path_validation.py (new): +2 (safe_path_join rejects
+  dot-dot, loki_findings skips malicious listdir entry)
+- mcp/test_phase1_tools: +1 (LEARNINGS_CORRUPT envelope; existing
+  test tightened to require code field)
+- dashboard/test_phase1_endpoints: +3 (auth-required smoke,
+  symlink-traversal 400, CORS prod fail-fast)
+- tests/test-app-runner-injection.sh (new): 28 cases covering 21
+  rejection classes + 7 acceptance forms
+- tests/test-run-sh-quoting.sh (new): 19 cases for sed escape +
+  LOKI_MONOREPO_TEST_CMD whitelist
+
+All 703 bun tests pass. 37 python tests pass. 14/14 CLI tests on
+both Bun and bash routes. local-ci 20/20 GREEN.
+
+### Documentation
+
+Parallel 8-agent doc audit. Files updated:
+- README.md: gate count corrected to 11, Docker tag pinned to
+  v7.5.8, healing/memory/MCP claims with file pointers, `loki run`
+  deprecation noted, `loki heal` row added.
+- SKILL.md: split conflated table into Implemented + Planned +
+  Deprecated; documented Phase 1 RARV-C env vars; added skill-vs-
+  memory progressive-disclosure naming clarification.
+- CLAUDE.md: line counts in the file map updated against grep-
+  verified positions; vscode-extension marked deprecated; Phase 1
+  RARV-C env vars section added; `loki run` deprecation note.
+- docs/INSTALLATION.md: v7.5.0+ Phase 1 framing as shipped (default-
+  on since v7.5.3); install commands re-verified.
+- wiki/Home.md: 10-Gate Quality System bullet added.
+- wiki/API-Reference.md: phase1 block documented under
+  status --json.
+- wiki/Network-Security.md: planned env vars given target windows.
+- docs/architecture/ADR-001: status updated to "Phase 1-5 shipped,
+  Phase 6 gated"; phase status table added.
+- docs/architecture/STATE-MACHINES.md: Last-verified header + drift
+  section added; line numbers NOT silently rewritten (council-
+  reviewed doc preserved).
+- skills/{quality-gates,healing,providers,agents}.md: env vars
+  cross-referenced; legacy-healing-auditor added to specialist
+  pool; `loki run` deprecation labeled.
+- references/{core-workflow,quality-control,memory-system,
+  production-patterns,prompt-repetition,deployment}.md: Phase 1
+  RARV-C / override council / cross-process file lock / 14-version
+  release rule each cross-referenced from the most relevant ref;
+  emoji removed from prompt-repetition.
+- DOCKER_README.md, CONTRIBUTING.md, benchmarks/*/README.md: MIT
+  License -> BUSL-1.1 corrected; stale Docker tag examples bumped.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.8 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow completes).
+- Telemetry SDK integration for the phase1 status fields.
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- The `autonomous.ts` behavior change (throw instead of silent null
+  fallback when a sibling Phase-4 module is missing required exports)
+  may regress the documented "skeleton stays green" guarantee if any
+  existing module is incomplete. The known-good Phase-4 sibling
+  modules all expose their required keys, so production paths are
+  unaffected; flagged for monitoring.
+
 ## [7.5.7] - 2026-04-29
 
 PATCH release. 20-agent bug-hunt + fix marathon. 20 hunters returned ~150

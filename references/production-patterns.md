@@ -550,6 +550,12 @@ cost_patterns:
 
 ---
 
+## Cross-Process File Lock (v7.5.5)
+
+Concurrent loki invocations on the same `.loki/` workspace previously raced on `state/orchestrator.json`, `queue/pending.json`, and CONTINUITY.md. v7.5.5 introduces a `flock`-backed cross-process lock around all state writes. Concurrent runs serialize state mutations cleanly; readers continue without blocking.
+
+---
+
 ## Sources
 
 **Hacker News Discussions:**

@@ -60,6 +60,25 @@ describe("v7.5.1 B2: proofType enum validation", () => {
     }
   });
 
+  it("v7.5.8: drops a single entry with proofType='malicious-string' (validation BEFORE cast)", () => {
+    // Pre-v7.5.8 the cast `e["proofType"] as OverrideProofType` happened
+    // before the VALID_PROOF_TYPES check. The runtime drop still worked but
+    // the narrowed type was already a lie. v7.5.8 reads the value as unknown
+    // first, validates, then narrows. Verify behavior end-to-end: a sole
+    // malicious entry yields zero surviving evidence records.
+    writeFile(7, [
+      {
+        findingId: "evil-1",
+        claim: "trust me bro",
+        proofType: "malicious-string",
+        artifacts: [],
+      },
+    ]);
+    const f = loadCounterEvidence(scratch, 7);
+    expect(f).not.toBeNull();
+    expect(f!.evidence.length).toBe(0);
+  });
+
   it("silently drops entries with an unknown proofType", () => {
     writeFile(2, [
       {

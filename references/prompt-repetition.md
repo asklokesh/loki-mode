@@ -14,13 +14,13 @@ Research-backed technique from arXiv 2512.14982v1: "Prompt Repetition Improves N
 
 ## When to Apply
 
-### ✅ USE Prompt Repetition For:
+### USE Prompt Repetition For:
 - **Haiku agents** (non-reasoning model)
 - **Structured tasks** (unit tests, linting, formatting)
 - **Position-dependent operations** (finding items in lists, parsing structured data)
 - **Simple bug fixes** (typos, imports, syntax errors)
 
-### ❌ DO NOT Use For:
+### DO NOT Use For:
 - **Opus agents** (reasoning model - neutral/slightly negative effect)
 - **Sonnet agents** (reasoning model - neutral effect)
 - **Complex reasoning tasks** (architecture decisions, planning)

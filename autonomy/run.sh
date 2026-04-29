@@ -4061,10 +4061,19 @@ generate_dashboard() {
     local project_path=$(pwd)
 
     if [ -f "$skill_dashboard" ]; then
+        # v7.5.8: Escape sed-special chars in project_name/project_path before
+        # interpolating into the substitution RHS. Without this, a project
+        # whose path contains '|' (the chosen sed delimiter), '&' (RHS
+        # backref), '\' or '/' would either break the substitution or allow
+        # attacker-controlled text to be smuggled into the served HTML.
+        local project_name_sed project_path_sed
+        project_name_sed=$(printf '%s' "$project_name" | sed -e 's/[\\&|/]/\\&/g')
+        project_path_sed=$(printf '%s' "$project_path" | sed -e 's/[\\&|/]/\\&/g')
+
         # Copy and inject project info
-        sed -e "s|Loki Mode</title>|Loki Mode - $project_name</title>|g" \
-            -e "s|<div class=\"project-name\" id=\"project-name\">--|<div class=\"project-name\" id=\"project-name\">$project_name|g" \
-            -e "s|<div class=\"project-path\" id=\"project-path\" title=\"\">--|<div class=\"project-path\" id=\"project-path\" title=\"$project_path\">$project_path|g" \
+        sed -e "s|Loki Mode</title>|Loki Mode - ${project_name_sed}</title>|g" \
+            -e "s|<div class=\"project-name\" id=\"project-name\">--|<div class=\"project-name\" id=\"project-name\">${project_name_sed}|g" \
+            -e "s|<div class=\"project-path\" id=\"project-path\" title=\"\">--|<div class=\"project-path\" id=\"project-path\" title=\"${project_path_sed}\">${project_path_sed}|g" \
             "$skill_dashboard" > .loki/dashboard/index.html
         log_info "Dashboard copied from skill installation"
         log_info "Project: $project_name ($project_path)"
@@ -4422,8 +4431,8 @@ generate_dashboard() {
                     <div class="agent-status ${status}">${status}</div>
                     <div class="agent-work">${currentTask}</div>
                     <div class="agent-meta">
-                        <span>⏱ ${duration}</span>
-                        <span>✓ ${tasksCount} tasks</span>
+                        <span>${duration}</span>
+                        <span>${tasksCount} tasks</span>
                     </div>
                 </div>
             `;
@@ -5757,10 +5766,23 @@ enforce_test_coverage() {
         if [ "$is_monorepo" = "true" ]; then
             # Allow env override
             if [ -n "${LOKI_MONOREPO_TEST_CMD:-}" ]; then
-                test_runner="monorepo-custom"
-                local output
-                output=$(cd "${TARGET_DIR:-.}" && eval "$LOKI_MONOREPO_TEST_CMD" 2>&1) || test_passed=false
-                details="monorepo-custom: $(echo "$output" | tail -3 | tr '\n' ' ')"
+                # v7.5.8: Strict whitelist before eval (mirrors app-runner.sh
+                # _validate_app_command hardening). Reject anything outside
+                # [A-Za-z0-9_./= -] so command separators (; | & `), redirects,
+                # subshells, and command substitution can't be smuggled in via
+                # an env var. Failing input is treated as inconclusive (gate
+                # skipped) rather than executed.
+                if [[ ! "$LOKI_MONOREPO_TEST_CMD" =~ ^[A-Za-z0-9_./=\ -]+$ ]] || \
+                   echo "$LOKI_MONOREPO_TEST_CMD" | grep -qE '[;|`$]|&&|\|\||>>|<<'; then
+                    log_error "LOKI_MONOREPO_TEST_CMD rejected (only [A-Za-z0-9_./= -] allowed): $LOKI_MONOREPO_TEST_CMD"
+                    test_runner="monorepo-custom-rejected"
+                    details="monorepo-custom: rejected by whitelist (gate skipped, inconclusive)"
+                else
+                    test_runner="monorepo-custom"
+                    local output
+                    output=$(cd "${TARGET_DIR:-.}" && eval "$LOKI_MONOREPO_TEST_CMD" 2>&1) || test_passed=false
+                    details="monorepo-custom: $(echo "$output" | tail -3 | tr '\n' ' ')"
+                fi
             else
                 # Scan workspace packages for test runners
                 local workspace_runner=""

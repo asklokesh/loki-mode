@@ -66,7 +66,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "7.5.7",
+  "version": "7.5.8",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
@@ -80,6 +80,32 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
   "current_task": "implement-auth"
 }
 ```
+
+**`loki status --json` Phase 1 block (v7.5.5+):**
+
+The `loki status --json` CLI emits a `phase1` block summarizing Phase 1
+RARV-C closure artifacts. It is present even when the session is
+inactive (with zeroed counts).
+
+```json
+{
+  "phase1": {
+    "findings_iters": 3,
+    "learnings_count": 12,
+    "escalations_count": 1,
+    "pause_signal": false,
+    "gate_failure_counts": {"code_review": 2}
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `findings_iters` | Count of `findings-*.json` files in `.loki/state/` |
+| `learnings_count` | Entries in `.loki/state/relevant-learnings.json` |
+| `escalations_count` | `.md` files in `.loki/escalations/` |
+| `pause_signal` | `true` if `.loki/PAUSE` exists |
+| `gate_failure_counts` | Per-gate failure counters from `.loki/quality/gate-failure-count.json` |
 
 **Status Values:**
 | Status | Description |

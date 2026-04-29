@@ -13,6 +13,7 @@ import {
   readCheckpoint,
   rollbackToCheckpoint,
   readIndex,
+  rebuildIndex,
   CheckpointNotFoundError,
   InvalidCheckpointIdError,
 } from "../../src/runner/checkpoint.ts";
@@ -302,6 +303,112 @@ describe("rollbackToCheckpoint", () => {
 
   it("throws InvalidCheckpointIdError for invalid id", () => {
     expect(() => rollbackToCheckpoint("../bad", tmpBase)).toThrow(InvalidCheckpointIdError);
+  });
+});
+
+describe("v7.5.8: control-char rejection + structured drop events", () => {
+  it("rejects metadata where `id` contains a NUL byte (returns null + warns)", async () => {
+    // Capture console.warn so we can assert the breadcrumb fires.
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      const r = await createCheckpoint({
+        taskDescription: "ctrl-char-test",
+        iteration: 1,
+        lokiDirOverride: tmpBase,
+        forceCreate: true,
+        epochOverride: 4242,
+      });
+      expect(r.created).toBe(true);
+      if (!r.created) throw new Error("unreachable");
+
+      // Inject a NUL byte into the `id` field on disk.
+      const metaPath = join(r.dir, "metadata.json");
+      writeFileSync(
+        metaPath,
+        JSON.stringify({
+          id: `${r.id}\x00evil`,
+          timestamp: "2026-04-29T00:00:00Z",
+          iteration: 1,
+          task_id: "x",
+          task_description: "x",
+          git_sha: "abc",
+          git_branch: "main",
+          provider: "claude",
+          phase: "DEV",
+        }),
+      );
+
+      // listCheckpoints must skip; readCheckpoint must surface as not-found.
+      const list = listCheckpoints(tmpBase);
+      expect(list.length).toBe(0);
+      expect(() => readCheckpoint(r.id, tmpBase)).toThrow(CheckpointNotFoundError);
+      // Warning must have fired and named the offending field.
+      expect(warnings.some((w) => w.includes("control characters") && w.includes('"id"'))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("rebuildIndex emits a structured event to .loki/events.jsonl on drop", async () => {
+    // Seed two checkpoints, then corrupt one (CR/LF in git_sha).
+    const r1 = await createCheckpoint({
+      taskDescription: "good",
+      iteration: 1,
+      lokiDirOverride: tmpBase,
+      forceCreate: true,
+      epochOverride: 6001,
+    });
+    const r2 = await createCheckpoint({
+      taskDescription: "bad",
+      iteration: 2,
+      lokiDirOverride: tmpBase,
+      forceCreate: true,
+      epochOverride: 6002,
+    });
+    expect(r1.created && r2.created).toBe(true);
+    if (!r1.created || !r2.created) throw new Error("unreachable");
+
+    const badMeta = join(r2.dir, "metadata.json");
+    writeFileSync(
+      badMeta,
+      JSON.stringify({
+        id: r2.id,
+        timestamp: "2026-04-29T00:00:00Z",
+        iteration: 2,
+        task_id: "x",
+        task_description: "x",
+        git_sha: "abc\r\ndef", // control chars
+        git_branch: "main",
+        provider: "claude",
+        phase: "DEV",
+      }),
+    );
+
+    // Trigger rebuildIndex directly (test seam export).
+    rebuildIndex(tmpBase);
+
+    const eventsPath = join(tmpBase, "events.jsonl");
+    expect(existsSync(eventsPath)).toBe(true);
+    const lines = readFileSync(eventsPath, "utf-8").split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    const drop = parsed.find(
+      (e) => e["type"] === "checkpoint.metadata.dropped" && e["field"] === "git_sha",
+    );
+    expect(drop).toBeDefined();
+    expect(drop?.["reason"]).toBe("control_chars");
+    expect(typeof drop?.["timestamp"]).toBe("string");
+    expect(typeof drop?.["checkpoint_dir"]).toBe("string");
+    expect((drop?.["checkpoint_dir"] as string).includes(r2.id)).toBe(true);
+
+    // Index must contain only the good checkpoint.
+    const idx = readIndex(tmpBase);
+    expect(idx.length).toBe(1);
+    expect(idx[0]?.id).toBe(r1.id);
   });
 });
 

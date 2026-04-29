@@ -64,11 +64,32 @@ _json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr -d '\n'
 }
 
-# Validate a command string: reject shell metacharacters that enable injection
+# Validate a command string: reject shell metacharacters that enable injection.
+#
+# Trust contract:
+#   - $_APP_RUNNER_METHOD is either (a) auto-detected by app_runner_init from a
+#     fixed set of internal templates (npm run dev, docker compose up -d, etc.)
+#     or (b) supplied verbatim by the operator via the LOKI_APP_COMMAND env
+#     variable. Auto-detected strings are trusted; LOKI_APP_COMMAND is an
+#     external operator-controlled input that may be set in CI, .envrc, or by
+#     a hostile parent process.
+#   - This validator is the only line of defense for the LOKI_APP_COMMAND path.
+#     It runs BEFORE the value is assigned to _APP_RUNNER_METHOD and BEFORE
+#     it is interpolated into `bash -lc -- "$_APP_RUNNER_METHOD"` at startup.
+#   - Allow only a strict whitelist: A-Z a-z 0-9 _ . / - = and a single ASCII
+#     space (0x20). Tabs, newlines, glob, redirects, command separators, and
+#     command substitution are all rejected.
 _validate_app_command() {
     local cmd="$1"
-    # Allow alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, equals
-    # Reject semicolons, pipes, backticks, $(), &&, ||, redirects used for injection
+    # Strict whitelist: alphanumerics, underscore, dot, slash, hyphen, equals,
+    # and ASCII space. Anything else (including tabs, newlines, ;, |, &, <, >,
+    # $, `, (, ), {, }, [, ], *, ?, ~, ", ', \) is rejected.
+    if [[ ! "$cmd" =~ ^[A-Za-z0-9_./=\ -]+$ ]]; then
+        log_error "App Runner: command rejected (only [A-Za-z0-9_./= -] allowed): $cmd"
+        return 1
+    fi
+    # Belt-and-braces: also explicitly reject the legacy injection set so a
+    # future regex regression cannot silently re-allow these.
     if echo "$cmd" | grep -qE '[;|`$]|&&|\|\||>>|<<'; then
         log_error "App Runner: command rejected (unsafe characters): $cmd"
         return 1
@@ -440,7 +461,10 @@ app_runner_start() {
         # Use setsid with a PID file so we capture the actual child PID (the process
         # group leader) rather than the subshell PID, which would orphan the app.
         local _pgid_file="$_APP_RUNNER_DIR/app.pgid.$$"
-        (cd "$dir" && setsid bash -c 'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
+        # The `--` after `bash -lc` prevents flag injection if the assembled
+        # script string ever begins with a `-`.
+        (cd "$dir" && setsid bash -lc -- 'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         local _subshell_pid=$!
         # Wait briefly for the pgid file to appear, then read the real PGID
         local _pgid_wait=0
@@ -456,7 +480,9 @@ app_runner_start() {
         rm -f "$_pgid_file"
     else
         _APP_RUNNER_HAS_SETSID=false
-        (cd "$dir" && bash -c "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
+        # The `--` after `bash -lc` prevents flag injection.
+        (cd "$dir" && bash -lc -- "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         _APP_RUNNER_PID=$!
     fi
     # Register with central PID registry if available

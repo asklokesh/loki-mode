@@ -70,6 +70,10 @@ Every iteration follows this cycle:
 - Retries with learned context
 - Achieves 2-3x quality improvement (Boris Cherny's observed result)
 
+### Phase 1 RARV-C Closure (v7.5.0+)
+
+The RARV cycle now closes with an explicit Critique step (RARV-C). After VERIFY, an override council of real provider judges (v7.5.4) issues a binding decision before the iteration is marked complete. See `references/quality-control.md` for the override council protocol.
+
 ---
 
 ## CONTINUITY.md - Working Memory Protocol

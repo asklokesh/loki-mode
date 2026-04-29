@@ -194,8 +194,8 @@ const heuristicVoter = (role: string): Voter => async (cec) => {
             entry !== null &&
             typeof entry === "object" &&
             !Array.isArray(entry) &&
-            ("task" in (entry as Record<string, unknown>) ||
-              "id" in (entry as Record<string, unknown>))
+            (Object.prototype.hasOwnProperty.call(entry, "task") ||
+              Object.prototype.hasOwnProperty.call(entry, "id"))
           ) {
             return acc + 1;
           }
@@ -384,7 +384,12 @@ export async function councilDevilsAdvocate(
         hasTestLog = true;
         try {
           const full = resolve(logsDir, entry);
-          if (statSync(full).isFile()) {
+          const st = statSync(full);
+          if (st.isFile()) {
+            if (st.size > 5_000_000) {
+              console.warn(`[council] skipping large log ${full} (${st.size} bytes)`);
+              continue;
+            }
             const tail = readFileSync(full, "utf-8").split("\n").slice(-30).join("\n");
             if (/passed|success|all tests|\bok\b/i.test(tail)) {
               hasPassMarker = true;

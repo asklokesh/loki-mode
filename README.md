@@ -18,16 +18,19 @@
 
 ---
 
-> **How it works:** You provide a PRD. Loki Mode classifies complexity, assembles an agent team from 41 specialized types across 8 swarms, and runs autonomous RARV cycles (Reason - Act - Reflect - Verify) with 9 quality gates. Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
+> **How it works:** You provide a PRD. Loki Mode classifies complexity (`run.sh:detect_complexity()`), assembles an agent team from 41 specialized types across 8 swarms, and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 11 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
 
 ---
 
 ## Why Loki Mode?
 
 - **Truly autonomous** -- Describe what you want, walk away, come back to working code with tests
-- **Production quality built in** -- 9 quality gates, blind 3-reviewer code review, anti-sycophancy checks
+- **Production quality built in** -- 11 quality gates (`skills/quality-gates.md`), blind 3-reviewer code review (`run.sh:run_code_review()`), anti-sycophancy checks
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
-- **5 AI providers** -- Claude, Codex, Gemini, Cline, Aider with automatic failover
+- **5 AI providers** -- Claude, Codex, Gemini, Cline, Aider with automatic failover (`loki-ts/src/runner/providers.ts`)
+- **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
+- **Memory system** -- Episodic/semantic/procedural with vector search (v5.15.0, see `memory/engine.py`)
+- **MCP server** -- 15 tools including ChromaDB code search (`mcp/server.py`)
 - **Full-stack output** -- Source code, tests, Docker configs, CI/CD pipelines, audit logs
 - **Open source** -- Free for personal, internal, and academic use. No vendor lock-in.
 
@@ -61,7 +64,7 @@ loki quick "build a landing page with a signup form"
 |--------|---------|-------|
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest. v8 will be Bun-only. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker** | `docker pull asklokesh/loki-mode && docker run --rm asklokesh/loki-mode start prd.md` | Bun pre-installed in image |
+| **Docker** | `docker pull asklokesh/loki-mode:7.5.7 && docker run --rm asklokesh/loki-mode:7.5.7 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -121,7 +124,7 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.5.7` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 
@@ -184,8 +187,8 @@ Every iteration: **Reason** (read state) - **Act** (execute, commit) - **Reflect
 </td>
 <td width="33%" valign="top">
 
-### 9 Quality Gates
-Blind review, anti-sycophancy, severity blocking, mock/mutation detection. Code does not ship until all gates pass.
+### 11 Quality Gates
+Blind review, anti-sycophancy, severity blocking, mock/mutation detection, backward compatibility (gate 10, v6.67.0), documentation coverage (gate 11, v7.5.0). Code does not ship until all gates pass.
 
 [Quality Gates](skills/quality-gates.md)
 
@@ -262,7 +265,7 @@ loki web                           # launches at http://localhost:57375
 |---------|:---------:|:--------:|:------:|:-------:|
 | Self-hosted / your keys | Yes | No | No | No |
 | 5 AI provider failover | Yes | No | No | No |
-| 9 quality gates | Yes | No | No | No |
+| 11 quality gates | Yes | No | No | No |
 | Blind code review | Yes | No | No | No |
 | Enterprise auth (SSO/RBAC) | Yes | No | Yes | No |
 | Air-gapped deployment | Yes | No | No | No |
@@ -295,8 +298,9 @@ Claude gets full features (subagents, parallelization, MCP, Task tool). Other pr
 
 | Command | Description |
 |---------|-------------|
-| `loki start [PRD]` | Start with optional PRD file |
+| `loki start [PRD]` | Start with optional PRD file (also accepts an issue ref; replaces deprecated `loki run`) |
 | `loki stop` | Stop execution |
+| `loki heal <path>` | Legacy system healing (archaeology, stabilize, isolate, modernize, validate -- v6.67.0) |
 | `loki pause` / `resume` | Pause/resume after current session |
 | `loki status` | Show current status |
 | `loki dashboard` | Open web dashboard |
@@ -383,7 +387,7 @@ See [benchmarks/](benchmarks/) for methodology.
 |------|-----------|---------------------|
 | **Code Gen** | Full-stack apps from PRDs | Complex domain logic may need human review |
 | **Deploy** | Generates configs, Dockerfiles, CI/CD | Does not deploy -- human runs deploy commands |
-| **Testing** | 9 automated quality gates | Test quality depends on AI assertions |
+| **Testing** | 11 automated quality gates | Test quality depends on AI assertions |
 | **Providers** | 5 providers with auto-failover | Non-Claude providers lack parallel agents |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |
 

@@ -8,6 +8,63 @@ triggers and persistence, and source file references (file:line).
 
 ---
 
+## Verification status
+
+**Last verified:** 2026-03-03 against v6.6.1 codebase (council-reviewed, merged via PR #49).
+
+**Current codebase:** v7.5.7 (2026-04-29). This document has NOT been re-verified
+end-to-end against v7.5.x. Treat shape/semantics as authoritative; treat line
+numbers as approximate. See "Known drift" and "Known additions" sections below
+before relying on any specific `file:line` reference.
+
+This is a council-reviewed document. Per the audit guidance (2026-04-29), line
+numbers are NOT being silently rewritten throughout. Drift is recorded here so
+readers can spot-check before trusting a citation.
+
+### Known additions since last verify (v6.7.0 -> v7.5.7)
+
+These components exist in v7.5.x but are NOT yet documented in the sections
+below. They should be added when this doc is next re-verified end-to-end:
+
+- **Phase 1 override council** (v7.5.x). Specialized council that fires when a
+  Phase 1 (archaeology / planning) gate would otherwise block, allowing a
+  reviewed override path. Belongs in section 7 (Quality Gates) or alongside
+  section 3 (Completion Council).
+- **File-lock primitive** (`atomic.ts withFileLockSync`, v7.5.x). Atomic
+  filesystem coordination primitive used by the Bun runtime. Belongs in section
+  1 (Master State File Index) -- documents the locking contract for all `.loki/`
+  state files.
+- **Gate-failure escalation ladder** (v7.5.x). Multi-tier escalation when a
+  quality gate fails repeatedly. Belongs in section 7 (Quality Gates).
+
+### Known drift (line numbers, sampled 2026-04-29 against v7.5.7)
+
+Sampled spot-checks against the live source. The function/file is correct in
+every case below; only the line number drifted. Verify with `grep -n` before
+citing.
+
+| Section | Citation in doc | Actual location (v7.5.7) | Delta |
+|---|---|---|---|
+| 2.1 | `run.sh:7380` (`run_autonomous`) | `run.sh:10253` | +2873 |
+| 2.2 | `run.sh:1325` (`get_rarv_tier`) | `run.sh:1484` | +159 |
+| 2.4 | `run.sh:8059` / `run.sh:10419` (`check_human_intervention`) | `run.sh:11262` | +843 to +3203 |
+| 3.1 | `completion-council.sh:1359` (`council_should_stop`) | `completion-council.sh:1605` | +246 |
+| 13 | `run.sh:6464` (`create_checkpoint`) | `run.sh:6943` | +479 |
+| 14 | `run.sh:1229` (`detect_complexity`) | `run.sh:1338` | +109 |
+
+Drift trend: `autonomy/run.sh` and `autonomy/completion-council.sh` have grown
+roughly 800-3000 lines per minor release. **For navigation, prefer `grep -n
+'^<function_name>()'` over the line numbers below.** The function names and
+file paths in this document remain authoritative.
+
+Note: a meaningful share of orchestration logic now lives in the Bun runtime
+under `loki-ts/src/` (Phases 4-5 of ADR-001). This document still describes the
+bash route, which is the legacy fallback gated behind `LOKI_LEGACY_BASH=1`.
+When Phase 6 ships (bash sunset), this document will need to be re-pointed at
+the TypeScript implementation.
+
+---
+
 ## Table of Contents
 
 1. [Master State File Index](#1-master-state-file-index)

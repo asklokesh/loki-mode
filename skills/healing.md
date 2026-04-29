@@ -257,6 +257,22 @@ VERIFY: Run the test.
                 (Amazon: "the hardest part is teaching why workflows fail")
 ```
 
+### RARV-C Closure Flags (v7.5.0+)
+
+The Phase 1 RARV-C closure pipeline is also useful in healing runs because
+characterization-test failures generate structured findings that benefit
+from override-council adjudication and persistent learnings:
+
+```bash
+LOKI_INJECT_FINDINGS=1     # structured findings -> next-iteration prompt
+LOKI_OVERRIDE_COUNCIL=1    # 3-judge override council on BLOCK
+LOKI_AUTO_LEARNINGS=1      # persist code_review failures as learnings
+LOKI_HANDOFF_MD=1          # write handoff doc before PAUSE
+```
+
+Full spec and counter-evidence schema: `skills/quality-gates.md` (v7.5.0
+Phase 1 environment flags section).
+
 ---
 
 ## Structured Fault Injection (Honest Alternative to RL Gyms)

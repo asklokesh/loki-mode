@@ -93,22 +93,61 @@ type GatesMod = {
   runQualityGates(ctx: RunnerContext): Promise<GateOutcomeShape>;
 };
 
-// Dynamic import that also validates the module exposes the expected
-// function names. Sibling modules being authored in parallel by other Phase-4
-// agents may exist on disk before they expose the contract this loop expects;
-// in that case we treat them as missing and use the fallback path so the
-// skeleton stays green. Once a sibling module is finalized to match the
-// contract in types.ts, drop its name out of the validators below.
-async function tryImport<T>(spec: string, requiredKeys: readonly string[] = []): Promise<T | null> {
+// Generic runtime type guard: verifies that every `key` in `keys` is present
+// on `mod` AND points at a function value. Narrows `mod` to a record where
+// every listed key is a function, which is the strongest contract we can
+// enforce on a dynamically-imported module without pulling in zod.
+//
+// v7.5.8: replaces the prior bare `as unknown as T` cast in tryImport. The
+// cast lied to the type-system because it claimed conformance after only
+// checking the keys via a side-effecting loop -- a refactor that renamed a
+// validator key would compile clean while shipping a runtime crash. The
+// guard below makes the post-condition explicit and enforced.
+function hasRequiredFunctions<K extends string>(
+  mod: Record<string, unknown>,
+  keys: readonly K[],
+): mod is Record<K, (...args: unknown[]) => unknown> & Record<string, unknown> {
+  for (const k of keys) {
+    if (typeof mod[k] !== "function") return false;
+  }
+  return true;
+}
+
+// Dynamic import that validates the module exposes the expected function
+// names. Two failure modes are distinguished:
+//
+//   1. Module not found / import error -> return null. Sibling modules being
+//      authored in parallel by other Phase-4 agents may not yet exist on
+//      disk; the loop falls back to a stub for these.
+//
+//   2. Module loaded but missing one of the required keys, OR the key is
+//      present but not a function -> throw a clear error naming the spec
+//      path AND the offending key. This is a contract violation (the file
+//      exists, so it MUST conform) and silently null-returning would mask
+//      the bug behind a stub fallback for the rest of the run.
+export async function tryImport<T>(spec: string, requiredKeys: readonly string[] = []): Promise<T | null> {
+  let mod: Record<string, unknown>;
   try {
-    const mod = (await import(spec)) as Record<string, unknown>;
-    for (const k of requiredKeys) {
-      if (typeof mod[k] !== "function") return null;
-    }
-    return mod as unknown as T;
+    mod = (await import(spec)) as Record<string, unknown>;
   } catch {
     return null;
   }
+  // Module loaded -- validate each required key. Throw on the FIRST offender
+  // so the error message points at exactly one missing/wrong key per run.
+  for (const k of requiredKeys) {
+    if (typeof mod[k] !== "function") {
+      const actual = mod[k] === undefined ? "missing" : `${typeof mod[k]}`;
+      throw new Error(
+        `tryImport(${spec}): required export '${k}' is ${actual} (expected function)`,
+      );
+    }
+  }
+  if (!hasRequiredFunctions(mod, requiredKeys)) {
+    // Defensive -- the loop above already throws, but the type guard makes
+    // the narrowing explicit for downstream callers.
+    throw new Error(`tryImport(${spec}): runtime contract validation failed`);
+  }
+  return mod as unknown as T;
 }
 
 // ---------------------------------------------------------------------------

@@ -65,8 +65,8 @@ After timeout optimization, the multi-agent RARV pipeline matches single-agent p
 ## Repository
 
 - **GitHub**: [asklokesh/loki-mode](https://github.com/asklokesh/loki-mode)
-- **License**: MIT
-- **Version**: 2.25.0
+- **License**: Business Source License 1.1 (BUSL-1.1, converts to Apache 2.0 in 2030). This submission template was authored when the project was MIT-licensed; subsequent submissions are under BUSL-1.1.
+- **Submission Version**: 2.25.0 (historical -- pinned to the SWE-bench submission point)
 
 ## Running Loki Mode
 

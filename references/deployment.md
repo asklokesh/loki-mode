@@ -602,3 +602,9 @@ vault kv get -field=database-url secret/app
 ```
 
 All production secrets must be in a secrets manager, never in code or environment files.
+
+---
+
+## Loki Mode Release Workflow
+
+Releasing a new Loki Mode version requires bumping the version string in 14 locations in a single commit (VERSION, package.json, SKILL.md header and footer, Dockerfile, Dockerfile.sandbox, vscode-extension/package.json, CLAUDE.md, dashboard/__init__.py, mcp/__init__.py, CHANGELOG.md, docs/INSTALLATION.md, wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md). The full step-by-step procedure, pre-publish validation, and distribution channel checklist live in the project root `CLAUDE.md` Release Workflow section.

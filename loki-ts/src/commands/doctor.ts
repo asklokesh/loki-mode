@@ -158,7 +158,7 @@ export async function httpReachable(url: string, timeoutMs = 2000): Promise<bool
 // sentence_transformers import (~3.3s) under parallel load, causing
 // probabilistic divergence vs bash (which has no timeout). ML imports get
 // 30s; non-ML imports keep 5s.
-async function pythonImportOk(module: string, useMlPython = false): Promise<boolean> {
+export async function pythonImportOk(module: string, useMlPython = false): Promise<boolean> {
   const source = `import ${module}`;
   const timeoutMs = useMlPython ? 30000 : 5000;
   if (!useMlPython) {
@@ -173,6 +173,16 @@ async function pythonImportOk(module: string, useMlPython = false): Promise<bool
   if (!py) return false;
   const r = await run([py, "-c", source], { timeoutMs });
   return r.exitCode === 0;
+}
+
+// Mutable indirection so tests can swap the implementation (e.g. to record
+// invocation timestamps and assert the three Integration-section probes run
+// in parallel). Production callers use this exact reference, so a test stub
+// is observed inside runText() without touching the export shape.
+type PythonImportOk = (module: string, useMlPython?: boolean) => Promise<boolean>;
+const pyImpl = { fn: pythonImportOk as PythonImportOk };
+export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
+  pyImpl.fn = fn ?? pythonImportOk;
 }
 
 // ---------- Skills check ------------------------------------------------------
@@ -396,9 +406,9 @@ async function runText(): Promise<number> {
 
   // API Keys (presence only -- never echo values)
   process.stdout.write(`${CYAN}API Keys:${NC}\n`);
-  const claudeFound = byCmd.get("claude")!.found;
-  const codexFound = byCmd.get("codex")!.found;
-  const geminiFound = byCmd.get("gemini")!.found;
+  const claudeFound = byCmd.get("claude")?.found ?? false;
+  const codexFound = byCmd.get("codex")?.found ?? false;
+  const geminiFound = byCmd.get("gemini")?.found ?? false;
   const env = process.env;
   if (env["ANTHROPIC_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
@@ -445,21 +455,31 @@ async function runText(): Promise<number> {
 
   // Integrations
   process.stdout.write(`${CYAN}Integrations:${NC}\n`);
-  if (await pythonImportOk("mcp")) {
+  // v7.5.8: parallelize the three python module probes. Sequentially the
+  // numpy + sentence_transformers checks each have a 30s timeout (cold ML
+  // imports), so worst case was ~60-90s wall time. Promise.all keeps them
+  // bounded by the slowest single probe. Output order is preserved by
+  // awaiting the array up front.
+  const [mcpOk, numpyOk, stOk] = await Promise.all([
+    pyImpl.fn("mcp"),
+    pyImpl.fn("numpy", true),
+    pyImpl.fn("sentence_transformers", true),
+  ]);
+  if (mcpOk) {
     process.stdout.write(`  ${badge("pass")}  MCP SDK (Python)\n`);
     tally.pass++;
   } else {
     process.stdout.write(`  ${badge("warn")}  MCP SDK - not installed (pip3 install mcp)\n`);
     tally.warn++;
   }
-  if (await pythonImportOk("numpy", true)) {
+  if (numpyOk) {
     process.stdout.write(`  ${badge("pass")}  numpy (vector search)\n`);
     tally.pass++;
   } else {
     process.stdout.write(`  ${badge("warn")}  numpy - not installed (pip3 install numpy)\n`);
     tally.warn++;
   }
-  if (await pythonImportOk("sentence_transformers", true)) {
+  if (stOk) {
     process.stdout.write(`  ${badge("pass")}  sentence-transformers (embeddings)\n`);
     tally.pass++;
   } else {

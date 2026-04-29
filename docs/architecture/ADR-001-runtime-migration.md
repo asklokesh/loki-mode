@@ -1,7 +1,28 @@
 # ADR-001: Migrate Loki orchestrator off bash
 
-**Status:** Proposed (feature/bun-migration branch)
-**Date:** 2026-04-25
+**Status:** Accepted -- Phases 1-5 shipped; Phase 6 (bash sunset) gated on 30-day clean soak
+**Date:** 2026-04-25 (proposed) / 2026-04-29 (status updated for v7.5.7)
+**Last reviewed:** 2026-04-29 against v7.5.7
+
+## Phase status (as of v7.5.7, 2026-04-29)
+
+| Phase | Description | Status | Shipped in |
+|---|---|---|---|
+| 1 | Scaffold `loki-ts/`, `ts-version` POC, CI matrix | DONE | v7.0.x |
+| 2 | Read-only sub-commands ported (provider show, status, stats, memory list) | DONE | v7.1.x |
+| 3 | Build/release tooling on Bun (`bun publish`, `bun build`, `bun test`) | DONE | v7.2.0 |
+| 4 | `build_prompt` + `run_autonomous` outer loop ported; `LOKI_LEGACY_BASH=1` fallback live | DONE | v7.3.0 |
+| 5 | `council_should_stop`, `run_code_review` ported; side-by-side parity verified | DONE | v7.3.0 -- v7.4.x |
+| 6 | Sunset bash: remove `LOKI_LEGACY_BASH`, delete `autonomy/run.sh` + `autonomy/loki` | **GATED** | Pending 30-day clean soak from v7.3.0 GA |
+
+**Phase 6 entry criteria (per founder call 2026-04-25, release_strategy memory):**
+- 30 consecutive days with zero parity-diff regressions on the Bun route
+- All 14 CLI tests passing on both routes (`tests/test-cli-commands.sh`)
+- Bun-parity matrix green on every workflow (added after v7.4.18 doctor-text drift bug)
+- No `LOKI_LEGACY_BASH=1` fallback invocations observed in telemetry over the soak window
+- Local CI gate (`scripts/local-ci.sh`) green on every push
+
+When all criteria are met, Phase 6 PR (#159 per release_strategy) opens for council review.
 **Decision driver:** `autonomy/run.sh` is 11,327 lines of bash and `autonomy/loki` is 22,304 lines. Both are fragile, hard to refactor, untyped, and the upstream RARV-C audit (v6.81 plan) flagged them as the single biggest architectural debt.
 
 ## Context: facts the user asked me to verify
@@ -162,10 +183,11 @@ Reasons:
 - Port `council_should_stop` and `run_code_review` to TypeScript
 - Same validation discipline
 
-### Phase 6: Sunset bash (only after 30 days clean in production)
+### Phase 6: Sunset bash (only after 30 days clean in production) -- GATED as of v7.5.7
 - Remove `LOKI_LEGACY_BASH` flag
 - Delete `autonomy/run.sh` and `autonomy/loki` (keep in git history)
-- Bash → Bun migration complete
+- Bash -> Bun migration complete
+- **Status (2026-04-29):** awaiting 30-day clean soak. Soak clock started with v7.3.0 GA. See "Phase status" table at top of this ADR for entry criteria.
 
 ## What we can do better for releases (Anthropic owns Bun → leverage)
 

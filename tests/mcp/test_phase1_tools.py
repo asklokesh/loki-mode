@@ -224,13 +224,40 @@ class Phase1ToolsTests(unittest.TestCase):
         with _ChdirToTmp(self.tmp):
             raw = _run(self.server.loki_learnings(limit=10))
         body = json.loads(raw)
-        # Either a soft-empty result or an explicit error envelope is acceptable;
-        # current implementation returns {"error": "..."} on parse failure.
-        if "error" in body:
-            self.assertIsInstance(body["error"], str)
-        else:
-            self.assertEqual(body.get("learnings", []), [])
-            self.assertEqual(body.get("total", 0), 0)
+        # v7.5.8: corruption now surfaces as an explicit structured envelope
+        # rather than being silently masked as an empty result.
+        self.assertEqual(body.get("code"), "LEARNINGS_CORRUPT")
+        self.assertEqual(body.get("error"), "Learning file corrupted")
+        self.assertEqual(body.get("entries"), [])
+        self.assertIn("path", body)
+        self.assertTrue(body["path"].endswith("relevant-learnings.json"))
+
+    def test_code_search_chroma_exception_returns_generic_envelope(self):
+        """Simulated ChromaDB exception must yield the generic CHROMA_QUERY_ERROR
+        envelope and must NOT propagate raw exception text to the client."""
+        secret_msg = "ConnectionRefusedError: tcp://internal-host:8100/super-secret"
+
+        class _BoomCollection:
+            def query(self, *a, **kw):
+                raise RuntimeError(secret_msg)
+
+        # Monkey-patch the chroma collection getter used inside loki_code_search.
+        orig = self.server._get_chroma_collection
+        self.server._get_chroma_collection = lambda: _BoomCollection()
+        try:
+            with _ChdirToTmp(self.tmp):
+                raw = _run(self.server.loki_code_search(query="foo", n_results=1))
+        finally:
+            self.server._get_chroma_collection = orig
+
+        body = json.loads(raw)
+        self.assertEqual(body.get("code"), "CHROMA_QUERY_ERROR")
+        self.assertEqual(body.get("error"), "Code search failed")
+        self.assertIn("hint", body)
+        # Crucial: no raw exception text or internal endpoint leaks to client.
+        self.assertNotIn(secret_msg, raw)
+        self.assertNotIn("ConnectionRefusedError", raw)
+        self.assertNotIn("internal-host", raw)
 
     # ---- loki_counter_evidence_template --------------------------------
 

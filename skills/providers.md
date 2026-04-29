@@ -166,7 +166,7 @@ loki start --provider cline ./prd.md
 # With specific model
 loki start --provider cline --cline-model deepseek/deepseek-chat ./prd.md
 
-# With loki run
+# With loki run (DEPRECATED -- still works; prefer `loki start`)
 loki run 52 --provider cline --ship -d
 ```
 

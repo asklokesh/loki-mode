@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { runAutonomous } from "../../src/runner/autonomous.ts";
+import { runAutonomous, tryImport } from "../../src/runner/autonomous.ts";
 import { saveStateForRunner as realSaveStateForRunner } from "../../src/runner/state.ts";
 import type {
   Clock,
@@ -336,6 +336,45 @@ describe("runAutonomous", () => {
     expect(parsed["status"]).toBe("max_iterations_reached");
     expect(parsed["prdPath"]).toBe("/tmp/test-prd.md");
     expect(parsed["maxRetries"]).toBe(5);
+  });
+
+  // v7.5.8: tryImport must throw a clear error if a loaded module is missing
+  // an expected export. Pre-v7.5.8 the function ended in `return mod as
+  // unknown as T` after a side-effecting key check, which silently lied to
+  // the type system if the key validator drifted. Now: file-not-found still
+  // returns null (graceful Phase-4 stub fallback), but a loaded-but-missing
+  // export raises with the spec path AND the offending key in the message.
+  it("tryImport throws a clear error when a loaded module is missing a required export", async () => {
+    const stubPath = resolve(tmpRoot, "stub-module.mjs");
+    // Module exposes `present` as a function but is MISSING `absent`. Both
+    // are listed as required, so the second key triggers the throw.
+    writeFileSync(
+      stubPath,
+      "export function present(){ return 42; }\n",
+    );
+
+    let err: unknown;
+    try {
+      await tryImport(stubPath, ["present", "absent"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain(stubPath);
+    expect(msg).toContain("absent");
+    expect(msg).toContain("missing");
+
+    // Sanity: when all required keys are present and are functions, the
+    // module loads normally. Preserves pre-existing behavior.
+    const ok = await tryImport<{ present: () => number }>(stubPath, ["present"]);
+    expect(ok).not.toBeNull();
+    expect(ok!.present()).toBe(42);
+
+    // Sanity: file-not-found still returns null (graceful fallback path used
+    // by phase-4 sibling modules that haven't landed yet).
+    const missing = await tryImport(resolve(tmpRoot, "does-not-exist.mjs"), ["foo"]);
+    expect(missing).toBeNull();
   });
 
   it("perpetual mode never stops on council true; retries exhaust eventually", async () => {

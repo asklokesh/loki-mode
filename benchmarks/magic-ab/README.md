@@ -22,10 +22,9 @@ Emits a side-by-side comparison table.
 
 ## Why it exists
 
-Past audits (see `docs/audits/v6.76.x-honest-audit.md`) noted that the magic
-debate gate had been claimed to improve accessibility / performance / consistency
-of generated UI components, but no measurement had ever been done. This bench
-is the answer.
+Past audits noted that the magic debate gate had been claimed to improve
+accessibility / performance / consistency of generated UI components, but
+no measurement had ever been done. This bench is the answer.
 
 ## Honesty notes
 

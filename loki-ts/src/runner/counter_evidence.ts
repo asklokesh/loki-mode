@@ -99,10 +99,11 @@ export function loadCounterEvidence(lokiDir: string, iter: number): CounterEvide
       const e = entry as Record<string, unknown>;
       if (typeof e["findingId"] !== "string") continue;
       if (typeof e["claim"] !== "string") continue;
-      if (typeof e["proofType"] !== "string") continue;
       // v7.5.1 B2: enum validation. Drop entries with unknown proofType.
-      const proofType = e["proofType"] as OverrideProofType;
-      if (!VALID_PROOF_TYPES.has(proofType)) continue;
+      // v7.5.8: validate BEFORE narrowing the type so the cast is sound.
+      const raw = e["proofType"];
+      if (typeof raw !== "string" || !VALID_PROOF_TYPES.has(raw as OverrideProofType)) continue;
+      const proofType = raw as OverrideProofType;
       const artifacts = Array.isArray(e["artifacts"]) ? e["artifacts"] : [];
       cleaned.push({
         findingId: e["findingId"],

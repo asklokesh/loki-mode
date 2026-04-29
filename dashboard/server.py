@@ -622,15 +622,21 @@ app = FastAPI(
 # Set LOKI_DASHBOARD_CORS to override (comma-separated origins).
 _cors_default = "http://localhost:57374,http://127.0.0.1:57374"
 _cors_raw = os.environ.get("LOKI_DASHBOARD_CORS", _cors_default)
-if _cors_raw.strip() == "*":
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+if "*" in _cors_origins or _cors_raw.strip() == "*":
+    if os.environ.get("LOKI_ENV") == "production":
+        raise RuntimeError(
+            "Wildcard CORS ('*') is not allowed in production. "
+            "Set LOKI_DASHBOARD_CORS to a specific origin list, "
+            "or set LOKI_ENV != production."
+        )
     logger.warning(
         "LOKI_DASHBOARD_CORS is set to '*' -- all origins are allowed. "
         "This is insecure for production deployments."
     )
-_cors_origins = _cors_raw.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
@@ -2244,7 +2250,7 @@ def _sanitize_agent_id(agent_id: str) -> str:
         )
     return agent_id
 
-@app.get("/api/memory/summary")
+@app.get("/api/memory/summary", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_summary():
     """Get memory system summary from .loki/memory/."""
     # Try SQLite backend first for accurate counts
@@ -2371,7 +2377,7 @@ async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
     return episodes
 
 
-@app.get("/api/memory/episodes/{episode_id}")
+@app.get("/api/memory/episodes/{episode_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_episode(episode_id: str):
     """Get a specific episodic memory entry."""
     # Try SQLite first
@@ -2432,7 +2438,7 @@ async def list_patterns():
     return []
 
 
-@app.get("/api/memory/patterns/{pattern_id}")
+@app.get("/api/memory/patterns/{pattern_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_pattern(pattern_id: str):
     """Get a specific semantic pattern."""
     patterns = await list_patterns()
@@ -2471,7 +2477,7 @@ async def list_skills():
     return skills
 
 
-@app.get("/api/memory/skills/{skill_id}")
+@app.get("/api/memory/skills/{skill_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_skill(skill_id: str):
     """Get a specific procedural skill."""
     loki_dir = _get_loki_dir()
@@ -2510,7 +2516,7 @@ async def consolidate_memory(hours: int = 24):
     return {"status": "ok", "message": f"Consolidation for last {hours}h", "consolidated": 0, "patternsCreated": 0, "patternsMerged": 0, "episodesProcessed": 0}
 
 
-@app.post("/api/memory/retrieve")
+@app.post("/api/memory/retrieve", dependencies=[Depends(auth.require_scope("control"))])
 async def retrieve_memory(query: dict = None):
     """Search memories by query."""
     return {"results": [], "query": query}
@@ -2678,7 +2684,7 @@ def _read_learning_signals(signal_type: Optional[str] = None, limit: int = 50) -
     return signals[:limit]
 
 
-@app.get("/api/learning/metrics")
+@app.get("/api/learning/metrics", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_metrics(
     timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
@@ -2747,7 +2753,7 @@ async def get_learning_metrics(
     }
 
 
-@app.get("/api/learning/trends")
+@app.get("/api/learning/trends", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_trends(
     timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
@@ -2767,7 +2773,7 @@ async def get_learning_trends(
     return {"dataPoints": data_points, "maxValue": max_val, "period": timeRange}
 
 
-@app.get("/api/learning/signals")
+@app.get("/api/learning/signals", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_signals(
     timeRange: str = Query("7d", pattern=r"^\d{1,4}[hdm]$"),
     signalType: Optional[str] = None,
@@ -2793,7 +2799,7 @@ async def get_learning_signals(
     return combined[offset:offset + limit]
 
 
-@app.get("/api/learning/aggregation")
+@app.get("/api/learning/aggregation", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_aggregation():
     """Get latest learning aggregation result, merging file-based aggregation with live signals."""
     result = {"preferences": [], "error_patterns": [], "success_patterns": [], "tool_efficiencies": []}
@@ -2976,7 +2982,7 @@ async def trigger_aggregation():
     return result
 
 
-@app.get("/api/learning/preferences")
+@app.get("/api/learning/preferences", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_preferences(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated user preferences from events and learning signals directory."""
     events = _read_events("30d")
@@ -2988,7 +2994,7 @@ async def get_learning_preferences(limit: int = Query(default=50, ge=1, le=1000)
     return combined[:limit]
 
 
-@app.get("/api/learning/errors")
+@app.get("/api/learning/errors", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_errors(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated error patterns from events and learning signals directory."""
     events = _read_events("30d")
@@ -3000,7 +3006,7 @@ async def get_learning_errors(limit: int = Query(default=50, ge=1, le=1000)):
     return combined[:limit]
 
 
-@app.get("/api/learning/success")
+@app.get("/api/learning/success", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_success(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated success patterns from events and learning signals directory."""
     events = _read_events("30d")
@@ -3012,7 +3018,7 @@ async def get_learning_success(limit: int = Query(default=50, ge=1, le=1000)):
     return combined[:limit]
 
 
-@app.get("/api/learning/tools")
+@app.get("/api/learning/tools", dependencies=[Depends(auth.require_scope("read"))])
 async def get_tool_efficiency(limit: int = Query(default=50, ge=1, le=1000)):
     """Get tool efficiency rankings from events and learning signals directory."""
     events = _read_events("30d")
@@ -5882,13 +5888,20 @@ async def list_escalations():
 @app.get("/api/escalations/{filename}")
 async def get_escalation(filename: str):
     """Read one handoff document. Path-traversal-safe."""
-    if "/" in filename or "\\" in filename or filename.startswith("."):
+    if "\\" in filename or filename.startswith("."):
         raise HTTPException(status_code=400, detail="invalid filename")
     if not filename.endswith(".md"):
         raise HTTPException(status_code=400,
                             detail="only .md handoffs are served")
-    base = _get_loki_dir()
-    path = base / "escalations" / filename
+    escalations_dir = str(_get_loki_dir() / "escalations")
+    # Resolve symlinks on both sides to catch symlink traversal that the
+    # router-level "/" rejection misses (e.g. a symlink whose target
+    # escapes the escalations directory).
+    target = os.path.realpath(os.path.join(escalations_dir, filename))
+    base = os.path.realpath(escalations_dir)
+    if not target.startswith(base + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = _Path(target)
     if not path.exists():
         raise HTTPException(status_code=404,
                             detail=f"handoff not found: {filename}")

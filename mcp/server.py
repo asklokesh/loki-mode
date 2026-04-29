@@ -1554,7 +1554,13 @@ async def loki_code_search(
         logger.error(f"Code search failed: {e}")
         _emit_tool_event_async('loki_code_search', 'complete',
                                result_status='error', error=str(e))
-        return json.dumps({"error": str(e)})
+        # Generic envelope: do not leak raw exception text (may include
+        # ChromaDB connection details / internal field names) to client.
+        return json.dumps({
+            "error": "Code search failed",
+            "code": "CHROMA_QUERY_ERROR",
+            "hint": "Ensure ChromaDB is running: docker start loki-chroma",
+        })
 
 
 @mcp.tool()
@@ -1601,7 +1607,13 @@ async def loki_code_search_stats() -> str:
             "reindex_command": "python3.12 tools/index-codebase.py --reset",
         })
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        logger.error(f"Code search stats failed: {e}")
+        # Generic envelope: do not leak raw exception text to client.
+        return json.dumps({
+            "error": "Index unavailable",
+            "code": "CHROMA_STATS_ERROR",
+            "hint": "docker start loki-chroma",
+        })
 
 
 # ============================================================
@@ -1882,7 +1894,7 @@ async def loki_get_hotspots(
 
     try:
         results = []
-        with open(hotspots_path, 'r') as f:
+        with safe_open(hotspots_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -1940,7 +1952,7 @@ async def loki_get_co_changes(
         })
 
     try:
-        with open(co_changes_path, 'r') as f:
+        with safe_open(co_changes_path, 'r') as f:
             pairs = json.load(f)
 
         # Filter pairs involving the requested file
@@ -1993,7 +2005,7 @@ async def loki_get_doc_coverage() -> str:
         })
 
     try:
-        with open(manifest_path, 'r') as f:
+        with safe_open(manifest_path, 'r') as f:
             manifest = json.load(f)
 
         total_files = manifest.get("total_files", 0)
@@ -2077,7 +2089,13 @@ async def loki_findings(iteration: int = -1) -> str:
             if entry.endswith('-prompt.txt'):
                 continue
             reviewer = entry[:-4]
-            with safe_open(os.path.join(review_path, entry), 'r') as f:
+            try:
+                entry_path = safe_path_join(review_path, entry)
+            except PathTraversalError:
+                # Skip listdir entries that resolve outside the review dir
+                # (defensive against e.g. "../etc/passwd"-style names).
+                continue
+            with safe_open(entry_path, 'r') as f:
                 body = f.read()
             for line in body.splitlines():
                 stripped = line.strip().lstrip('-* ').strip()
@@ -2110,8 +2128,20 @@ async def loki_learnings(limit: int = 50) -> str:
         path = safe_path_join('.loki', 'state', 'relevant-learnings.json')
         if not os.path.exists(path):
             return json.dumps({"version": 1, "learnings": [], "total": 0})
-        with safe_open(path, 'r') as f:
-            data = json.load(f)
+        try:
+            with safe_open(path, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, ValueError) as je:
+            # Surface corruption explicitly rather than masking it as empty.
+            logger.error(f"loki_learnings corrupt file at {path}: {je}")
+            _emit_tool_event_async('loki_learnings', 'complete',
+                                   result_status='error', error=str(je))
+            return json.dumps({
+                "error": "Learning file corrupted",
+                "code": "LEARNINGS_CORRUPT",
+                "path": path,
+                "entries": [],
+            })
         learnings = data.get('learnings', []) if isinstance(data, dict) else []
         if not isinstance(learnings, list):
             learnings = []

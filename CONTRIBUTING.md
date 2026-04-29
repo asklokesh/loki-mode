@@ -163,4 +163,4 @@ Use the [issue templates](https://github.com/asklokesh/loki-mode/issues/new/choo
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [Business Source License 1.1](LICENSE) (BUSL-1.1) and that you accept the terms of the [Contributor License Agreement](CLA.md). See [LICENSE-CHANGE-NOTICE.md](LICENSE-CHANGE-NOTICE.md) for context on the March 2026 license change and the planned conversion to Apache 2.0 in 2030.

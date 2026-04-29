@@ -2,26 +2,32 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.5.7
+**Version:** v7.5.8
 
 ---
 
-## What's New in v7.5.0
+## What's New in v7.5.x
 
-### Phase 1 RARV-C closure (Bun route, default-off feature flags)
+### Phase 1 RARV-C closure (shipped v7.5.0, default-on as of v7.5.3)
+Phase 1 closure features now activate automatically when you run
+`loki start` -- no env flags required. Power users can opt out by
+setting any flag to `0`.
+
 - `findings_injector.ts` -- structured per-finding records (severity, file,
   line, reviewer) injected into the next iteration's prompt instead of bare
-  comma-separated tokens. Enable with `LOKI_INJECT_FINDINGS=1`.
-- `counter_evidence.ts` -- 3-judge override council. Drop a
+  comma-separated tokens. Default: ON. Opt out with `LOKI_INJECT_FINDINGS=0`.
+- `counter_evidence.ts` -- override council. Drop a
   `.loki/state/counter-evidence-<iter>.json` to dispute reviewer findings;
-  2-of-3 approval lifts the BLOCK. Enable with `LOKI_OVERRIDE_COUNCIL=1`
-  (requires `LOKI_INJECT_FINDINGS=1`).
+  approval lifts the BLOCK. Default: ON. Opt out with `LOKI_OVERRIDE_COUNCIL=0`.
 - `learnings_writer.ts` -- automatic structured learnings to
   `.loki/state/relevant-learnings.json` on every code_review failure.
-  Enable with `LOKI_AUTO_LEARNINGS=1`.
+  Default: ON. Opt out with `LOKI_AUTO_LEARNINGS=0`.
 - `escalation_handoff.ts` -- structured human-handoff doc to
-  `.loki/escalations/handoff-*.md` before PAUSE. Enable with
-  `LOKI_HANDOFF_MD=1`.
+  `.loki/escalations/handoff-*.md` before PAUSE. Default: ON. Opt out
+  with `LOKI_HANDOFF_MD=0`.
+- `loki status` shows a "Phase 1 artifacts" section when findings,
+  learnings, or escalations exist (added v7.5.5; see the `phase1` block
+  in `loki status --json`).
 - See `skills/quality-gates.md` for full schema and reachability notes.
 
 ### Earlier highlights still in scope

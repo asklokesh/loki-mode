@@ -64,12 +64,15 @@ function parseReviewerOutput(
     // (quality_gates.ts:556-561 buildReviewerPrompt) but tolerate variation.
     const stripped = trimmed.replace(/^[-*]\s*/, "");
     const m = SEVERITY_RE.exec(stripped);
-    if (!m) continue;
-    const sev = normalizeSeverity(m[1]!);
-    const description = m[2]!.trim();
+    // v7.5.8: explicitly check both capture groups exist instead of using
+    // non-null assertions, so a future regex shape change cannot silently
+    // produce undefined values.
+    if (!m || !m[1] || !m[2]) continue;
+    const sev = normalizeSeverity(m[1]);
+    const description = m[2].trim();
     const fileLine = FILE_LINE_RE.exec(description);
-    const file = fileLine ? fileLine[1]! : null;
-    const lineNo = fileLine ? Number.parseInt(fileLine[2]!, 10) : null;
+    const file = fileLine && fileLine[1] ? fileLine[1] : null;
+    const lineNo = fileLine && fileLine[2] ? Number.parseInt(fileLine[2], 10) : null;
     out.push({
       reviewId,
       iteration,
