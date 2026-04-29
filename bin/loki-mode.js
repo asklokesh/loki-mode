@@ -13,18 +13,10 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-// Deprecation banner. Suppressed when piped (so scripts don't get noise) and
-// when LOKI_NO_BANNER=1 / NO_COLOR is set (already-aware users).
-if (
-  process.stderr.isTTY &&
-  !process.env.LOKI_NO_BANNER &&
-  !process.env.NO_COLOR
-) {
-  process.stderr.write(
-    '[loki-mode] DEPRECATED: this binary is being removed in v8.0.0. ' +
-    'Use `loki` instead -- same behaviour, shorter name.\n',
-  );
-}
+// v7.5.3: dropped the per-invocation deprecation banner per the
+// "embedded by default, no commands required" UX mandate. Muscle-memory
+// users continue to work with no friction; the wrapper is removed in
+// v8.0.0 along with the rest of the bash sunset.
 
 const shim = path.join(__dirname, 'loki');
 const args = process.argv.slice(2);

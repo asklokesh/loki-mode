@@ -1346,13 +1346,16 @@ cmd_start() {
         if [[ "$_auto_confirm" == "true" ]]; then
             echo -e "${YELLOW}Warning: No PRD file specified. Auto-confirming (CI mode).${NC}"
         else
-            echo -e "${YELLOW}Warning: No PRD file specified.${NC}"
+            echo -e "${YELLOW}No PRD file specified.${NC}"
             echo "Loki Mode will analyze the existing codebase and generate"
             echo "a PRD automatically. No requirements document needed."
             echo ""
-            echo -e "Continue? [y/N] \c"
+            # v7.5.3 UX: rephrased + default flipped from N to Y. The pre-v7.5.3
+            # "Continue? [y/N]" with default-N caused users to accidentally
+            # cancel by hitting Enter after reading the explanation.
+            echo -e "Generate PRD from codebase and start? [Y/n] \c"
             read -r confirm
-            if [[ ! "$confirm" =~ ^[Yy] ]]; then
+            if [[ "$confirm" =~ ^[Nn] ]]; then
                 echo "Aborted. Usage: loki start <path-to-prd.md>"
                 exit 0
             fi

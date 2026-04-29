@@ -2022,6 +2022,165 @@ async def loki_get_doc_coverage() -> str:
 
 
 # ============================================================
+# Phase 1 artifact tools (v7.5.3) -- expose findings + learnings +
+# counter-evidence templates produced by the Bun runner under .loki/.
+# ============================================================
+
+@mcp.tool()
+async def loki_findings(iteration: int = -1) -> str:
+    """Read structured code-review findings for a given iteration.
+
+    Args:
+        iteration: iteration number (default -1 = most recent).
+    Returns: JSON {iteration, review_id, findings: [...]}.
+    """
+    _emit_tool_event_async('loki_findings', 'start',
+                           parameters={'iteration': iteration})
+    try:
+        import re as _re
+        state_dir = safe_path_join('.loki', 'state')
+        if iteration >= 0:
+            persisted = safe_path_join('.loki', 'state', f'findings-{iteration}.json')
+            if os.path.exists(persisted):
+                with safe_open(persisted, 'r') as f:
+                    data = json.load(f)
+                _emit_tool_event_async('loki_findings', 'complete', result_status='success')
+                return json.dumps(data)
+        if iteration < 0 and os.path.exists(state_dir):
+            files = [n for n in os.listdir(state_dir) if _re.fullmatch(r'findings-\d+\.json', n)]
+            if files:
+                files.sort(key=lambda n: int(_re.sub(r'\D', '', n) or '0'))
+                with safe_open(safe_path_join('.loki', 'state', files[-1]), 'r') as f:
+                    data = json.load(f)
+                _emit_tool_event_async('loki_findings', 'complete', result_status='success')
+                return json.dumps(data)
+        reviews_dir = safe_path_join('.loki', 'quality', 'reviews')
+        if not os.path.exists(reviews_dir):
+            return json.dumps({"iteration": iteration, "review_id": None, "findings": []})
+        candidates = sorted([d for d in os.listdir(reviews_dir)
+                             if d.startswith('review-')
+                             and os.path.isdir(os.path.join(reviews_dir, d))])
+        if iteration >= 0:
+            candidates = [c for c in candidates if c.endswith(f'-{iteration}')]
+        if not candidates:
+            return json.dumps({"iteration": iteration, "review_id": None, "findings": []})
+        latest = candidates[-1]
+        review_path = safe_path_join('.loki', 'quality', 'reviews', latest)
+        sev_re = _re.compile(r'\[(Critical|High|Medium|Low)\]\s*(.+)', _re.IGNORECASE)
+        file_re = _re.compile(r'([\w./\-]+\.[a-zA-Z]+):(\d+)')
+        findings = []
+        for entry in os.listdir(review_path):
+            if not entry.endswith('.txt'):
+                continue
+            if entry in ('diff.txt', 'files.txt', 'anti-sycophancy.txt'):
+                continue
+            if entry.endswith('-prompt.txt'):
+                continue
+            reviewer = entry[:-4]
+            with safe_open(os.path.join(review_path, entry), 'r') as f:
+                body = f.read()
+            for line in body.splitlines():
+                stripped = line.strip().lstrip('-* ').strip()
+                m = sev_re.match(stripped)
+                if not m:
+                    continue
+                sev_raw, desc = m.group(1), m.group(2).strip()
+                sev = sev_raw[:1].upper() + sev_raw[1:].lower()
+                fl = file_re.search(desc)
+                findings.append({
+                    "severity": sev, "reviewer": reviewer, "description": desc,
+                    "file": fl.group(1) if fl else None,
+                    "line": int(fl.group(2)) if fl else None,
+                    "raw": stripped,
+                })
+        result = {"iteration": iteration, "review_id": latest, "findings": findings}
+        _emit_tool_event_async('loki_findings', 'complete', result_status='success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_findings failed: {e}")
+        _emit_tool_event_async('loki_findings', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_learnings(limit: int = 50) -> str:
+    """Read recent learnings (newest first) from relevant-learnings.json."""
+    _emit_tool_event_async('loki_learnings', 'start', parameters={'limit': limit})
+    try:
+        path = safe_path_join('.loki', 'state', 'relevant-learnings.json')
+        if not os.path.exists(path):
+            return json.dumps({"version": 1, "learnings": [], "total": 0})
+        with safe_open(path, 'r') as f:
+            data = json.load(f)
+        learnings = data.get('learnings', []) if isinstance(data, dict) else []
+        if not isinstance(learnings, list):
+            learnings = []
+        sliced = list(reversed(learnings))[:max(1, int(limit))]
+        result = {"version": data.get('version', 1) if isinstance(data, dict) else 1,
+                  "total": len(learnings), "learnings": sliced}
+        _emit_tool_event_async('loki_learnings', 'complete', result_status='success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_learnings failed: {e}")
+        _emit_tool_event_async('loki_learnings', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_counter_evidence_template(iteration: int) -> str:
+    """Generate a counter-evidence file template for the given iteration.
+
+    Pre-fills canonical findingId for each Critical/High finding so the
+    user only has to fill in `claim` + `proofType`. Save the template
+    body to .loki/state/counter-evidence-<iteration>.json to dispute
+    findings via the override council.
+    """
+    _emit_tool_event_async('loki_counter_evidence_template', 'start',
+                           parameters={'iteration': iteration})
+    try:
+        findings_data = json.loads(await loki_findings(iteration=iteration))
+        if 'error' in findings_data:
+            return json.dumps(findings_data)
+        findings = findings_data.get('findings', [])
+        if not findings:
+            return json.dumps({"iteration": iteration, "template": None,
+                               "message": f"No findings for iteration {iteration}."})
+        evidence = []
+        for f in findings:
+            if f.get('severity') not in ('Critical', 'High'):
+                continue
+            head = (f.get('raw') or '').strip()[:80]
+            evidence.append({
+                "findingId": f"{f.get('reviewer', '')}::{head}",
+                "claim": "(describe why this finding is wrong, in one sentence)",
+                "proofType": "duplicate-code-path",
+                "artifacts": ["(file path or command output backing your claim)"],
+                "_finding_for_reference": {
+                    "severity": f.get('severity'),
+                    "description": f.get('description'),
+                    "file": f.get('file'),
+                    "line": f.get('line'),
+                },
+            })
+        result = {
+            "iteration": iteration,
+            "template": {"iteration": iteration, "evidence": evidence},
+            "usage": (f"Save to .loki/state/counter-evidence-{iteration}.json "
+                      "after filling in `claim` and `proofType`. proofType MUST "
+                      "be one of: file-exists, test-passes, grep-miss, "
+                      "reviewer-misread, duplicate-code-path, out-of-scope."),
+        }
+        _emit_tool_event_async('loki_counter_evidence_template', 'complete',
+                               result_status='success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_counter_evidence_template failed: {e}")
+        _emit_tool_event_async('loki_counter_evidence_template', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================
 # PROMPTS - Pre-built prompt templates
 # ============================================================
 

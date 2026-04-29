@@ -188,6 +188,7 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
           dst="${src}.norm"
           sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
             | sed -E "/Runtime route:/,/^$/d" \
+            | sed -E "/Phase 1 artifacts:/,/^$/d" \
             | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
             > "$dst"
         done

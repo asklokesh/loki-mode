@@ -11011,10 +11011,36 @@ if __name__ == "__main__":
                     cr_count=$(track_gate_failure "code_review")
                     # BUG-QG-007: Always append to gate_failures regardless of escalation tier
                     # BUG-RUN-009: Write PAUSE to .loki/PAUSE (not .loki/signals/PAUSE)
-                    if [ "$cr_count" -ge "$GATE_PAUSE_LIMIT" ]; then
+                    # v7.5.3 Phase 1 hook: try the override council BEFORE
+                    # locking in the BLOCK / escalation. If counter-evidence
+                    # is supplied AND a trusted proofType, this lifts the
+                    # BLOCK and clears the code_review gate counter.
+                    # No-op when no counter-evidence file exists. Embedded
+                    # by default; opt out with LOKI_OVERRIDE_COUNCIL=0.
+                    local _phase1_overrode=false
+                    if [ "${LOKI_OVERRIDE_COUNCIL:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
+                        local _override_out
+                        _override_out=$(bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks override "$ITERATION_COUNT" 2>/dev/null || true)
+                        case "$_override_out" in
+                            *"override: LIFTED"*)
+                                log_info "Phase 1 override council lifted code_review BLOCK"
+                                clear_gate_failure "code_review"
+                                cr_count=0
+                                _phase1_overrode=true
+                                ;;
+                        esac
+                    fi
+                    if [ "$_phase1_overrode" = "true" ]; then
+                        : # BLOCK lifted; continue without escalation
+                    elif [ "$cr_count" -ge "$GATE_PAUSE_LIMIT" ]; then
                         log_error "Gate escalation: code_review failed $cr_count times (>= $GATE_PAUSE_LIMIT) - forcing PAUSE for human intervention"
                         echo "PAUSE" > "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
                         echo "code_review gate failed $cr_count consecutive times" >> "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
+                        # v7.5.3 Phase 1 hook: structured handoff doc before
+                        # bare PAUSE. Embedded; opt out LOKI_HANDOFF_MD=0.
+                        if [ "${LOKI_HANDOFF_MD:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
+                            bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks handoff code_review "$cr_count" "$ITERATION_COUNT" 2>/dev/null || true
+                        fi
                         touch "${TARGET_DIR:-.}/.loki/PAUSE"
                         gate_failures="${gate_failures}code_review_PAUSED,"
                     elif [ "$cr_count" -ge "$GATE_ESCALATE_LIMIT" ]; then
@@ -11027,6 +11053,12 @@ if __name__ == "__main__":
                     else
                         gate_failures="${gate_failures}code_review,"
                         log_warn "Code review BLOCKED ($cr_count consecutive) - Critical/High findings"
+                    fi
+                    # v7.5.3 Phase 1 hook: persist structured findings +
+                    # auto-write learnings (one shell-out per iteration).
+                    # Best-effort; never fails the main loop.
+                    if [ "${LOKI_INJECT_FINDINGS:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
+                        bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
                     fi
                 fi
             fi

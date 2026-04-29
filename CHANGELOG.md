@@ -5,6 +5,102 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.3] - 2026-04-29
+
+MINOR-impact patch. **Embedded-by-default UX**: per the explicit user
+mandate, Phase 1 features now activate automatically when users run
+`loki start` -- no env flags required. Power users can still opt out
+with `LOKI_INJECT_FINDINGS=0` etc.
+
+### UX (the headline change)
+
+- **Default-on flip**: `LOKI_INJECT_FINDINGS / LOKI_OVERRIDE_COUNCIL /
+  LOKI_AUTO_LEARNINGS / LOKI_HANDOFF_MD` now default to ON in the Bun
+  route. Pre-v7.5.3 users had to opt IN by setting env=1; now the
+  autonomous flow gets findings injection, override council on BLOCK,
+  auto-learnings, and structured handoff docs out of the box.
+- **Bash route activation**: `autonomy/run.sh` now shells out to a
+  hidden `loki internal phase1-hooks` Bun subcommand once per
+  iteration to drive findings persistence + override council + handoff
+  docs. `loki start` (which routes through bash) now exercises the
+  same Phase 1 pipeline as the Bun route. Cost: one Bun fork per
+  iteration, amortized.
+- **`loki status` Phase 1 inline**: a "Phase 1 artifacts" section
+  appears in `loki status` when findings, learnings, or escalations
+  exist. No new command required. Quiet on greenfield runs.
+- **`loki start` no-args prompt**: was `Continue? [y/N]` with default-N
+  (caused accidental cancel); now `Generate PRD from codebase and
+  start? [Y/n]` with default-Y.
+- **`bin/loki-mode.js` deprecation banner removed**: was firing on
+  every TTY invocation since v7.4.12. The wrapper still works.
+
+### Code
+
+- **#5 `withAppendLock` extracted** to `loki-ts/src/util/atomic.ts`
+  for reuse by other call sites. Cross-process race on
+  gate-failure-count.json from parallel worktrees still deferred
+  (needs flock/sqlite, separate scope).
+- **#6 `intervention.ts` wired into autonomous.ts**: replaces the
+  inline 4-line stub with the richer module (PAUSE/STOP/INPUT signals,
+  prompt-injection limits, quarantine-on-validation-fail). Falls back
+  on dynamic-import failure.
+
+### New surfaces (read-only inspectors; mutations stay in Bun)
+
+- **MCP tools (#7)** in `mcp/server.py`:
+  - `loki_findings(iteration=-1)` -- read structured findings.
+  - `loki_learnings(limit=50)` -- read recent learnings (newest first).
+  - `loki_counter_evidence_template(iteration)` -- pre-filled
+    counter-evidence JSON template with canonical findingIds.
+- **Dashboard endpoints (#8)** in `dashboard/server.py`:
+  - `GET /api/findings/{iteration}`
+  - `GET /api/learnings?limit=N`
+  - `GET /api/escalations` (list) + `GET /api/escalations/{filename}`
+    (path-traversal-safe).
+
+### Hidden / internal
+
+- **`loki internal phase1-hooks`** (`commands/internal_phase1.ts`):
+  hidden Bun subcommand bash invokes between iterations. Subcommands:
+  `reflect <iter>`, `override <iter>`, `handoff <gate> <count> <iter>`.
+  Not in `loki help`; users never run it directly.
+
+### Infra
+
+- **`bunfig.toml`** at repo root scopes `bun test` to `loki-ts/tests/`.
+  Repo-root `bun test` is now 654/0 pass (was 1421/207 fail/13
+  errors).
+
+### Tests
+
+10 new test cases across 4 new test files (654 pass / 0 fail total):
+
+- `tests/integration/embedded_phase1_e2e.test.ts` -- 2 cases proving
+  the embedded default-on flow works without explicit env vars.
+- `tests/commands/internal_phase1.test.ts` -- 8 cases for every
+  subcommand of `loki internal phase1-hooks`.
+
+### Verified locally
+
+- `bun test` (repo root, with new bunfig.toml): **654 pass / 0 fail**.
+- `bun run typecheck`: clean.
+- `bash -n autonomy/run.sh autonomy/loki`: clean.
+- `python3 ast.parse` for mcp/server.py and dashboard/server.py: clean.
+- End-to-end: `bun loki-ts/dist/loki.js internal phase1-hooks reflect 3`
+  against a synthetic .loki/quality/reviews/ tree wrote both
+  findings-3.json and relevant-learnings.json correctly.
+
+### Honest gaps still open (deferred)
+
+- **Real provider-backed override judges**: stub-judge remains the
+  default. Targeting v7.5.4 / v7.6.0.
+- Cross-process gate-failure-count.json race (parallel worktrees).
+- 3-LLM panel for override council. Today is single-LLM-stub.
+- Real-user UAT.
+- Telemetry on flag adoption.
+
+14 version locations bumped 7.5.2 -> 7.5.3.
+
 ## [7.5.2] - 2026-04-29
 
 PATCH release. Closes 10 of the 36 honest-audit gaps from the v7.5.1

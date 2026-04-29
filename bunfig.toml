@@ -1,0 +1,14 @@
+# v7.5.3: scope `bun test` invoked from the repo root to the loki-ts/ test
+# tree only. The repo also contains test files for OTHER runners that should
+# NOT be run by Bun:
+#   - api/*_test.ts                   -- Deno-style (https:// imports)
+#   - tests/**/*.test.{ts,js}         -- node --test runner
+#   - vscode-extension/test/**/*.ts   -- @vscode/test-electron runner
+#   - dashboard-ui/tests/*.test.js    -- jsdom / Playwright
+#   - sdk/typescript/tests/*.test.js  -- node --test runner
+#
+# Without this scope, repo-root `bun test` reports ~207 fail / 13 errors out
+# of 1628 -- not real bugs, just runner mismatch. CI is unaffected because
+# scripts/local-ci.sh already does `cd loki-ts && bun test`.
+[test]
+root = "loki-ts/tests"

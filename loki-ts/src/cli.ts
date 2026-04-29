@@ -77,6 +77,20 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runRollback(rest);
     }
 
+    case "internal": {
+      // v7.5.3: hidden internal subcommand surface used by autonomy/run.sh
+      // to drive Phase 1 hooks (findings persistence, override council,
+      // handoff doc) once per iteration. NOT user-facing -- absent from
+      // help text.
+      const subcmd = rest[0];
+      if (subcmd === "phase1-hooks") {
+        const { runInternalPhase1Hooks } = await import("./commands/internal_phase1.ts");
+        return runInternalPhase1Hooks(rest.slice(1));
+      }
+      process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
+      return 2;
+    }
+
     default:
       // Unknown to Bun -- shim falls through to bash. If invoked directly
       // via `bun src/cli.ts <unknown>`, print help and exit 2.

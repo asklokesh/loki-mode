@@ -5795,6 +5795,112 @@ async def list_managed_memory_versions(memory_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 artifact endpoints (v7.5.3) -- read-only inspectors.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/findings/{iteration}")
+async def get_findings(iteration: int):
+    """Read structured code-review findings for a given iteration."""
+    base = _get_loki_dir()
+    persisted = base / "state" / f"findings-{iteration}.json"
+    if persisted.exists():
+        data = _safe_json_read(persisted, default=None)
+        if data is not None:
+            return data
+    reviews_dir = base / "quality" / "reviews"
+    if reviews_dir.exists():
+        candidates = sorted(
+            d.name for d in reviews_dir.iterdir()
+            if d.is_dir() and d.name.startswith("review-")
+            and d.name.endswith(f"-{iteration}")
+        )
+        if candidates:
+            review_dir = reviews_dir / candidates[-1]
+            agg = _safe_json_read(review_dir / "aggregate.json", default=None)
+            return {
+                "iteration": iteration,
+                "review_id": agg.get("review_id") if isinstance(agg, dict) else candidates[-1],
+                "findings": [],
+                "note": "findings-<iter>.json not found; review dir present",
+            }
+    raise HTTPException(status_code=404,
+                        detail=f"No findings for iteration {iteration}")
+
+
+@app.get("/api/learnings")
+async def get_learnings(limit: int = 50):
+    """Read recent learnings (newest first)."""
+    base = _get_loki_dir()
+    path = base / "state" / "relevant-learnings.json"
+    if not path.exists():
+        return {"version": 1, "learnings": [], "total": 0}
+    data = _safe_json_read(path, default={})
+    if not isinstance(data, dict):
+        return {"version": 1, "learnings": [], "total": 0}
+    learnings = data.get("learnings", [])
+    if not isinstance(learnings, list):
+        learnings = []
+    limit_clamped = max(1, int(limit)) if isinstance(limit, int) else 50
+    sliced = list(reversed(learnings))[:limit_clamped]
+    return {"version": data.get("version", 1), "total": len(learnings),
+            "learnings": sliced}
+
+
+@app.get("/api/escalations")
+async def list_escalations():
+    """List handoff documents under .loki/escalations/."""
+    base = _get_loki_dir()
+    esc_dir = base / "escalations"
+    if not esc_dir.exists():
+        return {"escalations": []}
+    items = []
+    try:
+        for entry in sorted(esc_dir.iterdir(),
+                            key=lambda p: p.name, reverse=True):
+            if not entry.name.endswith(".md"):
+                continue
+            try:
+                stat = entry.stat()
+                items.append({
+                    "filename": entry.name,
+                    "size_bytes": stat.st_size,
+                    "modified_at": (
+                        __import__("datetime").datetime
+                        .fromtimestamp(stat.st_mtime,
+                                       tz=__import__("datetime").timezone.utc)
+                        .isoformat()
+                    ),
+                })
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return {"escalations": items}
+
+
+@app.get("/api/escalations/{filename}")
+async def get_escalation(filename: str):
+    """Read one handoff document. Path-traversal-safe."""
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    if not filename.endswith(".md"):
+        raise HTTPException(status_code=400,
+                            detail="only .md handoffs are served")
+    base = _get_loki_dir()
+    path = base / "escalations" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404,
+                            detail=f"handoff not found: {filename}")
+    try:
+        body = _safe_read_text(path)
+    except OSError as exc:
+        raise HTTPException(status_code=500,
+                            detail=f"read failed: {exc}") from exc
+    return PlainTextResponse(content=body, media_type="text/markdown")
+
+
+# ---------------------------------------------------------------------------
 # SPA catch-all: serve index.html for any path not matched by API routes
 # or static asset mounts.  This lets the dashboard UI handle client-side routing.
 # Must be registered LAST so it never shadows an API endpoint.

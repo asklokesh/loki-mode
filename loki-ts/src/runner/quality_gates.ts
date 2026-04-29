@@ -685,7 +685,7 @@ export async function runCodeReview(
   // so the next iteration's prompt build (and any out-of-process consumers like
   // the dashboard) can read them without re-parsing per-reviewer *.txt files.
   // Default off to keep behavior byte-identical when the flag is unset.
-  if (process.env["LOKI_INJECT_FINDINGS"] === "1") {
+  if (process.env["LOKI_INJECT_FINDINGS"] !== "0") {
     try {
       const fInjector = await import("./findings_injector.ts");
       const findings = fInjector.loadPreviousFindings(base, ctx.iterationCount).findings;
@@ -719,7 +719,7 @@ export async function runCodeReview(
     // the prompt-injection side-effect. Drop the redundant gate so an
     // operator can enable LOKI_OVERRIDE_COUNCIL alone and see the override
     // BLOCK-lift behavior advertised in the docs.
-    if (process.env["LOKI_OVERRIDE_COUNCIL"] === "1") {
+    if (process.env["LOKI_OVERRIDE_COUNCIL"] !== "0") {
       const overrideOutcome = await maybeRunOverrideCouncil({
         lokiDir: base,
         reviewDir,
@@ -1056,7 +1056,7 @@ function applyEscalation(
     // async. The handoff write is sync (writeFileSync), so we use a sync
     // dynamic import via createRequire which Bun supports natively. If the
     // module fails to load we fall through to the bare PAUSE signal.
-    if (process.env["LOKI_HANDOFF_MD"] === "1") {
+    if (process.env["LOKI_HANDOFF_MD"] !== "0") {
       try {
         const mod = handoffModSync();
         if (mod?.writeEscalationHandoff) {
@@ -1187,7 +1187,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     // which lost entries to TOCTOU). learnings_writer serializes appends
     // internally via withAppendLock so concurrent findings still merge safely.
     // Best-effort: a thrown error is logged and we continue.
-    if (process.env["LOKI_AUTO_LEARNINGS"] === "1" && gate.name === "code_review") {
+    if (process.env["LOKI_AUTO_LEARNINGS"] !== "0" && gate.name === "code_review") {
       try {
         const fInjector = await import("./findings_injector.ts");
         const lWriter = await import("./learnings_writer.ts");

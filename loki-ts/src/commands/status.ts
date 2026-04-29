@@ -467,10 +467,117 @@ async function runStatusText(): Promise<number> {
     }
   }
 
+  // v7.5.3: Phase 1 artifacts (findings, learnings, escalations) are
+  // surfaced inline so users see them where they already look. Per the
+  // "embedded by default" mandate. Falls silent if no artifacts exist.
+  await renderPhase1Section(dir);
+
   process.stdout.write(`\n`);
   process.stdout.write(`${DIM}  Tip: loki context show   - detailed token breakdown${NC}\n`);
   process.stdout.write(`${DIM}  Tip: loki code overview   - codebase intelligence${NC}\n`);
   return 0;
+}
+
+// v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
+async function renderPhase1Section(lokiBase: string): Promise<void> {
+  const stateDir = resolve(lokiBase, "state");
+  const findingsFiles = listFindingsFiles(stateDir);
+  const learningsPath = resolve(stateDir, "relevant-learnings.json");
+  const escalationsDir = resolve(lokiBase, "escalations");
+  const hasFindings = findingsFiles.length > 0;
+  const hasLearnings = existsSync(learningsPath);
+  const hasEscalations = existsSync(escalationsDir);
+  if (!hasFindings && !hasLearnings && !hasEscalations) return;
+
+  process.stdout.write(`\n${CYAN}Phase 1 artifacts:${NC}\n`);
+
+  if (hasFindings) {
+    const latest = findingsFiles[findingsFiles.length - 1]!;
+    const data = safeReadJson(latest) as
+      | { iteration?: number; findings?: Array<{ severity?: string }> }
+      | null;
+    if (data && Array.isArray(data.findings)) {
+      const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 } as Record<string, number>;
+      for (const f of data.findings) {
+        const s = String(f.severity ?? "");
+        if (s in counts) counts[s] = (counts[s] ?? 0) + 1;
+      }
+      const summary = Object.entries(counts)
+        .filter(([, n]) => n > 0)
+        .map(([s, n]) => `${n} ${s.toLowerCase()}`)
+        .join(", ");
+      process.stdout.write(
+        `  Findings (iter ${data.iteration ?? "?"}): ${summary || "none"} -- ${data.findings.length} total\n`,
+      );
+    }
+  }
+
+  if (hasLearnings) {
+    const data = safeReadJson(learningsPath) as
+      | { learnings?: Array<{ trigger?: string }> }
+      | null;
+    if (data && Array.isArray(data.learnings) && data.learnings.length > 0) {
+      const counts = new Map<string, number>();
+      for (const l of data.learnings) {
+        const t = String(l.trigger ?? "unknown");
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+      const top = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([t, n]) => `${n} ${t}`)
+        .join(", ");
+      process.stdout.write(`  Learnings: ${data.learnings.length} total (${top})\n`);
+    }
+  }
+
+  if (hasEscalations) {
+    let mdCount = 0;
+    let latestName = "";
+    try {
+      const fs = await import("node:fs");
+      const entries = fs.readdirSync(escalationsDir).filter((n) => n.endsWith(".md"));
+      mdCount = entries.length;
+      if (entries.length > 0) {
+        entries.sort();
+        latestName = entries[entries.length - 1] ?? "";
+      }
+    } catch {
+      // best-effort
+    }
+    if (mdCount > 0) {
+      process.stdout.write(
+        `  Escalations: ${mdCount} handoff doc${mdCount === 1 ? "" : "s"} (latest: ${latestName})\n`,
+      );
+    }
+  }
+}
+
+function listFindingsFiles(stateDir: string): string[] {
+  if (!existsSync(stateDir)) return [];
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const all = fs
+      .readdirSync(stateDir)
+      .filter((n) => /^findings-\d+\.json$/.test(n))
+      .sort((a, b) => {
+        const na = Number.parseInt(a.replace(/[^0-9]/g, ""), 10) || 0;
+        const nb = Number.parseInt(b.replace(/[^0-9]/g, ""), 10) || 0;
+        return na - nb;
+      });
+    return all.map((n) => resolve(stateDir, n));
+  } catch {
+    return [];
+  }
+}
+
+function safeReadJson(path: string): unknown {
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    return JSON.parse(fs.readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
 }
 
 async function runStatusJson(): Promise<number> {

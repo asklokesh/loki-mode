@@ -138,14 +138,34 @@ const stubProvider: ProviderInvoker = {
   },
 };
 
+// v7.5.3: route through the richer intervention.ts module (PAUSE/STOP/INPUT
+// signals, prompt-injection limits, quarantine-on-validation-fail) instead
+// of the inline 4-line stub. Falls back to inline check on dynamic-import
+// failure so the loop never wedges. Honest-audit gap #6 closed.
 const fileSignals: SignalSource = {
   async checkHumanIntervention(ctx: RunnerContext): Promise<0 | 1 | 2> {
-    // Bash source: run.sh:10314 (check_human_intervention).
-    const stop = resolve(ctx.lokiDir, "STOP");
-    const pause = resolve(ctx.lokiDir, "PAUSE");
-    if (existsSync(stop)) return 2;
-    if (existsSync(pause)) return 1;
-    return 0;
+    try {
+      const mod = await import("./intervention.ts");
+      const result = mod.checkHumanIntervention({
+        lokiDirOverride: ctx.lokiDir,
+        autonomyMode: ctx.autonomyMode === "perpetual" ? "perpetual" : "standard",
+      });
+      switch (result.action) {
+        case "stop":
+          return 2;
+        case "pause":
+        case "input":
+          return 1;
+        default:
+          return 0;
+      }
+    } catch {
+      const stop = resolve(ctx.lokiDir, "STOP");
+      const pause = resolve(ctx.lokiDir, "PAUSE");
+      if (existsSync(stop)) return 2;
+      if (existsSync(pause)) return 1;
+      return 0;
+    }
   },
   async isBudgetExceeded(): Promise<boolean> {
     return false;

@@ -492,7 +492,7 @@ async function buildGateFailureContext(cwd: string): Promise<string> {
   // records (severity, file:line, reviewer) parsed from the previous
   // iteration's per-reviewer *.txt files. Default off so existing prompts
   // are byte-identical when the flag is not set.
-  if (process.env["LOKI_INJECT_FINDINGS"] === "1") {
+  if (process.env["LOKI_INJECT_FINDINGS"] !== "0") {
     const findingsBlock = await buildStructuredFindingsBlock(cwd);
     if (findingsBlock.length > 0) {
       ctx += `\n\n${findingsBlock}\n`;
