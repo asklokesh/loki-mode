@@ -103,7 +103,8 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback)
+        # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         exec bun "$BUN_CLI" "$@"
         ;;
     *)

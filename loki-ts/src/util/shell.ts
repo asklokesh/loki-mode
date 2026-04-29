@@ -29,6 +29,16 @@ export class ShellError extends Error {
 
 // Run a command and capture stdout/stderr without throwing on non-zero exit.
 // Use this when you want to inspect exit codes (like `command -v` checks).
+//
+// v7.5.2 fixes (bug-hunt H6):
+//   - SIGTERM -> SIGKILL escalation: a subprocess that ignores SIGTERM
+//     (common with python wrappers, codex/claude shells trapping signals)
+//     used to deadlock the await Promise.all forever. Now SIGTERM first,
+//     then SIGKILL after a 2s grace, so the timeout actually fires.
+//   - Timer cleanup in finally: if `new Response(proc.stdout).text()`
+//     rejected (closed stream, decode error), clearTimeout never ran
+//     and the timer kept firing on a long-since-exited process. Wrapped
+//     in try/finally so timers are always released.
 export async function run(
   argv: readonly string[],
   opts: ShellOpts = {},
@@ -42,19 +52,36 @@ export async function run(
   });
 
   let timer: Timer | undefined;
+  let killTimer: Timer | undefined;
   if (opts.timeoutMs && opts.timeoutMs > 0) {
-    timer = setTimeout(() => proc.kill(), opts.timeoutMs);
+    timer = setTimeout(() => {
+      // SIGTERM first; if the process ignores it, SIGKILL after 2s.
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        /* already exited */
+      }
+      killTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          /* already exited */
+        }
+      }, 2000);
+    }, opts.timeoutMs);
   }
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (timer) clearTimeout(timer);
-
-  return { stdout, stderr, exitCode };
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (killTimer) clearTimeout(killTimer);
+  }
 }
 
 // Strict variant: throws ShellError on non-zero exit.

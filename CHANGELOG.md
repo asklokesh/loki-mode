@@ -5,6 +5,120 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.2] - 2026-04-29
+
+PATCH release. Closes 10 of the 36 honest-audit gaps from the v7.5.1
+post-ship review. New tests for B1/B3/B4/B18/B23 fixes shipped in
+v7.5.0/v7.5.1; new `loki rollback` CLI wires the previously-dead
+checkpoint API; doctor now reports active runtime + Python 3.12 status;
+shell.ts gains SIGKILL escalation + timer-cleanup; episode_bridge no
+longer silently swallows python failures; rarv.ts is now actually
+called from the autonomous loop; ADR-001 + STATE-MACHINES.md
+cherry-picked from feat/bun-migration so referenced paths resolve on
+main; counter-evidence walkthrough documented end-to-end.
+
+### Code fixes
+
+- **Override council activation (#3)**: drop the redundant
+  `LOKI_INJECT_FINDINGS=1` requirement. `LOKI_OVERRIDE_COUNCIL=1` now
+  works standalone. Pre-v7.5.2 the override path was double-gated; an
+  operator setting only `LOKI_OVERRIDE_COUNCIL` saw nothing happen.
+- **shell.ts SIGTERM -> SIGKILL escalation (#6)**: pre-v7.5.2 a
+  subprocess that ignored SIGTERM deadlocked the await Promise.all
+  forever. Now SIGTERM first, SIGKILL after 2s grace.
+- **shell.ts timer leak on rejection (#7)**: pre-v7.5.2 if the
+  `Response(proc.stdout).text()` rejected, `clearTimeout` never ran
+  and the timer kept firing. Wrapped in try/finally so timers are
+  always released.
+- **episode_bridge silent failures (#5)**: pre-v7.5.2 callers
+  discarded the structured `EpisodeBridgeResult`, so a python3
+  ImportError or chromadb crash was completely invisible. Now logged
+  via an injectable `bridgeFailureLog` sink (defaults to stderr).
+- **rarv.ts wired into autonomous.ts (#9a, dead code H4)**: pre-v7.5.2
+  `getRarvPhaseName` and `getRarvTier` had zero production callers
+  even though the bash route at autonomy/run.sh:10515 logged the
+  phase per iteration. The Bun loop now logs the same RARV phase +
+  tier for parity.
+- **executeRollback ENOENT on fresh project (uncovered by new
+  rollback CLI tests)**: pre-v7.5.2 the function assumed `.loki/queue/`
+  + `.loki/state/` already existed; restoring into a fresh repo
+  failed. Now mkdirSync(parent, recursive) before each copy.
+
+### New surfaces
+
+- **`loki rollback <subcmd>` (#9c, dead code H4)**: the entire
+  checkpoint rollback API at `loki-ts/src/runner/checkpoint.ts`
+  shipped in Part A Phase 4 but had no CLI command. v7.5.2 wires it
+  through `loki-ts/src/commands/rollback.ts` and the `bin/loki`
+  shim's routed list. Subcommands: `list`, `show <id>`, `to <id>`,
+  `latest`. Ten test cases cover every branch.
+- **`loki doctor` Python 3.12 specific check (#33)**: the generic
+  Python 3 check passes Python 3.13/3.14, but chromadb +
+  sentence-transformers require 3.12. Doctor now reports python3.12
+  status explicitly under "Runtime route" -- WARN if missing or if
+  only 3.13+ is found. Mirrored in autonomy/loki cmd_doctor for
+  parity.
+
+### Documentation fixes
+
+- **Verified `docs/architecture/ADR-001-runtime-migration.md` and
+  `docs/architecture/STATE-MACHINES.md` are present on `main` (#10)**.
+  An earlier honest-audit pass claimed these were missing; on
+  re-verification both files have been on `main` since commit
+  `f6be85e7` (the original feat/bun-migration scaffold merge). No
+  cherry-pick needed; the original audit `find` invocation was wrong.
+  Documented here so the prior gap entry is closed honestly.
+- **Counter-evidence end-to-end walkthrough (#28, #30)**: added a
+  step-by-step "when reviewer is wrong, how to override" section to
+  `UPGRADING.md` covering: how to find the finding text, how to
+  compute the canonical `findingId`, how to write the
+  `.loki/state/counter-evidence-<iter>.json` file, how to enable the
+  override, how to inspect the transcript, what happens on rejection.
+
+### New regression tests
+
+Five test files, 22 new test cases pinning v7.5.0/v7.5.1 fixes that
+shipped without per-bug tests:
+
+- `tests/runner/learnings_writer_concurrency.test.ts` -- B1 (Map GC
+  bound check), B3 (malformed file element validation), B4 (poisoned
+  chain recovery).
+- `tests/runner/counter_evidence_validation.test.ts` -- B2 proofType
+  enum validation (accepts all 6 documented values, drops unknown).
+- `tests/commands/doctor_runtime_route.test.ts` -- B23 doctor Runtime
+  route section under various env permutations.
+- `tests/integration/shim_env_validation.test.ts` -- B18 LOKI_TS_ENTRY
+  validation in `bin/loki` shim.
+- `tests/commands/rollback.test.ts` -- 10 cases for the new CLI
+  command + the executeRollback mkdirSync fix.
+
+### Verified locally before push
+
+- `bun test` from `loki-ts/`: **644 pass / 0 fail** (22 new tests).
+- `bun run typecheck`: clean.
+- `bash -n autonomy/loki / scripts/local-ci.sh`: clean.
+- `scripts/local-ci.sh --fast`: 19/19 pass.
+
+### Honest gaps still open (deferred to later releases)
+
+- Phase 1 wiring still not reachable from `loki start` (bin/loki shim
+  routes start to bash). This is the top remaining gap; activation
+  blocks on Part A Phase 4 wiring the Bun start route. Documented in
+  the new doctor "Runtime route" section + UPGRADING.md walkthrough
+  caveat.
+- Real provider-backed override judges. Phase 2 of Part B (v7.6.0).
+- 207 test failures from `bun test` at repo root (vs 644 pass from
+  `loki-ts/`). Test isolation issue; canonical CI uses `loki-ts/` scope.
+- MCP server + dashboard server do not surface the new findings /
+  learnings / counter-evidence / handoff artifacts.
+- gate-failure-count.json cross-process race (parallel worktrees).
+- `intervention.ts handlePause/readHumanInput` still orphaned;
+  autonomous.ts has its own inline stub.
+- No real-user UAT. The agentbudget user has not re-run their PRD
+  against the new code.
+
+14 version locations bumped 7.5.1 -> 7.5.2.
+
 ## [7.5.1] - 2026-04-28
 
 PATCH release. Fixes 17 bugs uncovered by a 10-parallel-hunter audit

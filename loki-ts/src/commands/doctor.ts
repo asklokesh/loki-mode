@@ -566,6 +566,24 @@ async function runText(): Promise<number> {
   if (process.env["BUN_FROM_SOURCE"] === "1" || process.env["BUN_FROM_SOURCE"] === "true") {
     process.stdout.write(`  ${badge("pass")}  BUN_FROM_SOURCE set: shim prefers loki-ts/src/ over dist/\n`);
   }
+  // v7.5.2 fix #33: chromadb + sentence-transformers require Python 3.12; the
+  // generic "Python 3 (>= 3.8)" check above passes Python 3.13/3.14 and the
+  // operator only finds out via cryptic chromadb errors at runtime. Probe
+  // explicitly here. Informational only -- does NOT contribute to the count.
+  const py = await findPython3();
+  if (py !== null) {
+    const verRes = await run([py, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], { timeoutMs: 5000 });
+    const ver = verRes.stdout.trim();
+    if (ver.startsWith("3.12")) {
+      process.stdout.write(`  ${badge("pass")}  Python 3.12 (chromadb / sentence-transformers): ${ver} at ${py}\n`);
+    } else if (ver) {
+      process.stdout.write(`  ${badge("warn")}  Python 3.12 NOT found -- using ${ver} at ${py}; chromadb / sentence-transformers may fail. Install python3.12 (brew install python@3.12 / apt install python3.12).\n`);
+    } else {
+      process.stdout.write(`  ${badge("warn")}  Python 3 found at ${py} but version probe failed; chromadb may not work.\n`);
+    }
+  } else {
+    process.stdout.write(`  ${badge("warn")}  Python 3 not on PATH -- memory + MCP integrations disabled.\n`);
+  }
   process.stdout.write(`\n`);
 
   // Summary

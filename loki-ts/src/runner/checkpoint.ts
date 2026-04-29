@@ -468,6 +468,11 @@ export function executeRollback(plan: RollbackPlan): { restored: number; errors:
   let restored = 0;
   for (const entry of plan.restore) {
     try {
+      // v7.5.2 fix: ensure the destination's parent directory exists.
+      // Pre-v7.5.2 this assumed `.loki/queue/` and `.loki/state/` already
+      // existed; restoring into a fresh project (where they don't) failed
+      // with ENOENT. The new `loki rollback` CLI exposed this regression.
+      mkdirSync(dirname(entry.to), { recursive: true });
       const tmp = `${entry.to}.tmp.${process.pid}.${++_tmpCounter}`;
       copyFileSync(entry.from, tmp);
       renameSync(tmp, entry.to);

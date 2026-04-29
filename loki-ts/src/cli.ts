@@ -26,6 +26,8 @@ Phase 2 ported (Bun-native, fast):
   memory list            Cross-project learnings counts
   memory index [rebuild] Show or rebuild memory index
   doctor [--json]        System prerequisites health check
+  rollback <subcmd>      Restore .loki/ state from a checkpoint
+                         (subcmds: list | show <id> | to <id> | latest)
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
@@ -67,6 +69,12 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "doctor": {
       const { runDoctor } = await import("./commands/doctor.ts");
       return runDoctor(rest);
+    }
+
+    case "rollback": {
+      // v7.5.2: wire the checkpoint rollback API (was dead code per H4).
+      const { runRollback } = await import("./commands/rollback.ts");
+      return runRollback(rest);
     }
 
     default:

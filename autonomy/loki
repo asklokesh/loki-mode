@@ -6764,6 +6764,16 @@ cmd_doctor() {
     if [ "${BUN_FROM_SOURCE:-}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
         echo -e "  ${GREEN}PASS${NC}  BUN_FROM_SOURCE set: shim prefers loki-ts/src/ over dist/"
     fi
+    # v7.5.2: explicit python3.12 probe -- chromadb + sentence-transformers
+    # require it; the generic Python 3 check passes Python 3.13/3.14 and
+    # silently fails at runtime. Informational only.
+    py312_path=$(command -v python3.12 2>/dev/null || true)
+    if [ -n "$py312_path" ]; then
+        py312_ver=$("$py312_path" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null)
+        echo -e "  ${GREEN}PASS${NC}  Python 3.12 (chromadb / sentence-transformers): ${py312_ver} at ${py312_path}"
+    else
+        echo -e "  ${YELLOW}WARN${NC}  Python 3.12 NOT on PATH -- chromadb / sentence-transformers may fail. Install via brew install python@3.12 or apt install python3.12."
+    fi
     echo ""
 
     # Summary

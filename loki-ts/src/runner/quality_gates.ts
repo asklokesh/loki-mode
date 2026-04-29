@@ -709,14 +709,17 @@ export async function runCodeReview(
   }
 
   if (hasBlocking) {
-    // Phase 1 (v7.5.0) -- override council. When counter-evidence file exists
-    // AND LOKI_OVERRIDE_COUNCIL=1 AND LOKI_INJECT_FINDINGS=1 (so structured
-    // findings exist), dispatch the override judge panel. If 2-of-3 judges
-    // approve, lift the BLOCK and persist a learnings entry. Default off.
-    if (
-      process.env["LOKI_OVERRIDE_COUNCIL"] === "1" &&
-      process.env["LOKI_INJECT_FINDINGS"] === "1"
-    ) {
+    // Phase 1 (v7.5.0/.1/.2) -- override council. When counter-evidence file
+    // exists AND LOKI_OVERRIDE_COUNCIL=1, dispatch the override judge panel.
+    // If 2-of-3 judges approve, lift the BLOCK and persist a learnings entry.
+    //
+    // v7.5.2 fix: the pre-v7.5.2 gate also required LOKI_INJECT_FINDINGS=1
+    // so the override path was effectively double-gated. The findings parser
+    // is needed to resolve the override's findings, but it does not require
+    // the prompt-injection side-effect. Drop the redundant gate so an
+    // operator can enable LOKI_OVERRIDE_COUNCIL alone and see the override
+    // BLOCK-lift behavior advertised in the docs.
+    if (process.env["LOKI_OVERRIDE_COUNCIL"] === "1") {
       const overrideOutcome = await maybeRunOverrideCouncil({
         lokiDir: base,
         reviewDir,

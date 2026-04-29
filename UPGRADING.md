@@ -155,9 +155,66 @@ the v7.5.0 CHANGELOG entry's "NOT tested" section for the honest gap.
 `findingId` is `<reviewer>::<first 80 chars of the finding's raw text>`.
 `proofType` MUST be one of: `file-exists`, `test-passes`, `grep-miss`,
 `reviewer-misread`, `duplicate-code-path`, `out-of-scope`. Entries with
-any other value are silently dropped at load time. The override council
-uses a stub judge in v7.5.x that approves these six trusted proofTypes;
-real provider-backed judges land in Part B Phase 2 (target v7.6.0).
+any other value are silently dropped at load time (v7.5.1+ enum check).
+The override council uses a stub judge in v7.5.x that approves these
+six trusted proofTypes; real provider-backed judges land in Part B
+Phase 2 (target v7.6.0).
+
+### End-to-end walkthrough: when reviewer is wrong, how to override
+
+You are running a session at iteration 7. The code-review gate fires
+and BLOCKs with a finding the dev agent (or you) believes is a false
+positive (e.g. the reviewer is reading dead-duplicate code).
+
+1. **Find the finding text.** Look under
+   `.loki/quality/reviews/review-<ts>-7/<reviewer>.txt`. Each line that
+   matches `\[(Critical|High|Medium|Low)\] <description>` is one
+   finding. Pick the one you want to override.
+
+2. **Compute the findingId.** It is exactly:
+
+   ```
+   <reviewer>::<first 80 chars of the finding's raw line, with leading "- " bullet stripped>
+   ```
+
+   The implementation lives at
+   `loki-ts/src/runner/counter_evidence.ts:canonicalFindingId`. You
+   only need to compute it manually if you are hand-writing the file;
+   programmatic callers can import the function.
+
+3. **Write the counter-evidence file** at
+   `.loki/state/counter-evidence-7.json` using the schema above. Pick a
+   `proofType` from the enum that best matches your evidence. Provide
+   plain-text `artifacts[]` -- file paths, command outputs, links.
+
+4. **Re-run the iteration with override enabled:**
+
+   ```bash
+   LOKI_INJECT_FINDINGS=1 LOKI_OVERRIDE_COUNCIL=1 loki start ...
+   ```
+
+   `LOKI_INJECT_FINDINGS=1` is required so the runner re-parses the
+   per-reviewer text into structured findings. `LOKI_OVERRIDE_COUNCIL=1`
+   enables the judge panel.
+
+5. **Inspect the override transcript** at
+   `.loki/quality/reviews/review-<ts>-7/override-7.json`. It records
+   each judge's verdict and reasoning. If 2-of-3 approved, the BLOCK
+   was lifted. The override is also persisted to
+   `.loki/state/relevant-learnings.json` so future iterations remember
+   the dispute.
+
+6. **If the override is rejected** (judges disagreed with your
+   evidence), the BLOCK stays. Either fix the actual finding or
+   strengthen the counter-evidence and try again.
+
+Important caveat for v7.5.x: `loki start` today routes through the
+bash CLI via `bin/loki` shim fall-through, and the bash side does NOT
+honor these flags. The override path activates in any code path that
+calls `runQualityGates` directly (tests, programmatic integration,
+future Bun `start` route once Part A Phase 4 wires it). Track the
+actual route via `loki doctor` -- the v7.5.1+ "Runtime route" section
+shows whether you are on Bun or Bash.
 
 ### How to roll back
 

@@ -319,6 +319,23 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
       prompt = `[stub-prompt-fallback iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
     }
 
+    // v7.5.2: wire rarv.ts so the RARV phase + tier is logged per iteration
+    // (matches autonomy/run.sh:10515 `RARV Phase: $rarv_phase -> Tier: ...`).
+    // Pre-v7.5.2 the rarv module exported getRarvPhaseName/getRarvTier but
+    // had zero production callers; the bash route logs the phase, the Bun
+    // route silently swallowed it.
+    try {
+      const rarvMod = await import("./rarv.ts");
+      const phase = rarvMod.getRarvPhaseName(ctx.iterationCount);
+      const tier = rarvMod.getRarvTier(ctx.iterationCount, {
+        sessionModel: typeof ctx.sessionModel === "string" ? ctx.sessionModel : undefined,
+      });
+      log(`[runner] RARV Phase: ${phase} -> Tier: ${tier}`);
+      ctx.currentTier = tier;
+    } catch (err) {
+      log(`[runner] rarv module load failed (non-fatal): ${(err as Error).message}`);
+    }
+
     log(`[runner] Attempt ${ctx.retryCount + 1}/${ctx.maxRetries} iteration=${ctx.iterationCount}`);
     await persistState(stateMod, ctx, "running", 0);
 
