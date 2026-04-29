@@ -5,6 +5,116 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.0] - 2026-04-28
+
+MINOR release. Part B Phase 1 of the plan at
+`/Users/lokesh/.claude/plans/polished-waddling-stardust.md` -- closes the
+"fix issues completely" gaps in RARV-C with zero new external deps.
+Embedded into the existing autonomous loop; no new CLI commands.
+Backward-compatible behind four feature flags, all default off.
+
+### Added
+
+- `loki-ts/src/runner/findings_injector.ts` -- parses per-reviewer `*.txt`
+  files in `.loki/quality/reviews/<id>/` with the same `\[(Critical|High|Medium|Low)\]`
+  regex `quality_gates.ts:548` uses. Exposes `loadPreviousFindings(lokiDir,
+  iter?)` returning structured `Finding[]` records (severity, file, line,
+  reviewer, evidence). The pre-v7.5.0 prompt-build path only saw a comma-
+  separated failure token; this module surfaces the actual findings so the
+  next iteration's prompt can address them directly.
+- `loki-ts/src/runner/counter_evidence.ts` -- override council. Reads
+  `.loki/state/counter-evidence-<iter>.json`, runs a 3-judge panel via the
+  injectable `OverrideJudgeFn`, lifts BLOCK on 2-of-3 approval. Closest
+  precedent is `councilEvaluate` at `council.ts:373` (3-voter pattern); the
+  override-on-REJECT direction is new architecture.
+- `loki-ts/src/runner/learnings_writer.ts` -- the missing writer for
+  `.loki/state/relevant-learnings.json`. Pre-v7.5.0 `build_prompt.ts:175`
+  instructs the LLM to "CHECK" this file but no orchestrator code wrote it.
+  Append-only with sha256 dedupe on `(trigger, rootCause)`. Serialized via
+  per-target `withAppendLock` to defeat read-mutate-write races. Optional
+  episode-bridge call to write episodic memory entries via the existing
+  `memory.engine.save_episode` API.
+- `loki-ts/src/runner/episode_bridge.ts` -- TS-side mirror of the bash
+  `store_episode_trace()` at `autonomy/run.sh:8504`. Same env-passing
+  pattern, same `EpisodeTrace.create()` constructor.
+- `loki-ts/src/runner/escalation_handoff.ts` -- structured human-handoff
+  document above the bare `.loki/PAUSE` write. Renders the failing finding,
+  recent learnings, and a "what the human must decide" block to
+  `.loki/escalations/handoff-<ts>-<gate>.md`.
+
+### Wired (no new entry points; embedded in existing flows)
+
+- `loki-ts/src/runner/build_prompt.ts buildGateFailureContext` -- under
+  `LOKI_INJECT_FINDINGS=1` appends a "PREVIOUS REVIEWER FINDINGS" section
+  built from the structured findings. The bare-token path is preserved.
+- `loki-ts/src/runner/quality_gates.ts runCodeReview` -- under
+  `LOKI_INJECT_FINDINGS=1` persists `.loki/state/findings-<iter>.json`
+  after aggregation. Under both `LOKI_INJECT_FINDINGS=1` and
+  `LOKI_OVERRIDE_COUNCIL=1`, dispatches the override council when a BLOCK
+  fires AND counter-evidence exists. 2-of-3 approval lifts the BLOCK and
+  writes a `learnings_writer` entry. Override transcript is persisted to
+  `.loki/quality/reviews/<id>/override-<iter>.json` for audit.
+- `loki-ts/src/runner/quality_gates.ts runQualityGates` -- under
+  `LOKI_AUTO_LEARNINGS=1` writes a structured learning per code_review
+  finding on failure. Awaited (not fire-and-forget) so writes are durable.
+- `loki-ts/src/runner/quality_gates.ts applyEscalation` -- under
+  `LOKI_HANDOFF_MD=1` writes the structured handoff doc BEFORE
+  `writePauseSignal`. PAUSE semantics unchanged when flag unset.
+- `loki-ts/src/runner/council.ts councilDevilsAdvocate` -- mirror of the
+  APPROVE-side anti-sycophancy on REJECT. Returns `CANNOT_VALIDATE` (not
+  APPROVE) when counter-evidence exists, deferring to the judge panel in
+  `runCodeReview`. Critical fix from council R1 review: never lift REJECT
+  on file presence alone.
+
+### Fixed (uncovered during council review)
+
+- `loki-ts/src/runner/autonomous.ts:196` -- pre-existing bug where the
+  dynamic import looked up `./gates.ts` instead of `./quality_gates.ts`.
+  `gatesMod` was always `null` and `runQualityGates` never executed from
+  the autonomous loop. Fixed so the gate pipeline is reachable and so
+  Phase 1 wiring on top of it actually fires when the Bun `start` route
+  lands. Type signature also corrected to match the real implementation
+  (returns `GateOutcome`, not `void`; takes `ctx` only, not `(ctx, exitCode)`).
+
+### Council review (pre-merge)
+
+3 parallel reviewers + verification loops:
+- R1 correctness: APPROVE_WITH_CHANGES -> all 5 mandatory fixes landed
+  (override council short-circuit, atomic-write race, TOCTOU,
+  findings-<iter>.json persistence, episodeBridge hermeticity).
+- R2 CLAUDE.md compliance: APPROVE_WITH_CHANGES -> episode_bridge wiring
+  documented; integration-test cleanup style noted (non-blocking).
+- R3 integration safety: REJECT -> all 4 mandatory fixes landed
+  (autonomous.ts gates.ts -> quality_gates.ts, override council judge
+  panel actually wired, integration test for the wiring added).
+
+### Verified locally before push
+
+- `bun test` from `loki-ts/`: 621 pass / 0 fail (61 new tests).
+- `bun run typecheck`: clean.
+- `scripts/local-ci.sh --fast`: 19/19 pass.
+
+### NOT tested in this release
+
+- End-to-end `loki start <prd>` with the new wiring active. The bash
+  route still handles `loki start` today via `bin/loki` shim fall-through;
+  the new code is reachable from `runAutonomous` (loki-ts) tests but does
+  not yet activate on a real `loki start` invocation. The autonomous.ts
+  import-path fix unblocks this for when Part A Phase 4 wires the Bun
+  `start` route, but real-iteration coverage is deferred.
+- Real provider-backed override judges. Today the override council uses
+  a deterministic stub that approves trusted proofTypes (`duplicate-code-path`,
+  `file-exists`, `test-passes`, `grep-miss`, `out-of-scope`). Real judge
+  wiring through the 5-provider abstraction is Phase 2 of Part B (target
+  v7.6.0).
+- Bash route. Phase 1 is Bun route only. PAUSE writes from
+  `autonomy/run.sh:7953,11018,11280,11590` and `autonomy/loki:1901` keep
+  the legacy bare-PAUSE behavior under `LOKI_LEGACY_BASH=1`.
+- Future-AGI / Flyte integrations (Part B Phases 2-5). Plan-only in this
+  release.
+
+14 version locations bumped 7.4.20 -> 7.5.0.
+
 ## [7.4.20] - 2026-04-27
 
 PATCH release. Fixes a code-review gate regression observed in the wild

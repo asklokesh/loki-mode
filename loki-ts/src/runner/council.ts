@@ -268,10 +268,39 @@ export async function councilAggregateVotes(
 
 export async function councilDevilsAdvocate(
   votes: readonly AgentVerdict[],
-  opts: { lokiDir?: string } = {},
+  opts: { lokiDir?: string; iteration?: number } = {},
 ): Promise<AgentVerdict> {
   const total = votes.length;
   const allApprove = total > 0 && votes.every((v) => v.verdict === "APPROVE");
+
+  // Phase 1 (v7.5.0) -- mirror the APPROVE-side anti-sycophancy on REJECT.
+  // When all voters REJECT AND a counter-evidence file exists for the
+  // iteration, surface the dispute as CANNOT_VALIDATE so the council
+  // aggregator does not lock in REJECT silently. The actual judge panel
+  // runs in quality_gates.runCodeReview where the per-reviewer findings
+  // are available -- this hook only marks "operator disputes; see code
+  // review override transcripts." Critical correctness: NEVER return
+  // APPROVE based on file presence alone (council review R1 finding D).
+  const allReject = total > 0 && votes.every((v) => v.verdict === "REJECT");
+  if (allReject && process.env["LOKI_OVERRIDE_COUNCIL"] === "1") {
+    const root = opts.lokiDir ?? defaultLokiDir();
+    const iter = opts.iteration ?? -1;
+    try {
+      const ce = await import("./counter_evidence.ts");
+      const evidence = ce.loadCounterEvidence(root, iter);
+      if (evidence !== null && evidence.evidence.length > 0) {
+        return {
+          role: "devils_advocate",
+          verdict: "CANNOT_VALIDATE",
+          reason: `operator-supplied counter-evidence (${evidence.evidence.length} item${evidence.evidence.length === 1 ? "" : "s"}) -- inspect quality/reviews/<id>/override-*.json for judge panel result`,
+          issues: [],
+        };
+      }
+    } catch {
+      // override path is best-effort; fall through to default no-op behavior
+    }
+  }
+
   if (!allApprove) {
     return {
       role: "devils_advocate",

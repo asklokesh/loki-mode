@@ -28,10 +28,27 @@
 // and final.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
+
+// v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
+// (which is sync because it sits inside the runQualityGates for-loop). Bun
+// supports createRequire(import.meta.url) for ESM->CJS interop; the loaded
+// module exposes the same writeEscalationHandoff function.
+let _handoffMod: typeof import("./escalation_handoff.ts") | null = null;
+function handoffModSync(): typeof import("./escalation_handoff.ts") | null {
+  if (_handoffMod !== null) return _handoffMod;
+  try {
+    const req = createRequire(import.meta.url);
+    _handoffMod = req("./escalation_handoff.ts") as typeof import("./escalation_handoff.ts");
+    return _handoffMod;
+  } catch {
+    return null;
+  }
+}
 
 // --- Public types ----------------------------------------------------------
 
@@ -664,6 +681,25 @@ export async function runCodeReview(
   };
   atomicWrite(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
 
+  // Phase 1 (v7.5.0) -- persist structured findings to .loki/state/findings-<iter>.json
+  // so the next iteration's prompt build (and any out-of-process consumers like
+  // the dashboard) can read them without re-parsing per-reviewer *.txt files.
+  // Default off to keep behavior byte-identical when the flag is unset.
+  if (process.env["LOKI_INJECT_FINDINGS"] === "1") {
+    try {
+      const fInjector = await import("./findings_injector.ts");
+      const findings = fInjector.loadPreviousFindings(base, ctx.iterationCount).findings;
+      const stateDir = join(base, "state");
+      mkdirSync(stateDir, { recursive: true });
+      atomicWrite(
+        join(stateDir, `findings-${ctx.iterationCount}.json`),
+        `${JSON.stringify({ review_id: reviewId, iteration: ctx.iterationCount, findings }, null, 2)}\n`,
+      );
+    } catch (err) {
+      ctx.log(`findings-<iter>.json persist failed (non-fatal): ${(err as Error).message}`);
+    }
+  }
+
   // Anti-sycophancy note (autonomy/run.sh:6629-6635).
   if (passCount === selection.reviewers.length && failCount === 0) {
     writeFileSync(
@@ -673,6 +709,28 @@ export async function runCodeReview(
   }
 
   if (hasBlocking) {
+    // Phase 1 (v7.5.0) -- override council. When counter-evidence file exists
+    // AND LOKI_OVERRIDE_COUNCIL=1 AND LOKI_INJECT_FINDINGS=1 (so structured
+    // findings exist), dispatch the override judge panel. If 2-of-3 judges
+    // approve, lift the BLOCK and persist a learnings entry. Default off.
+    if (
+      process.env["LOKI_OVERRIDE_COUNCIL"] === "1" &&
+      process.env["LOKI_INJECT_FINDINGS"] === "1"
+    ) {
+      const overrideOutcome = await maybeRunOverrideCouncil({
+        lokiDir: base,
+        reviewDir,
+        reviewId,
+        iteration: ctx.iterationCount,
+        log: ctx.log,
+      });
+      if (overrideOutcome !== null && overrideOutcome.allBlockersLifted) {
+        return {
+          passed: true,
+          detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail, blockers lifted by override council (${reviewId})`,
+        };
+      }
+    }
     return {
       passed: false,
       detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail, blocking severity present (${reviewId})`,
@@ -682,6 +740,87 @@ export async function runCodeReview(
     passed: true,
     detail: `code_review: ${passCount}/${selection.reviewers.length} pass, ${failCount} fail (${reviewId})`,
   };
+}
+
+// Phase 1 (v7.5.0) helper -- runs the override council using a stub judge
+// today (deterministic APPROVE_OVERRIDE iff proofType is one of the
+// trusted classes). Real provider-backed judge wiring lands in v7.6.0
+// (Phase 2 of Part B). Returns null when no override path is taken.
+async function maybeRunOverrideCouncil(args: {
+  lokiDir: string;
+  reviewDir: string;
+  reviewId: string;
+  iteration: number;
+  log: (s: string) => void;
+}): Promise<{ allBlockersLifted: boolean; approvedCount: number; rejectedCount: number } | null> {
+  try {
+    const fInjector = await import("./findings_injector.ts");
+    const ce = await import("./counter_evidence.ts");
+
+    const findingsResult = fInjector.loadPreviousFindings(args.lokiDir, args.iteration);
+    if (findingsResult.findings.length === 0) return null;
+    const evidenceFile = ce.loadCounterEvidence(args.lokiDir, args.iteration);
+    if (evidenceFile === null || evidenceFile.evidence.length === 0) return null;
+
+    // Stub judge: APPROVE_OVERRIDE iff the operator-supplied proofType is
+    // one of the trusted classes. Real judge wiring (provider-backed) is
+    // Phase 2 of Part B per the plan.
+    const TRUSTED_PROOFS = new Set([
+      "duplicate-code-path",
+      "file-exists",
+      "test-passes",
+      "grep-miss",
+      "out-of-scope",
+    ]);
+    const judge = async (input: {
+      finding: import("./findings_injector.ts").Finding;
+      evidence: import("./counter_evidence.ts").CounterEvidence;
+      judge: string;
+    }) => {
+      const trusted = TRUSTED_PROOFS.has(input.evidence.proofType);
+      return {
+        judge: input.judge,
+        verdict: trusted ? ("APPROVE_OVERRIDE" as const) : ("REJECT_OVERRIDE" as const),
+        reasoning: trusted
+          ? `proofType=${input.evidence.proofType} is in the trusted-proof set`
+          : `proofType=${input.evidence.proofType} requires manual review`,
+      };
+    };
+
+    // Filter findings to just the blocking severities (Critical/High) --
+    // mirrors the parseVerdict regex at line 548.
+    const blockers = findingsResult.findings.filter(
+      (f) => f.severity === "Critical" || f.severity === "High",
+    );
+    if (blockers.length === 0) return null;
+
+    const outcome = await ce.runOverrideCouncil(blockers, evidenceFile, judge);
+    await ce.recordOverrideOutcome(args.lokiDir, args.iteration, outcome, blockers);
+
+    // Persist the override transcript next to the review for audit.
+    const transcript = {
+      review_id: args.reviewId,
+      iteration: args.iteration,
+      approved_finding_ids: Array.from(outcome.approvedFindingIds),
+      rejected_finding_ids: Array.from(outcome.rejectedFindingIds),
+      votes: outcome.votes,
+    };
+    atomicWrite(
+      join(args.reviewDir, `override-${args.iteration}.json`),
+      `${JSON.stringify(transcript, null, 2)}\n`,
+    );
+
+    const approvedCount = outcome.approvedFindingIds.size;
+    const rejectedCount = outcome.rejectedFindingIds.size;
+    const allBlockersLifted = rejectedCount === 0 && approvedCount > 0;
+    args.log(
+      `Override council: ${approvedCount} approved / ${rejectedCount} rejected (${allBlockersLifted ? "BLOCK lifted" : "BLOCK retained"})`,
+    );
+    return { allBlockersLifted, approvedCount, rejectedCount };
+  } catch (err) {
+    args.log(`Override council failed (continuing with BLOCK): ${(err as Error).message}`);
+    return null;
+  }
 }
 
 // Phase 5 real implementation. Doc quality gate scans the canonical project
@@ -897,12 +1036,40 @@ function applyEscalation(
   base: string,
   limits: EscalationLimits,
   ctx: RunnerContext,
+  detail?: string,
 ): EscalationOutcome {
   const count = trackGateFailure(name, base);
   if (count >= limits.pause) {
     ctx.log(
       `Gate escalation: ${name} failed ${count} times (>= ${limits.pause}) - forcing PAUSE`,
     );
+    // Phase 1 (v7.5.0) -- LOKI_HANDOFF_MD=1 writes a structured handoff doc
+    // BEFORE the PAUSE signal so the operator sees the failing findings + the
+    // recent learnings + decision options up front. Default off; PAUSE
+    // semantics unchanged when flag is unset. Bun route only.
+    //
+    // applyEscalation is a synchronous function called from the runQualityGates
+    // for-loop -- we cannot await here without making the whole call chain
+    // async. The handoff write is sync (writeFileSync), so we use a sync
+    // dynamic import via createRequire which Bun supports natively. If the
+    // module fails to load we fall through to the bare PAUSE signal.
+    if (process.env["LOKI_HANDOFF_MD"] === "1") {
+      try {
+        const mod = handoffModSync();
+        if (mod?.writeEscalationHandoff) {
+          const result = mod.writeEscalationHandoff(base, {
+            gateName: name,
+            iteration: ctx.iterationCount,
+            consecutiveFailures: count,
+            detail: detail ?? `${name} hit PAUSE_LIMIT`,
+          });
+          ctx.log(`Wrote handoff doc: ${result.path} (${result.bytes}B)`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.log(`Handoff doc write failed (continuing with PAUSE): ${msg}`);
+      }
+    }
     writePauseSignal(base, name, count);
     return { cleared: false, escalated: true, pause: true, count };
   }
@@ -1009,8 +1176,28 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
       passed.push(gate.name);
       continue;
     }
-    const esc = applyEscalation(gate.name, base, limits, ctx);
+    const esc = applyEscalation(gate.name, base, limits, ctx, result.detail);
     if (esc.escalated) escalated = true;
+    // Phase 1 (v7.5.0) -- LOKI_AUTO_LEARNINGS=1 writes structured learnings
+    // for every code_review gate fail. Awaited so the file is durable before
+    // the next gate runs (council R1 fix vs the prior fire-and-forget loop
+    // which lost entries to TOCTOU). learnings_writer serializes appends
+    // internally via withAppendLock so concurrent findings still merge safely.
+    // Best-effort: a thrown error is logged and we continue.
+    if (process.env["LOKI_AUTO_LEARNINGS"] === "1" && gate.name === "code_review") {
+      try {
+        const fInjector = await import("./findings_injector.ts");
+        const lWriter = await import("./learnings_writer.ts");
+        const findingsResult = fInjector.loadPreviousFindings(base);
+        for (const f of findingsResult.findings) {
+          await lWriter.appendFromGateFailure(base, ctx.iterationCount, f, {
+            episodeBridge: null,
+          });
+        }
+      } catch (err) {
+        ctx.log(`auto-learnings write failed (non-fatal): ${(err as Error).message}`);
+      }
+    }
     if (esc.cleared) {
       // Per bash CLEAR_LIMIT semantics the gate is treated as passing this
       // iteration even though the counter keeps climbing. Surface it under

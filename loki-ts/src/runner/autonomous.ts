@@ -78,8 +78,19 @@ type CompletionMod = {
   checkCompletionPromise(ctx: RunnerContext, capturedOutputPath: string): Promise<boolean>;
 };
 
+// v7.5.0: signature matches the real implementation in quality_gates.ts.
+// runQualityGates returns a structured GateOutcome and only takes RunnerContext.
+// Pre-v7.5.0 this type expected (ctx, exitCode) -> Promise<void> AND looked up
+// the wrong file ("./gates.ts" instead of "./quality_gates.ts") so gatesMod
+// was always null. Both fixed together.
+type GateOutcomeShape = {
+  passed: string[];
+  failed: string[];
+  blocked: boolean;
+  escalated: boolean;
+};
 type GatesMod = {
-  runQualityGates(ctx: RunnerContext, exitCode: number): Promise<void>;
+  runQualityGates(ctx: RunnerContext): Promise<GateOutcomeShape>;
 };
 
 // Dynamic import that also validates the module exposes the expected
@@ -193,7 +204,11 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
   const completionMod = await tryImport<CompletionMod>("./completion.ts", [
     "checkCompletionPromise",
   ]);
-  const gatesMod = await tryImport<GatesMod>("./gates.ts", ["runQualityGates"]);
+  // v7.5.0 fix: was "./gates.ts" but the actual file is quality_gates.ts.
+  // Pre-existing bug: gatesMod was always null, so runQualityGates never
+  // executed from the autonomous loop. Fixed so the gate pipeline (and
+  // Phase 1 wiring on top of it) is reachable.
+  const gatesMod = await tryImport<GatesMod>("./quality_gates.ts", ["runQualityGates"]);
 
   if (stateMod) await stateMod.loadStateForRunner(ctx);
   else logStub(ctx, "state.loadState");
@@ -364,8 +379,20 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
     }
 
     // Quality gates (run.sh:10845-10980).
-    if (gatesMod) await gatesMod.runQualityGates(ctx, outcome.exitCode);
-    else logStub(ctx, "gates.runQualityGates");
+    // v7.5.0: signature corrected -- runQualityGates(ctx) only. The exitCode
+    // arg was never consumed by the real implementation; Phase 1 wiring
+    // (findings injection, learnings, escalation handoff) hangs off this call.
+    if (gatesMod) {
+      try {
+        await gatesMod.runQualityGates(ctx);
+      } catch (err) {
+        // Gate runner errors are best-effort -- the bash equivalent at
+        // run.sh:10845-10980 logs and continues. Do not crash the loop.
+        log(`[runner] runQualityGates threw (non-fatal): ${(err as Error).message}`);
+      }
+    } else {
+      logStub(ctx, "gates.runQualityGates");
+    }
 
     if (council.trackIteration) {
       try {

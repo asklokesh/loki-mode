@@ -487,8 +487,39 @@ async function buildGateFailureContext(cwd: string): Promise<string> {
     const summary = await readSummaryField(trPath);
     if (summary.length > 0) ctx += `Tests: ${summary}. `;
   }
+
+  // Phase 1 (v7.5.0) -- LOKI_INJECT_FINDINGS=1 appends structured per-finding
+  // records (severity, file:line, reviewer) parsed from the previous
+  // iteration's per-reviewer *.txt files. Default off so existing prompts
+  // are byte-identical when the flag is not set.
+  if (process.env["LOKI_INJECT_FINDINGS"] === "1") {
+    const findingsBlock = await buildStructuredFindingsBlock(cwd);
+    if (findingsBlock.length > 0) {
+      ctx += `\n\n${findingsBlock}\n`;
+    }
+  }
+
   ctx += `FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.`;
   return ctx;
+}
+
+// Phase 1 helper: read structured findings from the most recent review dir
+// and render them as a prompt-ready block. Lives here (not in
+// build_prompt_helpers.ts) to keep the env-flag gate in one file. Imports
+// are dynamic to avoid loading the whole findings_injector module on every
+// prompt build when the flag is off.
+async function buildStructuredFindingsBlock(cwd: string): Promise<string> {
+  try {
+    const mod = await import("./findings_injector.ts");
+    const lokiDir = resolve(cwd, ".loki");
+    const result = mod.loadPreviousFindings(lokiDir);
+    if (result.findings.length === 0) return "";
+    return mod.renderFindingsForPrompt(result.findings);
+  } catch {
+    // If the module fails to load for any reason (e.g. mid-port races),
+    // fall back to the bare token-list path silently.
+    return "";
+  }
 }
 
 async function readSummaryField(path: string): Promise<string> {
