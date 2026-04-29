@@ -3,11 +3,11 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.4
+# Loki Mode v7.5.5
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
-**New in v5.0.0:** Multi-provider support (Claude/Codex/Gemini/Cline/Aider), abstract model tiers, degraded mode for non-Claude providers. See `skills/providers.md`.
+**Multi-provider (stable since v5.0.0):** Claude/Codex/Gemini/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. See `skills/providers.md`. **Current track (v7.5.x):** Phase 1 RARV-C closure -- real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`, dead code cleanup.
 
 **Runtime migration in progress:** A bash-to-Bun migration is underway on the `feat/bun-migration` branch. The first phase (shipped in v7.3.0) routes a small set of read-only commands -- `version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index` -- through a Bun runtime via `bin/loki`. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback is available with `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md` for the full plan.
 
@@ -322,4 +322,4 @@ The following features are documented in skill modules but not yet fully automat
 | Quality gates 3-reviewer system | Implemented (v5.35.0) | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Benchmarks (HumanEval, SWE-bench) | Infrastructure only | Runner scripts and datasets exist in `benchmarks/`; no published results |
 
-**v7.5.4 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.5 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

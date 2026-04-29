@@ -5,6 +5,114 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.5] - 2026-04-28
+
+PATCH release. Closes the four follow-ups left open in v7.5.4: a
+cross-process advisory lock around the gate-failure counter, Phase 1
+artifact summary in `loki status --json`, discoverable help for
+`loki internal`, and end-to-end tests covering the MCP tools, dashboard
+endpoints, and `loki start` autonomous loop. Doc + dead-code cleanup
+swept in. No behavior changes for users running the default flow; new
+status fields are additive.
+
+### Code
+
+- **#201 cross-process file lock for `gate-failure-count.json`**: added
+  `withFileLock` / `withFileLockSync` to `loki-ts/src/util/atomic.ts`
+  using POSIX `O_CREAT|O_EXCL` on a `<target>.lock` sentinel with
+  stale-lock reaping (default 30s). Wired into
+  `quality_gates.ts:trackGateFailure` and `clearGateFailure` so
+  parallel-worktree invocations and the bash route's
+  `loki internal phase1-hooks` writer cannot lose increments. Same-
+  process serialization, stale-lock takeover, timeout error path, and
+  fn-throw cleanup all covered by `loki-ts/tests/util/file_lock.test.ts`
+  (6 tests).
+- **#204 `loki status --json` Phase 1 artifact summary**: extended both
+  the Bun route (`loki-ts/src/commands/status.ts`) and the bash route
+  (`autonomy/loki:cmd_status_json`) to emit a `phase1` block with
+  `findings_iters`, `learnings_count`, `escalations_count`,
+  `pause_signal`, and `gate_failure_counts`. Lets dashboards / CI /
+  operators confirm Phase 1 is wired without tailing files. Both
+  routes share the same Python heredoc shape; parity test matrix
+  passes both sides byte-for-byte.
+- **#204 `loki internal --help` discoverability**: bare `loki internal`,
+  `--help`, `-h`, and `help` now print a subcommand listing instead of
+  failing silently. Unknown subcommands point at `--help` in the
+  error.
+
+### Tests
+
+- **#202 e2e `loki start` with stub provider**:
+  `loki-ts/tests/integration/loki_start_e2e.test.ts` (5 tests) drives
+  `runAutonomous` end-to-end with a deterministic stub provider and
+  asserts the loop iterates >= 2 cycles, gate firing happens through
+  `runQualityGates`, state files (`session.json`,
+  `dashboard-state.json`, etc.) are written, and `max_retries` halts
+  cleanly. Two scenarios (structured-findings persistence and
+  override-council BLOCK lift) are honestly skipped with a reason
+  comment because `runQualityGates` does not currently expose a
+  `ReviewerFn` injection seam; those paths are still covered at the
+  `runCodeReview` boundary by existing unit tests.
+- **#203 MCP + dashboard endpoint tests**: `tests/mcp/test_phase1_tools.py`
+  (9 tests) covers the `loki_findings`, `loki_learnings`, and
+  `loki_counter_evidence_template` MCP tools end-to-end against a
+  pinned `LOKI_DIR`. `tests/dashboard/test_phase1_endpoints.py`
+  (11 tests) covers `/api/findings/{iter}`, `/api/learnings`, and
+  `/api/escalations` (list + read) via the FastAPI TestClient. Both
+  suites flagged module bugs that are tracked separately and do not
+  block this release: a corrupt-JSON envelope mismatch in
+  `loki_learnings` and a now-unreachable `/` guard in
+  `/api/escalations/{filename}` (FastAPI rejects path traversal at the
+  router layer before our guard runs).
+- **status --json phase1 fields**: 3 new tests in
+  `loki-ts/tests/commands/status.test.ts` cover the missing-`.loki`
+  zeroed shape, the populated shape with findings/learnings/
+  escalations/PAUSE/gate counts, and the `{entries: [...]}` learnings
+  shape variant.
+- **`loki internal` help dispatch**: 5 new tests in
+  `loki-ts/tests/commands/internal_help.test.ts` spawn the CLI as a
+  subprocess so the dispatch path is exercised end-to-end (bare
+  `internal`, `--help`, `-h`, `help`, and the unknown-subcommand
+  error envelope).
+
+### Process
+
+- **doctor_runtime_route flake fix**: the four B23 tests in
+  `loki-ts/tests/commands/doctor_runtime_route.test.ts` were timing
+  out at 5s on a loaded laptop because `runDoctor` spawns ~30
+  subprocesses each with a 5s budget. Bumped per-test timeout to 30s
+  so the full doctor run completes deterministically; root cause is
+  documented in a comment.
+
+### Doc + dead-code cleanup (#205)
+
+- Reframed v5.0.0 mention in `SKILL.md` as "stable since" so the
+  flagship-product line does not falsely imply v5 is current.
+- Updated `CLAUDE.md` Top-Level File Map line counts to reflect actual
+  file sizes (autonomy/loki 10,820 -> 23,049, autonomy/run.sh
+  8,766 -> 12,170, completion-council.sh 1,403 -> 1,771,
+  dashboard/server.py 4,482 -> 5,952, mcp/server.py 1,439 -> 2,282,
+  memory/* updated to current).
+- Added CHANGELOG link to `wiki/Home.md` Current Version line for
+  click-through.
+- Removed dead `findSkillDir` from `loki-ts/src/util/paths.ts` (zero
+  callers across the codebase).
+
+### NOT tested in this release
+
+- Real-user UAT against the v7.5.5 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the release workflow
+  completes).
+- Telemetry SDK integration for the new `phase1` status fields (no
+  dashboard yet consumes them; will land in a follow-up release).
+- Phase 6 bash sunset is still gated on the 30-day clean soak per the
+  Bun migration plan; v7.5.5 keeps both routes alive.
+- The two flagged module bugs from #203 (corrupt-JSON envelope in
+  `loki_learnings`; unreachable `/` guard in
+  `/api/escalations/{filename}`) are intentionally not patched in
+  this release -- they will be addressed in a separate small PR after
+  the council reviews.
+
 ## [7.5.4] - 2026-04-29
 
 PATCH release. Wires real provider-backed override council judges

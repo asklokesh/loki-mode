@@ -2174,6 +2174,13 @@ if not os.path.isdir(loki_dir):
     result['pid'] = None
     result['elapsed_time'] = 0
     result['task_counts'] = {'total': 0, 'completed': 0, 'failed': 0, 'pending': 0}
+    result['phase1'] = {
+        'findings_iters': 0,
+        'learnings_count': 0,
+        'escalations_count': 0,
+        'pause_signal': False,
+        'gate_failure_counts': {},
+    }
     print(json.dumps(result, indent=2))
     sys.exit(0)
 
@@ -2291,6 +2298,59 @@ if os.path.isdir(queue_dir):
                 pass
     task_counts['total'] = task_counts['pending'] + task_counts['completed'] + task_counts['failed']
 result['task_counts'] = task_counts
+
+# v7.5.5 (#204): Phase 1 (RARV-C closure) artifact summary -- mirror of the
+# Bun route in loki-ts/src/commands/status.ts STATUS_JSON_PY. Keep in sync.
+phase1 = {
+    'findings_iters': 0,
+    'learnings_count': 0,
+    'escalations_count': 0,
+    'pause_signal': False,
+    'gate_failure_counts': {},
+}
+state_dir = os.path.join(loki_dir, 'state')
+if os.path.isdir(state_dir):
+    try:
+        phase1['findings_iters'] = sum(
+            1 for n in os.listdir(state_dir)
+            if n.startswith('findings-') and n.endswith('.json')
+        )
+    except Exception:
+        pass
+    learnings_file = os.path.join(state_dir, 'relevant-learnings.json')
+    if os.path.isfile(learnings_file):
+        try:
+            with open(learnings_file) as f:
+                learnings = json.load(f)
+            if isinstance(learnings, list):
+                phase1['learnings_count'] = len(learnings)
+            elif isinstance(learnings, dict):
+                entries = learnings.get('entries')
+                if isinstance(entries, list):
+                    phase1['learnings_count'] = len(entries)
+        except Exception:
+            pass
+escalations_dir = os.path.join(loki_dir, 'escalations')
+if os.path.isdir(escalations_dir):
+    try:
+        phase1['escalations_count'] = sum(
+            1 for n in os.listdir(escalations_dir) if n.endswith('.md')
+        )
+    except Exception:
+        pass
+phase1['pause_signal'] = os.path.isfile(os.path.join(loki_dir, 'PAUSE'))
+gate_count_file = os.path.join(loki_dir, 'quality', 'gate-failure-count.json')
+if os.path.isfile(gate_count_file):
+    try:
+        with open(gate_count_file) as f:
+            gc = json.load(f)
+        if isinstance(gc, dict):
+            phase1['gate_failure_counts'] = {
+                k: v for k, v in gc.items() if isinstance(v, (int, float))
+            }
+    except Exception:
+        pass
+result['phase1'] = phase1
 
 print(json.dumps(result, indent=2))
 " "$skill_dir" "$loki_dir" "$dashboard_port" "$env_provider"

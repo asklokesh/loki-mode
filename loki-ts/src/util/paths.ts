@@ -51,14 +51,3 @@ export function lokiDir(): string {
 export function homeLokiDir(): string {
   return resolve(homedir(), ".loki");
 }
-
-// Verify the SKILL.md and autonomy/run.sh markers exist (mirror find_skill_dir).
-export function findSkillDir(): string | null {
-  const candidates = [REPO_ROOT, resolve(homedir(), ".claude/skills/loki-mode"), process.cwd()];
-  for (const dir of candidates) {
-    if (existsSync(resolve(dir, "SKILL.md")) && existsSync(resolve(dir, "autonomy/run.sh"))) {
-      return dir;
-    }
-  }
-  return null;
-}

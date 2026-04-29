@@ -81,13 +81,37 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // v7.5.3: hidden internal subcommand surface used by autonomy/run.sh
       // to drive Phase 1 hooks (findings persistence, override council,
       // handoff doc) once per iteration. NOT user-facing -- absent from
-      // help text.
+      // top-level help text.
+      //
+      // v7.5.5 (#204): bare `loki internal` and `--help` now print a
+      // discoverable subcommand listing instead of failing silently. The
+      // surface is still flagged "internal" so users know it is a runtime
+      // hook, not part of the supported public CLI.
       const subcmd = rest[0];
+      const isHelp = !subcmd || subcmd === "--help" || subcmd === "-h" || subcmd === "help";
+      if (isHelp) {
+        const help = [
+          "loki internal -- runtime hooks driven by autonomy/run.sh",
+          "",
+          "Subcommands:",
+          "  phase1-hooks    Persist structured findings, run override council,",
+          "                  append learnings, and write the escalation handoff",
+          "                  doc once per iteration. Driven by run.sh; not",
+          "                  intended for direct invocation.",
+          "",
+          "These commands are wired into the autonomous loop and may change",
+          "without notice. Do not script against them.",
+          "",
+        ].join("\n");
+        process.stdout.write(`${help}\n`);
+        return 0;
+      }
       if (subcmd === "phase1-hooks") {
         const { runInternalPhase1Hooks } = await import("./commands/internal_phase1.ts");
         return runInternalPhase1Hooks(rest.slice(1));
       }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
+      process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);
       return 2;
     }
 

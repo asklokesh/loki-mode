@@ -45,6 +45,11 @@ afterEach(() => {
 });
 
 describe("v7.5.1 B23: doctor Runtime route section", () => {
+  // v7.5.5: doctor spawns ~30 subprocesses (one per check, each with a 5s
+  // timeout). The default 5s test budget is too tight on a loaded laptop
+  // and flakes -- worse, the orphaned subprocesses can leak stdout into
+  // the next test, causing cross-contamination assertions to fail. Bump
+  // to 30s so the full doctor run can complete deterministically.
   it("renders 'Runtime route:' header + Active runtime line by default", async () => {
     const stop = captureStdout();
     await runDoctor([]);
@@ -55,7 +60,7 @@ describe("v7.5.1 B23: doctor Runtime route section", () => {
     expect(out).not.toContain("LOKI_LEGACY_BASH set:");
     expect(out).not.toContain("LOKI_TS_ENTRY override:");
     expect(out).not.toContain("BUN_FROM_SOURCE set:");
-  });
+  }, 30_000);
 
   it("surfaces LOKI_LEGACY_BASH=1 as a WARN line", async () => {
     process.env["LOKI_LEGACY_BASH"] = "1";
@@ -63,7 +68,7 @@ describe("v7.5.1 B23: doctor Runtime route section", () => {
     await runDoctor([]);
     const out = stop();
     expect(out).toContain("LOKI_LEGACY_BASH set:");
-  });
+  }, 30_000);
 
   it("surfaces LOKI_TS_ENTRY override path", async () => {
     process.env["LOKI_TS_ENTRY"] = "/custom/path/loki.js";
@@ -71,7 +76,7 @@ describe("v7.5.1 B23: doctor Runtime route section", () => {
     await runDoctor([]);
     const out = stop();
     expect(out).toContain("LOKI_TS_ENTRY override: /custom/path/loki.js");
-  });
+  }, 30_000);
 
   it("surfaces BUN_FROM_SOURCE=1", async () => {
     process.env["BUN_FROM_SOURCE"] = "1";
@@ -79,5 +84,5 @@ describe("v7.5.1 B23: doctor Runtime route section", () => {
     await runDoctor([]);
     const out = stop();
     expect(out).toContain("BUN_FROM_SOURCE set:");
-  });
+  }, 30_000);
 });

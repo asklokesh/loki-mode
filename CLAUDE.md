@@ -141,16 +141,16 @@ LOKI_PROVIDER=codex loki start ./prd.md
 
 | File | Lines | Role |
 |---|---|---|
-| `autonomy/loki` | 10,820 | CLI (74 cmd_ functions, dispatch at line 7400) |
-| `autonomy/run.sh` | 8,766 | Orchestration engine (RARV loop) |
-| `autonomy/completion-council.sh` | 1,403 | Completion detection (council voting) |
-| `dashboard/server.py` | 4,482 | FastAPI (100+ endpoints, WebSocket) |
-| `memory/retrieval.py` | 1,565 | Task-aware memory retrieval |
-| `memory/storage.py` | 1,396 | File-based memory backend |
-| `memory/engine.py` | 1,297 | Memory orchestrator |
-| `memory/consolidation.py` | 951 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | 1,439 | MCP server (15 tools) |
-| `providers/loader.sh` | 184 | Provider loader |
+| `autonomy/loki` | 23,049 | CLI (74 cmd_ functions, dispatch at line 7400) |
+| `autonomy/run.sh` | 12,170 | Orchestration engine (RARV loop) |
+| `autonomy/completion-council.sh` | 1,771 | Completion detection (council voting) |
+| `dashboard/server.py` | 5,952 | FastAPI (100+ endpoints, WebSocket) |
+| `memory/retrieval.py` | 1,611 | Task-aware memory retrieval |
+| `memory/storage.py` | 1,521 | File-based memory backend |
+| `memory/engine.py` | 1,401 | Memory orchestrator |
+| `memory/consolidation.py` | 999 | Episodic-to-semantic pipeline |
+| `mcp/server.py` | 2,282 | MCP server (15 tools) |
+| `providers/loader.sh` | 185 | Provider loader |
 
 ### Key Function Lookup
 
@@ -255,7 +255,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.5.4 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.5.5 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

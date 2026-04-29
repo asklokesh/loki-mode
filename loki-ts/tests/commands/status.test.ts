@@ -574,3 +574,85 @@ describe("status --json: present .loki", () => {
     }
   });
 });
+
+// v7.5.5 (#204): Phase 1 (RARV-C closure) artifact summary in --json output.
+describe("status --json: phase1 artifact summary", () => {
+  it("returns zeroed phase1 block when .loki is missing", async () => {
+    const root = mkTmp();
+    try {
+      process.env["LOKI_DIR"] = join(root, "nonexistent");
+      const r = await runWithCapture(["--json"]);
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+      expect(parsed["phase1"]).toEqual({
+        findings_iters: 0,
+        learnings_count: 0,
+        escalations_count: 0,
+        pause_signal: false,
+        gate_failure_counts: {},
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("counts findings, learnings, escalations, pause, gate counts", async () => {
+    const root = mkTmp();
+    try {
+      const lokiDir = join(root, ".loki");
+      mkdirSync(join(lokiDir, "state"), { recursive: true });
+      mkdirSync(join(lokiDir, "escalations"), { recursive: true });
+      mkdirSync(join(lokiDir, "quality"), { recursive: true });
+      writeFileSync(join(lokiDir, "state", "findings-1.json"), "{}");
+      writeFileSync(join(lokiDir, "state", "findings-2.json"), "{}");
+      writeFileSync(join(lokiDir, "state", "findings-3.json"), "{}");
+      writeFileSync(
+        join(lokiDir, "state", "relevant-learnings.json"),
+        JSON.stringify([{ id: "a" }, { id: "b" }]),
+      );
+      writeFileSync(join(lokiDir, "escalations", "2026-04-28-x.md"), "x");
+      writeFileSync(join(lokiDir, "escalations", "2026-04-28-y.md"), "y");
+      writeFileSync(join(lokiDir, "escalations", "ignore.txt"), "noise");
+      writeFileSync(join(lokiDir, "PAUSE"), "");
+      writeFileSync(
+        join(lokiDir, "quality", "gate-failure-count.json"),
+        JSON.stringify({ static_analysis: 2, code_review: 5 }),
+      );
+      process.env["LOKI_DIR"] = lokiDir;
+      const r = await runWithCapture(["--json"]);
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+      const p1 = parsed["phase1"] as Record<string, unknown>;
+      expect(p1["findings_iters"]).toBe(3);
+      expect(p1["learnings_count"]).toBe(2);
+      expect(p1["escalations_count"]).toBe(2);
+      expect(p1["pause_signal"]).toBe(true);
+      expect(p1["gate_failure_counts"]).toEqual({
+        static_analysis: 2,
+        code_review: 5,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("supports {entries: [...]} learnings shape", async () => {
+    const root = mkTmp();
+    try {
+      const lokiDir = join(root, ".loki");
+      mkdirSync(join(lokiDir, "state"), { recursive: true });
+      writeFileSync(
+        join(lokiDir, "state", "relevant-learnings.json"),
+        JSON.stringify({ entries: [{ id: 1 }, { id: 2 }, { id: 3 }] }),
+      );
+      process.env["LOKI_DIR"] = lokiDir;
+      const r = await runWithCapture(["--json"]);
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+      const p1 = parsed["phase1"] as Record<string, unknown>;
+      expect(p1["learnings_count"]).toBe(3);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

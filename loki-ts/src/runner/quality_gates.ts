@@ -30,6 +30,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { withFileLockSync } from "../util/atomic.ts";
 import { lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
@@ -145,13 +146,21 @@ function writeCounts(base: string, counts: Record<string, number>): void {
 
 // Increment and persist. Returns the new count for that gate.
 // Mirror of bash track_gate_failure() (autonomy/run.sh:5639).
+//
+// v7.5.5 (#201): cross-process advisory lock around the read-modify-write so
+// parallel worktree invocations and the bash route's `loki internal
+// phase1-hooks` writer cannot lose increments. Lock target is the JSON file
+// itself; lock sentinel lives at <file>.lock and is reaped if a holder
+// crashed (see withFileLockSync staleMs default).
 export function trackGateFailure(name: string, lokiDirOverride?: string): number {
   const base = resolveBase(lokiDirOverride);
-  const counts = readCounts(base);
-  const next = (counts[name] ?? 0) + 1;
-  counts[name] = next;
-  writeCounts(base, counts);
-  return next;
+  return withFileLockSync(gateFilePath(base), () => {
+    const counts = readCounts(base);
+    const next = (counts[name] ?? 0) + 1;
+    counts[name] = next;
+    writeCounts(base, counts);
+    return next;
+  });
 }
 
 // Reset a single gate counter to 0. Mirror of bash clear_gate_failure()
@@ -161,9 +170,11 @@ export function clearGateFailure(name: string, lokiDirOverride?: string): void {
   const base = resolveBase(lokiDirOverride);
   const file = gateFilePath(base);
   if (!existsSync(file)) return;
-  const counts = readCounts(base);
-  counts[name] = 0;
-  writeCounts(base, counts);
+  withFileLockSync(file, () => {
+    const counts = readCounts(base);
+    counts[name] = 0;
+    writeCounts(base, counts);
+  });
 }
 
 // Read-only view of the current count. Mirror of bash get_gate_failure_count().
