@@ -27,6 +27,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import type { RunnerContext } from "./types.ts";
+import { withFileLock } from "../util/atomic.ts";
 
 // --- MiroFish queue (real) ------------------------------------------------
 //
@@ -41,6 +42,8 @@ export async function populateMirofishQueue(ctx: RunnerContext): Promise<void> {
   const advisoryPath = resolve(ctx.lokiDir, "mirofish-tasks.json");
 
   if (!existsSync(advisoryPath)) return;
+  // Cheap pre-check outside the lock to avoid acquiring it for the
+  // common no-op case. The authoritative check is repeated inside.
   if (existsSync(sentinel)) return;
 
   let advisories: unknown;
@@ -53,44 +56,55 @@ export async function populateMirofishQueue(ctx: RunnerContext): Promise<void> {
 
   if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
   const pendingPath = resolve(queueDir, "pending.json");
-  const { tasks: existing, wrapper } = readExisting(pendingPath);
-  const existingIds = new Set(existing.map((t) => t.id));
 
-  let added = 0;
-  for (let i = 0; i < advisories.length; i++) {
-    const raw = advisories[i];
-    if (!raw || typeof raw !== "object") continue;
-    const a = raw as Record<string, unknown>;
-    const idVal = typeof a["id"] === "string" ? a["id"] : `mirofish-${String(i + 1).padStart(3, "0")}`;
-    if (existingIds.has(idVal)) continue;
-    const titleVal = typeof a["title"] === "string" ? a["title"] : `MiroFish Advisory ${i + 1}`;
-    const descVal = typeof a["description"] === "string" ? a["description"] : "";
-    const priorityVal: "high" | "medium" | "low" =
-      a["priority"] === "high" || a["priority"] === "low" ? a["priority"] : "medium";
-    const entry: PrdTask & { category?: string } = {
-      id: idVal,
-      title: titleVal,
-      description: descVal,
-      priority: priorityVal,
-      status: "pending",
-      source: "mirofish",
-    };
-    if (typeof a["category"] === "string") entry.category = a["category"];
-    existing.push(entry);
-    existingIds.add(idVal);
-    added++;
-  }
+  // v7.5.7: serialize the sentinel-check + read + modify + write + sentinel-
+  // write sequence cross-process via a file lock on pending.json. All
+  // populate* functions contend on the same lock target so two parallel
+  // worktrees cannot both pass the sentinel check, both read the same
+  // baseline pending.json, and both write back -- losing one writer's tasks.
+  await withFileLock(pendingPath, async () => {
+    // Re-check sentinel inside the lock -- another process may have run
+    // populate* between our pre-check and lock acquisition.
+    if (existsSync(sentinel)) return;
+    const { tasks: existing, wrapper } = readExisting(pendingPath);
+    const existingIds = new Set(existing.map((t) => t.id));
 
-  if (added === 0) {
-    // Drop sentinel anyway -- avoids re-scanning a stable advisory file when
-    // every advisory already lives in pending.json (matches BMAD/OpenSpec idiom).
+    let added = 0;
+    for (let i = 0; i < (advisories as unknown[]).length; i++) {
+      const raw = (advisories as unknown[])[i];
+      if (!raw || typeof raw !== "object") continue;
+      const a = raw as Record<string, unknown>;
+      const idVal = typeof a["id"] === "string" ? a["id"] : `mirofish-${String(i + 1).padStart(3, "0")}`;
+      if (existingIds.has(idVal)) continue;
+      const titleVal = typeof a["title"] === "string" ? a["title"] : `MiroFish Advisory ${i + 1}`;
+      const descVal = typeof a["description"] === "string" ? a["description"] : "";
+      const priorityVal: "high" | "medium" | "low" =
+        a["priority"] === "high" || a["priority"] === "low" ? a["priority"] : "medium";
+      const entry: PrdTask & { category?: string } = {
+        id: idVal,
+        title: titleVal,
+        description: descVal,
+        priority: priorityVal,
+        status: "pending",
+        source: "mirofish",
+      };
+      if (typeof a["category"] === "string") entry.category = a["category"];
+      existing.push(entry);
+      existingIds.add(idVal);
+      added++;
+    }
+
+    if (added === 0) {
+      // Drop sentinel anyway -- avoids re-scanning a stable advisory file when
+      // every advisory already lives in pending.json (matches BMAD/OpenSpec idiom).
+      writeFileSync(sentinel, "");
+      return;
+    }
+
+    const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+    atomicWriteJson(pendingPath, out);
     writeFileSync(sentinel, "");
-    return;
-  }
-
-  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-  atomicWriteJson(pendingPath, out);
-  writeFileSync(sentinel, "");
+  });
 }
 
 // --- PRD queue (real) ------------------------------------------------------
@@ -190,7 +204,8 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
 
   const queueDir = resolve(ctx.lokiDir, "queue");
   const sentinel = resolve(queueDir, ".prd-populated");
-  // Idempotency + adapter-precedence guards (run.sh:9823-9830).
+  // Idempotency + adapter-precedence guards (run.sh:9823-9830). Cheap
+  // pre-checks outside the lock; authoritative checks repeated inside.
   if (existsSync(sentinel)) return;
   for (const other of [".openspec-populated", ".bmad-populated", ".mirofish-populated"]) {
     if (existsSync(resolve(queueDir, other))) return;
@@ -207,26 +222,38 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
 
   if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
   const pendingPath = resolve(queueDir, "pending.json");
-  const { tasks: existing, wrapper } = readExisting(pendingPath);
-  const existingIds = new Set(existing.map((t) => t.id));
 
-  for (let i = 0; i < features.length; i++) {
-    const id = `prd-${String(i + 1).padStart(3, "0")}`;
-    if (existingIds.has(id)) continue;
-    const title = features[i] as string;
-    existing.push({
-      id,
-      title,
-      description: title,
-      priority: priorityFor(i, features.length),
-      status: "pending",
-      source: "prd",
-    });
-  }
+  // v7.5.7: cross-process lock on pending.json so concurrent worktree
+  // invocations cannot both pass the sentinel check, both read the same
+  // baseline, and both write back -- losing one writer's tasks.
+  await withFileLock(pendingPath, async () => {
+    // Re-check sentinels inside the lock -- another populate* may have
+    // run between our pre-check and lock acquisition.
+    if (existsSync(sentinel)) return;
+    for (const other of [".openspec-populated", ".bmad-populated", ".mirofish-populated"]) {
+      if (existsSync(resolve(queueDir, other))) return;
+    }
+    const { tasks: existing, wrapper } = readExisting(pendingPath);
+    const existingIds = new Set(existing.map((t) => t.id));
 
-  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-  atomicWriteJson(pendingPath, out);
-  writeFileSync(sentinel, "");
+    for (let i = 0; i < features.length; i++) {
+      const id = `prd-${String(i + 1).padStart(3, "0")}`;
+      if (existingIds.has(id)) continue;
+      const title = features[i] as string;
+      existing.push({
+        id,
+        title,
+        description: title,
+        priority: priorityFor(i, features.length),
+        status: "pending",
+        source: "prd",
+      });
+    }
+
+    const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+    atomicWriteJson(pendingPath, out);
+    writeFileSync(sentinel, "");
+  });
 }
 
 // --- Markdown directory helpers (shared by BMAD + OpenSpec) ---------------
@@ -340,36 +367,42 @@ export async function populateBmadQueue(ctx: RunnerContext): Promise<void> {
 
   if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
   const pendingPath = resolve(queueDir, "pending.json");
-  const { tasks: existing, wrapper } = readExisting(pendingPath);
-  const existingIds = new Set(existing.map((t) => t.id));
 
-  let added = 0;
-  for (let i = 0; i < stories.length; i++) {
-    const id = `bmad-${String(i + 1).padStart(3, "0")}`;
-    if (existingIds.has(id)) continue;
-    const stub = stories[i]!;
-    existing.push({
-      id,
-      title: stub.title,
-      description: stub.description,
-      priority: priorityFor(i, stories.length),
-      status: "pending",
-      source: "bmad",
-    });
-    existingIds.add(id);
-    added++;
-  }
+  // v7.5.7: cross-process lock on pending.json. See populatePrdQueue for
+  // the full rationale; same race, same fix.
+  await withFileLock(pendingPath, async () => {
+    if (existsSync(sentinel)) return;
+    const { tasks: existing, wrapper } = readExisting(pendingPath);
+    const existingIds = new Set(existing.map((t) => t.id));
 
-  if (added === 0) {
-    // Drop sentinel anyway -- avoids re-scanning a stable .loki/bmad/ when
-    // every story already lives in pending.json (e.g. crash-restart).
+    let added = 0;
+    for (let i = 0; i < stories.length; i++) {
+      const id = `bmad-${String(i + 1).padStart(3, "0")}`;
+      if (existingIds.has(id)) continue;
+      const stub = stories[i]!;
+      existing.push({
+        id,
+        title: stub.title,
+        description: stub.description,
+        priority: priorityFor(i, stories.length),
+        status: "pending",
+        source: "bmad",
+      });
+      existingIds.add(id);
+      added++;
+    }
+
+    if (added === 0) {
+      // Drop sentinel anyway -- avoids re-scanning a stable .loki/bmad/ when
+      // every story already lives in pending.json (e.g. crash-restart).
+      writeFileSync(sentinel, "");
+      return;
+    }
+
+    const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+    atomicWriteJson(pendingPath, out);
     writeFileSync(sentinel, "");
-    return;
-  }
-
-  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-  atomicWriteJson(pendingPath, out);
-  writeFileSync(sentinel, "");
+  });
 }
 
 // --- OpenSpec queue (real) -------------------------------------------------
@@ -404,32 +437,37 @@ export async function populateOpenspecQueue(ctx: RunnerContext): Promise<void> {
 
   if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });
   const pendingPath = resolve(queueDir, "pending.json");
-  const { tasks: existing, wrapper } = readExisting(pendingPath);
-  const existingIds = new Set(existing.map((t) => t.id));
 
-  let added = 0;
-  for (let i = 0; i < specs.length; i++) {
-    const id = `openspec-${String(i + 1).padStart(3, "0")}`;
-    if (existingIds.has(id)) continue;
-    const stub = specs[i]!;
-    existing.push({
-      id,
-      title: stub.title,
-      description: stub.description,
-      priority: priorityFor(i, specs.length),
-      status: "pending",
-      source: "openspec",
-    });
-    existingIds.add(id);
-    added++;
-  }
+  // v7.5.7: cross-process lock on pending.json. See populatePrdQueue.
+  await withFileLock(pendingPath, async () => {
+    if (existsSync(sentinel)) return;
+    const { tasks: existing, wrapper } = readExisting(pendingPath);
+    const existingIds = new Set(existing.map((t) => t.id));
 
-  if (added === 0) {
+    let added = 0;
+    for (let i = 0; i < specs.length; i++) {
+      const id = `openspec-${String(i + 1).padStart(3, "0")}`;
+      if (existingIds.has(id)) continue;
+      const stub = specs[i]!;
+      existing.push({
+        id,
+        title: stub.title,
+        description: stub.description,
+        priority: priorityFor(i, specs.length),
+        status: "pending",
+        source: "openspec",
+      });
+      existingIds.add(id);
+      added++;
+    }
+
+    if (added === 0) {
+      writeFileSync(sentinel, "");
+      return;
+    }
+
+    const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
+    atomicWriteJson(pendingPath, out);
     writeFileSync(sentinel, "");
-    return;
-  }
-
-  const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-  atomicWriteJson(pendingPath, out);
-  writeFileSync(sentinel, "");
+  });
 }

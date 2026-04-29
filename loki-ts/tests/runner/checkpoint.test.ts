@@ -4,7 +4,7 @@
 // "no uncommitted changes" guard so tests do not depend on git state.
 
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -302,5 +302,70 @@ describe("rollbackToCheckpoint", () => {
 
   it("throws InvalidCheckpointIdError for invalid id", () => {
     expect(() => rollbackToCheckpoint("../bad", tmpBase)).toThrow(InvalidCheckpointIdError);
+  });
+});
+
+describe("v7.5.7: metadata validation + index lock", () => {
+  it("readCheckpoint/listCheckpoints reject metadata missing required fields", async () => {
+    // First, create a valid checkpoint so the cp-* directory exists.
+    const r = await createCheckpoint({
+      taskDescription: "valid",
+      iteration: 1,
+      lokiDirOverride: tmpBase,
+      forceCreate: true,
+      epochOverride: 7000,
+    });
+    expect(r.created).toBe(true);
+    if (!r.created) throw new Error("unreachable");
+
+    // Corrupt the metadata.json: drop required `git_sha` and break `iteration` type.
+    const metaPath = join(r.dir, "metadata.json");
+    writeFileSync(
+      metaPath,
+      JSON.stringify({
+        id: r.id,
+        timestamp: "2026-04-29T00:00:00Z",
+        iteration: "not-a-number",
+        task_id: "x",
+        task_description: "x",
+        // git_sha missing entirely
+        git_branch: "main",
+        provider: "claude",
+        phase: "DEV",
+      }),
+    );
+
+    // listCheckpoints must skip the invalid entry rather than returning bad data.
+    const list = listCheckpoints(tmpBase);
+    expect(list.length).toBe(0);
+
+    // readCheckpoint must surface the invalid entry as not-found
+    // (validateCheckpointMetadata returns null, readCheckpointSafe -> null,
+    // which the public readCheckpoint converts to CheckpointNotFoundError).
+    expect(() => readCheckpoint(r.id, tmpBase)).toThrow(CheckpointNotFoundError);
+  });
+
+  it("creates the index lock sentinel without breaking checkpoint dir scans", async () => {
+    await createCheckpoint({
+      taskDescription: "lock-sentinel-test",
+      iteration: 1,
+      lokiDirOverride: tmpBase,
+      forceCreate: true,
+      epochOverride: 8001,
+    });
+    const cpRoot = join(tmpBase, "state", "checkpoints");
+    // The `.lock` sentinel should have been cleaned up after the append
+    // (withFileLockSync removes it in finally). Either way, the directory
+    // listing must contain only cp-* entries that listCheckpointDirs
+    // recognizes.
+    const list = listCheckpoints(tmpBase);
+    expect(list.length).toBe(1);
+    // Even if the sentinel transiently appeared, anything not starting with
+    // "cp-" must be filtered out by listCheckpointDirs.
+    const onDisk = readdirSync(cpRoot);
+    const cpOnly = onDisk.filter((n) => n.startsWith("cp-"));
+    expect(cpOnly.length).toBe(1);
+    // index.jsonl.lock must not still be held after the call returns.
+    expect(existsSync(join(cpRoot, "index.jsonl.lock"))).toBe(false);
   });
 });

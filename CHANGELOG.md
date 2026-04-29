@@ -5,6 +5,131 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.7] - 2026-04-29
+
+PATCH release. 20-agent bug-hunt + fix marathon. 20 hunters returned ~150
+raw findings; senior-owner agent triaged to 7 high-value fixes for this
+release; 6 developer agents implemented in parallel on disjoint files;
+4 reviewer + 4 tester + 4 UAT agents validated. All five council
+reviewers (correctness / CLAUDE.md / integration / security / UAT)
+approved with low-severity follow-ups only. No behavior changes for
+users on the default flow.
+
+### Code
+
+- **JSON.parse hardening (council, budget, checkpoint)**: replaced bare
+  `as <Interface>` casts with runtime validators that reject malformed
+  inputs and log a one-line warning, returning a safe default. Affected
+  sites: `loki-ts/src/runner/council.ts:186` (failed.json now requires
+  array entries to be objects with `task` or `id` keys before counting),
+  `loki-ts/src/runner/budget.ts:135` (BudgetState shape check), and
+  `loki-ts/src/runner/checkpoint.ts:340 / :376` (CheckpointMetadata
+  validator covering all required string + numeric fields). Valid
+  inputs flow through byte-identically; only crafted/corrupt JSON gets
+  filtered. Council parity-narrow concern (R1#1) is documented;
+  pre-change `[null]` would have been counted as 1 failed task -- now
+  it correctly counts 0.
+- **Cross-process index lock (checkpoint.ts)**: wrapped
+  `appendFileSync(index.jsonl)` in `withFileLockSync` from
+  `src/util/atomic.ts`. Sentinel lives at `index.jsonl.lock` (not
+  matching `cp-*` so directory scans skip it; verified in
+  dashboard/server.py and mcp/server.py readers). Parallel-worktree
+  appends can no longer interleave partial lines.
+- **Queue read-modify-write under lock (queues.ts)**: wrapped the
+  `{sentinel-check + readExisting + modify + atomicWriteJson +
+  sentinel-write}` sequence of `populatePrdQueue`,
+  `populateBmadQueue`, `populateOpenspecQueue`, and
+  `populateMirofishQueue` in `withFileLock(pendingPath, ...)`.
+  Sentinel pre-check kept outside the lock for the common no-op fast
+  path; an authoritative re-check inside the lock callback forces a
+  loser to early-return cleanly when a winner just dropped the
+  sentinel. Three new tests cover the race regression.
+- **Shared atomic-write in quality_gates.ts**: the local
+  `atomicWrite()` helper used a PID-only tmp suffix (`<target>.tmp.
+  <pid>`), racy under PID reuse in containers and intra-process
+  concurrent writes. Replaced with the shared `atomicWriteText` from
+  `src/util/atomic.ts` (per-call counter on the suffix). Migrated all
+  7 call sites (writeCounts, selection.json, aggregate.json, findings,
+  override transcript, escalation, pause-failure-list).
+- **LOKI_ALLOW_HAIKU truthy parity (providers.ts)**: prior code
+  checked `=== "true"` only. Added a `truthy()` helper that accepts
+  `1`, `true`, `yes`, `on` (case-insensitive, trimmed) for parity
+  with the bash route's permissive matching. Helper is exported only
+  for unit testing and is intentionally NOT applied to other env
+  reads in this patch -- separate work for v7.5.8+.
+- **LOKI_LEGACY_BASH defense-in-depth (cli.ts)**: when the env var
+  is set to a truthy form but Bun is invoked directly (bypassing the
+  `bin/loki` shim), print a one-line stderr warning that the env var
+  is a no-op in this code path. No behavior change. Suppressible via
+  `LOKI_SUPPRESS_BUN_DIRECT_WARN=1` for tooling that intentionally
+  invokes the Bun entrypoint.
+
+### Tests
+
+- 6 new tests in `loki-ts/tests/runner/council_validation.test.ts`
+  covering garbage-only / mixed valid+garbage / single valid
+  scenarios, malformed JSON parse, missing files, and unreadable
+  events.jsonl.
+- 4 new tests in `loki-ts/tests/runner/budget.test.ts` covering
+  malformed JSON, missing required field, wrong-type field, and
+  top-level array (44 pass, was 40).
+- 2 new tests in `loki-ts/tests/runner/checkpoint.test.ts` covering
+  corrupt-metadata rejection (drops `git_sha`, breaks `iteration`
+  type) and lock-sentinel hygiene (asserts `index.jsonl.lock` is
+  absent post-call) (15 pass, was 13).
+- 3 new tests in `loki-ts/tests/runner/queues.test.ts` covering
+  concurrent populatePrdQueue producing exactly 3 unique tasks,
+  external lock holder + concurrent populate (proves wait), and
+  PRD+BMAD racing on the same `pending.json` (19 pass, was 16).
+- 1 new test in `loki-ts/tests/runner/quality_gates.test.ts`
+  asserting that a passing gate resets prior failure count from 5
+  to 0 (51 pass, was 50).
+- 21 expect()-call test file `loki-ts/tests/runner/providers_truthy.
+  test.ts` covering positive + negative forms.
+
+### Process
+
+- 20-agent team structure: 1 lead + 1 senior owner + 6 developers +
+  4 reviewers + 4 testers + 4 UAT users. Senior owner trimmed scope
+  from 12 proposed fixes to 7 high-value ones to keep the patch
+  focused. R3 (integration) noted that `mcp/server.py:1346-1347`
+  loops `*.json` directly under `state/checkpoints/`, but
+  `checkpoint.ts` writes `cp-*/metadata.json` under subdirectories
+  -- this is a PRE-EXISTING MCP schema mismatch unrelated to this
+  release; tracked separately.
+
+### Council deferred (not blocking ship)
+
+- R1#1 council parity-narrow: heuristic voter now requires `task`
+  or `id` field on each entry. Pre-change accepted any non-empty
+  array. Real-world `failed.json` always has `task` field, so the
+  parity diff is theoretical; documented for future bash-side
+  alignment.
+- R3#1 checkpoint silent-drop on rebuild: corrupt metadata.json is
+  now logged via console.warn but no structured event is emitted
+  to the dashboard. Follow-up to wire an event in v7.5.8.
+- R4#1 council `in` operator on dynamic JSON: theoretical
+  prototype-pollution surface (no exploit today; values are only
+  string-interpolated into a description). Recommended swap to
+  `Object.prototype.hasOwnProperty.call`. Tracked.
+- R4#2 checkpoint metadata accepts control characters: no
+  exploitation path today (values are only logged or JSON-
+  serialized, never shell-evaluated). Recommended tighten before
+  any future shell interpolation lands. Tracked.
+- LOKI_GATE_TIMEOUT in `autonomy/run.sh:5727`: Dev6 audit confirmed
+  it IS used (lines 5731/5736/5741 pass it to `timeout` for
+  vitest/jest/mocha). Initial L19 finding was a false positive
+  caused by a local-variable rename. No change needed.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.7 npm/Docker/brew tarballs (post-release
+  distribution validation runs after the workflow completes).
+- Telemetry SDK integration for the phase1 status fields.
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- The deferred items above (R1#1, R3#1, R4#1, R4#2) are
+  intentionally not patched in this release.
+
 ## [7.5.6] - 2026-04-29
 
 PATCH release. Addresses 5-agent council findings against v7.5.5 (all

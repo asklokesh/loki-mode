@@ -229,6 +229,38 @@ describe("budget.read/writeBudgetState atomic round-trip", () => {
   it("returns null when budget file missing", () => {
     expect(readBudgetState(join(scratch, "missing.json"))).toBeNull();
   });
+
+  it("returns null and warns on malformed JSON content", () => {
+    const fp = join(scratch, "metrics", "bad.json");
+    mkdirSync(join(scratch, "metrics"), { recursive: true });
+    writeFileSync(fp, "{not json");
+    expect(readBudgetState(fp)).toBeNull();
+  });
+
+  it("returns null when required field missing", () => {
+    const fp = join(scratch, "metrics", "missing-field.json");
+    mkdirSync(join(scratch, "metrics"), { recursive: true });
+    // Missing budget_used
+    writeFileSync(fp, JSON.stringify({ limit: 10, budget_limit: 10, exceeded: false }));
+    expect(readBudgetState(fp)).toBeNull();
+  });
+
+  it("returns null when field has wrong type", () => {
+    const fp = join(scratch, "metrics", "wrong-type.json");
+    mkdirSync(join(scratch, "metrics"), { recursive: true });
+    writeFileSync(
+      fp,
+      JSON.stringify({ limit: 10, budget_limit: 10, budget_used: "0.4", exceeded: false }),
+    );
+    expect(readBudgetState(fp)).toBeNull();
+  });
+
+  it("returns null when top-level is an array", () => {
+    const fp = join(scratch, "metrics", "array.json");
+    mkdirSync(join(scratch, "metrics"), { recursive: true });
+    writeFileSync(fp, JSON.stringify([1, 2, 3]));
+    expect(readBudgetState(fp)).toBeNull();
+  });
 });
 
 describe("budget.checkBudgetLimit circuit breaker", () => {

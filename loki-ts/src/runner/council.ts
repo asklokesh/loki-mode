@@ -184,11 +184,35 @@ const heuristicVoter = (role: string): Voter => async (cec) => {
   if (existsSync(failedFile)) {
     try {
       const failed = JSON.parse(readFileSync(failedFile, "utf-8")) as unknown;
-      if (Array.isArray(failed) && failed.length > 0) {
-        issues.push({ severity: "HIGH", description: `${failed.length} tasks in failed queue` });
+      if (Array.isArray(failed)) {
+        // Tighten: only count entries that look like real task records --
+        // an object with a `task` or `id` field. Garbage entries (strings,
+        // numbers, null, objects without task/id) are ignored so a single
+        // malformed row cannot trip the REJECT heuristic.
+        const validCount = failed.reduce<number>((acc, entry) => {
+          if (
+            entry !== null &&
+            typeof entry === "object" &&
+            !Array.isArray(entry) &&
+            ("task" in (entry as Record<string, unknown>) ||
+              "id" in (entry as Record<string, unknown>))
+          ) {
+            return acc + 1;
+          }
+          return acc;
+        }, 0);
+        if (validCount > 0) {
+          issues.push({ severity: "HIGH", description: `${validCount} tasks in failed queue` });
+        }
       }
-    } catch {
-      // ignore corrupt JSON
+    } catch (err) {
+      const msg = `council heuristic voter: failed to parse ${failedFile}: ${(err as Error).message}`;
+      const log = (cec.ctx as Partial<RunnerContext>).log;
+      if (typeof log === "function") {
+        log(msg);
+      } else {
+        console.warn(msg);
+      }
     }
   }
   if (issues.length > 0) {
@@ -329,8 +353,16 @@ export async function councilDevilsAdvocate(
   // Check 2: recent error events
   const eventsFile = resolve(root, "events.jsonl");
   if (existsSync(eventsFile)) {
+    let lines: string[] | null = null;
     try {
-      const lines = readFileSync(eventsFile, "utf-8").split("\n").slice(-50);
+      lines = readFileSync(eventsFile, "utf-8").split("\n").slice(-50);
+    } catch (err) {
+      console.warn(
+        `council devil's advocate: failed to read ${eventsFile}: ${(err as Error).message}`,
+      );
+      lines = null;
+    }
+    if (lines !== null) {
       let errors = 0;
       for (const line of lines) {
         if (/"level"\s*:\s*"error"/i.test(line)) errors++;
@@ -338,8 +370,6 @@ export async function councilDevilsAdvocate(
       if (errors > 0) {
         issues.push({ severity: "MEDIUM", description: `${errors} recent error events` });
       }
-    } catch {
-      // ignore
     }
   }
 

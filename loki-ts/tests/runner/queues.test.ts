@@ -12,6 +12,7 @@ import {
   populateOpenspecQueue,
   populateMirofishQueue,
 } from "../../src/runner/queues.ts";
+import { withFileLock } from "../../src/util/atomic.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 
 let tmp: string;
@@ -347,5 +348,120 @@ describe("populateMirofishQueue", () => {
     expect(tasks[0]?.source).toBe("prd");
     expect(tasks[1]?.id).toBe("mf-007");
     expect(tasks[1]?.source).toBe("mirofish");
+  });
+});
+
+// v7.5.7: cross-process / cross-async race regression. Two parallel
+// populatePrdQueue calls (e.g. from two worktrees executing
+// `loki internal phase1-hooks` simultaneously) must not lose tasks via
+// the read-modify-write race. The withFileLock wrapper in queues.ts
+// serializes the sentinel-check + read + modify + write + sentinel-write
+// sequence on the pending.json path so one writer wins cleanly and the
+// second observes the sentinel and yields.
+describe("populate* concurrency (race regression)", () => {
+  it("two concurrent populatePrdQueue calls produce a single populated pending.json with no lost tasks", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    writeFileSync(prdPath, SAMPLE_PRD);
+    const ctx = makeCtx(prdPath);
+
+    // Promise.all to maximise interleaving. Without the lock both would
+    // pass the sentinel check, both would read the empty baseline, and
+    // both would write back -- the second write would clobber the first.
+    // With the lock, the loser sees the sentinel inside the lock and is
+    // a clean no-op.
+    const results = await Promise.all([
+      populatePrdQueue(ctx),
+      populatePrdQueue(ctx),
+    ]);
+    expect(results.length).toBe(2);
+
+    const pendingPath = join(lokiDir, "queue", "pending.json");
+    expect(existsSync(pendingPath)).toBe(true);
+    const tasks = JSON.parse(readFileSync(pendingPath, "utf8")) as Array<{
+      id: string;
+      title: string;
+      source: string;
+    }>;
+    // Exactly the 3 features from SAMPLE_PRD must be present, with no
+    // duplicates and no lost increments.
+    expect(Array.isArray(tasks)).toBe(true);
+    expect(tasks.length).toBe(3);
+    const ids = tasks.map((t) => t.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids).toEqual(["prd-001", "prd-002", "prd-003"]);
+    expect(tasks.every((t) => t.source === "prd")).toBe(true);
+    // Sentinel exists and no leftover lock or tmp files.
+    expect(existsSync(join(lokiDir, "queue", ".prd-populated"))).toBe(true);
+    expect(existsSync(`${pendingPath}.lock`)).toBe(false);
+    expect(existsSync(`${pendingPath}.tmp.${process.pid}`)).toBe(false);
+  });
+
+  it("populatePrdQueue waits for an externally-held lock on pending.json (proves cross-process serialization)", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    writeFileSync(prdPath, SAMPLE_PRD);
+    const ctx = makeCtx(prdPath);
+    const queueDir = join(lokiDir, "queue");
+    mkdirSync(queueDir, { recursive: true });
+    const pendingPath = join(queueDir, "pending.json");
+
+    // Hold the lock externally and concurrently try to populate. The
+    // populate call must block until we release. This proves the
+    // populate path actually serializes on the pending.json lock.
+    let released = false;
+    const externalHolder = withFileLock(
+      pendingPath,
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            released = true;
+            resolve();
+          }, 80);
+        }),
+    );
+
+    // Tiny delay so the external holder is the first to acquire.
+    await new Promise((r) => setTimeout(r, 10));
+
+    const populateP = populatePrdQueue(ctx).then(() => {
+      // populate must observe `released === true` -- if it ran without
+      // waiting, this would be false.
+      expect(released).toBe(true);
+    });
+
+    await Promise.all([externalHolder, populateP]);
+
+    const tasks = JSON.parse(readFileSync(pendingPath, "utf8")) as Array<{ id: string }>;
+    expect(tasks.length).toBe(3);
+    expect(existsSync(`${pendingPath}.lock`)).toBe(false);
+  });
+
+  it("populatePrdQueue + populateBmadQueue racing on the same pending.json do not lose tasks", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    writeFileSync(prdPath, SAMPLE_PRD);
+    const bmadDir = join(lokiDir, "bmad");
+    mkdirSync(bmadDir, { recursive: true });
+    writeFileSync(join(bmadDir, "story.md"), "# Story Alpha\n\nFirst story body.\n");
+
+    const ctx = makeCtx(prdPath);
+
+    // Both queues populate against the same pending.json. The PRD path
+    // also yields-on-bmad-sentinel and vice versa, so the final state
+    // depends on which wins -- but the union of guarantees is: no
+    // partial / clobbered writes, no leftover lock, valid JSON.
+    await Promise.all([populatePrdQueue(ctx), populateBmadQueue(ctx)]);
+
+    const pendingPath = join(lokiDir, "queue", "pending.json");
+    expect(existsSync(pendingPath)).toBe(true);
+    const raw = readFileSync(pendingPath, "utf8");
+    const tasks = JSON.parse(raw) as Array<{ id: string; source: string }>;
+    expect(Array.isArray(tasks)).toBe(true);
+    expect(tasks.length).toBeGreaterThan(0);
+    // Every entry must be valid (no half-written records).
+    for (const t of tasks) {
+      expect(typeof t.id).toBe("string");
+      expect(t.source === "prd" || t.source === "bmad").toBe(true);
+    }
+    // Lock file must not leak.
+    expect(existsSync(`${pendingPath}.lock`)).toBe(false);
   });
 });

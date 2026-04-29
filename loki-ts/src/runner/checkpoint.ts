@@ -32,6 +32,7 @@ import {
 import { join, dirname } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
+import { withFileLockSync } from "../util/atomic.ts";
 
 // Schema mirrors metadata.json exactly. Field names and types are load-bearing
 // (consumed by rollback_to_checkpoint and the dashboard). Do not rename.
@@ -262,8 +263,14 @@ async function _createCheckpointImpl(
   atomicWriteFile(join(cpDir, "metadata.json"), serializeMetadata(metadata));
 
   // Append to index.jsonl. Single appendFileSync writes are atomic for small
-  // payloads on POSIX (PIPE_BUF = 4096+ bytes); index lines are well under
-  // that. The serialize() chain prevents in-process interleaving as well.
+  // payloads on POSIX (PIPE_BUF = 4096+ bytes), and the serialize() chain
+  // prevents in-process interleaving. v7.5.7: wrap the append in a
+  // cross-process advisory lock (withFileLockSync) so concurrent appends
+  // from parallel worktrees / sibling processes cannot interleave on disks
+  // where PIPE_BUF guarantees do not hold (NFS, some FUSE mounts) or when
+  // a future change pushes line size near the boundary. Lock sentinel is
+  // `${indexPath}.lock`, which lives alongside index.jsonl; tests scanning
+  // the checkpoints dir filter for `cp-*` names so the sentinel is ignored.
   const idxLine: CheckpointIndexEntry = {
     id: metadata.id,
     ts: metadata.timestamp,
@@ -271,7 +278,10 @@ async function _createCheckpointImpl(
     task: metadata.task_description,
     sha: metadata.git_sha,
   };
-  appendFileSync(indexPath(base), `${serializeIndexLine(idxLine)}\n`);
+  const idxPath = indexPath(base);
+  withFileLockSync(idxPath, () => {
+    appendFileSync(idxPath, `${serializeIndexLine(idxLine)}\n`);
+  });
 
   // Retention: prune oldest above RETENTION_LIMIT, then rebuild index atomically.
   enforceRetention(base);
@@ -337,7 +347,9 @@ function rebuildIndex(base: string): void {
     const metaPath = join(checkpointsRoot(base), id, "metadata.json");
     if (!existsSync(metaPath)) continue;
     try {
-      const m = JSON.parse(readFileSync(metaPath, "utf-8")) as CheckpointMetadata;
+      const parsed: unknown = JSON.parse(readFileSync(metaPath, "utf-8"));
+      const m = validateCheckpointMetadata(parsed, metaPath);
+      if (!m) continue; // warning already logged
       lines.push(
         serializeIndexLine({
           id: m.id,
@@ -373,10 +385,66 @@ function readCheckpointSafe(base: string, id: string): CheckpointMetadata | null
   const metaPath = join(checkpointsRoot(base), id, "metadata.json");
   if (!existsSync(metaPath)) return null;
   try {
-    return JSON.parse(readFileSync(metaPath, "utf-8")) as CheckpointMetadata;
+    const parsed: unknown = JSON.parse(readFileSync(metaPath, "utf-8"));
+    return validateCheckpointMetadata(parsed, metaPath);
   } catch {
     return null;
   }
+}
+
+// v7.5.7: runtime validator for metadata.json. Replaces bare
+// `as CheckpointMetadata` casts that would silently propagate corrupt or
+// truncated metadata (partial write, foreign tooling, accidental edit) to
+// callers that subsequently relied on `iteration` being a number,
+// `git_sha` being a non-empty string, etc. Returns null on any field
+// missing or wrong type, after logging a one-line warning so on-call has
+// a breadcrumb. We do NOT throw -- the surrounding code paths
+// (readCheckpointSafe, rebuildIndex, listCheckpoints) already treat null
+// as "skip this checkpoint" and continue.
+function validateCheckpointMetadata(
+  raw: unknown,
+  source: string,
+): CheckpointMetadata | null {
+  if (raw === null || typeof raw !== "object") {
+    console.warn(`[checkpoint] invalid metadata at ${source}: not an object`);
+    return null;
+  }
+  const o = raw as Record<string, unknown>;
+  const stringFields: Array<keyof CheckpointMetadata> = [
+    "id",
+    "timestamp",
+    "task_id",
+    "task_description",
+    "git_sha",
+    "git_branch",
+    "provider",
+    "phase",
+  ];
+  for (const f of stringFields) {
+    if (typeof o[f] !== "string") {
+      console.warn(
+        `[checkpoint] invalid metadata at ${source}: field "${f}" not a string`,
+      );
+      return null;
+    }
+  }
+  if (typeof o["iteration"] !== "number" || !Number.isFinite(o["iteration"])) {
+    console.warn(
+      `[checkpoint] invalid metadata at ${source}: field "iteration" not a finite number`,
+    );
+    return null;
+  }
+  return {
+    id: o["id"] as string,
+    timestamp: o["timestamp"] as string,
+    iteration: o["iteration"] as number,
+    task_id: o["task_id"] as string,
+    task_description: o["task_description"] as string,
+    git_sha: o["git_sha"] as string,
+    git_branch: o["git_branch"] as string,
+    provider: o["provider"] as string,
+    phase: o["phase"] as string,
+  };
 }
 
 // Validation: matches bash autonomy/run.sh:7006 regex.

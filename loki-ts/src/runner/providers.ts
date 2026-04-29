@@ -77,11 +77,33 @@ function resolveCli(envVar: string, defaultCli: string): string {
   return override && override.length > 0 ? override : defaultCli;
 }
 
+// Permissive truthy check matching the bash convention used across the
+// shell side (claude.sh and friends accept "1", "true", "yes", "on" in any
+// case). The Bun port previously only accepted the literal string "true",
+// which silently dropped LOKI_ALLOW_HAIKU=1 -- a real foot-gun for anyone
+// switching between routes. Keep the helper narrow: a single exported
+// predicate so we can broaden coverage to other env reads in a follow-up
+// without re-deriving the matching rules.
+//
+// Exported for unit tests; not part of the public provider API.
+export function truthy(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Resolve tier -> Claude model alias. Mirrors claude.sh:121-142
 // (provider_get_tier_param) including the LOKI_ALLOW_HAIKU branch that
 // upgrades fast/development tiers when haiku is opt-in only.
 function claudeTierToModel(tier: SessionTier): string {
-  const allowHaiku = process.env["LOKI_ALLOW_HAIKU"] === "true";
+  const allowHaiku = truthy(process.env["LOKI_ALLOW_HAIKU"]);
   if (allowHaiku) {
     switch (tier) {
       case "planning":

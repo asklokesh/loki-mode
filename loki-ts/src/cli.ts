@@ -33,7 +33,30 @@ All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `;
 
+// Defense-in-depth: LOKI_LEGACY_BASH is interpreted by the bin/loki shim
+// (which decides between Bun and bash routes). If we are already running
+// inside Bun, the env var is a no-op -- the shim is bypassed. Warn so the
+// operator does not assume the legacy route is active. We do NOT change
+// behavior; this is purely an observability aid. Mirrors the truthy
+// convention used elsewhere ("1"/"true"/"yes"/"on", case-insensitive).
+function warnIfLegacyBashSetUnderBun(): void {
+  const raw = process.env["LOKI_LEGACY_BASH"];
+  if (raw === undefined) return;
+  const v = raw.trim().toLowerCase();
+  if (v !== "1" && v !== "true" && v !== "yes" && v !== "on") return;
+  // Allow tests / tooling to suppress the noise when they intentionally
+  // invoke the Bun entrypoint directly.
+  if (process.env["LOKI_SUPPRESS_BUN_DIRECT_WARN"] === "1") return;
+  process.stderr.write(
+    "warning: LOKI_LEGACY_BASH is set, but you are running the Bun runtime " +
+      "directly (src/cli.ts). The env var only takes effect via the " +
+      "bin/loki shim, which dispatches between Bun and bash. Behavior is " +
+      "unchanged; this message is informational.\n",
+  );
+}
+
 async function dispatch(argv: readonly string[]): Promise<number> {
+  warnIfLegacyBashSetUnderBun();
   const cmd = argv[0];
   const rest = argv.slice(1);
 

@@ -127,12 +127,32 @@ export function readEfficiencyDir(dir: string): EfficiencyRecord[] {
 // Budget state I/O (atomic write via tmp + rename)
 // ---------------------------------------------------------------------------
 
+// Runtime validator for parsed budget.json content. Mirrors BudgetState shape.
+// Required: limit, budget_limit, budget_used (finite numbers), exceeded (bool).
+// Optional: exceeded_at, created_at (strings if present).
+function isValidBudgetState(v: unknown): v is BudgetState {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o["limit"] !== "number" || !Number.isFinite(o["limit"])) return false;
+  if (typeof o["budget_limit"] !== "number" || !Number.isFinite(o["budget_limit"])) return false;
+  if (typeof o["budget_used"] !== "number" || !Number.isFinite(o["budget_used"])) return false;
+  if (typeof o["exceeded"] !== "boolean") return false;
+  if (o["exceeded_at"] !== undefined && typeof o["exceeded_at"] !== "string") return false;
+  if (o["created_at"] !== undefined && typeof o["created_at"] !== "string") return false;
+  return true;
+}
+
 export function readBudgetState(file?: string): BudgetState | null {
   const fp = file ?? join(lokiDir(), "metrics", "budget.json");
   if (!existsSync(fp)) return null;
   try {
     const raw = readFileSync(fp, "utf8");
-    return JSON.parse(raw) as BudgetState;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidBudgetState(parsed)) {
+      console.warn(`[budget] discarding malformed budget state at ${fp}`);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }

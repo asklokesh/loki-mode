@@ -136,6 +136,31 @@ describe("trackGateFailure / clearGateFailure persistence", () => {
     expect(getGateFailureCount("static_analysis", scratch)).toBe(0);
     expect(getGateFailureCount("test_coverage", scratch)).toBe(4);
   });
+
+  // v7.5.7 parity: bash autonomy/run.sh:10966 calls clear_gate_failure() on
+  // every passing gate; the TS orchestrator must do the same in the
+  // runQualityGates for-loop. Seed the counter at 5 (above CLEAR_LIMIT) and
+  // confirm that one passing iteration drops it to 0 on the next read.
+  it("runQualityGates resets a prior failure count to 0 when the gate passes", async () => {
+    // Seed the on-disk counter to 5 for static_analysis. Five trackGateFailure
+    // calls is the same path the production loop uses, so the seed is durable
+    // and uses the file's real schema.
+    for (let i = 0; i < 5; i++) trackGateFailure("static_analysis", scratch);
+    expect(getGateFailureCount("static_analysis", scratch)).toBe(5);
+
+    // Force every gate to pass so runQualityGates exercises the success
+    // branch for static_analysis specifically.
+    process.env["LOKI_STUB_GATE_STATIC_ANALYSIS"] = "pass";
+    process.env["LOKI_STUB_GATE_TEST_COVERAGE"] = "pass";
+    process.env["LOKI_STUB_GATE_CODE_REVIEW"] = "pass";
+    process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
+    process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "pass";
+
+    const r = await runQualityGates(makeCtx());
+    expect(r.failed).toEqual([]);
+    expect(r.passed).toContain("static_analysis");
+    expect(getGateFailureCount("static_analysis", scratch)).toBe(0);
+  });
 });
 
 // --- Escalation ladder ----------------------------------------------------

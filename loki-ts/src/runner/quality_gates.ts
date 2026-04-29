@@ -27,10 +27,10 @@
 // it is real. The escalation ladder and failure-count persistence are real
 // and final.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { withFileLockSync } from "../util/atomic.ts";
+import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
@@ -112,15 +112,12 @@ function resolveBase(override?: string): string {
   return override ?? lokiDir();
 }
 
-// Atomic write via tmp + rename, matching the pattern used by state.ts.
-// renameSync is atomic on POSIX when both paths share a filesystem.
-function atomicWrite(target: string, body: string): void {
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}`;
-  writeFileSync(tmp, body);
-  renameSync(tmp, target);
-}
-
+// Atomic write via tmp + rename. Delegates to the shared atomicWriteText
+// helper in util/atomic.ts, which uses a per-call counter on the tmp suffix
+// (`<target>.tmp.<pid>.<n>`) so concurrent writers within the same process --
+// or across PID-reusing containers -- cannot collide on the tmp path.
+// Pre-v7.5.7 this module had its own local helper using only `<pid>` as the
+// suffix, which raced under those conditions.
 function readCounts(base: string): Record<string, number> {
   const file = gateFilePath(base);
   if (!existsSync(file)) return {};
@@ -141,7 +138,7 @@ function readCounts(base: string): Record<string, number> {
 }
 
 function writeCounts(base: string, counts: Record<string, number>): void {
-  atomicWrite(gateFilePath(base), `${JSON.stringify(counts, null, 2)}\n`);
+  atomicWriteText(gateFilePath(base), `${JSON.stringify(counts, null, 2)}\n`);
 }
 
 // Increment and persist. Returns the new count for that gate.
@@ -650,7 +647,7 @@ export async function runCodeReview(
   const selection = selectReviewers(diff, files, {
     healingActive: isHealingActive(cwd, diff),
   });
-  atomicWrite(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
+  atomicWriteText(join(reviewDir, "selection.json"), `${JSON.stringify(selection, null, 2)}\n`);
 
   // Dispatch all reviewers in parallel via Promise.all (parity with the bash
   // backgrounding-and-wait loop at run.sh:6516-6556).
@@ -690,7 +687,7 @@ export async function runCodeReview(
     has_blocking: hasBlocking,
     verdicts: verdictsSummary,
   };
-  atomicWrite(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
+  atomicWriteText(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
 
   // Phase 1 (v7.5.0) -- persist structured findings to .loki/state/findings-<iter>.json
   // so the next iteration's prompt build (and any out-of-process consumers like
@@ -702,7 +699,7 @@ export async function runCodeReview(
       const findings = fInjector.loadPreviousFindings(base, ctx.iterationCount).findings;
       const stateDir = join(base, "state");
       mkdirSync(stateDir, { recursive: true });
-      atomicWrite(
+      atomicWriteText(
         join(stateDir, `findings-${ctx.iterationCount}.json`),
         `${JSON.stringify({ review_id: reviewId, iteration: ctx.iterationCount, findings }, null, 2)}\n`,
       );
@@ -1028,7 +1025,7 @@ async function maybeRunOverrideCouncil(args: {
       rejected_finding_ids: Array.from(outcome.rejectedFindingIds),
       votes: outcome.votes,
     };
-    atomicWrite(
+    atomicWriteText(
       join(args.reviewDir, `override-${args.iteration}.json`),
       `${JSON.stringify(transcript, null, 2)}\n`,
     );
@@ -1317,7 +1314,7 @@ function writeEscalationSignal(base: string, gate: string, count: number, action
   const target = join(base, "signals", "GATE_ESCALATION");
   mkdirSync(dirname(target), { recursive: true });
   const body = `${action}\n${gate} gate failed ${count} consecutive times\n`;
-  atomicWrite(target, body);
+  atomicWriteText(target, body);
 }
 
 function writePauseSignal(base: string, gate: string, count: number): void {
@@ -1343,7 +1340,7 @@ function persistFailureList(base: string, failed: string[]): void {
     return;
   }
   const body = `${failed.join(",")},\n`;
-  atomicWrite(target, body);
+  atomicWriteText(target, body);
 }
 
 // Run every enabled gate in the bash order. Returns a structured outcome the
