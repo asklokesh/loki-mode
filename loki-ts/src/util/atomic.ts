@@ -17,12 +17,15 @@
 
 import {
   closeSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -119,44 +122,103 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// v7.5.6 (council R1 #1): if writeSync throws (ENOSPC, EIO, EBADF), the fd
+// would leak AND the sentinel would persist on disk, blocking every future
+// acquirer until staleMs elapses. Wrap in try/catch and clean both up
+// before propagating.
 function tryAcquire(lockFile: string): number | null {
+  let fd: number | null = null;
   try {
     mkdirSync(dirname(lockFile), { recursive: true });
-    const fd = openSync(lockFile, "wx");
+    fd = openSync(lockFile, "wx");
     writeSync(fd, `${process.pid}\n`);
     return fd;
   } catch (err: unknown) {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+      try {
+        unlinkSync(lockFile);
+      } catch {
+        // ignore
+      }
+    }
     if ((err as NodeJS.ErrnoException)?.code === "EEXIST") return null;
     throw err;
   }
 }
 
+// v7.5.6 (council R1 #2 + R4 #1): close the TOCTOU window between mtime
+// check and pid read by opening the file once and using fstat on the open
+// fd, so a same-inode swap by another process cannot fool us. Use lstat
+// first to refuse a symlinked sentinel -- a malicious local user with
+// write access to .loki/quality/ could otherwise plant a symlink to make
+// the lock look stale and steal it.
 function reapStaleLock(lockFile: string, staleMs: number): boolean {
-  let st: ReturnType<typeof statSync>;
+  let lst: ReturnType<typeof lstatSync>;
   try {
-    st = statSync(lockFile);
+    lst = lstatSync(lockFile);
   } catch {
+    // gone -> caller will retry tryAcquire and either succeed or race
     return true;
   }
-  const age = Date.now() - st.mtimeMs;
-  if (age < staleMs) return false;
-  // Try to read pid; if process is gone or unreadable, take over.
-  let pid = NaN;
-  try {
-    const body = readFileSync(lockFile, "utf-8");
-    pid = Number.parseInt(body.trim(), 10);
-  } catch {
-    // unreadable -> stale
+  if (lst.isSymbolicLink()) {
+    // Refuse to interpret a symlinked sentinel. Remove the symlink
+    // (rmSync of a symlink removes the link, not the target) so the next
+    // tryAcquire has a chance to create a real sentinel; if removal
+    // fails (read-only parent), report not-stale so we keep waiting.
+    try {
+      unlinkSync(lockFile);
+      return true;
+    } catch {
+      return false;
+    }
   }
-  if (!Number.isFinite(pid) || !isProcessAlive(pid)) {
+  let fd: number;
+  try {
+    fd = openSync(lockFile, "r");
+  } catch {
+    // raced with the holder releasing the file; treat as gone
+    return true;
+  }
+  try {
+    const fst = fstatSync(fd);
+    const age = Date.now() - fst.mtimeMs;
+    if (age < staleMs) return false;
+    let pid = NaN;
+    try {
+      const buf = Buffer.alloc(64);
+      const bytes = readSync(fd, buf, 0, 64, 0);
+      pid = Number.parseInt(buf.subarray(0, bytes).toString("utf-8").trim(), 10);
+    } catch {
+      // unreadable -> stale
+    }
+    if (Number.isFinite(pid) && isProcessAlive(pid)) return false;
+    // Holder is dead or pid was garbage. Re-stat by path; if mtime is
+    // newer than what we read via fstat, a fresh holder took over
+    // between our open and our stat -- back off without removing.
+    try {
+      const pathStat = statSync(lockFile);
+      if (pathStat.mtimeMs > fst.mtimeMs) return false;
+    } catch {
+      return true;
+    }
     try {
       rmSync(lockFile, { force: true });
     } catch {
-      // ignore -- another process may have just reaped it
+      // another process may have just reaped it
     }
     return true;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // ignore
+    }
   }
-  return false;
 }
 
 export async function withFileLock<T>(

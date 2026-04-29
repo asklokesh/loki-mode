@@ -90,6 +90,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       const subcmd = rest[0];
       const isHelp = !subcmd || subcmd === "--help" || subcmd === "-h" || subcmd === "help";
       if (isHelp) {
+        // v7.5.6 (council R5 #1): list the Phase 1 env vars so operators
+        // have an on-CLI discovery path to the toggles that drive the
+        // RARV-C closure flow. References point at the canonical doc
+        // (CHANGELOG #204 + skills/healing.md) for the longer story.
         const help = [
           "loki internal -- runtime hooks driven by autonomy/run.sh",
           "",
@@ -98,6 +102,24 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "                  append learnings, and write the escalation handoff",
           "                  doc once per iteration. Driven by run.sh; not",
           "                  intended for direct invocation.",
+          "",
+          "Phase 1 (RARV-C closure) env vars:",
+          "  LOKI_INJECT_FINDINGS=1   Persist structured reviewer findings to",
+          "                           .loki/state/findings-<iter>.json so the",
+          "                           next iteration can address them.",
+          "  LOKI_OVERRIDE_COUNCIL=1  Allow a 3-LLM override panel to lift a",
+          "                           BLOCK when counter-evidence is presented.",
+          "                           See LOKI_OVERRIDE_JUDGES (csv),",
+          "                           LOKI_OVERRIDE_PANEL_SIZE,",
+          "                           LOKI_OVERRIDE_REAL_JUDGE.",
+          "  LOKI_AUTO_LEARNINGS=1    Append failure rootcauses to",
+          "                           .loki/state/relevant-learnings.json via",
+          "                           the episodic memory bridge.",
+          "  LOKI_HANDOFF_MD=1        Write a structured human handoff doc to",
+          "                           .loki/escalations/<ts>.md before PAUSE.",
+          "",
+          "All four are default-on as of v7.5.3. Set to 0 to disable.",
+          "Reference: CHANGELOG.md (search 'Phase 1') and skills/healing.md.",
           "",
           "These commands are wired into the autonomous loop and may change",
           "without notice. Do not script against them.",

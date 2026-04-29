@@ -100,4 +100,36 @@ describe("withFileLockSync", () => {
     ).toThrow("sync-boom");
     expect(existsSync(`${target}.lock`)).toBe(false);
   });
+
+  test("times out cleanly when external holder never releases", () => {
+    const dir = newDir();
+    const target = join(dir, "counter.json");
+    writeFileSync(target, "{}");
+    writeFileSync(`${target}.lock`, `${process.pid}\n`);
+    expect(() =>
+      withFileLockSync(target, () => 1, { timeoutMs: 200, pollMs: 20, staleMs: 60_000 }),
+    ).toThrow(/timed out/);
+    expect(existsSync(`${target}.lock`)).toBe(true);
+  });
+});
+
+// v7.5.6 (council R4 #1): refuse a symlinked sentinel so a malicious
+// local user with write access to the lock dir cannot plant a symlink
+// to make the lock look stale and steal it (or coerce reads of an
+// unrelated file).
+describe("withFileLock -- symlink sentinel rejection", () => {
+  test("removes a symlinked sentinel and proceeds", async () => {
+    const dir = newDir();
+    const target = join(dir, "counter.json");
+    writeFileSync(target, "{}");
+    const real = join(dir, "decoy.txt");
+    writeFileSync(real, "not a pid");
+    const fs = await import("node:fs");
+    fs.symlinkSync(real, `${target}.lock`);
+    await withFileLock(target, () => {}, { staleMs: 1, timeoutMs: 1_000 });
+    expect(existsSync(`${target}.lock`)).toBe(false);
+    // Decoy untouched: rmSync of a symlink removes only the link, not
+    // the target.
+    expect(existsSync(real)).toBe(true);
+  });
 });

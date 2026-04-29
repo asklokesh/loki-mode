@@ -5,6 +5,82 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.6] - 2026-04-29
+
+PATCH release. Addresses 5-agent council findings against v7.5.5 (all
+five reviewers approved-with-concerns; no rejects). Fixes the long-
+standing CI Bun Parity failure (5 runs red since v7.5.1), hardens the
+new file lock against fd leaks and symlink sentinel attacks, and adds
+the Phase 1 env-var discovery surface to `loki internal --help`. No
+behavior changes for users on the default flow.
+
+### Code
+
+- **R3 #1 HIGH (CI bun-parity 5-runs-red)**: ported the
+  `scripts/local-ci.sh` doctor parity normalization into
+  `.github/workflows/bun-parity.yml`. The local-only normalization had
+  been masking a route-dependent diff on developer Macs since v7.5.1
+  added the "Runtime route:" doctor section -- bash route reports
+  `Bash`, Bun route reports `Bun`, and the block can never be byte-
+  identical across the two routes. Workflow now strips the Runtime
+  route block, the Phase 1 artifacts block (added in v7.5.5 #204), and
+  normalizes Summary counts before diffing.
+- **R1 #1 MED (file-lock fd / sentinel leak)**:
+  `loki-ts/src/util/atomic.ts:tryAcquire` wrapped `writeSync` in
+  try/catch so an ENOSPC / EIO / EBADF failure no longer leaks the
+  open fd or leaves the sentinel on disk. Without this, a single
+  failed write could block every future acquirer until `staleMs`
+  elapsed.
+- **R1 #2 MED + R4 #1 LOW (TOCTOU + symlink in stale-reap)**:
+  `reapStaleLock` now opens the sentinel once, reads pid + mtime via
+  `fstat`/`readSync` on the same fd (closing the same-inode-swap
+  TOCTOU window), and refuses symlinked sentinels via `lstat`. A
+  malicious local user with write access to `.loki/quality/` can no
+  longer plant a symlink to make the lock look stale and steal it.
+  Before reaping, the path is re-`stat`ed to detect a fresh holder
+  who took over between the open and the stat.
+- **R5 #1 MED (operator discovery)**: `loki internal --help` now
+  documents the four Phase 1 env vars (`LOKI_INJECT_FINDINGS`,
+  `LOKI_OVERRIDE_COUNCIL`, `LOKI_AUTO_LEARNINGS`, `LOKI_HANDOFF_MD`)
+  plus the related override-council knobs. Operators have an on-CLI
+  discovery path to the toggles that drive the RARV-C closure flow.
+
+### Tests
+
+- Added 2 tests to `loki-ts/tests/util/file_lock.test.ts`: sync-mode
+  external-holder timeout and symlink sentinel rejection (with decoy-
+  target preservation check).
+
+### Process
+
+- **R2 #1 LOW emoji sweep**: replaced 9 leftover emoji bullets in the
+  historical CHANGELOG entries (v6.x patches) with `[OK]` text labels
+  per the CLAUDE.md hard rule. No emoji remain in `CHANGELOG.md`.
+
+### Council deferred (not blocking ship)
+
+- R1 #4 corruption-logging in `readCounts`: the lock makes the
+  corruption window much smaller, but a silently-reset counters file
+  could still mask a same-instant disk failure. Tracked separately.
+- R1 #5 sync-mode contention / stale paths: only happy-path + throw +
+  external-holder timeout covered. Sync stale-takeover not yet
+  exercised by tests.
+- R5 #3 `findings_iters` field-name ambiguity: kept the v7.5.5 name
+  to avoid a same-week public-API rename. Will revisit in v7.6.0
+  alongside other phase1 schema work.
+- R5 #4-#6: pause_signal as enum, full gate listing, bare-internal
+  exit code -- all minor / nit; deferred.
+
+### NOT tested in this release
+
+- Real-user UAT against the v7.5.6 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow completes).
+- Telemetry SDK integration for the phase1 status fields.
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- The two flagged module bugs from v7.5.5 #203 (corrupt-JSON envelope
+  in `loki_learnings`; unreachable `/` guard in
+  `/api/escalations/{filename}`) remain deferred.
+
 ## [7.5.5] - 2026-04-28
 
 PATCH release. Closes the four follow-ups left open in v7.5.4: a
@@ -8728,10 +8804,10 @@ LOKI_AUTONOMY_MODE=perpetual      # perpetual|checkpoint|supervised (Tim Dettmer
 
 ### Validation
 
-- ✅ All existing tests pass
-- ✅ SKILL.md syntax valid
-- ✅ run.sh functioning correctly
-- ✅ Backward compatible (all new features default to enabled or safe modes)
+- [OK] All existing tests pass
+- [OK] SKILL.md syntax valid
+- [OK] run.sh functioning correctly
+- [OK] Backward compatible (all new features default to enabled or safe modes)
 
 ### Research Findings
 
@@ -9181,11 +9257,11 @@ Loki Mode already implements most research-backed patterns:
 | Feature | ToolOrchestra | Loki Mode 2.28.0 |
 |---------|---------------|------------------|
 | Multi-turn reasoning | Orchestrator-8B | RARV cycle |
-| Efficiency tracking | ✅ 70% cost reduction | ✅ Now implemented |
-| Reward signals | 3 types | ✅ 3 types (same) |
-| Dynamic tool selection | 5/10/15/20/all | ✅ By complexity (5 levels) |
-| Memory system | None | ✅ Episodic/Semantic/Procedural |
-| Anti-sycophancy | None | ✅ Blind review + Devil's Advocate |
+| Efficiency tracking | [OK] 70% cost reduction | [OK] Now implemented |
+| Reward signals | 3 types | [OK] 3 types (same) |
+| Dynamic tool selection | 5/10/15/20/all | [OK] By complexity (5 levels) |
+| Memory system | None | [OK] Episodic/Semantic/Procedural |
+| Anti-sycophancy | None | [OK] Blind review + Devil's Advocate |
 | Benchmarks | GAIA #1, HLE 37.1% | HumanEval 98.78%, SWE-bench 99.67% |
 
 ---

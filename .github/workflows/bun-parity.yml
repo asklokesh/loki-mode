@@ -156,8 +156,24 @@ jobs:
               # bash + Bun read `df` independently a few ms apart; on a CI
               # runner where logs are being written, the value can drift by
               # 1GB between the two reads and trigger a false parity fail.
-              sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/g' "$bash_out" > "${bash_out}.norm"
-              sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/g' "$bun_out"  > "${bun_out}.norm"
+              # v7.5.6 (council R3 #1, 5-runs-red): mirror the
+              # scripts/local-ci.sh normalization that was added in
+              # v7.5.1 + v7.5.5 but never ported here:
+              #   - strip the "Runtime route:" block (route-dependent;
+              #     reports "Bash" on the bash route and "Bun" on Bun)
+              #   - strip the "Phase 1 artifacts:" block (#204)
+              #   - normalize "Summary: N passed/N failed/N warnings"
+              #     counts which shift slightly between routes
+              # Without these, doctor parity failed every release since
+              # v7.5.1 -- the local-only normalization masked it on
+              # developer Macs while CI was red.
+              for src in "$bash_out" "$bun_out"; do
+                sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/g' "$src" \
+                  | sed -E '/Runtime route:/,/^$/d' \
+                  | sed -E '/Phase 1 artifacts:/,/^$/d' \
+                  | sed -E 's/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g' \
+                  > "${src}.norm"
+              done
               if diff -u "${bash_out}.norm" "${bun_out}.norm" >"$diff_out"; then
                 PASSED+=("$label")
               else
