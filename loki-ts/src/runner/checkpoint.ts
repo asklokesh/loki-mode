@@ -92,8 +92,12 @@ let _chain: Promise<unknown> = Promise.resolve();
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
   const next = _chain.then(fn, fn);
   // Swallow rejections in the chain so one failure does not poison subsequent
-  // calls. Each caller still receives its own error via `next`.
-  _chain = next.catch(() => undefined);
+  // calls. Each caller still receives its own error via `next`. Surface the
+  // failure on stderr so silent rejection-swallow does not hide bugs (L4#4).
+  _chain = next.catch((err: unknown) => {
+    console.warn("[checkpoint] serialized op rejected:", err);
+    return undefined;
+  });
   return next;
 }
 

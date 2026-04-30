@@ -477,6 +477,18 @@ parse_yaml_with_yq() {
 load_config_file
 
 # Load JSON settings from loki config set (v6.0.0)
+#
+# SECURITY NOTE (v7.5.10, L12#2 audit): The eval below is intentional and safe.
+# The Python script's output is constrained to a fixed template:
+#     [ -z "${VAR:-}" ] && export VAR=<value>
+# where:
+#   - VAR is a hardcoded env var name from the `mapping` dict (NOT user-controlled).
+#   - <value> is produced by shlex.quote(), which emits POSIX-shell-safe single-
+#     quoted strings even for adversarial input (e.g. quotes, semicolons, $()).
+#   - Non-string values from settings.json are skipped (isinstance check).
+# Therefore no user-controlled bytes can break out of the quoted value or alter
+# the surrounding shell syntax. Do NOT remove the shlex.quote() call or relax
+# the isinstance(val, str) guard without re-auditing this eval.
 _load_json_settings() {
     local settings_file="${TARGET_DIR:-.}/.loki/config/settings.json"
     [ -f "$settings_file" ] || return 0
@@ -7100,13 +7112,31 @@ rollback_to_checkpoint() {
     done
 
     # Log the rollback (use python3 for safe JSON serialization)
-    local timestamp
+    # v7.5.10: route through safe_append_event_jsonl() so parallel-worktree
+    # rollbacks cannot interleave partial JSONL lines (POSIX append is
+    # only atomic for <PIPE_BUF and not all platforms honor it).
+    local timestamp rb_event
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    _RB_CPID="$checkpoint_id" _RB_SHA="$git_sha" _RB_TS="$timestamp" \
+    rb_event=$(_RB_CPID="$checkpoint_id" _RB_SHA="$git_sha" _RB_TS="$timestamp" \
     python3 -c "
 import json,os
 print(json.dumps({'event':'rollback','checkpoint':os.environ['_RB_CPID'],'git_sha':os.environ['_RB_SHA'],'timestamp':os.environ['_RB_TS']}))
-" >> ".loki/events.jsonl" 2>/dev/null || true
+" 2>/dev/null) || rb_event=""
+    if [ -n "$rb_event" ]; then
+        # Source the emit lib once per call to get safe_append_event_jsonl.
+        # Lib-only mode skips the emit script's normal CLI execution.
+        # shellcheck disable=SC1091
+        if [ -z "${_LOKI_EMIT_LIB_LOADED:-}" ]; then
+            LOKI_EMIT_LIB_ONLY=1 . "$(dirname "${BASH_SOURCE[0]}")/../events/emit.sh" 2>/dev/null \
+                && _LOKI_EMIT_LIB_LOADED=1
+        fi
+        if declare -f safe_append_event_jsonl >/dev/null 2>&1; then
+            safe_append_event_jsonl ".loki/events.jsonl" "$rb_event" 2>/dev/null || true
+        else
+            # Last-resort fallback: bare append (preserves prior behavior).
+            printf '%s\n' "$rb_event" >> ".loki/events.jsonl" 2>/dev/null || true
+        fi
+    fi
 
     log_info "State files restored from checkpoint: ${checkpoint_id}"
 

@@ -391,6 +391,11 @@ class MemoryStorage:
         episode_id = episode_data.get("id") or self._generate_id("episode")
         episode_data["id"] = episode_id
 
+        # Stamp namespace so retrieval can verify isolation (cross-namespace
+        # leak defense, v7.5.10). Defaults to DEFAULT_NAMESPACE for unscoped
+        # storage instances.
+        episode_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
+
         # Determine storage path based on date
         timestamp = episode_data.get("timestamp", datetime.now(timezone.utc).isoformat())
         if isinstance(timestamp, str):
@@ -557,6 +562,8 @@ class MemoryStorage:
             "created_at",
             datetime.now(timezone.utc).isoformat()
         )
+        # Stamp namespace for cross-namespace leak defense (v7.5.10).
+        pattern_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
 
         patterns_path = self.base_path / "semantic" / "patterns.json"
 
@@ -750,6 +757,8 @@ class MemoryStorage:
             "created_at",
             datetime.now(timezone.utc).isoformat()
         )
+        # Stamp namespace for cross-namespace leak defense (v7.5.10).
+        skill_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
 
         # Use skill name for filename if available, otherwise use ID
         skill_name = skill_data.get("name", skill_id)

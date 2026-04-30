@@ -221,11 +221,12 @@ export function checkSkills(): SkillStatus[] {
     try {
       const info = lstatSync(sdir);
       if (info.isSymbolicLink()) {
+        // Initialize before the try so the catch arm leaves `target` defined.
         let target = "unknown";
         try {
           target = readlinkSync(sdir);
         } catch {
-          // ignore
+          // readlink can fail on race or permission error; keep "unknown".
         }
         return {
           name,

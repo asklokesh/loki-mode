@@ -174,6 +174,63 @@ describe("checkHumanIntervention: HUMAN_INPUT.md", () => {
   });
 });
 
+describe("checkHumanIntervention: HUMAN_INPUT.md serialization (L1#5/L1#9)", () => {
+  // v7.5.10 -- the validate-then-consume sequence (lstat -> stat -> read ->
+  // rename) is now wrapped in withFileLockSync. Two cross-process readers
+  // racing for the same HUMAN_INPUT.md must serialize: exactly one consumes
+  // the payload and the other observes the file already consumed.
+  it("serializes concurrent read+remove across processes (only one wins payload)", async () => {
+    touch(join(dir, "HUMAN_INPUT.md"), "race-payload-once");
+
+    // Spawn two short-lived bun workers that each call checkHumanIntervention
+    // simultaneously. The advisory file lock at sp.humanInput must serialize
+    // them so exactly one returns action="input".
+    const workerSrc = `
+      const dir = ${JSON.stringify(dir)};
+      const { checkHumanIntervention } = await import(
+        ${JSON.stringify(new URL("../../src/runner/intervention.ts", import.meta.url).pathname)}
+      );
+      const r = checkHumanIntervention({
+        lokiDirOverride: dir,
+        promptInjectionEnabled: true,
+      });
+      console.log(JSON.stringify(r));
+    `;
+    const spawn = (): Promise<{ action: string; reason?: string; payload?: string }> => {
+      const proc = Bun.spawn(["bun", "-e", workerSrc], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return (async () => {
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        // Last non-empty line is the JSON result.
+        const line = out.trim().split("\n").filter(Boolean).pop() ?? "{}";
+        return JSON.parse(line);
+      })();
+    };
+    const [a, b] = await Promise.all([spawn(), spawn()]);
+
+    const actions = [a.action, b.action].sort();
+    // Exactly one consumed the payload, the other saw it already consumed
+    // (or quarantined). The lock guarantees no double-consumption and no
+    // crash from a TOCTOU race.
+    const inputs = [a, b].filter((r) => r.action === "input");
+    expect(inputs.length).toBe(1);
+    const winner = inputs[0];
+    if (!winner) throw new Error("unreachable -- inputs.length asserted above");
+    expect(winner.payload).toBe("race-payload-once");
+    // The losing worker must be a "continue" (file was consumed) -- never a
+    // duplicate "input" and never a thrown error.
+    expect(actions).toContain("continue");
+    // File must have been moved into logs/ exactly once.
+    expect(existsSync(join(dir, "HUMAN_INPUT.md"))).toBe(false);
+    const logs = readdirSync(join(dir, "logs"));
+    const consumed = logs.filter((f) => f.startsWith("human-input-") && !f.startsWith("human-input-REJECTED"));
+    expect(consumed.length).toBe(1);
+  }, 30_000);
+});
+
 describe("checkHumanIntervention: COUNCIL_REVIEW_REQUESTED", () => {
   it("removes the signal and continues (council subsystem not yet ported)", () => {
     touch(join(dir, "signals", "COUNCIL_REVIEW_REQUESTED"));

@@ -11,7 +11,9 @@ dashboard/.venv/
 node_modules/
 *.log
 *.tgz
-/package-lock.json
+# v7.5.10: package-lock.json is now committed (was gitignored prior).
+# Required for `npm audit` to scan production deps; also gives
+# reproducible installs for users who consume `npm install -g loki-mode`.
 
 # Python
 __pycache__/

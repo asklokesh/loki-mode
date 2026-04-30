@@ -505,3 +505,15 @@ loki heal --report
 # Strict mode: block any behavioral change without approval
 LOKI_HEAL_STRICT=true loki heal ./legacy-app
 ```
+
+## Checkpoint metadata hardening (v7.5.8)
+
+As defense-in-depth for the healing checkpoint store, the checkpoint
+writer now rejects ASCII control characters (U+0000-U+001F except TAB,
+LF, CR, plus U+007F) anywhere in checkpoint metadata keys or values
+before persisting `.loki/healing/checkpoints/<phase>.json`. This blocks
+log-injection and JSON-poisoning vectors where adapter output, friction
+notes, or institutional-knowledge excerpts could smuggle terminal
+escapes or NUL bytes into the resume path. Rejected writes raise a
+typed error and never partially overwrite the prior checkpoint, so
+`loki heal --resume` always restarts from a clean, validated state.

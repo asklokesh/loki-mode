@@ -25,3 +25,6 @@ passlib[bcrypt]>=1.7.4
 # Encryption (optional) -- Fernet encryption for user secrets.
 # Needed only for the /api/secrets endpoints in cloud mode.
 cryptography>=41.0.0
+
+# YAML parsing -- used by server.py for config loading
+pyyaml>=6.0

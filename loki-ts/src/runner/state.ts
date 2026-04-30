@@ -17,11 +17,9 @@
 // bash treats absent state as "fresh start", we mirror that).
 
 import {
-  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -29,9 +27,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { constants as fsConstants } from "node:fs";
 import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
+import { withFileLockSync } from "../util/atomic.ts";
 
 // --- injectable fs primitives (test-only) ----------------------------------
 //
@@ -160,81 +158,26 @@ function statusTxtPath(dir: string): string {
 // target concurrently, one writer's `${path}.tmp.${pid}` could race with the
 // other's rename. We acquire a per-target lockfile via O_EXCL|O_CREAT before
 // the write and release it after the rename, mirroring the flock pattern in
-// autonomy/run.sh:11729-11748. Stale locks (process crashed mid-write) are
-// detected by mtime > LOCK_STALE_MS and stolen.
-// v7.4.7: bumped from 30s -> 120s after W2-R3 HIGH finding. Sub-millisecond
-// writes (STATUS.txt / autonomy-state.json are <10KB) make 30s safe in the
-// common case, but a stalled disk, paused container (SIGSTOP, debugger), or
-// swap-thrashing host can exceed 30s. At 120s the only way to trip the
-// stealer-during-legit-write race is genuine writer death.
+// autonomy/run.sh:11729-11748.
+//
+// v7.5.10 (L5 BUG-3): the prior in-line lock used a 120s mtime threshold and
+// did `statSync(lockPath)` followed by `unlinkSync(lockPath)`, which gave a
+// TOCTOU window in which a slow-but-legitimate writer's lock could be stolen
+// between the stat and the unlink. We now delegate to the proven
+// withFileLockSync from util/atomic.ts which:
+//   1. Opens the sentinel once and uses fstat on the open fd (closes the
+//      same-inode-swap window vs stat-by-path).
+//   2. Reads the holder's pid from the sentinel and probes liveness via
+//      process.kill(pid, 0). A live holder is never reaped regardless of
+//      mtime -- this is the actual fix for "slow legitimate writer".
+//   3. Refuses symlinked sentinels (defends against a local user planting a
+//      symlink to fake staleness).
+//   4. Re-stats by path after the fstat to catch a fresh holder that took
+//      over between our open and our stat; backs off without removing.
+// staleMs stays at 120s for back-compat with state_concurrency.test.ts which
+// pre-creates an empty (no-pid) sentinel and expects it to be reaped.
 const LOCK_TTL_MS = 120_000;         // mtime threshold for declaring a lock stale
 const LOCK_MAX_WAIT_MS = 5_000;      // total time we'll wait for a contended lock
-const LOCK_BACKOFF_INITIAL_MS = 5;   // first sleep on contention
-const LOCK_BACKOFF_MAX_MS = 100;     // cap exponential backoff
-
-function sleepSyncMs(ms: number): void {
-  // Bun and Node both expose Atomics.wait via SharedArrayBuffer; use it for
-  // a real (interrupt-friendly) sync sleep that doesn't burn CPU. Fallback
-  // to a busy loop if SAB is unavailable (shouldn't happen on Bun >=1.0).
-  try {
-    const sab = new SharedArrayBuffer(4);
-    const view = new Int32Array(sab);
-    Atomics.wait(view, 0, 0, ms);
-  } catch {
-    const end = Date.now() + ms;
-    while (Date.now() < end) { /* spin */ }
-  }
-}
-
-function acquireLock(lockPath: string): number {
-  // Returns the open fd of the lockfile (caller closes + unlinks). Throws
-  // if we exhaust LOCK_MAX_WAIT_MS without acquiring.
-  const start = Date.now();
-  let backoff = LOCK_BACKOFF_INITIAL_MS;
-  // We retry on EEXIST. Stale-lock detection runs each loop so a long-dead
-  // writer's lock is reaped within one backoff cycle of detection.
-  // O_EXCL|O_CREAT|O_WRONLY is the canonical "create-if-missing" atomic op.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    try {
-      const fd = openSync(
-        lockPath,
-        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
-        0o600,
-      );
-      return fd;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== "EEXIST") throw err;
-      // Stale-lock check: if the lockfile is older than LOCK_TTL_MS the
-      // owning writer is presumed dead. unlinkSync is racy under concurrent
-      // stealers -- we tolerate ENOENT (someone else stole first) and let
-      // the next loop iteration retry the open.
-      try {
-        const st = statSync(lockPath);
-        if (Date.now() - st.mtimeMs > LOCK_TTL_MS) {
-          try { unlinkSync(lockPath); } catch { /* raced */ }
-          continue; // retry immediately after stealing
-        }
-      } catch {
-        // Lockfile vanished between EEXIST and statSync -- retry.
-        continue;
-      }
-      if (Date.now() - start >= LOCK_MAX_WAIT_MS) {
-        throw new Error(
-          `atomicWriteFileSync: could not acquire ${lockPath} within ${LOCK_MAX_WAIT_MS}ms`,
-        );
-      }
-      sleepSyncMs(backoff);
-      backoff = Math.min(backoff * 2, LOCK_BACKOFF_MAX_MS);
-    }
-  }
-}
-
-function releaseLock(lockPath: string, fd: number): void {
-  try { closeSync(fd); } catch { /* already closed */ }
-  try { unlinkSync(lockPath); } catch { /* may have been stolen */ }
-}
 
 export function atomicWriteFileSync(targetPath: string, contents: string): void {
   // v7.4.7 (W2-R3 LOW): reject targets that end in `.lock` -- they would
@@ -249,41 +192,41 @@ export function atomicWriteFileSync(targetPath: string, contents: string): void 
   // Per-process tmp suffix prevents a same-process double-write from clobbering
   // its own tmp; per-target lockfile prevents cross-process races.
   const tmpPath = `${targetPath}.tmp.${process.pid}`;
-  const lockPath = `${targetPath}.lock`;
 
-  const lockFd = acquireLock(lockPath);
-  try {
-    // Node's writeFileSync replaces the file atomically *only* via rename; the
-    // initial write to tmp may interleave on crash, which is exactly what
-    // load_state's orphan sweep is designed to clean up.
-    _writeFileSync(tmpPath, contents);
-    try {
-      _renameSync(tmpPath, targetPath);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code === "EXDEV") {
-        // Cross-device fallback: copy + unlink. Not atomic at the FS level,
-        // but the orphan sweep handles a kill -9 between copy and unlink by
-        // collecting the leftover tmp file.
-        try {
-          _copyFileSync(tmpPath, targetPath);
-          try { _unlinkSync(tmpPath); } catch { /* orphan sweep handles it */ }
-          return;
-        } catch (copyErr) {
-          // Copy failed -- best-effort cleanup of tmp and re-throw the copy
-          // error (more informative than the original EXDEV).
-          try { _unlinkSync(tmpPath); } catch { /* ignore */ }
-          throw copyErr;
+  withFileLockSync(
+    targetPath,
+    () => {
+      // Node's writeFileSync replaces the file atomically *only* via rename; the
+      // initial write to tmp may interleave on crash, which is exactly what
+      // load_state's orphan sweep is designed to clean up.
+      _writeFileSync(tmpPath, contents);
+      try {
+        _renameSync(tmpPath, targetPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code === "EXDEV") {
+          // Cross-device fallback: copy + unlink. Not atomic at the FS level,
+          // but the orphan sweep handles a kill -9 between copy and unlink by
+          // collecting the leftover tmp file.
+          try {
+            _copyFileSync(tmpPath, targetPath);
+            try { _unlinkSync(tmpPath); } catch { /* orphan sweep handles it */ }
+            return;
+          } catch (copyErr) {
+            // Copy failed -- best-effort cleanup of tmp and re-throw the copy
+            // error (more informative than the original EXDEV).
+            try { _unlinkSync(tmpPath); } catch { /* ignore */ }
+            throw copyErr;
+          }
         }
+        // Best-effort cleanup of the tmp file if rename fails for any other
+        // reason (EACCES, ENOSPC, etc.).
+        try { _unlinkSync(tmpPath); } catch { /* orphan sweep handles it */ }
+        throw err;
       }
-      // Best-effort cleanup of the tmp file if rename fails for any other
-      // reason (EACCES, ENOSPC, etc.).
-      try { _unlinkSync(tmpPath); } catch { /* orphan sweep handles it */ }
-      throw err;
-    }
-  } finally {
-    releaseLock(lockPath, lockFd);
-  }
+    },
+    { timeoutMs: LOCK_MAX_WAIT_MS, staleMs: LOCK_TTL_MS },
+  );
 }
 
 // --- save_state ------------------------------------------------------------
@@ -610,6 +553,44 @@ export function writeOrchestratorState(
   const body = `${JSON.stringify(state, null, 4)}\n`;
   atomicWriteFileSync(target, body);
   return target;
+}
+
+// v7.5.10 (L5 BUG-9): merge `currentPhase` (and optionally `iteration`)
+// into orchestrator.json, preserving every other field. Pre-v7.5.10 the
+// runner logged the RARV phase but never persisted it, so the dashboard
+// (which polls `.loki/state/orchestrator.json` every 2s) showed a stale
+// phase forever. Implementation contract:
+//   * read existing orchestrator.json (null -> seed minimal record)
+//   * shallow-merge `{ currentPhase, iteration? }` over the existing record
+//   * preserve all other top-level keys (forward-compat with dashboard)
+//   * write atomically via the same lock/rename path as writeOrchestratorState
+// Returns the path written. Never throws on missing file.
+export function updateCurrentPhase(
+  phase: string,
+  opts: { lokiDirOverride?: string; iteration?: number } = {},
+): string {
+  // v7.5.10 (R1 follow-up): readOrchestratorState rejects records that lack a
+  // currentPhase string (returns null). Using it here would silently drop
+  // every other top-level key on a partial-bootstrap record. Read the raw
+  // JSON directly instead so the merge is non-destructive.
+  const dir = resolveLokiDir(opts.lokiDirOverride);
+  const target = orchestratorStatePath(dir);
+  let base: Record<string, unknown> = {};
+  if (existsSync(target)) {
+    try {
+      const parsed = JSON.parse(readFileSync(target, "utf8")) as unknown;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Corrupt JSON -> seed fresh, just like the prior behavior would have.
+    }
+  }
+  const next: Record<string, unknown> = { ...base, currentPhase: phase };
+  if (typeof opts.iteration === "number") {
+    next["iteration"] = opts.iteration;
+  }
+  return writeOrchestratorState(next as OrchestratorState, { lokiDirOverride: opts.lokiDirOverride });
 }
 
 // --- provider --------------------------------------------------------------

@@ -27,6 +27,7 @@ import {
 import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteFileSync } from "./state.ts";
+import { withFileLockSync } from "../util/atomic.ts";
 
 // --- public types ----------------------------------------------------------
 
@@ -234,63 +235,80 @@ export function checkHumanIntervention(opts: CheckOptions = {}): InterventionRes
 
   // 3. HUMAN_INPUT.md (run.sh:11187-11222). Symlink + size + injection-enabled
   //    checks come first; on success the file is moved into logs/.
+  //
+  // L1#5 + L1#9: The validate-then-consume sequence (lstat -> stat -> read ->
+  //    rename) is a TOCTOU window. Between any two syscalls a concurrent
+  //    writer (or attacker with same-uid access) could swap the regular file
+  //    for a symlink, or replace its contents. We wrap the whole sequence in
+  //    a cross-process advisory file lock so any other intervention checker /
+  //    writer must wait. The lock is keyed on sp.humanInput so it is unique
+  //    per .loki dir.
   if (existsSync(sp.humanInput)) {
-    let lst: ReturnType<typeof lstatSync> | null = null;
-    try {
-      lst = lstatSync(sp.humanInput);
-    } catch {
-      lst = null;
-    }
-    if (lst && lst.isSymbolicLink()) {
-      // run.sh:11218-11222 -- reject and remove.
-      rmIfExists(sp.humanInput);
-      return {
-        action: "continue",
-        reason: "HUMAN_INPUT.md is a symlink - rejected for security",
-      };
-    }
-    if (!opts.promptInjectionEnabled) {
-      // run.sh:11189-11194 -- quarantine to logs/ as REJECTED.
-      quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input-REJECTED", now);
-      return {
-        action: "continue",
-        reason: "HUMAN_INPUT.md detected but prompt injection is DISABLED",
-      };
-    }
-    // Size check (run.sh:11199).
-    let size = 0;
-    try {
-      size = statSync(sp.humanInput).size;
-    } catch {
-      // Disappeared between exists and stat -- treat as absent.
-      size = -1;
-    }
-    if (size > HUMAN_INPUT_SIZE_LIMIT_BYTES) {
-      quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input-REJECTED-TOOLARGE", now);
-      return {
-        action: "continue",
-        reason: "HUMAN_INPUT.md exceeds 1MB size limit, rejecting",
-      };
-    }
-    if (size >= 0) {
-      let body = "";
-      try {
-        body = readFileSync(sp.humanInput, "utf8");
-      } catch {
-        rmIfExists(sp.humanInput);
-        return { action: "continue", reason: "HUMAN_INPUT.md unreadable" };
+    const humanResult = withFileLockSync<InterventionResult | null>(sp.humanInput, () => {
+      // Re-check inside the lock: another process may have just consumed
+      // the file before we acquired (race-on-consume).
+      if (!existsSync(sp.humanInput)) {
+        return null;
       }
-      if (body.length > 0) {
-        // run.sh:11211 moves the consumed file into logs/ for the audit trail.
-        quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input", now);
+      let lst: ReturnType<typeof lstatSync> | null = null;
+      try {
+        lst = lstatSync(sp.humanInput);
+      } catch {
+        lst = null;
+      }
+      if (lst && lst.isSymbolicLink()) {
+        // run.sh:11218-11222 -- reject and remove.
+        rmIfExists(sp.humanInput);
         return {
-          action: "input",
-          payload: body,
-          reason: "Human input detected",
+          action: "continue",
+          reason: "HUMAN_INPUT.md is a symlink - rejected for security",
         };
       }
-      // Empty file -- bash falls through (does not move). We do the same.
-    }
+      if (!opts.promptInjectionEnabled) {
+        // run.sh:11189-11194 -- quarantine to logs/ as REJECTED.
+        quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input-REJECTED", now);
+        return {
+          action: "continue",
+          reason: "HUMAN_INPUT.md detected but prompt injection is DISABLED",
+        };
+      }
+      // Size check (run.sh:11199).
+      let size = 0;
+      try {
+        size = statSync(sp.humanInput).size;
+      } catch {
+        // Disappeared between exists and stat -- treat as absent.
+        size = -1;
+      }
+      if (size > HUMAN_INPUT_SIZE_LIMIT_BYTES) {
+        quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input-REJECTED-TOOLARGE", now);
+        return {
+          action: "continue",
+          reason: "HUMAN_INPUT.md exceeds 1MB size limit, rejecting",
+        };
+      }
+      if (size >= 0) {
+        let body = "";
+        try {
+          body = readFileSync(sp.humanInput, "utf8");
+        } catch {
+          rmIfExists(sp.humanInput);
+          return { action: "continue", reason: "HUMAN_INPUT.md unreadable" };
+        }
+        if (body.length > 0) {
+          // run.sh:11211 moves the consumed file into logs/ for the audit trail.
+          quarantineHumanInput(sp.humanInput, sp.logsDir, "human-input", now);
+          return {
+            action: "input",
+            payload: body,
+            reason: "Human input detected",
+          };
+        }
+        // Empty file -- bash falls through (does not move). We do the same.
+      }
+      return null;
+    });
+    if (humanResult !== null) return humanResult;
   }
 
   // 4. COUNCIL_REVIEW_REQUESTED (run.sh:11225-11246). The bash version may

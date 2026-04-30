@@ -339,3 +339,61 @@ describe("atomicWriteFileSync (lower-level)", () => {
     expect(tmps).toHaveLength(0);
   });
 });
+
+describe("saveState: in-process concurrent persists (L5 BUG-3 regression)", () => {
+  // v7.5.10: with the inline 120s mtime-only lock from <=v7.5.9 a slow
+  // legitimate writer could be displaced via the TOCTOU window between
+  // statSync(lockPath) and unlinkSync(lockPath). We now delegate to
+  // util/atomic.ts withFileLockSync which probes the holder pid via
+  // process.kill(pid, 0). This regression test fires 10 concurrent
+  // saveStates and verifies the surviving file is one valid JSON document
+  // matching exactly one of the candidate writes -- no torn writes, no
+  // truncation, no leftover tmp/lock sentinels.
+  it("Promise.all of 10 concurrent saveState calls leaves one valid file", async () => {
+    mkdirSync(dir, { recursive: true });
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        Promise.resolve().then(() =>
+          saveState(
+            baseCtx({
+              retryCount: i,
+              iterationCount: i * 100,
+              status: `concurrent-${i}`,
+              prdPath: `/tmp/prd-${i}.md`,
+            }),
+          ),
+        ),
+      ),
+    );
+
+    // All 10 calls returned the same target path (no rename to alt names).
+    const target = results[0] as string;
+    expect(target).toBeTruthy();
+    expect(results.every((p) => p === target)).toBe(true);
+    expect(existsSync(target)).toBe(true);
+
+    // Surviving file must parse as valid JSON (no torn write).
+    const raw = readFileSync(target, "utf8");
+    expect(() => JSON.parse(raw)).not.toThrow();
+
+    // Surviving file must equal exactly one of the 10 candidate writes.
+    const loaded = loadState({ lokiDirOverride: dir });
+    expect(loaded.state).not.toBeNull();
+    const status = loaded.state?.status ?? "";
+    expect(status).toMatch(/^concurrent-\d$/);
+    const winner = Number.parseInt(status.replace("concurrent-", ""), 10);
+    expect(loaded.state?.retryCount).toBe(winner);
+    expect(loaded.state?.iterationCount).toBe(winner * 100);
+    expect(loaded.state?.prdPath).toBe(`/tmp/prd-${winner}.md`);
+
+    // No leftover tmp files (every winner's tmp got renamed; every loser
+    // was serialized behind the lock so its tmp also renamed cleanly).
+    const tmps = readdirSync(dir).filter((f) => f.includes(".tmp."));
+    expect(tmps).toEqual([]);
+
+    // No leftover lockfile (every writer released in finally).
+    const locks = readdirSync(dir).filter((f) => f.endsWith(".lock"));
+    expect(locks).toEqual([]);
+  });
+});

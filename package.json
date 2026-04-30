@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "7.5.9",
+  "version": "7.5.10",
   "description": "Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
   "keywords": [
     "agent",
@@ -102,7 +102,7 @@
   ],
   "scripts": {
     "prepack": "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; if command -v bun >/dev/null 2>&1; then (cd loki-ts && bun install --production && bun run build) || echo 'WARN: loki-ts build failed, using existing dist if present'; else echo 'WARN: bun not on PATH, skipping loki-ts build (using committed dist if present)'; fi; true",
-    "prepublishOnly": "cd dashboard-ui && npm ci && npm run build:all",
+    "prepublishOnly": "cd dashboard-ui && npm ci && npm run build:all && test -f ../dashboard/static/index.html",
     "test": "bash -n autonomy/run.sh && bash -n autonomy/loki && bash -n autonomy/completion-council.sh && bash -n autonomy/app-runner.sh && bash -n autonomy/prd-checklist.sh && bash -n autonomy/playwright-verify.sh && node --test tests/protocols/*.test.js && node --test tests/protocols/a2a/*.test.js && node --test tests/observability/*.test.js && node --test tests/policies/*.test.js && node --test tests/audit/*.test.js && node --test tests/integrations/*.test.js && node --test tests/integrations/jira/*.test.js && node --test tests/integrations/github/*.test.js && node --test tests/integrations/slack/*.test.js && bash tests/managed_memory/test_flag_matrix.sh && bash tests/managed_memory/test_sdk_isolation.sh && bash tests/managed_memory/test_kill_switch.sh && python3 -m unittest tests.managed_memory.test_shadow_write_mock tests.managed_memory.test_retrieve_mock && echo 'All checks passed'",
     "test:visual": "node --experimental-vm-modules node_modules/jest/bin/jest.js dashboard-ui/tests/visual-regression.test.js",
     "test:parity": "node --experimental-vm-modules dashboard-ui/scripts/check-parity.js",
@@ -111,7 +111,7 @@
     "test:integration": "bash tests/integration/run_integration_suite.sh"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "os": [
     "darwin",
@@ -124,7 +124,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.0"
   },
   "overrides": {
-    "protobufjs": ">=7.5.9"
+    "protobufjs": ">=7.5.6"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

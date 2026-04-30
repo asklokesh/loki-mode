@@ -740,7 +740,7 @@ async def agent_card() -> dict:
 
 
 # Status endpoint - reads from .loki/ flat files (primary) + DB (fallback)
-@app.get("/api/status", response_model=StatusResponse)
+@app.get("/api/status", response_model=StatusResponse, dependencies=[Depends(auth.require_scope("read"))])
 async def get_status() -> StatusResponse:
     """Get system status from .loki/ session files."""
     loki_dir = _get_loki_dir()

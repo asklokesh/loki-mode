@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.9
+# Loki Mode v7.5.10
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -89,7 +89,7 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 ## Model Selection
 
-**Default since v5.3.0 (reaffirmed in v7.5.9):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
+**Default since v5.3.0 (reaffirmed in v7.5.10):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
 | Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
 |-----------|------|------------------|------------------------|------------------|--------|
@@ -330,6 +330,19 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
+## Concurrency and Security Hardening (v7.5.7 - v7.5.10)
+
+Three back-to-back patches closed cross-process and security gaps. No user-facing behavior change on the default flow; verify via the cited paths.
+
+- **Cross-process file locks** on append-or-rewrite state, so parallel runs / dashboard / MCP do not corrupt shared files: gate counter (`autonomy/run.sh` gate-counter writes), task queues (`autonomy/run.sh` queue read-modify-write), checkpoint index (`autonomy/run.sh` checkpoint index updates), `events.jsonl` append (event emission paths in `events/emit.sh` and `autonomy/run.sh`), human intervention signal files (`autonomy/run.sh:check_human_intervention()` at line ~8059 / 7897 per state-machine doc).
+- **MCP path validation** -- file/path arguments to `mcp/server.py` tools are normalized and rejected if they escape the project root (path-traversal fix from v7.5.8).
+- **Dashboard auth** now required on `/api/memory/*`, `/api/learning/*`, and `/api/status` in `dashboard/server.py` (previously unauthenticated read paths).
+- **Bash quoting hardening** across `autonomy/run.sh` and `autonomy/loki` -- variable expansions inside command substitution and `[ ]` tests quoted to prevent word-splitting on paths with spaces.
+
+See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.10] for the per-fix list and reviewer sign-off.
+
+---
+
 ## Implemented Features
 
 | Feature | Added | Notes |
@@ -365,4 +378,4 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
-**v7.5.9 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.10 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

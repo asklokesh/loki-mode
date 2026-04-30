@@ -160,6 +160,16 @@ are silently dropped at load time. The override council uses a stub
 judge in v7.5.x that approves any of those six trusted proofTypes;
 real provider-backed judges land in Phase 2 of Part B.
 
+**Cross-process gate counter (v7.5.5+)**: the per-iteration gate counter
+at `.loki/state/gate-counter-<iter>.json` is now incremented under a
+cross-process file lock via `withFileLockSync` in
+`loki-ts/src/util/atomic.ts`. Concurrent gate runs (parallel worktrees,
+overlapping `runQualityGates` invocations) no longer race the
+read-modify-write, so override-council quotas and per-finding counters
+remain consistent across processes. The lock file lives at
+`.loki/state/gate-counter-<iter>.json.lock` and is released even on
+crash via the primitive's `finally` cleanup.
+
 ---
 
 ## Guardrails Execution Modes

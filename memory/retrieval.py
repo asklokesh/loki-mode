@@ -295,6 +295,42 @@ class MemoryRetrieval:
         """Get the current namespace."""
         return self._namespace
 
+    # Track which legacy entries we've already warned about to avoid log spam.
+    _LEGACY_WARN_LIMIT = 5
+    _legacy_warned_count: int = 0
+
+    def _belongs_to_namespace(self, result: Dict[str, Any]) -> bool:
+        """
+        Check if a memory result belongs to the current namespace.
+
+        Cross-namespace leak defense (v7.5.10). Storage layer should isolate
+        files by directory, but this filter provides defense-in-depth and
+        handles cases where vector indices span namespaces.
+
+        Behavior:
+        - If self._namespace is None, accept all (backward compat for unscoped retrieval).
+        - If result has "_namespace" matching, accept.
+        - If result lacks "_namespace" (legacy entry written before stamping),
+          log a deprecation warning (rate-limited) and ACCEPT for backward compat.
+        - Otherwise, reject.
+        """
+        if self._namespace is None:
+            return True
+        result_ns = result.get("_namespace")
+        if result_ns is None:
+            # Legacy entry without namespace stamp; accept for backward compat
+            # but warn so operators can re-save to add stamps.
+            if MemoryRetrieval._legacy_warned_count < MemoryRetrieval._LEGACY_WARN_LIMIT:
+                logger.warning(
+                    "Memory entry id=%s lacks '_namespace' stamp (legacy "
+                    "entry). Including in results for backward compatibility. "
+                    "Re-save this entry to enable namespace isolation.",
+                    result.get("id", "<unknown>"),
+                )
+                MemoryRetrieval._legacy_warned_count += 1
+            return True
+        return result_ns == self._namespace
+
     def with_namespace(self, namespace: str) -> "MemoryRetrieval":
         """
         Create a new MemoryRetrieval instance with a different namespace.
@@ -761,7 +797,10 @@ class MemoryRetrieval:
             item["id"] = item_id
             item["_score"] = float(score)
             item["_source"] = collection
-            items.append(item)
+            # Cross-namespace leak defense (v7.5.10): vector indices may be
+            # shared across namespaces, so filter here too.
+            if self._belongs_to_namespace(item):
+                items.append(item)
 
         return items
 
@@ -810,7 +849,8 @@ class MemoryRetrieval:
                     )
                     if data:
                         data["_source"] = "episodic"
-                        results.append(data)
+                        if self._belongs_to_namespace(data):
+                            results.append(data)
 
         # Filter semantic patterns by last_used
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
@@ -831,7 +871,8 @@ class MemoryRetrieval:
 
                     if since <= last_used_dt <= until:
                         pattern["_source"] = "semantic"
-                        results.append(pattern)
+                        if self._belongs_to_namespace(pattern):
+                            results.append(pattern)
                 except (ValueError, TypeError):
                     continue
 
@@ -1428,7 +1469,8 @@ class MemoryRetrieval:
                     data_copy = dict(data)
                     data_copy["_score"] = score
                     data_copy["_source"] = "episodic"
-                    results.append(data_copy)
+                    if self._belongs_to_namespace(data_copy):
+                        results.append(data_copy)
 
         return results
 
@@ -1457,7 +1499,8 @@ class MemoryRetrieval:
                 pattern_copy = dict(pattern)
                 pattern_copy["_score"] = score
                 pattern_copy["_source"] = "semantic"
-                results.append(pattern_copy)
+                if self._belongs_to_namespace(pattern_copy):
+                    results.append(pattern_copy)
 
         return results
 
@@ -1486,7 +1529,8 @@ class MemoryRetrieval:
                 data_copy = dict(data)
                 data_copy["_score"] = score
                 data_copy["_source"] = "skills"
-                results.append(data_copy)
+                if self._belongs_to_namespace(data_copy):
+                    results.append(data_copy)
 
         return results
 
@@ -1511,7 +1555,8 @@ class MemoryRetrieval:
                 anti_copy = dict(anti)
                 anti_copy["_score"] = score
                 anti_copy["_source"] = "anti_patterns"
-                results.append(anti_copy)
+                if self._belongs_to_namespace(anti_copy):
+                    results.append(anti_copy)
 
         return results
 

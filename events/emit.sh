@@ -11,6 +11,82 @@
 #
 # Environment:
 #   LOKI_DIR - Path to .loki directory (default: .loki)
+#
+# Sourcing:
+#   This script can also be sourced (LOKI_EMIT_LIB_ONLY=1) to expose the
+#   safe_append_event_jsonl() helper without performing an emit.
+
+# safe_append_event_jsonl <events_jsonl_path> <line>
+#
+# Cross-process serialized append to .loki/events.jsonl. POSIX append is
+# atomic only for writes <PIPE_BUF (typically 4KB) and not all filesystems
+# honor it; under parallel-worktree contention bare `>>` can interleave
+# partial JSONL lines. This helper serializes appends across processes.
+#
+# Strategy (v7.5.10):
+#   - Prefer flock(1) when available (Linux, util-linux). Uses an
+#     exclusive lock on a sentinel FD bound to <events>.lock so the lock
+#     is released automatically when the subshell exits.
+#   - Fall back to a mkdir() mutex on macOS / BSDs where flock is not
+#     installed by default. mkdir is atomic on POSIX -- exactly one
+#     concurrent caller wins the create. We retry with backoff up to
+#     ~5s, and treat a stale lockdir (>30s old) as abandonable.
+#   - The newline is appended by the helper -- callers pass the JSON
+#     payload only.
+safe_append_event_jsonl() {
+    local events_path="$1"
+    local line="$2"
+    local lock_target="${events_path}.lock"
+    local events_dir
+    events_dir="$(dirname "$events_path")"
+    mkdir -p "$events_dir" 2>/dev/null || true
+
+    if command -v flock >/dev/null 2>&1; then
+        # flock path: bind FD 9 to the sentinel file (created if absent),
+        # take an exclusive lock, append, release on subshell exit.
+        (
+            flock -x 9
+            printf '%s\n' "$line" >> "$events_path"
+        ) 9>"$lock_target"
+        return $?
+    fi
+
+    # Fallback: mkdir-based mutex. mkdir is atomic on POSIX.
+    local lock_dir="${events_path}.lockdir"
+    local attempts=0
+    local max_attempts=500   # ~5s at 10ms sleep
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge "$max_attempts" ]; then
+            # Stale lock: if the dir is older than 30s, force-remove it.
+            local age
+            age=$(( $(date +%s) - $(stat -f%m "$lock_dir" 2>/dev/null \
+                                    || stat -c%Y "$lock_dir" 2>/dev/null \
+                                    || echo 0) ))
+            if [ "$age" -gt 30 ]; then
+                rmdir "$lock_dir" 2>/dev/null || rm -rf "$lock_dir" 2>/dev/null || true
+                attempts=0
+                continue
+            fi
+            # Give up -- best-effort write so observability never blocks.
+            printf '%s\n' "$line" >> "$events_path" 2>/dev/null || true
+            return 1
+        fi
+        # Sleep ~10ms (perl avoids `sleep 0.01` portability issues).
+        perl -e 'select(undef,undef,undef,0.01)' 2>/dev/null || sleep 1
+    done
+    # Critical section.
+    printf '%s\n' "$line" >> "$events_path"
+    local rc=$?
+    rmdir "$lock_dir" 2>/dev/null || true
+    return $rc
+}
+
+# Library-only mode: source this file to get safe_append_event_jsonl
+# without executing the emit logic below.
+if [ "${LOKI_EMIT_LIB_ONLY:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 set -euo pipefail
 

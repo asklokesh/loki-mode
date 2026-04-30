@@ -248,21 +248,47 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
   const shFiles = listFilesBySuffix(join(root, "autonomy"), ".sh");
   const jsFiles = listFilesBySuffix(join(root, "scripts"), ".js");
 
-  const errors: string[] = [];
   const TIMEOUT_MS = 30_000;
+  // Concurrency limit: dispatch checks in parallel batches of N to amortize
+  // per-file subprocess latency without fork-bombing huge repos. Default 8;
+  // override via LOKI_STATIC_ANALYSIS_CONCURRENCY for tuning. Pre-v7.5.10
+  // this loop ran sequentially (worst case 50 files * 30s = 1500s).
+  const concurrencyRaw = process.env["LOKI_STATIC_ANALYSIS_CONCURRENCY"];
+  const concurrency = concurrencyRaw && Number.parseInt(concurrencyRaw, 10) > 0
+    ? Math.min(Math.max(1, Number.parseInt(concurrencyRaw, 10)), 64)
+    : 8;
 
-  for (const f of shFiles) {
-    const r = await run(["bash", "-n", f], { timeoutMs: TIMEOUT_MS });
-    if (r.exitCode !== 0) {
-      const msg = (r.stderr || r.stdout || `exit ${r.exitCode}`).trim().split(/\r?\n/).slice(0, 3).join(" | ");
-      errors.push(`bash -n ${f}: ${msg}`);
-    }
-  }
-  for (const f of jsFiles) {
-    const r = await run(["node", "--check", f], { timeoutMs: TIMEOUT_MS });
-    if (r.exitCode !== 0) {
-      const msg = (r.stderr || r.stdout || `exit ${r.exitCode}`).trim().split(/\r?\n/).slice(0, 3).join(" | ");
-      errors.push(`node --check ${f}: ${msg}`);
+  type Check = { kind: "bash" | "node"; file: string };
+  const checks: Check[] = [
+    ...shFiles.map((f): Check => ({ kind: "bash", file: f })),
+    ...jsFiles.map((f): Check => ({ kind: "node", file: f })),
+  ];
+
+  // Batched parallel dispatch via Promise.all over chunks of `concurrency`.
+  // Each chunk awaits before the next dispatches so peak subprocess count is
+  // bounded by `concurrency`. Failure aggregation preserves the original
+  // input order so error messages remain deterministic across runs.
+  const errors: string[] = [];
+  for (let i = 0; i < checks.length; i += concurrency) {
+    const chunk = checks.slice(i, i + concurrency);
+    const chunkResults = await Promise.all(
+      chunk.map(async (c) => {
+        const argv = c.kind === "bash" ? ["bash", "-n", c.file] : ["node", "--check", c.file];
+        const r = await run(argv, { timeoutMs: TIMEOUT_MS });
+        if (r.exitCode !== 0) {
+          const msg = (r.stderr || r.stdout || `exit ${r.exitCode}`)
+            .trim()
+            .split(/\r?\n/)
+            .slice(0, 3)
+            .join(" | ");
+          const label = c.kind === "bash" ? "bash -n" : "node --check";
+          return `${label} ${c.file}: ${msg}`;
+        }
+        return null;
+      }),
+    );
+    for (const e of chunkResults) {
+      if (e !== null) errors.push(e);
     }
   }
 

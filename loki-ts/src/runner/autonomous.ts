@@ -391,6 +391,21 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
       });
       log(`[runner] RARV Phase: ${phase} -> Tier: ${tier}`);
       ctx.currentTier = tier;
+
+      // v7.5.10 (L5 BUG-9): persist the RARV phase so the dashboard's
+      // 2s poll of `.loki/state/orchestrator.json` reflects the live phase
+      // instead of whatever the bootstrap writer last set. We merge into
+      // the existing record so other dashboard-critical fields
+      // (complexity, agents, metrics, ...) survive the round-trip.
+      try {
+        const stateModForPhase = await import("./state.ts");
+        stateModForPhase.updateCurrentPhase(phase, {
+          lokiDirOverride: ctx.lokiDir,
+          iteration: ctx.iterationCount,
+        });
+      } catch (err) {
+        log(`[runner] updateCurrentPhase failed (non-fatal): ${(err as Error).message}`);
+      }
     } catch (err) {
       log(`[runner] rarv module load failed (non-fatal): ${(err as Error).message}`);
     }

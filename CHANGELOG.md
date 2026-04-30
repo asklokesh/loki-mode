@@ -5,6 +5,162 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+(none)
+
+## [7.5.10] - 2026-04-29
+
+PATCH release. Mega-batch second pass: closes the remaining real items
+from the original 20-agent hunt that prior releases deferred. 20-agent
+team across discovery + implementation + review + test + UAT.
+No behavior changes for users on the default flow.
+
+### Code
+
+- **L8#1 cross-namespace memory leak (CRITICAL)**: `MemoryRetrieval`
+  was loading episodes / patterns / skills / anti-patterns from disk
+  without filtering by `_namespace`. A `MemoryRetrieval(namespace="A")`
+  query could return memories belonging to project B. Fixed:
+  - `memory/storage.py` now stamps `_namespace = self._namespace or
+    "default"` on every `save_episode`, `save_pattern`, `save_skill`.
+  - `memory/retrieval.py` adds `_belongs_to_namespace(result)` filter
+    applied in `_keyword_search_episodic`, `_keyword_search_semantic`,
+    `_keyword_search_skills`, `_keyword_search_anti_patterns`,
+    `retrieve_by_temporal`, and `retrieve_by_similarity`.
+  - Legacy entries without `_namespace` are still included with a
+    rate-limited deprecation warning (max 50 across the process) so
+    backward compat is preserved.
+  - 4 new tests in `tests/test_memory_namespace_isolation.py`.
+
+- **L5 BUG-3 state.ts atomic-write race**: `state.ts` had its own
+  inline 70-line `acquireLock`/`releaseLock` that used a 120s mtime
+  threshold with NO process-liveness check. A slow legitimate writer
+  past 120s could be displaced; TOCTOU between `statSync(lockPath)`
+  and `unlinkSync(lockPath)` could let a fresh holder be reaped.
+  Replaced with `withFileLockSync` from `src/util/atomic.ts` (the
+  v7.5.6/R4 hardened primitive: open-once-fstat-on-fd, pid liveness,
+  lstat-rejects-symlinks, re-stat to detect fresh holder). Removed
+  ~70 lines of duplicate locking code.
+
+- **L5 BUG-9 dashboard phase desync**: `OrchestratorState` declared
+  `currentPhase?: string`, the dashboard polls it every 2s, but the
+  runner only logged the RARV phase to console -- never persisted it.
+  Added `state.ts:updateCurrentPhase(phase, opts)` and wired it in
+  `autonomous.ts` after each iteration's `getRarvPhaseName()`.
+  Implementation reads raw JSON for the merge (NOT the strict
+  `readOrchestratorState` -- caught by R1 review) so it preserves all
+  other top-level keys forward-compatibly. New test asserts iter-3
+  ends with `currentPhase=="VERIFY"` and `iteration:3`.
+
+- **L1#5 + L1#9 intervention HUMAN_INPUT TOCTOU + symlink race**:
+  wrapped the validate-and-consume sequence (lstat -> stat -> read ->
+  rename) in `intervention.ts` in `withFileLockSync(sp.humanInput,
+  ...)`. Re-check inside the lock handles race-on-consume. Closes the
+  symlink-swap window between `existsSync` and `lstat`.
+
+- **L17#3 quality_gates.ts static analysis sequential loop**: was
+  `for...of await run(["bash","-n",f])` -- 50+ files * 30s timeout
+  could take 1500s sequential. Replaced with `Promise.all` chunked
+  parallelism (default 8-wide, overridable via
+  `LOKI_STATIC_ANALYSIS_CONCURRENCY` clamped 1-64). Failure
+  aggregation order preserved; new test asserts 16 files complete in
+  < 4 * single-file-time.
+
+- **L4#10 doctor.ts:218 readlinkSync target init**: `let target = ""`
+  hardened with explanatory comment; broken-symlink test added.
+
+- **L4#4 checkpoint.ts:95 promise chain silent rejection**: added
+  `console.warn("[checkpoint] serialized op rejected:", err)` in the
+  catch arm. Behavior preserved (still swallows so chain not
+  poisoned); failures now visible.
+
+- **L1#7 events.jsonl bash-side append serialization**: added
+  `safe_append_event_jsonl()` helper to `events/emit.sh` that prefers
+  `flock -x` and falls back to atomic `mkdir`-mutex on macOS where
+  flock(1) is not installed. Wired into `autonomy/run.sh` rollback
+  emit (the only direct `>>` site). New
+  `tests/test-events-jsonl-concurrency.sh` covers 10 concurrent
+  appenders -> all 10 lines intact.
+
+- **L9#2 /api/status auth scope**: added
+  `dependencies=[Depends(auth.require_scope("read"))]` to `GET
+  /api/status`. Backward-compat preserved when
+  `ENTERPRISE_AUTH_ENABLED=False` (default).
+
+- **autonomy/run.sh:483 eval audit**: confirmed safe -- Python emits
+  hardcoded `[ -z "${VAR:-}" ] && export VAR=<shlex.quote(value)>`
+  template; var names from hardcoded mapping (not user input);
+  values shlex-quoted. Added security comment block above the eval
+  documenting why it's safe and warning future maintainers not to
+  remove the `shlex.quote()` call.
+
+### Build / supply chain
+
+- **L20#1**: generated `package-lock.json` (was missing -- npm audit
+  was unable to run before this).
+- **L20#2**: bumped Node engine `>=18.0.0` -> `>=20.0.0` in
+  `package.json` and `loki-ts/package.json` (Node 18 EOL passed
+  2025-04).
+- **L20#7**: added `pyyaml>=6.0` to `web-app/requirements.txt` (web-
+  app/server.py imports yaml).
+- **L13#4**: prepublishOnly now appends `&& test -f
+  ../dashboard/static/index.html` to fail-fast if dashboard build
+  silently failed.
+- **protobufjs override fix**: serial-sed accident inflated the
+  `overrides.protobufjs` pin from `>=7.5.5` (the original v7.5.5
+  security floor) up through every release to `>=7.5.10`. Latest
+  protobufjs 7.x is `7.5.6`; constraint `>=7.5.10` would have made
+  install impossible. Reset to `>=7.5.6` (current latest 7.x;
+  satisfies the v7.5.5 security advisory).
+
+### Documentation
+
+- **README.md**: Docker quickstart tag bumped to 7.5.10.
+- **SKILL.md**: Concurrency-and-Security-Hardening section
+  (v7.5.7-v7.5.10) added before the Implemented Features table; cites
+  cross-process locks, MCP path validation, dashboard auth, and bash
+  quoting with file pointers.
+- **CLAUDE.md** (v7.5.9): "10-gate" -> "11-gate" reconciled.
+- **skills/quality-gates.md**: cross-process gate counter (v7.5.5+)
+  section added citing `withFileLockSync`.
+- **skills/healing.md**: checkpoint metadata hardening (v7.5.8)
+  section added.
+- **skills/00-index.md**: "10-gate" -> "11-gate" reconciled.
+- **CHANGELOG.md**: added `## [Unreleased]` section per Keep-a-
+  Changelog convention.
+
+### Tests
+
+- 708 bun tests pass (was 703; +5 new this release).
+- 42 python tests pass (was 37; +4 namespace isolation, +1 status
+  auth).
+- 14/14 CLI on both Bun and bash routes; 28+19+10 bash injection /
+  quoting / events concurrency.
+
+### Council deferred (low / minor; tracked)
+
+- R1#3 `LOKI_STATIC_ANALYSIS_CONCURRENCY` decimal fractional values
+  silently floor (e.g. "8.9" -> 8). Acceptable.
+- R1#4 events.jsonl mkdir-mutex stale-dir age fallback uses `||
+  echo 0` chain -- if both BSD/GNU stat fail simultaneously, age
+  would compute as huge and force-remove a live lockdir. Probability
+  near zero; flagged for future hardening.
+- R4#1 retrieval.py legacy unstamped entries: minor accept-on-
+  missing-namespace path; not exploitable since storage layer
+  already isolates by directory. Tighten in v7.6.0+ once vector
+  index spans are audited.
+- R3 minor: `autonomous.ts` uses dynamic import of `state.ts` for
+  the phase-update path; no cycle exists, could hoist to static
+  import in a follow-up.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.10 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow completes).
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- Phase 1 telemetry SDK (no consumer yet).
+
 ## [7.5.9] - 2026-04-29
 
 PATCH release. Closes the remaining low/medium-severity items from the

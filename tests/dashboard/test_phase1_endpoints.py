@@ -270,6 +270,22 @@ class Phase1EndpointTests(unittest.TestCase):
         finally:
             _auth.ENTERPRISE_AUTH_ENABLED = prev_enterprise
 
+    def test_status_requires_auth_when_enterprise_enabled(self):
+        """GET /api/status must return 401 when enterprise auth is on and no
+        token is supplied. v7.5.10: closes L9#2 (status leaked phase /
+        iteration / current_task / phase1 orchestration counts to anonymous
+        callers)."""
+        from dashboard import auth as _auth
+        prev_enterprise = _auth.ENTERPRISE_AUTH_ENABLED
+        _auth.ENTERPRISE_AUTH_ENABLED = True
+        try:
+            with _ForceLokiDir(self.tmp):
+                resp = self._client().get("/api/status")
+            self.assertEqual(resp.status_code, 401)
+            self.assertIn("authentication", resp.json()["detail"].lower())
+        finally:
+            _auth.ENTERPRISE_AUTH_ENABLED = prev_enterprise
+
 
 class CorsProductionGuardTests(unittest.TestCase):
     """v7.5.8: wildcard CORS in production must fail startup."""

@@ -377,6 +377,60 @@ describe("runAutonomous", () => {
     expect(missing).toBeNull();
   });
 
+  // v7.5.10 (L5 BUG-9): the runner used to log the RARV phase but never
+  // persist it. The dashboard polls `.loki/state/orchestrator.json` every 2s
+  // for `currentPhase`, so it always rendered the bootstrap phase. This
+  // test asserts that after each iteration the file is updated to the
+  // RARV phase that matches `getRarvPhaseName(iterationCount)`. iter 1 ->
+  // ACT, iter 2 -> REFLECT, iter 3 -> VERIFY (iter 0 -> REASON, but the
+  // loop pre-increments iterationCount before computing the phase, so the
+  // first observed phase is iter 1's ACT; we run enough iterations to
+  // hit each branch).
+  it("L5 BUG-9: RARV phase is persisted to orchestrator.json each iteration", async () => {
+    // Pin LOKI_DIR for the duration of this test so we don't depend on
+    // whatever the host shell exported.
+    const prevLokiDir = process.env["LOKI_DIR"];
+    process.env["LOKI_DIR"] = lokiDir;
+    try {
+      const fakeStateMod = new FakeStateMod();
+      const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+      const council = new FakeCouncil([false, false, false, false]);
+      const code = await runAutonomous(
+        baseOpts({
+          providerOverride: provider,
+          council,
+          stateOverride: fakeStateMod,
+          autonomyMode: "checkpoint",
+          maxIterations: 3,
+          maxRetries: 5,
+          prdPath: "/tmp/test-prd.md",
+        }),
+      );
+      expect(code).toBe(0);
+
+      // After max_iterations_reached the loop has run iters 1..3 plus the
+      // post-increment that triggers termination. The last persisted phase
+      // is from iteration 3 -> VERIFY. We assert the file exists, parses,
+      // and contains a RarvPhase string.
+      const orchestratorPath = resolve(lokiDir, "state", "orchestrator.json");
+      expect(existsSync(orchestratorPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(orchestratorPath, "utf8")) as Record<string, unknown>;
+      expect(typeof parsed["currentPhase"]).toBe("string");
+      const validPhases = new Set(["REASON", "ACT", "REFLECT", "VERIFY"]);
+      expect(validPhases.has(parsed["currentPhase"] as string)).toBe(true);
+      // Iteration 3 -> VERIFY (per rarv.getRarvPhaseName).
+      expect(parsed["currentPhase"]).toBe("VERIFY");
+      // iteration field is also persisted so the dashboard can correlate.
+      expect(parsed["iteration"]).toBe(3);
+    } finally {
+      if (prevLokiDir === undefined) {
+        delete process.env["LOKI_DIR"];
+      } else {
+        process.env["LOKI_DIR"] = prevLokiDir;
+      }
+    }
+  });
+
   it("perpetual mode never stops on council true; retries exhaust eventually", async () => {
     const provider = new FakeProvider([
       { exitCode: 0, capturedOutputPath: "" },

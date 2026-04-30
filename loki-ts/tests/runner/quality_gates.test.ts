@@ -364,6 +364,50 @@ describe("runStaticAnalysis (real Phase 5 implementation)", () => {
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("0 files clean");
   });
+
+  // v7.5.10: parallelization regression guard. Pre-v7.5.10 the gate ran
+  // checks sequentially -- 16 files at ~50ms cold-start subprocess overhead
+  // would take ~800ms. With concurrency=8 the same set should finish in
+  // roughly half the wallclock. We assert a generous upper bound rather than
+  // a tight ratio so the test is stable under CI variance: total wallclock
+  // must be substantially less than N * single-file-time.
+  it("runs many .sh files in parallel (wallclock < N * single-file-time)", async () => {
+    mkdirSync(join(scratch, "autonomy"), { recursive: true });
+    const FILE_COUNT = 16;
+    for (let i = 0; i < FILE_COUNT; i++) {
+      writeFileSync(join(scratch, "autonomy", `f${i}.sh`), "#!/bin/bash\ntrue\n");
+    }
+
+    // Measure single-file baseline.
+    const tmpSingle = mkdtempSync(join(tmpdir(), "loki-gates-single-"));
+    try {
+      mkdirSync(join(tmpSingle, "autonomy"), { recursive: true });
+      writeFileSync(join(tmpSingle, "autonomy", "only.sh"), "#!/bin/bash\ntrue\n");
+      const ctxSingle = makeCtx({ cwd: tmpSingle, lokiDir: tmpSingle });
+      const t0 = Date.now();
+      const rs = await runStaticAnalysis(ctxSingle);
+      const singleMs = Date.now() - t0;
+      expect(rs.passed).toBe(true);
+
+      // Measure batched parallel run over FILE_COUNT files.
+      const t1 = Date.now();
+      const r = await runStaticAnalysis(makeCtx());
+      const parallelMs = Date.now() - t1;
+      expect(r.passed).toBe(true);
+      expect(r.detail ?? "").toContain(`${FILE_COUNT} files clean`);
+
+      // Sequential worst case = FILE_COUNT * singleMs. Concurrency=8 should
+      // bring this to roughly 2 * singleMs (2 batches). Allow generous slack
+      // (4x) to absorb CI noise -- the regression we care about (sequential
+      // loop) would be ~16x baseline, far above this bound.
+      const sequentialEstimate = FILE_COUNT * singleMs;
+      const upperBound = Math.max(4 * singleMs, 1500); // floor at 1.5s for tiny baselines
+      expect(parallelMs).toBeLessThan(upperBound);
+      expect(parallelMs).toBeLessThan(sequentialEstimate);
+    } finally {
+      rmSync(tmpSingle, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runTestCoverage (real Phase 5 implementation)", () => {
