@@ -1,6 +1,6 @@
 <div align="center">
 
-# Loki Mode aka Autonomi
+# Loki Mode
 
 ### Build the future, faster.
 
