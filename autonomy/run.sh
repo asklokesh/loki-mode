@@ -601,6 +601,17 @@ PERPETUAL_MODE=${LOKI_PERPETUAL_MODE:-false}
 # Enterprise background service PIDs (OTEL bridge, audit subscriber, integration sync)
 ENTERPRISE_PIDS=()
 
+# Portable lock helper (v7.5.12) -- mkdir-mutex replacement for flock(1).
+# Provides safe_acquire_lock / safe_release_lock / safe_with_lock so bash
+# callers no longer need a Linux-only flock binary. Macs do not ship
+# flock; pre-7.5.12 the fallback was a non-atomic PID check that emitted
+# "[WARN] flock not available - using non-atomic PID check ...".
+LOCK_LIB="$SCRIPT_DIR/lib/lock.sh"
+if [ -f "$LOCK_LIB" ]; then
+    # shellcheck source=lib/lock.sh
+    source "$LOCK_LIB"
+fi
+
 # Completion Council (v5.25.0) - Multi-agent completion verification
 # Source completion council module
 COUNCIL_SCRIPT="$SCRIPT_DIR/completion-council.sh"
@@ -1825,23 +1836,23 @@ import_github_issues() {
                 created_at: $created
             }')
 
-        # BUG-XC-010: Create temp file in same directory as target (avoids cross-filesystem mv)
-        # and use flock for queue locking
+        # BUG-XC-010: Create temp file in same directory as target (avoids cross-filesystem mv).
+        # v7.5.12: replace flock-only queue lock with portable mkdir-mutex via
+        # safe_acquire_lock (works on macOS without util-linux flock).
         local temp_file
         temp_file=$(mktemp ".loki/queue/pending.json.tmp.XXXXXX")
         local lockfile=".loki/queue/.pending.lock"
-        (
-            if ! flock -w 5 200 2>/dev/null; then
-                log_warn "Could not acquire queue lock for issue #$number, skipping"
-                exit 1
-            fi
+        if type safe_acquire_lock >/dev/null 2>&1 && safe_acquire_lock "$lockfile" 5; then
             if jq ". += [$task_json]" "$pending_file" > "$temp_file" && mv "$temp_file" "$pending_file"; then
                 log_info "Imported issue #$number: $title"
                 task_count=$((task_count + 1))
             else
                 log_warn "Failed to import issue #$number"
             fi
-        ) 200>"$lockfile"
+            safe_release_lock "$lockfile"
+        else
+            log_warn "Could not acquire queue lock for issue #$number, skipping"
+        fi
         rm -f "$temp_file"
     done < <(echo "$issues" | jq -c '.[]')
 
@@ -3018,9 +3029,14 @@ check_skill_installed() {
 init_loki_dir() {
     log_header "Initializing Loki Mode Directory"
 
-    # Clean up stale control files ONLY if no other session is running
-    # Deleting these while another session is active would destroy its signals
-    # Use flock if available to avoid TOCTOU race
+    # Clean up stale control files ONLY if no other session is running.
+    # Deleting these while another session is active would destroy its signals.
+    #
+    # v7.5.12: PID-liveness probe replaces flock-based "is the lock held?"
+    # check. The mkdir-mutex used by safe_acquire_lock is not introspectable
+    # the same way (no FD to non-blocking-poll), but the PID file is the
+    # source of truth for liveness anyway -- a stale lockdir without a
+    # live owner means the session is gone, so cleanup is safe.
     #
     # Per-session locking (v6.4.0): When LOKI_SESSION_ID is set, only clean up
     # that session's files. Global control files (PAUSE/STOP) are only cleaned
@@ -3028,37 +3044,30 @@ init_loki_dir() {
     local lock_file can_cleanup=false
 
     if [ -n "${LOKI_SESSION_ID:-}" ]; then
-        # Per-session: check only this session's lock
+        # Per-session: PID-liveness probe
         lock_file=".loki/sessions/${LOKI_SESSION_ID}/session.lock"
         local session_pid_file=".loki/sessions/${LOKI_SESSION_ID}/loki.pid"
-        if command -v flock >/dev/null 2>&1 && [ -f "$lock_file" ]; then
-            { if flock -n 201 2>/dev/null; then can_cleanup=true; fi } 201>"$lock_file"
-        else
-            local existing_pid=""
-            if [ -f "$session_pid_file" ]; then
-                existing_pid=$(cat "$session_pid_file" 2>/dev/null)
-            fi
-            if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
-                can_cleanup=true
-            fi
+        local existing_pid=""
+        if [ -f "$session_pid_file" ]; then
+            existing_pid=$(cat "$session_pid_file" 2>/dev/null)
+        fi
+        if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
+            can_cleanup=true
         fi
         if [ "$can_cleanup" = "true" ]; then
             rm -f "$session_pid_file" 2>/dev/null
             rm -f "$lock_file" 2>/dev/null
+            rm -rf "${lock_file}.lockdir" 2>/dev/null
         fi
     else
-        # Global: original behavior
+        # Global: PID-liveness probe
         lock_file=".loki/session.lock"
-        if command -v flock >/dev/null 2>&1 && [ -f "$lock_file" ]; then
-            { if flock -n 201 2>/dev/null; then can_cleanup=true; fi } 201>"$lock_file"
-        else
-            local existing_pid=""
-            if [ -f ".loki/loki.pid" ]; then
-                existing_pid=$(cat ".loki/loki.pid" 2>/dev/null)
-            fi
-            if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
-                can_cleanup=true
-            fi
+        local existing_pid=""
+        if [ -f ".loki/loki.pid" ]; then
+            existing_pid=$(cat ".loki/loki.pid" 2>/dev/null)
+        fi
+        if [ -z "$existing_pid" ] || ! kill -0 "$existing_pid" 2>/dev/null; then
+            can_cleanup=true
         fi
         if [ "$can_cleanup" = "true" ]; then
             # v7.4.16: extended stale-signal cleanup. Pre-v7.4.16 only
@@ -3073,6 +3082,7 @@ init_loki_dir() {
             rm -f .loki/PAUSE_AT_CHECKPOINT .loki/PAUSED.md .loki/COMPLETED 2>/dev/null
             rm -f .loki/loki.pid 2>/dev/null
             rm -f .loki/session.lock 2>/dev/null
+            rm -rf .loki/session.lock.lockdir 2>/dev/null
         fi
     fi
 
@@ -3453,6 +3463,73 @@ os.replace(tmp, orch_file)
     fi
 
     LAST_KNOWN_PHASE="$new_phase"
+
+    # v7.5.12: Append a structured log entry to the active iteration task so
+    # the dashboard shows per-phase progress (REASON / ACT / REFLECT / VERIFY).
+    # No-op if no iteration is active or queue file is missing/corrupt.
+    append_iteration_task_log "${ITERATION_COUNT:-0}" "$new_phase" "info" \
+        "Phase entered: $new_phase" 2>/dev/null || true
+}
+
+# v7.5.12: append a log entry to the iteration-N task in in-progress.json.
+# Args: iteration, phase, level, message. All silent on failure -- this
+# must NEVER kill the run.
+append_iteration_task_log() {
+    local iteration="${1:-0}"
+    local phase="${2:-}"
+    local level="${3:-info}"
+    local message="${4:-}"
+    local in_progress_file=".loki/queue/in-progress.json"
+
+    [ -z "$iteration" ] && return 0
+    [ "$iteration" = "0" ] && return 0
+    [ ! -f "$in_progress_file" ] && return 0
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    ITER="$iteration" PHASE="$phase" LEVEL="$level" \
+    MESSAGE="$message" TIMESTAMP="$timestamp" \
+    python3 - "$in_progress_file" <<'PY' 2>/dev/null || true
+import json, os, sys, tempfile
+path = sys.argv[1]
+target_id = f"iteration-{os.environ['ITER']}"
+entry = {
+    "timestamp": os.environ["TIMESTAMP"],
+    "iteration": int(os.environ["ITER"]),
+    "level": os.environ.get("LEVEL", "info"),
+    "phase": os.environ.get("PHASE", ""),
+    "message": os.environ.get("MESSAGE", ""),
+}
+try:
+    with open(path) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+# Support both [...] and {tasks: [...]} shapes (matches load_queue_tasks).
+tasks = data["tasks"] if isinstance(data, dict) and isinstance(data.get("tasks"), list) else (data if isinstance(data, list) else None)
+if tasks is None:
+    sys.exit(0)
+mutated = False
+for t in tasks:
+    if not isinstance(t, dict):
+        continue
+    if t.get("id") == target_id:
+        logs = t.get("logs")
+        if not isinstance(logs, list):
+            logs = []
+        logs.append(entry)
+        t["logs"] = logs
+        mutated = True
+        break
+if not mutated:
+    sys.exit(0)
+out_dir = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(dir=out_dir, suffix=".json")
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+PY
 }
 
 #===============================================================================
@@ -3758,18 +3835,34 @@ except: pass
         task_json=$(python3 -c "
 import json, sys
 ctx = json.loads('''$next_task_context''')
+# v7.5.12: always emit acceptance_criteria, notes, logs so the dashboard
+# task model has consistent shape. default_ac covers the RARV gate-pass
+# requirements when no PRD-provided list exists.
+default_ac = [
+    'REASON phase identifies next task without errors',
+    'ACT phase produces verifiable artifacts (code/docs/tests)',
+    'REFLECT phase records progress in CONTINUITY.md',
+    'VERIFY phase passes automated tests / quality gates'
+]
 task = {
     'id': 'iteration-$iteration',
     'type': 'iteration',
     'title': ctx.get('current_task') or 'Iteration $iteration',
-    'description': ctx.get('description') or 'PRD: ${prd_escaped}',
+    'description': ctx.get('description') or 'RARV iteration $iteration. PRD: ${prd_escaped}',
     'status': 'in_progress',
     'priority': 'medium',
     'startedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'provider': '${PROVIDER_NAME:-claude}'
+    'provider': '${PROVIDER_NAME:-claude}',
+    'acceptance_criteria': ctx.get('acceptance_criteria') or default_ac,
+    'notes': [],
+    'logs': [{
+        'timestamp': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+        'iteration': $iteration,
+        'level': 'info',
+        'phase': 'BOOTSTRAP',
+        'message': 'Iteration $iteration started'
+    }]
 }
-if ctx.get('acceptance_criteria'):
-    task['acceptance_criteria'] = ctx['acceptance_criteria']
 if ctx.get('user_story'):
     task['user_story'] = ctx['user_story']
 if ctx.get('source'):
@@ -3782,27 +3875,49 @@ print(json.dumps(task, indent=2))
 
     # Fallback to basic task JSON if enrichment failed
     if [[ -z "${task_json:-}" ]]; then
+        local _start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         task_json=$(cat <<EOF
 {
   "id": "$task_id",
   "type": "iteration",
   "title": "Iteration $iteration",
-  "description": "PRD: ${prd_escaped}",
+  "description": "RARV iteration $iteration. PRD: ${prd_escaped}",
   "status": "in_progress",
   "priority": "medium",
-  "startedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "provider": "${PROVIDER_NAME:-claude}"
+  "startedAt": "$_start_ts",
+  "provider": "${PROVIDER_NAME:-claude}",
+  "acceptance_criteria": [
+    "REASON phase identifies next task without errors",
+    "ACT phase produces verifiable artifacts (code/docs/tests)",
+    "REFLECT phase records progress in CONTINUITY.md",
+    "VERIFY phase passes automated tests / quality gates"
+  ],
+  "notes": [],
+  "logs": [
+    {
+      "timestamp": "$_start_ts",
+      "iteration": $iteration,
+      "level": "info",
+      "phase": "BOOTSTRAP",
+      "message": "Iteration $iteration started"
+    }
+  ]
 }
 EOF
 )
     fi
 
     # Add to in-progress queue
-    # BUG-XC-003: Use flock for atomic queue modification
+    # BUG-XC-003: atomic queue modification.
+    # v7.5.12: portable mkdir-mutex via safe_acquire_lock (no flock needed).
+    # v7.5.12 Dev11 (R1 HIGH): gate the read-modify-write on acquire SUCCESS.
+    # The prior `safe_acquire_lock ... || true` then unconditional
+    # `safe_release_lock` mutated state on timeout AND released the OTHER
+    # holder's lock -- a mutex correctness violation. Mirror the working
+    # pattern at line 1845 (acquire-success guarded RMW + release inside).
     local in_progress_file=".loki/queue/in-progress.json"
     local lockfile=".loki/queue/.in-progress.lock"
-    (
-        flock -w 5 200 2>/dev/null || true
+    if type safe_acquire_lock >/dev/null 2>&1 && safe_acquire_lock "$lockfile" 5; then
         if [ -f "$in_progress_file" ]; then
             local existing=$(cat "$in_progress_file")
             if [ "$existing" = "[]" ] || [ -z "$existing" ]; then
@@ -3819,7 +3934,10 @@ print(json.dumps(data, indent=2))
         else
             echo "[$task_json]" > "$in_progress_file"
         fi
-    ) 200>"$lockfile"
+        safe_release_lock "$lockfile"
+    else
+        log_warn "could not acquire in-progress lock; skipping update"
+    fi
 
     # BUG-ST-014: Atomic current-task.json update via temp file + mv
     local ct_tmp=".loki/queue/current-task.json.tmp.$$"
@@ -5562,11 +5680,75 @@ enforce_static_analysis() {
                     details="${details}ESLint: $(echo "$eslint_out" | tail -3 | tr '\n' ' '). "
                 }
             else
+                # v7.5.12 (Triage #2): when tsconfig.json exists, run
+                # `tsc --noEmit -p .` ONCE so paths/baseUrl/types resolve.
+                # Per-file `tsc` invocations ignore tsconfig and false-block on
+                # path-aliased imports (e.g. `@/x`) in Next.js / NestJS /
+                # monorepo projects. Only count errors that reference files
+                # changed in this iteration; pre-existing errors in unchanged
+                # files must not block.
+                local _ts_project_mode=0
+                if [ -f "${TARGET_DIR:-.}/tsconfig.json" ] && command -v tsc &>/dev/null; then
+                    local _has_ts=0
+                    for f in $abs_files; do
+                        case "$f" in *.ts|*.tsx) _has_ts=1; break ;; esac
+                    done
+                    if [ "$_has_ts" -eq 1 ]; then
+                        _ts_project_mode=1
+                        local _tsc_out _tsc_rc=0
+                        _tsc_out=$(cd "${TARGET_DIR:-.}" && tsc --noEmit -p . 2>&1) || _tsc_rc=$?
+                        if [ "$_tsc_rc" -ne 0 ]; then
+                            local _changed_ts_errors=""
+                            for f in $js_files; do
+                                case "$f" in
+                                    *.ts|*.tsx)
+                                        # tsc emits paths relative to project root with `(line,col):` suffix.
+                                        # v7.5.12 Dev11 (R1 MED): use grep -F (literal) so filenames
+                                        # containing regex metacharacters cannot cause false positives
+                                        # or malformed regex. Two literal passes for the `(` and `:`
+                                        # suffix forms tsc emits.
+                                        if grep -qF -- "${f}(" <<<"$_tsc_out" || grep -qF -- "${f}:" <<<"$_tsc_out"; then
+                                            _changed_ts_errors="${_changed_ts_errors}${f} "
+                                        fi
+                                        ;;
+                                esac
+                            done
+                            if [ -n "$_changed_ts_errors" ]; then
+                                findings=$((findings + 1))
+                                details="${details}TS errors in changed files: ${_changed_ts_errors}. "
+                            else
+                                log_info "Static analysis: tsc -p . reported errors only in unchanged files (not blocking)"
+                            fi
+                        fi
+                    fi
+                fi
                 for f in $abs_files; do
-                    node --check "$f" 2>&1 || {
-                        findings=$((findings + 1))
-                        details="${details}Syntax error: $f. "
-                    }
+                    # node --check cannot parse TypeScript / TSX files; it
+                    # crashes with ERR_UNKNOWN_FILE_EXTENSION. Skip them when
+                    # tsc is not available; otherwise delegate to tsc.
+                    case "$f" in
+                        *.ts|*.tsx)
+                            # When tsconfig project-mode handled it above, skip
+                            # the per-file fallback to avoid duplicate / false errors.
+                            if [ "$_ts_project_mode" -eq 1 ]; then
+                                continue
+                            fi
+                            if command -v tsc &>/dev/null; then
+                                tsc --noEmit --allowJs --jsx preserve --target esnext "$f" 2>&1 || {
+                                    findings=$((findings + 1))
+                                    details="${details}TS syntax error: $f. "
+                                }
+                            else
+                                log_info "Static analysis: skipping $f (tsc not on PATH; node --check cannot parse .ts/.tsx)"
+                            fi
+                            ;;
+                        *)
+                            node --check "$f" 2>&1 || {
+                                findings=$((findings + 1))
+                                details="${details}Syntax error: $f. "
+                            }
+                            ;;
+                    esac
                 done
             fi
         fi
@@ -5612,11 +5794,14 @@ enforce_static_analysis() {
             }
         done
         if command -v shellcheck &>/dev/null; then
+            # v7.5.12 (Triage #3): only `error` severity blocks. style/info/warning
+            # findings on WIP shell scripts must not block iteration. `.shellcheckrc`
+            # in the target dir is honored automatically by shellcheck (do not override).
             for f in $sh_files; do
                 [ -f "${TARGET_DIR:-.}/$f" ] || continue
-                shellcheck "${TARGET_DIR:-.}/$f" 2>&1 || {
+                shellcheck -S error "${TARGET_DIR:-.}/$f" 2>&1 || {
                     findings=$((findings + 1))
-                    details="${details}shellcheck: $f. "
+                    details="${details}shellcheck (error severity): $f. "
                 }
             done
         fi
@@ -10593,6 +10778,8 @@ except Exception as exc:
 
         # Provider-specific invocation with dynamic tier selection
         local exit_code=0
+        # v7.5.12: Mark provider pipeline as active so SIGINT trap can kill it.
+        LOKI_PROVIDER_ACTIVE=1
         case "${PROVIDER_NAME:-claude}" in
             claude)
                 # Claude: Full features with stream-json output and agent tracking
@@ -10917,6 +11104,8 @@ if __name__ == "__main__":
                 local exit_code=1
                 ;;
         esac
+        # v7.5.12: Provider invocation finished (or was killed by trap).
+        LOKI_PROVIDER_ACTIVE=0
 
         echo ""
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -10929,6 +11118,25 @@ if __name__ == "__main__":
         local duration=$((end_time - start_time))
 
         log_info "${PROVIDER_DISPLAY_NAME:-Claude} exited with code $exit_code after ${duration}s"
+
+        # v7.5.12 Gap A: Distinguish signal-induced exits (130/143/137) from clean failure.
+        # Without this, post-iteration logic may quietly proceed past a SIGINT/SIGTERM,
+        # leaving stale state and confusing the next iteration. Any non-zero exit is a
+        # failure, but signal exits warrant a louder log line for forensic clarity.
+        case "$exit_code" in
+            130)
+                log_warn "Provider terminated by SIGINT (exit 130) -- treating as user interrupt"
+                emit_event_pending "provider_interrupted" "signal=SIGINT" "exit_code=130" 2>/dev/null || true
+                ;;
+            143)
+                log_warn "Provider terminated by SIGTERM (exit 143) -- treating as forced shutdown"
+                emit_event_pending "provider_interrupted" "signal=SIGTERM" "exit_code=143" 2>/dev/null || true
+                ;;
+            137)
+                log_warn "Provider killed by SIGKILL (exit 137) -- treating as forced shutdown"
+                emit_event_pending "provider_interrupted" "signal=SIGKILL" "exit_code=137" 2>/dev/null || true
+                ;;
+        esac
 
         # BUG-EC-013: Detect empty provider output (0 bytes = no work done)
         if [ -f "$iter_output" ] && [ ! -s "$iter_output" ] && [ $exit_code -eq 0 ]; then
@@ -11310,6 +11518,50 @@ INTERRUPT_COUNT=0
 INTERRUPT_LAST_TIME=0
 PAUSED=false
 
+# v7.5.12: Track active provider invocation for SIGINT propagation.
+# When non-zero, indicates a provider pipeline (claude/codex/gemini/cline/aider)
+# is currently running and should be killed on Ctrl+C.
+LOKI_PROVIDER_ACTIVE=0
+
+# v7.5.12: Kill provider pipeline children with SIGTERM, then SIGKILL escalation.
+# Uses pkill -P $$ to target direct children only (the pipeline subshells).
+# Returns 0 if anything was killed, 1 if no children present.
+kill_provider_child() {
+    local killed=0
+    # First pass: SIGTERM to direct children of this shell. Pipeline subshells
+    # for `claude -p | tee | python` are direct children of $$.
+    if pkill -TERM -P $$ 2>/dev/null; then
+        killed=1
+    fi
+    # Also kill provider leaf processes by name in case they were reparented.
+    local proc
+    for proc in claude codex gemini aider cline; do
+        pkill -TERM -f "^${proc}( |$)" 2>/dev/null && killed=1
+    done
+
+    # Brief wait for graceful exit (max ~2s).
+    local i=0
+    while [ $i -lt 20 ]; do
+        if ! pgrep -P $$ >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    # Escalate to SIGKILL for any survivors.
+    if pgrep -P $$ >/dev/null 2>&1; then
+        pkill -KILL -P $$ 2>/dev/null || true
+        killed=1
+    fi
+
+    LOKI_PROVIDER_ACTIVE=0
+    if [ $killed -eq 1 ]; then
+        return 0
+    fi
+    return 1
+}
+
 # Check for human intervention signals
 check_human_intervention() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
@@ -11544,7 +11796,9 @@ cleanup() {
     # Exit immediately without entering interactive pause mode
     if [ -f "$loki_dir/STOP" ]; then
         echo ""
-        log_warn "Stop signal received - shutting down"
+        log_warn "Loki Mode interrupted -- shutting down (STOP signal)"
+        # v7.5.12: Kill any running provider pipeline first, before slow cleanup.
+        kill_provider_child 2>/dev/null || true
         rm -f "$loki_dir/STOP" "$loki_dir/PAUSE" "$loki_dir/PAUSED.md" 2>/dev/null
         if type app_runner_cleanup &>/dev/null; then
             app_runner_cleanup
@@ -11582,7 +11836,11 @@ except (json.JSONDecodeError, OSError): pass
     # If double Ctrl+C within 2 seconds, exit immediately
     if [ "$time_diff" -lt 2 ] && [ "$INTERRUPT_COUNT" -gt 0 ]; then
         echo ""
-        log_warn "Double interrupt - stopping immediately"
+        log_warn "Loki Mode interrupted -- shutting down (double Ctrl+C)"
+        # v7.5.12: Kill provider pipeline immediately so we don't wait on it.
+        kill_provider_child 2>/dev/null || true
+        # Write STOP signal so any peer processes (dashboard, etc.) also stop.
+        mkdir -p "$loki_dir" 2>/dev/null && touch "$loki_dir/STOP" 2>/dev/null || true
         if type app_runner_cleanup &>/dev/null; then
             app_runner_cleanup
         fi
@@ -11630,13 +11888,20 @@ except (json.JSONDecodeError, OSError): pass
     fi
 
     # In perpetual/autonomous mode: NEVER pause, NEVER wait for input
-    # Log the interrupt but continue the iteration loop immediately
+    # v7.5.12: A single Ctrl+C now interrupts the *current provider invocation*
+    # (so the user can abort a hung iteration) but lets the loop continue.
+    # A second Ctrl+C within 2s exits via the double-interrupt branch above.
     if [ "$AUTONOMY_MODE" = "perpetual" ] || [ "$PERPETUAL_MODE" = "true" ]; then
         INTERRUPT_COUNT=$((INTERRUPT_COUNT + 1))
         INTERRUPT_LAST_TIME=$current_time
         echo ""
-        log_warn "Interrupt received in perpetual mode - ignoring (not pausing)"
-        log_info "To stop: touch .loki/STOP or press Ctrl+C twice within 2 seconds"
+        if [ "$LOKI_PROVIDER_ACTIVE" -eq 1 ]; then
+            log_warn "Interrupt received -- killing current provider invocation"
+            kill_provider_child 2>/dev/null || true
+        else
+            log_warn "Interrupt received in perpetual mode -- iteration will continue"
+        fi
+        log_info "Press Ctrl+C again within 2 seconds to exit, or touch .loki/STOP"
         echo ""
         # Check and restart dashboard if it died
         handle_dashboard_crash
@@ -11920,17 +12185,13 @@ main() {
         lock_file=".loki/session.lock"
     fi
 
-    # Use flock for atomic locking to prevent TOCTOU race conditions
-    if command -v flock >/dev/null 2>&1; then
-        # Create lock file
-        touch "$lock_file"
-
-        # Open FD 200 at process scope so flock persists for entire session lifetime
-        # (block-scoped redirection would release the lock when the block exits)
-        exec 200>"$lock_file"
-
-        # Try to acquire exclusive lock (non-blocking)
-        if ! flock -n 200 2>/dev/null; then
+    # Atomic session lock via mkdir-mutex (v7.5.12). Replaces flock-only
+    # path that emitted "[WARN] flock not available ..." on macOS. The
+    # mkdir-based lock is portable, atomic on POSIX, and self-heals via
+    # PID-stamped sentinel + 30s mtime-based stale reaping.
+    touch "$lock_file" 2>/dev/null || true
+    if type safe_acquire_lock >/dev/null 2>&1; then
+        if ! safe_acquire_lock "$lock_file" 5; then
             if [ -n "${LOKI_SESSION_ID:-}" ]; then
                 log_error "Session '${LOKI_SESSION_ID}' is already running (locked)"
                 log_error "Stop it first with: loki stop ${LOKI_SESSION_ID}"
@@ -11940,6 +12201,10 @@ main() {
             fi
             exit 1
         fi
+        # Release on session-process exit so a fresh `loki start` can
+        # immediately re-acquire after this one finishes / is killed.
+        # shellcheck disable=SC2064
+        trap "safe_release_lock '$lock_file'" EXIT INT TERM HUP
 
         # Check PID file after acquiring lock
         if [ -f "$pid_file" ]; then
@@ -11958,12 +12223,10 @@ main() {
             fi
         fi
     else
-        # Fallback to original behavior if flock not available
-        log_warn "flock not available - using non-atomic PID check (race condition possible)"
+        # Lock helper not loaded (lib/lock.sh missing). PID-only fallback.
         if [ -f "$pid_file" ]; then
             local existing_pid
             existing_pid=$(cat "$pid_file" 2>/dev/null)
-            # Skip if it's our own PID or parent PID (background mode writes PID before child starts)
             if [ -n "$existing_pid" ] && [ "$existing_pid" != "$$" ] && [ "$existing_pid" != "$PPID" ] && kill -0 "$existing_pid" 2>/dev/null; then
                 if [ -n "${LOKI_SESSION_ID:-}" ]; then
                     log_error "Session '${LOKI_SESSION_ID}' is already running (PID: $existing_pid)"

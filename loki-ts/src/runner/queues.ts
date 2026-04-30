@@ -116,6 +116,13 @@ interface PrdTask {
   priority: "high" | "medium" | "low";
   status: "pending";
   source: "prd" | "bmad" | "openspec" | "mirofish";
+  // v7.5.12: optional enrichment fields. Writers may populate any subset;
+  // the bash track_iteration_start() promotes these into the in-progress
+  // queue so the dashboard task model has consistent shape (description,
+  // acceptance_criteria, notes, per-iteration logs).
+  acceptance_criteria?: string[];
+  notes?: { timestamp: string; author?: string; body: string }[];
+  logs?: { timestamp: string; iteration?: number; level?: string; phase?: string; message: string }[];
 }
 
 // Read existing pending.json, supporting both bare-list and {tasks: [...]}
@@ -247,6 +254,15 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
         priority: priorityFor(i, features.length),
         status: "pending",
         source: "prd",
+        // v7.5.12: seed minimal acceptance_criteria so the iteration task
+        // bash promotes these into the in-progress queue with detail.
+        acceptance_criteria: [
+          `Feature implemented: ${title}`,
+          "Tests added or updated for the feature",
+          "Quality gates pass (lint, typecheck, unit tests)",
+        ],
+        notes: [],
+        logs: [],
       });
     }
 

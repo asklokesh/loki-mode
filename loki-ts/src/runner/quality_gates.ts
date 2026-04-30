@@ -232,10 +232,14 @@ function listFilesBySuffix(dir: string, suffix: string): string[] {
 }
 
 // Phase 5 real implementation. Mirrors the bash `enforce_static_analysis`
-// shell-script + JS branches at autonomy/run.sh:5572-5593 and 5516-5543, but
-// scoped to the directory layout the spec calls out (autonomy/*.sh +
-// scripts/*.js). Both subprocess wrappers honor a 30s timeout per file so a
-// hung interpreter cannot stall the iteration.
+// shell-script + JS branches at autonomy/run.sh:5540-5654. Targets are
+// derived from the git diff (HEAD~1 -> --cached fallback -> all tracked
+// files on shallow clones / first commit) so the gate works on ANY user
+// repo, not just loki-mode's own layout. Pre-v7.5.12 this hardcoded
+// `autonomy/*.sh` + `scripts/*.js`, which silently scanned 0 files on
+// every external user's project (triage #12). Both subprocess wrappers
+// honor a 30s timeout per file so a hung interpreter cannot stall the
+// iteration.
 //
 // Honors LOKI_STUB_GATE_STATIC_ANALYSIS for tests that prefer to drive the
 // orchestrator without spawning real subprocesses (the stub override wins).
@@ -245,8 +249,66 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
   if (stubVal === "fail" || stubVal === "pass") return stubResult("static_analysis");
 
   const root = ctx?.cwd ?? process.cwd();
-  const shFiles = listFilesBySuffix(join(root, "autonomy"), ".sh");
-  const jsFiles = listFilesBySuffix(join(root, "scripts"), ".js");
+
+  // Diff-based file enumeration. Order matches the bash chain at
+  // autonomy/run.sh:5547-5549, with an extra fallback to `git ls-files` so
+  // shallow clones / first commits (no HEAD~1, no staged changes) still
+  // get a meaningful scan instead of "0 files clean". Triage #13 covers
+  // the missing-HEAD~1 case; without the ls-files fallback this gate
+  // would degrade to a no-op for any single-commit user repo.
+  // tryGit distinguishes "git command failed" (null) from "git succeeded
+  // with empty output" (""), so a clean post-commit state is NOT confused
+  // with a missing HEAD~1 / shallow clone. Pre-Dev11 a clean iteration
+  // (exit 0 + "" from `git diff HEAD~1 HEAD`) was treated as "no signal"
+  // and fell through to `git ls-files`, scanning the entire repo every
+  // iteration -- a big perf regression on healthy repos. Now: empty-but-
+  // successful means "no changes this iteration" -- gate passes with
+  // 0 files. ls-files is reserved for the genuine shallow-clone /
+  // single-commit case (HEAD~1 absent AND --cached empty AND repo
+  // actually has tracked files).
+  const tryGit = async (args: readonly string[]): Promise<string | null> => {
+    const r = await run(["git", "-C", root, ...args], { timeoutMs: 30_000 });
+    if (r.exitCode !== 0) return null;
+    return r.stdout;
+  };
+  let changedRaw: string;
+  const headTilde = await tryGit(["diff", "--name-only", "HEAD~1", "HEAD"]);
+  if (headTilde !== null) {
+    // HEAD~1 resolved -- successful diff. Empty stdout here is the
+    // legitimate "no changes this iteration" signal; honor it.
+    changedRaw = headTilde;
+  } else {
+    // HEAD~1 did not resolve (single commit / shallow clone / not a
+    // repo). Try the staged-changes fallback next.
+    const cached = await tryGit(["diff", "--name-only", "--cached"]);
+    if (cached !== null && cached.trim().length > 0) {
+      changedRaw = cached;
+    } else {
+      // Either git failed entirely or both diff probes returned empty.
+      // Only fall back to ls-files if the repo actually has files;
+      // otherwise return empty (not-a-repo or empty-repo => 0 files).
+      const lsFiles = await tryGit(["ls-files"]);
+      changedRaw = lsFiles !== null && lsFiles.trim().length > 0 ? lsFiles : "";
+    }
+  }
+  const changedRel = changedRaw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  const shFiles: string[] = [];
+  const jsFiles: string[] = [];
+  for (const rel of changedRel) {
+    // Skip TS/TSX (handled by typecheck route, not node --check).
+    if (/\.(ts|tsx)$/i.test(rel)) continue;
+    const abs = join(root, rel);
+    if (!existsSync(abs)) continue; // deleted/renamed entries
+    if (rel.endsWith(".sh")) {
+      shFiles.push(abs);
+    } else if (/\.(js|mjs|cjs)$/i.test(rel)) {
+      jsFiles.push(abs);
+    }
+  }
 
   const TIMEOUT_MS = 30_000;
   // Concurrency limit: dispatch checks in parallel batches of N to amortize
@@ -259,9 +321,14 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
     : 8;
 
   type Check = { kind: "bash" | "node"; file: string };
+  // Defensive: even though listFilesBySuffix is scoped to ".js", filter out
+  // any .ts/.tsx that may have slipped in (e.g. if a future caller changes
+  // enumeration). `node --check` crashes with ERR_UNKNOWN_FILE_EXTENSION on
+  // TypeScript/TSX; see autonomy/run.sh:5566 for the same guard.
+  const safeJsFiles = jsFiles.filter((f) => !f.endsWith(".ts") && !f.endsWith(".tsx"));
   const checks: Check[] = [
     ...shFiles.map((f): Check => ({ kind: "bash", file: f })),
-    ...jsFiles.map((f): Check => ({ kind: "node", file: f })),
+    ...safeJsFiles.map((f): Check => ({ kind: "node", file: f })),
   ];
 
   // Batched parallel dispatch via Promise.all over chunks of `concurrency`.
@@ -292,7 +359,7 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
     }
   }
 
-  const total = shFiles.length + jsFiles.length;
+  const total = shFiles.length + safeJsFiles.length;
   if (errors.length > 0) {
     return {
       passed: false,
@@ -1093,11 +1160,15 @@ const DOC_MIN_BYTES = 64;
 
 function listDocFiles(root: string): { path: string; required: boolean }[] {
   const out: { path: string; required: boolean }[] = [];
-  // Required top-level docs. README is the user-facing entry, CLAUDE.md
-  // carries the rules, SKILL.md is the skill manifest -- all first-class
-  // artifacts of this repo.
-  for (const name of ["README.md", "CLAUDE.md", "SKILL.md"]) {
-    out.push({ path: join(root, name), required: true });
+  // README.md is the only universally-required top-level doc. CLAUDE.md and
+  // SKILL.md are loki-mode-INTERNAL artifacts (the repo's own rules file +
+  // skill manifest). User projects driven by `loki start` will not have
+  // them, and pre-v7.5.12 the gate hard-failed every external user's first
+  // iteration because of this. They are still scanned for link/header
+  // hygiene WHEN PRESENT, but absence is not a blocker.
+  out.push({ path: join(root, "README.md"), required: true });
+  for (const name of ["CLAUDE.md", "SKILL.md"]) {
+    out.push({ path: join(root, name), required: false });
   }
   // docs/**/*.md -- best-effort, optional. Missing dir is fine.
   const docsDir = join(root, "docs");

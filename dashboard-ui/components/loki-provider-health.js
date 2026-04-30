@@ -353,7 +353,7 @@ export class LokiProviderHealth extends LokiElement {
       content = '<div class="empty-state">No provider data available</div>';
     } else {
       content = `<div class="provider-grid">${this._providers.map(p => {
-        const icon = PROVIDER_ICONS[p.name] || { initial: p.name.charAt(0).toUpperCase(), color: '#939084', bgColor: 'rgba(147, 144, 132, 0.12)' };
+        const icon = PROVIDER_ICONS[p.name] || { initial: (p.name ?? '?').charAt(0).toUpperCase(), color: '#939084', bgColor: 'rgba(147, 144, 132, 0.12)' };
         const statusColor = STATUS_COLORS[p.status] || STATUS_COLORS.unknown;
         const isExpanded = this._expandedProvider === p.name;
         const rateLimitPct = p.rate_limit ? ((p.rate_limit.remaining / p.rate_limit.limit) * 100) : 100;

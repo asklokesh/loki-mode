@@ -9,6 +9,188 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.12] - 2026-04-29
+
+PATCH release. **Real-user adoption fixes** triggered by the user
+running `loki start` on a real React/Express SaaS project (EC2Renter)
+and hitting 5 user-visible bugs in the first iteration. Triage agent
+found 15 more. 20-agent team (1 lead + 1 senior owner + 10 devs +
+4 reviewers + 2 testers + 2 UAT users + 1 doc agent + 1 triage)
+delivered 12 verified fixes covering both ship-blockers and quality-
+of-life regressions.
+
+### User-reported bugs (5)
+
+- **`.tsx` static analysis crash**: `node --check` was invoked on
+  `.tsx` files producing 9 `ERR_UNKNOWN_FILE_EXTENSION` stack traces
+  per iteration. Fixed in BOTH routes:
+  - `autonomy/run.sh:5566`: routes `.ts/.tsx` to `tsc --noEmit
+    --allowJs --jsx preserve --target esnext` if `tsc` on PATH;
+    skips with informational log otherwise.
+  - `loki-ts/src/runner/quality_gates.ts:266-271`: defensive filter
+    excludes `.ts/.tsx` from the node-check enumeration.
+  - Regression test: a fixture dir with `foo.tsx` no longer crashes
+    the gate.
+- **App Runner false-FAILED on Docker Compose**: containers actually
+  started (`Container ec2renter-postgres Started`) but the dashboard
+  showed FAILED. Root cause: brittle one-liner at
+  `autonomy/app-runner.sh:506` did not poll for state transitions.
+  Replaced with `_app_runner_compose_running_count()` helper that
+  polls `docker compose ps --format '{{.State}}'` for 30s
+  (`LOKI_COMPOSE_HEALTH_TIMEOUT` configurable). Logs full
+  `docker compose ps` output on failure for postmortem. Also added
+  `_app_runner_compose_dir()` so health checks `cd` into the actual
+  compose-file directory. New smoke test
+  `tests/test-app-runner-compose.sh` (4 assertions, all pass against
+  real Docker; SKIPs gracefully when Docker is unavailable).
+- **Vague task cards in dashboard**: tasks displayed only "Iteration
+  1" + tag + status with no description, acceptance criteria,
+  notes, or per-iteration logs. Fixed across the stack:
+  - `dashboard/models.py:144-149`: 3 new nullable Text columns
+    (`acceptance_criteria`, `notes`, `logs`) on Task. Idempotent
+    migration in `database.py:_apply_task_enrichment_migration()`
+    (PRAGMA-driven `ALTER TABLE ADD COLUMN`) so legacy SQLite DBs
+    gain the columns on next boot.
+  - `dashboard/server.py:203,167-226`: new `TaskNote` and `TaskLog`
+    Pydantic models; `TaskCreate/Update/Response` extended with
+    the new lists (default `[]`).
+  - `autonomy/run.sh`: `track_iteration_start` now seeds default
+    RARV gate criteria + initial BOOTSTRAP log entry. New
+    `append_iteration_task_log()` helper appends per-phase logs;
+    wired to `set_phase()`.
+  - `loki-ts/src/runner/queues.ts`: `PrdTask` interface gained the
+    optional fields; `populatePrdQueue` seeds defaults.
+  - `dashboard-ui/components/loki-task-board.js`: detail modal now
+    renders Description (markdown), Specification, Acceptance
+    Criteria (checkboxes), Notes (timeline with author + body), and
+    Logs (scrollable monospace grid color-coded by RARV phase).
+    Bundle mirror in `dashboard/static/index.html`.
+  - 3 new tests in `tests/dashboard/test_task_enrichment.py`.
+- **Ctrl+C ignored**: user pressed `^C` 9 times during a `loki start`
+  run; nothing happened. Had to open a new terminal to `loki stop`.
+  Root cause: trap on SIGINT existed but never killed the active
+  provider subprocess (claude / codex / gemini). Fixed in
+  `autonomy/run.sh`:
+  - New `kill_provider_child()` helper: `pkill -TERM -P $$` on
+    direct children + named provider processes, 2s grace, then
+    SIGKILL escalation.
+  - New `LOKI_PROVIDER_ACTIVE` global tracks active invocations.
+  - 3 trap branches updated (STOP-file, double-Ctrl+C escape,
+    perpetual-mode single-Ctrl+C) to call the helper first and
+    print "Loki Mode interrupted -- shutting down".
+  - New `tests/integration/test_sigint_propagation.sh` (4 tests, all
+    pass).
+- **`flock not available` warning on macOS**: bash route used `flock`
+  which Linux-only. Replaced with portable mkdir-mutex. New
+  `autonomy/lib/lock.sh` (140 lines) provides `safe_acquire_lock`,
+  `safe_release_lock`, `safe_with_lock` with stale-PID detection
+  (sentinel + age check + liveness probe), 50ms poll, 5s default
+  timeout. Wired into 4 call sites in `autonomy/run.sh` (queue
+  writes, in-progress task registration, session lock, init
+  detection). The non-atomic-PID warning is gone. Smoke test: 10
+  concurrent appenders preserve 10/10 lines.
+
+### Triage-found bugs (10 of 15 highest-severity, fixed)
+
+- **Doc gate hard-required CLAUDE.md + SKILL.md** (ship-blocker for
+  every external user): `loki-ts/src/runner/quality_gates.ts:1100-
+  1115` (listDocFiles) made `CLAUDE.md` and `SKILL.md` `required:
+  false`. Only `README.md` is required. Comment explains they are
+  loki-mode-internal artifacts. New regression test for user-style
+  repo with only README.md.
+- **Static analysis hardcoded to loki-mode repo layout** (ship-
+  blocker): `quality_gates.ts:242-308` (runStaticAnalysis) replaced
+  hardcoded `autonomy/*.sh + scripts/*.js` with diff-based
+  enumeration mirroring the bash route. Chain: `git diff --name-only
+  HEAD~1 HEAD` -> `git diff --cached` -> `git ls-files`. Filters to
+  `.sh|.js|.mjs|.cjs`, skips `.ts/.tsx` (handled by Dev9 below),
+  skips deletions. Single-commit and shallow-clone fallbacks
+  covered.
+- **TS gate ignored tsconfig.json paths**: `autonomy/run.sh:5678-
+  5747` (TS branch). When tsconfig.json exists, runs `tsc --noEmit
+  -p .` ONCE inside `${TARGET_DIR}` so `paths`/`baseUrl`/`types`
+  resolve. Errors filtered to changed files only; pre-existing
+  errors in unchanged files are logged but not blocking. Fixes the
+  "@/components/x cannot find module" failure on every Next.js /
+  NestJS / monorepo project.
+- **Shellcheck blocked on style severity**: `autonomy/run.sh:5790-
+  5798`. Added `-S error` so only error severity blocks. Honors
+  `.shellcheckrc` automatically.
+- **Dashboard React null guards**: 7 components fixed for
+  `TypeError: Cannot read properties of undefined`:
+  loki-cost-dashboard.js, loki-learning-dashboard.js,
+  loki-memory-browser.js, loki-tool-insights.js, loki-analytics.js,
+  loki-provider-health.js, loki-task-board.js. Pattern: `Number(x
+  ?? 0).toFixed(N)`, `(x ?? 0).toLocaleString()`, `(x ??
+  '?').charAt(0)`, `String(x ?? '').substring(0, N)`. Bundle mirror
+  in `dashboard/static/index.html`.
+- **Exit-code propagation audit**: `autonomy/run.sh:10968-10984`.
+  Provider exits 130 (SIGINT), 143 (SIGTERM), 137 (SIGKILL) now
+  emit `provider_interrupted` events with the signal name. Forensic
+  clarity for users who see a half-finished iteration.
+- **Stale lock cleanup on hard-kill**: `autonomy/loki:1382-1402`.
+  `cmd_start` now does an explicit pre-exec stale-PID check on
+  `.loki/loki.pid`. Live PID -> error + clear message; stale ->
+  log + remove + continue. Test
+  `tests/cli/test_stale_pid_cleanup.sh` (4 assertions, all pass).
+
+### Documentation
+
+- README header is **"Loki Mode aka Autonomi"** (per v7.5.11) with
+  spec-formats expandable section.
+- npm package.json description includes all 5 providers and 11
+  quality gates with spec framing.
+- GitHub repo description + 19 topics live (per v7.5.11).
+
+### Verified false positives (not changed; documented for honesty)
+
+- LOKI_CODEX_OUTPUT_LAST default (v7.5.9): both routes default ON.
+- status flag-parsing infinite loop (v7.5.9): early-return per-flag,
+  no infinite path.
+
+### Council deferred (low / minor)
+
+- Triage #1 Python gate `python3 -m py_compile` fails on PEP 695 if
+  system python3 < 3.12 -- needs venv detection (deferred).
+- Triage #4 missing per-framework detection in app-runner.sh
+  (Next.js/Nuxt/Astro/SvelteKit named branches) -- deferred.
+- Triage #5 `pip install` no virtualenv -- PEP 668 fails on
+  Homebrew Python -- deferred.
+- Triage #6 missing Ruby/Elixir/Java/PHP detection -- deferred.
+- Triage #14 pytest gate no timeout wrapper -- deferred.
+- Triage #15 `/api/memory/episodes` no per-file try/except --
+  deferred.
+- Multi-provider degradation matrix on EC2Renter (Dev7 found
+  hardcoded `claude` invocations at `run.sh:2603, 6628, 6845`):
+  conflict resolution and code review paths assume claude. Tracked
+  for v7.5.13.
+- UAT1 found: `loki web` launches Purple Lab (port 57375) not the
+  dashboard (port 57374); dashboard exits when parent shell exits
+  (no nohup wrap); no Escalations nav item. Tracked.
+
+### Tests
+
+- 712 bun tests pass (was 708).
+- 45 Python tests pass (4 new for namespace, 3 new for task
+  enrichment, plus existing).
+- 14/14 CLI on both Bun and bash routes.
+- New: 4 tests in `test-app-runner-compose.sh`, 6 in
+  `test-static-analysis-tsconfig.sh`, 4 in
+  `test_sigint_propagation.sh`, 4 in `test_stale_pid_cleanup.sh`,
+  3 in `test_task_enrichment.py`.
+- local-ci 20/20 PASS first try.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.12 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow
+  completes).
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- Triage #1, #4-#6, #14-#15 + 3 UAT-found bugs deferred to v7.5.13
+  with explicit list above.
+- Multi-provider degradation matrix (codex/gemini path against a
+  full real-world SaaS) deferred to v7.5.13.
+
 ## [7.5.11] - 2026-04-29
 
 PATCH release. Documentation-only refresh: rename the user-facing

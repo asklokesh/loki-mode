@@ -164,6 +164,78 @@ def _sanitize_text_field(value: str) -> str:
     return cleaned
 
 
+def _decode_task_json_list(raw: Optional[str]) -> list:
+    """Decode a JSON-encoded list column on the Task model.
+
+    v7.5.12 enrichment columns (acceptance_criteria, notes, logs) are stored
+    as JSON-encoded text. Returns [] for NULL / empty / malformed values so
+    the API response is always shape-stable.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _encode_task_json_list(value: Any) -> Optional[str]:
+    """Encode a list (or list-of-pydantic-models) as JSON for storage.
+
+    Pydantic models are dumped via .model_dump(mode='json') so nested
+    datetimes serialize as ISO strings. Plain dicts go through a
+    datetime-aware encoder fallback (PUT requests reach here as dicts
+    via model_dump(exclude_unset=True), which leaves datetimes raw).
+    Returns None for empty/None input so we don't write empty strings
+    into the column.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        return None
+    out = []
+    for item in value:
+        if hasattr(item, "model_dump"):
+            out.append(item.model_dump(mode="json"))
+        else:
+            out.append(item)
+    return json.dumps(out, default=_json_default)
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON encoder fallback for datetime / date objects."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _task_response_from_db(task: Any) -> "TaskResponse":
+    """Build a TaskResponse from a Task ORM row, decoding JSON columns."""
+    payload = {
+        "id": task.id,
+        "project_id": task.project_id,
+        "title": task.title,
+        "description": task.description,
+        "status": task.status,
+        "priority": task.priority,
+        "position": task.position,
+        "assigned_agent_id": task.assigned_agent_id,
+        "parent_task_id": task.parent_task_id,
+        "estimated_duration": task.estimated_duration,
+        "actual_duration": task.actual_duration,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "completed_at": task.completed_at,
+        "acceptance_criteria": _decode_task_json_list(
+            getattr(task, "acceptance_criteria", None)
+        ),
+        "notes": _decode_task_json_list(getattr(task, "notes", None)),
+        "logs": _decode_task_json_list(getattr(task, "logs", None)),
+    }
+    return TaskResponse.model_validate(payload)
+
+
 class ProjectCreate(BaseModel):
     """Schema for creating a project."""
     name: str = Field(..., min_length=1, max_length=255)
@@ -200,6 +272,26 @@ class ProjectResponse(BaseModel):
     completed_task_count: int = 0
 
 
+class TaskNote(BaseModel):
+    """A single note attached to a task (v7.5.12)."""
+    timestamp: datetime
+    author: str = "system"
+    body: str
+
+
+class TaskLog(BaseModel):
+    """A single log entry attached to a task (v7.5.12).
+
+    Written by the runner after each RARV phase (REASON, ACT, REFLECT,
+    VERIFY) so the dashboard can show per-iteration progress.
+    """
+    timestamp: datetime
+    iteration: Optional[int] = None
+    level: str = "info"  # info | warn | error
+    phase: Optional[str] = None  # REASON | ACT | REFLECT | VERIFY | ...
+    message: str
+
+
 class TaskCreate(BaseModel):
     """Schema for creating a task."""
     project_id: int
@@ -210,6 +302,10 @@ class TaskCreate(BaseModel):
     position: int = 0
     parent_task_id: Optional[int] = None
     estimated_duration: Optional[int] = None
+    # v7.5.12 enrichment (additive, all optional, default to empty list).
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    notes: list[TaskNote] = Field(default_factory=list)
+    logs: list[TaskLog] = Field(default_factory=list)
 
     @field_validator("title")
     @classmethod
@@ -227,6 +323,11 @@ class TaskUpdate(BaseModel):
     assigned_agent_id: Optional[int] = None
     estimated_duration: Optional[int] = None
     actual_duration: Optional[int] = None
+    # v7.5.12 enrichment. Clients PUT a full replacement list when supplied;
+    # omitted fields are left untouched (Pydantic exclude_unset semantics).
+    acceptance_criteria: Optional[list[str]] = None
+    notes: Optional[list[TaskNote]] = None
+    logs: Optional[list[TaskLog]] = None
 
 
 class TaskMove(BaseModel):
@@ -253,6 +354,12 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
+    # v7.5.12 enrichment. Always present in the response (default to []) so
+    # frontend code can rely on the shape; legacy DB rows with NULL columns
+    # surface as empty lists via _decode_task_json_list().
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    notes: list[TaskNote] = Field(default_factory=list)
+    logs: list[TaskLog] = Field(default_factory=list)
 
 
 class SessionInfo(BaseModel):
@@ -1428,6 +1535,12 @@ async def list_tasks(
                                     task_entry["project"] = item["project"]
                                 if item.get("source"):
                                     task_entry["source"] = item["source"]
+                                # v7.5.12: pass-through enrichment fields so
+                                # the dashboard can render notes + per-phase logs.
+                                if isinstance(item.get("notes"), list):
+                                    task_entry["notes"] = item["notes"]
+                                if isinstance(item.get("logs"), list):
+                                    task_entry["logs"] = item["logs"]
                                 all_tasks.append(task_entry)
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -1519,6 +1632,9 @@ async def create_task(
         position=task.position,
         parent_task_id=task.parent_task_id,
         estimated_duration=task.estimated_duration,
+        acceptance_criteria=_encode_task_json_list(task.acceptance_criteria),
+        notes=_encode_task_json_list(task.notes),
+        logs=_encode_task_json_list(task.logs),
     )
     db.add(db_task)
     await db.flush()
@@ -1535,7 +1651,7 @@ async def create_task(
         },
     })
 
-    return TaskResponse.model_validate(db_task)
+    return _task_response_from_db(db_task)
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskResponse)
@@ -1552,7 +1668,7 @@ async def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    return TaskResponse.model_validate(task)
+    return _task_response_from_db(task)
 
 
 @app.put("/api/tasks/{task_id}", response_model=TaskResponse, dependencies=[Depends(auth.require_scope("control"))])
@@ -1579,6 +1695,11 @@ async def update_task(
         else:
             update_data["completed_at"] = None
 
+    # v7.5.12: encode enrichment list columns as JSON before persisting.
+    for _enrich_col in ("acceptance_criteria", "notes", "logs"):
+        if _enrich_col in update_data:
+            update_data[_enrich_col] = _encode_task_json_list(update_data[_enrich_col])
+
     for field, value in update_data.items():
         setattr(task, field, value)
 
@@ -1596,7 +1717,7 @@ async def update_task(
         },
     })
 
-    return TaskResponse.model_validate(task)
+    return _task_response_from_db(task)
 
 
 @app.delete("/api/tasks/{task_id}", status_code=204, dependencies=[Depends(auth.require_scope("control"))])
@@ -1696,7 +1817,7 @@ async def move_task(
         },
     })
 
-    return TaskResponse.model_validate(task)
+    return _task_response_from_db(task)
 
 
 # WebSocket endpoint

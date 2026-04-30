@@ -1379,6 +1379,28 @@ cmd_start() {
         fi
     fi
 
+    # v7.5.12 Gap B: Stale-PID detection. Hard-kill (Ctrl+C followed by SIGKILL or
+    # `loki stop`) can leave .loki/loki.pid + .loki/session.lock orphaned. The
+    # next `loki start` then refuses to launch -- or worse, run.sh's downstream
+    # cleanup may treat the stale pid as live. Detect-and-clean here, BEFORE
+    # exec, so the user gets one clear log line instead of mysterious silent
+    # behavior.
+    local _start_loki_dir="${LOKI_DIR:-.loki}"
+    local _start_pid_file="$_start_loki_dir/loki.pid"
+    if [ -f "$_start_pid_file" ]; then
+        local _existing_pid
+        _existing_pid=$(cat "$_start_pid_file" 2>/dev/null | tr -dc '0-9')
+        if [ -n "$_existing_pid" ] && kill -0 "$_existing_pid" 2>/dev/null; then
+            echo -e "${RED}Error: another loki instance is running (pid $_existing_pid).${NC}" >&2
+            echo -e "${YELLOW}Run 'loki stop' first, then retry 'loki start'.${NC}" >&2
+            exit 1
+        fi
+        # PID is stale (file present but process gone). Log + remove + continue.
+        echo -e "${YELLOW}Removing stale pid file ($_start_pid_file, pid=${_existing_pid:-empty} not alive)${NC}" >&2
+        rm -f "$_start_pid_file" 2>/dev/null || true
+        rm -f "$_start_loki_dir/session.lock" 2>/dev/null || true
+    fi
+
     # Determine effective provider for display
     local effective_provider="${provider:-${LOKI_PROVIDER:-claude}}"
 

@@ -47,10 +47,36 @@ async def init_db() -> None:
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # v7.5.12: Idempotent column adds for legacy SQLite databases.
+            # New installs get the columns from create_all; existing installs
+            # need ALTER TABLE because we have no migration framework.
+            await conn.run_sync(_apply_task_enrichment_migration)
         logger.info("Database initialized at %s", DATABASE_PATH)
     except Exception as exc:
         logger.error("Database initialization failed: %s", exc, exc_info=True)
         raise
+
+
+def _apply_task_enrichment_migration(sync_conn) -> None:
+    """Add v7.5.12 task enrichment columns if they don't exist.
+
+    SQLite-specific: PRAGMA table_info to inspect, ALTER TABLE ADD COLUMN
+    to extend. Safe to run repeatedly. No-op on a fresh DB where columns
+    were already created by Base.metadata.create_all.
+    """
+    from sqlalchemy import text as _text
+    try:
+        rows = sync_conn.execute(_text("PRAGMA table_info(tasks)")).fetchall()
+    except Exception:
+        return
+    existing_cols = {row[1] for row in rows}
+    for col in ("acceptance_criteria", "notes", "logs"):
+        if col not in existing_cols:
+            try:
+                sync_conn.execute(_text(f"ALTER TABLE tasks ADD COLUMN {col} TEXT"))
+                logger.info("Added column tasks.%s (v7.5.12 enrichment)", col)
+            except Exception as exc:
+                logger.warning("Could not add column tasks.%s: %s", col, exc)
 
 
 async def close_db() -> None:

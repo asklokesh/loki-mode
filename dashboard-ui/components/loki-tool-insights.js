@@ -147,7 +147,7 @@ export class LokiToolInsights extends LokiElement {
           <div class="origin-header" onclick="this.parentElement.classList.toggle('expanded')">
             <span class="origin-name">${origin}</span>
             <span class="origin-count">${group.tools.length} tools</span>
-            <span class="origin-tokens">${group.tokens.toLocaleString()} tokens</span>
+            <span class="origin-tokens">${(group.tokens ?? 0).toLocaleString()} tokens</span>
             <span class="origin-bar"><span class="bar-fill" style="width:${pct}%"></span></span>
             <span class="origin-pct">${pct}%</span>
           </div>

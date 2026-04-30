@@ -464,7 +464,7 @@ export class LokiAnalytics extends LokiElement {
                 </div>
                 <div class="provider-stat">
                   <span class="provider-stat-label">Total Tokens</span>
-                  <span class="provider-stat-value">${data.tokens.toLocaleString()}</span>
+                  <span class="provider-stat-value">${(data.tokens ?? 0).toLocaleString()}</span>
                 </div>
                 <div class="provider-models">${data.models.map(m => this._esc(m)).join(', ')}</div>
               </div>

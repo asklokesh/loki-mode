@@ -359,7 +359,7 @@ export class LokiMemoryBrowser extends LokiElement {
             ${this._stats.total_entries != null ? `
               <div class="stats-item">
                 <span class="stats-label">Total Entries</span>
-                <span class="stats-value mono">${this._stats.total_entries.toLocaleString()}</span>
+                <span class="stats-value mono">${(this._stats.total_entries ?? 0).toLocaleString()}</span>
               </div>
             ` : ''}
             ${this._stats.db_size_bytes != null ? `

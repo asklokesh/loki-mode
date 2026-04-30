@@ -431,6 +431,66 @@ _install_python_deps() {
     fi
 }
 
+# Resolve the directory containing the compose file. Falls back to the passed
+# directory when no compose file is found (callers should already have verified
+# detection). Honors LOKI_COMPOSE_FILE override.
+_app_runner_compose_dir() {
+    local base="${1:-${TARGET_DIR:-.}}"
+    if [ -n "${LOKI_COMPOSE_FILE:-}" ] && [ -f "${LOKI_COMPOSE_FILE}" ]; then
+        dirname "${LOKI_COMPOSE_FILE}"
+        return
+    fi
+    for candidate in \
+        "$base/docker-compose.yml" \
+        "$base/docker-compose.yaml" \
+        "$base/compose.yml" \
+        "$base/compose.yaml"; do
+        if [ -f "$candidate" ]; then
+            dirname "$candidate"
+            return
+        fi
+    done
+    printf '%s\n' "$base"
+}
+
+# Count containers currently in the "running" state for the compose project.
+# Polls up to LOKI_COMPOSE_HEALTH_TIMEOUT seconds (default 30) at 1s intervals
+# so containers transitioning from Created -> Running are not falsely reported
+# as failed. Echoes the final running-container count (0 on failure).
+_app_runner_compose_running_count() {
+    local base="${1:-${TARGET_DIR:-.}}"
+    local compose_dir
+    compose_dir=$(_app_runner_compose_dir "$base")
+    local timeout="${LOKI_COMPOSE_HEALTH_TIMEOUT:-30}"
+    if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+        timeout=30
+    fi
+    local elapsed=0
+    local count=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        # Prefer the structured --format '{{.State}}' which lists one state per
+        # container (one per line) and is stable across docker-compose v2.x.
+        local states
+        states=$(cd "$compose_dir" && docker compose ps --format '{{.State}}' 2>/dev/null || true)
+        if [ -n "$states" ]; then
+            # Match exact "running" lines only (case-insensitive). Avoid grep -c
+            # on empty input which can return 0 with success even when nothing
+            # ran. Also strip CR for safety on weird terminals.
+            count=$(printf '%s\n' "$states" | tr -d '\r' | grep -ciE '^running$' || true)
+        else
+            count=0
+        fi
+        if [ "${count:-0}" -gt 0 ]; then
+            printf '%s\n' "$count"
+            return 0
+        fi
+        sleep 1
+        elapsed=$(( elapsed + 1 ))
+    done
+    printf '%s\n' "${count:-0}"
+    return 0
+}
+
 #===============================================================================
 # Lifecycle
 #===============================================================================
@@ -501,15 +561,24 @@ app_runner_start() {
 
     # Verify process started
     if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
-        # Docker compose -d exits immediately; check containers instead of PID
+        # Docker compose -d exits immediately; poll for containers in "running"
+        # state. Containers may report "Created" briefly before transitioning to
+        # "Running", so retry up to ~30 seconds before declaring failure.
         local running_containers
-        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps 2>/dev/null | grep -ciE 'running|up'; } | wc -l | tr -d ' ')
+        running_containers=$(_app_runner_compose_running_count "$dir")
         if [ "${running_containers:-0}" -gt 0 ]; then
             _write_app_state "running"
             log_info "App Runner: docker compose started ($running_containers container(s) running)"
             return 0
         else
-            log_error "App Runner: docker compose containers failed to start"
+            # Capture diagnostic output for postmortem
+            local compose_dir
+            compose_dir=$(_app_runner_compose_dir "$dir")
+            local diag
+            diag=$(cd "$compose_dir" && docker compose ps 2>&1 || true)
+            log_error "App Runner: docker compose containers failed to start (no containers in running state after retries)"
+            log_error "App Runner: docker compose ps output:"
+            printf '%s\n' "$diag" | while IFS= read -r line; do log_error "  $line"; done
             _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
             _write_app_state "failed"
             return 1
@@ -547,7 +616,9 @@ app_runner_stop() {
             docker rm "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
         fi
         if echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
-            (cd "${TARGET_DIR:-.}" && docker compose down 2>/dev/null) || true
+            local _stop_compose_dir
+            _stop_compose_dir=$(_app_runner_compose_dir "${TARGET_DIR:-.}")
+            (cd "$_stop_compose_dir" && docker compose down 2>/dev/null) || true
         fi
     fi
 
@@ -619,8 +690,10 @@ app_runner_health_check() {
 
     # Docker compose: check containers instead of PID (docker compose up -d exits immediately)
     if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
+        # Use a 1-second timeout for health checks (no long retry); start-time
+        # retries are handled in app_runner_start.
         local running_containers
-        running_containers=$(cd "${TARGET_DIR:-.}" && { docker compose ps --status running -q 2>/dev/null || docker compose ps 2>/dev/null | grep -ciE 'running|up'; } | wc -l | tr -d ' ')
+        running_containers=$(LOKI_COMPOSE_HEALTH_TIMEOUT=1 _app_runner_compose_running_count "${TARGET_DIR:-.}")
         if [ "${running_containers:-0}" -gt 0 ]; then
             _write_health "true"
             _write_app_state "running"
@@ -759,7 +832,9 @@ app_runner_cleanup() {
             docker rm "$_APP_RUNNER_DOCKER_CONTAINER" 2>/dev/null || true
         fi
         if echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
-            (cd "${TARGET_DIR:-.}" && docker compose down 2>/dev/null) || true
+            local _stop_compose_dir
+            _stop_compose_dir=$(_app_runner_compose_dir "${TARGET_DIR:-.}")
+            (cd "$_stop_compose_dir" && docker compose down 2>/dev/null) || true
         fi
     fi
 

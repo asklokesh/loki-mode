@@ -695,7 +695,7 @@ export class LokiCostDashboard extends LokiElement {
             ${Object.entries(this._modelPricing).map(([key, m]) => `
             <div class="pricing-item">
               <div class="pricing-model ${this._getPricingColorClass(key, m)}">${m.label || key}</div>
-              <div class="pricing-rates">In: $${m.input.toFixed(2)} / Out: $${m.output.toFixed(2)}</div>
+              <div class="pricing-rates">In: $${Number(m.input ?? 0).toFixed(2)} / Out: $${Number(m.output ?? 0).toFixed(2)}</div>
             </div>`).join('')}
           </div>
         </div>

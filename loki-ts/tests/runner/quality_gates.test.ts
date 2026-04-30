@@ -329,79 +329,195 @@ describe("runQualityGates orchestration", () => {
 // real loki-mode repo.
 
 describe("runStaticAnalysis (real Phase 5 implementation)", () => {
-  it("flags the invalid .sh file and leaves the valid one alone", async () => {
-    // Build fixture: autonomy/{ok.sh,bad.sh}, scripts/ok.js
+  // v7.5.12 (triage #12): the gate now derives its file list from
+  // `git diff --name-only HEAD~1 HEAD` (with --cached then ls-files
+  // fallbacks), instead of the hardcoded `autonomy/*.sh` + `scripts/*.js`
+  // layout. Tests build a real git repo so the diff path is exercised.
+  // The repo is initialized with two commits: a baseline commit (so
+  // HEAD~1 exists), then a commit that introduces the files under test.
+  function gitInit(dir: string): void {
+    // Use Bun.spawnSync via Node child_process to avoid awaiting in the
+    // setup helper (the it-blocks already await runStaticAnalysis).
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+    const opts = { cwd: dir, stdio: "ignore" as const };
+    spawnSync("git", ["init", "-q", "-b", "main"], opts);
+    spawnSync("git", ["config", "user.email", "test@loki.dev"], opts);
+    spawnSync("git", ["config", "user.name", "Loki Test"], opts);
+    spawnSync("git", ["config", "commit.gpgsign", "false"], opts);
+    // Baseline empty commit so HEAD~1 resolves after the next commit.
+    writeFileSync(join(dir, ".gitkeep"), "");
+    spawnSync("git", ["add", ".gitkeep"], opts);
+    spawnSync("git", ["commit", "-q", "-m", "baseline"], opts);
+  }
+  function gitCommitAll(dir: string, msg: string): void {
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+    const opts = { cwd: dir, stdio: "ignore" as const };
+    spawnSync("git", ["add", "-A"], opts);
+    spawnSync("git", ["commit", "-q", "-m", msg], opts);
+  }
+
+  it("flags an invalid .sh file in the diff and leaves the valid one alone", async () => {
+    gitInit(scratch);
     mkdirSync(join(scratch, "autonomy"), { recursive: true });
     mkdirSync(join(scratch, "scripts"), { recursive: true });
     writeFileSync(join(scratch, "autonomy", "ok.sh"), "#!/bin/bash\necho hello\n");
-    // Unterminated quote -- bash -n must exit non-zero.
     writeFileSync(join(scratch, "autonomy", "bad.sh"), "#!/bin/bash\necho \"oops\n");
     writeFileSync(join(scratch, "scripts", "ok.js"), "const x = 1;\n");
+    gitCommitAll(scratch, "add fixtures");
 
-    const ctx = makeCtx();
-    const r = await runStaticAnalysis(ctx);
+    const r = await runStaticAnalysis(makeCtx());
     expect(r.passed).toBe(false);
     expect(r.detail ?? "").toContain("bad.sh");
-    // Valid file should not appear in the failure summary.
     expect(r.detail ?? "").not.toContain("ok.sh:");
   });
 
-  it("passes when all .sh and .js files are syntactically valid", async () => {
+  it("passes when all changed .sh and .js files are syntactically valid", async () => {
+    gitInit(scratch);
     mkdirSync(join(scratch, "autonomy"), { recursive: true });
     mkdirSync(join(scratch, "scripts"), { recursive: true });
     writeFileSync(join(scratch, "autonomy", "a.sh"), "#!/bin/bash\nls\n");
     writeFileSync(join(scratch, "autonomy", "b.sh"), "true\n");
     writeFileSync(join(scratch, "scripts", "a.js"), "const x = 2;\n");
+    gitCommitAll(scratch, "add fixtures");
 
     const r = await runStaticAnalysis(makeCtx());
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("3 files clean");
   });
 
-  it("returns pass with zero files when neither directory exists", async () => {
-    // scratch is fresh -- no autonomy/ or scripts/ subdir exists.
+  it("returns pass with zero files when no changes touch .sh/.js", async () => {
+    gitInit(scratch);
+    // Only the baseline .gitkeep is tracked -- diff against HEAD~1 yields
+    // nothing matching the filter, ls-files fallback also yields just
+    // .gitkeep (no matching suffix). Either way the count is 0.
     const r = await runStaticAnalysis(makeCtx());
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("0 files clean");
   });
 
-  // v7.5.10: parallelization regression guard. Pre-v7.5.10 the gate ran
-  // checks sequentially -- 16 files at ~50ms cold-start subprocess overhead
-  // would take ~800ms. With concurrency=8 the same set should finish in
-  // roughly half the wallclock. We assert a generous upper bound rather than
-  // a tight ratio so the test is stable under CI variance: total wallclock
-  // must be substantially less than N * single-file-time.
+  // v7.5.12 (triage #12): the bug. Pre-fix the gate hardcoded
+  // `autonomy/*.sh` + `scripts/*.js`, so a USER repo with src/foo.js
+  // would scan 0 files and silently report "0 files clean" -- meaning
+  // the Bun route had NO static analysis on user code. This test pins
+  // the new diff-based contract: a user-style layout (src/foo.js) IS
+  // scanned, and the autonomy/*.sh path has no special standing.
+  it("scans user-repo files (src/foo.js) via git diff, not just autonomy/scripts/", async () => {
+    gitInit(scratch);
+    mkdirSync(join(scratch, "src"), { recursive: true });
+    writeFileSync(join(scratch, "src", "foo.js"), "const greeting = 'hi';\n");
+    // Add a syntactically broken sibling to prove the scan is ACTUALLY
+    // running (not just claiming "1 file clean" because of a no-op).
+    writeFileSync(join(scratch, "src", "broken.js"), "const x = ;\n");
+    gitCommitAll(scratch, "add user src");
+
+    const r = await runStaticAnalysis(makeCtx());
+    // Must FAIL because broken.js has a syntax error -- proves the
+    // diff-based scan reached src/, not just empty autonomy/.
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("broken.js");
+    // Must NOT mention autonomy -- it's not a privileged path anymore.
+    expect(r.detail ?? "").not.toContain("autonomy/");
+  });
+
+  // v7.5.12 (triage #11/#13 sibling): when there is no HEAD~1 (single-
+  // commit repo / shallow clone), the gate must fall through to
+  // `git ls-files` and still scan tracked files instead of degrading to
+  // a silent no-op. Without this fallback every fresh user repo would
+  // lose static analysis on iteration 1.
+  it("falls back to ls-files when HEAD~1 does not exist (single-commit repo)", async () => {
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+    const opts = { cwd: scratch, stdio: "ignore" as const };
+    spawnSync("git", ["init", "-q", "-b", "main"], opts);
+    spawnSync("git", ["config", "user.email", "test@loki.dev"], opts);
+    spawnSync("git", ["config", "user.name", "Loki Test"], opts);
+    spawnSync("git", ["config", "commit.gpgsign", "false"], opts);
+    writeFileSync(join(scratch, "only.js"), "const x = 1;\n");
+    spawnSync("git", ["add", "only.js"], opts);
+    spawnSync("git", ["commit", "-q", "-m", "first"], opts);
+    // No HEAD~1; --cached is empty post-commit; ls-files returns only.js.
+    const r = await runStaticAnalysis(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("1 files clean");
+  });
+
+  // v7.5.12 Dev11 (R1 MED): a CLEAN post-commit state (HEAD~1 resolves,
+  // diff succeeds with empty output) MUST be treated as "no changes this
+  // iteration" -- gate passes with 0 files. Pre-Dev11 the empty-success
+  // result fell through to `git ls-files`, scanning the entire repo on
+  // every clean iteration. This pin: a populated repo with NO post-commit
+  // diff must NOT mention any of the populated files (proving ls-files
+  // was not invoked).
+  it("treats clean post-commit state (empty diff, populated repo) as 0 files, not full-repo scan", async () => {
+    gitInit(scratch);
+    // Populate the repo with a syntactically broken file. If the gate
+    // erroneously falls back to ls-files, broken.js would be scanned
+    // and the gate would FAIL with a broken.js mention. The fix means
+    // diff HEAD~1 HEAD is empty (clean) => 0 files => pass.
+    mkdirSync(join(scratch, "src"), { recursive: true });
+    writeFileSync(join(scratch, "src", "broken.js"), "const x = ;\n");
+    gitCommitAll(scratch, "add broken file");
+    // Second no-op commit so HEAD~1 -> HEAD diff is empty.
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+    const opts = { cwd: scratch, stdio: "ignore" as const };
+    spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "noop"], opts);
+
+    const r = await runStaticAnalysis(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("0 files clean");
+    // Must NOT have scanned broken.js -- proves ls-files fallback did
+    // NOT fire on a clean diff.
+    expect(r.detail ?? "").not.toContain("broken.js");
+  });
+
+  // v7.5.12 carryover guard: a `.tsx` (or `.ts`) file in the diff must
+  // NOT be passed to `node --check` -- doing so crashes with
+  // ERR_UNKNOWN_FILE_EXTENSION. Same guarantee as pre-v7.5.12, now via
+  // the regex skip in the diff loop instead of listFilesBySuffix scope.
+  it("does not crash when a .tsx file is part of the diff", async () => {
+    gitInit(scratch);
+    mkdirSync(join(scratch, "src"), { recursive: true });
+    writeFileSync(join(scratch, "src", "ok.js"), "const x = 1;\n");
+    writeFileSync(
+      join(scratch, "src", "foo.tsx"),
+      "export const X = () => <div>hi</div>;\n",
+    );
+    writeFileSync(join(scratch, "guard.sh"), "#!/bin/bash\ntrue\n");
+    gitCommitAll(scratch, "add tsx + sh + js");
+    const r = await runStaticAnalysis(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("2 files clean");
+  });
+
+  // v7.5.10 parallelization guard preserved across the diff-based
+  // refactor: 16 .sh files in the diff must complete in well under
+  // sequential worst-case wallclock.
   it("runs many .sh files in parallel (wallclock < N * single-file-time)", async () => {
-    mkdirSync(join(scratch, "autonomy"), { recursive: true });
+    gitInit(scratch);
     const FILE_COUNT = 16;
     for (let i = 0; i < FILE_COUNT; i++) {
-      writeFileSync(join(scratch, "autonomy", `f${i}.sh`), "#!/bin/bash\ntrue\n");
+      writeFileSync(join(scratch, `f${i}.sh`), "#!/bin/bash\ntrue\n");
     }
+    gitCommitAll(scratch, "add many sh");
 
-    // Measure single-file baseline.
     const tmpSingle = mkdtempSync(join(tmpdir(), "loki-gates-single-"));
     try {
-      mkdirSync(join(tmpSingle, "autonomy"), { recursive: true });
-      writeFileSync(join(tmpSingle, "autonomy", "only.sh"), "#!/bin/bash\ntrue\n");
+      gitInit(tmpSingle);
+      writeFileSync(join(tmpSingle, "only.sh"), "#!/bin/bash\ntrue\n");
+      gitCommitAll(tmpSingle, "add one sh");
       const ctxSingle = makeCtx({ cwd: tmpSingle, lokiDir: tmpSingle });
       const t0 = Date.now();
       const rs = await runStaticAnalysis(ctxSingle);
       const singleMs = Date.now() - t0;
       expect(rs.passed).toBe(true);
 
-      // Measure batched parallel run over FILE_COUNT files.
       const t1 = Date.now();
       const r = await runStaticAnalysis(makeCtx());
       const parallelMs = Date.now() - t1;
       expect(r.passed).toBe(true);
       expect(r.detail ?? "").toContain(`${FILE_COUNT} files clean`);
 
-      // Sequential worst case = FILE_COUNT * singleMs. Concurrency=8 should
-      // bring this to roughly 2 * singleMs (2 batches). Allow generous slack
-      // (4x) to absorb CI noise -- the regression we care about (sequential
-      // loop) would be ~16x baseline, far above this bound.
       const sequentialEstimate = FILE_COUNT * singleMs;
-      const upperBound = Math.max(4 * singleMs, 1500); // floor at 1.5s for tiny baselines
+      const upperBound = Math.max(4 * singleMs, 1500);
       expect(parallelMs).toBeLessThan(upperBound);
       expect(parallelMs).toBeLessThan(sequentialEstimate);
     } finally {
@@ -470,12 +586,30 @@ describe("runDocQualityGate (real Phase 5 implementation)", () => {
     }
   }
 
-  it("fails when CLAUDE.md is missing", async () => {
-    writeFileSync(join(scratch, "README.md"), "# R\n\nbody body body body body body body body body.\n");
-    writeFileSync(join(scratch, "SKILL.md"), "# S\n\nbody body body body body body body body body.\n");
+  // v7.5.12 (triage #11): pre-fix the gate hard-required CLAUDE.md and
+  // SKILL.md, which BLOCKED every external user's first iteration since
+  // those are loki-mode-INTERNAL artifacts. Post-fix, only README.md is
+  // required; CLAUDE.md and SKILL.md are recommended-only. This test pins
+  // the new contract: a user repo with ONLY README.md (no CLAUDE.md or
+  // SKILL.md) MUST pass the doc gate.
+  it("passes on a user-style repo with only README.md present", async () => {
+    writeFileSync(
+      join(scratch, "README.md"),
+      "# Project\n\nA real README body padded to clear the minimum length threshold easily.\n",
+    );
+    // Intentionally omit CLAUDE.md and SKILL.md -- this is the shape of
+    // virtually every user repo `loki start` will run against.
+    const r = await runDocQualityGate(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("clean");
+  });
+
+  it("still fails when README.md (the only required doc) is missing", async () => {
+    // No README -- the one universally-required top-level doc.
+    writeFileSync(join(scratch, "CLAUDE.md"), "# C\n\nbody body body body body body body body body.\n");
     const r = await runDocQualityGate(makeCtx());
     expect(r.passed).toBe(false);
-    expect(r.detail ?? "").toContain("CLAUDE.md");
+    expect(r.detail ?? "").toContain("README.md");
     expect(r.detail ?? "").toContain("missing");
   });
 

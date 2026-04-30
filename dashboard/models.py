@@ -142,6 +142,14 @@ class Task(Base):
     )
     estimated_duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     actual_duration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # v7.5.12: Enriched task detail fields (additive, JSON-encoded text).
+    # acceptance_criteria: JSON list of strings.
+    # notes: JSON list of {timestamp, author, body}.
+    # logs: JSON list of {timestamp, iteration, level, phase, message}.
+    # All are nullable; legacy rows render as empty lists in TaskResponse.
+    acceptance_criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    logs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

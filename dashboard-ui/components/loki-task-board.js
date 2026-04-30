@@ -317,6 +317,62 @@ export class LokiTaskBoard extends LokiElement {
     this.render();
   }
 
+  _renderMarkdown(md) {
+    if (!md) return '';
+    // Minimal markdown: escape first, then apply simple inline + block patterns.
+    let html = this._escapeHtml(String(md));
+    // Code fences ```...```
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="md-code">${code.trim()}</pre>`);
+    // Inline code `...`
+    html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>');
+    // Headings
+    html = html.replace(/^###\s+(.+)$/gm, '<h4 class="md-h4">$1</h4>');
+    html = html.replace(/^##\s+(.+)$/gm, '<h3 class="md-h3">$1</h3>');
+    html = html.replace(/^#\s+(.+)$/gm, '<h2 class="md-h2">$1</h2>');
+    // Bold and italic
+    html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    // Bullet lists (single-level)
+    html = html.replace(/(?:^|\n)((?:[-*]\s+.+(?:\n|$))+)/g, (_, block) => {
+      const items = block.trim().split(/\n/).map(line => line.replace(/^[-*]\s+/, '')).map(t => `<li>${t}</li>`).join('');
+      return `\n<ul class="md-list">${items}</ul>`;
+    });
+    // Paragraphs (double newlines)
+    html = html.split(/\n{2,}/).map(block => {
+      if (/^<(h\d|ul|ol|pre)/.test(block.trim())) return block;
+      return `<p class="md-p">${block.replace(/\n/g, '<br>')}</p>`;
+    }).join('');
+    return html;
+  }
+
+  _formatTimestamp(ts) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return this._escapeHtml(String(ts));
+      return d.toLocaleString();
+    } catch (e) {
+      return this._escapeHtml(String(ts));
+    }
+  }
+
+  _phaseClass(phase) {
+    const p = String(phase || '').toLowerCase();
+    if (['reason', 'plan', 'planning'].includes(p)) return 'phase-reason';
+    if (['act', 'execute', 'execution', 'implement'].includes(p)) return 'phase-act';
+    if (['reflect', 'review'].includes(p)) return 'phase-reflect';
+    if (['verify', 'test', 'gate'].includes(p)) return 'phase-verify';
+    return 'phase-default';
+  }
+
+  _logLevelClass(level) {
+    const l = String(level || 'info').toLowerCase();
+    if (l === 'error' || l === 'fatal') return 'log-error';
+    if (l === 'warn' || l === 'warning') return 'log-warn';
+    if (l === 'debug' || l === 'trace') return 'log-debug';
+    return 'log-info';
+  }
+
   _renderTaskDetailModal(task) {
     if (!task) return '';
 
@@ -327,7 +383,10 @@ export class LokiTaskBoard extends LokiElement {
     const meta = task.metadata || {};
     const criteria = task.acceptance_criteria || [];
     const contextFiles = task.context_files || [];
-    const spec = task.specification || task.description || '';
+    const spec = task.specification || '';
+    const description = task.description || '';
+    const notes = Array.isArray(task.notes) ? task.notes : [];
+    const logs = Array.isArray(task.logs) ? task.logs : [];
     const fullContent = task.full_content || '';
 
     return `
@@ -357,6 +416,13 @@ export class LokiTaskBoard extends LokiElement {
             </div>
           ` : ''}
 
+          ${description ? `
+            <div class="modal-section">
+              <h3 class="modal-section-title">Description</h3>
+              <div class="modal-prose md-body">${this._renderMarkdown(description)}</div>
+            </div>
+          ` : ''}
+
           ${spec ? `
             <div class="modal-section">
               <h3 class="modal-section-title">Specification</h3>
@@ -367,9 +433,61 @@ export class LokiTaskBoard extends LokiElement {
           ${criteria.length > 0 ? `
             <div class="modal-section">
               <h3 class="modal-section-title">Acceptance Criteria</h3>
-              <ol class="criteria-list">
-                ${criteria.map(c => `<li>${this._escapeHtml(c)}</li>`).join('')}
-              </ol>
+              <ul class="criteria-checklist" role="list">
+                ${criteria.map(c => {
+                  const isObj = c && typeof c === 'object';
+                  const text = isObj ? (c.text || c.title || '') : c;
+                  const done = isObj ? !!c.done : false;
+                  return `<li class="criteria-item">
+                    <span class="criteria-checkbox ${done ? 'checked' : ''}" aria-hidden="true">${done ? '&#10003;' : ''}</span>
+                    <span class="criteria-text ${done ? 'done' : ''}">${this._escapeHtml(String(text))}</span>
+                  </li>`;
+                }).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          ${notes.length > 0 ? `
+            <div class="modal-section">
+              <h3 class="modal-section-title">Notes</h3>
+              <ul class="notes-timeline" role="list">
+                ${notes.map(n => {
+                  const ts = this._formatTimestamp(n && n.timestamp);
+                  const author = n && n.author ? this._escapeHtml(String(n.author)) : 'unknown';
+                  const body = n && n.body ? this._escapeHtml(String(n.body)) : '';
+                  return `<li class="note-entry">
+                    <div class="note-meta">
+                      <span class="note-author">${author}</span>
+                      ${ts ? `<span class="note-time">${ts}</span>` : ''}
+                    </div>
+                    <div class="note-body">${body}</div>
+                  </li>`;
+                }).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          ${logs.length > 0 ? `
+            <div class="modal-section">
+              <h3 class="modal-section-title">Logs</h3>
+              <div class="logs-scroll">
+                <ul class="logs-timeline" role="list">
+                  ${logs.map(l => {
+                    const ts = this._formatTimestamp(l && l.timestamp);
+                    const iter = l && (l.iteration !== undefined && l.iteration !== null) ? `i${this._escapeHtml(String(l.iteration))}` : '';
+                    const phase = l && l.phase ? String(l.phase) : '';
+                    const phaseClass = this._phaseClass(phase);
+                    const levelClass = this._logLevelClass(l && l.level);
+                    const message = l && l.message ? this._escapeHtml(String(l.message)) : '';
+                    return `<li class="log-entry ${levelClass}">
+                      ${ts ? `<span class="log-time">${ts}</span>` : ''}
+                      ${iter ? `<span class="log-iter">${iter}</span>` : ''}
+                      ${phase ? `<span class="log-phase ${phaseClass}">${this._escapeHtml(phase)}</span>` : ''}
+                      <span class="log-message">${message}</span>
+                    </li>`;
+                  }).join('')}
+                </ul>
+              </div>
             </div>
           ` : ''}
 
@@ -851,6 +969,153 @@ export class LokiTaskBoard extends LokiElement {
           color: var(--loki-text-muted);
         }
 
+        /* Markdown body inside Description section */
+        .md-body .md-h2 { font-size: 14px; margin: 8px 0 4px; color: var(--loki-text-primary); }
+        .md-body .md-h3 { font-size: 13px; margin: 8px 0 4px; color: var(--loki-text-primary); }
+        .md-body .md-h4 { font-size: 12px; margin: 6px 0 2px; color: var(--loki-text-primary); }
+        .md-body .md-p { margin: 6px 0; }
+        .md-body .md-list { margin: 6px 0; padding-left: 20px; }
+        .md-body .md-list li { margin-bottom: 2px; }
+        .md-body .md-inline-code {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          background: var(--loki-bg-secondary);
+          padding: 1px 4px;
+          border-radius: 3px;
+        }
+        .md-body .md-code {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 8px;
+          overflow-x: auto;
+          white-space: pre;
+        }
+
+        /* Acceptance criteria checklist */
+        .criteria-checklist {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .criteria-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--loki-text-primary);
+        }
+        .criteria-checkbox {
+          flex: 0 0 14px;
+          width: 14px;
+          height: 14px;
+          margin-top: 2px;
+          border: 1px solid var(--loki-border);
+          border-radius: 3px;
+          background: var(--loki-bg-secondary);
+          font-size: 10px;
+          line-height: 12px;
+          text-align: center;
+          color: var(--loki-green, #22c55e);
+        }
+        .criteria-checkbox.checked {
+          background: var(--loki-green, #22c55e);
+          border-color: var(--loki-green, #22c55e);
+          color: #fff;
+        }
+        .criteria-text.done {
+          text-decoration: line-through;
+          color: var(--loki-text-muted);
+        }
+
+        /* Notes timeline */
+        .notes-timeline {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .note-entry {
+          padding: 8px 10px;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-left: 2px solid var(--loki-blue, #3b82f6);
+          border-radius: 4px;
+        }
+        .note-meta {
+          display: flex;
+          gap: 8px;
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          margin-bottom: 4px;
+        }
+        .note-author { font-weight: 600; color: var(--loki-text-secondary); }
+        .note-body {
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--loki-text-primary);
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        /* Logs timeline */
+        .logs-scroll {
+          max-height: 400px;
+          overflow-y: auto;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+        }
+        .logs-timeline {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+        .log-entry {
+          display: grid;
+          grid-template-columns: auto auto auto 1fr;
+          gap: 8px;
+          padding: 4px 8px;
+          border-bottom: 1px solid var(--loki-border);
+          color: var(--loki-text-primary);
+          align-items: baseline;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: var(--loki-text-muted); white-space: nowrap; }
+        .log-iter {
+          color: var(--loki-text-secondary);
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .log-phase {
+          padding: 1px 6px;
+          border-radius: 3px;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
+        }
+        .log-phase.phase-reason   { background: rgba(59,130,246,0.15);  color: var(--loki-blue,   #3b82f6); }
+        .log-phase.phase-act      { background: rgba(34,197,94,0.15);   color: var(--loki-green,  #22c55e); }
+        .log-phase.phase-reflect  { background: rgba(168,85,247,0.15);  color: var(--loki-purple, #a855f7); }
+        .log-phase.phase-verify   { background: rgba(245,158,11,0.15);  color: var(--loki-amber,  #f59e0b); }
+        .log-phase.phase-default  { background: var(--loki-bg-primary); color: var(--loki-text-muted); }
+        .log-message { word-break: break-word; white-space: pre-wrap; }
+        .log-entry.log-error   .log-message { color: var(--loki-red,   #ef4444); }
+        .log-entry.log-warn    .log-message { color: var(--loki-amber, #f59e0b); }
+        .log-entry.log-debug   .log-message { color: var(--loki-text-muted); }
+
         /* G72: Smooth transition when cards move */
         .kanban-tasks {
           position: relative;
@@ -1216,7 +1481,7 @@ export class LokiTaskBoard extends LokiElement {
                         </div>
                       </div>
                       <div class="task-title">${this._escapeHtml(task.title || 'Untitled')}</div>
-                      ${!isExpanded && task.description ? `<div class="task-desc">${this._escapeHtml(task.description.substring(0, 80))}${task.description.length > 80 ? '...' : ''}</div>` : ''}
+                      ${!isExpanded && task.description ? `<div class="task-desc">${this._escapeHtml(String(task.description ?? '').substring(0, 80))}${String(task.description ?? '').length > 80 ? '...' : ''}</div>` : ''}
                       <div class="task-meta">
                         <span class="task-type">${this._escapeHtml(String(task.type || 'task'))}</span>
                         <span class="expand-toggle" data-expand-id="${this._escapeHtml(taskIdStr)}">

@@ -470,7 +470,7 @@ export class LokiLearningDashboard extends LokiElement {
                 </div>
                 <div class="item-meta">
                   <span class="success-rate ${t.success_rate > 0.8 ? 'good' : ''}">${this._formatPercent(t.success_rate)}</span>
-                  <span class="item-time">${t.avg_execution_time_ms.toFixed(0)}ms</span>
+                  <span class="item-time">${Number(t.avg_execution_time_ms ?? 0).toFixed(0)}ms</span>
                 </div>
               </div>
             `).join('') || '<div class="list-empty">No tool data found</div>'}
@@ -619,7 +619,7 @@ export class LokiLearningDashboard extends LokiElement {
           </div>
           <div class="detail-row">
             <span class="detail-label">Avg Execution Time</span>
-            <span class="detail-value">${item.avg_execution_time_ms.toFixed(0)}ms</span>
+            <span class="detail-value">${Number(item.avg_execution_time_ms ?? 0).toFixed(0)}ms</span>
           </div>
           <div class="detail-row">
             <span class="detail-label">Total Tokens</span>
