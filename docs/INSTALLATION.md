@@ -41,6 +41,7 @@ setting any flag to `0`.
 ## Table of Contents
 
 - [npm (Recommended)](#npm-recommended)
+- [Bun](#bun)
 - [Homebrew](#homebrew)
 - [Quick Start](#quick-start)
 - [Verify Installation](#verify-installation)
@@ -85,6 +86,34 @@ LOKI_TELEMETRY_DISABLED=true npm install -g loki-mode
 **Update:** `npm update -g loki-mode`
 
 **Uninstall:** `npm uninstall -g loki-mode`
+
+---
+
+## Bun
+
+```bash
+bun install -g loki-mode
+```
+
+Installs the `loki` CLI via Bun's package manager. Faster than npm and
+recommended for the v8 forward-compat path.
+
+**Add Bun's global bin to your PATH** (one-time setup -- Bun does not modify
+shell config files for you):
+
+```bash
+# zsh (macOS default)
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# bash
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+Then verify: `loki --version`.
+
+**Update:** `bun update -g loki-mode`
+
+**Uninstall:** `bun remove -g loki-mode`
 
 ---
 
@@ -646,6 +675,23 @@ The completion scripts support:
 ---
 
 ## Troubleshooting
+
+### Bun: "loki: command not found" after `bun install -g`
+
+**Problem:** Bun warns `To run "loki", add the global bin folder to $PATH`
+because Bun does not modify your shell config. The `loki` binary is
+installed at `~/.bun/bin/loki` but the shell cannot find it.
+
+**Solution:**
+```bash
+# zsh (macOS default)
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# bash
+echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+Verify with `loki --version`.
 
 ### Skill Not Found
 

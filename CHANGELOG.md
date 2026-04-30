@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+### Fixed
+
+- **Bun install UX**: `bun install -g loki-mode` no longer prints
+  `Blocked 1 postinstall. Run \`bun pm -g untrusted\` for details.`
+  Removed `@opentelemetry/exporter-trace-otlp-http` from
+  `optionalDependencies`; it was the only edge in our dep graph that
+  pulled in `protobufjs`, whose harmless postinstall (a version-scheme
+  warning check) triggered Bun's block warning. The "real SDK" branch
+  in `src/observability/otel.js` is already wrapped in a try/catch and
+  falls back to the in-tree HTTP+JSON OTLP exporter, so OTEL users see
+  no behavior change. Users who explicitly want the upstream SDK can
+  `npm install @opentelemetry/exporter-trace-otlp-http`. Install drops
+  from 31 to 11 packages and the warning is gone.
+- **Bun PATH guidance**: added a dedicated `## Bun` section and a
+  troubleshooting entry to `docs/INSTALLATION.md` covering Bun's
+  `~/.bun/bin` PATH requirement (Bun does not modify shell config).
 
 ## [7.5.13] - 2026-04-29
 
