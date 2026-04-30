@@ -33,7 +33,7 @@ const FEATURES: Feature[] = [
     icon: Zap,
     title: 'Getting Started Checklist',
     description:
-      'A friendly checklist guides you through your first project, from writing a PRD to deploying your app.',
+      'A friendly checklist guides you through your first project, from writing a spec to deploying your app.',
   },
   {
     icon: Shield,

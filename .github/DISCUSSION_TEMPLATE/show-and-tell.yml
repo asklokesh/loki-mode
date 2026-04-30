@@ -14,11 +14,11 @@ body:
     validations:
       required: true
   - type: textarea
-    id: prd
+    id: spec
     attributes:
-      label: PRD or prompt used
-      description: Share the PRD or prompt that kicked off the project (optional).
-      placeholder: Paste your PRD or describe the prompt
+      label: Spec or prompt used
+      description: Share the spec or prompt that kicked off the project (optional).
+      placeholder: Paste your spec (PRD, GitHub issue, OpenAPI, etc.) or describe the prompt
   - type: dropdown
     id: provider
     attributes:

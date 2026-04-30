@@ -1474,7 +1474,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
             onClick={() => {
               const prd = sessionData.prd || '';
               if (!prd.trim()) {
-                window.alert('No PRD found for this project. Go to Home to start a new build.');
+                window.alert('No spec found for this project. Go to Home to start a new build.');
                 return;
               }
               setShowCostEstimator(true);
@@ -1673,7 +1673,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                       { id: 'deploy' as const, label: 'Deploy', icon: Rocket },
                       { id: 'config' as const, label: 'Config', icon: Settings2 },
                       { id: 'secrets' as const, label: 'Secrets', icon: KeyRound },
-                      { id: 'prd' as const, label: 'PRD', icon: PrdIcon },
+                      { id: 'prd' as const, label: 'Spec', icon: PrdIcon },
                       { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
                       { id: 'git' as const, label: 'Git', icon: GitBranch },
                       { id: 'cicd' as const, label: 'CI/CD', icon: CICDIcon },
@@ -2193,7 +2193,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                             </pre>
                           ) : (
                             <div className="text-sm text-muted text-center py-8">
-                              No PRD found for this project.
+                              No spec found for this project.
                             </div>
                           )}
                         </div>

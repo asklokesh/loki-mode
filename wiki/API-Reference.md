@@ -66,7 +66,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "7.5.10",
+  "version": "7.5.11",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
@@ -1173,9 +1173,9 @@ The following endpoints exist in `dashboard/server.py` but were not previously d
 - `POST /api/checklist/waivers` -- create waiver (control scope).
 - `DELETE /api/checklist/waivers/{item_id}` -- delete waiver (control scope).
 
-### PRD Observations and Council Gate
+### Spec Observations and Council Gate
 
-- `GET /api/prd-observations` -- PRD observation log.
+- `GET /api/prd-observations` -- spec (PRD) observation log. Endpoint path retains legacy `prd-observations` name for backward compatibility.
 - `GET /api/council/gate` -- council gate status.
 
 ### App Runner

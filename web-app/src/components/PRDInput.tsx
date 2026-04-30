@@ -188,7 +188,7 @@ export function PRDInput({ onSubmit, running, error, provider: providerProp, onP
       <textarea
         value={prd}
         onChange={(e) => setPrd(e.target.value)}
-        placeholder="Paste your PRD here, or select a template above to get started..."
+        placeholder="Paste your spec or PRD here, or select a template above to get started..."
         className="flex-1 min-h-[280px] w-full bg-card rounded-card border border-border-light px-4 py-3 text-sm font-mono text-ink placeholder:text-primary/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
         spellCheck={false}
       />

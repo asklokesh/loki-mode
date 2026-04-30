@@ -6,7 +6,7 @@
 
 ### What is Loki Mode?
 
-Loki Mode is an autonomous AI development orchestrator that transforms a Product Requirements Document (PRD) into a fully deployed application with minimal human intervention. It manages multiple AI agents, runs comprehensive SDLC phases, and learns from every session.
+Loki Mode is an autonomous AI development orchestrator that transforms a spec -- a PRD markdown file, GitHub issue, YAML brief, or any natural-language description of what to build -- into a fully deployed application with minimal human intervention. It manages multiple AI agents, runs comprehensive SDLC phases, and learns from every session.
 
 ### Why is it called "Loki Mode"?
 
@@ -43,11 +43,11 @@ docker pull asklokesh/loki-mode
 
 - Node.js 16+ (for npm install)
 - Claude Code CLI installed and authenticated
-- A PRD file describing what you want to build
+- A spec describing what you want to build (PRD markdown file, GitHub issue, or YAML feature brief)
 
-### How do I write a good PRD?
+### How do I write a good spec?
 
-Include:
+A spec is any clear description of what to build. The most common format is a markdown PRD. Include:
 - Clear overview of what to build
 - Requirements as checkboxes `- [ ]`
 - Tech stack preferences
@@ -78,11 +78,14 @@ Build a todo app with React.
 ### How do I start a session?
 
 ```bash
-# Option 1: CLI
+# Option 1: CLI with a PRD markdown file
 loki start ./my-prd.md
 
-# Option 2: In Claude
-# "Loki Mode with PRD at ./my-prd.md"
+# Option 2: CLI with a GitHub issue as the spec
+loki issue 123 --start
+
+# Option 3: In Claude
+# "Loki Mode with spec at ./my-prd.md"
 ```
 
 ### How do I stop a session?
@@ -235,7 +238,7 @@ loki logs | grep -i error
 
 Common causes:
 - Rate limiting (will auto-retry)
-- PRD too vague
+- Spec too vague (PRD or issue lacks acceptance criteria)
 - Missing dependencies
 - Authentication expired
 

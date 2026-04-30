@@ -53,7 +53,7 @@ When not set, the default is `http://localhost:57374,http://127.0.0.1:57374` (lo
 | Data | Sent | Notes |
 |------|------|-------|
 | Your code | Yes | Sent to AI provider for analysis |
-| PRD content | Yes | Required for task understanding |
+| Spec content (PRD/issue/YAML) | Yes | Required for task understanding |
 | Learnings | No | Stored locally only |
 | API keys | No | Never logged or transmitted |
 | Credentials | No | Should be in .env (gitignored) |
@@ -199,7 +199,7 @@ export LOKI_ENTERPRISE_AUDIT=true
 
 | Event | Data Captured |
 |-------|---------------|
-| Session start/stop | Timestamp, user, PRD path |
+| Session start/stop | Timestamp, user, spec path (PRD/issue ref) |
 | API requests | Endpoint, method, status |
 | Token usage | Token name, action |
 | Errors | Error type, context |
@@ -247,7 +247,7 @@ Security-relevant actions are forwarded at WARNING level to facility LOG_LOCAL0.
 ### For Individual Developers
 
 1. **Use .gitignore** - Never commit `.env`, `.loki/`, credentials
-2. **Review PRDs** - Check PRD content before sharing
+2. **Review specs** - Check spec content (PRDs, issue bodies, YAML briefs) before sharing
 3. **Update regularly** - Keep Loki Mode and provider CLIs updated
 4. **Use strong tokens** - Generate unique tokens for each use case
 

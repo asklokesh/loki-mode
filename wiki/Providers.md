@@ -45,7 +45,7 @@ claude login
 claude --dangerously-skip-permissions
 
 # In Claude:
-# "Loki Mode with PRD at ./my-prd.md"
+# "Loki Mode with spec at ./my-prd.md"
 ```
 
 ### Capabilities

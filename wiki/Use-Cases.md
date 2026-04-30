@@ -10,7 +10,7 @@ Real-world examples and patterns for using Loki Mode effectively.
 
 **Scenario:** You have a weekend to build a todo app.
 
-**PRD (todo-app.md):**
+**Spec (PRD markdown -- todo-app.md):**
 ```markdown
 # Todo Application
 
@@ -44,12 +44,12 @@ loki start todo-app.md
 **Scenario:** You have a bug report on GitHub.
 
 ```bash
-# Generate PRD from issue and start
+# Use the GitHub issue as the spec and start
 loki issue https://github.com/myorg/myapp/issues/42 --start
 
 # Or step by step
 loki issue 42 --dry-run  # Preview
-loki issue 42            # Generate PRD
+loki issue 42            # Generate spec (PRD markdown)
 loki start .loki/prd/issue-42.md
 ```
 
@@ -59,7 +59,7 @@ loki start .loki/prd/issue-42.md
 
 **Scenario:** Test a business idea quickly.
 
-**PRD (mvp.md):**
+**Spec (PRD markdown -- mvp.md):**
 ```markdown
 # Landing Page MVP
 
@@ -135,7 +135,7 @@ jobs:
 
 **Scenario:** Implement a complete feature across multiple services.
 
-**PRD (auth-system.md):**
+**Spec (PRD markdown -- auth-system.md):**
 ```markdown
 # Authentication System
 
@@ -348,7 +348,7 @@ export LOKI_WEBHOOK_URL="https://monitoring.company.com/api/events"
 1. Install VS Code extension (search "Loki Mode")
 2. Open command palette: `Cmd+Shift+P`
 3. Type "Loki Mode: Start Session"
-4. Select your PRD file
+4. Select your spec file (PRD markdown)
 5. Monitor in sidebar
 
 ### Features

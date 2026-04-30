@@ -527,7 +527,7 @@
         </button>
         <button class="nav-link" data-section="prd-checklist" id="nav-prd-checklist">
           <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          PRD Checklist
+          Spec Checklist
         </button>
         <button class="nav-link" data-section="app-runner" id="nav-app-runner">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -618,10 +618,10 @@
         </div>
       </div>
 
-      <!-- PRD Checklist -->
+      <!-- Spec Checklist -->
       <div class="section-page" id="page-prd-checklist">
         <div class="section-page-header">
-          <h2 class="section-page-title">PRD Checklist</h2>
+          <h2 class="section-page-title">Spec Checklist</h2>
         </div>
         <loki-checklist-viewer id="checklist-viewer"></loki-checklist-viewer>
       </div>
@@ -715,7 +715,7 @@
         <div class="shortcuts-group-title">Navigation</div>
         <div class="shortcut-row"><span class="shortcut-desc">Overview</span><span class="shortcut-keys"><kbd class="shortcut-key">1</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Insights</span><span class="shortcut-keys"><kbd class="shortcut-key">2</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">PRD Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Spec Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">App Runner</span><span class="shortcut-keys"><kbd class="shortcut-key">4</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">5</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Quality</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
@@ -1267,12 +1267,12 @@ var LokiDashboard=(()=>{var xt=Object.defineProperty;var Qt=Object.getOwnPropert
       </div>
     `}_renderChecklistCard(){let t=this._checklistSummary;if(!t||!t.total)return`
         <div class="overview-card">
-          <div class="card-label">PRD Progress</div>
-          <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Analyzing PRD...":"No checklist"}</div>
+          <div class="card-label">Spec Progress</div>
+          <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Analyzing spec...":"No checklist"}</div>
         </div>
       `;let e=Math.round(t.verified/t.total*100),i=t.failing>0?"var(--loki-yellow, #f59e0b)":"var(--loki-green, #22c55e)";return`
       <div class="overview-card">
-        <div class="card-label">PRD Progress</div>
+        <div class="card-label">Spec Progress</div>
         <div class="card-value small-text">${t.verified}/${t.total} (${e}%)</div>
         <div class="mini-progress" style="margin-top:4px;height:4px;background:var(--loki-bg-secondary,#e4e4e7);border-radius:2px;overflow:hidden;">
           <div style="width:${e}%;height:100%;background:${i};transition:width 0.3s;"></div>
@@ -5572,7 +5572,7 @@ var LokiDashboard=(()=>{var xt=Object.defineProperty;var Qt=Object.getOwnPropert
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
       <div class="checklist-viewer">
         <div class="checklist-header">
-          <h2 class="title">PRD Checklist</h2>
+          <h2 class="title">Spec Checklist</h2>
           ${i?this._renderBadges(e.summary):""}
         </div>
         ${i?this._renderGateBanner():""}
@@ -5623,7 +5623,7 @@ var LokiDashboard=(()=>{var xt=Object.defineProperty;var Qt=Object.getOwnPropert
       `}).join(""):'<div class="item" style="color:var(--loki-text-muted)">No items</div>'}_renderEmpty(){return`
       <div class="empty-state">
         <p><strong>No checklist data yet.</strong></p>
-        <p class="hint">The PRD checklist is generated during the first iteration. Start a session with <code>loki start ./prd.md</code> -- groups and items will appear here as the session progresses and can be expanded for details.</p>
+        <p class="hint">The spec checklist is generated during the first iteration. Start a session with <code>loki start ./spec.md</code> (PRD files also accepted) -- groups and items will appear here as the session progresses and can be expanded for details.</p>
       </div>
     `}_attachEventListeners(){let t=this.shadowRoot;t&&(t.querySelectorAll(".category-header[data-category]").forEach(e=>{e.addEventListener("click",()=>this._toggleCategory(e.dataset.category))}),t.querySelectorAll("button[data-waive-id]").forEach(e=>{e.addEventListener("click",i=>{i.stopPropagation(),this._waiveItem(e.dataset.waiveId)})}),t.querySelectorAll("button[data-unwaive-id]").forEach(e=>{e.addEventListener("click",i=>{i.stopPropagation(),this._unwaiveItem(e.dataset.unwaiveId)})}))}_escapeHtml(t){return t?String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}};customElements.define("loki-checklist-viewer",Y);var Nt={not_initialized:{color:"var(--loki-text-muted, #71717a)",label:"Not Started",pulse:!1},starting:{color:"var(--loki-yellow, #ca8a04)",label:"Starting...",pulse:!0},running:{color:"var(--loki-green, #16a34a)",label:"Running",pulse:!0},stale:{color:"var(--loki-yellow, #ca8a04)",label:"Stale",pulse:!1},completed:{color:"var(--loki-text-muted, #a1a1aa)",label:"Completed",pulse:!1},failed:{color:"var(--loki-red, #dc2626)",label:"Failed",pulse:!1},crashed:{color:"var(--loki-red, #dc2626)",label:"Crashed",pulse:!1},stopped:{color:"var(--loki-text-muted, #a1a1aa)",label:"Stopped",pulse:!1},unknown:{color:"var(--loki-text-muted, #71717a)",label:"Unknown",pulse:!1}},W=class extends u{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._pollInterval=null,this._status=null,this._logs=[],this._lastDataHash=null,this._lastLogsHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(t,e,i){e!==i&&(t==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),t==="theme"&&this._applyTheme())}_setupApi(){let t=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:t})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let[t,e]=await Promise.all([this._api.getAppRunnerStatus(),this._api.getAppRunnerLogs()]),i=JSON.stringify({status:t?.status,port:t?.port,restarts:t?.restart_count,url:t?.url}),a=JSON.stringify(e?.lines?.slice(-5)||[]),s=a!==this._lastLogsHash;if(i===this._lastDataHash&&!s)return;this._lastDataHash=i,this._lastLogsHash=a,this._status=t,this._logs=e?.lines||[],this._error=null,this.render(),this._scrollLogsToBottom()}catch(t){this._error||(this._error=`Failed to load app status: ${t.message}`,this.render())}}_scrollLogsToBottom(){let t=this.shadowRoot;if(!t)return;let e=t.querySelector(".log-area");e&&(e.scrollTop=e.scrollHeight)}async _handleRestart(){try{await this._api.restartApp(),this._loadData()}catch(t){this._error=`Restart failed: ${t.message}`,this.render()}}async _handleStop(){try{await this._api.stopApp(),this._loadData()}catch(t){this._error=`Stop failed: ${t.message}`,this.render()}}_formatUptime(t){if(!t)return"--";let e=new Date(t),a=Math.floor((new Date-e)/1e3);if(a<60)return`${a}s`;if(a<3600)return`${Math.floor(a/60)}m ${a%60}s`;let s=Math.floor(a/3600),r=Math.floor(a%3600/60);return`${s}h ${r}m`}_isValidUrl(t){if(!t)return!1;try{let e=new URL(t);return e.protocol==="http:"||e.protocol==="https:"}catch{return!1}}_getStyles(){return`
       .app-status {

@@ -110,9 +110,9 @@ loki --help
 
 ## Post-Installation
 
-### Create Your First PRD
+### Create Your First Spec
 
-Create a file called `my-prd.md`:
+A spec can be a PRD markdown file, a GitHub issue, or a YAML feature brief. The simplest is a markdown PRD. Create a file called `my-prd.md`:
 
 ```markdown
 # My Application
@@ -134,8 +134,11 @@ Build a simple todo application.
 ### Run Loki Mode
 
 ```bash
-# Start with your PRD
+# Start with your spec (PRD markdown file)
 loki start ./my-prd.md
+
+# Or use a GitHub issue as the spec
+# loki issue 123 --start
 
 # Monitor progress
 loki status

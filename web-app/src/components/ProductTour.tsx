@@ -20,7 +20,7 @@ const DEFAULT_STEPS: TourStep[] = [
     target: '[data-tour="input-box"]',
     title: 'Describe what you want to build',
     description:
-      'Type a plain-English description of your project here. The more detail you give, the better the result. You can also paste a PRD or select a template.',
+      'Type a plain-English description of your project here. The more detail you give, the better the result. You can also paste a spec / PRD or select a template.',
     position: 'bottom',
   },
   {

@@ -20,7 +20,7 @@ body:
       options:
         - Installation and Setup
         - CLI Usage
-        - PRD Writing
+        - Spec Writing (PRD, GitHub issues, OpenAPI, etc.)
         - Agent Configuration
         - Memory System
         - Quality Gates

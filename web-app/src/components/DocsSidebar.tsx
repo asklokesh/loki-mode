@@ -82,7 +82,7 @@ Purple Lab includes ready-made templates to help you start fast:
 - **Mobile App** -- React Native app with navigation and screens
 - **Dashboard** -- Data visualization with charts and metrics
 
-Browse templates from the sidebar or the home page. Each template includes a pre-written PRD that you can customize before building.`,
+Browse templates from the sidebar or the home page. Each template includes a pre-written spec that you can customize before building.`,
   },
   {
     id: 'providers',

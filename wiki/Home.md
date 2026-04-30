@@ -2,7 +2,7 @@
 
 **The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, Google Gemini CLI, Cline, and Aider.**
 
-> Transform a Product Requirements Document (PRD) into a fully deployed, production-ready application with minimal human intervention.
+> Transform a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application with minimal human intervention.
 
 ---
 
@@ -38,7 +38,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 ### For Individuals & Startups
 
 - **Zero Configuration** - Works out of the box with sensible defaults
-- **PRD to Production** - Just provide a PRD, Loki handles the rest
+- **Spec to Production** - Provide a spec (PRD markdown, GitHub issue, YAML brief), Loki handles the rest
 - **Multi-Provider Support** - Use Claude, Cline, Codex, Gemini, or Aider
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
@@ -68,7 +68,8 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ```
 +------------------+     +------------------+     +------------------+
-|   PRD / Issue    | --> |   Loki Mode      | --> |   Deployed App   |
+| Spec (PRD/Issue/ | --> |   Loki Mode      | --> |   Deployed App   |
+| YAML brief)      |     |                  |     |                  |
 +------------------+     +------------------+     +------------------+
                                |
          +-----------+-------------+-------------+-----------+
@@ -97,7 +98,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.5.10** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **7.5.11** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

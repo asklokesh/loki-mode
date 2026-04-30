@@ -419,7 +419,7 @@ export function TemplatePreview({ template, onClose }: TemplatePreviewProps) {
                 onClick={() => setShowPrd(!showPrd)}
                 className="w-full justify-center"
               >
-                {showPrd ? 'Hide PRD' : 'View PRD'}
+                {showPrd ? 'Hide Spec' : 'View Spec'}
               </Button>
             </div>
           </div>
@@ -430,7 +430,7 @@ export function TemplatePreview({ template, onClose }: TemplatePreviewProps) {
           <div className="absolute inset-0 bg-white z-20 overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-[#ECEAE3] px-6 py-4 flex items-center justify-between z-10">
               <h3 className="text-lg font-semibold text-[#36342E]">
-                Template PRD: {template.name.replace(/\.md$/i, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                Template Spec: {template.name.replace(/\.md$/i, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
               </h3>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setShowPrd(false)}>

@@ -332,7 +332,7 @@ export default function HomePage() {
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   className="text-sm text-[#553DE9] hover:text-[#4832c7] font-medium transition-colors"
                 >
-                  {showAdvanced ? 'Hide advanced options' : 'Advanced (write full PRD)'}
+                  {showAdvanced ? 'Hide advanced options' : 'Advanced (write full spec)'}
                 </button>
               </div>
 

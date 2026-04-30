@@ -2,7 +2,7 @@
 
 **Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI**
 
-Transform your PRD into a fully deployed, production-ready product with minimal human intervention. Built on 2025 research from OpenAI, Google DeepMind, and Anthropic.
+Transform your spec into a fully deployed, production-ready product with minimal human intervention. Built on 2025 research from OpenAI, Google DeepMind, and Anthropic.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ docker pull asklokesh/loki-mode:latest
 # Show help
 docker run --rm asklokesh/loki-mode
 
-# Start autonomous mode with a PRD
+# Start autonomous mode with a spec
 docker run -it \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -v $(pwd):/workspace \
@@ -284,7 +284,7 @@ docker inspect --format='{{.State.Health.Status}}' <container-id>
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `7.x.x` | Specific version (e.g. `7.5.5`) |
+| `7.x.x` | Specific version (e.g. `7.5.11`) |
 | `sandbox` | Security-hardened image (Debian slim) |
 
 ## Links

@@ -1,11 +1,13 @@
 ---
 name: loki-mode
-description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes PRD to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
+description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.10
+# Loki Mode v7.5.11
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
+
+**Spec in, product out.** A "spec" is whatever describes the work: a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket -- a PRD is one form of spec.
 
 **Multi-provider (stable since v5.0.0):** Claude/Codex/Gemini/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. See `skills/providers.md`. **Current track (v7.5.x):** Phase 1 RARV-C closure -- real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`, dead code cleanup.
 
@@ -89,11 +91,11 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 ## Model Selection
 
-**Default since v5.3.0 (reaffirmed in v7.5.10):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
+**Default since v5.3.0 (reaffirmed in v7.5.11):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
 | Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
 |-----------|------|------------------|------------------------|------------------|--------|
-| PRD analysis, architecture, system design | **planning** | opus | opus | effort=xhigh | thinking=high |
+| Spec analysis, architecture, system design | **planning** | opus | opus | effort=xhigh | thinking=high |
 | Feature implementation, complex bugs | **development** | opus | sonnet | effort=high | thinking=medium |
 | Code review (planned: 3 parallel reviewers) | **development** | opus | sonnet | effort=high | thinking=medium |
 | Integration tests, E2E, deployment | **development** | opus | sonnet | effort=high | thinking=medium |
@@ -113,7 +115,7 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 ```
 BOOTSTRAP ──[project initialized]──> DISCOVERY
-DISCOVERY ──[PRD analyzed, requirements clear]──> ARCHITECTURE
+DISCOVERY ──[spec analyzed, requirements clear]──> ARCHITECTURE
 ARCHITECTURE ──[design approved, specs written]──> DEEPEN_PLAN (standard/complex only)
 DEEPEN_PLAN ──[plan enhanced by 4 research agents]──> INFRASTRUCTURE
 INFRASTRUCTURE ──[cloud/DB ready]──> DEVELOPMENT
@@ -187,20 +189,21 @@ This protocol governs **skill module** loading -- task-scoped instruction files 
 
 ## Invocation
 
-**Unified entry point (v6.84.0):** `loki start` auto-detects whether the input is a PRD file, an issue URL, or an issue number. No need to pick between `loki start` and `loki run` -- the single command handles all cases.
+**Unified entry point (v6.84.0):** `loki start [SPEC|ISSUE-REF]` auto-detects whether the input is a PRD file, an issue URL, an issue number, or another spec format (e.g. OpenAPI). No need to pick between `loki start` and `loki run` -- the single command handles all cases.
 
 ```bash
 # Standard mode (Claude - full features)
 claude --dangerously-skip-permissions
-# Then say: "Loki Mode" or "Loki Mode with PRD at path/to/prd.md" (or .json)
+# Then say: "Loki Mode" or "Loki Mode with spec at path/to/spec" (PRD .md/.json, OpenAPI .yaml, etc.)
 
 # Unified `loki start` -- one command, auto-detected mode
-loki start                                   # no arg: analyze current dir, auto-generate PRD
-loki start ./prd.md                          # PRD mode (.md/.json/.txt/.yaml)
+loki start                                   # no arg: analyze current dir, auto-generate spec
+loki start ./prd.md                          # PRD mode (.md/.json/.txt/.yaml) -- a PRD is one form of spec
+loki start ./openapi.yaml                    # SPEC mode (OpenAPI doc treated as the spec)
+loki start owner/repo#123                    # ISSUE mode (GitHub specific repo)
 loki start https://github.com/o/r/issues/42  # ISSUE mode (GitHub URL)
 loki start 123                               # ISSUE mode (GitHub issue in current repo)
 loki start PROJ-456                          # ISSUE mode (Jira)
-loki start owner/repo#789                    # ISSUE mode (GitHub specific repo)
 loki start --prd ./prd.md                    # Explicit PRD mode (overrides detection)
 loki start --issue 123                       # Explicit issue mode (overrides detection)
 
@@ -330,7 +333,7 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
-## Concurrency and Security Hardening (v7.5.7 - v7.5.10)
+## Concurrency and Security Hardening (v7.5.7 - v7.5.11)
 
 Three back-to-back patches closed cross-process and security gaps. No user-facing behavior change on the default flow; verify via the cited paths.
 
@@ -339,7 +342,7 @@ Three back-to-back patches closed cross-process and security gaps. No user-facin
 - **Dashboard auth** now required on `/api/memory/*`, `/api/learning/*`, and `/api/status` in `dashboard/server.py` (previously unauthenticated read paths).
 - **Bash quoting hardening** across `autonomy/run.sh` and `autonomy/loki` -- variable expansions inside command substitution and `[ ]` tests quoted to prevent word-splitting on paths with spaces.
 
-See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.10] for the per-fix list and reviewer sign-off.
+See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.11] for the per-fix list and reviewer sign-off.
 
 ---
 
@@ -355,7 +358,7 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.10] for the per-fix list and r
 | Notification Triggers | v5.40.0 | `GET/PUT /api/notifications/triggers` |
 | GitHub integration | v5.42.2 | Import, sync-back, PR creation, export. CLI: `loki github`, API: `/api/github/*` |
 | Legacy System Healing | v6.67.0 | `loki heal <path>` -- friction-as-semantics, characterization tests |
-| Unified `loki start` | v6.84.0 | Auto-detects PRD vs issue input |
+| Unified `loki start` | v6.84.0 | Auto-detects spec (PRD, OpenAPI, etc.) vs issue input |
 | Managed Agents (memory mirror) | v7.2.0 | Opt-in via `LOKI_MANAGED_AGENTS` -- see Managed Agents section |
 | Bun runtime (Phase 1) | v7.3.0 | Read-only commands routed through `bin/loki`; `LOKI_LEGACY_BASH=1` to revert |
 | Phase 1 RARV-C closure | v7.5.x | Findings injection, real judges, auto-learnings, handoff.md |
@@ -378,4 +381,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.10] for the per-fix list and r
 
 ---
 
-**v7.5.10 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.11 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

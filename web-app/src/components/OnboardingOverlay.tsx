@@ -14,7 +14,7 @@ interface Step {
 const STEPS: Step[] = [
   {
     icon: FileText,
-    title: 'Write your PRD',
+    title: 'Write your spec',
     description: 'Describe what you want to build, or choose a template to get started quickly.',
   },
   {

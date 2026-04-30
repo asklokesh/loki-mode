@@ -283,10 +283,10 @@ export class LokiOverview extends LokiElement {
     const s = this._checklistSummary;
     if (!s || !s.total) {
       const isRunning = this._data.status === 'running' || this._data.status === 'autonomous';
-      const label = isRunning ? 'Analyzing PRD...' : 'No checklist';
+      const label = isRunning ? 'Analyzing spec...' : 'No checklist';
       return `
         <div class="overview-card">
-          <div class="card-label">PRD Progress</div>
+          <div class="card-label">Spec Progress</div>
           <div class="card-value small-text">${label}</div>
         </div>
       `;
@@ -295,7 +295,7 @@ export class LokiOverview extends LokiElement {
     const barColor = s.failing > 0 ? 'var(--loki-yellow, #f59e0b)' : 'var(--loki-green, #22c55e)';
     return `
       <div class="overview-card">
-        <div class="card-label">PRD Progress</div>
+        <div class="card-label">Spec Progress</div>
         <div class="card-value small-text">${s.verified}/${s.total} (${pct}%)</div>
         <div class="mini-progress" style="margin-top:4px;height:4px;background:var(--loki-bg-secondary,#e4e4e7);border-radius:2px;overflow:hidden;">
           <div style="width:${pct}%;height:100%;background:${barColor};transition:width 0.3s;"></div>

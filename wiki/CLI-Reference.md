@@ -29,19 +29,19 @@ loki demo
 # Quick single-task mode (lightweight, 3 iterations max)
 loki quick "add dark mode to the app"
 
-# Build a PRD interactively from templates
+# Build a spec (PRD markdown) interactively from templates
 loki init
 
 # Start from a template
 loki init -t saas-starter
 
-# Start with a PRD file
+# Start with a spec (PRD markdown file)
 loki start ./prd.md
 
-# Start without a PRD (analyzes existing codebase)
+# Start without a spec (analyzes existing codebase)
 loki start
 
-# Generate PRD from GitHub issue and start
+# Use a GitHub issue as the spec
 loki issue 42 --start
 
 # Import all open GitHub issues and work on them
@@ -71,10 +71,10 @@ Options:
 
 ### `loki start`
 
-Start autonomous execution. Works with or without a PRD -- if no PRD is provided, Loki analyzes the existing codebase and generates one.
+Start autonomous execution from a spec. Works with or without one -- if no spec is provided, Loki analyzes the existing codebase and generates one. A spec is typically a PRD markdown file, but can also be sourced from a GitHub issue (`loki issue`).
 
 ```bash
-loki start [PRD_FILE] [OPTIONS]
+loki start [SPEC_FILE] [OPTIONS]
 ```
 
 **Options:**
@@ -96,10 +96,10 @@ loki start [PRD_FILE] [OPTIONS]
 **Examples:**
 
 ```bash
-# Start with a PRD file
+# Start with a spec (PRD markdown file)
 loki start ./my-app-prd.md
 
-# Analyze existing codebase (no PRD needed)
+# Analyze existing codebase (no spec needed)
 loki start
 
 # Use OpenAI Codex as provider
@@ -164,7 +164,7 @@ loki demo
 
 ### `loki init`
 
-Build a PRD interactively or from one of 12 built-in templates.
+Build a PRD markdown spec interactively or from one of 12 built-in templates. Output is a `.md` file you can pass to `loki start`.
 
 ```bash
 loki init [OPTIONS]
@@ -180,7 +180,7 @@ loki init [OPTIONS]
 **Examples:**
 
 ```bash
-# Interactive PRD builder
+# Interactive PRD spec builder
 loki init
 
 # List available templates
@@ -315,7 +315,7 @@ loki reset failed
 
 ### `loki issue`
 
-Convert GitHub issues to PRDs and optionally start working on them.
+Use a GitHub issue as a spec -- converts the issue body to a PRD markdown file and optionally starts working on it.
 
 ```bash
 loki issue [URL|NUMBER] [OPTIONS]
@@ -327,23 +327,23 @@ loki issue [URL|NUMBER] [OPTIONS]
 |--------|-------------|
 | `--repo OWNER/REPO` | Specify repository (default: auto-detect) |
 | `--number NUM` | Specify issue number |
-| `--start` | Start Loki Mode after generating PRD |
+| `--start` | Start Loki Mode after generating the PRD spec |
 | `--dry-run` | Preview without saving |
 | `--output FILE` | Custom output path |
 
 **Examples:**
 
 ```bash
-# Generate PRD from issue number (auto-detects repo from git remote)
+# Generate a spec from a GitHub issue number (auto-detects repo from git remote)
 loki issue 123
 
-# Generate PRD from full URL
+# Generate a spec from a full GitHub issue URL
 loki issue https://github.com/myorg/myapp/issues/42
 
 # Generate and immediately start working
 loki issue 123 --start
 
-# Preview the generated PRD without saving
+# Preview the generated spec (PRD markdown) without saving
 loki issue 123 --dry-run
 
 # Save to custom path
@@ -829,7 +829,7 @@ LOKI_WEBHOOK_URL=https://your-server.com/webhook
 
 ### `loki voice`
 
-Voice input for PRD creation (v5.36.0).
+Voice input for spec creation -- dictate a PRD markdown file by speaking (v5.36.0).
 
 ```bash
 loki voice [SUBCOMMAND]
@@ -841,7 +841,7 @@ loki voice [SUBCOMMAND]
 |---------|-------------|
 | `status` | Check voice input availability |
 | `listen` | Start listening for voice input |
-| `dictate` | Dictate a PRD |
+| `dictate` | Dictate a PRD markdown spec |
 | `speak TEXT` | Text-to-speech output |
 | `start` | Start voice-driven session |
 
@@ -851,7 +851,7 @@ loki voice [SUBCOMMAND]
 # Check if voice input is available
 loki voice status
 
-# Dictate a PRD
+# Dictate a PRD spec
 loki voice dictate
 
 # Start voice-driven session
@@ -1168,7 +1168,7 @@ loki start --github
 ### Improve an existing codebase
 
 ```bash
-# No PRD needed -- Loki analyzes the code and generates improvements
+# No spec needed -- Loki analyzes the code and generates improvements
 loki start
 
 # Or give it a quick task
@@ -1208,7 +1208,7 @@ loki resume
 ### Multi-provider comparison
 
 ```bash
-# Run the same PRD with different providers
+# Run the same spec with different providers
 loki start ./prd.md --provider claude
 loki start ./prd.md --provider codex
 loki start ./prd.md --provider gemini

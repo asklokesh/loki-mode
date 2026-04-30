@@ -8,7 +8,7 @@ Get Loki Mode running in under 5 minutes.
 
 - **Node.js 16+** or **Homebrew** (macOS/Linux)
 - **Claude Code CLI** installed and authenticated
-- A PRD (Product Requirements Document) or GitHub issue
+- A spec describing what to build -- a PRD markdown file, GitHub issue, YAML feature brief, or any natural-language description
 
 ---
 
@@ -43,9 +43,9 @@ loki --version
 
 ## Your First Session
 
-### Step 1: Create a PRD
+### Step 1: Create a spec
 
-Create a file called `my-app.md`:
+A spec can be a PRD markdown file, a GitHub issue, or a YAML brief. The simplest is a markdown PRD. Create a file called `my-app.md`:
 
 ```markdown
 # My Todo App
@@ -73,7 +73,8 @@ Build a simple todo application with React and localStorage.
 claude --dangerously-skip-permissions
 
 # In Claude, invoke:
-# "Loki Mode with PRD at my-app.md"
+# "Loki Mode with spec at my-app.md"
+# (also accepts: "with PRD at my-app.md", "from issue #42", etc.)
 ```
 
 Or use the CLI directly:
@@ -104,7 +105,7 @@ loki logs --follow
 ### Start from GitHub Issue
 
 ```bash
-# Convert issue to PRD and start
+# Use a GitHub issue as the spec (converts issue body to a PRD and starts)
 loki issue https://github.com/owner/repo/issues/123 --start
 ```
 

@@ -297,7 +297,7 @@ export default function TemplatesPage() {
           </span>
         </h1>
         <p className="text-[#6B6960] text-sm max-w-lg mx-auto mb-6">
-          Choose a starting point and customize with AI. Each template is a complete PRD
+          Choose a starting point and customize with AI. Each template is a complete spec
           ready to become your next project.
         </p>
 

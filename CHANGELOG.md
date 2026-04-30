@@ -9,6 +9,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.11] - 2026-04-29
+
+PATCH release. Documentation-only refresh: rename the user-facing
+umbrella term from "PRD" to "spec", add the supported-spec-formats
+collapsible to README, fix the npm description from 3 providers to 5,
+and update the GitHub repo description plus topics. The README header
+is now "Loki Mode aka Autonomi". No code behavior changes.
+
+### Why
+
+`loki start` actually accepts ~10 input forms (Markdown PRD, JSON,
+YAML/OpenAPI, plain text, GitHub issue URL, GitHub shorthand
+`owner/repo#N`, Jira key `PROJ-456`, GitLab/Azure issue URL, bare
+issue number, OpenSpec change directory, plus auto-detect from
+current directory). Calling all of them "PRD" hides the real
+flexibility and turns away non-PM users with Jira tickets, OpenAPI
+specs, or one-line briefs. "Spec" is the accurate umbrella; PRD
+becomes one form of spec.
+
+### What changed
+
+- **README.md**: header now reads "Loki Mode aka Autonomi". The
+  "How it works" line leads with "Drop a spec" and lists all input
+  forms. Two new CLI examples: `loki start owner/repo#123` and
+  `loki start ./openapi.yaml`. New collapsible section "Supported
+  spec formats" with a 11-row markdown table covering every input
+  form the tool accepts. Docker tag bumped to 7.5.11.
+- **SKILL.md**: opens with "Spec in, product out." Tagline:
+  '"spec" is whatever describes the work: a Markdown PRD, a GitHub
+  issue, an OpenAPI doc, a Jira ticket, a PRD is one form of spec.'
+  Implemented Features table updated.
+- **CLAUDE.md**: project description now "Takes any spec (PRD,
+  GitHub issue, OpenAPI/JSON/YAML, or one-line brief) to fully
+  deployed product." Quick Start adds an issue-mode example.
+- **wiki/**: 12 wiki pages refreshed. Home, Getting-Started, FAQ,
+  Installation, CLI-Reference, Providers, GitHub-Integration,
+  Architecture, Security, Notifications, Use-Cases, API-Reference
+  all use spec framing. Wiki Sync workflow publishes to the
+  GitHub Wiki on push.
+- **dashboard/static/index.html + dashboard-ui/ sources + web-app
+  React components**: every user-visible "PRD" label that was
+  actually generic ("PRD Checklist", "PRD Progress", "Analyzing
+  PRD...", "Write your PRD", "View PRD") becomes "Spec". Internal
+  IDs, API field names, HTTP routes, A2A skill IDs, React
+  component names, and on-disk filename lookups (PRD.md, prd.md)
+  all stay (would be breaking changes). Plan v8 to migrate API
+  fields with backward-compat aliases.
+- **.github/**: discussion templates updated. Specifically
+  `show-and-tell.yml` placeholder now says "Paste your spec (PRD,
+  GitHub issue, OpenAPI, etc.)"; `q-and-a.yml` category renamed
+  "Spec Writing (PRD, GitHub issues, OpenAPI, etc.)". Issue and
+  PR templates had no PRD prompts.
+- **GitHub repo metadata** (via `gh repo edit`): repo description
+  now "Multi-agent autonomous SDLC framework. Spec to deployed
+  app: PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief.
+  5 AI providers, 11 quality gates." Added 7 new topics:
+  spec-driven-development, openapi, sdlc, github-issues,
+  anthropic, cline, aider.
+- **npm package.json description**: was "for Claude Code, Codex
+  CLI, and Gemini CLI" (3 providers). Now correctly lists all 5
+  AI providers (Claude Code, OpenAI Codex, Google Gemini, Cline,
+  Aider) and includes the spec framing.
+- **DOCKER_README.md**: value-prop "Transform your PRD" became
+  "Transform your spec"; Docker tag bumped to 7.5.11.
+- **docs/INSTALLATION.md**: Quick Start adds a GitHub issue
+  example; sandbox section reframed for spec files.
+- **docs/cursor-comparison.md + docs/COMPARISON.md**: gate count
+  corrected from 9 to 11; PRD framing replaced with spec framing.
+
+### What was NOT changed (deliberately)
+
+- `loki start --prd FILE` flag (still forces PRD-mode explicitly).
+- `loki init` PRD templates (they ARE PRD templates).
+- Internal bash variables (`$prd_file`, `$prd_context`).
+- TypeScript internal types.
+- API field names (`prd` in request/response payloads, on-disk
+  state files). API rename planned for v8 with backward-compat
+  aliases.
+- A2A protocol skill ID `prd-to-product` (machine-readable
+  contract).
+- React component identifiers (`PRDInput`, `getPRDChecklist`).
+- HTML element IDs and data attributes.
+
+### Tests
+
+All 708 bun tests pass; 42 python tests pass; 14/14 CLI on both
+Bun and bash routes; bash injection / quoting / events
+concurrency suites all green; local-ci 20/20.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.11 npm/Docker/brew tarballs (post-
+  release distribution validation runs after the workflow
+  completes).
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+- API field rename to `spec` deferred to v8.
+
 ## [7.5.10] - 2026-04-29
 
 PATCH release. Mega-batch second pass: closes the remaining real items

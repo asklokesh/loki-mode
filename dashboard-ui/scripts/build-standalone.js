@@ -611,7 +611,7 @@ function generateStandaloneHTML(bundleCode) {
         </button>
         <button class="nav-link" data-section="prd-checklist" id="nav-prd-checklist">
           <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-          PRD Checklist
+          Spec Checklist
         </button>
         <button class="nav-link" data-section="app-runner" id="nav-app-runner">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -702,10 +702,10 @@ function generateStandaloneHTML(bundleCode) {
         </div>
       </div>
 
-      <!-- PRD Checklist -->
+      <!-- Spec Checklist -->
       <div class="section-page" id="page-prd-checklist">
         <div class="section-page-header">
-          <h2 class="section-page-title">PRD Checklist</h2>
+          <h2 class="section-page-title">Spec Checklist</h2>
         </div>
         <loki-checklist-viewer id="checklist-viewer"></loki-checklist-viewer>
       </div>
@@ -799,7 +799,7 @@ function generateStandaloneHTML(bundleCode) {
         <div class="shortcuts-group-title">Navigation</div>
         <div class="shortcut-row"><span class="shortcut-desc">Overview</span><span class="shortcut-keys"><kbd class="shortcut-key">1</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Insights</span><span class="shortcut-keys"><kbd class="shortcut-key">2</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">PRD Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
+        <div class="shortcut-row"><span class="shortcut-desc">Spec Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">App Runner</span><span class="shortcut-keys"><kbd class="shortcut-key">4</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">5</kbd></span></div>
         <div class="shortcut-row"><span class="shortcut-desc">Quality</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>

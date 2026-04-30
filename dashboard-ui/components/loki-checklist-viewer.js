@@ -443,7 +443,7 @@ export class LokiChecklistViewer extends LokiElement {
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
       <div class="checklist-viewer">
         <div class="checklist-header">
-          <h2 class="title">PRD Checklist</h2>
+          <h2 class="title">Spec Checklist</h2>
           ${isInit ? this._renderBadges(cl.summary) : ''}
         </div>
         ${isInit ? this._renderGateBanner() : ''}
@@ -558,7 +558,7 @@ export class LokiChecklistViewer extends LokiElement {
     return `
       <div class="empty-state">
         <p><strong>No checklist data yet.</strong></p>
-        <p class="hint">The PRD checklist is generated during the first iteration. Start a session with <code>loki start ./prd.md</code> -- groups and items will appear here as the session progresses and can be expanded for details.</p>
+        <p class="hint">The spec checklist is generated during the first iteration. Start a session with <code>loki start ./spec.md</code> (PRD files also accepted) -- groups and items will appear here as the session progresses and can be expanded for details.</p>
       </div>
     `;
   }

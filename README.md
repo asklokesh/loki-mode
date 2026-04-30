@@ -1,6 +1,6 @@
 <div align="center">
 
-# Loki Mode
+# Loki Mode aka Autonomi
 
 ### Build the future, faster.
 
@@ -18,7 +18,7 @@
 
 ---
 
-> **How it works:** You provide a PRD. Loki Mode classifies complexity (`run.sh:detect_complexity()`), assembles an agent team from 41 specialized types across 8 swarms, and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 11 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
+> **How it works:** Drop a spec -- a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), assembles an agent team from 41 specialized types across 8 swarms, and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 11 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
 
 ---
 
@@ -49,7 +49,9 @@ bun install -g loki-mode
 loki doctor                                   # verify environment
 loki init my-app --template simple-todo-app
 cd my-app
-loki start prd.md                             # autonomous build starts
+loki start prd.md                             # autonomous build from a Markdown PRD
+loki start owner/repo#123                     # ...or a GitHub issue
+loki start ./openapi.yaml                     # ...or an OpenAPI/YAML spec
 ```
 
 Or skip scaffolding and go straight to a quick task:
@@ -64,7 +66,7 @@ loki quick "build a landing page with a signup form"
 |--------|---------|-------|
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest. v8 will be Bun-only. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker** | `docker pull asklokesh/loki-mode:7.5.9 && docker run --rm asklokesh/loki-mode:7.5.9 start prd.md` | Bun pre-installed in image |
+| **Docker** | `docker pull asklokesh/loki-mode:7.5.11 && docker run --rm asklokesh/loki-mode:7.5.11 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -124,11 +126,34 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode:7.5.9` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.5.11` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 
 See the full [Installation Guide](docs/INSTALLATION.md).
+
+</details>
+
+<details>
+<summary><strong>Supported spec formats</strong></summary>
+
+A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the v7.5.11 CLI accepts.
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| Markdown PRD | `loki start ./prd.md` | Canonical form. Headings become section anchors. |
+| JSON spec | `loki start ./spec.json` | Free-form JSON; keys surfaced to agents. |
+| YAML spec | `loki start ./openapi.yaml` | OpenAPI / AsyncAPI / plain YAML all accepted. |
+| Plain text brief | `loki start ./brief.txt` | One-paragraph briefs work; complexity auto-detects to "simple". |
+| GitHub issue URL | `loki start https://github.com/owner/repo/issues/42` | Title + body + labels become the spec. |
+| GitHub shorthand | `loki start owner/repo#42` | Same as above, shorter. |
+| Jira ticket key | `loki start PROJ-456` | Requires `JIRA_BASE_URL` + `JIRA_TOKEN` env vars. |
+| GitLab / Azure DevOps URL | `loki start https://gitlab.com/group/proj/-/issues/7` | GitLab and Azure DevOps issue URLs both supported. |
+| Bare issue number | `loki start #123` or `loki start 123` | Resolved against the current repo's `origin` remote. |
+| OpenSpec change directory | `loki start --openspec ./openspec/change-001` | Reads OpenSpec change manifest + delta files. |
+| Auto-detect (no input) | `loki start` | Picks up `./prd.md`, `./spec.{json,yaml,yml}`, or `./SPEC.md` from cwd. |
+
+All formats land in the same RARV pipeline and pass the same 11 quality gates (`skills/quality-gates.md`).
 
 </details>
 

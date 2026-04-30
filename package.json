@@ -1,7 +1,7 @@
 {
   "name": "loki-mode",
-  "version": "7.5.10",
-  "description": "Loki Mode by Autonomi - Multi-agent autonomous startup system for Claude Code, Codex CLI, and Gemini CLI",
+  "version": "7.5.11",
+  "description": "Loki Mode by Autonomi. Multi-agent autonomous SDLC framework. Spec to deployed app: PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. 5 AI providers (Claude Code, OpenAI Codex, Google Gemini, Cline, Aider). 11 quality gates.",
   "keywords": [
     "agent",
     "agent-orchestration",

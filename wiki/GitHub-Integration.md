@@ -1,6 +1,6 @@
 # GitHub Integration
 
-Convert GitHub issues to PRDs and automate PR creation.
+Use GitHub issues as specs and automate PR creation.
 
 ---
 
@@ -8,7 +8,7 @@ Convert GitHub issues to PRDs and automate PR creation.
 
 Loki Mode integrates with GitHub to:
 
-- Import issues as PRDs
+- Use issues as specs (converted to PRD markdown internally)
 - Create pull requests automatically
 - Sync task status with issues
 - Notify on completion
@@ -29,7 +29,7 @@ gh auth login
 
 ---
 
-## Converting Issues to PRDs
+## Converting Issues to Specs (PRD markdown)
 
 ### From URL
 
@@ -62,9 +62,9 @@ loki issue 123 --output ./prds/issue-123.md
 
 ---
 
-## Generated PRD Format
+## Generated Spec Format
 
-Loki Mode converts issues to this format:
+Loki Mode converts issues to this PRD markdown format:
 
 ```markdown
 # Issue #123: Feature Title

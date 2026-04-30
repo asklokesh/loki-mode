@@ -164,7 +164,7 @@ loki notify webhook "Custom event"
   "attachments": [{
     "color": "#3498DB",
     "title": "Loki Mode: Session Started",
-    "text": "Starting Loki Mode session with PRD: my-app.md",
+    "text": "Starting Loki Mode session with spec: my-app.md",
     "fields": [
       {"title": "Event", "value": "session_start", "short": true},
       {"title": "Project", "value": "my-app", "short": true}

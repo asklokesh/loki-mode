@@ -17,7 +17,7 @@ State machines and component diagrams for Loki Mode.
                               | INITIALIZING|
                               +------+------+
                                      |
-                                     | PRD loaded
+                                     | Spec loaded (PRD/issue/YAML)
                                      v
 +-------------+              +-------+-------+
 |   PAUSED    |<-------------+   RUNNING     |<-----------+
@@ -198,7 +198,7 @@ Queue files:
 ```
 +------------------+
 |   REQUIREMENTS   |
-| - Parse PRD      |
+| - Parse spec     |
 | - Extract tasks  |
 +--------+---------+
          |
