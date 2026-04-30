@@ -46,7 +46,7 @@ echo "999999" > "$TMPDIR/test1/.loki/loki.pid"
 # trigger side effects). Asserting the *behavior*, not the wiring, keeps
 # this test stable across cmd_start refactors.
 (
-    cd "$TMPDIR/test1"
+    cd "$TMPDIR/test1" || exit 1
     LOKI_DIR=".loki"
     _start_loki_dir="${LOKI_DIR:-.loki}"
     _start_pid_file="$_start_loki_dir/loki.pid"
@@ -77,7 +77,7 @@ mkdir -p "$TMPDIR/test2/.loki"
 echo "$$" > "$TMPDIR/test2/.loki/loki.pid"
 
 (
-    cd "$TMPDIR/test2"
+    cd "$TMPDIR/test2" || exit 2
     LOKI_DIR=".loki"
     _start_loki_dir="${LOKI_DIR:-.loki}"
     _start_pid_file="$_start_loki_dir/loki.pid"
@@ -106,7 +106,7 @@ mkdir -p "$TMPDIR/test3/.loki"
 : > "$TMPDIR/test3/.loki/loki.pid"
 
 (
-    cd "$TMPDIR/test3"
+    cd "$TMPDIR/test3" || exit 3
     LOKI_DIR=".loki"
     _start_loki_dir="${LOKI_DIR:-.loki}"
     _start_pid_file="$_start_loki_dir/loki.pid"

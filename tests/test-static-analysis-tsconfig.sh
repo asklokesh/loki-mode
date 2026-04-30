@@ -17,7 +17,7 @@
 #     CLI surface the gate uses: `tsc --noEmit -p .` should succeed where
 #     `tsc --noEmit "$f"` fails. That proves the fix's contract.
 #   - For Triage #3 we grep autonomy/run.sh for the `-S error` flag on the
-#     shellcheck invocation in enforce_static_analysis() and confirm the
+#     ShellCheck invocation in enforce_static_analysis() and confirm the
 #     blocking call no longer fires on style/info severity.
 #===============================================================================
 

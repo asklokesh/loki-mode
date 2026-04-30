@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.12
+# Loki Mode v7.5.13
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -91,7 +91,7 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 ## Model Selection
 
-**Default since v5.3.0 (reaffirmed in v7.5.12):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
+**Default since v5.3.0 (reaffirmed in v7.5.13):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
 | Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
 |-----------|------|------------------|------------------------|------------------|--------|
@@ -333,7 +333,7 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
-## Concurrency and Security Hardening (v7.5.7 - v7.5.12)
+## Concurrency and Security Hardening (v7.5.7 - v7.5.13)
 
 Three back-to-back patches closed cross-process and security gaps. No user-facing behavior change on the default flow; verify via the cited paths.
 
@@ -342,7 +342,7 @@ Three back-to-back patches closed cross-process and security gaps. No user-facin
 - **Dashboard auth** now required on `/api/memory/*`, `/api/learning/*`, and `/api/status` in `dashboard/server.py` (previously unauthenticated read paths).
 - **Bash quoting hardening** across `autonomy/run.sh` and `autonomy/loki` -- variable expansions inside command substitution and `[ ]` tests quoted to prevent word-splitting on paths with spaces.
 
-See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.12] for the per-fix list and reviewer sign-off.
+See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and reviewer sign-off.
 
 ---
 
@@ -381,4 +381,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.12] for the per-fix list and r
 
 ---
 
-**v7.5.12 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.13 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

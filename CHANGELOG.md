@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.13] - 2026-04-29
+
+PATCH release. Test-suite fix-up. v7.5.12 published successfully to
+npm/Docker/brew, but the post-publish ShellCheck workflow failed on
+the two new test files Dev6/Dev7 added in v7.5.12. No code/runtime
+behavior changes.
+
+### Fixed
+
+- **tests/test-static-analysis-tsconfig.sh:20**: a comment containing
+  the literal word `shellcheck` at the start of a line was misparsed
+  by ShellCheck as a `# shellcheck` directive (SC1073/1072). Reworded
+  to "ShellCheck" (capital S).
+- **tests/cli/test_stale_pid_cleanup.sh:49,80,109**: 3 `cd "$dir"`
+  invocations without an `|| exit` guard (SC2164). Added explicit
+  `|| exit N` per cd.
+
+### Tests
+
+- Both files re-checked with `shellcheck` -> CLEAN.
+- Both test scripts still pass: 4/4 stale-pid + 6/6 static-analysis-
+  tsconfig.
+- local-ci 20/20 PASS.
+
+### NOT tested in this release
+
+- Real-user UAT against v7.5.13 npm/Docker/brew tarballs.
+- Phase 6 bash sunset still gated on the 30-day clean soak.
+
 ## [7.5.12] - 2026-04-29
 
 PATCH release. **Real-user adoption fixes** triggered by the user
