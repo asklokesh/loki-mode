@@ -6961,6 +6961,20 @@ if disk_gb is not None:
     elif disk_gb < 5:
         disk_status = 'warn'
 
+# v7.5.15: expose the sentrux architectural-drift gate state in --json so
+# dashboards/automation can surface it the same way the text-mode block does
+# (added in v7.5.14). Sibling of checks/disk -- intentionally not counted in
+# the summary tally to keep summary numbers backwards-compatible.
+sentrux_found = shutil.which('sentrux') is not None
+sentrux_version = get_version('sentrux') if sentrux_found else None
+sentrux_status = 'pass' if sentrux_found else 'warn'
+sentrux = {
+    'found': sentrux_found,
+    'version': sentrux_version,
+    'status': sentrux_status,
+    'required': 'optional'
+}
+
 pass_count = sum(1 for c in checks if c['status'] == 'pass')
 fail_count = sum(1 for c in checks if c['status'] == 'fail')
 warn_count = sum(1 for c in checks if c['status'] == 'warn')
@@ -6975,6 +6989,7 @@ result = {
         'available_gb': disk_gb,
         'status': disk_status
     },
+    'sentrux': sentrux,
     'summary': {
         'passed': pass_count,
         'failed': fail_count,
