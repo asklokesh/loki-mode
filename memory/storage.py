@@ -329,22 +329,50 @@ class MemoryStorage:
         """
         Load JSON data from a file.
 
+        Per-file resilience (Triage #15): a single corrupt, unreadable, or
+        non-UTF8 file must NOT propagate an exception to callers iterating
+        over many files (e.g. ``.loki/memory/episodic/*.json``). On any
+        load failure we log a warning and return None so the caller can
+        skip and continue.
+
         Args:
             path: Path to JSON file
 
         Returns:
-            Parsed JSON as dictionary, or None if file doesn't exist or is corrupted
+            Parsed JSON as dictionary, or None if file doesn't exist,
+            is unreadable, contains invalid JSON, or is not UTF-8.
         """
         path = Path(path)
         if not path.exists():
             return None
 
-        with self._file_lock(path, exclusive=False):
-            with open(path, "r") as f:
-                try:
-                    return json.load(f)
-                except json.JSONDecodeError:
-                    return None
+        try:
+            with self._file_lock(path, exclusive=False):
+                with open(path, "r", encoding="utf-8") as f:
+                    try:
+                        return json.load(f)
+                    except json.JSONDecodeError as exc:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "Skipping corrupt JSON file %s: %s", path, exc
+                        )
+                        return None
+                    except UnicodeDecodeError as exc:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "Skipping non-UTF8 JSON file %s: %s", path, exc
+                        )
+                        return None
+        except (OSError, UnicodeDecodeError) as exc:
+            # OSError covers I/O errors, permission errors, and missing
+            # files that race with the existence check above.
+            # UnicodeDecodeError can also surface from the file_lock /
+            # open layer on some platforms.
+            import logging
+            logging.getLogger(__name__).warning(
+                "Skipping unreadable JSON file %s: %s", path, exc
+            )
+            return None
 
     def _generate_id(self, prefix: str) -> str:
         """
