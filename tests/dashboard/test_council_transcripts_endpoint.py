@@ -266,6 +266,34 @@ class CouncilTranscriptsEndpointTests(unittest.TestCase):
                     msg=f"Expected 404 or 422 for traversal id {bad_id!r}, got {resp.status_code}",
                 )
 
+    # --- BUG-006: corrupt single-record returns 410, not 500 ---------------------
+
+    def test_single_record_corrupt_returns_410(self):
+        """BUG-006: GET single record where file contains corrupt JSON returns 410."""
+        d = self._transcripts_dir()
+        (d / "iter-99.json").write_text("{not valid json", encoding="utf-8")
+
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/council/transcripts/iter-99")
+        self.assertEqual(resp.status_code, 410)
+        self.assertIn("corrupt", resp.json()["detail"].lower())
+
+    def test_single_record_non_object_returns_410(self):
+        """BUG-006: GET single record where file contains a JSON array (not object) returns 410."""
+        d = self._transcripts_dir()
+        (d / "iter-100.json").write_text("[1,2,3]", encoding="utf-8")
+
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/council/transcripts/iter-100")
+        self.assertEqual(resp.status_code, 410)
+        self.assertIn("corrupt", resp.json()["detail"].lower())
+
+    def test_single_record_missing_still_returns_404(self):
+        """BUG-006: GET single record for a nonexistent file still returns 404."""
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/council/transcripts/iter-doesnotexist")
+        self.assertEqual(resp.status_code, 404)
+
     # --- AC10: Content-Type is application/json ----------------------------------
 
     def test_ac10_content_type_is_json(self):

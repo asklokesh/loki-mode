@@ -3852,9 +3852,18 @@ async def get_council_transcript(iteration_id: str):
     if not transcript_file.exists():
         raise HTTPException(status_code=404, detail="Transcript not found")
     try:
-        return json.loads(transcript_file.read_text())
+        rec = json.loads(transcript_file.read_text())
     except Exception:
-        raise HTTPException(status_code=500, detail="Corrupt transcript file")
+        raise HTTPException(
+            status_code=410,
+            detail=f"Transcript file for {iteration_id} is corrupt; admin should inspect or remove it",
+        )
+    if not isinstance(rec, dict):
+        raise HTTPException(
+            status_code=410,
+            detail=f"Transcript file for {iteration_id} is corrupt; admin should inspect or remove it",
+        )
+    return rec
 
 
 # =============================================================================
