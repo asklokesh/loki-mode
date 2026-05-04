@@ -3782,6 +3782,80 @@ async def force_council_review():
     return {"success": True, "message": "Council review requested"}
 
 
+@app.get("/api/council/transcripts")
+async def get_council_transcripts(
+    limit: int = Query(default=20, ge=1, le=200),
+    since: Optional[str] = Query(default=None),
+    iter_min: Optional[int] = Query(default=None),
+):
+    """List council transcript records, sorted descending by iteration number.
+
+    Query params:
+      limit    int, default=20, max=200
+      since    ISO8601 string (optional), filter to transcripts after this time
+      iter_min int (optional), filter to iteration >= N
+    """
+    transcripts_dir = _get_loki_dir() / "council" / "transcripts"
+    if not transcripts_dir.exists():
+        return {"transcripts": [], "total": 0, "latest_id": None}
+
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid 'since' timestamp format; expected ISO8601")
+
+    records = []
+    for f in sorted(transcripts_dir.glob("iter-*.json"), reverse=True):
+        try:
+            rec = json.loads(f.read_text())
+        except Exception:
+            logger.warning("Skipping corrupt council transcript file: %s", f.name)
+            continue
+        if not isinstance(rec, dict):
+            logger.warning("Skipping non-object council transcript file: %s", f.name)
+            continue
+        if since_dt is not None:
+            ts_str = rec.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if ts <= since_dt:
+                continue
+        if iter_min is not None and rec.get("iteration", 0) < iter_min:
+            continue
+        records.append(rec)
+        if len(records) >= limit:
+            break
+
+    return {
+        "transcripts": records,
+        "total": len(records),
+        "latest_id": records[0]["iteration_id"] if records else None,
+    }
+
+
+@app.get("/api/council/transcripts/{iteration_id}")
+async def get_council_transcript(iteration_id: str):
+    """Fetch a single council transcript by iteration_id.
+
+    Returns the record body or 404 if not found.
+    Path traversal attempts (containing '/' or '..') are rejected with 404.
+    """
+    # Reject path traversal: iteration_id must be a plain filename component.
+    if "/" in iteration_id or "\\" in iteration_id or ".." in iteration_id:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    transcript_file = _get_loki_dir() / "council" / "transcripts" / f"{iteration_id}.json"
+    if not transcript_file.exists():
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    try:
+        return json.loads(transcript_file.read_text())
+    except Exception:
+        raise HTTPException(status_code=500, detail="Corrupt transcript file")
+
+
 # =============================================================================
 # Context Window Tracking API (v5.40.0)
 # =============================================================================
