@@ -3795,16 +3795,17 @@ async def get_council_transcripts(
       since    ISO8601 string (optional), filter to transcripts after this time
       iter_min int (optional), filter to iteration >= N
     """
-    transcripts_dir = _get_loki_dir() / "council" / "transcripts"
-    if not transcripts_dir.exists():
-        return {"transcripts": [], "total": 0, "latest_id": None}
-
+    # Validate query params before any early-return so invalid inputs always get 400.
     since_dt = None
     if since:
         try:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid 'since' timestamp format; expected ISO8601")
+
+    transcripts_dir = _get_loki_dir() / "council" / "transcripts"
+    if not transcripts_dir.exists():
+        return {"transcripts": [], "total": 0, "latest_id": None}
 
     records = []
     for f in sorted(transcripts_dir.glob("iter-*.json"), reverse=True):

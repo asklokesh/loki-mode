@@ -279,5 +279,41 @@ class CouncilTranscriptsEndpointTests(unittest.TestCase):
             self.assertIn("application/json", single_resp.headers.get("content-type", ""))
 
 
+    # --- BUG-001 regression: since validation must run before missing-dir check ----
+
+    def test_since_validation_runs_before_missing_dir_check(self):
+        """BUG-001: ?since=<invalid> must return 400 even when transcripts dir is absent.
+
+        Prior to the fix, the early-return for a missing directory fired before the
+        since param was validated, so garbage values silently returned 200.
+        """
+        # tmp dir has NO .loki/council/transcripts/ subdirectory.
+        with _ForceLokiDir(self.tmp):
+            client = self._client()
+
+            # Invalid since value -- must get 400 regardless of missing dir.
+            resp = client.get("/api/council/transcripts", params={"since": "garbage"})
+            self.assertEqual(
+                resp.status_code,
+                400,
+                msg=f"Expected 400 for since=garbage with missing dir, got {resp.status_code}",
+            )
+
+            # Valid since value with no transcripts dir -- must get 200 with empty list.
+            resp = client.get(
+                "/api/council/transcripts",
+                params={"since": "2099-01-01T00:00:00Z"},
+            )
+            self.assertEqual(
+                resp.status_code,
+                200,
+                msg=f"Expected 200 for valid since with missing dir, got {resp.status_code}",
+            )
+            body = resp.json()
+            self.assertEqual(body["transcripts"], [])
+            self.assertEqual(body["total"], 0)
+            self.assertIsNone(body["latest_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
