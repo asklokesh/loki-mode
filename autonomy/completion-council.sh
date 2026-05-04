@@ -484,7 +484,7 @@ with open(state_file, 'w') as f:
     if [ "$_ct_triggered" = "true" ] && [ $approve_count -lt $COUNCIL_SIZE ]; then
         _ct_flipped="true"
     fi
-    council_write_transcript "${ITERATION_COUNT:-0}" "$_ct_outcome" "$_ct_triggered" "$_ct_flipped"
+    council_write_transcript "${ITERATION_COUNT:-0}" "$_ct_outcome" "$_ct_triggered" "$_ct_flipped" "$effective_threshold"
 
     if [ $approve_count -ge $effective_threshold ]; then
         return 0  # Council says DONE
@@ -500,6 +500,7 @@ with open(state_file, 'w') as f:
 #   $2 - outcome: APPROVED | REJECTED | BLOCKED_BY_GATE
 #   $3 - contrarian_triggered: true | false
 #   $4 - contrarian_flipped: true | false
+#   $5 - effective_threshold: votes needed for approval (0 = unknown/sentinel)
 #
 # Output: .loki/council/transcripts/iter-<N>-<TIMESTAMP>.json
 #===============================================================================
@@ -509,6 +510,7 @@ council_write_transcript() {
     local outcome="${2:-REJECTED}"
     local contrarian_triggered="${3:-false}"
     local contrarian_flipped="${4:-false}"
+    local effective_threshold="${5:-0}"
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     # Remove colons and hyphens from timestamp for filename safety
@@ -532,6 +534,7 @@ council_write_transcript() {
     _TASK="$task_or_prd" _PRD="${COUNCIL_PRD_PATH:-}" \
     _ROUND_FILE="${round_file}" _DA_FILE="${da_file}" \
     _MEMBERS_DIR="$COUNCIL_STATE_DIR/votes/iteration-${iteration}" \
+    _THRESHOLD="$effective_threshold" \
     _OUT="$transcript_file" \
     python3 -c "
 import json, os, pathlib, re
@@ -627,7 +630,7 @@ transcript = {
     'contrarian_flipped': cf,
     'approve_count': sum(1 for v in non_contrarian if v.get('verdict') == 'APPROVE'),
     'reject_count': sum(1 for v in non_contrarian if v.get('verdict') in ('REJECT', 'CANNOT_VALIDATE')),
-    'threshold': 2,
+    'threshold': int(os.environ.get('_THRESHOLD', '0')),
     'total_members': len(non_contrarian),
 }
 with open(os.environ['_OUT'], 'w') as f:
@@ -1512,6 +1515,9 @@ council_evaluate() {
         return 1  # CONTINUE - can't complete with critical failures
     fi
 
+    # Compute threshold using the same ceiling(2/3) formula as council_vote and council_aggregate_votes
+    local _eval_threshold=$(( (COUNCIL_SIZE * 2 + 2) / 3 ))
+
     # Step 1: Aggregate votes from all members
     local aggregate_result
     aggregate_result=$(council_aggregate_votes)
@@ -1532,14 +1538,14 @@ council_evaluate() {
             if [ "$da_result" = "OVERRIDE_CONTINUE" ]; then
                 log_warn "Council evaluate: devil's advocate overrode unanimous COMPLETE"
                 # Write transcript: DA triggered and flipped the outcome (Path B)
-                council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "true" "true"
+                council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "true" "true" "$_eval_threshold"
                 return 1  # CONTINUE
             fi
             # Write transcript: DA triggered but did NOT flip (Path B, unanimous COMPLETE confirmed)
-            council_write_transcript "${ITERATION_COUNT:-0}" "APPROVED" "true" "false"
+            council_write_transcript "${ITERATION_COUNT:-0}" "APPROVED" "true" "false" "$_eval_threshold"
         else
             # Write transcript: not unanimous, DA not triggered (Path B)
-            council_write_transcript "${ITERATION_COUNT:-0}" "APPROVED" "false" "false"
+            council_write_transcript "${ITERATION_COUNT:-0}" "APPROVED" "false" "false" "$_eval_threshold"
         fi
 
         log_info "Council evaluate: verdict is COMPLETE"
@@ -1547,7 +1553,7 @@ council_evaluate() {
     fi
 
     # Write transcript: aggregate voted CONTINUE (Path B)
-    council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "false" "false"
+    council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "false" "false" "$_eval_threshold"
     log_info "Council evaluate: verdict is CONTINUE"
     return 1  # CONTINUE
 }
