@@ -3816,6 +3816,9 @@ async def get_council_transcripts(
         if not isinstance(rec, dict):
             logger.warning("Skipping non-object council transcript file: %s", f.name)
             continue
+        if not isinstance(rec.get("iteration_id"), str):
+            logger.warning("Skipping transcript missing iteration_id field: %s", f.name)
+            continue
         if since_dt is not None:
             ts_str = rec.get("timestamp", "")
             try:
@@ -3833,7 +3836,7 @@ async def get_council_transcripts(
     return {
         "transcripts": records,
         "total": len(records),
-        "latest_id": records[0]["iteration_id"] if records else None,
+        "latest_id": records[0].get("iteration_id") if records else None,
     }
 
 

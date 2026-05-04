@@ -279,5 +279,52 @@ class CouncilTranscriptsEndpointTests(unittest.TestCase):
             self.assertIn("application/json", single_resp.headers.get("content-type", ""))
 
 
+    # --- BUG-007: records missing iteration_id skipped; latest_id unaffected ------
+
+    def test_list_skips_records_missing_iteration_id(self):
+        """BUG-007: a valid JSON dict that is missing iteration_id is skipped.
+
+        Seed 3 files: 2 fully valid, 1 valid JSON object but no iteration_id key.
+        Expect: 200, total=2, the bad record absent, latest_id from a valid record.
+        """
+        d = self._transcripts_dir()
+
+        valid1 = _make_transcript(3, "2026-05-03T10:00:00Z")
+        valid2 = _make_transcript(1, "2026-05-01T10:00:00Z")
+        bad = {
+            "iteration": 2,
+            "timestamp": "2026-05-02T10:00:00Z",
+            "outcome": "APPROVED",
+            # iteration_id intentionally omitted
+        }
+
+        self._write_transcript(valid1)
+        self._write_transcript(valid2)
+        # Write the bad file manually (no iteration_id to form filename from).
+        (d / "iter-2-no-id.json").write_text(json.dumps(bad), encoding="utf-8")
+
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/council/transcripts")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+
+        # Only the 2 valid records should be returned.
+        self.assertEqual(body["total"], 2)
+
+        returned_ids = {t["iteration_id"] for t in body["transcripts"]}
+        self.assertIn(valid1["iteration_id"], returned_ids)
+        self.assertIn(valid2["iteration_id"], returned_ids)
+
+        # latest_id must be one of the valid iteration_ids (not None, not the bad record).
+        self.assertIn(body["latest_id"], (valid1["iteration_id"], valid2["iteration_id"]))
+
+        # Confirm the bad record (iteration=2, no id) is absent.
+        bad_iterations = [t for t in body["transcripts"] if t.get("iteration") == 2]
+        # If iteration 2 appears, it must have come from a valid record (it won't here).
+        for t in bad_iterations:
+            self.assertIn("iteration_id", t)
+
+
 if __name__ == "__main__":
     unittest.main()
