@@ -10487,10 +10487,78 @@ PRD_PARSE_EOF
 # Main Autonomous Loop
 #===============================================================================
 
+#-------------------------------------------------------------------------------
+# Sentrux architectural-drift gate hooks (v7.5.15).
+#
+# Opt-in via LOKI_SENTRUX_GATE=1. Default OFF -- zero behavior change for users
+# who don't opt in. The helper at autonomy/lib/sentrux-gate.sh is sourced inside
+# run_autonomous() under the same guard. Both hook functions no-op silently if
+# the helper is not loaded or the sentrux binary is not on PATH.
+#-------------------------------------------------------------------------------
+_loki_sentrux_iteration_start() {
+    local target="${1:-${TARGET_DIR:-.}}"
+    if [ "${LOKI_SENTRUX_GATE:-0}" != "1" ]; then
+        return 0
+    fi
+    if ! type sentrux_available >/dev/null 2>&1 || ! sentrux_available; then
+        return 0
+    fi
+    sentrux_baseline_save "$target" >/dev/null 2>&1 || true
+    return 0
+}
+
+_loki_sentrux_iteration_end() {
+    local iter="${1:-0}"
+    local target="${2:-${TARGET_DIR:-.}}"
+    if [ "${LOKI_SENTRUX_GATE:-0}" != "1" ]; then
+        return 0
+    fi
+    if ! type sentrux_available >/dev/null 2>&1 || ! sentrux_available; then
+        return 0
+    fi
+    local diff before after verdict
+    diff=$(sentrux_gate_diff "$target" 2>/dev/null || true)
+    if [ -z "$diff" ]; then
+        return 0
+    fi
+    before="${diff%%|*}"
+    local rest="${diff#*|}"
+    after="${rest%%|*}"
+    verdict="${rest#*|}"
+    if type log_info >/dev/null 2>&1; then
+        log_info "sentrux gate iter=$iter verdict=$verdict before=${before:-?} after=${after:-?}"
+    fi
+    if [ "$verdict" = "DEGRADED" ]; then
+        local state_dir="$target/.loki/state"
+        mkdir -p "$state_dir" 2>/dev/null || true
+        local finding_path="$state_dir/findings-sentrux-${iter}.json"
+        local ts
+        ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+        local before_json="${before:-0}"
+        local after_json="${after:-0}"
+        # Guard against non-numeric values when serializing to JSON.
+        if ! [[ "$before_json" =~ ^[0-9]+$ ]]; then before_json=0; fi
+        if ! [[ "$after_json"  =~ ^[0-9]+$ ]]; then after_json=0; fi
+        printf '{"type":"architectural-drift","iteration":%s,"before":%s,"after":%s,"verdict":"DEGRADED","timestamp":"%s","source":"sentrux"}\n' \
+            "$iter" "$before_json" "$after_json" "$ts" \
+            > "$finding_path" 2>/dev/null || true
+    fi
+    return 0
+}
+
 run_autonomous() {
     local prd_path="$1"
 
     log_header "Starting Autonomous Execution"
+
+    # Sentrux architectural-drift gate (opt-in via LOKI_SENTRUX_GATE=1, v7.5.15).
+    # Source the helper only when the gate is enabled to avoid hot-path overhead
+    # for the default-off case. Failure to source is non-fatal -- the wrapper
+    # functions degrade to no-ops via type checks.
+    if [ "${LOKI_SENTRUX_GATE:-0}" = "1" ]; then
+        # shellcheck disable=SC1090,SC1091
+        source "${SCRIPT_DIR}/lib/sentrux-gate.sh" 2>/dev/null || true
+    fi
 
     # Auto-detect PRD if not provided
     if [ -z "$prd_path" ]; then
@@ -10669,6 +10737,9 @@ except Exception as exc:
 
         # Auto-track iteration start (for dashboard task queue)
         track_iteration_start "$ITERATION_COUNT" "$prd_path"
+
+        # Sentrux architectural-drift baseline snapshot (opt-in, v7.5.15).
+        _loki_sentrux_iteration_start "${TARGET_DIR:-.}"
 
         local prompt
         prompt=$(build_prompt "$retry" "$prd_path" "$ITERATION_COUNT")
@@ -11148,6 +11219,9 @@ if __name__ == "__main__":
 
         # Auto-track iteration completion (for dashboard task queue)
         track_iteration_complete "$ITERATION_COUNT" "$exit_code"
+
+        # Sentrux architectural-drift gate diff + finding emission (opt-in, v7.5.15).
+        _loki_sentrux_iteration_end "$ITERATION_COUNT" "${TARGET_DIR:-.}"
 
         # End OTEL phase span (if OTEL is enabled)
         if [ -n "${LOKI_OTEL_ENDPOINT:-}" ]; then
