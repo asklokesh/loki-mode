@@ -728,6 +728,7 @@ function generateStandaloneHTML(bundleCode) {
           <h2 class="section-page-title">Completion Council</h2>
         </div>
         <loki-council-dashboard id="council-dashboard"></loki-council-dashboard>
+        <loki-council-transcripts id="council-transcripts"></loki-council-transcripts>
       </div>
 
       <!-- Quality -->
@@ -903,7 +904,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'rarv-timeline',
       'migration-dashboard',
       'analytics-dashboard',
-      'escalations-panel'
+      'escalations-panel',
+      'council-transcripts'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);

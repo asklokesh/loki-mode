@@ -97,6 +97,7 @@ export { LokiCostWaterfall } from './components/loki-cost-waterfall.js';
 export { LokiAgentLeaderboard } from './components/loki-agent-leaderboard.js';
 export { LokiManagedMemoryPanel } from './components/loki-managed-memory-panel.js';
 export { LokiEscalations } from './components/loki-escalations.js';
+export { LokiCouncilTranscripts } from './components/loki-council-transcripts.js';
 
 // Version
 export const VERSION = '1.4.0';
