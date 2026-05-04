@@ -5916,6 +5916,29 @@ except (json.JSONDecodeError, FileNotFoundError, OSError):
 # Results stored in .loki/quality/test-results.json
 # ============================================================================
 
+# v7.5.15 (Triage #14): wrap pytest with a configurable timeout so a
+# deadlocked or infinite-loop test under /test cannot hang the gate
+# indefinitely. Uses `timeout` on Linux, `gtimeout` (coreutils) on macOS,
+# and degrades gracefully if neither is available (logs a warning, runs
+# unbounded). Configurable via LOKI_PYTEST_TIMEOUT (default 300s).
+#
+# Usage: _loki_run_pytest_with_timeout <target_dir> [pytest_args...]
+# Stdout: combined pytest output
+# Exit: 0 on pass, non-zero on fail. Exit 124 indicates the timeout fired.
+_loki_run_pytest_with_timeout() {
+    local target_dir="$1"; shift
+    local pytest_timeout="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
+    local _to_cmd=()
+    if command -v gtimeout >/dev/null 2>&1; then
+        _to_cmd=(gtimeout "${pytest_timeout}s")
+    elif command -v timeout >/dev/null 2>&1; then
+        _to_cmd=(timeout "${pytest_timeout}s")
+    else
+        log_warn "Neither gtimeout nor timeout available; pytest gate will run unbounded (install coreutils on macOS)"
+    fi
+    (cd "$target_dir" && "${_to_cmd[@]}" pytest "$@" 2>&1)
+}
+
 enforce_test_coverage() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
     local quality_dir="$loki_dir/quality"
@@ -6037,9 +6060,19 @@ enforce_test_coverage() {
         fi
         if [ "$has_python_project" = "true" ] && command -v pytest &>/dev/null; then
             test_runner="pytest"
-            local output
-            output=$(cd "${TARGET_DIR:-.}" && pytest --tb=short 2>&1) || test_passed=false
-            details="pytest: $(echo "$output" | tail -5 | tr '\n' ' ')"
+            local output pytest_exit
+            # v7.5.15 (Triage #14): wrapped with configurable timeout via helper.
+            output=$(_loki_run_pytest_with_timeout "${TARGET_DIR:-.}" --tb=short)
+            pytest_exit=$?
+            if [ "$pytest_exit" -eq 124 ]; then
+                local _pt_to="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
+                test_passed=false
+                log_warn "pytest gate timed out after ${_pt_to}s (exit 124)"
+                details="pytest: TIMED OUT after ${_pt_to}s -- $(echo "$output" | tail -3 | tr '\n' ' ')"
+            else
+                [ "$pytest_exit" -ne 0 ] && test_passed=false
+                details="pytest: $(echo "$output" | tail -5 | tr '\n' ' ')"
+            fi
         fi
     fi
 
