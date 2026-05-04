@@ -7052,9 +7052,10 @@ cmd_sentrux() {
     case "$sub" in
         baseline)
             if ! sentrux_available; then
-                echo -e "${YELLOW}sentrux not installed.${NC} Install via:" >&2
+                echo -e "${YELLOW}sentrux not installed.${NC} Install with one of:" >&2
                 echo "  brew install sentrux/tap/sentrux" >&2
-                echo "  or download from https://github.com/sentrux/sentrux/releases" >&2
+                echo "  curl -fsSL https://raw.githubusercontent.com/sentrux/sentrux/main/install.sh | sh" >&2
+                echo "  See also: https://github.com/sentrux/sentrux" >&2
                 return 2
             fi
             if sentrux_baseline_save "$target"; then
@@ -7068,7 +7069,10 @@ cmd_sentrux() {
             ;;
         gate)
             if ! sentrux_available; then
-                echo -e "${YELLOW}sentrux not installed.${NC} Run 'loki sentrux baseline' for setup hints." >&2
+                echo -e "${YELLOW}sentrux not installed.${NC} Install with one of:" >&2
+                echo "  brew install sentrux/tap/sentrux" >&2
+                echo "  curl -fsSL https://raw.githubusercontent.com/sentrux/sentrux/main/install.sh | sh" >&2
+                echo "  See also: https://github.com/sentrux/sentrux" >&2
                 return 2
             fi
             local diff verdict before after
@@ -7097,7 +7101,10 @@ cmd_sentrux() {
         status)
             if ! sentrux_available; then
                 echo "sentrux: not installed (optional)"
-                echo "install: brew install sentrux/tap/sentrux"
+                echo "install with one of:"
+                echo "  brew install sentrux/tap/sentrux"
+                echo "  curl -fsSL https://raw.githubusercontent.com/sentrux/sentrux/main/install.sh | sh"
+                echo "  See also: https://github.com/sentrux/sentrux"
                 return 0
             fi
             local v
