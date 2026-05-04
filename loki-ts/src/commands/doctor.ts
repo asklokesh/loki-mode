@@ -38,9 +38,20 @@ export type DiskCheck = {
   status: Status;
 };
 
+// v7.5.15: sentrux architectural-drift gate state exposed in --json output.
+// Sibling of checks/disk -- intentionally not counted in the summary tally
+// to keep summary numbers backwards-compatible with v7.5.14 consumers.
+export type SentruxCheck = {
+  found: boolean;
+  version: string | null;
+  status: Status;
+  required: "optional";
+};
+
 export type DoctorJson = {
   checks: ToolCheck[];
   disk: DiskCheck;
+  sentrux: SentruxCheck;
   summary: {
     passed: number;
     failed: number;
@@ -292,11 +303,24 @@ async function runAllToolChecks(): Promise<ToolRow[]> {
 
 // ---------- JSON mode ---------------------------------------------------------
 
+// v7.5.15: probe the sentrux binary for the JSON output. Mirrors the bash
+// cmd_doctor_json sentrux block byte-for-byte (subject to the bun-parity
+// matrix's jq -S key-sort + disk float normalization). Always returns a
+// SentruxCheck record; the `found` field discriminates installed vs not.
+async function checkSentrux(): Promise<SentruxCheck> {
+  const path = await commandExists("sentrux");
+  const found = path !== null;
+  const version = found ? await probeVersion("sentrux") : null;
+  const status: Status = found ? "pass" : "warn";
+  return { found, version, status, required: "optional" };
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
+  const sentrux = await checkSentrux();
 
   let passed = 0;
   let failed = 0;
@@ -313,6 +337,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   return {
     checks,
     disk,
+    sentrux,
     summary: { passed, failed, warnings, ok: failed === 0 },
   };
 }
