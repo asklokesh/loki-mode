@@ -83,6 +83,185 @@ See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 
 ---
 
+## FAQ
+
+### General Questions
+
+**Q: What is Loki Mode and how does it differ from other agent frameworks?**
+
+A: Loki Mode is a **multi-agent autonomous SDLC framework** that transforms specs into production-ready code. Key differentiators:
+- **Truly autonomous**: Describe what you want, walk away, come back to working code with tests
+- **RARV cycles**: Reason-Act-Reflect-Verify with 11 quality gates
+- **41 specialized agent types**: 8 swarms for different complexity levels
+- **Self-hosted and private**: Your keys, your infrastructure, no data leaves your network
+
+Compared to other frameworks:
+- **LangChain**: Chain-based orchestration, general-purpose
+- **CrewAI**: Role-playing agents, team collaboration
+- **Loki Mode**: Autonomous spec-to-deployment with built-in quality gates
+
+**Q: What are RARV cycles?**
+
+A: **RARV** stands for **Reason-Act-Reflect-Verify** - the autonomous execution loop:
+1. **Reason**: Analyze spec complexity, assemble agent team
+2. **Act**: Execute tasks with specialized agents
+3. **Reflect**: Review progress, identify issues
+4. **Verify**: Run 11 quality gates before completion
+
+Code is not "done" until it passes automated verification.
+
+**Q: What are the 11 quality gates?**
+
+A: See `skills/quality-gates.md` for details. Gates include:
+- Syntax validation
+- Type checking
+- Test coverage
+- Code review (blind 3-reviewer)
+- Anti-sycophancy checks
+- Security scan
+- Performance benchmarks
+- And more...
+
+**Q: What AI providers does Loki Mode support?**
+
+A: Loki Mode supports **5 AI providers** with automatic failover:
+- **Claude**: Anthropic's Claude models
+- **Codex**: OpenAI Codex
+- **Gemini**: Google Gemini
+- **Cline**: VS Code extension AI
+- **Aider**: AI pair programming tool
+
+See `loki-ts/src/runner/providers.ts` for provider configuration.
+
+**Q: What is the Memory system?**
+
+A: Loki Mode has **Episodic/Semantic/Procedural memory** with vector search (v5.15.0):
+- **Episodic**: Task-specific memories
+- **Semantic**: Knowledge and concepts
+- **Procedural**: How-to and process memories
+
+See `memory/engine.py` for implementation details.
+
+**Q: What MCP tools are available?**
+
+A: Loki Mode MCP server provides **15 tools** including:
+- ChromaDB code search
+- Codebase indexing
+- Spec analysis
+- Complexity detection
+- Agent team assembly
+- Quality gate execution
+
+See `mcp/server.py` for full tool list.
+
+### Getting Started
+
+**Q: How do I install Loki Mode?**
+
+A: **Recommended (Bun)**:
+```bash
+bun install -g loki-mode
+loki doctor  # verify environment
+```
+
+Other methods:
+- **Homebrew**: `brew tap asklokesh/tap && brew install loki-mode`
+- **Docker**: `docker pull asklokesh/loki-mode:7.5.11`
+- **npm**: `npm install -g loki-mode` (works without Bun)
+
+**Q: How do I start a project?**
+
+A: 
+```bash
+loki init my-app --template simple-todo-app
+cd my-app
+loki start prd.md  # from a PRD file
+loki start owner/repo#123  # from a GitHub issue
+loki start ./openapi.yaml  # from an OpenAPI spec
+```
+
+Or quick task:
+```bash
+loki quick "build a landing page with a signup form"
+```
+
+**Q: How do I heal legacy systems?**
+
+A: Use `loki heal` with archaeology/stabilize/isolate/modernize/validate phases (v6.67.0):
+```bash
+loki heal legacy-repo
+```
+
+See `skills/healing.md` for healing process details.
+
+### Features
+
+**Q: What are the 41 specialized agent types?**
+
+A: Agents are organized in **8 swarms** for different complexity levels:
+- **Simple tasks**: Quick agents for straightforward work
+- **Medium complexity**: Balanced agents for typical features
+- **High complexity**: Specialized agents for complex systems
+- **Full-stack**: Agents handling frontend, backend, database
+- **Testing**: Quality assurance agents
+- **DevOps**: CI/CD and deployment agents
+- **Documentation**: Docs and README agents
+- **Security**: Security audit agents
+
+Agent team is assembled automatically based on complexity detection.
+
+**Q: What output does Loki Mode produce?**
+
+A: **Full-stack output**:
+- Source code (frontend, backend, database)
+- Tests (unit, integration, e2e)
+- Docker configs
+- CI/CD pipelines
+- Audit logs
+- Documentation
+
+**Q: Is Loki Mode free?**
+
+A: Yes! **Free for personal, internal, academic, and non-commercial use**. License: Business Source License 1.1 (converts to Apache 2.0 on March 19, 2030). Contact founder@autonomi.dev for commercial licensing.
+
+### Troubleshooting
+
+**Q: Loki doctor shows errors. What should I check?**
+
+A: 
+1. Verify Bun is installed: `bun --version`
+2. Check AI provider API keys in `.env`
+3. Ensure Docker is running (if using Docker method)
+4. Run `loki self-update --check` to verify installation
+
+**Q: Agents aren't completing tasks. What's wrong?**
+
+A: 
+1. Check provider failover: review `loki-ts/src/runner/providers.ts`
+2. Verify API key permissions
+3. Review quality gate logs in audit directory
+4. Check complexity detection accuracy
+
+**Q: How do I upgrade Loki Mode?**
+
+A: 
+```bash
+loki self-update  # upgrade in place
+loki self-update --to bun  # switch from npm/brew to Bun
+loki self-update --check  # show current installation info
+```
+
+### Help Resources
+
+- **Website**: [autonomi.dev](https://www.autonomi.dev/)
+- **Documentation**: [wiki/Home.md](wiki/Home.md)
+- **Installation**: [docs/INSTALLATION.md](docs/INSTALLATION.md)
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Comparisons**: [references/competitive-analysis.md](references/competitive-analysis.md)
+
+---
+
 ## Runtime Architecture
 
 Loki Mode is in the middle of a phased migration from a Bash-based runtime to a TypeScript/Bun runtime. The work is happening on the `feat/bun-migration` branch and is being shipped incrementally.
