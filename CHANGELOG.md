@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - 7-bug QA pass (three feedback loops; independent code review by 3 agents)
+
+After shipping Phase A-plus, I ran a structured QA loop on everything new:
+(1) end-to-end functional testing, (2) edge-case bug hunting, (3) independent
+parallel code review by three Explore agents over pick.py, sandbox.sh, and
+mcp/server.py. Seven real bugs surfaced and were fixed in-place; six
+regression tests were added so the same defects cannot return silently.
+Two findings (validate_yaml_value bracket-regex no-op in run.sh, command
+injection via `$session`) were investigated and dismissed - the first is
+pre-existing scope-out-of-scope work, the second was a false positive
+(quoting is intact through every shell layer).
+
+- **BUG-1** `sandbox.sh sandbox_resume_status`: leaked `docker ps`/`docker
+  exec` stderr when the daemon was unreachable, scribbling on top of the
+  JSON line that callers pipe into a parser. Fix: gate the docker probe
+  on `command -v docker`, redirect stderr on every docker call, surface a
+  new `container_running` boolean in the JSON envelope so the caller can
+  branch without parsing error text.
+- **BUG-2** `sandbox.sh sandbox_diagnose`: `egress_allow_count` /
+  `egress_deny_count` counted empty fields, so `",,,"` reported 4 entries
+  and the default empty string reported 1. Fix: awk loop that trims each
+  field and skips zero-length ones.
+- **BUG-3** `mcp/server.py loki_sandbox_start`: called `os.environ.update`
+  to push `LOKI_SANDBOX_NETWORK`/`LOKI_SANDBOX_READONLY` into the child
+  process. The MCP process is long-lived, so subsequent tool calls (and
+  the whole rest of the server) inherited the polluted env. Fix:
+  `_run_sandbox` now accepts an `extra_env` dict that is layered on a
+  copy of `os.environ` and handed to `subprocess.run(..., env=...)`. The
+  parent env is never touched.
+- **BUG-4** `sandbox.sh sandbox_resume_status`: `$CONTAINER_NAME` and
+  `$session` were embedded into the JSON envelope without escaping. An
+  adversarial session name containing `"` or `\` would break parsers.
+  Fix: route both through `_json_escape` before printf.
+- **BUG-5** (false positive on review) `$session` allegedly unquoted in
+  tmux invocations. Verified by audit that every reference is
+  `"$session"`. No change required; documenting for the record.
+- **BUG-6** `autonomy/pick.py _load_version`: read the contents of
+  `VERSION` and rendered them straight into the TTY banner. A hostile
+  `VERSION` file with embedded ANSI escapes (or OSC sequences) could
+  clear the screen, set the title, or inject text. Fix: a strict regex
+  (`[^A-Za-z0-9._+\-]`) strips anything outside the version alphabet,
+  and the result is capped at 32 chars.
+- **BUG-7** `autonomy/pick.py _interactive`: if `termios.tcsetattr`
+  failed mid-loop or stdin closed mid-read, the terminal could be left
+  in raw mode with the cursor hidden. Fix: snapshot the original termios
+  attrs on entry and restore them via a `_restore` closure in `finally`;
+  catch `OSError`/`IOError` around `_read_key` and bail cleanly.
+
+### Tests (QA pass)
+
+Six new regression assertions added to existing suites
+(`test-sandbox-diagnose.sh`, `test-sandbox-resume.sh`,
+`test-mcp-sandbox-tools.sh`, `test-pick.sh`). Total Phase A + A-plus + QA:
+**101 assertions across six suites, all green**.
+
 ### Added - Phase A-plus: matches and exceeds LiteLLM Agent Platform v0.0.4
 
 Tracks the LAP release announced 2026-05-16 (Codex + Hermes harnesses,

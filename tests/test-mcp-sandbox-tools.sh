@@ -64,6 +64,22 @@ else
     fail "path math resolved to unexpected location: $out"
 fi
 
+# 7. BUG-3 regression: loki_sandbox_start must NOT call os.environ.update.
+# If we see that call back in the code, it would re-introduce the bug where
+# LOKI_SANDBOX_* settings leaked across MCP tool calls in the same process.
+if grep -A 25 '^async def loki_sandbox_start' mcp/server.py | grep -q 'os\.environ\.update'; then
+    fail "BUG-3 regression: loki_sandbox_start still calls os.environ.update"
+else
+    pass "BUG-3 fix: loki_sandbox_start does not mutate os.environ"
+fi
+
+# 8. _run_sandbox accepts extra_env parameter (the new, correct pathway).
+if grep -A 1 '^def _run_sandbox' mcp/server.py | grep -q 'extra_env'; then
+    pass "_run_sandbox accepts extra_env for safe per-call env override"
+else
+    fail "_run_sandbox missing extra_env parameter"
+fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

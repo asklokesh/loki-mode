@@ -254,6 +254,9 @@ def _read_key() -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+_VERSION_RE = __import__("re").compile(r"[^A-Za-z0-9._+\-]")
+
+
 def _load_version() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
@@ -263,9 +266,15 @@ def _load_version() -> str:
     for p in candidates:
         try:
             with open(p, "r", encoding="utf-8") as f:
-                return f.read().strip()
+                raw = f.read().strip()
         except OSError:
             continue
+        # Sanitize: VERSION is rendered into the TTY banner; a hostile
+        # file with ANSI escape sequences could clear the screen or inject
+        # OSC commands. Cap length and strip anything outside the version
+        # alphabet (letters, digits, dot, dash, underscore, plus).
+        cleaned = _VERSION_RE.sub("", raw)[:32]
+        return cleaned or "unknown"
     return "unknown"
 
 
@@ -281,6 +290,27 @@ def _emit_clipboard(text: str) -> None:
 def _interactive(entries: List[Provider], version: str) -> Optional[Provider]:
     cols = shutil.get_terminal_size((80, 24)).columns
     selected = 0
+    # Snapshot the original terminal mode so we can restore it even if
+    # _read_key()'s tcsetattr fails mid-way and leaves us in raw mode.
+    fd = sys.stdin.fileno()
+    try:
+        original_attrs = termios.tcgetattr(fd)
+    except termios.error:
+        original_attrs = None
+
+    def _restore() -> None:
+        # Always-safe cleanup: cursor on, default mode, no-op if attrs missing.
+        try:
+            sys.stderr.write(CSI + "?25h")
+            sys.stderr.flush()
+        except Exception:
+            pass
+        if original_attrs is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, original_attrs)
+            except termios.error:
+                pass
+
     # Hide cursor while drawing.
     sys.stderr.write(CSI + "?25l")
     sys.stderr.flush()
@@ -289,7 +319,11 @@ def _interactive(entries: List[Provider], version: str) -> Optional[Provider]:
             screen = _render(entries, selected, cols, version)
             sys.stderr.write("\x1b[2J\x1b[H" + screen + "\n")
             sys.stderr.flush()
-            key = _read_key()
+            try:
+                key = _read_key()
+            except (OSError, IOError):
+                # stdin closed or unreadable mid-loop; bail cleanly.
+                return None
             if key == "UP":
                 selected = (selected - 1) % len(entries)
             elif key == "DOWN" or key == "TAB":
@@ -303,9 +337,7 @@ def _interactive(entries: List[Provider], version: str) -> Optional[Provider]:
                 if 0 <= idx < len(entries):
                     selected = idx
     finally:
-        # Restore cursor + clear screen.
-        sys.stderr.write(CSI + "?25h")
-        sys.stderr.flush()
+        _restore()
 
 
 def _plain_list(entries: List[Provider]) -> None:

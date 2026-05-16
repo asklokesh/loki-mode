@@ -1752,9 +1752,12 @@ sandbox_build() {
 #===============================================================================
 
 # Returns 0 if the named tmux session exists inside the running container.
+# Returns 2 if tmux is not installed in the container.
+# Returns non-zero (>=1) if no session matches. Stderr from docker is
+# always suppressed -- callers care only about the exit code.
 _tmux_session_exists() {
     local session="${1:-loki-agent}"
-    if ! docker exec "$CONTAINER_NAME" sh -c 'command -v tmux >/dev/null 2>&1'; then
+    if ! docker exec "$CONTAINER_NAME" sh -c 'command -v tmux >/dev/null 2>&1' 2>/dev/null; then
         return 2
     fi
     docker exec "$CONTAINER_NAME" tmux has-session -t "$session" 2>/dev/null
@@ -1787,12 +1790,21 @@ sandbox_resume() {
 }
 
 # Variant that surfaces session metadata without attaching (for scripting and
-# the dashboard). Always exits 0 with a one-line JSON record.
+# the dashboard). Always exits 0 with a one-line JSON record. Suppresses
+# stderr from `docker ps` and `docker exec` so a missing daemon does not
+# scribble error noise on top of the JSON line (caller pipes stdout into
+# a JSON parser).
 sandbox_resume_status() {
     local session="${1:-loki-agent}"
     local present=false
     local attached="unknown"
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    local container_running=false
+    if command -v docker >/dev/null 2>&1; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+            container_running=true
+        fi
+    fi
+    if [[ "$container_running" == "true" ]]; then
         if _tmux_session_exists "$session"; then
             present=true
             local meta
@@ -1805,8 +1817,13 @@ sandbox_resume_status() {
             fi
         fi
     fi
-    printf '{"schema":"loki.sandbox.resume/v1","container":"%s","session":"%s","present":%s,"attached":"%s"}\n' \
-        "$CONTAINER_NAME" "$session" "$present" "$attached"
+    # JSON-escape user-influenced fields (CONTAINER_NAME is derived from a
+    # hash so normally safe, but session can be passed in by the caller).
+    local esc_container esc_session
+    esc_container=$(_json_escape "$CONTAINER_NAME")
+    esc_session=$(_json_escape "$session")
+    printf '{"schema":"loki.sandbox.resume/v1","container":"%s","container_running":%s,"session":"%s","present":%s,"attached":"%s"}\n' \
+        "$esc_container" "$container_running" "$esc_session" "$present" "$attached"
 }
 
 #===============================================================================
@@ -1893,13 +1910,11 @@ sandbox_diagnose() {
         codes+=("$(_diag_emit EGR004 critical 'LOKI_SANDBOX_NETWORK=host exposes host network namespace to agent')")
     fi
 
-    # Egress counts (informational; consumed by vault).
-    if [[ -n "$SANDBOX_EGRESS_ALLOW" ]]; then
-        egress_allow_count=$(awk -F',' '{print NF}' <<< "$SANDBOX_EGRESS_ALLOW")
-    fi
-    if [[ -n "$SANDBOX_EGRESS_DENY" ]]; then
-        egress_deny_count=$(awk -F',' '{print NF}' <<< "$SANDBOX_EGRESS_DENY")
-    fi
+    # Egress counts (informational; consumed by vault). Count non-empty,
+    # non-whitespace fields only so a stray "a,,b," reports 2 entries
+    # rather than 4.
+    egress_allow_count=$(awk -F',' '{c=0; for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if(length($i)>0) c++} print c}' <<< "$SANDBOX_EGRESS_ALLOW")
+    egress_deny_count=$(awk -F',' '{c=0; for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if(length($i)>0) c++} print c}' <<< "$SANDBOX_EGRESS_DENY")
 
     # LND005: landlock supported on this kernel?
     if [[ "$(uname -s)" != "Linux" ]]; then

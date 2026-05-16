@@ -89,6 +89,28 @@ else
     fail "human-readable diagnose missing summary"
 fi
 
+# 9. BUG-2 regression: empty fields in egress lists must not inflate the count.
+# Pre-fix: "a,,b," reported 4. Post-fix: must report 2.
+out_egress=$(LOKI_SANDBOX_EGRESS_ALLOW=",a,,b," LOKI_SANDBOX_EGRESS_DENY="x,,y," \
+    bash "$SANDBOX" diagnose --json 2>/dev/null || true)
+allow_n=$(echo "$out_egress" | python3 -c "import json,sys; print(json.load(sys.stdin)['egress_allow_count'])" 2>/dev/null || echo "")
+deny_n=$(echo "$out_egress" | python3 -c "import json,sys; print(json.load(sys.stdin)['egress_deny_count'])" 2>/dev/null || echo "")
+if [[ "$allow_n" == "2" ]] && [[ "$deny_n" == "2" ]]; then
+    pass "BUG-2 fix: empty fields excluded from egress counts (allow=$allow_n, deny=$deny_n)"
+else
+    fail "BUG-2 regression: allow=$allow_n deny=$deny_n (expected 2 each)"
+fi
+
+# 10. Empty egress strings report 0 (not 1).
+out_empty=$(LOKI_SANDBOX_EGRESS_ALLOW="" LOKI_SANDBOX_EGRESS_DENY="" \
+    bash "$SANDBOX" diagnose --json 2>/dev/null || true)
+empty_allow=$(echo "$out_empty" | python3 -c "import json,sys; print(json.load(sys.stdin)['egress_allow_count'])" 2>/dev/null || echo "")
+if [[ "$empty_allow" == "0" ]]; then
+    pass "empty egress allow yields count 0"
+else
+    fail "empty egress allow yielded $empty_allow"
+fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

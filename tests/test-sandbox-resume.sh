@@ -91,6 +91,35 @@ else
     fail "Dockerfile.sandbox missing tmux line"
 fi
 
+# 12. BUG-1 regression: resume-status must not write to stderr when docker
+# daemon is unreachable. JSON must still appear on stdout.
+out=$(bash "$SANDBOX" resume-status 2>/tmp/resume_status_stderr_$$ || true)
+stderr_bytes=$(wc -c < /tmp/resume_status_stderr_$$ 2>/dev/null || echo 0)
+rm -f /tmp/resume_status_stderr_$$
+if [[ "$stderr_bytes" == "0" ]] && echo "$out" | grep -q 'loki.sandbox.resume/v1'; then
+    pass "BUG-1 fix: resume-status keeps stderr clean even with no docker daemon"
+else
+    fail "BUG-1 regression: resume-status leaked $stderr_bytes bytes to stderr"
+fi
+
+# 13. container_running field present (post-BUG-1)
+if echo "$out" | grep -q '"container_running"'; then
+    pass "resume-status surfaces container_running field"
+else
+    fail "resume-status missing container_running field"
+fi
+
+# 14. BUG-4 regression: container/session JSON values are escaped.
+# Run resume-status with a session name containing a double quote and a
+# backslash; the output must still parse as JSON.
+adversarial='evil"\\session'
+out_adv=$(bash "$SANDBOX" resume-status "$adversarial" 2>/dev/null || true)
+if echo "$out_adv" | python3 -c "import json,sys; json.load(sys.stdin); print('OK')" 2>/dev/null | grep -q OK; then
+    pass "BUG-4 fix: resume-status JSON valid with adversarial session name"
+else
+    fail "BUG-4 regression: resume-status JSON broke on adversarial session name"
+fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

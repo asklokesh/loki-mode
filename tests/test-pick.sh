@@ -117,7 +117,61 @@ else
     fail "missing providers:$missing"
 fi
 
-# 11. No emojis in output (CLAUDE.md mandate)
+# --- Bug-fix regression tests ---
+
+# 11. BUG-6: VERSION sanitization strips ANSI escape bytes (ESC = \x1b)
+# and bracket characters. We don't rely on cwd resolution -- we feed the
+# raw payload through the public regex so the assertion is deterministic.
+out=$(python3 -c "
+import sys
+sys.path.insert(0, '$ROOT/autonomy')
+import pick
+adversarial = '\x1b[31mEVIL\x1b[0m'
+cleaned = pick._VERSION_RE.sub('', adversarial)
+# Confirm: no ESC byte, no bracket, no semicolon. EVIL survives as letters.
+assert '\x1b' not in cleaned, 'ESC byte leaked: ' + repr(cleaned)
+assert '[' not in cleaned and ']' not in cleaned, 'bracket leaked: ' + repr(cleaned)
+assert 'EVIL' in cleaned, 'lost letters: ' + repr(cleaned)
+print('OK')
+" 2>&1)
+if [[ "$out" == "OK" ]]; then
+    pass "BUG-6 fix: VERSION ANSI escapes stripped (ESC + brackets removed; letters survive)"
+else
+    fail "BUG-6 regression: $out"
+fi
+
+# 12. VERSION caps at 32 chars (DoS hardening)
+out=$(python3 -c "
+import sys
+sys.path.insert(0, '$ROOT/autonomy')
+import pick
+huge = 'a' * 10000
+result = pick._VERSION_RE.sub('', huge)[:32]
+assert len(result) == 32, 'cap broken: %d' % len(result)
+print('OK')
+" 2>&1)
+if [[ "$out" == "OK" ]]; then
+    pass "VERSION output capped at 32 chars"
+else
+    fail "VERSION cap broken: $out"
+fi
+
+# 13. BUG-7: _interactive snapshots original termios attrs (cursor restore
+# still happens even when termios state is broken on entry).
+if grep -q '_restore' "$PICK" && grep -q 'original_attrs' "$PICK"; then
+    pass "BUG-7 fix: _interactive snapshots original termios attrs"
+else
+    fail "BUG-7 regression: termios snapshot missing"
+fi
+
+# 14. BUG-7: stdin OSError/IOError mid-loop is handled gracefully.
+if grep -q 'except (OSError, IOError)' "$PICK"; then
+    pass "BUG-7 fix: stdin error mid-loop handled"
+else
+    fail "BUG-7 regression: stdin error not handled"
+fi
+
+# 15. No emojis in output (CLAUDE.md mandate)
 if echo "$list_out$json_out" | python3 -c "
 import sys, unicodedata
 text = sys.stdin.read()

@@ -2298,11 +2298,25 @@ def _sandbox_sh_path() -> str:
     return os.path.abspath(os.path.join(here, '..', 'autonomy', 'sandbox.sh'))
 
 
-def _run_sandbox(args, timeout_seconds: int = 60):
+def _run_sandbox(args, timeout_seconds: int = 60, extra_env=None):
+    """Invoke autonomy/sandbox.sh as a child process.
+
+    Args:
+        args:             Positional args forwarded to sandbox.sh.
+        timeout_seconds:  Hard timeout. Kills the child on expiry.
+        extra_env:        Optional dict layered on top of os.environ for
+                          this call only. Does NOT mutate the parent env;
+                          a subsequent call without `extra_env` will see
+                          the original environment.
+    """
     import subprocess
     script = _sandbox_sh_path()
     if not os.path.isfile(script):
         return {"error": "sandbox.sh missing", "path": script}
+    env = None
+    if extra_env:
+        env = os.environ.copy()
+        env.update(extra_env)
     try:
         proc = subprocess.run(
             ['bash', script, *args],
@@ -2310,6 +2324,7 @@ def _run_sandbox(args, timeout_seconds: int = 60):
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=env,
         )
         return {
             "exit_code": proc.returncode,
@@ -2351,16 +2366,14 @@ async def loki_sandbox_start(network: str = "bridge",
                                    result_status='error', error='invalid_network')
             return result
 
-        env = os.environ.copy()
-        env['LOKI_SANDBOX_NETWORK'] = network
+        # Apply env overrides for this child only; do NOT mutate os.environ
+        # because the MCP process is long-lived and would otherwise leak
+        # `LOKI_SANDBOX_*` across subsequent tool calls.
+        extra_env = {"LOKI_SANDBOX_NETWORK": network}
         if readonly:
-            env['LOKI_SANDBOX_READONLY'] = 'true'
-        # We can't pass env via _run_sandbox subprocess.run without rewriting,
-        # so just push to current process env (MCP server lives only as long as
-        # the client session and child inherits).
-        os.environ.update(env)
+            extra_env["LOKI_SANDBOX_READONLY"] = "true"
 
-        out = _run_sandbox(['start'], timeout_seconds=300)
+        out = _run_sandbox(['start'], timeout_seconds=300, extra_env=extra_env)
         _emit_tool_event_async('loki_sandbox_start', 'complete',
                                result_status='success' if out.get('exit_code') == 0 else 'error')
         return json.dumps(out)
