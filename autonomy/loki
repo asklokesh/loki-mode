@@ -12245,6 +12245,10 @@ main() {
         agent)
             cmd_agent "$@"
             ;;
+        pick)
+            # v7.6.0: retro-pixel provider picker (LAP-parity feature)
+            cmd_pick "$@"
+            ;;
         state)
             cmd_state "$@"
             ;;
@@ -17725,6 +17729,28 @@ cmd_completions() {
 }
 
 # Agent type dispatch (v6.7.0)
+#===============================================================================
+# v7.6.0: loki pick - retro-pixel provider picker (LAP-parity feature)
+#
+# Delegates to autonomy/pick.py. Honors --list / --json / --providers-only
+# pass-through flags. On selection the chosen command is printed to stdout
+# so callers can do `eval "$(loki pick)"` to launch.
+#===============================================================================
+cmd_pick() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local pick_py="${script_dir}/pick.py"
+    if [ ! -f "$pick_py" ]; then
+        echo "Error: pick.py not found at $pick_py" >&2
+        return 2
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 required for 'loki pick'" >&2
+        return 2
+    fi
+    python3 "$pick_py" "$@"
+}
+
 cmd_agent() {
     local subcommand="${1:-list}"
     shift 2>/dev/null || true

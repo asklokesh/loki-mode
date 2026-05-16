@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Phase A-plus: matches and exceeds LiteLLM Agent Platform v0.0.4
+
+Tracks the LAP release announced 2026-05-16 (Codex + Hermes harnesses,
+tmux-wrapped durable sessions, agent picker UX). All additions are opt-in
+and live behind subcommand surfaces so existing flows are untouched.
+
+- **`loki pick` retro-pixel provider picker** (`autonomy/pick.py`,
+  `autonomy/loki:cmd_pick`). Curses-free TTY UI with a hand-drawn LOKI
+  banner, arrow-key + j/k navigation, OSC 52 clipboard emit on selection,
+  and an auto-fallback to plain list when stdin is not a TTY. Surfaces
+  nine entries (vs LAP's three): five providers (claude, cline, codex,
+  gemini, aider) plus four Loki-only meta-entries (heal, sandbox,
+  dashboard, memory) so users can launch any major capability from one
+  picker. Each row shows tier, credential availability against the
+  underlying env var, and the literal command that gets emitted on
+  selection. `--list`, `--json` (schema `loki.pick/v1`), `--providers-only`,
+  `--no-clipboard` flags.
+- **`loki sandbox resume` durable agent sessions** (`autonomy/sandbox.sh`,
+  `Dockerfile.sandbox`). Matches LAP #147 and #141. The provider TUI runs
+  inside a tmux session named `loki-agent` (tmux baked into the sandbox
+  image) so disconnects from the host shell or the WS bridge no longer
+  lose state. `loki sandbox resume` attaches to the existing session;
+  `loki sandbox resume-status` emits a one-line JSON record
+  (`schema=loki.sandbox.resume/v1`) suitable for the dashboard or
+  scripting clients. Falls back gracefully when tmux is absent (older
+  images) or no session has been created yet.
+- **WebSocket keepalive (LAP #128)** - already shipped: dashboard pings
+  every 30s with a 60s idle close at `dashboard/server.py:1877-1903`.
+  No change required to match.
+
+### Tests (Phase A-plus)
+
+- `tests/test-pick.sh` (21 assertions) - syntax, --list/--json schemas,
+  field coverage, tier representation, CLI wire-up, non-TTY fallback,
+  no-emoji enforcement.
+- `tests/test-sandbox-resume.sh` (11 assertions) - function definitions,
+  dispatch wiring, tmux attach/new-session usage, Dockerfile.sandbox
+  tmux install, versioned JSON schema, help text coverage.
+
+Total Phase A + A-plus: 90 new assertions across 6 suites; all green.
+
 ### Added — Phase A of the LAP-parity sandbox enhancement plan (enterprise sandboxing)
 
 Closes the gap between Loki Mode's existing sandbox and LiteLLM Agent Platform

@@ -1740,6 +1740,76 @@ sandbox_build() {
 }
 
 #===============================================================================
+# v7.6.0: loki sandbox resume (LAP-parity feature, matches BerriAI #147 / #141)
+#
+# Durable agent sessions: the provider TUI runs inside a tmux session named
+# "loki-agent" so it survives WS reconnects and docker exec drops. `resume`
+# attaches to that session if it exists; otherwise it falls through to a
+# fresh `sandbox shell` so the operator gets a useful prompt either way.
+#
+# Status output also flags whether the session is currently attached vs
+# detached so the user knows what state they are reconnecting to.
+#===============================================================================
+
+# Returns 0 if the named tmux session exists inside the running container.
+_tmux_session_exists() {
+    local session="${1:-loki-agent}"
+    if ! docker exec "$CONTAINER_NAME" sh -c 'command -v tmux >/dev/null 2>&1'; then
+        return 2
+    fi
+    docker exec "$CONTAINER_NAME" tmux has-session -t "$session" 2>/dev/null
+}
+
+sandbox_resume() {
+    local session="${1:-loki-agent}"
+    check_docker
+
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        log_error "Sandbox is not running; start it first with 'loki sandbox start'"
+        return 1
+    fi
+
+    case $(_tmux_session_exists "$session"; echo $?) in
+        0)
+            log_info "Reattaching to tmux session '$session'"
+            exec docker exec -it "$CONTAINER_NAME" tmux attach-session -t "$session"
+            ;;
+        2)
+            log_warn "tmux not present in container image; falling back to shell"
+            exec docker exec -it "$CONTAINER_NAME" bash
+            ;;
+        *)
+            log_warn "No tmux session '$session' found; creating one"
+            exec docker exec -it "$CONTAINER_NAME" \
+                tmux new-session -A -s "$session" -n loki bash
+            ;;
+    esac
+}
+
+# Variant that surfaces session metadata without attaching (for scripting and
+# the dashboard). Always exits 0 with a one-line JSON record.
+sandbox_resume_status() {
+    local session="${1:-loki-agent}"
+    local present=false
+    local attached="unknown"
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        if _tmux_session_exists "$session"; then
+            present=true
+            local meta
+            meta=$(docker exec "$CONTAINER_NAME" tmux display-message -p -t "$session" \
+                '#{session_attached}' 2>/dev/null || echo "0")
+            if [[ "$meta" =~ ^[0-9]+$ ]] && (( meta > 0 )); then
+                attached="true"
+            else
+                attached="false"
+            fi
+        fi
+    fi
+    printf '{"schema":"loki.sandbox.resume/v1","container":"%s","session":"%s","present":%s,"attached":"%s"}\n' \
+        "$CONTAINER_NAME" "$session" "$present" "$attached"
+}
+
+#===============================================================================
 # v7.6.0: loki sandbox diagnose (LAP-parity feature A3)
 #
 # Emits a JSON document describing the sandbox runtime state plus an array of
@@ -2045,6 +2115,8 @@ show_help() {
     echo "  loki sandbox diagnose                           # Inspect runtime, emit detection codes"
     echo "  loki sandbox diagnose --json                    # Machine-readable output"
     echo "  loki sandbox start --env-var FOO=bar            # Inject per-session env var"
+    echo "  loki sandbox resume                             # Reattach to tmux-wrapped agent session"
+    echo "  loki sandbox resume-status                      # One-line JSON session metadata"
     echo ""
     echo "Diagnose detection codes (v7.6.0):"
     echo "  DKR001  docker_missing            CRD003  no_credentials_mounted"
@@ -2205,6 +2277,13 @@ main() {
         diagnose)
             # v7.6.0: typed detection-code diagnose (LAP-parity)
             sandbox_diagnose ${args[@]+"${args[@]}"}
+            ;;
+        resume)
+            # v7.6.0: tmux-wrapped durable session attach (LAP-parity #147)
+            sandbox_resume ${args[@]+"${args[@]}"}
+            ;;
+        resume-status)
+            sandbox_resume_status ${args[@]+"${args[@]}"}
             ;;
         help|--help|-h)
             show_help

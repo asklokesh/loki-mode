@@ -119,6 +119,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     # Network utilities for health checks
     netcat-openbsd \
+    # Terminal multiplexer (v7.6.0: enables `loki sandbox resume` durable sessions)
+    tmux \
     # Timezone data (for log timestamps)
     tzdata \
     # Security: Clean up apt cache
