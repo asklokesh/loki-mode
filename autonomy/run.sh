@@ -263,6 +263,16 @@ parse_simple_yaml() {
     set_from_yaml "$file" "security.allowed_paths" "LOKI_ALLOWED_PATHS"
     set_from_yaml "$file" "security.blocked_commands" "LOKI_BLOCKED_COMMANDS"
 
+    # Sandbox (v7.6.0: declarative sandbox config + egress + vault opt-in)
+    set_from_yaml "$file" "sandbox.image" "LOKI_SANDBOX_IMAGE"
+    set_from_yaml "$file" "sandbox.network" "LOKI_SANDBOX_NETWORK"
+    set_from_yaml "$file" "sandbox.cpus" "LOKI_SANDBOX_CPUS"
+    set_from_yaml "$file" "sandbox.memory" "LOKI_SANDBOX_MEMORY"
+    set_from_yaml "$file" "sandbox.readonly" "LOKI_SANDBOX_READONLY"
+    set_from_yaml "$file" "sandbox.egress.allow" "LOKI_SANDBOX_EGRESS_ALLOW"
+    set_from_yaml "$file" "sandbox.egress.deny" "LOKI_SANDBOX_EGRESS_DENY"
+    set_from_yaml "$file" "sandbox.vault.enabled" "LOKI_SANDBOX_VAULT_ENABLED"
+
     # Phases
     set_from_yaml "$file" "phases.unit_tests" "LOKI_PHASE_UNIT_TESTS"
     set_from_yaml "$file" "phases.api_tests" "LOKI_PHASE_API_TESTS"
@@ -408,6 +418,14 @@ parse_yaml_with_yq() {
         "security.sandbox_mode:LOKI_SANDBOX_MODE"
         "security.allowed_paths:LOKI_ALLOWED_PATHS"
         "security.blocked_commands:LOKI_BLOCKED_COMMANDS"
+        "sandbox.image:LOKI_SANDBOX_IMAGE"
+        "sandbox.network:LOKI_SANDBOX_NETWORK"
+        "sandbox.cpus:LOKI_SANDBOX_CPUS"
+        "sandbox.memory:LOKI_SANDBOX_MEMORY"
+        "sandbox.readonly:LOKI_SANDBOX_READONLY"
+        "sandbox.egress.allow:LOKI_SANDBOX_EGRESS_ALLOW"
+        "sandbox.egress.deny:LOKI_SANDBOX_EGRESS_DENY"
+        "sandbox.vault.enabled:LOKI_SANDBOX_VAULT_ENABLED"
         "phases.unit_tests:LOKI_PHASE_UNIT_TESTS"
         "phases.api_tests:LOKI_PHASE_API_TESTS"
         "phases.e2e_tests:LOKI_PHASE_E2E_TESTS"

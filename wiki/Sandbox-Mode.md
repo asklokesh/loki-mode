@@ -91,42 +91,75 @@ loki sandbox build
 
 ## Configuration Options
 
-### Full Configuration
+### Full Configuration (v7.6.0+)
 
 ```yaml
 # .loki/config.yaml
 sandbox:
-  enabled: true
-  image: "asklokesh/loki-mode:latest"
+  # Image and runtime resources
+  image: "loki-mode:sandbox"
+  network: "bridge"       # bridge | none | host
+  cpus: "2"
+  memory: "4g"
+  readonly: false
 
-  # Resource limits
-  memory_limit: "4g"
-  cpu_limit: "2"
+  # Egress rules (comma-separated; wildcards and CIDR supported)
+  # Consumed by the vault sidecar (Phase B) and the diagnose command.
+  egress:
+    allow: "*.anthropic.com,*.github.com,10.0.0.0/8"
+    deny:  "169.254.169.254/32"
 
-  # Network
-  network: false  # Disable network access
-
-  # Filesystem mounts
-  mounts:
-    - "./:/workspace:rw"           # Project directory
-    - "~/.npm:/root/.npm:ro"       # npm cache (read-only)
-    - "~/.claude:/home/loki/.claude:ro" # Claude auth (read-only)
-
-  # Environment variables to pass
-  env:
-    - ANTHROPIC_API_KEY
-    - LOKI_PROVIDER
+  # Optional credential vault sidecar (Phase B; opt-in)
+  vault:
+    enabled: false
 ```
+
+All keys also accept `security.*` legacy forms (`security.sandbox_mode`, `security.allowed_paths`, `security.blocked_commands`) which continue to work unchanged.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_SANDBOX_MODE` | `false` | Enable sandbox |
-| `LOKI_SANDBOX_IMAGE` | `asklokesh/loki-mode:latest` | Docker image |
+| `LOKI_SANDBOX_IMAGE` | `loki-mode:sandbox` | Docker image |
+| `LOKI_SANDBOX_NETWORK` | `bridge` | `bridge` / `none` / `host` |
+| `LOKI_SANDBOX_CPUS` | `2` | CPU limit (passed to `--cpus`) |
 | `LOKI_SANDBOX_MEMORY` | `4g` | Memory limit |
-| `LOKI_SANDBOX_CPU` | `2` | CPU limit |
-| `LOKI_SANDBOX_NETWORK` | `true` | Allow network access |
+| `LOKI_SANDBOX_READONLY` | `false` | Mount project read-only |
+| `LOKI_SANDBOX_EGRESS_ALLOW` | _empty_ | Comma-separated allow rules (v7.6.0) |
+| `LOKI_SANDBOX_EGRESS_DENY` | _empty_ | Comma-separated deny rules (v7.6.0) |
+| `LOKI_SANDBOX_VAULT_ENABLED` | `false` | Opt into vault sidecar (v7.6.0; sidecar lands in 7.7) |
+
+### Diagnose (v7.6.0+)
+
+```bash
+loki sandbox diagnose            # human-readable summary
+loki sandbox diagnose --json     # machine-readable, schema loki.sandbox.diagnose/v1
+```
+
+Typed detection codes:
+
+| Code | Severity | Meaning |
+|------|----------|---------|
+| `DKR001` | critical | docker CLI missing or daemon unreachable |
+| `SBX002` | warn | nested sandbox detected (refused at runtime) |
+| `CRD003` | warn | no provider API key in caller env |
+| `EGR004` | critical | `LOKI_SANDBOX_NETWORK=host` exposes the host network namespace |
+| `LND005` | warn/info | Landlock kernel support unavailable (path enforcement degrades to warn-only) |
+| `VLT006` | critical | vault sidecar enabled but `127.0.0.1:14322/healthz` did not respond |
+| `AUD007` | critical | dashboard audit chain verification failed |
+| `RES008` | info | resource limits at stock defaults |
+
+### Per-session environment variables (v7.6.0+)
+
+```bash
+loki sandbox start --env-var GITHUB_TOKEN=ghp_xxx --env-var GH_REPO=org/repo
+```
+
+- Repeatable; max 50 entries, total payload ≤ 16 KB.
+- Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`.
+- Values must contain only printable ASCII (no newlines, no control bytes).
+- Reserved keys are rejected: `LOKI_*`, `LD_*`, `DOCKER_*`, `PATH`, `HOME`, `USER`, `SHELL`, `PWD`, `OLDPWD`, `IFS`, `TERM`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `REPO_URL`, `BRANCH`, `AGENT_PROMPT`, `GIT_TOKEN`.
 
 ---
 

@@ -7,7 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(none)
+### Added — Phase A of the LAP-parity sandbox enhancement plan (enterprise sandboxing)
+
+Closes the gap between Loki Mode's existing sandbox and LiteLLM Agent Platform
+(`BerriAI/litellm-agent-platform`) for enterprise users who need stronger isolation
+guarantees before letting the autonomous agent touch dev branches. The work is
+strictly additive; every existing `--sandbox` flag and `LOKI_SANDBOX_*` env var
+keeps working unchanged.
+
+- **A1 - `.loki/config.yaml` `sandbox.*` section parser** (`autonomy/run.sh`).
+  Eight new YAML keys map into `LOKI_SANDBOX_*` env vars in both the simple
+  parser block and the yq mappings array: `sandbox.image`, `sandbox.network`,
+  `sandbox.cpus`, `sandbox.memory`, `sandbox.readonly`, `sandbox.egress.allow`,
+  `sandbox.egress.deny`, `sandbox.vault.enabled`. The pre-existing
+  `security.sandbox_mode`, `security.allowed_paths`, `security.blocked_commands`
+  keys are untouched.
+- **A3 - `loki sandbox diagnose [--json]`** (`autonomy/sandbox.sh`). Reports
+  container/image state, seccomp profile sha256, network mode, egress rule
+  counts, vault reachability, Landlock kernel support, and audit-chain status.
+  Eight typed detection codes (`DKR001 docker_missing`, `SBX002 nested_sandbox`,
+  `CRD003 no_credentials_mounted`, `EGR004 host_network_dangerous`, `LND005
+  landlock_unsupported`, `VLT006 vault_unreachable`, `AUD007 audit_chain_broken`,
+  `RES008 resource_limits_unset`) mirror the LAP `detected_issues` taxonomy
+  adapted to local Docker. JSON envelope is versioned as
+  `loki.sandbox.diagnose/v1`.
+- **A4 - Per-session `--env-var KEY=VAL` flag** (`autonomy/sandbox.sh`).
+  Repeatable; validated against LAP's reserved-key contract (max 50 entries,
+  total payload at most 16 KB, keys match `^[A-Za-z_][A-Za-z0-9_]*$`, values
+  must be printable ASCII with no newlines, reserved namespaces `LOKI_*` /
+  `LD_*` / `DOCKER_*` and named platform-owned keys are rejected). Both
+  `--env-var KEY=VAL` and `--env-var=KEY=VAL` forms supported.
+- **A5 - Three MCP tools** (`mcp/server.py`). `loki_sandbox_start`,
+  `loki_sandbox_status`, `loki_sandbox_diagnose` shell out to the canonical
+  `autonomy/sandbox.sh` lifecycle; the diagnose tool parses and returns the
+  versioned JSON report. Network mode is allowlisted at the MCP boundary so a
+  client can't smuggle `host` networking through.
+
+### Tests (Phase A)
+
+- `tests/test-sandbox-config.sh` (22 assertions) — YAML parser mapping coverage.
+- `tests/test-sandbox-diagnose.sh` (8 assertions) — end-to-end detection codes.
+- `tests/test-sandbox-env-var.sh` (16 assertions) — validation, reserved keys,
+  payload caps.
+- `tests/test-mcp-sandbox-tools.sh` (12 assertions) — MCP tool registration and
+  delegation contract.
+
+All 58 new assertions green locally; no existing tests modified.
+
+### Deferred to Phase B / C
+
+A2 (Landlock + pre-flight wrapper), B1 (vault sidecar in TypeScript), B2 (egress
+enforcement), B3 (interception audit log), B4 (named sessions), B5 (dashboard
+sandbox UI), and the K8s session-per-pod track (Phase C).
 
 ## [7.5.17] - 2026-05-04
 

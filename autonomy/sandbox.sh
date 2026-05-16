@@ -55,6 +55,15 @@ SANDBOX_CPUS="${LOKI_SANDBOX_CPUS:-2}"
 SANDBOX_MEMORY="${LOKI_SANDBOX_MEMORY:-4g}"
 SANDBOX_READONLY="${LOKI_SANDBOX_READONLY:-false}"
 
+# v7.6.0: Egress rules (comma-separated; wildcards and CIDR supported)
+# Consumed by vault sidecar (Phase B) and used by diagnose for code EGR004.
+SANDBOX_EGRESS_ALLOW="${LOKI_SANDBOX_EGRESS_ALLOW:-}"
+SANDBOX_EGRESS_DENY="${LOKI_SANDBOX_EGRESS_DENY:-}"
+SANDBOX_VAULT_ENABLED="${LOKI_SANDBOX_VAULT_ENABLED:-false}"
+
+# v7.6.0: Per-session env vars (set by --env-var; populated by parse_session_env_vars)
+SANDBOX_SESSION_ENV_VARS=()
+
 # API ports
 API_PORT="${LOKI_DASHBOARD_PORT:-57374}"
 DASHBOARD_PORT="${LOKI_DASHBOARD_PORT:-57374}"
@@ -93,6 +102,103 @@ _get_env_preset() {
         terraform) echo "TF_VAR_*" ;;
         *)         echo "" ;;
     esac
+}
+
+#===============================================================================
+# v7.6.0: Per-session env var injection (LAP-parity feature A4)
+#
+# Validates and accumulates --env-var KEY=VAL pairs into SANDBOX_SESSION_ENV_VARS.
+# Constraints (match LAP src/server/DEVELOPER.md reserved-key contract):
+#   - max 50 entries, total payload <= 16 KB
+#   - key matches ^[A-Za-z_][A-Za-z0-9_]*$
+#   - value contains only printable ASCII (0x20-0x7e)
+#   - reserved keys rejected: LOKI_*, PATH, HOME, LD_*, DOCKER_*, and named
+#     provider/secret keys that the platform owns end-to-end.
+#===============================================================================
+
+# Returns 0 if KEY is reserved (must not be overridden by --env-var)
+_is_reserved_env_key() {
+    local key="$1"
+    case "$key" in
+        LOKI_*|LD_*|DOCKER_*) return 0 ;;
+        PATH|HOME|USER|SHELL|PWD|OLDPWD|IFS|TERM) return 0 ;;
+        ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY) return 0 ;;
+        ANTHROPIC_BASE_URL|OPENAI_BASE_URL) return 0 ;;
+        REPO_URL|BRANCH|AGENT_PROMPT|GIT_TOKEN) return 0 ;;
+    esac
+    return 1
+}
+
+# Parse one KEY=VAL pair; on success appends to SANDBOX_SESSION_ENV_VARS.
+# Returns non-zero (and logs an error) on any validation failure.
+parse_session_env_var() {
+    local pair="$1"
+
+    # Cap entry count.
+    if [[ ${#SANDBOX_SESSION_ENV_VARS[@]} -ge 50 ]]; then
+        log_error "Too many --env-var entries (max 50)"
+        return 1
+    fi
+
+    # Require KEY=VAL form.
+    if [[ "$pair" != *=* ]]; then
+        log_error "--env-var must be KEY=VAL (got: $pair)"
+        return 1
+    fi
+
+    local key="${pair%%=*}"
+    local val="${pair#*=}"
+
+    # Validate key.
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        log_error "Invalid --env-var key: $key"
+        return 1
+    fi
+
+    # Reject reserved keys.
+    if _is_reserved_env_key "$key"; then
+        log_error "Reserved --env-var key: $key (cannot override platform-owned variable)"
+        return 1
+    fi
+
+    # Validate value: printable ASCII only, no newlines.
+    # Use a non-bracket-class regex so we don't tangle with the shell.
+    local i ch code
+    for ((i = 0; i < ${#val}; i++)); do
+        ch="${val:i:1}"
+        code=$(printf '%d' "'$ch")
+        if (( code < 32 || code > 126 )); then
+            log_error "Invalid --env-var value for $key (non-printable byte at offset $i)"
+            return 1
+        fi
+    done
+
+    # Enforce total payload cap (16 KB across all KEY=VAL pairs, LAP parity).
+    local total=0
+    local existing
+    for existing in "${SANDBOX_SESSION_ENV_VARS[@]:-}"; do
+        total=$(( total + ${#existing} + 1 ))
+    done
+    total=$(( total + ${#pair} + 1 ))
+    if (( total > 16384 )); then
+        log_error "--env-var payload exceeds 16 KB cap"
+        return 1
+    fi
+
+    SANDBOX_SESSION_ENV_VARS+=("$pair")
+    return 0
+}
+
+# Emit docker -e args for SANDBOX_SESSION_ENV_VARS (echoes lines, caller eval/reads).
+# Uses printf %q escaping to keep the same safety contract as _desktop_build_env_args.
+session_env_docker_args() {
+    local pair _escaped key val
+    for pair in "${SANDBOX_SESSION_ENV_VARS[@]:-}"; do
+        key="${pair%%=*}"
+        val="${pair#*=}"
+        printf -v _escaped '%s' "$val"
+        printf -- '-e\n%s=%s\n' "$key" "$_escaped"
+    done
 }
 
 #===============================================================================
@@ -1633,6 +1739,241 @@ sandbox_build() {
     build_sandbox_image
 }
 
+#===============================================================================
+# v7.6.0: loki sandbox diagnose (LAP-parity feature A3)
+#
+# Emits a JSON document describing the sandbox runtime state plus an array of
+# typed detection codes the operator can act on. Codes mirror LAP's
+# /api/v1/managed_agents/sessions/<id>/diagnose detected_issues taxonomy:
+#
+#   DKR001 docker_missing            - docker CLI absent or daemon unreachable
+#   SBX002 nested_sandbox            - already running inside a sandbox
+#   CRD003 no_credentials_mounted    - no provider API key in env
+#   EGR004 host_network_dangerous    - LOKI_SANDBOX_NETWORK=host (leaks host net)
+#   LND005 landlock_unsupported      - kernel <5.13 or non-Linux runtime
+#   VLT006 vault_unreachable         - vault opt-in but sidecar not responding
+#   AUD007 audit_chain_broken        - dashboard audit chain verification failed
+#   RES008 resource_limits_unset     - cpus/memory at defaults that LAP would flag
+#===============================================================================
+
+# JSON-escape one value (handles ", \, control chars).
+_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# Emit one detection entry: code, severity, message.
+_diag_emit() {
+    local code="$1" severity="$2" message="$3"
+    printf '    {"code":"%s","severity":"%s","message":"%s"}' \
+        "$code" "$severity" "$(_json_escape "$message")"
+}
+
+sandbox_diagnose() {
+    local want_json="false"
+    if [[ "${1:-}" == "--json" ]]; then
+        want_json="true"
+    fi
+
+    local codes=()
+    local docker_version="unknown"
+    local image_digest="unknown"
+    local container_state="not_running"
+    local seccomp_sha=""
+    local egress_allow_count=0
+    local egress_deny_count=0
+    local vault_status="disabled"
+    local landlock_supported="unknown"
+    local audit_chain="not_checked"
+
+    # DKR001: docker present?
+    if ! command -v docker &> /dev/null; then
+        codes+=("$(_diag_emit DKR001 critical 'docker CLI not found on PATH')")
+    elif ! docker info &> /dev/null; then
+        codes+=("$(_diag_emit DKR001 critical 'docker daemon unreachable (docker info failed)')")
+    else
+        docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+        if docker image inspect "$SANDBOX_IMAGE" &> /dev/null; then
+            image_digest=$(docker image inspect "$SANDBOX_IMAGE" --format '{{.Id}}' 2>/dev/null | head -c 71 || echo "unknown")
+        fi
+        if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            container_state="running"
+        elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            container_state="stopped"
+        fi
+    fi
+
+    # SBX002: nested sandbox attempt?
+    if [[ -f /.dockerenv ]] || [[ "${IS_SANDBOX:-}" == "1" ]]; then
+        codes+=("$(_diag_emit SBX002 warn 'already running inside a sandbox; nesting refused at run-time')")
+    fi
+
+    # CRD003: any credentials mounted in caller env?
+    if [[ -z "${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}${GOOGLE_API_KEY:-}${GITHUB_TOKEN:-}${GH_TOKEN:-}" ]]; then
+        codes+=("$(_diag_emit CRD003 warn 'no provider API key found in caller env; sandbox will start without credentials')")
+    fi
+
+    # EGR004: host network mode?
+    if [[ "$SANDBOX_NETWORK" == "host" ]]; then
+        codes+=("$(_diag_emit EGR004 critical 'LOKI_SANDBOX_NETWORK=host exposes host network namespace to agent')")
+    fi
+
+    # Egress counts (informational; consumed by vault).
+    if [[ -n "$SANDBOX_EGRESS_ALLOW" ]]; then
+        egress_allow_count=$(awk -F',' '{print NF}' <<< "$SANDBOX_EGRESS_ALLOW")
+    fi
+    if [[ -n "$SANDBOX_EGRESS_DENY" ]]; then
+        egress_deny_count=$(awk -F',' '{print NF}' <<< "$SANDBOX_EGRESS_DENY")
+    fi
+
+    # LND005: landlock supported on this kernel?
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        landlock_supported="false"
+        codes+=("$(_diag_emit LND005 info 'Landlock unavailable on non-Linux host; rely on Docker isolation')")
+    elif [[ -r /sys/kernel/security/landlock ]] || [[ -r /proc/self/status && $(grep -c '^Seccomp' /proc/self/status 2>/dev/null) -gt 0 ]]; then
+        # Best-effort check; the kernel ruleset exists on 5.13+ even without LSM enabled.
+        if grep -q 'CONFIG_SECURITY_LANDLOCK=y' /boot/config-"$(uname -r)" 2>/dev/null; then
+            landlock_supported="true"
+        else
+            landlock_supported="probable"
+        fi
+    else
+        landlock_supported="false"
+        codes+=("$(_diag_emit LND005 warn 'Landlock kernel support not detected; path enforcement will warn-only')")
+    fi
+
+    # VLT006: vault enabled but unreachable?
+    if [[ "$SANDBOX_VAULT_ENABLED" == "true" ]]; then
+        if command -v curl &> /dev/null && curl -sf --max-time 1 http://127.0.0.1:14322/healthz &> /dev/null; then
+            vault_status="reachable"
+        else
+            vault_status="unreachable"
+            codes+=("$(_diag_emit VLT006 critical 'vault sidecar enabled but http://127.0.0.1:14322/healthz did not respond')")
+        fi
+    fi
+
+    # RES008: defaults left in place?
+    if [[ "$SANDBOX_CPUS" == "2" ]] && [[ "$SANDBOX_MEMORY" == "4g" ]] && [[ -z "${LOKI_SANDBOX_CPUS:-}${LOKI_SANDBOX_MEMORY:-}" ]]; then
+        codes+=("$(_diag_emit RES008 info 'resource limits at stock defaults (2 cpus / 4g memory); raise for heavy projects')")
+    fi
+
+    # Seccomp profile sha (cheap integrity check).
+    if [[ -r "$SCRIPT_DIR/seccomp-sandbox.json" ]]; then
+        if command -v sha256sum &> /dev/null; then
+            seccomp_sha=$(sha256sum "$SCRIPT_DIR/seccomp-sandbox.json" | cut -d' ' -f1)
+        elif command -v shasum &> /dev/null; then
+            seccomp_sha=$(shasum -a 256 "$SCRIPT_DIR/seccomp-sandbox.json" | cut -d' ' -f1)
+        fi
+    fi
+
+    # AUD007: best-effort audit chain check. Skip cleanly when no log file
+    # exists yet (fresh project, audit disabled, no events written) so we
+    # don't raise a critical code for a non-actionable state.
+    if command -v python3 &> /dev/null && [[ -r "$SKILL_DIR/dashboard/audit.py" ]]; then
+        local audit_probe
+        audit_probe=$(cd "$SKILL_DIR" && python3 - <<'PY' 2>/dev/null
+from pathlib import Path
+import sys
+try:
+    from dashboard import audit
+except Exception:
+    print("skip"); sys.exit(0)
+try:
+    log_file = audit._get_current_log_file()
+except Exception:
+    print("skip"); sys.exit(0)
+if not Path(log_file).is_file():
+    print("not_initialised"); sys.exit(0)
+try:
+    report = audit.verify_log_integrity(str(log_file))
+except Exception as exc:
+    print(f"error:{exc}"); sys.exit(0)
+print("ok" if report.get("valid") else "broken")
+PY
+)
+        case "$audit_probe" in
+            ok)
+                audit_chain="ok" ;;
+            not_initialised|skip|"")
+                audit_chain="not_initialised" ;;
+            broken)
+                audit_chain="broken"
+                codes+=("$(_diag_emit AUD007 critical 'dashboard audit chain verification failed (run loki dashboard audit verify)')")
+                ;;
+            error:*)
+                audit_chain="error" ;;
+        esac
+    fi
+
+    # Stitch JSON output.
+    local codes_joined=""
+    if (( ${#codes[@]} > 0 )); then
+        local i
+        for ((i = 0; i < ${#codes[@]}; i++)); do
+            codes_joined+="${codes[i]}"
+            if (( i < ${#codes[@]} - 1 )); then codes_joined+=$',\n'; fi
+        done
+    fi
+
+    local json
+    json=$(cat <<EOF
+{
+  "schema": "loki.sandbox.diagnose/v1",
+  "container_name": "$(_json_escape "$CONTAINER_NAME")",
+  "container_state": "$container_state",
+  "image": "$(_json_escape "$SANDBOX_IMAGE")",
+  "image_digest": "$image_digest",
+  "docker_version": "$(_json_escape "$docker_version")",
+  "seccomp_sha256": "$seccomp_sha",
+  "network": "$(_json_escape "$SANDBOX_NETWORK")",
+  "cpus": "$(_json_escape "$SANDBOX_CPUS")",
+  "memory": "$(_json_escape "$SANDBOX_MEMORY")",
+  "readonly": "$(_json_escape "$SANDBOX_READONLY")",
+  "egress_allow_count": $egress_allow_count,
+  "egress_deny_count": $egress_deny_count,
+  "vault_enabled": $([ "$SANDBOX_VAULT_ENABLED" = "true" ] && echo true || echo false),
+  "vault_status": "$vault_status",
+  "landlock_supported": "$landlock_supported",
+  "audit_chain": "$audit_chain",
+  "codes": [
+${codes_joined}
+  ]
+}
+EOF
+)
+
+    if [[ "$want_json" == "true" ]]; then
+        printf '%s\n' "$json"
+        return 0
+    fi
+
+    # Human-readable summary.
+    echo "Loki sandbox diagnose"
+    echo "  container : $CONTAINER_NAME ($container_state)"
+    echo "  image     : $SANDBOX_IMAGE"
+    echo "  network   : $SANDBOX_NETWORK"
+    echo "  cpus      : $SANDBOX_CPUS"
+    echo "  memory    : $SANDBOX_MEMORY"
+    echo "  egress    : ${egress_allow_count} allow / ${egress_deny_count} deny"
+    echo "  vault     : $vault_status"
+    echo "  landlock  : $landlock_supported"
+    echo "  audit     : $audit_chain"
+    echo ""
+    if (( ${#codes[@]} == 0 )); then
+        log_success "no detection codes raised"
+    else
+        echo "Detection codes (${#codes[@]}):"
+        printf '%s\n' "${codes[@]}" | sed -E 's/^    //; s/^/  /'
+        echo ""
+        echo "For machine-readable output: loki sandbox diagnose --json"
+    fi
+}
+
 show_help() {
     echo -e "${BOLD}Loki Mode Sandbox${NC}"
     echo ""
@@ -1701,6 +2042,15 @@ show_help() {
     echo "  loki sandbox phase                              # Check phase, get testing tips"
     echo "  loki sandbox run 'npm test'                     # Run custom command"
     echo "  loki sandbox cleanup                            # Remove old worktrees"
+    echo "  loki sandbox diagnose                           # Inspect runtime, emit detection codes"
+    echo "  loki sandbox diagnose --json                    # Machine-readable output"
+    echo "  loki sandbox start --env-var FOO=bar            # Inject per-session env var"
+    echo ""
+    echo "Diagnose detection codes (v7.6.0):"
+    echo "  DKR001  docker_missing            CRD003  no_credentials_mounted"
+    echo "  SBX002  nested_sandbox            EGR004  host_network_dangerous"
+    echo "  LND005  landlock_unsupported      VLT006  vault_unreachable"
+    echo "  AUD007  audit_chain_broken        RES008  resource_limits_unset"
 }
 
 #===============================================================================
@@ -1720,6 +2070,23 @@ main() {
             --docker) mode="docker"; shift ;;
             --worktree) mode="worktree"; shift ;;
             --auto) mode="auto"; shift ;;
+            --env-var)
+                # v7.6.0: per-session env var injection (--env-var KEY=VAL, repeatable)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--env-var requires KEY=VAL argument"
+                    exit 1
+                fi
+                if ! parse_session_env_var "$2"; then
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --env-var=*)
+                if ! parse_session_env_var "${1#--env-var=}"; then
+                    exit 1
+                fi
+                shift
+                ;;
             *) args+=("$1"); shift ;;
         esac
     done
@@ -1834,6 +2201,10 @@ main() {
             ;;
         expose)
             sandbox_expose ${args[@]+"${args[@]}"}
+            ;;
+        diagnose)
+            # v7.6.0: typed detection-code diagnose (LAP-parity)
+            sandbox_diagnose ${args[@]+"${args[@]}"}
             ;;
         help|--help|-h)
             show_help

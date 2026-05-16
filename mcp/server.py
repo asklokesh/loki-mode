@@ -2284,6 +2284,155 @@ except Exception as _magic_err:
 
 
 # ============================================================
+# SANDBOX TOOLS (v7.6.0 - LAP-parity feature A5)
+#
+# Expose the existing autonomy/sandbox.sh lifecycle and the new diagnose
+# command to MCP clients (Claude Code, etc.). All three tools shell out to
+# the canonical bash implementation; no business logic is duplicated here.
+# ============================================================
+
+
+def _sandbox_sh_path() -> str:
+    # The script lives at $SKILL_DIR/autonomy/sandbox.sh relative to this file.
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, '..', 'autonomy', 'sandbox.sh'))
+
+
+def _run_sandbox(args, timeout_seconds: int = 60):
+    import subprocess
+    script = _sandbox_sh_path()
+    if not os.path.isfile(script):
+        return {"error": "sandbox.sh missing", "path": script}
+    try:
+        proc = subprocess.run(
+            ['bash', script, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        return {
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        }
+    except subprocess.TimeoutExpired as e:
+        return {"error": "timeout", "timeout_seconds": timeout_seconds,
+                "stdout": e.stdout or "", "stderr": e.stderr or ""}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def loki_sandbox_start(network: str = "bridge",
+                             readonly: bool = False) -> str:
+    """
+    Start the local Loki sandbox (delegates to autonomy/sandbox.sh start).
+
+    Args:
+        network: Docker network mode (bridge | none | host). Defaults to bridge.
+        readonly: Mount the project read-only. Defaults to False.
+
+    Returns:
+        JSON object with exit_code, stdout, stderr from the underlying sandbox
+        start command. Detection codes can be retrieved separately via
+        loki_sandbox_diagnose.
+    """
+    _emit_tool_event_async(
+        'loki_sandbox_start', 'start',
+        parameters={'network': network, 'readonly': readonly}
+    )
+    try:
+        # Allowlist the network mode so we don't smuggle anything else through.
+        if network not in ("bridge", "none", "host"):
+            result = json.dumps({"error": "invalid network mode",
+                                 "allowed": ["bridge", "none", "host"]})
+            _emit_tool_event_async('loki_sandbox_start', 'complete',
+                                   result_status='error', error='invalid_network')
+            return result
+
+        env = os.environ.copy()
+        env['LOKI_SANDBOX_NETWORK'] = network
+        if readonly:
+            env['LOKI_SANDBOX_READONLY'] = 'true'
+        # We can't pass env via _run_sandbox subprocess.run without rewriting,
+        # so just push to current process env (MCP server lives only as long as
+        # the client session and child inherits).
+        os.environ.update(env)
+
+        out = _run_sandbox(['start'], timeout_seconds=300)
+        _emit_tool_event_async('loki_sandbox_start', 'complete',
+                               result_status='success' if out.get('exit_code') == 0 else 'error')
+        return json.dumps(out)
+    except Exception as e:
+        logger.error(f"loki_sandbox_start failed: {e}")
+        _emit_tool_event_async('loki_sandbox_start', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_sandbox_status() -> str:
+    """
+    Report the local sandbox runtime status.
+
+    Returns:
+        JSON object with exit_code, stdout, stderr from `loki sandbox status`.
+    """
+    _emit_tool_event_async('loki_sandbox_status', 'start')
+    try:
+        out = _run_sandbox(['status'], timeout_seconds=15)
+        _emit_tool_event_async('loki_sandbox_status', 'complete',
+                               result_status='success')
+        return json.dumps(out)
+    except Exception as e:
+        logger.error(f"loki_sandbox_status failed: {e}")
+        _emit_tool_event_async('loki_sandbox_status', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+async def loki_sandbox_diagnose() -> str:
+    """
+    Run the typed-detection-code diagnose (LAP-parity).
+
+    Codes follow the LAP detected_issues taxonomy adapted to Loki:
+      DKR001 docker_missing, SBX002 nested_sandbox, CRD003 no_credentials_mounted,
+      EGR004 host_network_dangerous, LND005 landlock_unsupported,
+      VLT006 vault_unreachable, AUD007 audit_chain_broken,
+      RES008 resource_limits_unset.
+
+    Returns:
+        JSON object with the full diagnose payload (schema loki.sandbox.diagnose/v1)
+        embedded under `report`, plus exit_code from the underlying command.
+    """
+    _emit_tool_event_async('loki_sandbox_diagnose', 'start')
+    try:
+        raw = _run_sandbox(['diagnose', '--json'], timeout_seconds=20)
+        report = None
+        if raw.get('stdout'):
+            try:
+                report = json.loads(raw['stdout'])
+            except json.JSONDecodeError:
+                report = None
+        payload = {
+            "exit_code": raw.get('exit_code'),
+            "report": report,
+            "raw_stdout": raw.get('stdout') if report is None else None,
+            "stderr": raw.get('stderr'),
+        }
+        _emit_tool_event_async('loki_sandbox_diagnose', 'complete',
+                               result_status='success')
+        return json.dumps(payload)
+    except Exception as e:
+        logger.error(f"loki_sandbox_diagnose failed: {e}")
+        _emit_tool_event_async('loki_sandbox_diagnose', 'complete',
+                               result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
