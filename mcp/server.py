@@ -2284,6 +2284,19 @@ except Exception as _magic_err:
 
 
 # ============================================================
+# FORGE TOOLS (v7.6.0 Phase F-1 - integrated BaaS for the autonomous loop)
+# ============================================================
+
+try:
+    from mcp.forge_tools import register as _register_forge_tools
+    _register_forge_tools(mcp)
+except Exception as _forge_err:
+    # Forge is optional and additive; surface the error but never block boot.
+    import sys as _sys
+    print(f"[warn] forge_tools registration skipped: {_forge_err}", file=_sys.stderr)
+
+
+# ============================================================
 # SANDBOX TOOLS (v7.6.0 - LAP-parity feature A5)
 #
 # Expose the existing autonomy/sandbox.sh lifecycle and the new diagnose

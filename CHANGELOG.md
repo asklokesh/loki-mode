@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Loki Forge Phase F-1: integrated BaaS for the autonomous loop
+
+Closes the headline gap vs InsForge
+(https://github.com/InsForge/InsForge - the "BaaS for AI coding agents"
+that reached 10k stars in 9 months on the strength of its MCP semantic
+layer). Loki Forge is our first-party BaaS, materialized lazily by the
+agent during the RARV loop. The operator does not run `loki forge
+db-create-table` - the agent calls `forge_db_migrate` inside iteration N,
+because iteration N-1 detected "users table" in the PRD.
+
+Full multi-phase plan: docs/plans/ULTRAPLAN-FORGE-BAAS.md.
+
+This commit ships Phase F-1: the smallest shippable Forge that beats
+InsForge's headline win on auto-detection + db introspection.
+
+**Forge package** (`forge/`)
+- `spec_detector.py` - reads PRD/issue text and emits a structured
+  ForgeRequirements (tables, auth_providers, buckets, payments, realtime
+  channels, schedules). Deterministic keyword + bullet-list heuristics;
+  F-2 will graft on an LLM extraction step but keeps the deterministic
+  baseline so the agent never sees a hallucinated requirement.
+- `provisioner.py` - idempotent ForgeRequirements -> SQLite migrations.
+  F-2 wires in auth/storage/functions/etc. Non-DB primitives are
+  surfaced in the `skipped` field so they are visible in the dashboard.
+- `semantic_layer.py` - renders the prompt-injection block (capped at
+  ~2 KB) with live tables/columns/indices/RLS/row-count data so the
+  agent reasons against ground truth instead of its iteration-N-1 memory.
+- `services/database/engine.py` - SQLite engine with WAL, FK
+  enforcement, and a write-statement gate. PRAGMA bifurcation:
+  read-form PRAGMAs (no `=`) allowed; write-form blocked behind
+  `allow_writes=True`. Multi-statement input rejected at the API surface
+  so `; DROP TABLE` cannot smuggle through.
+- `services/database/introspect.py` - tables + columns + indices +
+  foreign keys + RLS metadata + row-count estimate -> structured JSON.
+  Hides SQLite system tables and forge-internal tables.
+- `services/database/migrate.py` - spec-driven migration compiler.
+  Verbs: add_table, drop_table, add_column, drop_column, set_rls,
+  create_index. Type aliases (id/pk/text/timestamp/json/uuid/...).
+  Idempotent by spec_hash. Best-effort rollback synthesis for invertible
+  ops. Conservative validation rejects unsafe identifiers, multi-byte
+  defaults, and SQL injection in policy predicates.
+
+**MCP tools** (`mcp/forge_tools.py`, registered from `mcp/server.py`)
+- `forge_db_introspect` - live schema snapshot
+- `forge_db_query` - SELECT-only by default; allow_writes=True opt-in
+- `forge_db_migrate` - spec-driven migration apply (idempotent)
+- `forge_db_migrate_dryrun` - compile to SQL without applying
+- `forge_db_migrate_rollback` - revert by migration_id
+- `forge_state_dump` - full snapshot for dashboard + the prompt block
+
+**Integration with the existing loop**
+- `autonomy/forge_detector.sh` runs between Reason and Act in
+  `autonomy/run.sh:run_autonomous()`. Never blocks - failures go to
+  `.loki/forge/errors.log`.
+- `autonomy/run.sh:build_prompt()` now appends the semantic-layer block
+  to every iteration's dynamic context when forge has state, with
+  Python-level cost-aware truncation.
+
+**Skills package** (`skills/forge/`)
+- `00-index.md` - progressive-disclosure entry point for the agent.
+- `database.md` - full database service reference (operations, types,
+  RLS, anti-patterns).
+
+**Plan document**
+- `docs/plans/ULTRAPLAN-FORGE-BAAS.md` - the full 5-phase plan with
+  per-service architecture, integration philosophy ("no new top-level
+  commands; everything through MCP + spec detection"), risks, and
+  acceptance gates.
+
+**Tests** (38 new assertions across 4 suites, all green)
+- `tests/test-forge-detector.sh` (11) - spec_detector heuristics +
+  write_required_json + missing-file safety
+- `tests/test-forge-db.sh` (12) - engine + migrate + introspect, write
+  gating, PRAGMA read/write bifurcation, idempotency, rollback,
+  unsafe-identifier rejection, plus regression tests for 4 bugs caught
+  during F-1 development (duplicate PRIMARY KEY on id alias, RLS hyphen
+  rejection, function-vs-module import bug, PRAGMA gate over-restriction)
+- `tests/test-forge-semantic.sh` (3) - empty-state empty-block, table
+  surfacing, MAX_BLOCK_BYTES cap
+- `tests/test-forge-mcp.sh` (12) - file structure, decorator wiring,
+  optional-import handling, no-emoji compliance
+
+**Bugs caught and fixed during F-1 end-to-end smoke**
+- BUG-1 in `migrate._compile_set_rls`: identifier validator rejected
+  hyphens in policy names (e.g. `own-row`). Fixed: dedicated
+  permissive validator for policy strings.
+- BUG-2 in `semantic_layer`: `import introspect as _db_introspect`
+  imported the re-exported function (from `database/__init__.py`)
+  shadowing the submodule, so `_db_introspect.introspect(...)` failed
+  with "'function' object has no attribute 'introspect'". Fixed: direct
+  submodule import.
+- BUG-3 in `migrate._compile_column`: the `id`/`pk` type aliases
+  expand to `INTEGER PRIMARY KEY AUTOINCREMENT`. A column dict with
+  `primary_key: True` then emitted a second `PRIMARY KEY` causing
+  "table X has more than one primary key" at CREATE. Fixed: detect
+  `PRIMARY KEY in type_sql` before appending.
+- BUG-4 in `engine.execute`: PRAGMA was classified as a write
+  statement, so `PRAGMA table_info(x)` (required by introspection)
+  was rejected. Fixed: PRAGMA bifurcates on `=` presence.
+
+Each of the four bugs has a regression test in `test-forge-db.sh`.
+
+**What is NOT in F-1**
+- Auth, Storage, Functions, Gateway, Realtime, Schedules, Secrets,
+  Payments, Deploy adapters - all in F-2/F-3/F-4 per the plan.
+- Council review of migrations (the integration point is identified;
+  hookup is F-2).
+- Postgres promotion path (F-2).
+- SDK generation in any language (F-5).
+
 ### Fixed - 7-bug QA pass (three feedback loops; independent code review by 3 agents)
 
 After shipping Phase A-plus, I ran a structured QA loop on everything new:

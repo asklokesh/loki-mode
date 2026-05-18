@@ -9750,6 +9750,28 @@ except Exception:
     [ -n "$app_runner_info" ] && printf '%s\n' "$app_runner_info"
     [ -n "$playwright_info" ] && printf '%s\n' "$playwright_info"
     [ -n "$memory_context_section" ] && printf '%s\n' "$memory_context_section"
+
+    # v7.6.0 Phase F-1: Loki Forge semantic-layer prompt-injection block.
+    # Emits the live state of .loki/forge/ (tables, columns, indices, RLS) so
+    # the agent reasons against ground truth instead of its own memory.
+    # Capped at ~2 KB by forge.semantic_layer.render_prompt_block().
+    if command -v python3 >/dev/null 2>&1 && [ -d "${TARGET_DIR:-.}/.loki/forge" ]; then
+        local _forge_loki_root="${SKILL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+        local _forge_block
+        _forge_block=$(LOKI_ROOT="$_forge_loki_root" \
+                       FORGE_DIR="${TARGET_DIR:-.}/.loki/forge" \
+                       python3 -c "
+import os, sys
+sys.path.insert(0, os.environ['LOKI_ROOT'])
+try:
+    from forge.semantic_layer import render_prompt_block
+    sys.stdout.write(render_prompt_block(os.environ['FORGE_DIR']))
+except Exception as _e:
+    pass
+" 2>/dev/null)
+        [ -n "$_forge_block" ] && printf '%s\n' "$_forge_block"
+    fi
+
     printf '%s\n' "$completion_instruction"
     printf '</dynamic_context>\n'
 }
@@ -10791,6 +10813,22 @@ except Exception as exc:
 
         # Sentrux architectural-drift baseline snapshot (opt-in, v7.5.15).
         _loki_sentrux_iteration_start "${TARGET_DIR:-.}"
+
+        # v7.6.0 Phase F-1: Loki Forge spec-driven backend provisioner.
+        # Runs between Reason and Act. Detects backend primitives in the
+        # spec and materializes them (F-1: SQLite tables only). Never
+        # blocks - errors go to .loki/forge/errors.log.
+        if [ -x "${SKILL_DIR:-$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")")}/autonomy/forge_detector.sh" ]; then
+            PROJECT_DIR="${TARGET_DIR:-$(pwd)}" \
+                LOKI_PRD_PATH="$prd_path" \
+                bash "${SKILL_DIR}/autonomy/forge_detector.sh" "$prd_path" \
+                </dev/null >/dev/null 2>&1 || true
+        elif [ -x "$(dirname "$0")/forge_detector.sh" ]; then
+            PROJECT_DIR="${TARGET_DIR:-$(pwd)}" \
+                LOKI_PRD_PATH="$prd_path" \
+                bash "$(dirname "$0")/forge_detector.sh" "$prd_path" \
+                </dev/null >/dev/null 2>&1 || true
+        fi
 
         local prompt
         prompt=$(build_prompt "$retry" "$prd_path" "$ITERATION_COUNT")
