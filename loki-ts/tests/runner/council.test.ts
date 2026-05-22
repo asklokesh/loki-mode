@@ -262,6 +262,53 @@ describe("councilEvaluate", () => {
     expect(r.votes[3]?.role).toBe("devils_advocate");
     expect(r.votes[3]?.verdict).toBe("REJECT");
   });
+
+  // Phase C (v7.5.20) regression test for the --agents <json> dispatch path.
+  // When a `claudeRunner` is injected AND `voters` is NOT set, councilEvaluate
+  // must use dispatchClaudeAgents instead of the heuristic loop. The voter
+  // slugs in the returned aggregate must be the new hyphenated forms, NOT the
+  // underscore-prefixed legacy heuristic roles.
+  it("uses --agents dispatch path when claudeRunner injected and voters omitted", async () => {
+    let heuristicTouched = false;
+    const _heuristicSpy: Voter = async (_c) => {
+      heuristicTouched = true;
+      return approve("should_not_fire");
+    };
+    // Note: we intentionally do NOT pass `voters: [_heuristicSpy]` because
+    // explicit voters always wins. The dispatch path is what we are testing,
+    // so we omit `voters` entirely and prove via `heuristicTouched` that the
+    // DEFAULT_VOTERS path also did not run.
+    const cannedStdout = JSON.stringify({
+      findings: [
+        { role: "requirements-verifier", vote: "APPROVE", reason: "all met", confidence: 0.9 },
+        { role: "test-auditor", vote: "APPROVE", reason: "passing", confidence: 0.85 },
+        { role: "convergence-voter", vote: "APPROVE", reason: "stable", confidence: 0.7 },
+      ],
+    });
+    const fakeRunner = async (_argv: string[]) => ({ stdout: cannedStdout, exitCode: 0 });
+
+    // Provide a logs/ dir with a pass marker so the DA upholds the unanimous APPROVE.
+    const fs = await import("node:fs");
+    fs.mkdirSync(join(tmpBase, "logs"), { recursive: true });
+    fs.writeFileSync(join(tmpBase, "logs", "test-run.log"), "running suite\nall tests passed\n");
+
+    const r = await councilEvaluate({
+      ctx: fakeCtx(),
+      iteration: 3,
+      claudeRunner: fakeRunner,
+    });
+    expect(heuristicTouched).toBe(false);
+    // Three votes from dispatch + 1 DA appended.
+    expect(r.votes.length).toBe(4);
+    const baseSlugs = r.votes.slice(0, 3).map((v) => v.role).sort();
+    expect(baseSlugs).toEqual([
+      "convergence-voter",
+      "requirements-verifier",
+      "test-auditor",
+    ]);
+    expect(r.approveCount).toBe(3);
+    expect(r.decision).toBe("COMPLETE");
+  });
 });
 
 describe("councilWriteReport", () => {

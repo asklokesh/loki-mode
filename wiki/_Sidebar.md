@@ -42,6 +42,6 @@
 
 ---
 
-**Version:** 7.5.20
+**Version:** 7.5.21
 
 [Autonomi](https://www.autonomi.dev/) | [GitHub](https://github.com/asklokesh/loki-mode) | [npm](https://www.npmjs.com/package/loki-mode)

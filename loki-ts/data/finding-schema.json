@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loki-mode.dev/schemas/finding.json",
+  "title": "Council Multi-Finding Response",
+  "description": "Phase C (v7.5.20) JSON contract Claude Code must emit when invoked with --agents <voter-set> and --json-schema. Top-level is an object with a 'findings' array, one entry per dispatched voter. Each finding describes a single voter's verdict on the current iteration. NOTE on reconciliation with the existing AgentVerdict type (loki-ts/src/runner/council.ts:128-133): the schema field 'vote' maps onto AgentVerdict.verdict; the schema field 'confidence' is required at emission time but is NOT carried onto AgentVerdict (validateFinding drops it). Optional 'severity' and 'suggested_action' top-level per-finding fields are likewise dropped from AgentVerdict. The schema is the authoritative shape Claude must produce; AgentVerdict is the simplified shape internal council logic consumes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "vote", "reason", "confidence"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Voter slug, e.g. 'requirements-verifier', 'test-auditor', 'convergence-voter', 'devils-advocate'."
+          },
+          "vote": {
+            "type": "string",
+            "enum": ["APPROVE", "REJECT", "CANNOT_VALIDATE"],
+            "description": "Voter's verdict. Maps onto AgentVerdict.verdict on the consumer side."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "Free-text explanation of the vote. Surfaced verbatim in council transcripts."
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Voter's self-reported confidence in the vote, 0..1. Used by future weighting passes; not carried onto AgentVerdict in v7.5.20."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+            "description": "Top-level severity hint for the finding. Optional; per-issue severities live under 'issues'."
+          },
+          "suggested_action": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Short remediation hint. Optional; surfaced in transcripts when present."
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["severity", "description"],
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

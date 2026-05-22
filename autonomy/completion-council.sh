@@ -1518,9 +1518,31 @@ council_evaluate() {
     # Compute threshold using the same ceiling(2/3) formula as council_vote and council_aggregate_votes
     local _eval_threshold=$(( (COUNCIL_SIZE * 2 + 2) / 3 ))
 
-    # Step 1: Aggregate votes from all members
-    local aggregate_result
-    aggregate_result=$(council_aggregate_votes)
+    # Step 1: Aggregate votes from all members.
+    # Phase C (v7.5.20): try the Claude `--agents <json>` + `--json-schema`
+    # dispatch first. When the locally installed Claude CLI supports both flags
+    # AND the call returns parseable findings, the helper writes both per-voter
+    # verdict files AND the round-N.json shape consumed by the existing
+    # transcript writer / aggregator readers downstream. On any failure
+    # (unsupported flags, missing binary, parse error, etc.) it returns 1 and
+    # we fall through to the existing heuristic council_aggregate_votes path.
+    local aggregate_result=""
+    local _va_helper="$(dirname "${BASH_SOURCE[0]}")/lib/voter-agents.sh"
+    if [ -f "$_va_helper" ]; then
+        # shellcheck disable=SC1090
+        . "$_va_helper" 2>/dev/null || true
+        if declare -f loki_council_dispatch_agents >/dev/null 2>&1; then
+            if loki_council_dispatch_agents "$ITERATION_COUNT" "${COUNCIL_PRD_PATH:-}"; then
+                local _va_round_file="$COUNCIL_STATE_DIR/votes/round-${ITERATION_COUNT}.json"
+                if [ -f "$_va_round_file" ]; then
+                    aggregate_result=$(_RF="$_va_round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('verdict', 'CONTINUE'))" 2>/dev/null || echo "")
+                fi
+            fi
+        fi
+    fi
+    if [ -z "$aggregate_result" ]; then
+        aggregate_result=$(council_aggregate_votes)
+    fi
 
     if [ "$aggregate_result" = "COMPLETE" ]; then
         # Step 2: Check if unanimous -- compare complete_count to COUNCIL_SIZE

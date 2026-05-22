@@ -31,6 +31,16 @@ import {
 import { resolve, dirname } from "node:path";
 import type { CouncilHook, RunnerContext } from "./types.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
+import { claudeFlagSupported } from "../providers/claude_flags.ts";
+
+// Local shim. Phase C dispatch path only checks support synchronously; the
+// help cache must be populated by the caller chain in production (the
+// runtime currently calls ensureClaudeHelpCache() in providers.ts). When the
+// cache is empty, claudeFlagSupported returns false (conservative), which
+// means we fall through to the heuristic -- the desired safe default.
+function claudeFlagSupportedShim(flag: string): boolean {
+  return claudeFlagSupported(flag);
+}
 
 // ---------------------------------------------------------------------------
 // Atomic write helper (POSIX rename is atomic within a directory).
@@ -158,6 +168,15 @@ export type CouncilEvaluateContext = {
   // COUNCIL_SEVERITY_THRESHOLD (HIGH) -- any issue at or above this severity
   // forces a CONTINUE verdict regardless of vote count.
   severityThreshold?: Severity;
+  // Phase C (v7.5.20) injection point for the --agents <json> dispatch path.
+  // When set AND `voters` is NOT set, councilEvaluate will attempt the
+  // dispatchClaudeAgents call using this runner before falling through to
+  // the existing heuristic. Production code leaves this undefined and the
+  // dispatcher uses Bun.spawn directly; tests pass a fake runner to drive
+  // the path without spawning a real claude binary.
+  claudeRunner?: (
+    argv: string[],
+  ) => Promise<{ stdout: string; exitCode: number }>;
 };
 
 // Severity ordering: lower index = more severe.
@@ -436,11 +455,39 @@ export async function councilDevilsAdvocate(
 
 export async function councilEvaluate(cec: CouncilEvaluateContext): Promise<AggregateResult> {
   const voters = cec.voters ?? DEFAULT_VOTERS;
-  const verdicts: AgentVerdict[] = [];
-  for (const voter of voters) {
-    // Sequential -- matches bash member loop and keeps logs deterministic.
-    const v = await voter(cec);
-    verdicts.push(v);
+  let verdicts: AgentVerdict[] = [];
+
+  // Phase C (v7.5.20) -- prefer the --agents <json> dispatch path when:
+  //   1. caller did NOT inject an explicit `voters` set (which still wins);
+  //   2. EITHER a `claudeRunner` is injected (test mode) OR the installed
+  //      claude CLI advertises both --agents and --json-schema.
+  // On any failure we fall through to the existing heuristic loop. The
+  // heuristic path is preserved as the safety net (DO NOT remove).
+  const shouldTryAgentsDispatch =
+    cec.voters === undefined &&
+    (cec.claudeRunner !== undefined ||
+      (claudeFlagSupportedShim("--agents") && claudeFlagSupportedShim("--json-schema")));
+  if (shouldTryAgentsDispatch) {
+    try {
+      const mod = await import("../council/voter_agents.ts");
+      verdicts = await mod.dispatchClaudeAgents(cec, cec.claudeRunner);
+    } catch (err) {
+      // Heuristic fall-through. Log once at warn level so the operator can
+      // see why the upgrade path was skipped this iteration.
+      const msg = `[council] --agents dispatch failed, falling back to heuristic: ${(err as Error).message}`;
+      const log = (cec.ctx as Partial<RunnerContext>).log;
+      if (typeof log === "function") log(msg);
+      else console.warn(msg);
+      verdicts = [];
+    }
+  }
+
+  if (verdicts.length === 0) {
+    for (const voter of voters) {
+      // Sequential -- matches bash member loop and keeps logs deterministic.
+      const v = await voter(cec);
+      verdicts.push(v);
+    }
   }
 
   const aggregate = await councilAggregateVotes(verdicts, {

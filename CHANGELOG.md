@@ -9,6 +9,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.21] - 2026-05-22
+
+PATCH release. Phase C of the v7.5.18 -> v7.5.27 arc. Replaces the ad-hoc
+council voter dispatch (three separate `claude -p` calls per iteration,
+regex-parsing free-text votes) with a single Claude Code invocation that
+declares all three voters via `--agents <json>` and validates each finding
+against `--json-schema`. Eliminates the regex-parse failure mode where a
+reviewer writes "VOTE:" in prose that doesn't match the `^VOTE: ` regex.
+
+Default-on when the installed Claude CLI advertises both flags; falls
+through to the existing heuristic voter loop on any failure (CLI lacks
+support, parse error, missing voter slug). No new CLI subcommands. No new
+opt-in env vars.
+
+### Added
+
+- **`loki-ts/data/finding-schema.json`** (new, ~80 lines). JSON Schema
+  draft-07 for the multi-finding response. Top-level shape is
+  `{ findings: [...] }` where each finding requires `role`, `vote`
+  (APPROVE | REJECT | CANNOT_VALIDATE), `reason`, `confidence` (0..1).
+  Optional `severity`, `suggested_action`, `issues`. Both bash and Bun
+  routes consume the SAME file (single source of truth).
+- **`loki-ts/src/council/finding_schema.ts`** (new, ~190 lines). Exports
+  `FINDING_SCHEMA` (frozen, loaded once), `validateFinding()`, and
+  `parseMultiResponse()`. Manual validation (no ajv) to keep deps tight;
+  rationale documented in file header. Reconciliation note for which
+  optional fields map to `AgentVerdict` vs are dropped.
+- **`loki-ts/src/council/voter_agents.ts`** (new, ~270 lines). Exports
+  `AgentSpec`, `VOTER_SLUGS`, `buildVoterAgentsJson()`,
+  `buildDevilsAdvocateAgent()`, `dispatchClaudeAgents()`. The 3 base
+  voters: `requirements-verifier` (opus, high), `test-auditor` (sonnet,
+  high), `convergence-voter` (sonnet, medium). The 4th
+  `devils-advocate` (opus, xhigh) is exposed as a typed primitive for
+  the unanimous-APPROVE conditional path (auto-wiring deferred to a
+  follow-up). Dispatch throws on any failure so the orchestrator falls
+  back to heuristic.
+- **`autonomy/lib/voter-agents.sh`** (new, ~250 lines). Bash mirror of
+  the Bun helpers. Exports `loki_voter_agents_json`,
+  `loki_devils_advocate_json`, `loki_finding_schema_path`,
+  `loki_council_dispatch_agents`. Uses `python3 -c` for JSON
+  build/parse (no jq dep). Sources `autonomy/lib/claude-flags.sh` for
+  the flag-support probe. Writes per-voter verdict files under
+  `.loki/council/verdicts/<role>-iter-<iter>.json` AND the existing
+  `votes/round-N.json` so the legacy aggregator keeps working unchanged.
+- **`loki-ts/tests/council/finding_schema.test.ts`** (new, ~165 lines).
+  14 tests covering schema parsing, validation of all required + optional
+  fields, vote enum rejection, confidence range, multi-response parse,
+  malformed JSON, balanced-brace extraction from mixed prose+JSON.
+- **`loki-ts/tests/council/voter_agents.test.ts`** (new, ~180 lines).
+  7 tests covering voter slug emission, prompt iteration + PRD-hint
+  embedding, devil's-advocate base-findings summary, dispatch success
+  with canned response, dispatch throws on malformed JSON, dispatch
+  throws on non-zero exit, dispatch throws on missing voter slug.
+- **`tests/test-voter-agents-json.sh`** (new, ~160 lines). 17 bash
+  assertions covering JSON shape parity with TS, model-per-voter
+  expectations, schema-path resolution, and dispatch-fallback behavior
+  on missing flag support or missing claude binary.
+
+### Changed
+
+- **`loki-ts/src/runner/council.ts`** -- extended `CouncilEvaluateContext`
+  with an optional `claudeRunner` injection point (production code leaves
+  this undefined; tests pass a fake runner). `councilEvaluate()` now
+  prefers the `--agents <json>` dispatch path when `voters` is not
+  explicitly set AND (the runner is injected OR the installed CLI
+  advertises both `--agents` and `--json-schema`). On any failure, falls
+  through to the existing heuristic loop with a warning log. The
+  heuristic path is preserved as the safety net and stays the default
+  when claude is unavailable.
+- **`autonomy/completion-council.sh::council_evaluate`** -- inserted a
+  dispatch-then-fallback block BEFORE the existing
+  `council_aggregate_votes` call. On success, reads the verdict from the
+  per-voter file the dispatch helper wrote; on any failure, falls
+  through to the existing per-voter member loop. Managed council path,
+  transcript writer, and aggregator are untouched.
+
+### Verified locally before commit
+
+- `bash tests/test-voter-agents-json.sh` -- 17/17 PASS.
+- `bash tests/test-claude-flags.sh` -- 29/29 PASS (no regression from
+  Phase B/E helpers).
+- `cd loki-ts && bun test tests/council/` -- 21/21 PASS (14 schema + 7
+  voter agents).
+- `cd loki-ts && bun test tests/runner/council.test.ts` -- 20/20 PASS
+  (was 19, +1 new injected-runner regression test).
+- `cd loki-ts && bun test` -- 760 PASS / 0 fail across 57 files. Note:
+  `tests/commands/doctor.test.ts` ChromaDB-PASS-branch is a known flake
+  (depends on port 8100 being free during full-suite run; passes in
+  isolation). Not introduced by Phase C.
+- `cd loki-ts && bun run typecheck` clean.
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+
+### NOT tested (honest disclosures)
+
+- Live `claude --agents <json> --json-schema <path> -p <topPrompt>`
+  invocation against the installed Claude CLI v2.1.148. The dispatch
+  helper is gated on `loki_claude_flag_supported` so an unsupported CLI
+  silently degrades; we have not yet seen a real multi-voter response
+  parse end-to-end. Architect noted this in TESTING ASSUMPTIONS section
+  of the design doc: if Claude only multiplexes via the `agents`
+  subcommand (not `-p` mode), the helper will throw on every iteration
+  and the orchestrator will fall back to heuristic on every iteration
+  (no functional regression, just no upgrade benefit).
+- Behavior on Claude versions where `--agents` accepts a different JSON
+  shape (e.g. if upstream renames frontmatter fields). The dispatch
+  throws and falls back; no version-pinning enforcement in Loki today.
+- Devil's-advocate 4th-voter dispatch is NOT auto-wired in this phase
+  (primitive shipped, integration follows). The deterministic
+  `councilDevilsAdvocate` at `loki-ts/src/runner/council.ts:269+` is
+  unchanged.
+
+### Migration
+
+- No action required for users. Phase C is default-on when the installed
+  Claude CLI supports both flags AND the heuristic-voter set is not
+  explicitly overridden by `councilEvaluate` callers.
+- Users on older Claude CLIs (lacking `--agents` or `--json-schema`):
+  behavior is identical to v7.5.20 (heuristic voter loop).
+
 ## [7.5.20] - 2026-05-22
 
 PATCH release. Phase E of the v7.5.18 -> v7.5.27 arc, plus the v7.5.19 Phase A
