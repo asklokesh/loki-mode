@@ -104,13 +104,26 @@ jobs:
           git push -f origin "$BRANCH"
 
           # Idempotent PR creation -- update if one already exists.
+          # Wrapped in a graceful skip: by default, GITHUB_TOKEN cannot create
+          # PRs unless the repo enables "Allow GitHub Actions to create and
+          # approve pull requests" in Settings -> Actions -> General. If the
+          # setting is off, this step logs a clear message + uploads the branch
+          # (already pushed above) so the maintainer can open the PR by hand.
           if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
-            gh pr edit "$BRANCH" --body-file .github/automation-reports/model-catalog-probe.md
+            gh pr edit "$BRANCH" --body-file .github/automation-reports/model-catalog-probe.md || \
+              echo "INFO: pr edit failed; the auto/model-catalog-probe branch was pushed -- open the PR manually if needed"
           else
-            gh pr create \
+            if ! gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "Model catalog probe: new model candidates found" \
               --body-file .github/automation-reports/model-catalog-probe.md \
-              --label "automation,models"
+              --label "automation,models" 2>&1; then
+              echo "INFO: 'gh pr create' was rejected (likely 'GitHub Actions is not permitted to create or approve pull requests' under Settings -> Actions -> General)."
+              echo "INFO: Branch '$BRANCH' is pushed and ready -- open the PR manually:"
+              echo "INFO:   https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}"
+              echo "INFO: Or enable PR creation for Actions in repo Settings to make this automatic."
+              # Don't fail the workflow -- the branch + report are the artifacts.
+              exit 0
+            fi
           fi
