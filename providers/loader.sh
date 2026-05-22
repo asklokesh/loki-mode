@@ -5,7 +5,7 @@
 PROVIDERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # List of supported providers
-SUPPORTED_PROVIDERS=("claude" "codex" "gemini" "cline" "aider")
+SUPPORTED_PROVIDERS=("claude" "codex" "cline" "aider")
 
 # Default provider
 DEFAULT_PROVIDER="claude"
@@ -171,10 +171,10 @@ print_capability_matrix() {
 }
 
 # Auto-detect best available provider
-# BUG-PROV-007 fix: includes all 5 supported providers in priority order
-# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Gemini/Aider (Tier 3, degraded)
+# BUG-PROV-007 fix: includes all 4 supported providers in priority order
+# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Aider (Tier 3, degraded)
 auto_detect_provider() {
-    for p in claude cline codex gemini aider; do
+    for p in claude cline codex aider; do
         if check_provider_installed "$p"; then
             echo "$p"
             return 0

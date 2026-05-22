@@ -5,7 +5,7 @@
 // file owns the contract surface so the loop in autonomous.ts compiles even
 // while those modules are still being written.
 
-export type ProviderName = "claude" | "codex" | "gemini" | "cline" | "aider";
+export type ProviderName = "claude" | "codex" | "cline" | "aider";
 
 export type AutonomyMode = "perpetual" | "checkpoint" | "single-pass";
 

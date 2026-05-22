@@ -48,15 +48,6 @@
       ],
       "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation"
     },
-    "gemini": {
-      "latest_planning": "gemini-3-pro-preview",
-      "latest_development": "gemini-3-pro-preview",
-      "latest_fast": "gemini-3-flash-preview",
-      "models": [
-        { "id": "gemini-3-pro-preview", "tier": "planning", "context_window": 1000000 },
-        { "id": "gemini-3-flash-preview", "tier": "fast", "context_window": 1000000 }
-      ]
-    },
     "cline": {
       "latest_planning": "claude-opus-4-7",
       "latest_development": "claude-opus-4-7",

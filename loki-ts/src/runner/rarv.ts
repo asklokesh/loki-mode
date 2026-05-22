@@ -21,7 +21,7 @@ import { extname, join, relative } from "node:path";
 
 export type RarvTier = "planning" | "development" | "fast";
 export type RarvPhase = "REASON" | "ACT" | "REFLECT" | "VERIFY";
-export type Provider = "claude" | "codex" | "gemini" | "cline" | "aider";
+export type Provider = "claude" | "codex" | "cline" | "aider";
 
 export interface GetRarvTierOptions {
   // When set and `legacy` is false, the session-pinned model overrides the
@@ -127,17 +127,6 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
           return process.env["PROVIDER_EFFORT_FAST"] ?? "low";
         default:
           return "high";
-      }
-    case "gemini":
-      switch (tier) {
-        case "planning":
-          return process.env["PROVIDER_THINKING_PLANNING"] ?? "high";
-        case "development":
-          return process.env["PROVIDER_THINKING_DEVELOPMENT"] ?? "medium";
-        case "fast":
-          return process.env["PROVIDER_THINKING_FAST"] ?? "low";
-        default:
-          return "medium";
       }
     case "cline":
       return process.env["CLINE_DEFAULT_MODEL"] ?? process.env["LOKI_CLINE_MODEL"] ?? "default";

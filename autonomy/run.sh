@@ -15,7 +15,7 @@
 #   ./autonomy/run.sh --parallel ./prd.md      # Parallel mode with PRD
 #
 # Environment Variables:
-#   LOKI_PROVIDER       - AI provider: claude (default), codex, gemini
+#   LOKI_PROVIDER       - AI provider: claude (default), codex, cline, aider
 #   LOKI_MAX_RETRIES    - Max retry attempts (default: 50)
 #   LOKI_BASE_WAIT      - Base wait time in seconds (default: 60)
 #   LOKI_MAX_WAIT       - Max wait time in seconds (default: 3600)
@@ -758,7 +758,7 @@ COMPLEXITY_TIER=${LOKI_COMPLEXITY:-auto}
 DETECTED_COMPLEXITY=""
 
 # Multi-Provider Support (v5.0.0)
-# Provider: claude (default), codex, gemini
+# Provider: claude (default), codex, cline, aider
 LOKI_PROVIDER=${LOKI_PROVIDER:-claude}
 
 # Source provider configuration
@@ -1291,7 +1291,7 @@ get_iteration_duration_ms() {
 validate_api_keys() {
     local provider="${LOKI_PROVIDER:-claude}"
 
-    # CLI tools (claude, codex, gemini) use their own login sessions.
+    # CLI tools (claude, codex, cline, aider) use their own login sessions.
     # Only require API keys inside Docker/K8s where CLI login isn't available.
     if [[ ! -f "/.dockerenv" ]] && [[ -z "${KUBERNETES_SERVICE_HOST:-}" ]]; then
         return 0
@@ -1301,7 +1301,6 @@ validate_api_keys() {
     case "$provider" in
         claude) key_var="ANTHROPIC_API_KEY" ;;
         codex)  key_var="OPENAI_API_KEY" ;;
-        gemini) key_var="GOOGLE_API_KEY" ;;
         cline)  # Cline manages its own keys via `cline auth`
             if ! command -v cline &>/dev/null; then
                 log_error "Cline CLI not found. Install: npm install -g cline"
@@ -1497,7 +1496,7 @@ get_phase_names() {
 
 # Global tier for current iteration (set by get_rarv_tier)
 CURRENT_TIER="development"
-# Export for provider helper functions (e.g., gemini.sh:provider_get_current_model)
+# Export for provider helper functions (e.g., provider_get_current_model)
 LOKI_CURRENT_TIER="$CURRENT_TIER"
 export LOKI_CURRENT_TIER
 
@@ -1571,14 +1570,6 @@ get_provider_tier_param() {
                 development) echo "${PROVIDER_EFFORT_DEVELOPMENT:-high}" ;;
                 fast) echo "${PROVIDER_EFFORT_FAST:-low}" ;;
                 *) echo "high" ;;
-            esac
-            ;;
-        gemini)
-            case "$tier" in
-                planning) echo "${PROVIDER_THINKING_PLANNING:-high}" ;;
-                development) echo "${PROVIDER_THINKING_DEVELOPMENT:-medium}" ;;
-                fast) echo "${PROVIDER_THINKING_FAST:-low}" ;;
-                *) echo "medium" ;;
             esac
             ;;
         cline)
@@ -2402,10 +2393,6 @@ spawn_worktree_session() {
                     "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1 || _wt_exit=$?
                 ;;
-            gemini)
-                invoke_gemini "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
-                    >> "$log_file" 2>&1 || _wt_exit=$?
-                ;;
             cline)
                 invoke_cline "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1 || _wt_exit=$?
@@ -2604,10 +2591,6 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 ;;
             codex)
                 resolution=$(codex exec --full-auto "$conflict_prompt" 2>/dev/null)
-                ;;
-            gemini)
-                # Uses invoke_gemini_capture for rate limit fallback to flash model
-                resolution=$(invoke_gemini_capture "$conflict_prompt" 2>/dev/null)
                 ;;
             cline)
                 resolution=$(invoke_cline_capture "$conflict_prompt" 2>/dev/null)
@@ -2895,10 +2878,6 @@ check_prerequisites() {
             codex)
                 log_info "Install: npm install -g @openai/codex"
                 ;;
-            gemini)
-                # TODO: Verify official Gemini CLI package name when available
-                log_info "Install: npm install -g @google/gemini-cli (or visit https://ai.google.dev/)"
-                ;;
             cline)
                 log_info "Install: npm install -g cline"
                 ;;
@@ -3003,7 +2982,7 @@ check_skill_installed() {
         fi
     done
 
-    # For providers without skill system (Codex, Gemini), this is expected
+    # For providers without skill system (Codex, Aider), this is expected
     if [ -z "${PROVIDER_SKILL_DIR:-}" ]; then
         log_info "Provider ${PROVIDER_NAME:-unknown} has no native skill directory"
         log_info "Skill will be passed via prompt injection"
@@ -3186,86 +3165,11 @@ _write_pricing_json() {
     "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus (latest)",   "provider": "claude"},
     "sonnet":          {"input": 3.00,  "output": 15.00, "label": "Sonnet (latest)", "provider": "claude"},
     "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku (latest)",  "provider": "claude"},
-    "gpt-5.3-codex":   {"input": 1.50,  "output": 12.00, "label": "GPT-5.3 Codex", "provider": "codex"},
-    "gemini-3-pro":    {"input": 1.25,  "output": 10.00, "label": "Gemini 3 Pro",   "provider": "gemini"},
-    "gemini-3-flash":  {"input": 0.10,  "output": 0.40,  "label": "Gemini 3 Flash", "provider": "gemini"}
+    "gpt-5.3-codex":   {"input": 1.50,  "output": 12.00, "label": "GPT-5.3 Codex", "provider": "codex"}
   }
 }
 PRICING_EOF
     log_info "Pricing data written: .loki/pricing.json (provider: ${provider})"
-}
-
-#===============================================================================
-# Gemini Invocation with Rate Limit Fallback
-#===============================================================================
-
-# Invoke Gemini with automatic fallback to flash model on rate limit
-# Usage: invoke_gemini "prompt" [additional args...]
-# Returns: exit code from gemini CLI
-invoke_gemini() {
-    local prompt="$1"
-    shift
-
-    # BUG-PROV-001/006 fix: Use dynamic model resolution instead of frozen PROVIDER_MODEL.
-    # provider_get_current_model() resolves based on LOKI_CURRENT_TIER at runtime.
-    # Falls back to provider_get_tier_param if available, then to GEMINI_DEFAULT_PRO.
-    local model
-    if type provider_get_current_model &>/dev/null; then
-        model=$(provider_get_current_model)
-    else
-        model="${GEMINI_DEFAULT_PRO:-gemini-3-pro-preview}"
-    fi
-    local fallback="${PROVIDER_MODEL_FALLBACK:-${GEMINI_DEFAULT_FLASH:-gemini-3-flash-preview}}"
-
-    # Create temp file for output to preserve streaming while checking for rate limit
-    local tmp_output
-    tmp_output=$(mktemp)
-
-    # Try primary model first
-    gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1 | tee "$tmp_output"
-    local exit_code=${PIPESTATUS[0]}
-
-    # Check for rate limit in output
-    if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_output"; then
-        log_warn "Rate limit hit on $model, falling back to $fallback"
-        rm -f "$tmp_output"
-        gemini --approval-mode=yolo --model "$fallback" "$prompt" "$@" < /dev/null
-        exit_code=$?
-    else
-        rm -f "$tmp_output"
-    fi
-
-    return $exit_code
-}
-
-# Invoke Gemini and capture output (for variable assignment)
-# Usage: result=$(invoke_gemini_capture "prompt")
-# Falls back to flash model on rate limit
-invoke_gemini_capture() {
-    local prompt="$1"
-    shift
-
-    # BUG-PROV-001/006 fix: Use dynamic model resolution instead of frozen PROVIDER_MODEL
-    local model
-    if type provider_get_current_model &>/dev/null; then
-        model=$(provider_get_current_model)
-    else
-        model="${GEMINI_DEFAULT_PRO:-gemini-3-pro-preview}"
-    fi
-    local fallback="${PROVIDER_MODEL_FALLBACK:-${GEMINI_DEFAULT_FLASH:-gemini-3-flash-preview}}"
-    local output
-
-    # Try primary model first
-    output=$(gemini --approval-mode=yolo --model "$model" "$prompt" "$@" < /dev/null 2>&1)
-    local exit_code=$?
-
-    # Check for rate limit in output
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qiE "(rate.?limit|429|quota|resource.?exhausted)"; then
-        log_warn "Rate limit hit on $model, falling back to $fallback" >&2
-        output=$(gemini --approval-mode=yolo --model "$fallback" "$prompt" "$@" < /dev/null 2>&1)
-    fi
-
-    echo "$output"
 }
 
 #===============================================================================
@@ -3334,7 +3238,7 @@ invoke_aider_capture() {
 copy_skill_files() {
     # Copy skill files from the CLI package to the project's .loki/ directory.
     # This makes the CLI self-contained - no need to install Claude Code skill separately.
-    # All providers (Claude, Gemini, Codex) use the same .loki/skills/ location.
+    # All providers (Claude, Codex, Cline, Aider) use the same .loki/skills/ location.
 
     local skills_src="$PROJECT_DIR/skills"
     local skills_dst=".loki/skills"
@@ -4020,8 +3924,6 @@ track_iteration_complete() {
     local model_tier="${PROVIDER_MODEL_DEVELOPMENT:-sonnet}"
     if [ "${PROVIDER_NAME:-claude}" = "codex" ]; then
         model_tier="${PROVIDER_MODEL_DEVELOPMENT:-${CODEX_DEFAULT_MODEL:-gpt-5.3-codex}}"
-    elif [ "${PROVIDER_NAME:-claude}" = "gemini" ]; then
-        model_tier="${PROVIDER_MODEL_DEVELOPMENT:-${GEMINI_DEFAULT_PRO:-gemini-3-pro}}"
     elif [ "${PROVIDER_NAME:-claude}" = "cline" ]; then
         model_tier="${CLINE_DEFAULT_MODEL:-${LOKI_CLINE_MODEL:-sonnet}}"
     elif [ "${PROVIDER_NAME:-claude}" = "aider" ]; then
@@ -4973,7 +4875,6 @@ check_command_allowed() {
     # input. Command execution is handled by the AI CLI's own permission model:
     #   - Claude Code: --dangerously-skip-permissions (with its own allowlist)
     #   - Codex CLI: --full-auto or exec --dangerously-bypass-approvals-and-sandbox
-    #   - Gemini CLI: --approval-mode=yolo
     #
     # HUMAN_INPUT.md content is injected as a text prompt to the AI agent (not
     # executed as a shell command), and is already guarded by:
@@ -6821,10 +6722,6 @@ BUILD_PROMPT
                     codex exec --full-auto "$prompt_text" \
                         > "$review_output" 2>/dev/null
                     ;;
-                gemini)
-                    invoke_gemini_capture "$prompt_text" \
-                        > "$review_output" 2>/dev/null
-                    ;;
                 cline)
                     invoke_cline_capture "$prompt_text" \
                         > "$review_output" 2>/dev/null
@@ -7038,12 +6935,6 @@ ADVERSARIAL_EOF
         codex)
             if command -v codex &>/dev/null; then
                 codex exec --full-auto "$adversarial_prompt" \
-                    > "$result_file" 2>/dev/null || true
-            fi
-            ;;
-        gemini)
-            if command -v gemini &>/dev/null; then
-                invoke_gemini_capture "$adversarial_prompt" \
                     > "$result_file" 2>/dev/null || true
             fi
             ;;
@@ -7683,12 +7574,12 @@ init_failover_state() {
     mkdir -p "$failover_dir"
 
     if [ ! -f "$failover_file" ]; then
-        local chain="${LOKI_FAILOVER_CHAIN:-claude,codex,gemini}"
+        local chain="${LOKI_FAILOVER_CHAIN:-claude,codex}"
         local primary="${PROVIDER_NAME:-claude}"
         cat > "$failover_file" << FEOF
 {
   "enabled": true,
-  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","codex","gemini"]'),
+  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","codex"]'),
   "currentProvider": "$primary",
   "primaryProvider": "$primary",
   "lastFailover": null,
@@ -7717,7 +7608,7 @@ import json, os
 try:
     with open(os.path.join(os.environ.get('TARGET_DIR', '.'), '.loki/state/failover.json')) as f:
         d = json.load(f)
-    chain = ','.join(d.get('chain', ['claude','codex','gemini']))
+    chain = ','.join(d.get('chain', ['claude','codex']))
     print(f'FAILOVER_ENABLED={str(d.get("enabled", False)).lower()}')
     print(f'FAILOVER_CHAIN="{chain}"')
     print(f'FAILOVER_CURRENT="{d.get("currentProvider", "claude")}"')
@@ -7819,18 +7710,6 @@ check_provider_health() {
         codex)
             command -v codex &>/dev/null || return 1
             [ -n "${OPENAI_API_KEY:-}" ] || return 1
-            ;;
-        gemini)
-            command -v gemini &>/dev/null || return 1
-            # BUG-PROV-003: Also accept GEMINI_API_KEY and gcloud ADC
-            if [ -n "${GOOGLE_API_KEY:-}" ] || [ -n "${GEMINI_API_KEY:-}" ]; then
-                return 0
-            fi
-            # Check for gcloud Application Default Credentials
-            if [ -f "${HOME}/.config/gcloud/application_default_credentials.json" ]; then
-                return 0
-            fi
-            return 1
             ;;
         cline)
             command -v cline &>/dev/null || return 1
@@ -8105,7 +7984,7 @@ detect_rate_limit() {
         claude)
             wait_secs=$(parse_claude_reset_time "$log_file")
             ;;
-        codex|gemini|cline|aider|*)
+        codex|cline|aider|*)
             # No provider-specific reset time format known
             # Fall through to generic parsing
             ;;
@@ -8186,8 +8065,6 @@ pricing = {
     'sonnet': {'input': 3.00, 'output': 15.00},
     'haiku': {'input': 1.00, 'output': 5.00},
     'gpt-5.3-codex': {'input': 1.50, 'output': 12.00},
-    'gemini-3-pro': {'input': 1.25, 'output': 10.00},
-    'gemini-3-flash': {'input': 0.10, 'output': 0.40},
 }
 for f in glob.glob('${efficiency_dir}/*.json'):
     try:
@@ -8349,7 +8226,7 @@ except Exception:
 # v7.4.17: also accepts a file-based fallback at .loki/signals/
 # COMPLETION_REQUESTED -- the LLM can `touch` this file directly when the
 # MCP tool isn't surfaced in its environment (e.g., harness limitations,
-# Codex CLI, Gemini CLI). User reproduction: the LLM said "the
+# Codex CLI). User reproduction: the LLM said "the
 # loki_complete_task MCP tool isn't loaded in this environment" and
 # tried to signal completion via state files; we now honor that.
 #
@@ -9284,7 +9161,7 @@ build_prompt() {
     # instead of emitting a prose completion string.
     local completion_instruction=""
     # v7.4.17: explicit fallback path. The loki_complete_task MCP tool is
-    # not always surfaced in the LLM's environment (Codex CLI, Gemini CLI,
+    # not always surfaced in the LLM's environment (Codex CLI,
     # certain Claude Code harness configs). When unavailable, the LLM
     # should `touch .loki/signals/COMPLETION_REQUESTED` instead -- the
     # runner's check_task_completion_signal honors that file as a
@@ -10849,7 +10726,7 @@ except Exception as exc:
             esac
         fi
         # Export LOKI_CURRENT_TIER so provider helper functions
-        # (e.g., gemini.sh:provider_get_current_model) can resolve the correct model.
+        # can resolve the correct model.
         # Without this, LOKI_CURRENT_TIER is always empty and defaults to "planning".
         LOKI_CURRENT_TIER="$CURRENT_TIER"
         export LOKI_CURRENT_TIER
@@ -11141,51 +11018,6 @@ if __name__ == "__main__":
                 codex exec --full-auto \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
-                ;;
-
-            gemini)
-                # Gemini: Degraded mode - no stream-json, no agent tracking
-                # Uses invoke_gemini helper for rate limit fallback to flash model
-                # BUG-PROV-001 fix: Use tier_param (resolved model) instead of frozen PROVIDER_MODEL
-                # tier_param is computed above via get_provider_tier_param() -> resolve_model_for_tier()
-                # which returns the correct model name for the current RARV tier
-                local model="$tier_param"
-                local fallback="${PROVIDER_MODEL_FALLBACK:-${GEMINI_DEFAULT_FLASH:-gemini-3-flash-preview}}"
-                echo "[loki] Gemini model: $model (fallback: $fallback), tier: $CURRENT_TIER" >> "$log_file"
-                echo "[loki] Gemini model: $model (fallback: $fallback), tier: $CURRENT_TIER" >> "$agent_log"
-
-                # BUG-PROV-003: Resolve API key (supports GEMINI_API_KEY alias and ADC)
-                if type _gemini_resolve_api_key &>/dev/null; then
-                    _gemini_resolve_api_key || true
-                fi
-
-                # Try primary model, fallback on rate limit or auth error
-                local tmp_output tmp_stderr
-                tmp_output=$(mktemp)
-                tmp_stderr=$(mktemp)
-                # BUG-RUN-011/RUN-013: Use PIPESTATUS[0] for primary invocation too
-                gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>"$tmp_stderr" | tee "$tmp_output" | tee -a "$log_file" "$agent_log" "$iter_output"
-                exit_code=${PIPESTATUS[0]}
-
-                # BUG-PROV-003: Handle auth errors with API key rotation
-                if [[ $exit_code -ne 0 ]] && grep -qiE "(401|403|unauthorized|forbidden|invalid.?api.?key|permission.?denied)" "$tmp_stderr" 2>/dev/null; then
-                    if type _gemini_rotate_api_key &>/dev/null && _gemini_rotate_api_key; then
-                        log_warn "Auth error on Gemini, rotated to next API key"
-                        rm -f "$tmp_output" "$tmp_stderr"
-                        tmp_output=$(mktemp)
-                        tmp_stderr=$(mktemp)
-                        gemini --approval-mode=yolo --model "$model" "$prompt" < /dev/null 2>"$tmp_stderr" | tee "$tmp_output" | tee -a "$log_file" "$agent_log" "$iter_output"
-                        exit_code=${PIPESTATUS[0]}
-                    fi
-                fi
-
-                if [[ $exit_code -ne 0 ]] && grep -qiE "(rate.?limit|429|quota|resource.?exhausted)" "$tmp_stderr" "$tmp_output" 2>/dev/null; then
-                    log_warn "Rate limit hit on $model, falling back to $fallback"
-                    echo "[loki] Fallback to $fallback due to rate limit" >> "$log_file"
-                    gemini --approval-mode=yolo --model "$fallback" "$prompt" < /dev/null 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"
-                    exit_code=${PIPESTATUS[0]}
-                fi
-                rm -f "$tmp_output" "$tmp_stderr"
                 ;;
 
             cline)
@@ -11626,7 +11458,7 @@ INTERRUPT_LAST_TIME=0
 PAUSED=false
 
 # v7.5.12: Track active provider invocation for SIGINT propagation.
-# When non-zero, indicates a provider pipeline (claude/codex/gemini/cline/aider)
+# When non-zero, indicates a provider pipeline (claude/codex/cline/aider)
 # is currently running and should be killed on Ctrl+C.
 LOKI_PROVIDER_ACTIVE=0
 
@@ -11642,7 +11474,7 @@ kill_provider_child() {
     fi
     # Also kill provider leaf processes by name in case they were reparented.
     local proc
-    for proc in claude codex gemini aider cline; do
+    for proc in claude codex aider cline; do
         pkill -TERM -f "^${proc}( |$)" 2>/dev/null && killed=1
     done
 
@@ -12102,7 +11934,7 @@ main() {
                     fi
                     shift 2
                 else
-                    log_error "--provider requires a value (claude, codex, gemini, cline, aider)"
+                    log_error "--provider requires a value (claude, codex, cline, aider)"
                     exit 1
                 fi
                 ;;
@@ -12136,7 +11968,7 @@ main() {
                 echo "Options:"
                 echo "  --parallel           Enable git worktree-based parallel workflows"
                 echo "  --allow-haiku        Enable Haiku model for fast tier (default: disabled)"
-                echo "  --provider <name>    Provider: claude (default), codex, gemini, cline, aider"
+                echo "  --provider <name>    Provider: claude (default), codex, cline, aider"
                 echo "  --bg, --background   Run in background mode"
                 echo "  --interactive-prd    Interactive PRD pre-flight analysis"
                 echo "  --help, -h           Show this help message"

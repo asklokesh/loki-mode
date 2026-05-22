@@ -417,7 +417,6 @@ async function runStatusText(): Promise<number> {
   let capability = "full features";
   switch (currentProvider) {
     case "codex":
-    case "gemini":
     case "aider":
       capability = "degraded mode";
       break;
@@ -429,7 +428,7 @@ async function runStatusText(): Promise<number> {
       break;
   }
   process.stdout.write(`${CYAN}Provider:${NC} ${currentProvider} (${capability})\n`);
-  process.stdout.write(`${DIM}  Switch with: loki provider set <claude|codex|gemini|cline|aider>${NC}\n`);
+  process.stdout.write(`${DIM}  Switch with: loki provider set <claude|codex|cline|aider>${NC}\n`);
   process.stdout.write(`\n`);
 
   // Running sessions

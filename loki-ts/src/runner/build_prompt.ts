@@ -1,7 +1,7 @@
 // build_prompt.ts -- Bun port of bash build_prompt() (autonomy/run.sh:8912-9382).
 //
 // Parity-CRITICAL function. Assembles the autonomous-loop prompt that the
-// orchestrator hands to Claude / Codex / Gemini. The function is read-only
+// orchestrator hands to Claude / Codex / Cline / Aider. The function is read-only
 // w.r.t. .loki/ state: it only consumes files and env vars, never writes.
 //
 // Two output shapes are produced (selected by env vars):
@@ -12,7 +12,7 @@
 //
 // And two provider modes inside layout (1):
 //   - Full provider (Claude): full RARV / SDLC / autonomy / memory blocks.
-//   - PROVIDER_DEGRADED=true (Codex / Gemini): minimal coding-assistant prefix
+//   - PROVIDER_DEGRADED=true (Codex / Aider): minimal coding-assistant prefix
 //     plus dynamic tail with priority/queue/PRD content.
 //
 // All bash variable expansion is resolved BEFORE assembling the prompt string,

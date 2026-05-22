@@ -1,6 +1,5 @@
-// Provider invocation module. Phase 5 port of providers/loader.sh + the five
-// per-provider shell configs (claude.sh, codex.sh, gemini.sh, cline.sh,
-// aider.sh).
+// Provider invocation module. Phase 5 port of providers/loader.sh + the four
+// per-provider shell configs (claude.sh, codex.sh, cline.sh, aider.sh).
 //
 // Bash sources (the single source of truth -- keep references current when
 // the shell side changes):
@@ -8,7 +7,6 @@
 //   providers/claude.sh:1-200  -- Tier 1, full features
 //   providers/cline.sh:1-139   -- Tier 2, near-full
 //   providers/codex.sh:1-190   -- Tier 3, degraded
-//   providers/gemini.sh:1-343  -- Tier 3, degraded + rate-limit fallback
 //   providers/aider.sh:1-145   -- Tier 3, degraded
 //
 // Contract: autonomous.ts:167 dynamically imports this module and invokes
@@ -17,7 +15,6 @@
 // Phase 5 progress:
 //   - claude is ported in full (Tier 1).
 //   - cline, aider are ported (Tier 2 / Tier 3 degraded).
-//   - gemini is ported (Tier 3 degraded + API-key rotation + flash fallback).
 //   - codex is still stubbed pending parallel work by other agents.
 // The dispatch table always returns an invoker; stubs throw with a
 // discoverable "STUB: Phase 5" marker so failures surface loudly instead
@@ -49,8 +46,6 @@ export async function resolveProvider(
       return claudeProvider();
     case "codex":
       return codexProvider();
-    case "gemini":
-      return geminiProvider();
     case "cline":
       return clineProvider();
     case "aider":
@@ -333,186 +328,6 @@ export function codexProvider(): ProviderInvoker {
       });
       await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
 
-      return {
-        exitCode: r.exitCode,
-        capturedOutputPath: call.iterationOutputPath,
-      };
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Gemini provider (gemini.sh:1-343)
-//
-// Maps to provider_invoke_with_tier() at gemini.sh:300-343:
-//   gemini --approval-mode=yolo --model <model> "<prompt>"
-//
-// Two recovery behaviors are ported from bash:
-//   1. API key rotation (gemini.sh:146-176, _gemini_rotate_api_key). When the
-//      first invocation fails with an auth error (401/403/unauthorized/...),
-//      the next key from LOKI_GEMINI_API_KEYS is selected and the call is
-//      retried once with the same model.
-//   2. Rate-limit fallback to the flash model (gemini.sh:335-338). When the
-//      invocation fails with a 429/quota signal in stderr, the call is retried
-//      once with PROVIDER_MODEL_FALLBACK (gemini.sh:77).
-//
-// At most ONE recovery retry happens per .invoke() to avoid retry loops; this
-// is stricter than the bash script (which can chain auth-rotation + flash-
-// fallback) and is the explicit Phase 5 contract.
-// ---------------------------------------------------------------------------
-
-const GEMINI_DEFAULT_PRO = "gemini-3-pro-preview";
-const GEMINI_DEFAULT_FLASH = "gemini-3-flash-preview";
-const GEMINI_AUTH_ERROR_RE =
-  /(401|403|unauthorized|forbidden|invalid.?api.?key|permission.?denied)/i;
-const GEMINI_RATE_LIMIT_RE = /(rate.?limit|429|quota|resource.?exhausted)/i;
-
-// Resolve tier -> Gemini model. Mirrors gemini.sh:74-76 +
-// provider_get_tier_param at gemini.sh:243-251. The "thinking" level is
-// informational only -- the bash script does not pass a thinking flag to
-// the CLI, it only selects pro vs flash.
-function geminiTierToModel(tier: SessionTier): string {
-  const planning =
-    process.env["LOKI_GEMINI_MODEL_PLANNING"] ??
-    process.env["LOKI_MODEL_PLANNING"] ??
-    GEMINI_DEFAULT_PRO;
-  const development =
-    process.env["LOKI_GEMINI_MODEL_DEVELOPMENT"] ??
-    process.env["LOKI_MODEL_DEVELOPMENT"] ??
-    GEMINI_DEFAULT_PRO;
-  const fast =
-    process.env["LOKI_GEMINI_MODEL_FAST"] ??
-    process.env["LOKI_MODEL_FAST"] ??
-    GEMINI_DEFAULT_FLASH;
-  switch (tier) {
-    case "planning":
-      return planning;
-    case "development":
-      return development;
-    case "fast":
-      return fast;
-    default:
-      return development;
-  }
-}
-
-// Apply LOKI_MAX_TIER ceiling. Mirrors gemini.sh:277-290.
-//   haiku|flash -> always fast model
-//   sonnet|pro  -> cap planning down to development model
-//   opus        -> no cap
-function applyGeminiMaxTier(tier: SessionTier, model: string): string {
-  const maxTier = process.env["LOKI_MAX_TIER"];
-  if (!maxTier) return model;
-  switch (maxTier) {
-    case "haiku":
-    case "flash":
-      return geminiTierToModel("fast");
-    case "sonnet":
-    case "pro":
-      if (tier === "planning") return geminiTierToModel("development");
-      return model;
-    default:
-      return model;
-  }
-}
-
-// Resolve the fallback (flash) model used on rate-limit retries.
-// Mirrors PROVIDER_MODEL_FALLBACK at gemini.sh:77.
-function geminiFallbackModel(): string {
-  return process.env["LOKI_GEMINI_MODEL_FALLBACK"] ?? GEMINI_DEFAULT_FLASH;
-}
-
-// Parse LOKI_GEMINI_API_KEYS into a clean list (drop empty / whitespace-only).
-function parseGeminiKeyPool(): string[] {
-  const raw = process.env["LOKI_GEMINI_API_KEYS"];
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((k) => k.trim())
-    .filter((k) => k.length > 0);
-}
-
-// Pick the next API key after `current` from the pool. Mirrors
-// _gemini_rotate_api_key (gemini.sh:146-176) including the wrap-around: if
-// `current` is unset or not found in the pool, return the first key; if the
-// pool has only one entry that equals `current`, return null (exhausted).
-function rotateGeminiApiKey(current: string | undefined): string | null {
-  const pool = parseGeminiKeyPool();
-  if (pool.length === 0) return null;
-  if (!current) return pool[0] ?? null;
-  const idx = pool.indexOf(current);
-  if (idx === -1) {
-    // Current key not in the pool -- fall through to the first entry rather
-    // than declaring exhaustion (matches the bash "first_key != current"
-    // branch at gemini.sh:170-173).
-    return pool[0] ?? null;
-  }
-  if (idx === pool.length - 1) return null; // exhausted, no wrap-around
-  return pool[idx + 1] ?? null;
-}
-
-// Resolve the initial API key for the invocation. Order matches
-// _gemini_resolve_api_key (gemini.sh:127-142) but returns the value rather
-// than mutating process.env -- the value is injected via shellRun's `env`
-// option so test isolation is preserved.
-function resolveInitialGeminiKey(): string | undefined {
-  const direct = process.env["GOOGLE_API_KEY"];
-  if (direct && direct.length > 0) return direct;
-  const alias = process.env["GEMINI_API_KEY"];
-  if (alias && alias.length > 0) return alias;
-  // ADC path is left to the gemini CLI. If a key pool is set, seed with the
-  // first entry so the invocation has credentials even on a fresh shell.
-  const pool = parseGeminiKeyPool();
-  return pool[0];
-}
-
-// Build the gemini argv. Positional prompt -- gemini.sh:34-36 documents -p as
-// DEPRECATED. The prompt MUST be the last argument.
-function buildGeminiArgv(cli: string, model: string, prompt: string): string[] {
-  return [cli, "--approval-mode=yolo", "--model", model, prompt];
-}
-
-export function geminiProvider(): ProviderInvoker {
-  const cli = resolveCli("LOKI_GEMINI_CLI", "gemini");
-  return {
-    async invoke(call: ProviderInvocation): Promise<ProviderResult> {
-      const baseModel = geminiTierToModel(call.tier);
-      const model = applyGeminiMaxTier(call.tier, baseModel);
-
-      let activeKey = resolveInitialGeminiKey();
-      const env: Record<string, string> = {};
-      if (activeKey) env["GOOGLE_API_KEY"] = activeKey;
-
-      // First attempt.
-      let r = await shellRun(buildGeminiArgv(cli, model, call.prompt), {
-        cwd: call.cwd,
-        env,
-      });
-
-      // Recovery: at most ONE retry per .invoke(). Auth error wins over
-      // rate-limit if both somehow appear in stderr -- it is the cheaper
-      // recovery (no model downgrade) and matches the bash ordering at
-      // gemini.sh:323-332 (auth branch runs before rate-limit branch).
-      if (r.exitCode !== 0 && GEMINI_AUTH_ERROR_RE.test(r.stderr)) {
-        const next = rotateGeminiApiKey(activeKey);
-        if (next && next !== activeKey) {
-          activeKey = next;
-          r = await shellRun(buildGeminiArgv(cli, model, call.prompt), {
-            cwd: call.cwd,
-            env: { GOOGLE_API_KEY: activeKey },
-          });
-        }
-      } else if (r.exitCode !== 0 && GEMINI_RATE_LIMIT_RE.test(r.stderr)) {
-        const fallbackModel = geminiFallbackModel();
-        if (fallbackModel !== model) {
-          r = await shellRun(
-            buildGeminiArgv(cli, fallbackModel, call.prompt),
-            { cwd: call.cwd, env },
-          );
-        }
-      }
-
-      await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
       return {
         exitCode: r.exitCode,
         capturedOutputPath: call.iterationOutputPath,

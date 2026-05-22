@@ -9,7 +9,6 @@
 # Usage:
 #   source providers/models.sh
 #   model=$(loki_latest_model claude planning)   # -> claude-opus-4-7
-#   model=$(loki_latest_model gemini fast)       # -> gemini-3-flash-preview
 #
 # Env override order: LOKI_<PROVIDER>_MODEL_<TIER> > LOKI_<PROVIDER>_MODEL > catalog latest.
 
@@ -18,7 +17,7 @@ _LOKI_MODELS_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LOKI_MODEL_CATALOG="${LOKI_MODEL_CATALOG:-$_LOKI_MODELS_SH_DIR/model_catalog.json}"
 
 # Return the "latest_<tier>" id for a provider from the catalog.
-# Args: $1 provider (claude|codex|gemini|cline|aider)
+# Args: $1 provider (claude|codex|cline|aider)
 #       $2 tier     (planning|development|fast)
 loki_latest_model() {
     local provider="${1:-claude}"

@@ -203,7 +203,6 @@ type SkillEntry = { name: string; dir: string };
 const SKILL_ENTRIES: readonly SkillEntry[] = [
   { name: "Claude Code", dir: ".claude/skills/loki-mode" },
   { name: "Codex CLI", dir: ".codex/skills/loki-mode" },
-  { name: "Gemini CLI", dir: ".gemini/skills/loki-mode" },
   { name: "Cline CLI", dir: ".cline/skills/loki-mode" },
   { name: "Aider CLI", dir: ".aider/skills/loki-mode" },
 ];
@@ -284,7 +283,6 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   { displayName: "Bun (>= 1.3)", jsonName: "Bun", cmd: "bun", required: "recommended", min: "1.3" },
   { displayName: "Claude CLI", jsonName: "Claude CLI", cmd: "claude", required: "optional" },
   { displayName: "Codex CLI", jsonName: "Codex CLI", cmd: "codex", required: "optional" },
-  { displayName: "Gemini CLI", jsonName: "Gemini CLI", cmd: "gemini", required: "optional" },
   { displayName: "Cline CLI", jsonName: "Cline CLI", cmd: "cline", required: "optional" },
   { displayName: "Aider CLI", jsonName: "Aider CLI", cmd: "aider", required: "optional" },
 ];
@@ -389,7 +387,7 @@ function printHelp(): void {
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON\n\n`);
   process.stdout.write(`Checks: node, python3, jq, git, curl, bash version,\n`);
-  process.stdout.write(`        claude/codex/gemini CLIs, and disk space.\n`);
+  process.stdout.write(`        claude/codex CLIs, and disk space.\n`);
 }
 
 async function runText(): Promise<number> {
@@ -411,7 +409,7 @@ async function runText(): Promise<number> {
 
   // AI Providers
   process.stdout.write(`${CYAN}AI Providers:${NC}\n`);
-  const providerCmds = ["claude", "codex", "gemini", "cline", "aider"];
+  const providerCmds = ["claude", "codex", "cline", "aider"];
   let anyProvider = false;
   for (const cmd of providerCmds) {
     const c = byCmd.get(cmd)!;
@@ -434,7 +432,6 @@ async function runText(): Promise<number> {
   process.stdout.write(`${CYAN}API Keys:${NC}\n`);
   const claudeFound = byCmd.get("claude")?.found ?? false;
   const codexFound = byCmd.get("codex")?.found ?? false;
-  const geminiFound = byCmd.get("gemini")?.found ?? false;
   const env = process.env;
   if (env["ANTHROPIC_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
@@ -450,14 +447,6 @@ async function runText(): Promise<number> {
   } else if (codexFound) {
     process.stdout.write(
       `  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)\n`,
-    );
-  }
-  if (env["GOOGLE_API_KEY"] || env["GEMINI_API_KEY"]) {
-    process.stdout.write(`  ${badge("pass")}  GOOGLE_API_KEY is set\n`);
-    tally.pass++;
-  } else if (geminiFound) {
-    process.stdout.write(
-      `  ${DIM}  --  ${NC}  GOOGLE_API_KEY not set (Gemini CLI uses its own login)\n`,
     );
   }
   process.stdout.write(`\n`);

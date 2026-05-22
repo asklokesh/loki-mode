@@ -22,8 +22,6 @@ export const PRICING: Readonly<Record<string, { input: number; output: number }>
   sonnet: { input: 3.0, output: 15.0 },
   haiku: { input: 1.0, output: 5.0 },
   "gpt-5.3-codex": { input: 1.5, output: 12.0 },
-  "gemini-3-pro": { input: 1.25, output: 10.0 },
-  "gemini-3-flash": { input: 0.1, output: 0.4 },
 });
 
 const DEFAULT_PRICING_KEY = "sonnet";

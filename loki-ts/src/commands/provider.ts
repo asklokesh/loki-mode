@@ -7,9 +7,9 @@ import { commandExists } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 
-type Provider = "claude" | "codex" | "gemini" | "cline" | "aider";
+type Provider = "claude" | "codex" | "cline" | "aider";
 
-const ALL_PROVIDERS: readonly Provider[] = ["claude", "codex", "gemini", "cline", "aider"];
+const ALL_PROVIDERS: readonly Provider[] = ["claude", "codex", "cline", "aider"];
 
 function readSavedProvider(): string {
   const path = resolve(lokiDir(), "state", "provider");
@@ -41,7 +41,6 @@ export function runProviderShow(positional?: string): number {
       process.stdout.write(`${GREEN}Status:${NC}   Near-full mode (subagents, MCP, 12+ providers)\n`);
       break;
     case "codex":
-    case "gemini":
     case "aider":
       process.stdout.write(`${YELLOW}Status:${NC}   Degraded mode (sequential only)\n`);
       break;
@@ -81,7 +80,6 @@ export async function runProviderList(): Promise<number> {
   const rows: ReadonlyArray<readonly [Provider, string]> = [
     ["claude", "claude  - Claude Code (Anthropic)    "],
     ["codex", "codex   - Codex CLI (OpenAI)         "],
-    ["gemini", "gemini  - Gemini CLI (Google)        "],
     ["cline", "cline   - Cline (multi-provider)     "],
     ["aider", "aider   - Aider (terminal pair prog) "],
   ];
@@ -113,7 +111,7 @@ export function printProviderHelp(): number {
   process.stdout.write(`  loki provider set claude\n`);
   process.stdout.write(`  loki provider set codex\n`);
   process.stdout.write(`  loki provider list\n`);
-  process.stdout.write(`  loki provider info gemini\n`);
+  process.stdout.write(`  loki provider info codex\n`);
   process.stdout.write(`  loki provider models\n`);
   return 0;
 }
