@@ -425,9 +425,9 @@ else
     pass "no deprecated model references"
 fi
 
-echo "Test 8.3: All 5 providers in provider list"
+echo "Test 8.3: All 4 providers in provider list (v7.5.18: gemini removed)"
 output=$(bash "$CLI" provider list 2>&1)
-for p in claude codex gemini cline aider; do
+for p in claude codex cline aider; do
     if echo "$output" | grep -qi "$p"; then
         pass "provider list has $p"
     else

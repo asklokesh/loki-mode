@@ -94,7 +94,8 @@ test('unknown event types get generic audit entry', function() {
     subscriber._setAudit(mock);
     subscriber._setPendingDir(tmpDir);
 
-    writeEvent(tmpDir, 'custom.json', makeEvent('custom_action', { foo: 'bar', provider: 'gemini' }, 'agent-x'));
+    // v7.5.18: gemini removed; use aider as the test provider here.
+    writeEvent(tmpDir, 'custom.json', makeEvent('custom_action', { foo: 'bar', provider: 'aider' }, 'agent-x'));
 
     subscriber._resetState();
     subscriber.scanPendingEvents();
@@ -102,7 +103,7 @@ test('unknown event types get generic audit entry', function() {
     assert.strictEqual(mock.entries.length, 1);
     assert.strictEqual(mock.entries[0].what, 'custom_action');
     assert.strictEqual(mock.entries[0].why, 'Event recorded');
-    assert.strictEqual(mock.entries[0].who, 'gemini');
+    assert.strictEqual(mock.entries[0].who, 'aider');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -191,9 +192,10 @@ test('policy events produce policy_violation and policy_approval entries', funct
         provider: 'claude',
         iteration: '2',
     }));
+    // v7.5.18: gemini removed; use aider as the test provider here.
     writeEvent(tmpDir, 'policy2.json', makeEvent('policy_approval_required', {
         action: 'deploy to prod',
-        provider: 'gemini',
+        provider: 'aider',
         iteration: '5',
     }));
 
@@ -208,7 +210,7 @@ test('policy events produce policy_violation and policy_approval entries', funct
 
     assert.strictEqual(mock.entries[1].what, 'policy_approval');
     assert.strictEqual(mock.entries[1].why, 'Policy requires approval');
-    assert.strictEqual(mock.entries[1].who, 'gemini');
+    assert.strictEqual(mock.entries[1].who, 'aider');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
 });

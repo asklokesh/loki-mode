@@ -151,34 +151,7 @@ else
     log_fail "provider_get_tier_param() returns incorrect values for codex - $result"
 fi
 
-# ===========================================
-# Test 6: provider_get_tier_param() returns correct values for gemini
-# ===========================================
-log_test "provider_get_tier_param() returns correct tier values for gemini"
-
-result=$(
-    source "$PROVIDERS_DIR/gemini.sh"
-
-    planning=$(provider_get_tier_param "planning")
-    development=$(provider_get_tier_param "development")
-    fast=$(provider_get_tier_param "fast")
-    default_val=$(provider_get_tier_param "unknown")
-
-    # Gemini should return thinking levels
-    if [ "$planning" = "high" ] && \
-       [ "$development" = "medium" ] && \
-       [ "$fast" = "low" ] && \
-       [ "$default_val" = "medium" ]; then
-        echo "pass"
-    else
-        echo "fail: planning=$planning, development=$development, fast=$fast, default=$default_val"
-    fi
-)
-if [ "$result" = "pass" ]; then
-    log_pass "provider_get_tier_param() returns correct values for gemini (high/medium/low)"
-else
-    log_fail "provider_get_tier_param() returns incorrect values for gemini - $result"
-fi
+# Test 6: gemini tier param test removed in v7.5.18 Phase A (gemini provider removed).
 
 # ===========================================
 # Test 7: provider_invoke() has correct signature (accepts prompt + extra args)

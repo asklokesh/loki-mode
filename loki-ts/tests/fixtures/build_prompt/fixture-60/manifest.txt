@@ -1,1 +1,1 @@
-PROVIDER_NAME=gemini with degraded mode
+PROVIDER_NAME=codex with degraded mode (v7.5.18: was gemini)

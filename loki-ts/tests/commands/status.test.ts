@@ -455,11 +455,11 @@ describe("status --json: missing .loki dir", () => {
     const root = mkTmp();
     try {
       process.env["LOKI_DIR"] = join(root, "nonexistent");
-      process.env["LOKI_PROVIDER"] = "gemini";
+      process.env["LOKI_PROVIDER"] = "codex";
       const r = await runWithCapture(["--json"]);
       expect(r.exitCode).toBe(0);
       const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
-      expect(parsed["provider"]).toBe("gemini");
+      expect(parsed["provider"]).toBe("codex");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

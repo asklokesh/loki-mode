@@ -242,7 +242,7 @@ clear_signals
     --action "validate_test" \
     --key "provider" \
     --value "claude" \
-    --rejected '["codex", "gemini"]' \
+    --rejected '["codex", "aider"]' \
     --confidence 0.95
 
 sleep 0.5

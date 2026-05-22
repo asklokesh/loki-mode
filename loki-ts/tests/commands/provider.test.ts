@@ -42,10 +42,10 @@ describe("provider list", () => {
     expect(a.stdout).toBe(b.stdout);
   });
 
-  it("lists all 5 providers", async () => {
+  it("lists all 4 providers", async () => {
     const a = await bunCmd(["provider", "list"]);
     const plain = stripAnsi(a.stdout);
-    for (const p of ["claude", "codex", "gemini", "cline", "aider"]) {
+    for (const p of ["claude", "codex", "cline", "aider"]) {
       expect(plain).toContain(p);
     }
   });

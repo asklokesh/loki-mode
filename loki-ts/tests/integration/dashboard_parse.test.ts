@@ -200,7 +200,7 @@ describe("dashboard parses TS-written state", () => {
       { lokiDirOverride: tmpLokiDir },
     );
     updateStatusTxt("verifying outputs", { lokiDirOverride: tmpLokiDir });
-    writeFileSync(join(tmpLokiDir, "state", "provider"), "gemini\n");
+    writeFileSync(join(tmpLokiDir, "state", "provider"), "codex\n");
 
     const r = await callGetStatus(tmpLokiDir);
     expect(r.stderr).not.toMatch(/Traceback/);
@@ -208,7 +208,7 @@ describe("dashboard parses TS-written state", () => {
     const parsed = JSON.parse(r.stdout);
     // currentTask flows through orchestrator.json -> StatusResponse.currentTask.
     expect(parsed.currentTask).toBe("Run final smoke tests");
-    expect(parsed.provider).toBe("gemini");
+    expect(parsed.provider).toBe("codex");
     // iteration/complexity come from dashboard-state.json, which we didn't
     // write -- so they should be the documented defaults (0, "standard").
     // This asserts the parser handles the *partial* artifact set the new TS

@@ -148,8 +148,9 @@ setup_test_env
 source_failover_functions
 LOKI_FAILOVER="true"
 # shellcheck disable=SC2034
-LOKI_FAILOVER_CHAIN="gemini,claude,codex"
-PROVIDER_NAME="gemini"
+# v7.5.18: gemini removed; use aider,claude,codex chain instead.
+LOKI_FAILOVER_CHAIN="aider,claude,codex"
+PROVIDER_NAME="aider"
 init_failover_state
 
 local_chain=$(python3 -c "
@@ -159,10 +160,10 @@ with open('$TEST_DIR/.loki/state/failover.json') as f:
 print(','.join(d['chain']))
 " 2>/dev/null)
 
-if [ "$local_chain" = "gemini,claude,codex" ]; then
+if [ "$local_chain" = "aider,claude,codex" ]; then
     log_pass "Custom chain set correctly: $local_chain"
 else
-    log_fail "Expected 'gemini,claude,codex', got '$local_chain'"
+    log_fail "Expected 'aider,claude,codex', got '$local_chain'"
 fi
 unset LOKI_FAILOVER_CHAIN
 

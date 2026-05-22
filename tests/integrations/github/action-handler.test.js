@@ -168,7 +168,8 @@ test('parseTriggerContext - workflow_dispatch with PRD input', function () {
 
 test('parseTriggerContext - workflow_dispatch with boolean dry_run', function () {
   var payload = { sender: {}, repository: { full_name: 'org/repo' } };
-  var inputs = { prd_content: 'test', provider: 'gemini', dry_run: true };
+  // v7.5.18: gemini removed; use aider instead.
+  var inputs = { prd_content: 'test', provider: 'aider', dry_run: true };
 
   var ctx = handler.parseTriggerContext({
     eventName: 'workflow_dispatch',
@@ -177,7 +178,7 @@ test('parseTriggerContext - workflow_dispatch with boolean dry_run', function ()
   });
 
   assert.equal(ctx.dryRun, true);
-  assert.equal(ctx.provider, 'gemini');
+  assert.equal(ctx.provider, 'aider');
 });
 
 // ============================================================
@@ -277,14 +278,15 @@ test('issue with provider label overrides default', function () {
     issue: {
       number: 50,
       body: 'Test body',
-      labels: [{ name: 'loki-mode' }, { name: 'loki-provider-gemini' }],
+      // v7.5.18: gemini removed; use loki-provider-codex.
+      labels: [{ name: 'loki-mode' }, { name: 'loki-provider-codex' }],
       user: {},
     },
     repository: { full_name: 'org/repo' },
   };
 
   var ctx = handler.parseTriggerContext({ eventName: 'issues', payload: payload });
-  assert.equal(ctx.provider, 'gemini');
+  assert.equal(ctx.provider, 'codex');
 });
 
 test('issue with priority label sets config', function () {
@@ -305,8 +307,9 @@ test('parseWorkflowDispatchEvent - valid provider is passed through', function (
   var ctx2 = handler.parseTriggerContext({ eventName: 'workflow_dispatch', payload: payload, inputs: { prd_content: 'x', provider: 'codex' } });
   assert.equal(ctx2.provider, 'codex');
 
-  var ctx3 = handler.parseTriggerContext({ eventName: 'workflow_dispatch', payload: payload, inputs: { prd_content: 'x', provider: 'gemini' } });
-  assert.equal(ctx3.provider, 'gemini');
+  // v7.5.18: gemini removed; use aider as the third valid provider.
+  var ctx3 = handler.parseTriggerContext({ eventName: 'workflow_dispatch', payload: payload, inputs: { prd_content: 'x', provider: 'aider' } });
+  assert.equal(ctx3.provider, 'aider');
 });
 
 test('parseWorkflowDispatchEvent - invalid provider falls back to claude', function () {
@@ -331,8 +334,9 @@ test('parseWorkflowDispatchEvent - unknown provider string falls back to claude'
   assert.equal(ctx.provider, 'claude');
 });
 
-test('ALLOWED_PROVIDERS contains exactly claude, codex, gemini', function () {
-  assert.deepEqual(handler.ALLOWED_PROVIDERS, ['claude', 'codex', 'gemini']);
+// v7.5.18: gemini removed from ALLOWED_PROVIDERS. Now claude, codex, cline, aider.
+test('ALLOWED_PROVIDERS contains exactly claude, codex, cline, aider', function () {
+  assert.deepEqual(handler.ALLOWED_PROVIDERS, ['claude', 'codex', 'cline', 'aider']);
 });
 
 // ============================================================

@@ -102,12 +102,6 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
     expect(getProviderTierParam("fast", "codex")).toBe("low");
   });
 
-  it("gemini tier mapping", () => {
-    expect(getProviderTierParam("planning", "gemini")).toBe("high");
-    expect(getProviderTierParam("development", "gemini")).toBe("medium");
-    expect(getProviderTierParam("fast", "gemini")).toBe("low");
-  });
-
   it("cline default", () => {
     expect(getProviderTierParam("planning", "cline")).toBe("default");
   });

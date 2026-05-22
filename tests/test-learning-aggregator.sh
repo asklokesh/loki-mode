@@ -103,7 +103,7 @@ emit_test_signals() {
         --action "select_provider" \
         --key "provider" \
         --value "claude" \
-        --rejected '["codex", "gemini"]' \
+        --rejected '["codex", "aider"]' \
         --confidence 0.9
 
     "$EMIT_SH" user_preference \
@@ -111,7 +111,7 @@ emit_test_signals() {
         --action "select_provider" \
         --key "provider" \
         --value "claude" \
-        --rejected '["gemini"]' \
+        --rejected '["aider"]' \
         --confidence 0.85
 
     "$EMIT_SH" user_preference \

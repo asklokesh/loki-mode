@@ -120,7 +120,8 @@ describe("MCP-through-shim contract", () => {
     const plain = r.stdout.replace(/\u001b\[[0-9;]*m/g, "");
     // The 5 documented providers must appear by name. Order is stable in the
     // bash CLI; we assert presence, not order, to remain robust.
-    for (const name of ["claude", "codex", "gemini", "cline", "aider"]) {
+    // v7.5.18: gemini removed from provider set.
+    for (const name of ["claude", "codex", "cline", "aider"]) {
       expect(plain).toContain(name);
     }
   });

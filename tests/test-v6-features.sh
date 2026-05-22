@@ -123,23 +123,7 @@ LOKI_MAX_TIER=haiku result=$(resolve_model_for_tier "planning")
 assert_eq "low" "$result" "Codex maxTier=haiku caps everything to low"
 unset LOKI_MAX_TIER
 
-#===============================================================================
-echo ""
-echo "--- Test Group 3: Dynamic Model Resolution (Gemini) ---"
-#===============================================================================
-
-source "$SKILL_DIR/providers/gemini.sh"
-
-result=$(resolve_model_for_tier "planning")
-assert_eq "gemini-3-pro-preview" "$result" "Gemini planning -> pro"
-
-result=$(resolve_model_for_tier "fast")
-assert_eq "gemini-3-flash-preview" "$result" "Gemini fast -> flash"
-
-# Test maxTier
-LOKI_MAX_TIER=flash result=$(resolve_model_for_tier "planning")
-assert_eq "gemini-3-flash-preview" "$result" "Gemini maxTier=flash caps to flash"
-unset LOKI_MAX_TIER
+# Test Group 3: Gemini Dynamic Model Resolution removed in v7.5.18 Phase A (gemini provider removed).
 
 #===============================================================================
 echo ""
@@ -373,7 +357,8 @@ else
     fail "autonomy/issue-providers.sh syntax error"
 fi
 
-for provider in claude codex gemini; do
+# v7.5.18: gemini removed from provider set.
+for provider in claude codex cline aider; do
     if bash -n "$SKILL_DIR/providers/${provider}.sh" 2>/dev/null; then
         pass "providers/${provider}.sh syntax valid"
     else

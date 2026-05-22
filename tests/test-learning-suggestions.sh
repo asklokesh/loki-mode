@@ -80,7 +80,7 @@ emit_test_signals() {
         --action "select_provider" \
         --key "provider" \
         --value "claude" \
-        --rejected '["codex", "gemini"]' \
+        --rejected '["codex", "aider"]' \
         --confidence 0.9
 
     "$EMIT_SH" user_preference \

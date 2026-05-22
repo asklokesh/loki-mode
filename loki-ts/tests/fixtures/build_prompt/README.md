@@ -75,7 +75,7 @@ opacity checks):
 | 57 | sessionModel=sonnet (env opaque) |
 | 58 | sessionModel=haiku (env opaque) |
 | 59 | PROVIDER_NAME=codex with degraded |
-| 60 | PROVIDER_NAME=gemini with degraded |
+| 60 | PROVIDER_NAME=codex with degraded (v7.5.18: was gemini) |
 
 ## Fixture Layout
 

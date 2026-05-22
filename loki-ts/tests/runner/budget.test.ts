@@ -57,20 +57,6 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(cost).toBe(13.5);
   });
 
-  it("computes gemini-3-pro pricing (1.25/10 per 1M)", () => {
-    const cost = calculateCostFromRecords([
-      { model: "gemini-3-pro", input_tokens: 1_000_000, output_tokens: 1_000_000 },
-    ]);
-    expect(cost).toBe(11.25);
-  });
-
-  it("computes gemini-3-flash pricing (0.10/0.40 per 1M)", () => {
-    const cost = calculateCostFromRecords([
-      { model: "gemini-3-flash", input_tokens: 1_000_000, output_tokens: 1_000_000 },
-    ]);
-    expect(cost).toBe(0.5);
-  });
-
   it("falls back to sonnet pricing for unknown models", () => {
     const cost = calculateCostFromRecords([{ model: "unknown-model", input_tokens: 1_000_000, output_tokens: 0 }]);
     expect(cost).toBe(3);

@@ -114,12 +114,11 @@ describe("doctor.checkDisk", () => {
 describe("doctor.checkSkills", () => {
   it("returns one entry per provider", () => {
     const skills = checkSkills();
-    expect(skills.length).toBe(5);
+    expect(skills.length).toBe(4);
     const names = skills.map((s) => s.name);
     expect(names).toEqual([
       "Claude Code",
       "Codex CLI",
-      "Gemini CLI",
       "Cline CLI",
       "Aider CLI",
     ]);
@@ -144,11 +143,10 @@ describe("doctor.checkSkills", () => {
   it("renders a defined target when readlinkSync hits a broken symlink", async () => {
     const tmpHome = mkdtempSync(join(tmpdir(), "loki-doctor-skills-"));
     try {
-      // Create broken symlinks at each of the 5 skill paths.
+      // Create broken symlinks at each of the 4 skill paths (gemini removed in v7.5.18).
       const paths = [
         ".claude/skills/loki-mode",
         ".codex/skills/loki-mode",
-        ".gemini/skills/loki-mode",
         ".cline/skills/loki-mode",
         ".aider/skills/loki-mode",
       ];
@@ -164,7 +162,7 @@ describe("doctor.checkSkills", () => {
         return { ...real, homedir: () => tmpHome };
       });
       const skills = checkSkills();
-      expect(skills.length).toBe(5);
+      expect(skills.length).toBe(4);
       for (const s of skills) {
         expect(s.status).toBe("fail");
         expect(s.detail).toContain("broken symlink");
@@ -216,9 +214,10 @@ describe("doctor.buildDoctorJson", () => {
     expect(typeof json.summary.ok).toBe("boolean");
   });
 
-  it("contains all 12 expected tool checks in order", () => {
+  it("contains all 11 expected tool checks in order", () => {
     // v7.4.9: added "bun" probe (recommended) so users can see whether the
     // ported-command speedup is available on their system.
+    // v7.5.18: gemini probe removed.
     const expected = [
       "node",
       "python3",
@@ -229,7 +228,6 @@ describe("doctor.buildDoctorJson", () => {
       "bun",
       "claude",
       "codex",
-      "gemini",
       "cline",
       "aider",
     ];
@@ -280,8 +278,8 @@ describe("doctor.runDoctor (end-to-end)", () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--json"]));
     expect(result).toBe(0);
     const parsed = JSON.parse(cap.out) as DoctorJson;
-    // v7.4.9: 11 -> 12 with the new "bun" probe.
-    expect(parsed.checks.length).toBe(12);
+    // v7.4.9: 11 -> 12 with the new "bun" probe. v7.5.18: 12 -> 11 (gemini removed).
+    expect(parsed.checks.length).toBe(11);
     expect(parsed.summary).toBeDefined();
   });
 
@@ -582,10 +580,11 @@ describe("doctor v7.5.8 parallel python imports", () => {
 });
 
 describe("doctor v7.5.8 byCmd non-null fallback", () => {
-  // Verifies that `byCmd.get("claude" | "codex" | "gemini")?.found ?? false`
+  // Verifies that `byCmd.get("claude" | "codex")?.found ?? false`
   // returns false (instead of crashing with "Cannot read property 'found' of
   // undefined") when a provider key is absent from the map. We exercise this
   // by stubbing runAllToolChecks via mock.module to omit those keys.
+  // v7.5.18: gemini removed from provider set.
   afterEach(() => {
     mock.module("../../src/commands/doctor.ts", () => {
       const orig = require("../../src/commands/doctor.ts");
@@ -593,8 +592,8 @@ describe("doctor v7.5.8 byCmd non-null fallback", () => {
     });
   });
 
-  it("does not throw when claude/codex/gemini are missing from byCmd", async () => {
-    // Replace runText's input by stubbing checkTool to mark those three as
+  it("does not throw when claude/codex are missing from byCmd", async () => {
+    // Replace runText's input by stubbing checkTool to mark those two as
     // not-found AND removing them from the spec output. The simplest path is
     // to install a mock that intercepts checkTool calls -- but checkTool is
     // called per-spec and needs to still return rows for non-provider tools.
@@ -605,10 +604,8 @@ describe("doctor v7.5.8 byCmd non-null fallback", () => {
     const byCmd = new Map<string, { found: boolean }>();
     const claudeFound = byCmd.get("claude")?.found ?? false;
     const codexFound = byCmd.get("codex")?.found ?? false;
-    const geminiFound = byCmd.get("gemini")?.found ?? false;
     expect(claudeFound).toBe(false);
     expect(codexFound).toBe(false);
-    expect(geminiFound).toBe(false);
   });
 });
 

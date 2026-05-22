@@ -76,20 +76,7 @@ else
     log_fail "Failed to load codex provider config"
 fi
 
-# ===========================================
-# Test 3: Gemini PROVIDER_DEGRADED is true
-# ===========================================
-log_test "Gemini PROVIDER_DEGRADED is true"
-reset_provider_vars
-if load_provider_direct "gemini"; then
-    if [ "$PROVIDER_DEGRADED" = "true" ]; then
-        log_pass "Gemini PROVIDER_DEGRADED is true (degraded mode)"
-    else
-        log_fail "Gemini PROVIDER_DEGRADED should be true (got: $PROVIDER_DEGRADED)"
-    fi
-else
-    log_fail "Failed to load gemini provider config"
-fi
+# Test 3: Gemini removed in v7.5.18 -- skipped.
 
 # ===========================================
 # Test 4: Claude PROVIDER_DEGRADED_REASONS is empty
@@ -121,20 +108,7 @@ else
     log_fail "Failed to load codex provider config"
 fi
 
-# ===========================================
-# Test 6: Gemini PROVIDER_DEGRADED_REASONS is populated
-# ===========================================
-log_test "Gemini PROVIDER_DEGRADED_REASONS is populated"
-reset_provider_vars
-if load_provider_direct "gemini"; then
-    if [ ${#PROVIDER_DEGRADED_REASONS[@]} -gt 0 ]; then
-        log_pass "Gemini PROVIDER_DEGRADED_REASONS has ${#PROVIDER_DEGRADED_REASONS[@]} reasons"
-    else
-        log_fail "Gemini PROVIDER_DEGRADED_REASONS should be populated"
-    fi
-else
-    log_fail "Failed to load gemini provider config"
-fi
+# Test 6: Gemini removed in v7.5.18 -- skipped.
 
 # ===========================================
 # Test 7: Claude has full capability flags (all true)
@@ -178,26 +152,7 @@ else
     log_fail "Failed to load codex provider config"
 fi
 
-# ===========================================
-# Test 9: Gemini has limited capability flags (all false)
-# ===========================================
-log_test "Gemini has limited capability flags"
-reset_provider_vars
-if load_provider_direct "gemini"; then
-    failed_caps=()
-    [ "$PROVIDER_HAS_SUBAGENTS" != "false" ] && failed_caps+=("PROVIDER_HAS_SUBAGENTS should be false")
-    [ "$PROVIDER_HAS_PARALLEL" != "false" ] && failed_caps+=("PROVIDER_HAS_PARALLEL should be false")
-    [ "$PROVIDER_HAS_TASK_TOOL" != "false" ] && failed_caps+=("PROVIDER_HAS_TASK_TOOL should be false")
-    [ "$PROVIDER_HAS_MCP" != "false" ] && failed_caps+=("PROVIDER_HAS_MCP should be false")
-
-    if [ ${#failed_caps[@]} -eq 0 ]; then
-        log_pass "Gemini has all capability flags set to false (degraded)"
-    else
-        log_fail "Gemini capability mismatch: ${failed_caps[*]}"
-    fi
-else
-    log_fail "Failed to load gemini provider config"
-fi
+# Test 9: Gemini removed in v7.5.18 -- skipped.
 
 # ===========================================
 # Test 10: Claude PROVIDER_MAX_PARALLEL is 10
@@ -229,26 +184,13 @@ else
     log_fail "Failed to load codex provider config"
 fi
 
-# ===========================================
-# Test 12: Gemini PROVIDER_MAX_PARALLEL is 1
-# ===========================================
-log_test "Gemini PROVIDER_MAX_PARALLEL is 1"
-reset_provider_vars
-if load_provider_direct "gemini"; then
-    if [ "$PROVIDER_MAX_PARALLEL" -eq 1 ]; then
-        log_pass "Gemini PROVIDER_MAX_PARALLEL is 1 (sequential only)"
-    else
-        log_fail "Gemini PROVIDER_MAX_PARALLEL should be 1 (got: $PROVIDER_MAX_PARALLEL)"
-    fi
-else
-    log_fail "Failed to load gemini provider config"
-fi
+# Test 12: Gemini removed in v7.5.18 -- skipped.
 
 # ===========================================
 # Test 13: Degraded providers have consistent limitation flags
 # ===========================================
 log_test "Degraded providers have consistent limitation flags"
-for provider in codex gemini; do
+for provider in codex aider; do
     reset_provider_vars
     if load_provider_direct "$provider"; then
         inconsistent=false
@@ -297,7 +239,7 @@ fi
 # Test 15: Degraded reasons include Task tool limitation
 # ===========================================
 log_test "Degraded reasons include Task tool limitation"
-for provider in codex gemini; do
+for provider in codex aider; do
     reset_provider_vars
     if load_provider_direct "$provider"; then
         found_task_reason=false
@@ -318,7 +260,7 @@ log_pass "All degraded providers document Task tool/subagent limitations"
 # Test 16: Degraded reasons include parallelization limitation
 # ===========================================
 log_test "Degraded reasons include parallelization limitation"
-for provider in codex gemini; do
+for provider in codex aider; do
     reset_provider_vars
     if load_provider_direct "$provider"; then
         found_parallel_reason=false
@@ -339,7 +281,7 @@ log_pass "All degraded providers document parallelization limitations"
 # Test 17: Degraded reasons include MCP limitation
 # ===========================================
 log_test "Degraded reasons include MCP limitation"
-for provider in codex gemini; do
+for provider in codex aider; do
     reset_provider_vars
     if load_provider_direct "$provider"; then
         found_mcp_reason=false
@@ -369,7 +311,7 @@ if load_provider_direct "claude"; then
     fi
 fi
 
-for provider in codex gemini; do
+for provider in codex aider; do
     reset_provider_vars
     if load_provider_direct "$provider"; then
         if [ -z "$PROVIDER_TASK_MODEL_PARAM" ] && [ "$PROVIDER_HAS_TASK_TOOL" = "false" ]; then

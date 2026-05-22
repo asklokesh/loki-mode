@@ -1,4 +1,4 @@
-Fixture 9: Degraded Provider (Codex/Gemini)
+Fixture 9: Degraded Provider (Codex/Aider) (v7.5.18: gemini removed)
 - Scenario: PROVIDER_DEGRADED=true, simplified prompt format
 - Invocation: build_prompt(0, "./prd.md", 2) with PROVIDER_DEGRADED=true
 - Expected Behavior: Uses simplified degraded-provider path (line 9304+)

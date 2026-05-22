@@ -34,7 +34,8 @@ echo ""
 # ===========================================
 log_test "validate_provider() with valid providers"
 valid_count=0
-for provider in claude codex gemini cline aider; do
+# v7.5.18: gemini removed from provider set.
+for provider in claude codex cline aider; do
     if validate_provider "$provider"; then
         ((valid_count++))
     else
@@ -42,8 +43,8 @@ for provider in claude codex gemini cline aider; do
     fi
 done
 
-if [ $valid_count -eq 5 ]; then
-    log_pass "validate_provider() accepts all valid providers (claude, codex, gemini, cline, aider)"
+if [ $valid_count -eq 4 ]; then
+    log_pass "validate_provider() accepts all valid providers (claude, codex, cline, aider)"
 fi
 
 # ===========================================
@@ -95,18 +96,7 @@ else
     log_fail "load_provider() failed to load codex"
 fi
 
-log_test "load_provider() loads correct config for gemini"
-unset PROVIDER_NAME PROVIDER_DISPLAY_NAME PROVIDER_CLI PROVIDER_DEGRADED 2>/dev/null || true
-
-if load_provider "gemini"; then
-    if [ "$PROVIDER_NAME" = "gemini" ] && [ "$PROVIDER_CLI" = "gemini" ]; then
-        log_pass "load_provider() correctly loads gemini config"
-    else
-        log_fail "load_provider() loaded gemini but variables incorrect (NAME=$PROVIDER_NAME, CLI=$PROVIDER_CLI)"
-    fi
-else
-    log_fail "load_provider() failed to load gemini"
-fi
+# Gemini load_provider test removed in v7.5.18 Phase A (gemini provider removed).
 
 log_test "load_provider() rejects invalid provider"
 if ! load_provider "invalid_provider" 2>/dev/null; then
@@ -150,7 +140,7 @@ log_test "auto_detect_provider() priority order"
 # Get installed providers list
 installed_list=$(get_installed_providers)
 
-# Check priority order is correct (claude > codex > gemini)
+# Check priority order is correct (claude > codex > cline > aider). v7.5.18: gemini removed.
 detected=$(auto_detect_provider)
 
 if [ -n "$detected" ]; then
@@ -168,12 +158,6 @@ if [ -n "$detected" ]; then
                 log_pass "auto_detect_provider() falls back to codex correctly"
             else
                 log_fail "auto_detect_provider() should return codex when claude not installed (got: $detected)"
-            fi
-        elif command -v gemini >/dev/null 2>&1; then
-            if [ "$detected" = "gemini" ]; then
-                log_pass "auto_detect_provider() falls back to gemini correctly"
-            else
-                log_fail "auto_detect_provider() should return gemini as last resort (got: $detected)"
             fi
         else
             log_pass "auto_detect_provider() returned installed provider: $detected"
@@ -203,8 +187,9 @@ fi
 # Test 6: SUPPORTED_PROVIDERS array
 # ===========================================
 log_test "SUPPORTED_PROVIDERS array contents"
-if [ ${#SUPPORTED_PROVIDERS[@]} -eq 5 ]; then
-    expected=("claude" "codex" "gemini" "cline" "aider")
+# v7.5.18: gemini removed, now 4 providers.
+if [ ${#SUPPORTED_PROVIDERS[@]} -eq 4 ]; then
+    expected=("claude" "codex" "cline" "aider")
     all_match=true
     for i in "${!expected[@]}"; do
         if [ "${SUPPORTED_PROVIDERS[$i]}" != "${expected[$i]}" ]; then
@@ -213,12 +198,12 @@ if [ ${#SUPPORTED_PROVIDERS[@]} -eq 5 ]; then
         fi
     done
     if $all_match; then
-        log_pass "SUPPORTED_PROVIDERS contains correct providers in order"
+        log_pass "SUPPORTED_PROVIDERS contains correct providers in order (claude, codex, cline, aider)"
     else
         log_fail "SUPPORTED_PROVIDERS order mismatch"
     fi
 else
-    log_fail "SUPPORTED_PROVIDERS should have 5 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
+    log_fail "SUPPORTED_PROVIDERS should have 4 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
 fi
 
 # ===========================================

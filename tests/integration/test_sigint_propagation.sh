@@ -37,7 +37,8 @@ kill_provider_child() {
         killed=1
     fi
     local proc
-    for proc in claude codex gemini aider cline; do
+    # v7.5.18: gemini removed from provider set.
+    for proc in claude codex aider cline; do
         pkill -TERM -f "^${proc}( |$)" 2>/dev/null && killed=1
     done
     local i=0

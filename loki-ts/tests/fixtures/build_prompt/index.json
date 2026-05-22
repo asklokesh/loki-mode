@@ -262,7 +262,7 @@
     },
     {
       "id": 9,
-      "name": "Degraded Provider (Codex/Gemini)",
+      "name": "Degraded Provider (Codex/Aider, v7.5.18: was Codex/Gemini)",
       "dir": "fixture-9",
       "env": {
         "RETRY": "0",
@@ -902,7 +902,7 @@
     },
     {
       "id": 29,
-      "name": "Degraded provider (codex/gemini) with PRD + human directive",
+      "name": "Degraded provider (codex/aider, v7.5.18: was codex/gemini) with PRD + human directive",
       "dir": "fixture-29",
       "env": {
         "RETRY": "1",
@@ -1894,7 +1894,7 @@
     },
     {
       "id": 60,
-      "name": "PROVIDER_NAME=gemini with degraded mode",
+      "name": "PROVIDER_NAME=codex (degraded mode, v7.5.18: was gemini)",
       "dir": "fixture-60",
       "env": {
         "RETRY": "0",
