@@ -94,7 +94,7 @@ agents = {
     "test-auditor": {
         "description": "Audits test coverage and pass status for the iteration.",
         "model": "sonnet",
-        "effort": "high",
+        "effort": _effort("high"),
         "tools": ["Read", "Grep", "Bash"],
         "prompt": (
             f"You are the test-auditor for iteration {iter_n}. "
@@ -107,7 +107,7 @@ agents = {
     "convergence-voter": {
         "description": "Checks code churn and progress signals to judge convergence.",
         "model": "sonnet",
-        "effort": "medium",
+        "effort": _effort("medium"),
         "tools": ["Read", "Grep", "Bash"],
         "prompt": (
             f"You are the convergence-voter for iteration {iter_n} on tier {tier}. "
