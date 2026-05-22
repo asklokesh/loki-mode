@@ -64,7 +64,12 @@ class MemoryStorage:
                        If provided, memories are stored in base_path/{namespace}/
                        Defaults to None (uses base_path directly for backward compat).
         """
-        self._root_path = Path(base_path)
+        # LOKI_MEMORY_BASE_PATH env override (Phase F cross-project context).
+        # When set, all MemoryStorage instances under the same app graph
+        # write to the shared memory dir. Backward compatible: when unset,
+        # the caller-provided base_path is used (original behavior).
+        effective_base = os.environ.get("LOKI_MEMORY_BASE_PATH", base_path)
+        self._root_path = Path(effective_base)
         self._namespace = namespace
 
         # Validate namespace to prevent path traversal

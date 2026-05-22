@@ -1484,6 +1484,18 @@ cmd_start() {
         sleep 2
     fi
 
+    # Phase F (v7.5.23): cross-project context discovery. Walks ONE parent
+    # level looking for sibling repos sharing a `.loki/app.json` marker.
+    # Exports LOKI_PROJECT_GRAPH_{ROOT,APP_ID,MEMBERS} which survive exec
+    # into run.sh. Silent no-op when no graph is found (backward compat).
+    local _pg_helper="$SKILL_DIR/autonomy/lib/project-graph.sh"
+    if [ -f "$_pg_helper" ]; then
+        # shellcheck disable=SC1090
+        . "$_pg_helper"
+        local _pg_target="${LOKI_TARGET_DIR:-$(pwd)}"
+        loki_project_graph_discover "$_pg_target" || true
+    fi
+
     exec "$RUN_SH" "${args[@]}"
 }
 

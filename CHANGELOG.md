@@ -9,6 +9,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.23] - 2026-05-22
+
+PATCH release. Phase F of the v7.5.18 -> v7.5.27 arc. Cross-project
+context discovery: when Loki detects sibling repos (`../ui`, `../api`,
+`../service`, etc.) that share an `.loki/app.json` marker, treats them
+as one logical app with layered CLAUDE.md walking and shared
+`.loki-shared/memory/` dir. Path-based discovery only (not semantic).
+No new CLI subcommands. No new user-facing env vars. The 4 internal
+env vars (LOKI_PROJECT_GRAPH_*) are set by Loki at start and never
+read from the user environment.
+
+### Added
+
+- **`autonomy/lib/project-graph.sh`** (new, ~570 lines). Functions:
+  - `loki_project_graph_discover <target_dir>` -- runs the discovery
+    algorithm, exports `LOKI_PROJECT_GRAPH_ROOT`,
+    `LOKI_PROJECT_GRAPH_APP_ID`, `LOKI_PROJECT_GRAPH_MEMBERS`,
+    `LOKI_PROJECT_GRAPH_SHARED_MEMORY_DIR`. Returns 0 always; empty
+    vars when no manifest found.
+  - `load_app_graph_context` -- reads parent + member + scope-aware
+    CLAUDE.md, concatenates with `<!-- LOKI_LAYER:... -->` markers.
+    Cap 32KB total, 16KB per layer.
+  - Cache at `<target>/.loki/state/project-graph.json` keyed by
+    sha256(sorted [mtime+path] of all app.json found). Hot-path skips
+    python3 (~25ms saved per cache hit), uses `stat`+`awk` instead.
+- **`loki-ts/src/project_graph.ts`** (new, ~243 lines). Bun mirror.
+  Exports `discoverProjectGraph(targetDir): AppGraphResult | null` and
+  `applyProjectGraphEnv(result)`. Parent-rooted manifest WINS per
+  architect (matches bash); fall back to target manifest only when
+  parent has none.
+- **`memory/app_graph.py`** (new, ~151 lines). Class `AppGraph` with
+  `from_env()`, `from_app_json()`, `get_shared_memory_path()`,
+  `get_members()`. Wraps `CrossProjectIndex` for app-scoped lookups.
+- **`tests/fixtures/project-graph/acme/`** -- 3-member fixture
+  (ui+api+service) for tests.
+- **`tests/test-project-graph.sh`** (new, ~263 lines, 20 tests):
+  discovery, cache, mismatch logging, schema/regex rejection,
+  graph-without-self-manifest, etc.
+- **`tests/test-claude-md-walker.sh`** (new, ~179 lines, 13 tests):
+  markers, content, per-layer + total caps, backward compat.
+- **`tests/test-parity-project-graph.sh`** (new, ~100 lines, 3 tests):
+  bash + Bun routes agree on app_id, root, member set.
+- **`loki-ts/tests/runner/project_graph.test.ts`** (new, 7 tests).
+- **`memory/tests/test_app_graph.py`** (new, 5 tests).
+
+### Changed
+
+- **`autonomy/loki::cmd_start`** lines 1487-1497 -- before `exec
+  "$RUN_SH"`, source the project-graph helper and call
+  `loki_project_graph_discover`. The exec is unchanged.
+- **`autonomy/run.sh::build_prompt`** lines 9234-9248 -- after
+  `memory_context` injection, call `load_app_graph_context` and append
+  the result as `APP_GRAPH_CONTEXT` in the prompt. Backward
+  compatible: unset `LOKI_PROJECT_GRAPH_ROOT` -> empty string.
+- **`memory/storage.py`** line 67 -- `_root_path` now honors
+  `LOKI_MEMORY_BASE_PATH` env override (when set, members of the same
+  app graph point at the shared memory dir). Backward compatible:
+  unset env -> original behavior. No symlinks created; the override is
+  pure env-driven.
+- **`loki-ts/src/project_graph.ts`** -- parent-rooted manifest wins
+  (architect rule); was originally target-first which broke bash
+  parity. Fixed during integration when
+  `tests/test-parity-project-graph.sh` flagged the divergence.
+
+### app.json schema (NEW, v1)
+
+```json
+{
+  "schema_version": 1,
+  "app_id": "myapp",
+  "name": "Optional friendly name",
+  "members": ["ui", "api", "service"],
+  "shared_memory_dir": ".loki-shared/memory"
+}
+```
+
+Lives at `<parent>/.loki/app.json` (canonical). Optional thin pointers
+at `<member>/.loki/app.json` for sibling-first discovery.
+
+### Verified locally before commit
+
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+- `bash tests/test-project-graph.sh` -- 20/20 PASS.
+- `bash tests/test-claude-md-walker.sh` -- 13/13 PASS.
+- `bash tests/test-parity-project-graph.sh` -- 3/3 PASS.
+- `bash tests/test-mcp-config.sh` -- 16/16 PASS (no regression).
+- `bash tests/test-claude-flags.sh` -- 29/29 PASS (no regression).
+- `bash tests/test-voter-agents-json.sh` -- 17/17 PASS (no regression).
+- `cd loki-ts && bun test tests/runner/project_graph.test.ts` -- 7/7
+  PASS.
+- `python3 -m unittest memory.tests.test_app_graph` -- 5/5 PASS.
+- `cd loki-ts && bun test` -- 777 PASS / 0 fail.
+- `cd loki-ts && bun run typecheck` clean.
+
+### NOT tested (honest disclosures)
+
+- Live `loki start` with a real 3-repo app graph (not a fixture). The
+  bash + Bun unit + parity tests confirm the discovery + walker logic;
+  the end-to-end smoke from a real PRD + 3 sibling repos was not run.
+- Behavior when `.loki/app.json` is added DURING an active `loki start`
+  session. Cache invalidates on next run; mid-session pickup is not
+  implemented.
+- Discovery on Windows path separators. The implementation uses
+  `python3 os.path.realpath` and bash `cd ../`, neither verified on
+  Windows.
+- Scaling beyond 10 members. Current tests max at 3 members.
+
+### Migration
+
+- No action required. Without a `.loki/app.json` marker, Loki behaves
+  exactly as v7.5.22 (no graph context, member-local memory).
+- To opt into cross-project context: drop a `.loki/app.json` at the
+  parent of related repos with `schema_version: 1` and `app_id`.
+
 ## [7.5.22] - 2026-05-22
 
 PATCH release. Phase D of the v7.5.18 -> v7.5.27 arc. Wires Claude Code's

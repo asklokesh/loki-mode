@@ -9231,6 +9231,22 @@ build_prompt() {
         context_injection="$context_injection $memory_context"
     fi
 
+    # Phase F (v7.5.23): inject layered CLAUDE.md context from sibling repos
+    # when this target is part of a cross-project graph. Silent no-op when
+    # LOKI_PROJECT_GRAPH_ROOT is unset (single-project workflows untouched).
+    local _pg_helper_rs="${PROJECT_DIR}/autonomy/lib/project-graph.sh"
+    if [ -f "$_pg_helper_rs" ]; then
+        # shellcheck disable=SC1090
+        . "$_pg_helper_rs" 2>/dev/null || true
+        if [ -n "${LOKI_PROJECT_GRAPH_ROOT:-}" ] && declare -f load_app_graph_context >/dev/null 2>&1; then
+            local app_graph_context=""
+            app_graph_context=$(load_app_graph_context 2>/dev/null || true)
+            if [ -n "$app_graph_context" ]; then
+                context_injection="$context_injection APP_GRAPH_CONTEXT: $app_graph_context"
+            fi
+        fi
+    fi
+
     # Gate failure injection (v6.7.0) - tells LLM what to fix
     local gate_failure_context=""
     if [ -f "${TARGET_DIR:-.}/.loki/quality/gate-failures.txt" ]; then
