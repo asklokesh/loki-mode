@@ -184,7 +184,18 @@ export function claudeProvider(): ProviderInvoker {
   return {
     async invoke(call: ProviderInvocation): Promise<ProviderResult> {
       const baseModel = claudeTierToModel(call.tier);
-      const model = applyMaxTierCeiling(call.tier, baseModel);
+      let model = applyMaxTierCeiling(call.tier, baseModel);
+
+      // Phase I (v7.5.25): when ANTHROPIC_BASE_URL is set, the user is
+      // routing Claude Code to an alt-provider (OpenRouter, Ollama,
+      // LiteLLM, self-hosted). The alt-provider may not recognize the
+      // opus/sonnet/haiku aliases that only Anthropic resolves. Let the
+      // user override the resolved model name via LOKI_MODEL_OVERRIDE; it
+      // wins over all tier mapping. ANTHROPIC_BASE_URL itself is passed
+      // through unchanged (Claude Code reads it natively).
+      if (process.env["ANTHROPIC_BASE_URL"] && process.env["LOKI_MODEL_OVERRIDE"]) {
+        model = process.env["LOKI_MODEL_OVERRIDE"];
+      }
 
       // v7.5.19 Phase B: prime the claude --help cache once, then compose
       // the auto-derived flag set. ensureClaudeHelpCache is idempotent --

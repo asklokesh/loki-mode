@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.25] - 2026-05-22
+
+PATCH release. Phase I of the v7.5.18 -> v7.5.27 arc. OpenRouter /
+Ollama / any Anthropic-compatible endpoint routing via the existing
+`ANTHROPIC_BASE_URL` env var convention. Loki already does NOT
+intercept or strip this env var (Claude Code reads it natively); this
+release adds the one missing piece: a `LOKI_MODEL_OVERRIDE` env that
+lets the user specify the alt-provider's model name (e.g.
+`anthropic/claude-3.5-sonnet` for OpenRouter, `qwen2.5-coder:32b` for
+Ollama). Both bash and Bun routes honor the override; doctor warns
+when an alt endpoint is set without an override.
+
+### Added
+
+- **`providers/claude.sh::resolve_model_for_tier`** -- after the
+  existing tier resolution + LOKI_MAX_TIER ceiling, `LOKI_MODEL_OVERRIDE`
+  wins ONLY when `ANTHROPIC_BASE_URL` is also set. This means
+  Anthropic-native invocations (no BASE_URL) keep using
+  opus/sonnet/haiku aliases unchanged, while alt-provider runs route to
+  the user's chosen model.
+- **`loki-ts/src/runner/providers.ts::claudeProvider`** -- mirror
+  override in the Bun route. Same gate: BASE_URL AND OVERRIDE both set.
+- **`loki-ts/src/commands/doctor.ts`** -- new "ANTHROPIC_BASE_URL"
+  check in the API keys section. PASS when set; WARN when set without
+  `LOKI_MODEL_OVERRIDE` (aliases may not resolve on alt-provider);
+  PASS-with-detail when both set.
+- **`tests/test-anthropic-base-url.sh`** (new, 9 assertions). Covers:
+  no-override defaults preserved across 3 tiers, BASE_URL alone does
+  not override (no risk of accidentally rerouting Anthropic-native),
+  OVERRIDE alone (no BASE_URL) is ignored, both-set wins across 3
+  tiers, Ollama-style local endpoint accepted.
+
+### Verified locally before commit
+
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+- `bash tests/test-anthropic-base-url.sh` -- 9/9 PASS.
+- `bash tests/test-claude-flags.sh` -- 29/29 PASS (no regression).
+- `bash tests/test-voter-agents-json.sh` -- 17/17 PASS (no regression).
+- `bash tests/test-mcp-config.sh` -- 16/16 PASS (no regression).
+- `cd loki-ts && bun test ./tests/commands/doctor.test.ts` -- 34/34 PASS.
+- `cd loki-ts && bun run typecheck` clean.
+
+### NOT tested (honest disclosures)
+
+- Live OpenRouter invocation. Routing primitive (ANTHROPIC_BASE_URL +
+  LOKI_MODEL_OVERRIDE) is unit-tested; we have not yet run
+  `claude --dangerously-skip-permissions --model <openrouter-id> -p ...`
+  with ANTHROPIC_BASE_URL pointing at OpenRouter and observed a
+  successful response. Deferred to first user-driven session.
+- Live Ollama invocation (same as above; OpenRouter and Ollama share
+  the same code path).
+- Not tested against LiteLLM proxy.
+- Not tested with custom auth headers (some alt-providers require
+  additional `Authorization` header beyond `ANTHROPIC_API_KEY`).
+- Not tested across every OpenRouter model (we test the routing
+  primitive, not each downstream model's behavior).
+
+### Migration
+
+- No action required for users on Anthropic-native Claude. Behavior
+  unchanged when `ANTHROPIC_BASE_URL` is unset.
+- To route to OpenRouter:
+  ```bash
+  export ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1
+  export ANTHROPIC_API_KEY=<your-openrouter-key>
+  export LOKI_MODEL_OVERRIDE=anthropic/claude-sonnet-4.5
+  loki start ./prd.md
+  ```
+- To route to local Ollama (v0.14+):
+  ```bash
+  export ANTHROPIC_BASE_URL=http://localhost:11434/v1
+  export ANTHROPIC_API_KEY=ollama
+  export LOKI_MODEL_OVERRIDE=qwen2.5-coder:32b
+  loki start ./prd.md
+  ```
+- `loki doctor` will report the configured endpoint + warn if
+  `LOKI_MODEL_OVERRIDE` is missing.
+
 ## [7.5.24] - 2026-05-22
 
 PATCH release. Phase G of the v7.5.18 -> v7.5.27 arc. LSP-backed MCP

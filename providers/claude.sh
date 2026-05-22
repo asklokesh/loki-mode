@@ -281,11 +281,24 @@ resolve_model_for_tier() {
         esac
     fi
 
+    # Phase I (v7.5.25): when ANTHROPIC_BASE_URL is set, the user is routing
+    # Claude Code to an alt-provider (OpenRouter, Ollama, LiteLLM, self-hosted).
+    # The alt-provider may not recognize the opus/sonnet/haiku aliases that
+    # only Anthropic resolves. Let the user override the resolved model name
+    # via LOKI_MODEL_OVERRIDE; it wins over all tier mapping. Bash and Bun
+    # routes honor the same env var.
+    if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${LOKI_MODEL_OVERRIDE:-}" ]; then
+        model="$LOKI_MODEL_OVERRIDE"
+    fi
+
     echo "$model"
 }
 
 # Tier-aware invocation (values are already aliases like opus/sonnet/haiku).
 # v7.5.19 Phase B: auto-derive --effort, --max-budget-usd, --fallback-model from existing Loki state.
+# v7.5.25 Phase I: ANTHROPIC_BASE_URL is passed through unchanged (Claude Code
+# reads it natively; we never strip or rewrite it). LOKI_MODEL_OVERRIDE wins
+# over tier-resolved model when an alt-provider endpoint is configured.
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"

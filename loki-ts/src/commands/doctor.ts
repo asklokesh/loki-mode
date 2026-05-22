@@ -449,6 +449,27 @@ async function runText(): Promise<number> {
       `  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)\n`,
     );
   }
+  // Phase I (v7.5.25): detect ANTHROPIC_BASE_URL alt-provider routing
+  // (OpenRouter, Ollama, LiteLLM, self-hosted). Claude Code reads this env
+  // var natively; Loki passes it through unchanged. Warn when the user sets
+  // an alt endpoint without LOKI_MODEL_OVERRIDE -- the default opus/sonnet/
+  // haiku aliases may not resolve on the alt-provider.
+  if (env["ANTHROPIC_BASE_URL"]) {
+    const url = env["ANTHROPIC_BASE_URL"];
+    process.stdout.write(`  ${badge("pass")}  ANTHROPIC_BASE_URL: ${url}\n`);
+    tally.pass++;
+    if (!env["LOKI_MODEL_OVERRIDE"]) {
+      process.stdout.write(
+        `  ${badge("warn")}  LOKI_MODEL_OVERRIDE not set -- opus/sonnet/haiku aliases may not resolve on alt-provider\n`,
+      );
+      tally.warn++;
+    } else {
+      process.stdout.write(
+        `  ${badge("pass")}  LOKI_MODEL_OVERRIDE: ${env["LOKI_MODEL_OVERRIDE"]}\n`,
+      );
+      tally.pass++;
+    }
+  }
   process.stdout.write(`\n`);
 
   // Skills
