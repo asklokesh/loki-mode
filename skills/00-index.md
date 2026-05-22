@@ -27,7 +27,7 @@
 | Parallel features, git worktrees | `parallel-workflows.md` |
 | Scale patterns (50+ agents) | `parallel-workflows.md` + `references/cursor-learnings.md` |
 | GitHub issues, PRs, syncing | `github-integration.md` |
-| Multi-provider (Codex, Gemini) | `providers.md` |
+| Multi-provider (Codex, Cline, Aider) | `providers.md` |
 | OpenSpec delta context, brownfield modifications | `openspec-integration.md` |
 | MiroFish market validation, `--mirofish` flag | `mirofish-integration.md` |
 | Writing/updating documentation, `loki docs` | `documentation.md` |
@@ -158,9 +158,9 @@
 - Full reference: `references/legacy-healing-patterns.md`
 
 ### providers.md (v5.0.0)
-**When:** Using non-Claude providers (Codex, Gemini), understanding degraded mode
+**When:** Using non-Claude providers (Codex, Cline, Aider), understanding degraded mode
 - Provider comparison matrix
-- Claude (full features) vs Codex/Gemini (degraded mode)
+- Claude (full features) vs Codex/Cline/Aider (degraded mode)
 - Provider selection via CLI flag or environment variable
 - Model tier mapping (planning/development/fast)
 - Degraded mode limitations and behavior

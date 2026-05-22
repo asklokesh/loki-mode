@@ -1,18 +1,19 @@
 # Providers
 
-Multi-provider support for Claude Code, OpenAI Codex CLI, and Google Gemini CLI.
+Multi-provider support for Claude Code, OpenAI Codex CLI, Cline, and Aider.
 
 ---
 
 ## Overview
 
-Loki Mode supports three AI providers with different capability levels:
+Loki Mode supports four AI providers with different capability levels:
 
 | Provider | Status | Task Tool | Parallel | MCP | Context |
 |----------|--------|-----------|----------|-----|---------|
 | **Claude** | Full | Yes | Yes (10+) | Yes | 200K |
+| **Cline** | Degraded | No | No | No | varies |
 | **Codex** | Degraded | No | No | No | 128K |
-| **Gemini** | Degraded | No | No | No | 1M |
+| **Aider** | Degraded | No | No | No | varies |
 
 ---
 
@@ -130,33 +131,22 @@ effort: high   -> Thorough analysis
 
 ---
 
-## Google Gemini CLI
+## Cline CLI
 
-Degraded mode with large context window.
+Degraded mode with sequential execution only.
 
 ### Installation
 
 ```bash
-# Install Gemini CLI
-npm install -g @google/gemini-cli
-
-# Authenticate
-gemini auth
+# Install Cline CLI
+npm install -g @anthropic-ai/cline
 ```
-
-### Model
-
-| Model | Context | Notes |
-|-------|---------|-------|
-| gemini-3-pro-medium | 1M | Placeholder name |
 
 ### Invocation
 
 ```bash
-# Autonomous mode (verified v0.27.3)
-gemini --approval-mode=yolo "Your prompt here"
-
-# Note: -p flag is DEPRECATED - use positional prompts instead
+# Autonomous mode
+cline --auto-approve
 ```
 
 ### Limitations
@@ -164,19 +154,55 @@ gemini --approval-mode=yolo "Your prompt here"
 - No Task tool (sequential only)
 - No parallel agents
 - No MCP integration
-- Single model
 
 ### Configuration
 
 ```bash
 # Set as provider
-loki provider set gemini
+loki provider set cline
 
 # Or via environment
-export LOKI_PROVIDER=gemini
+export LOKI_PROVIDER=cline
 
-# Start with Gemini
-loki start ./prd.md --provider gemini
+# Start with Cline
+loki start ./prd.md --provider cline
+```
+
+---
+
+## Aider
+
+Degraded mode with sequential execution. Supports 18+ model backends.
+
+### Installation
+
+```bash
+pip install aider-chat
+```
+
+### Invocation
+
+```bash
+aider --yes-always
+```
+
+### Limitations
+
+- No Task tool (sequential only)
+- No parallel agents
+- No MCP integration
+
+### Configuration
+
+```bash
+# Set as provider
+loki provider set aider
+
+# Or via environment
+export LOKI_PROVIDER=aider
+
+# Start with Aider
+loki start ./prd.md --provider aider
 ```
 
 ---
@@ -198,7 +224,8 @@ loki provider list
 # Available providers:
 #   claude  (installed, default)
 #   codex   (installed)
-#   gemini  (installed)
+#   cline   (installed)
+#   aider   (installed)
 ```
 
 ### Get Provider Info
@@ -224,7 +251,7 @@ loki provider set codex
 
 ```bash
 # Override for single session
-loki start ./prd.md --provider gemini
+loki start ./prd.md --provider cline
 ```
 
 ---
@@ -242,7 +269,7 @@ Spawn up to 10+ parallel subagents for:
 - Documentation
 ```
 
-**Codex/Gemini:** Not supported
+**Codex/Cline/Aider:** Not supported
 ```
 All tasks run sequentially in main context
 ```
@@ -255,7 +282,7 @@ export LOKI_PARALLEL_MODE=true
 export LOKI_MAX_PARALLEL_SESSIONS=3
 ```
 
-**Codex/Gemini:** Sequential only
+**Codex/Cline/Aider:** Sequential only
 ```
 Each task completes before next begins
 ```
@@ -266,13 +293,14 @@ Each task completes before next begins
 |----------|---------|---------------|
 | Claude | 200K | Large codebases |
 | Codex | 128K | Medium projects |
-| Gemini | 1M | Very large files |
+| Cline | varies | Depends on backend model |
+| Aider | varies | Depends on backend model |
 
 ---
 
 ## Degraded Mode Behavior
 
-When using Codex or Gemini:
+When using Codex, Cline, or Aider:
 
 1. **No Parallel Agents** - Tasks run sequentially
 2. **No Task Tool** - Cannot spawn subagents
@@ -307,12 +335,15 @@ Loki Mode automatically adjusts when in degraded mode:
 - Cost optimization needed
 - Sequential workflow acceptable
 
-### Use Gemini When:
+### Use Cline When:
 
-- Very large context needed
-- Google ecosystem preference
-- Simple tasks with large files
-- Cost optimization needed
+- Flexible model backend needed
+- Sequential workflow acceptable
+
+### Use Aider When:
+
+- 18+ model backend flexibility needed
+- Sequential workflow acceptable
 
 ---
 
@@ -334,7 +365,6 @@ npm install -g @openai/codex-cli
 # Re-authenticate
 claude login
 codex auth
-gemini auth
 ```
 
 ### Wrong Provider Used

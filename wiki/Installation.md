@@ -77,16 +77,13 @@ npm install -g @openai/codex-cli
 codex auth
 ```
 
-### Google Gemini CLI
+### Cline CLI
 
-Gemini runs in degraded mode (sequential execution only).
+Cline runs in degraded mode (sequential execution only).
 
 ```bash
-# Install Gemini CLI
-npm install -g @google/gemini-cli
-
-# Authenticate
-gemini auth
+# Install Cline CLI
+npm install -g @anthropic-ai/cline
 ```
 
 ---

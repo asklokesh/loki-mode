@@ -1,6 +1,6 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, Google Gemini CLI, Cline, and Aider.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, Cline, and Aider.**
 
 > Transform a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application with minimal human intervention.
 
@@ -12,7 +12,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
-- **Supports five providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Gemini / Aider (Tier 3 degraded)
+- **Supports four providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded)
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
@@ -39,7 +39,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Zero Configuration** - Works out of the box with sensible defaults
 - **Spec to Production** - Provide a spec (PRD markdown, GitHub issue, YAML brief), Loki handles the rest
-- **Multi-Provider Support** - Use Claude, Cline, Codex, Gemini, or Aider
+- **Multi-Provider Support** - Use Claude, Cline, Codex, or Aider
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
 
@@ -72,12 +72,12 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 | YAML brief)      |     |                  |     |                  |
 +------------------+     +------------------+     +------------------+
                                |
-         +-----------+-------------+-------------+-----------+
-         |           |             |             |           |
-    +---------+ +---------+ +---------+ +---------+ +---------+
-    | Claude  | | Cline   | | Codex   | | Gemini  | | Aider   |
-    |(Tier 1) | |(Tier 2) | |(Tier 3) | |(Tier 3) | |(Tier 3) |
-    +---------+ +---------+ +---------+ +---------+ +---------+
+         +-----------+-------------+-----------+
+         |           |             |           |
+    +---------+ +---------+ +---------+ +---------+
+    | Claude  | | Cline   | | Codex   | | Aider   |
+    |(Tier 1) | |(Tier 2) | |(Tier 3) | |(Tier 3) |
+    +---------+ +---------+ +---------+ +---------+
          |
     +----+----+----+----+
     |    |    |    |    |

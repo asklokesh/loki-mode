@@ -81,7 +81,7 @@ loki start [SPEC_FILE] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--provider {claude\|codex\|gemini}` | Select AI provider (default: claude) |
+| `--provider {claude\|codex\|cline\|aider}` | Select AI provider (default: claude) |
 | `--parallel` | Enable parallel mode with git worktrees |
 | `--bg, --background` | Run in background |
 | `--simple` | Force simple complexity (3 phases) |
@@ -105,8 +105,8 @@ loki start
 # Use OpenAI Codex as provider
 loki start ./prd.md --provider codex
 
-# Use Google Gemini as provider
-loki start ./prd.md --provider gemini
+# Use Cline as provider
+loki start ./prd.md --provider cline
 
 # Run in background with parallel mode
 loki start ./prd.md --background --parallel
@@ -446,7 +446,7 @@ LOKI_GITHUB_PR_LABEL=automated # Label for created PRs
 
 ### `loki provider`
 
-Manage AI providers (Claude, Codex, Gemini).
+Manage AI providers (Claude, Codex, Cline, Aider).
 
 ```bash
 loki provider [SUBCOMMAND]
@@ -457,7 +457,7 @@ loki provider [SUBCOMMAND]
 | Command | Description |
 |---------|-------------|
 | `show` | Display current provider |
-| `set {claude\|codex\|gemini}` | Set default provider |
+| `set {claude\|codex\|cline\|aider}` | Set default provider |
 | `list` | List available providers with status |
 | `info [provider]` | Get detailed provider information |
 
@@ -470,14 +470,14 @@ loki provider show
 # Switch to OpenAI Codex
 loki provider set codex
 
-# Switch to Google Gemini
-loki provider set gemini
+# Switch to Cline
+loki provider set cline
 
 # List all providers and their CLI status
 loki provider list
 
 # Get detailed info about a provider
-loki provider info gemini
+loki provider info cline
 loki provider info codex
 ```
 
@@ -1104,7 +1104,7 @@ loki doctor
 loki doctor --json
 ```
 
-Checks: Node.js, Python 3, jq, git, curl, Claude CLI, Codex CLI, Gemini CLI, bash 4.0+
+Checks: Node.js, Python 3, jq, git, curl, Claude CLI, Codex CLI, bash 4.0+
 
 ---
 
@@ -1211,7 +1211,7 @@ loki resume
 # Run the same spec with different providers
 loki start ./prd.md --provider claude
 loki start ./prd.md --provider codex
-loki start ./prd.md --provider gemini
+loki start ./prd.md --provider cline
 ```
 
 ---
@@ -1221,7 +1221,7 @@ loki start ./prd.md --provider gemini
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_MAX_ITERATIONS` | 1000 | Max loop iterations before exit |
-| `LOKI_PROVIDER` | claude | AI provider (claude/codex/gemini) |
+| `LOKI_PROVIDER` | claude | AI provider (claude/codex/cline/aider) |
 | `LOKI_DASHBOARD` | true | Enable web dashboard |
 | `LOKI_DASHBOARD_PORT` | 57374 | Dashboard port |
 | `LOKI_BUDGET` | (none) | Cost budget limit in USD |

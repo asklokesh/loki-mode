@@ -26,7 +26,6 @@ Loki Mode supports five AI providers. Claude has full features; all others run i
 |----------|---------------|----------|----------|
 | **Claude Code** | Yes | No | `--provider claude` (default) |
 | **OpenAI Codex CLI** | No | Yes | `--provider codex` |
-| **Google Gemini CLI** | No | Yes | `--provider gemini` |
 | **Cline CLI** | No | Yes | `--provider cline` |
 | **Aider** | No | Yes | `--provider aider` |
 
@@ -42,11 +41,11 @@ Loki Mode supports five AI providers. Claude has full features; all others run i
 
 **Default (v5.3.0):** Haiku disabled for quality. All tasks use Opus or Sonnet.
 
-| Tier | Purpose | Claude (default) | Claude (--allow-haiku) | Codex | Gemini |
-|------|---------|------------------|------------------------|-------|--------|
-| **planning** | PRD analysis, architecture, system design | opus | opus | effort=xhigh | thinking=high |
-| **development** | Feature implementation, complex bugs, tests | opus | sonnet | effort=high | thinking=medium |
-| **fast** | Unit tests, docs, linting, simple tasks | sonnet | haiku | effort=low | thinking=low |
+| Tier | Purpose | Claude (default) | Claude (--allow-haiku) | Codex |
+|------|---------|------------------|------------------------|-------|
+| **planning** | PRD analysis, architecture, system design | opus | opus | effort=xhigh |
+| **development** | Feature implementation, complex bugs, tests | opus | sonnet | effort=high |
+| **fast** | Unit tests, docs, linting, simple tasks | sonnet | haiku | effort=low |
 
 ### Enabling Haiku
 
@@ -80,11 +79,10 @@ When Haiku is enabled:
 
 **Claude-specific model names:** opus, sonnet, haiku (haiku requires --allow-haiku flag)
 **Codex effort levels:** xhigh, high, medium, low
-**Gemini thinking levels:** high, medium, low
 
 ## Task Tool Examples (Claude Only)
 
-**NOTE:** Task tool is Claude-specific. Codex and Gemini run in degraded mode without subagents.
+**NOTE:** Task tool is Claude-specific. Codex, Cline, and Aider run in degraded mode without subagents.
 
 ```python
 # Planning tier (opus) for Bootstrap, Discovery, Architecture
@@ -109,7 +107,7 @@ if [ "${PROVIDER_HAS_TASK_TOOL:-false}" = "true" ]; then
     # Claude: Use Task tool with parallel agents
     Task(model="haiku", description="Run tests", prompt="...")
 else
-    # Codex/Gemini: Run sequentially without subagents
+    # Codex/Cline/Aider: Run sequentially without subagents
     # Execute RARV cycle in main thread
 fi
 ```
@@ -136,7 +134,7 @@ fi
 
 ## Parallelization Strategy (Claude Only)
 
-**NOTE:** Parallelization requires Task tool, which is Claude-specific. Codex and Gemini run sequentially.
+**NOTE:** Parallelization requires Task tool, which is Claude-specific. Codex, Cline, and Aider run sequentially.
 
 ```python
 # Claude: Launch 10+ Haiku agents in parallel for unit test suite
@@ -145,7 +143,7 @@ for test_file in test_files:
          description=f"Run unit tests: {test_file}",
          run_in_background=True)
 
-# Codex/Gemini: Run tests sequentially (no parallelization)
+# Codex/Cline/Aider: Run tests sequentially (no parallelization)
 for test_file in test_files:
     run_test(test_file)  # Sequential execution
 ```
@@ -441,12 +439,11 @@ Task(
 )
 ```
 
-For Codex/Gemini (degraded mode):
+For Codex (degraded mode):
 ```python
-# Map tiers to effort/thinking levels
+# Map tiers to effort levels
 TIER_MAPPING = {
     "codex": {"HIGH": "xhigh", "MEDIUM": "high", "LOW": "low"},
-    "gemini": {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"},
 }
 effort_level = TIER_MAPPING[provider][determine_tier(task)]
 ```

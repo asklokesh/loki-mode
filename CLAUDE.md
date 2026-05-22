@@ -1,6 +1,6 @@
 # Loki Mode - Claude Code Skill
 
-The flagship product of [Autonomi](https://www.autonomi.dev/). Multi-agent autonomous startup system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI. Takes any spec (PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief) to fully deployed product with minimal human intervention.
+The flagship product of [Autonomi](https://www.autonomi.dev/). Multi-agent autonomous startup system for Claude Code, OpenAI Codex CLI, Cline, and Aider. Takes any spec (PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief) to fully deployed product with minimal human intervention.
 
 ## Quick Start
 
@@ -20,11 +20,10 @@ loki start owner/repo#123        # issue-mode (GitHub issue)
 
 ```
 SKILL.md                    # Slim core skill (~266 lines) - progressive disclosure
-providers/                  # Multi-provider support (5 providers)
+providers/                  # Multi-provider support (4 providers)
   claude.sh                 # Claude Code - full features (Tier 1)
   cline.sh                  # Cline - Tier 2
   codex.sh                  # OpenAI Codex CLI - degraded mode (Tier 3)
-  gemini.sh                 # Google Gemini CLI - degraded mode (Tier 3)
   aider.sh                  # Aider - degraded mode (Tier 3)
   loader.sh                 # Provider loader utility
   models.sh                 # Model name registry
@@ -96,17 +95,16 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 - **Sonnet**: Development and functional testing (implementation, integration tests)
 - **Haiku**: Unit tests, monitoring, and simple tasks - use extensively for parallelization
 
-### Multi-Provider Support (5 providers, see `providers/*.sh`)
+### Multi-Provider Support (4 providers, see `providers/*.sh`)
 - **Claude Code** (Tier 1): Full features (subagents, parallel, Task tool, MCP)
 - **Cline** (Tier 2): Reduced parallelism
 - **OpenAI Codex CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
-- **Google Gemini CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
 - **Aider** (Tier 3): Degraded mode
 
 ```bash
 # Provider selection
 ./autonomy/run.sh --provider codex ./prd.md
-loki start --provider gemini ./prd.md
+loki start --provider cline ./prd.md
 LOKI_PROVIDER=codex loki start ./prd.md
 ```
 
@@ -203,7 +201,7 @@ Verified against v7.5.13 source on 2026-04-29. Line numbers drift; re-verify wit
 
 ### Critical Data Flow
 
-A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `run_autonomous()` loop (`autonomy/run.sh:10253`) builds prompts via `build_prompt()` (`autonomy/run.sh:8987`) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Gemini via positional prompt with `--approval-mode=yolo`). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at `autonomy/completion-council.sh:1605`), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
+A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `run_autonomous()` loop (`autonomy/run.sh:10253`) builds prompts via `build_prompt()` (`autonomy/run.sh:8987`) injecting RARV instructions, SDLC phases, memory context, queue tasks, and checklist status. The provider is invoked (Claude via `-p` flag, Codex via `exec --full-auto` with `CODEX_MODEL_REASONING_EFFORT` env var, Cline/Aider sequentially). Post-iteration, the system runs checklist verification, app runner management, playwright smoke tests, and code review. Completion is determined by a council vote (`council_should_stop` at `autonomy/completion-council.sh:1605`), completion promise text, or max iterations. All components communicate through `.loki/` filesystem state files.
 
 **Deprecated entrypoints:**
 - `loki run <issue-ref>` is a deprecated alias for `loki start <issue-ref>` since v6.84.0. Emits a `cli_command_deprecated` telemetry event. See `autonomy/loki:4436-4456`. Prefer `loki start`.
@@ -502,7 +500,7 @@ Built on 2025 research from three major AI labs:
 
 **Google DeepMind:**
 - SIMA 2 (self-improvement, hierarchical reasoning)
-- Gemini Robotics (VLA models, planning)
+- Google DeepMind Robotics (VLA models, planning)
 - Dreamer 4 (world model training)
 - Scalable Oversight via Debate
 

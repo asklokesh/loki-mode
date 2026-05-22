@@ -113,10 +113,10 @@ the Python episodic memory layer via `memory.engine.save_episode`.
 **Override-judge knobs (v7.5.4+):**
 
 ```bash
-LOKI_OVERRIDE_JUDGES=claude,gemini   # csv of provider names for the
+LOKI_OVERRIDE_JUDGES=claude,codex    # csv of provider names for the
                                      # 3-judge override council. Defaults
                                      # to the available installed providers
-                                     # (claude, codex, gemini, cline, aider).
+                                     # (claude, codex, cline, aider).
 LOKI_OVERRIDE_REAL_JUDGE=0           # force the deterministic stub-judge
                                      # path (hermetic CI / cost control).
                                      # Default: 1 = real provider-backed

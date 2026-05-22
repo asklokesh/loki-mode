@@ -810,7 +810,7 @@ async def agent_card() -> dict:
             "agents": 41,
             "swarms": 8,
             "quality_gates": 9,
-            "providers": ["claude", "codex", "gemini", "cline", "aider"],
+            "providers": ["claude", "codex", "cline", "aider"],
             "streaming": True,
             "pushNotifications": False,
             "stateTransitionHistory": True,
@@ -3401,9 +3401,6 @@ _DEFAULT_PRICING = {
     "haiku":  {"input": 1.00, "output": 5.00},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
-    # Google Gemini
-    "gemini-3-pro":  {"input": 1.25, "output": 10.00},
-    "gemini-3-flash": {"input": 0.10, "output": 0.40},
 }
 
 # Active pricing - starts with defaults, updated from .loki/pricing.json
@@ -3616,8 +3613,6 @@ _PROVIDER_LABELS = {
     "sonnet": "Sonnet 4.5",
     "haiku": "Haiku 4.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
-    "gemini-3-pro": "Gemini 3 Pro",
-    "gemini-3-flash": "Gemini 3 Flash",
 }
 
 _MODEL_PROVIDERS = {
@@ -3625,8 +3620,6 @@ _MODEL_PROVIDERS = {
     "sonnet": "claude",
     "haiku": "claude",
     "gpt-5.3-codex": "codex",
-    "gemini-3-pro": "gemini",
-    "gemini-3-flash": "gemini",
     "cline-default": "cline",
     "aider-default": "aider",
 }

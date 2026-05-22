@@ -1,7 +1,7 @@
 /**
  * @fileoverview Provider Health Matrix - grid showing all providers with
  * health status, latency, token usage, and expandable detail cards.
- * Auto-refreshes every 10 seconds. Supports Claude, Codex, and Gemini.
+ * Auto-refreshes every 10 seconds. Supports Claude, Codex, Cline, and Aider.
  *
  * @example
  * <loki-provider-health api-url="http://localhost:57374" theme="dark"></loki-provider-health>
@@ -14,7 +14,6 @@ import { getApiClient } from '../core/loki-api-client.js';
 const PROVIDER_ICONS = {
   claude:  { initial: 'C', color: '#553DE9', bgColor: 'rgba(85, 61, 233, 0.12)' },
   codex:   { initial: 'X', color: '#1FC5A8', bgColor: 'rgba(31, 197, 168, 0.12)' },
-  gemini:  { initial: 'G', color: '#2F71E3', bgColor: 'rgba(47, 113, 227, 0.12)' },
   cline:   { initial: 'L', color: '#D4A03C', bgColor: 'rgba(212, 160, 60, 0.12)' },
   aider:   { initial: 'A', color: '#C45B5B', bgColor: 'rgba(196, 91, 91, 0.12)' },
 };
@@ -112,9 +111,9 @@ export class LokiProviderHealth extends LokiElement {
         cost_usd: 0.87,
       },
       {
-        name: 'gemini', status: 'healthy', latency_ms: 320,
-        tokens_used: 78600, model: 'gemini-3-pro',
-        api_version: 'v1beta', rate_limit: { remaining: 55, limit: 60 },
+        name: 'cline', status: 'healthy', latency_ms: 320,
+        tokens_used: 78600, model: 'cline-default',
+        api_version: 'v1', rate_limit: { remaining: 55, limit: 60 },
         cost_usd: 1.15,
       },
     ];
