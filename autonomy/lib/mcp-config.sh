@@ -2,8 +2,14 @@
 # autonomy/lib/mcp-config.sh -- Phase D (v7.5.22) helpers.
 #
 # Compute MCP-config paths for the Claude Code CLI `--mcp-config` flag.
-# The flag is variadic (`--mcp-config <configs...>`) and accepts a single
-# space-separated value containing one or more JSON file paths.
+# The flag is variadic per Commander (`--mcp-config <configs...>`), which
+# means Claude expects each path as a SEPARATE argv element following the
+# flag. The helper here emits a space-separated string for ergonomics; the
+# caller in `providers/claude.sh::_loki_build_claude_auto_flags` splits on
+# whitespace and pushes each path as its own array entry, so the variadic
+# shape is honored on the wire. Paths must not contain whitespace (both the
+# Loki bundle path and the `$HOME`-rooted overlay path are whitespace-safe
+# under normal use; the helper does not quote inside the joined string).
 #
 # Public API (all functions read env + filesystem, write stdout):
 #   loki_mcp_config_path        -- emit absolute path to .loki/mcp-config.json.
@@ -14,9 +20,11 @@
 #   loki_user_mcp_config_path   -- emit absolute path to ~/.claude/mcp.json
 #                                  if present + readable, else empty. Always
 #                                  returns 0.
-#   loki_mcp_config_argv        -- emit space-separated paths for the
-#                                  `--mcp-config <paths>` value. Loki bundle
-#                                  first, then user overlay if present.
+#   loki_mcp_config_argv        -- emit one space-separated string of paths
+#                                  (Loki bundle first, optional user overlay
+#                                  second). Caller MUST split on whitespace
+#                                  and pass each path as a separate argv
+#                                  element to satisfy Claude's variadic flag.
 #                                  Returns 0 on success, 1 if the bundle
 #                                  emission fails.
 #
@@ -89,9 +97,11 @@ loki_user_mcp_config_path() {
 }
 
 # ---------- Combined --mcp-config argv value ----------
-# Emits a single space-separated string of paths suitable for use as the
-# value of `claude --mcp-config <configs...>`. Loki bundle first, then
-# user overlay if present.
+# Emits a single space-separated string of paths. The caller in
+# `providers/claude.sh` splits on whitespace and pushes each path as its own
+# argv element so Claude's variadic `--mcp-config <configs...>` receives
+# separate argv entries (not one joined value). Loki bundle first, then
+# user overlay if present. Paths must not contain whitespace.
 #
 # Returns 1 if the Loki bundle cannot be emitted (the caller should then
 # skip the flag entirely rather than pass a malformed value).
