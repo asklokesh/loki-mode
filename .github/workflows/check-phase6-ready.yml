@@ -5,9 +5,9 @@ name: Phase 6 Readiness (weekly)
 # open issue with the `phase6-not-ready` label), opens a tracking issue.
 
 on:
-  schedule:
-    # Mondays at 08:00 UTC
-    # - cron: '0 8 * * 1'  # disabled 2026-05-22: issues disabled on repo, workflow_dispatch only
+  # schedule:
+  #   # Mondays at 08:00 UTC -- disabled 2026-05-22: issues disabled on repo, workflow_dispatch only
+  #   - cron: '0 8 * * 1'
   workflow_dispatch:
 
 permissions:
