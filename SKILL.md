@@ -3,7 +3,7 @@ name: loki-mode
 description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.5.17
+# Loki Mode v7.5.18
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -226,6 +226,8 @@ loki start 123 --ship                        # Issue -> PR -> auto-merge
 - **Codex**: GPT-5.3, 400K context, 128K output, MCP support, --full-auto mode, degraded (sequential only, no Task tool)
 - **Cline**: Multi-provider CLI, degraded mode (sequential only, no Task tool)
 - **Aider**: 18+ provider backends, degraded mode (sequential only, no Task tool)
+- **Google Gemini CLI**: DEPRECATED starting v7.5.18 (upstream deprecated; runtime removed)
+- **Anthropic Antigravity CLI**: Coming soon
 
 ---
 
@@ -379,4 +381,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v7.5.17 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.5.18 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

@@ -9,6 +9,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.18] - 2026-05-23
+
+PATCH release. Phase A of the v7.5.18 -> v7.5.27 release arc (embed latest
+Claude Code CLI features, deprecate stale providers). First phase: remove
+Google Gemini CLI provider (upstream deprecated).
+
+Shipped via 3-agent fleet in isolated worktrees + 1 integration patch +
+new 3-reviewer council protocol (2 Opus + 1 Sonnet, unanimous APPROVE
+required). 894 gemini references across 144 files cleaned in coordinated
+parallel.
+
+### Removed
+
+- **Gemini CLI provider runtime** (`providers/gemini.sh` deleted, ~775 LOC
+  removed across `autonomy/run.sh`, `autonomy/loki`, `loki-ts/src/runner/`,
+  `loki-ts/src/commands/`, `providers/loader.sh`, `providers/models.sh`,
+  `providers/model_catalog.json`). The Gemini Robotics reference in
+  `references/lab-research-patterns.md` was retained -- that's a DeepMind
+  research program name, not a provider reference.
+
+### Added
+
+- **Clear deprecation guard**: `LOKI_PROVIDER=gemini` now exits 1 with a
+  user-friendly message naming active providers (`claude`, `codex`, `cline`,
+  `aider`) and suggesting `unset LOKI_PROVIDER`. Guard fires in BOTH bash
+  (`autonomy/loki`) and Bun (`bin/loki` shim) routes for consistent UX.
+- **README provider table**: keeps the Gemini row marked `DEPRECATED v7.5.18`
+  (deletion would be confusing for users searching for it). Adds an
+  `Antigravity CLI: Coming soon` row signaling the next planned provider
+  per Anthropic's upcoming release.
+
+### Updated
+
+- `README.md`, `CLAUDE.md`, `SKILL.md`, `wiki/Providers.md`, `wiki/Home.md`,
+  `wiki/_Sidebar.md`, `wiki/API-Reference.md`, `docs/INSTALLATION.md`,
+  `skills/providers.md`, `skills/00-index.md`, `skills/model-selection.md`,
+  `skills/quality-gates.md`, `skills/troubleshooting.md`,
+  `references/multi-provider.md`, `references/quality-control.md`,
+  `dashboard/server.py`, `dashboard-ui/components/loki-cost-dashboard.js`,
+  `dashboard-ui/components/loki-provider-health.js`,
+  `dashboard-ui/components/loki-analytics.js`, `demo/voice-over-script.md`,
+  `demo/run-demo-auto.sh`.
+- All `loki-ts/tests/` updated to remove gemini test cases. Test count
+  decreased from 729 to 709 (20 gemini-specific tests removed).
+- All bash tests (`tests/test-provider-degraded-mode.sh`,
+  `test-cli-provider-flag.sh`, `test-provider-loader.sh`,
+  `test-provider-invocation.sh`, `test-failover.sh`, `test-rate-limiting.sh`,
+  etc.) updated to drop gemini cases.
+
+### Verified locally before push
+
+- `bash scripts/local-ci.sh` -- 21/21 PASS (bun-parity matrix included).
+- `bash bin/loki version` + `LOKI_LEGACY_BASH=1 bash bin/loki version` --
+  both report v7.5.18, byte-identical.
+- `bash bin/loki provider list` -- shows 4 active providers, no gemini, both
+  routes byte-identical.
+- `LOKI_PROVIDER=gemini bash bin/loki --version` -- exits with clean
+  migration message on both bash and Bun routes.
+- `bun test` -- 709/709 PASS.
+- `bun run typecheck` clean.
+- `bun run build` produces 66.50 KiB dist.
+- 13 version files at 7.5.18.
+
+### Verified post-publish (after this release ships)
+
+Will run: `npm view loki-mode version`, `docker pull asklokesh/loki-mode:7.5.18`,
+WebFetch Homebrew formula, `bun install -g loki-mode@7.5.18` end-to-end.
+All 8+ GH workflows must complete green; otherwise stop, root-cause, fix.
+
+### Reviewer council (new protocol per memory/feedback_reviewer_council_protocol.md)
+
+3-of-3 unanimous APPROVE required. Reviewers: 2 Opus + 1 Sonnet, blind to
+each other, each re-runs the dev's tests independently. Any REJECT/CONCERN
+triggers: validate the concern, fix if valid, refute if invalid, re-run
+the full council on post-fix state. Loop until unanimous. This replaces
+the prior 3-reviewer + Devil's Advocate pattern -- the DA role merges
+into one Opus reviewer who also asks meta-questions.
+
+### NOT in this release (honest list)
+
+- Antigravity CLI runtime -- documented as "Coming soon" in provider tables
+  but no code yet. Integration is its own planned work.
+- Real `loki start <prd>` end-to-end exercise -- the synthetic test sweep
+  covers provider invocation; a full RARV iteration against a real provider
+  is deferred to v7.5.19+ where the new Claude CLI flags become more
+  user-visible.
+- BMAD-METHOD integration -- explored, confirmed zero current refs in Loki,
+  treated as separate planning cycle (not "pull latest").
+- Phase L (PostHog telemetry) -- explicitly BLOCKED awaiting user
+  acknowledgement of disclosed-default-on (vs covert) posture.
+
+### Migration / rollback
+
+- Users with `LOKI_PROVIDER=gemini` set will see a clean migration error.
+  Set `LOKI_PROVIDER=claude` (or `codex` / `cline` / `aider`) instead.
+- Users still on Gemini who need more time: `npm install -g loki-mode@7.5.17`
+  pins to the last release with Gemini support.
+- No state migrations. No breaking config changes for non-Gemini users.
+
 ## [7.5.17] - 2026-05-04
 
 PATCH release. 7 bugs found via end-to-end testing of v7.5.16 against the real

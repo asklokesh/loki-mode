@@ -12,7 +12,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
-- **Supports four providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded)
+- **Supports four active providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded). Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
@@ -98,7 +98,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.5.17** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **7.5.18** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

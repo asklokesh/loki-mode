@@ -53,8 +53,8 @@ PROVIDER_MAX_PARALLEL=1
 CODEX_DEFAULT_MODEL="gpt-5.3-codex"
 
 # Known valid Codex model prefixes for validation (BUG-PROV-002 fix)
-# Generic LOKI_MODEL_* may contain Claude/Gemini model names (e.g. "opus", "sonnet",
-# "gemini-3-pro-preview") which are invalid for Codex. Validate before accepting.
+# Generic LOKI_MODEL_* may contain Claude model aliases (e.g. "opus", "sonnet",
+# "haiku") which are invalid for Codex. Validate before accepting.
 CODEX_KNOWN_MODELS=("gpt-" "o1-" "o3-" "o4-" "codex-" "ft:gpt-")
 
 _codex_validate_model() {

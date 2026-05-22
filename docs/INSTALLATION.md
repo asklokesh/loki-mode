@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.5.17
+**Version:** v7.5.18
 
 ---
 
@@ -247,16 +247,18 @@ The `HUMAN_INPUT.md` file has security controls:
 
 ## Multi-Provider Support
 
-Loki Mode supports four providers across three tiers. Pick by capability + cost.
+Loki Mode supports four active providers across three tiers, plus historical/upcoming entries. Pick by capability + cost.
 
 ### Supported Providers
 
-| Provider | Tier | Notes |
-|----------|------|-------|
-| `claude` | Tier 1 (full) | Default. All features incl. Task subagents, MCP, council. |
-| `cline`  | Tier 2 | Full feature set; small models (<13B) may fail tool-use. |
-| `codex`  | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
-| `aider`  | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
+| Provider | Status | Tier | Notes |
+|----------|--------|------|-------|
+| `claude` | Active | Tier 1 (full) | Default. All features incl. Task subagents, MCP, council. |
+| `cline`  | Active | Tier 2 | Full feature set; small models (<13B) may fail tool-use. |
+| `codex`  | Active | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
+| `aider`  | Active | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
+| `gemini` | DEPRECATED v7.5.18 | -- | Upstream Gemini CLI deprecated by Google. Runtime removed; `LOKI_PROVIDER=gemini` exits with migration message. |
+| `antigravity` | Coming soon | -- | Anthropic Antigravity CLI integration planned. |
 
 ### Configuration
 

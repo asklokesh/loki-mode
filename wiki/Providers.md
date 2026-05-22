@@ -6,14 +6,20 @@ Multi-provider support for Claude Code, OpenAI Codex CLI, Cline, and Aider.
 
 ## Overview
 
-Loki Mode supports four AI providers with different capability levels:
+Loki Mode supports four active AI providers with different capability levels, plus historical/upcoming entries:
 
 | Provider | Status | Task Tool | Parallel | MCP | Context |
 |----------|--------|-----------|----------|-----|---------|
-| **Claude** | Full | Yes | Yes (10+) | Yes | 200K |
-| **Cline** | Degraded | No | No | No | varies |
-| **Codex** | Degraded | No | No | No | 128K |
-| **Aider** | Degraded | No | No | No | varies |
+| **Claude** | Active (Tier 1, Full) | Yes | Yes (10+) | Yes | 200K |
+| **Cline** | Active (Tier 2, Degraded) | No | No | No | varies |
+| **Codex** | Active (Tier 3, Degraded) | No | No | No | 128K |
+| **Aider** | Active (Tier 3, Degraded) | No | No | No | varies |
+| **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- |
+| **Anthropic Antigravity CLI** | Coming soon | -- | -- | -- | -- |
+
+**Note on Gemini:** Upstream Gemini CLI was deprecated by Google. Loki removed the runtime in v7.5.18. `LOKI_PROVIDER=gemini` exits with a clear migration message pointing to Claude/Codex/Cline/Aider.
+
+**Note on Antigravity:** Anthropic Antigravity CLI integration is planned. Track progress in CHANGELOG.
 
 ---
 
