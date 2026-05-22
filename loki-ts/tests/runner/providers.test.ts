@@ -334,6 +334,60 @@ describe("claudeProvider invocation", () => {
     // confirming exit code propagated through the stub.
     expect(argv).not.toContain("planning");
   });
+
+  // Phase I (v7.5.25) regression tests for ANTHROPIC_BASE_URL +
+  // LOKI_MODEL_OVERRIDE alt-provider routing. Added per Opus #2 reviewer
+  // CONCERN that the bash and Bun routes had bash-only test coverage; this
+  // closes the parity gap by directly exercising the Bun override branch.
+  it("Phase I: LOKI_MODEL_OVERRIDE wins when ANTHROPIC_BASE_URL also set", async () => {
+    process.env["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api/v1";
+    process.env["LOKI_MODEL_OVERRIDE"] = "anthropic/claude-3.5-sonnet";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "development" }));
+    const argv = readArgv(argvLog);
+    expect(argv).toContain("--model");
+    expect(argv).toContain("anthropic/claude-3.5-sonnet");
+    expect(argv).not.toContain("opus");
+    delete process.env["ANTHROPIC_BASE_URL"];
+    delete process.env["LOKI_MODEL_OVERRIDE"];
+  });
+
+  it("Phase I: LOKI_MODEL_OVERRIDE alone (no BASE_URL) is ignored", async () => {
+    process.env["LOKI_MODEL_OVERRIDE"] = "anthropic/claude-3.5-sonnet";
+    delete process.env["ANTHROPIC_BASE_URL"];
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "development" }));
+    const argv = readArgv(argvLog);
+    // Default Anthropic-native invocation: tier-mapped opus alias.
+    expect(argv).toContain("opus");
+    expect(argv).not.toContain("anthropic/claude-3.5-sonnet");
+    delete process.env["LOKI_MODEL_OVERRIDE"];
+  });
+
+  it("Phase I: ANTHROPIC_BASE_URL alone (no OVERRIDE) keeps tier alias", async () => {
+    process.env["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api/v1";
+    delete process.env["LOKI_MODEL_OVERRIDE"];
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "development" }));
+    const argv = readArgv(argvLog);
+    expect(argv).toContain("opus");
+    delete process.env["ANTHROPIC_BASE_URL"];
+  });
+
+  it("Phase I: Ollama local endpoint with override routes correctly", async () => {
+    process.env["ANTHROPIC_BASE_URL"] = "http://localhost:11434/v1";
+    process.env["LOKI_MODEL_OVERRIDE"] = "qwen2.5-coder:32b";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "fast" }));
+    const argv = readArgv(argvLog);
+    expect(argv).toContain("qwen2.5-coder:32b");
+    delete process.env["ANTHROPIC_BASE_URL"];
+    delete process.env["LOKI_MODEL_OVERRIDE"];
+  });
 });
 
 // ---------------------------------------------------------------------------

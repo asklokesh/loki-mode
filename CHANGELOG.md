@@ -49,15 +49,21 @@ when an alt endpoint is set without an override.
 - `bash tests/test-voter-agents-json.sh` -- 17/17 PASS (no regression).
 - `bash tests/test-mcp-config.sh` -- 16/16 PASS (no regression).
 - `cd loki-ts && bun test ./tests/commands/doctor.test.ts` -- 34/34 PASS.
+- `cd loki-ts && bun test ./tests/runner/providers.test.ts` -- 34/34 PASS
+  (30 existing + 4 new Phase I Bun-route override-branch tests added
+  per Opus #2 reviewer CONCERN). Covers: override wins when both env
+  set, override alone (no BASE_URL) ignored, BASE_URL alone keeps
+  alias, Ollama local endpoint.
 - `cd loki-ts && bun run typecheck` clean.
 
 ### NOT tested (honest disclosures)
 
 - Live OpenRouter invocation. Routing primitive (ANTHROPIC_BASE_URL +
-  LOKI_MODEL_OVERRIDE) is unit-tested; we have not yet run
-  `claude --dangerously-skip-permissions --model <openrouter-id> -p ...`
-  with ANTHROPIC_BASE_URL pointing at OpenRouter and observed a
-  successful response. Deferred to first user-driven session.
+  LOKI_MODEL_OVERRIDE) is unit-tested on BOTH bash and Bun routes;
+  we have not yet run `claude --dangerously-skip-permissions --model
+  <openrouter-id> -p ...` with ANTHROPIC_BASE_URL pointing at
+  OpenRouter and observed a successful response. Deferred to first
+  user-driven session.
 - Live Ollama invocation (same as above; OpenRouter and Ollama share
   the same code path).
 - Not tested against LiteLLM proxy.
@@ -65,6 +71,18 @@ when an alt endpoint is set without an override.
   additional `Authorization` header beyond `ANTHROPIC_API_KEY`).
 - Not tested across every OpenRouter model (we test the routing
   primitive, not each downstream model's behavior).
+- No bash/Bun cross-route parity test (e.g. assert both routes emit
+  the same `--model <value>` for an identical env). Both routes are
+  individually tested with the same env semantics, but a true parity
+  test (like `tests/test-parity-mcp-config.sh`) is not in this
+  release. The override gate logic is small (2 env vars, AND-gated)
+  so drift risk is low; explicit parity test deferred to a follow-up.
+- Doctor's new ANTHROPIC_BASE_URL section has no dedicated unit
+  test in `tests/commands/doctor.test.ts`. The existing 34-test
+  doctor suite still passes (no regression), but the new conditional
+  branches (no env, env only, env + override) are only exercised by
+  the manual smoke verification above. Adding 3 unit tests is
+  trivial follow-up work.
 
 ### Migration
 
