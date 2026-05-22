@@ -9,6 +9,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.19] - 2026-05-23
+
+PATCH release. Phase B of the v7.5.18 -> v7.5.27 arc. Wires three Claude
+Code CLI flags into Loki's Claude provider invocation, derived automatically
+from existing Loki state. No new CLI subcommands. No new opt-in env vars.
+
+### Added
+
+- **`autonomy/lib/claude-flags.sh`** (new helper, ~120 LOC). Public API:
+  - `loki_effort_for_tier <tier> [complexity]` -> emits `low|medium|high|xhigh|max`
+    derived from RARV tier (planning=xhigh, development=high, fast=medium)
+    with one-notch upshift on complexity=complex (planning stays at xhigh).
+  - `loki_remaining_budget` -> emits 2-decimal USD remaining computed from
+    `LOKI_BUDGET_LIMIT` minus `current_spend` in `.loki/metrics/budget.json`.
+    Emits empty when limit unset/0 OR when overspent (never emits 0 or
+    negative).
+  - `loki_fallback_for_primary <model>` -> emits `sonnet` for opus, `haiku`
+    for sonnet (only when `LOKI_ALLOW_HAIKU=true`). Empty otherwise.
+  - `loki_claude_flag_supported <flag>` -> caches `claude --help` once per
+    process; returns 0 if flag present, 1 otherwise. Conservative: never
+    passes a flag the installed CLI lacks.
+- **`loki-ts/src/providers/claude_flags.ts`** (new, mirrors bash helper).
+  Exports: `effortForTier`, `remainingBudget`, `fallbackForPrimary`,
+  `claudeFlagSupported`, `ensureClaudeHelpCache`, `buildAutoFlags`. Same
+  semantics as bash side; same conservative behavior.
+
+### Changed
+
+- **`providers/claude.sh`** -- `provider_invoke()` + `provider_invoke_with_tier()`
+  now build an auto-flag array via `_loki_build_claude_auto_flags()` and
+  pass `--effort`, `--max-budget-usd`, `--fallback-model` to `claude -p`
+  when the installed CLI supports each flag and the derived value is
+  non-empty.
+- **`loki-ts/src/runner/providers.ts::claudeProvider()`** -- mirror Bun-route
+  implementation. Calls `ensureClaudeHelpCache()` once, then
+  `buildAutoFlags()` per invocation. Same argv ordering as bash, kept tight
+  so position-sensitive tests stay readable.
+- **`loki-ts/tests/runner/e2e_fake_provider.test.ts`** -- argv assertions
+  rewritten to be position-tolerant (find `-p` dynamically, verify any
+  injected `--effort` value is in the recognized enum). Phase B's new
+  argv shape no longer breaks this E2E.
+
+### Verified locally before commit
+
+- `bash tests/test-claude-flags.sh` -- 26/26 PASS.
+- `cd loki-ts && bun test tests/providers/claude_flags.test.ts` -- 26/26 PASS.
+- `cd loki-ts && bun test` -- 735/735 PASS (added 26, +0 regressions
+  after the E2E argv-tolerance fix).
+- `cd loki-ts && bun run typecheck` clean.
+- `cd loki-ts && bun run build` -- 66.50 KiB dist regenerated.
+- `bash scripts/local-ci.sh` -- 21/21 PASS (bun-parity matrix included).
+- `bash -n` + `shellcheck -S error` clean on `providers/claude.sh` and
+  `autonomy/lib/claude-flags.sh`.
+- 13 version files at 7.5.19.
+
+### Verified flag wiring on installed CLI
+
+`claude --help` on the local Mac confirms:
+- `--effort <level>` (low|medium|high|xhigh|max)
+- `--max-budget-usd <amount>` (only works with --print, which is `-p`)
+- `--fallback-model <model>` (only works with --print)
+
+All three flags are passed only when present in `claude --help` output and
+when the derived value is non-empty (never `--max-budget-usd 0`).
+
+### Default behavior (zero opt-in required)
+
+- A `loki start ./prd.md` run now passes `--effort high` for the development
+  tier; `--effort xhigh` for planning; `--effort medium` for fast.
+- If `LOKI_BUDGET_LIMIT=50` is set, every iteration passes
+  `--max-budget-usd <remaining>` automatically. Loki refuses the invocation
+  upstream when remaining hits zero (never passes `--max-budget-usd 0`).
+- For opus primary, `--fallback-model sonnet` is passed automatically.
+- All three derivations honor `LOKI_COMPLEXITY` + `LOKI_ALLOW_HAIKU`.
+
+### NOT in this release (honest list)
+
+- Real `loki start <prd>` end-to-end exercise against a live Claude provider
+  to verify the new flags change provider behavior in practice. Unit + E2E
+  tests cover argv construction; observed downstream behavior is the next
+  phase to soak.
+- `--effort max` is never auto-selected (we cap at xhigh on planning even
+  with complexity=complex). User can still force `max` via direct CLI flag
+  if they bypass Loki (not via Loki env vars).
+- No Cline/Codex/Aider parity for these flags -- they do not have them.
+  Phase B is Claude-only on purpose; non-Claude providers degrade honestly.
+
+### Migration / rollback
+
+No migration. All behavior is additive and behind `claude --help` flag
+detection (older Claude CLIs that lack `--effort` see no change). Rollback:
+`npm install -g loki-mode@7.5.18`. No state migrations.
+
 ## [7.5.18] - 2026-05-23
 
 PATCH release. Phase A of the v7.5.18 -> v7.5.27 release arc (embed latest

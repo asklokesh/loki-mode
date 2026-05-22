@@ -23,6 +23,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
+import { buildAutoFlags, ensureClaudeHelpCache } from "../providers/claude_flags.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -173,8 +174,11 @@ async function writeCaptured(
 // ---------------------------------------------------------------------------
 
 // Build the Claude provider invoker. Maps to provider_invoke_with_tier()
-// at claude.sh:192-199:
-//   claude --dangerously-skip-permissions --model <model> -p <prompt>
+// at claude.sh:192-199 (v7.5.19 Phase B adds --effort / --max-budget-usd /
+// --fallback-model derived from existing Loki state):
+//   claude --dangerously-skip-permissions --model <model> \
+//          [--effort <tier-derived>] [--max-budget-usd <limit-spend>] \
+//          [--fallback-model <primary-derived>] -p <prompt>
 export function claudeProvider(): ProviderInvoker {
   const cli = resolveCli("LOKI_CLAUDE_CLI", "claude");
   return {
@@ -182,12 +186,24 @@ export function claudeProvider(): ProviderInvoker {
       const baseModel = claudeTierToModel(call.tier);
       const model = applyMaxTierCeiling(call.tier, baseModel);
 
+      // v7.5.19 Phase B: prime the claude --help cache once, then compose
+      // the auto-derived flag set. ensureClaudeHelpCache is idempotent --
+      // first call populates, subsequent calls return immediately.
+      await ensureClaudeHelpCache();
+      const autoFlags = buildAutoFlags({
+        tier: call.tier,
+        complexity: process.env["LOKI_COMPLEXITY"] ?? "standard",
+        primary: model,
+        targetDir: call.cwd,
+      });
+
       const argv: string[] = [
         cli,
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG
         "--dangerously-skip-permissions",
         "--model",
         model,
+        ...autoFlags,
         // claude.sh:32 PROVIDER_PROMPT_FLAG
         "-p",
         call.prompt,

@@ -192,21 +192,29 @@ describe("runAutonomous E2E with fake claude binary (stream-json)", () => {
 
       expect(existsSync(ARGV_LOG)).toBe(true);
       const argv = readFileSync(ARGV_LOG, "utf8").split("\n").filter(Boolean);
-      // claudeProvider builds argv as:
-      //   [cli, --dangerously-skip-permissions, --model, <model>, -p, <prompt>]
-      // The script sees argv WITHOUT $0, so 5 args:
-      //   --dangerously-skip-permissions, --model, <model>, -p, <prompt>
+      // claudeProvider builds argv as (v7.5.19 Phase B onward):
+      //   [cli, --dangerously-skip-permissions, --model, <model>,
+      //    [optional --effort <level>, --max-budget-usd <amt>, --fallback-model <m>],
+      //    -p, <prompt>]
+      // The script sees argv WITHOUT $0. Position-tolerant assertions.
       expect(argv[0]).toBe("--dangerously-skip-permissions");
       expect(argv[1]).toBe("--model");
-      // sessionTier="sonnet" -> claudeTierToModel maps to "sonnet" branch via
-      // default; without LOKI_ALLOW_HAIKU, an unknown tier falls into
-      // `default: opus`. "sonnet" is not one of planning/development/fast so
-      // it lands in the default branch -> "opus". Just assert non-empty.
+      // Position 2 = model name. Just assert non-empty.
       expect(argv[2]?.length ?? 0).toBeGreaterThan(0);
-      expect(argv[3]).toBe("-p");
-      // Prompt is the stub-prompt string built by autonomous.ts when
-      // build_prompt.ts adapter is not yet present.
-      expect(argv[4]?.length ?? 0).toBeGreaterThan(0);
+
+      // -p marker exists, with a non-empty prompt immediately after.
+      const promptIdx = argv.indexOf("-p");
+      expect(promptIdx).toBeGreaterThan(-1);
+      const promptArg = argv[promptIdx + 1] ?? "";
+      expect(promptArg.length).toBeGreaterThan(0);
+
+      // If --effort was injected by Phase B's buildAutoFlags, it must have a
+      // recognized value.
+      const effortIdx = argv.indexOf("--effort");
+      if (effortIdx >= 0) {
+        const e = argv[effortIdx + 1] ?? "";
+        expect(["low", "medium", "high", "xhigh", "max"]).toContain(e);
+      }
 
       // -- Assertion 3: BUG-24 fix -- autonomy-state.json final status
       //    is "council_approved" (proves saveStateForRunner adapter wired). -

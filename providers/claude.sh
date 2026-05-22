@@ -109,11 +109,58 @@ provider_version() {
     claude --version 2>/dev/null | head -1
 }
 
-# Invocation function
+# Source the v7.5.19 Phase B claude-flags helper (idempotent).
+# shellcheck source=../autonomy/lib/claude-flags.sh
+_loki_claude_flags_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/autonomy/lib/claude-flags.sh"
+if [ -f "$_loki_claude_flags_helper" ]; then
+    # shellcheck disable=SC1090
+    . "$_loki_claude_flags_helper"
+fi
+
+# Build the auto-derived flag array. Caller passes tier + complexity + primary model.
+# Values that the helper returns empty are dropped (no flag emitted).
+# Honors loki_claude_flag_supported() so we never pass a flag the installed CLI lacks.
+_loki_build_claude_auto_flags() {
+    local tier="${1:-development}"
+    local complexity="${2:-${LOKI_COMPLEXITY:-standard}}"
+    local primary="${3:-}"
+    _LOKI_CLAUDE_AUTO_FLAGS=()
+
+    # --effort: default-on derived from tier + complexity.
+    if type loki_effort_for_tier >/dev/null 2>&1 && loki_claude_flag_supported "--effort"; then
+        local effort
+        effort=$(loki_effort_for_tier "$tier" "$complexity")
+        if [ -n "$effort" ]; then
+            _LOKI_CLAUDE_AUTO_FLAGS+=("--effort" "$effort")
+        fi
+    fi
+
+    # --max-budget-usd: derived from LOKI_BUDGET_LIMIT minus spend.
+    if type loki_remaining_budget >/dev/null 2>&1 && loki_claude_flag_supported "--max-budget-usd"; then
+        local rem
+        rem=$(loki_remaining_budget)
+        if [ -n "$rem" ]; then
+            _LOKI_CLAUDE_AUTO_FLAGS+=("--max-budget-usd" "$rem")
+        fi
+    fi
+
+    # --fallback-model: derived from primary model alias.
+    if [ -n "$primary" ] && type loki_fallback_for_primary >/dev/null 2>&1 && loki_claude_flag_supported "--fallback-model"; then
+        local fb
+        fb=$(loki_fallback_for_primary "$primary")
+        if [ -n "$fb" ]; then
+            _LOKI_CLAUDE_AUTO_FLAGS+=("--fallback-model" "$fb")
+        fi
+    fi
+}
+
+# Invocation function (basic, no tier).
+# Auto-flags use development tier defaults.
 provider_invoke() {
     local prompt="$1"
     shift
-    claude --dangerously-skip-permissions -p "$prompt" "$@"
+    _loki_build_claude_auto_flags "development" "${LOKI_COMPLEXITY:-standard}" ""
+    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]}" -p "$prompt" "$@"
 }
 
 # Model tier to Task tool model parameter value
@@ -188,12 +235,14 @@ resolve_model_for_tier() {
     echo "$model"
 }
 
-# Tier-aware invocation (values are already aliases like opus/sonnet/haiku)
+# Tier-aware invocation (values are already aliases like opus/sonnet/haiku).
+# v7.5.19 Phase B: auto-derive --effort, --max-budget-usd, --fallback-model from existing Loki state.
 provider_invoke_with_tier() {
     local tier="$1"
     local prompt="$2"
     shift 2
     local model
     model=$(resolve_model_for_tier "$tier")
-    claude --dangerously-skip-permissions --model "$model" -p "$prompt" "$@"
+    _loki_build_claude_auto_flags "$tier" "${LOKI_COMPLEXITY:-standard}" "$model"
+    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]}" -p "$prompt" "$@"
 }
