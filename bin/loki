@@ -88,6 +88,16 @@ if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ 
     fi
 fi
 
+# v7.5.18: Guard against deprecated LOKI_PROVIDER=gemini before routing.
+# Fires for all commands (Bun-routed and bash-routed) so users get a clear
+# error regardless of which subcommand they invoke.
+if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
+    echo "Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed." >&2
+    echo "Active providers: claude, codex, cline, aider" >&2
+    echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
+    exit 1
+fi
+
 # Force-fall-through to bash when the rollback flag is set.
 if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
     exec "$BASH_CLI" "$@"

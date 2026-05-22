@@ -479,7 +479,7 @@ show_help() {
     echo "  help             Show this help"
     echo ""
     echo "Options for 'start':"
-    echo "  --provider NAME  AI provider: claude (default), codex, gemini, cline, aider"
+    echo "  --provider NAME  AI provider: claude (default), codex, cline, aider"
     echo "  --parallel       Enable parallel mode with git worktrees"
     echo "  --bg, --background  Run in background mode"
     echo "  --simple         Force simple complexity tier (3 phases)"
@@ -497,7 +497,7 @@ show_help() {
     echo "  --dry-run          Preview generated PRD without starting"
     echo "  --no-start         Generate PRD but don't start execution"
     echo "  --output FILE      Save PRD to custom path"
-    echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
+    echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
     echo "  --parallel         Enable parallel mode with git worktrees"
     echo "  --budget USD       Set cost budget limit"
     echo ""
@@ -666,7 +666,7 @@ cmd_start() {
                 echo "  --issue URL|NUM       Force issue mode with URL or number"
                 echo ""
                 echo "Options:"
-                echo "  --provider NAME       AI provider: claude (default), codex, gemini, cline, aider"
+                echo "  --provider NAME       AI provider: claude (default), codex, cline, aider"
                 echo "  --parallel            Enable parallel mode with git worktrees"
                 echo "  --bg, --background    Run in background mode"
                 echo "  --simple              Force simple complexity tier (3 phases)"
@@ -733,7 +733,7 @@ cmd_start() {
                     args+=("--provider" "$provider")
                     shift 2
                 else
-                    echo -e "${RED}--provider requires a value (claude, codex, gemini, cline, aider)${NC}"
+                    echo -e "${RED}--provider requires a value (claude, codex, cline, aider)${NC}"
                     exit 1
                 fi
                 ;;
@@ -1446,7 +1446,7 @@ cmd_start() {
             --action "provider_selection" \
             --key "provider" \
             --value "$provider" \
-            --rejected '["'"$([ "$provider" != "claude" ] && echo "claude" || echo "codex")'", "'"$([ "$provider" != "gemini" ] && echo "gemini" || echo "codex")'"]' \
+            --rejected '["'"$([ "$provider" != "claude" ] && echo "claude" || echo "codex")'", "'"$([ "$provider" != "cline" ] && echo "cline" || echo "aider")'"]' \
             --confidence 0.95
     fi
 
@@ -1467,7 +1467,6 @@ cmd_start() {
         case "$effective_provider" in
             claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
             codex)  echo "  npm install -g @openai/codex" ;;
-            gemini) echo "  npm install -g @google/gemini-cli" ;;
             cline)  echo "  npm install -g @anthropic-ai/cline" ;;
             aider)  echo "  pip install aider-chat" ;;
             *)      echo "  Check the provider documentation for installation." ;;
@@ -2044,7 +2043,7 @@ cmd_status() {
     # Show provider with capability
     local capability="full features"
     case "$current_provider" in
-        codex|gemini|aider)
+        codex|aider)
             capability="degraded mode"
             ;;
         cline)
@@ -2052,7 +2051,7 @@ cmd_status() {
             ;;
     esac
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
-    echo -e "${DIM}  Switch with: loki provider set <claude|codex|gemini|cline|aider>${NC}"
+    echo -e "${DIM}  Switch with: loki provider set <claude|codex|cline|aider>${NC}"
     echo ""
 
     # Show running sessions (v6.4.0 - concurrent session support)
@@ -2709,7 +2708,7 @@ cmd_provider() {
             echo "  loki provider set claude"
             echo "  loki provider set codex"
             echo "  loki provider list"
-            echo "  loki provider info gemini"
+            echo "  loki provider info codex"
             echo "  loki provider models"
             ;;
     esac
@@ -2737,7 +2736,7 @@ cmd_provider_show() {
         cline)
             echo -e "${GREEN}Status:${NC}   Near-full mode (subagents, MCP, 12+ providers)"
             ;;
-        codex|gemini|aider)
+        codex|aider)
             echo -e "${YELLOW}Status:${NC}   Degraded mode (sequential only)"
             ;;
     esac
@@ -2758,17 +2757,22 @@ cmd_provider_set() {
 
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
-        echo "Usage: loki provider set <claude|codex|gemini|cline|aider>"
+        echo "Usage: loki provider set <claude|codex|cline|aider>"
         exit 1
     fi
 
     # Validate provider
     case "$new_provider" in
-        claude|codex|gemini|cline|aider)
+        gemini)
+            echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}"
+            echo "Active providers: claude, codex, cline, aider"
+            exit 1
+            ;;
+        claude|codex|cline|aider)
             ;;
         *)
             echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
-            echo "Valid providers: claude, codex, gemini, cline, aider"
+            echo "Valid providers: claude, codex, cline, aider"
             exit 1
             ;;
     esac
@@ -2783,9 +2787,6 @@ cmd_provider_set() {
                 ;;
             codex)
                 echo "Install: npm install -g @openai/codex"
-                ;;
-            gemini)
-                echo "Install: npm install -g @google/gemini-cli"
                 ;;
             cline)
                 echo "Install: npm install -g cline"
@@ -2821,7 +2822,6 @@ cmd_provider_list() {
     # Check which CLIs are installed
     local claude_status="${RED}not installed${NC}"
     local codex_status="${RED}not installed${NC}"
-    local gemini_status="${RED}not installed${NC}"
     local cline_status="${RED}not installed${NC}"
     local aider_status="${RED}not installed${NC}"
 
@@ -2830,9 +2830,6 @@ cmd_provider_list() {
     fi
     if command -v codex &> /dev/null; then
         codex_status="${GREEN}installed${NC}"
-    fi
-    if command -v gemini &> /dev/null; then
-        gemini_status="${GREEN}installed${NC}"
     fi
     if command -v cline &> /dev/null; then
         cline_status="${GREEN}installed${NC}"
@@ -2849,10 +2846,6 @@ cmd_provider_list() {
     marker=""
     [ "$current" = "codex" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  codex   - Codex CLI (OpenAI)          $codex_status$marker"
-
-    marker=""
-    [ "$current" = "gemini" ] && marker=" ${CYAN}(current)${NC}"
-    echo -e "  gemini  - Gemini CLI (Google)         $gemini_status$marker"
 
     marker=""
     [ "$current" = "cline" ] && marker=" ${CYAN}(current)${NC}"
@@ -2892,18 +2885,6 @@ cmd_provider_info() {
             echo "Vendor:      OpenAI"
             echo "CLI:         codex"
             echo "Flag:        --full-auto"
-            echo ""
-            echo "Features:"
-            echo "  - Autonomous mode"
-            echo "  - Sequential only (no subagents)"
-            echo ""
-            echo "Status:      Degraded mode"
-            ;;
-        gemini)
-            echo "Name:        Gemini CLI"
-            echo "Vendor:      Google"
-            echo "CLI:         gemini"
-            echo "Flag:        --approval-mode=yolo"
             echo ""
             echo "Features:"
             echo "  - Autonomous mode"
@@ -2954,7 +2935,7 @@ cmd_provider_models() {
     echo -e "${BOLD}Model Configuration (resolved):${NC}"
     echo ""
 
-    local providers=("claude" "codex" "gemini" "cline" "aider")
+    local providers=("claude" "codex" "cline" "aider")
     for provider in "${providers[@]}"; do
         local provider_file="$script_dir/providers/${provider}.sh"
         [ -f "$provider_file" ] || continue
@@ -3002,7 +2983,7 @@ cmd_provider_models() {
                     fi
                 fi
             else
-                # Multi-tier providers (claude, gemini): check provider-specific per-tier, then generic
+                # Multi-tier providers (claude): check provider-specific per-tier, then generic
                 local provider_var="LOKI_${provider_upper}_MODEL_${tier_upper}"
                 local generic_var="LOKI_MODEL_${tier_upper}"
 
@@ -3034,14 +3015,6 @@ cmd_provider_models() {
             effort_d=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_EFFORT_DEVELOPMENT")
             effort_f=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_EFFORT_FAST")
             echo "    Effort:      planning=$effort_p, development=$effort_d, fast=$effort_f"
-        elif [ "$provider" = "gemini" ]; then
-            local think_p think_d think_f fb
-            think_p=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_THINKING_PLANNING")
-            think_d=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_THINKING_DEVELOPMENT")
-            think_f=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_THINKING_FAST")
-            fb=$(bash -c "source '$provider_file' 2>/dev/null; echo \$PROVIDER_MODEL_FALLBACK")
-            echo "    Thinking:    planning=$think_p, development=$think_d, fast=$think_f"
-            echo "    Fallback:    $fb"
         fi
         echo ""
     done
@@ -4533,7 +4506,7 @@ cmd_run() {
                 echo "  --dry-run          Preview generated PRD without starting"
                 echo "  --no-start         Generate PRD but don't start execution"
                 echo "  --output FILE      Save PRD to custom path"
-                echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
+                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo "  --simple           Force simple complexity tier"
@@ -5021,7 +4994,7 @@ cmd_issue() {
                 echo "  --output FILE      Save PRD to custom path (default: .loki/prd-issue-N.md)"
                 echo ""
                 echo "Options passed to 'start' (when --start is used):"
-                echo "  --provider NAME    AI provider: claude (default), codex, gemini, cline, aider"
+                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo ""
@@ -5883,7 +5856,7 @@ cmd_config() {
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
             echo "  model.fast           Model for fast tier"
-            echo "  provider             Default AI provider: claude, codex, gemini, cline, aider"
+            echo "  provider             Default AI provider: claude, codex, cline, aider"
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
@@ -5942,8 +5915,12 @@ cmd_config_set() {
             ;;
         provider)
             case "$value" in
-                claude|codex|gemini|cline|aider) ;;
-                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, gemini, cline, aider)${NC}"; return 1 ;;
+                gemini)
+                    echo -e "${RED}Invalid provider: 'gemini' is deprecated as of v7.5.18. Active providers: claude, codex, cline, aider${NC}"
+                    return 1
+                    ;;
+                claude|codex|cline|aider) ;;
+                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, cline, aider)${NC}"; return 1 ;;
             esac
             ;;
         issue.provider)
@@ -6268,7 +6245,6 @@ cmd_setup_skill() {
     local skill_targets=(
         "$HOME/.claude/skills/loki-mode:Claude Code"
         "$HOME/.codex/skills/loki-mode:Codex CLI"
-        "$HOME/.gemini/skills/loki-mode:Gemini CLI"
         "$HOME/.cline/skills/loki-mode:Cline CLI"
         "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
@@ -6552,7 +6528,7 @@ cmd_doctor() {
                 echo "  --json    Output machine-readable JSON"
                 echo ""
                 echo "Checks: node, python3, jq, git, curl, bash version,"
-                echo "        claude/codex/gemini CLIs, and disk space."
+                echo "        claude/codex CLIs, and disk space."
                 return 0
                 ;;
             *)
@@ -6627,9 +6603,6 @@ cmd_doctor() {
             codex)
                 version=$(codex --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
                 ;;
-            gemini)
-                version=$(gemini --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
-                ;;
             cline)
                 version=$(cline --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
                 ;;
@@ -6680,13 +6653,12 @@ cmd_doctor() {
     echo -e "${CYAN}AI Providers:${NC}"
     doctor_check "Claude CLI"          claude   optional || true
     doctor_check "Codex CLI"           codex    optional || true
-    doctor_check "Gemini CLI"          gemini   optional || true
     doctor_check "Cline CLI"           cline    optional || true
     doctor_check "Aider CLI"           aider    optional || true
 
     # Check if at least one provider is installed
     local _any_provider=false
-    for _dp in claude codex gemini cline aider; do
+    for _dp in claude codex cline aider; do
         command -v "$_dp" &>/dev/null && _any_provider=true && break
     done
     if ! $_any_provider; then
@@ -6711,19 +6683,12 @@ cmd_doctor() {
     elif command -v codex &>/dev/null; then
         echo -e "  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)"
     fi
-    if [ -n "${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}" ]; then
-        echo -e "  ${GREEN}PASS${NC}  GOOGLE_API_KEY is set"
-        pass_count=$((pass_count + 1))
-    elif command -v gemini &>/dev/null; then
-        echo -e "  ${DIM}  --  ${NC}  GOOGLE_API_KEY not set (Gemini CLI uses its own login)"
-    fi
     echo ""
 
     echo -e "${CYAN}Skills:${NC}"
     local skill_dirs=(
         "$HOME/.claude/skills/loki-mode:Claude Code"
         "$HOME/.codex/skills/loki-mode:Codex CLI"
-        "$HOME/.gemini/skills/loki-mode:Gemini CLI"
         "$HOME/.cline/skills/loki-mode:Cline CLI"
         "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
@@ -6952,7 +6917,6 @@ checks.append(check_tool('bash', 'bash', 'recommended', '4.0'))
 checks.append(check_tool('Bun', 'bun', 'recommended', '1.3'))
 checks.append(check_tool('Claude CLI', 'claude', 'optional'))
 checks.append(check_tool('Codex CLI', 'codex', 'optional'))
-checks.append(check_tool('Gemini CLI', 'gemini', 'optional'))
 checks.append(check_tool('Cline CLI', 'cline', 'optional'))
 checks.append(check_tool('Aider CLI', 'aider', 'optional'))
 
@@ -8198,7 +8162,6 @@ QPRDEOF
         case "$_quick_provider" in
             claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
             codex)  echo "  npm install -g @openai/codex" ;;
-            gemini) echo "  npm install -g @google/gemini-cli" ;;
             cline)  echo "  npm install -g @anthropic-ai/cline" ;;
             aider)  echo "  pip install aider-chat" ;;
             *)      echo "  Check the provider documentation for installation." ;;
@@ -8443,7 +8406,7 @@ INSTRUCTIONS:
                 echo -e "${CYAN}[AI] Analyzing $svc_name failure with ${LOKI_PROVIDER:-claude}...${NC}"
 
                 # 4. LET AI FIX: Run loki quick with the AI prompt
-                # The AI provider (claude/codex/gemini/ollama) decides what to fix
+                # The AI provider (claude/codex/ollama) decides what to fix
                 fix_count=$((fix_count + 1))
                 echo -e "${CYAN}[FIX] Attempt $fix_count/$max_fixes${NC}"
 
@@ -8968,7 +8931,7 @@ ENDGITIGNORE
 
     # Check if an AI provider CLI is available
     local _has_provider=false
-    for _pcli in claude codex gemini cline aider; do
+    for _pcli in claude codex cline aider; do
         if command -v "$_pcli" &>/dev/null; then
             _has_provider=true
             break
@@ -8980,7 +8943,6 @@ ENDGITIGNORE
         echo "  Install at least one before running 'loki start':"
         echo "    npm install -g @anthropic-ai/claude-code   (recommended)"
         echo "    npm install -g @openai/codex"
-        echo "    npm install -g @google/gemini-cli"
         echo ""
         echo "  Then verify your setup: ${BOLD}loki doctor${NC}"
     fi
@@ -9851,9 +9813,6 @@ except Exception: pass
                 codex)
                     (cd "$codebase_path" && codex exec --full-auto "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
-                gemini)
-                    (cd "$codebase_path" && gemini --approval-mode=yolo "$phase_prompt" 2>&1) || phase_exit=$?
-                    ;;
                 cline)
                     (cd "$codebase_path" && cline -y "$phase_prompt" 2>&1) || phase_exit=$?
                     ;;
@@ -9864,7 +9823,7 @@ except Exception: pass
                     (cd "$codebase_path" && aider --message "$phase_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || phase_exit=$?
                     ;;
                 *)
-                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, gemini, cline, aider${NC}"
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, cline, aider${NC}"
                     phase_exit=1
                     ;;
             esac
@@ -10020,9 +9979,6 @@ except Exception: pass
                 ;;
             codex)
                 (cd "$codebase_path" && codex exec --full-auto "$doc_prompt" 2>&1) || doc_exit=$?
-                ;;
-            gemini)
-                (cd "$codebase_path" && gemini --approval-mode=yolo "$doc_prompt" 2>&1) || doc_exit=$?
                 ;;
             cline)
                 (cd "$codebase_path" && cline -y "$doc_prompt" 2>&1) || doc_exit=$?
@@ -10531,9 +10487,6 @@ except Exception: pass
         codex)
             (cd "$codebase_path" && codex exec --full-auto "$heal_prompt" 2>&1) || heal_exit=$?
             ;;
-        gemini)
-            (cd "$codebase_path" && gemini --approval-mode=yolo "$heal_prompt" 2>&1) || heal_exit=$?
-            ;;
         cline)
             (cd "$codebase_path" && cline -y "$heal_prompt" 2>&1) || heal_exit=$?
             ;;
@@ -10546,7 +10499,7 @@ except Exception: pass
         # BUG-HEAL-003: Unknown provider should error, not silently succeed
         *)
             echo -e "${RED}Error: Unknown provider: $provider${NC}"
-            echo "Supported providers: claude, codex, gemini, cline, aider"
+            echo "Supported providers: claude, codex, cline, aider"
             return 1
             ;;
     esac
@@ -11312,12 +11265,12 @@ PYEOF
                 mkdir -p "$loki_dir/state"
                 local current_provider
                 current_provider=$(cat "$loki_dir/state/provider" 2>/dev/null || echo "claude")
-                local chain="${LOKI_FAILOVER_CHAIN:-claude,codex,gemini}"
+                local chain="${LOKI_FAILOVER_CHAIN:-claude,codex,cline}"
 
                 cat > "$failover_file" << FEOF
 {
   "enabled": true,
-  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","codex","gemini"]'),
+  "chain": $(printf '%s' "$chain" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip().split(",")))' 2>/dev/null || echo '["claude","codex","cline"]'),
   "currentProvider": "$current_provider",
   "primaryProvider": "$current_provider",
   "lastFailover": null,
@@ -11355,7 +11308,7 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
                 local IFS=','
                 for p in $new_chain; do
                     case "$p" in
-                        claude|codex|gemini|cline|aider) ;;
+                        claude|codex|cline|aider) ;;
                         *) echo -e "${RED}Error: invalid provider '$p' in chain${NC}"; return 1 ;;
                     esac
                 done
@@ -11383,9 +11336,9 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
                     source "$script_dir/../providers/loader.sh"
                 fi
 
-                local chain_providers="claude,codex,gemini"
+                local chain_providers="claude,codex,cline"
                 if [ -f "$failover_file" ]; then
-                    chain_providers=$(_FAILOVER_FILE="$failover_file" python3 -c "import json, os; print(','.join(json.load(open(os.environ['_FAILOVER_FILE'])).get('chain', ['claude','codex','gemini'])))" 2>/dev/null || echo "claude,codex,gemini")
+                    chain_providers=$(_FAILOVER_FILE="$failover_file" python3 -c "import json, os; print(','.join(json.load(open(os.environ['_FAILOVER_FILE'])).get('chain', ['claude','codex','cline'])))" 2>/dev/null || echo "claude,codex,cline")
                 fi
 
                 local IFS=','
@@ -11411,7 +11364,6 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
                     case "$p" in
                         claude) [ -n "${ANTHROPIC_API_KEY:-}" ] && has_key=true ;;
                         codex) [ -n "${OPENAI_API_KEY:-}" ] && has_key=true ;;
-                        gemini) [ -n "${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}" ] && has_key=true ;;
                         cline|aider) has_key=true ;;  # Key check varies
                     esac
 
@@ -11452,7 +11404,7 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
                 echo "  (no args)        Show failover status and health"
                 echo "  --enable         Enable auto-failover"
                 echo "  --disable        Disable auto-failover"
-                echo "  --chain X,Y,Z    Set failover chain (e.g., claude,codex,gemini)"
+                echo "  --chain X,Y,Z    Set failover chain (e.g., claude,codex,cline)"
                 echo "  --test           Test all providers in chain"
                 echo "  --reset          Reset failover state to defaults"
                 echo "  --help, -h       Show this help"
@@ -11816,7 +11768,7 @@ if integration_count > 3 or complexity in ('complex', 'enterprise'):
     recommended_provider = 'Claude'
     provider_reason = 'Full feature support needed (subagents, parallel, MCP)'
 elif complexity == 'simple' and endpoint_count == 0:
-    recommended_provider = 'Any (Claude/Codex/Gemini)'
+    recommended_provider = 'Any (Claude/Codex/Cline)'
     provider_reason = 'Simple project works with all providers'
 else:
     recommended_provider = 'Claude'
@@ -12083,6 +12035,14 @@ maybe_show_auto_plan() {
 
 # Main command dispatcher
 main() {
+    # v7.5.18: early guard -- LOKI_PROVIDER=gemini is no longer supported.
+    if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
+        echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}" >&2
+        echo "Active providers: claude, codex, cline, aider" >&2
+        echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
+        exit 1
+    fi
+
     if [ $# -eq 0 ]; then
         show_help
         exit 0
@@ -17871,9 +17831,6 @@ USER TASK: ${prompt}"
                 codex)
                     codex exec --full-auto "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
-                gemini)
-                    gemini --approval-mode=yolo "$full_prompt" 2>&1 || agent_exit=$?
-                    ;;
                 cline)
                     cline -y "$full_prompt" 2>&1 || agent_exit=$?
                     ;;
@@ -17982,7 +17939,6 @@ $diff"
             case "$provider" in
                 claude)  claude -p "$review_prompt" 2>&1 ;;
                 codex)   codex exec --full-auto "$review_prompt" 2>&1 ;;
-                gemini)  gemini --approval-mode=yolo "$review_prompt" 2>&1 ;;
                 cline)   cline -y "$review_prompt" 2>&1 ;;
                 *)       echo -e "${RED}Unknown provider: $provider${NC}"; return 1 ;;
             esac
@@ -19574,9 +19530,6 @@ _docs_invoke_provider() {
             ;;
         codex)
             result=$($t_prefix codex exec --full-auto "$prompt" 2>/dev/null) || exit_code=$?
-            ;;
-        gemini)
-            result=$($t_prefix gemini --approval-mode=yolo "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         cline)
             result=$($t_prefix cline -y "$prompt" 2>/dev/null) || exit_code=$?
