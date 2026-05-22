@@ -1,8 +1,8 @@
 # Multi-Provider Architecture Reference
 
-> **Version:** 5.25.0 | **Status:** Production | **Last Updated:** 2026-02-06
+> **Version:** 5.25.0 | **Status:** Production | **Last Updated:** 2026-05-22
 
-Loki Mode supports three AI CLI providers with a unified abstraction layer. This document provides detailed technical reference for the multi-provider system.
+Loki Mode supports four AI CLI providers with a unified abstraction layer. This document provides detailed technical reference for the multi-provider system.
 
 ---
 
@@ -12,7 +12,8 @@ Loki Mode supports three AI CLI providers with a unified abstraction layer. This
 |----------|-----|--------|----------|
 | **Claude Code** | `claude` | Full | Subagents, Parallel, Task Tool, MCP |
 | **OpenAI Codex** | `codex` | Degraded | Sequential, Effort Parameter, MCP (basic) |
-| **Google Gemini** | `gemini` | Degraded | Sequential, Thinking Level |
+| **Cline CLI** | `cline` | Near-Full (Tier 2) | Subagents, MCP, 12+ providers |
+| **Aider** | `aider` | Degraded | Sequential, 18+ providers |
 
 ---
 
@@ -24,7 +25,8 @@ Located in `providers/` directory:
 providers/
   claude.sh   # Full-featured provider
   codex.sh    # Degraded mode, effort parameter
-  gemini.sh   # Degraded mode, thinking_level parameter
+  cline.sh    # Near-full mode, 12+ providers (Tier 2)
+  aider.sh    # Degraded mode, 18+ providers
   loader.sh   # Provider loader utility
 ```
 
@@ -71,7 +73,7 @@ PROVIDER_MAX_OUTPUT_TOKENS=128000
 
 #### Degraded Mode
 ```bash
-PROVIDER_DEGRADED=false        # true for Codex/Gemini
+PROVIDER_DEGRADED=false        # true for Codex/Aider
 PROVIDER_DEGRADED_REASONS=()   # Array of limitation descriptions
 ```
 
@@ -81,21 +83,21 @@ PROVIDER_DEGRADED_REASONS=()   # Array of limitation descriptions
 
 Loki Mode uses abstract tiers that map to provider-specific configurations:
 
-| Abstract Tier | Purpose | Claude | Codex | Gemini |
-|---------------|---------|--------|-------|--------|
-| `planning` | Architecture, PRD analysis | opus | xhigh effort | high thinking |
-| `development` | Implementation, tests | sonnet | high effort | medium thinking |
-| `fast` | Simple tasks, docs | haiku | low effort | low thinking |
+| Abstract Tier | Purpose | Claude | Codex |
+|---------------|---------|--------|-------|
+| `planning` | Architecture, PRD analysis | opus | xhigh effort |
+| `development` | Implementation, tests | sonnet | high effort |
+| `fast` | Simple tasks, docs | haiku | low effort |
 
 ### Tier Selection by RARV Phase
 
 ```
 RARV Phase    -> Abstract Tier -> Provider-Specific
-─────────────────────────────────────────────────────
-REASON        -> planning      -> opus/xhigh/high
-ACT           -> development   -> sonnet/high/medium
-REFLECT       -> development   -> sonnet/high/medium
-VERIFY        -> fast          -> haiku/low/low
+-----------------------------------------------------
+REASON        -> planning      -> opus/xhigh
+ACT           -> development   -> sonnet/high
+REFLECT       -> development   -> sonnet/high
+VERIFY        -> fast          -> haiku/low
 ```
 
 ---
@@ -112,7 +114,7 @@ load_provider "claude"  # Returns 0 on success, 1 on failure
 validate_provider "codex"  # Returns 0 if valid
 
 # Check if provider CLI is installed
-check_provider_installed "gemini"  # Returns 0 if installed
+check_provider_installed "cline"  # Returns 0 if installed
 
 # Auto-detect first available provider
 auto_detect_provider  # Echoes provider name or returns 1
@@ -169,13 +171,12 @@ provider_get_tier_param "development"  # Returns: opus/sonnet/haiku or xhigh/hig
 
 ## Degraded Mode Behavior
 
-When running with Codex or Gemini:
+When running with Codex or Aider:
 
 1. **RARV Cycle executes sequentially** - No parallel agents
 2. **Task tool calls are skipped** - Main thread handles all work
 3. **Model tier maps to provider configuration:**
    - Codex: `CODEX_MODEL_REASONING_EFFORT` environment variable
-   - Gemini: `~/.gemini/settings.json` thinkingMode
 4. **Quality gates run sequentially** - No 3-reviewer parallel review
 5. **Git worktree parallelism disabled** - `--parallel` flag has no effect
 
@@ -249,7 +250,7 @@ calculate_rate_limit_backoff  # Uses PROVIDER_RATE_LIMIT_RPM
 ```bash
 # Via CLI flag
 ./autonomy/run.sh --provider codex ./prd.md
-loki start --provider gemini ./prd.md
+loki start --provider cline ./prd.md
 
 # Via environment variable
 export LOKI_PROVIDER=codex
@@ -264,15 +265,16 @@ export LOKI_PROVIDER=codex
 $ loki start --help
 
 Provider Options:
-  --provider PROVIDER    Select AI provider (claude, codex, gemini)
+  --provider PROVIDER    Select AI provider (claude, codex, cline, aider)
                          Default: claude (auto-detect if not installed)
 
 Provider Capability Matrix:
   Provider    Features   Parallel   Task Tool   MCP
-  ──────────────────────────────────────────────────
+  --------------------------------------------------
   claude      Full       Yes (10)   Yes         Yes
   codex       Degraded   No         No          Basic
-  gemini      Degraded   No         No          No
+  cline       Near-Full  No         Yes         Yes
+  aider       Degraded   No         No          No
 ```
 
 ---
@@ -285,19 +287,8 @@ All CLI flags have been verified against actual CLI help output:
 |----------|------|------------------|-------|
 | Claude | `--dangerously-skip-permissions` | v2.1.34 | Autonomous mode |
 | Codex | `--full-auto` | v0.98.0 | Recommended; legacy: `exec --dangerously-bypass-approvals-and-sandbox` |
-| Gemini | `--approval-mode=yolo` | v0.27.3 | `-p` flag is DEPRECATED |
-
-### Gemini Note
-
-The `-p` prompt flag is deprecated in Gemini CLI v0.27.3. Loki Mode uses positional prompts instead:
-
-```bash
-# Correct (v5.1.0+)
-gemini --approval-mode=yolo "$prompt"
-
-# Deprecated (do not use)
-gemini --yolo -p "$prompt"
-```
+| Cline | `--auto-approve` | latest | Autonomous mode |
+| Aider | `--yes-always` | latest | Autonomous mode |
 
 ---
 

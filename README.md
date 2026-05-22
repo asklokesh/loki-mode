@@ -27,7 +27,7 @@
 - **Truly autonomous** -- Describe what you want, walk away, come back to working code with tests
 - **Production quality built in** -- 11 quality gates (`skills/quality-gates.md`), blind 3-reviewer code review (`run.sh:run_code_review()`), anti-sycophancy checks
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
-- **5 AI providers** -- Claude, Codex, Gemini, Cline, Aider with automatic failover (`loki-ts/src/runner/providers.ts`)
+- **4 AI providers** -- Claude, Codex, Cline, Aider with automatic failover (`loki-ts/src/runner/providers.ts`)
 - **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
 - **Memory system** -- Episodic/semantic/procedural with vector search (v5.15.0, see `memory/engine.py`)
 - **MCP server** -- 15 tools including ChromaDB code search (`mcp/server.py`)
@@ -308,7 +308,6 @@ Loki Mode is the only platform that is fully self-hosted, open source, and inclu
 |----------|:-:|:-:|---------|
 | **Claude Code** | `--dangerously-skip-permissions` | Yes (10+) | `npm i -g @anthropic-ai/claude-code` |
 | **Codex CLI** | `--full-auto` | Sequential | `npm i -g @openai/codex` |
-| **Gemini CLI** | `--approval-mode=yolo` | Sequential | `npm i -g @google/gemini-cli` |
 | **Cline CLI** | `--auto-approve` | Sequential | `npm i -g @anthropic-ai/cline` |
 | **Aider** | `--yes-always` | Sequential | `pip install aider-chat` |
 

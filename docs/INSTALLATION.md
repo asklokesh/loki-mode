@@ -32,7 +32,7 @@ setting any flag to `0`.
 
 ### Earlier highlights still in scope
 - Bash-to-Bun runtime migration in progress (see `UPGRADING.md`)
-- 5-provider support: Claude (full), Codex, Gemini, Cline, Aider
+- 4-provider support: Claude (full), Codex, Cline, Aider
 - Memory system (episodic / semantic / procedural)
 - ChromaDB semantic code search via MCP
 
@@ -65,7 +65,7 @@ npm install -g loki-mode
 
 Installs the `loki` CLI. As of v7.4.12 there is no postinstall step; run
 `loki setup-skill` once after install to create the per-provider skill
-symlinks (Claude Code, Codex CLI, Gemini CLI). The `loki` shim auto-routes
+symlinks (Claude Code, Codex CLI). The `loki` shim auto-routes
 read-only commands to the Bun runtime when `bun` is on `PATH` and falls
 back to the bash CLI otherwise.
 
@@ -74,7 +74,7 @@ faster routed commands and forward-compat with v8.0.0.
 
 **What it does:**
 - Installs the `loki` CLI binary to your PATH (`bin/loki` shim)
-- Subsequent `loki setup-skill` creates symlinks at `~/.claude/skills/loki-mode`, `~/.codex/skills/loki-mode`, `~/.gemini/skills/loki-mode`
+- Subsequent `loki setup-skill` creates symlinks at `~/.claude/skills/loki-mode`, `~/.codex/skills/loki-mode`
 
 **Opt out of anonymous install telemetry:**
 ```bash
@@ -136,7 +136,7 @@ GitHub issue URL, or a YAML feature description.
 # CLI mode (works with any provider) -- spec as markdown PRD
 loki start ./spec.md
 loki start ./spec.md --provider codex
-loki start ./spec.md --provider gemini
+loki start ./spec.md --provider cline
 
 # Spec as a GitHub issue
 loki start --github-issue https://github.com/owner/repo/issues/42
@@ -247,7 +247,7 @@ The `HUMAN_INPUT.md` file has security controls:
 
 ## Multi-Provider Support
 
-Loki Mode supports five providers across three tiers. Pick by capability + cost.
+Loki Mode supports four providers across three tiers. Pick by capability + cost.
 
 ### Supported Providers
 
@@ -256,7 +256,6 @@ Loki Mode supports five providers across three tiers. Pick by capability + cost.
 | `claude` | Tier 1 (full) | Default. All features incl. Task subagents, MCP, council. |
 | `cline`  | Tier 2 | Full feature set; small models (<13B) may fail tool-use. |
 | `codex`  | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
-| `gemini` | Tier 3 (degraded) | Sequential only, no Task tool; uses `--approval-mode=yolo`. |
 | `aider`  | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
 
 ### Configuration
@@ -272,8 +271,8 @@ export LOKI_PROVIDER=claude
 # Use OpenAI Codex
 export LOKI_PROVIDER=codex
 
-# Use Google Gemini
-export LOKI_PROVIDER=gemini
+# Use Cline
+export LOKI_PROVIDER=cline
 ```
 
 #### CLI Flag
@@ -287,8 +286,8 @@ loki start ./my-spec.md --provider claude
 # Use OpenAI Codex
 loki start ./my-spec.md --provider codex
 
-# Use Google Gemini
-loki start ./my-spec.md --provider gemini
+# Use Cline
+loki start ./my-spec.md --provider cline
 ```
 
 #### Docker
@@ -301,15 +300,15 @@ docker run -e LOKI_PROVIDER=codex \
   -v $(pwd):/workspace -w /workspace \
   asklokesh/loki-mode:latest start ./my-spec.md
 
-# Use Gemini with Docker
-docker run -e LOKI_PROVIDER=gemini \
+# Use Cline with Docker
+docker run -e LOKI_PROVIDER=cline \
   -v $(pwd):/workspace -w /workspace \
   asklokesh/loki-mode:latest start ./my-spec.md
 ```
 
 ### Degraded Mode
 
-When using `codex` or `gemini` providers, Loki Mode operates in **degraded mode**:
+When using `codex`, `cline`, or `aider` providers, Loki Mode operates in **degraded mode**:
 
 - Core autonomous workflow functions normally
 - Some advanced features may be unavailable or behave differently
@@ -637,7 +636,7 @@ The completion scripts support:
 
 * **Smart Context**
 
-  * `loki start --provider <TAB>` shows only installed providers (`claude`, `codex`, `gemini`).
+  * `loki start --provider <TAB>` shows only installed providers (`claude`, `codex`, `cline`, `aider`).
   * `loki start <TAB>` defaults to file completion for spec files (PRD templates, YAML).
 
 * **Nested Commands**

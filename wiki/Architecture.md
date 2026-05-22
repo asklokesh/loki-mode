@@ -484,7 +484,7 @@ Audit: ~/.loki/dashboard/audit/*.jsonl
          |                       |                       |
          v                       v                       v
 +--------+--------+    +--------+--------+    +--------+--------+
-|     CLAUDE      |    |     CODEX       |    |     GEMINI      |
+|     CLAUDE      |    |     CODEX       |    |  CLINE/AIDER    |
 | Full features   |    | Degraded mode   |    | Degraded mode   |
 | - Task tool     |    | - Sequential    |    | - Sequential    |
 | - Parallel      |    | - No subagents  |    | - No subagents  |

@@ -14,13 +14,14 @@ Named after the Norse god of mischief, Loki Mode operates autonomously and can s
 
 ### Is Loki Mode free?
 
-Yes, Loki Mode is open source under the MIT license. However, you need API access to Claude, Codex, or Gemini (which have their own pricing).
+Yes, Loki Mode is open source under the MIT license. However, you need API access to Claude or Codex (which have their own pricing).
 
 ### What AI providers are supported?
 
 - **Claude Code** (Full features - recommended)
 - **OpenAI Codex CLI** (Degraded mode)
-- **Google Gemini CLI** (Degraded mode)
+- **Cline CLI** (Degraded mode)
+- **Aider** (Degraded mode)
 
 ---
 
@@ -180,14 +181,14 @@ export LOKI_ENTERPRISE_AUDIT=true
 - Parallel execution needed
 - Best quality results
 
-**Codex/Gemini** for:
+**Codex/Cline/Aider** for:
 - Cost optimization
 - Simple projects
 - Provider preference
 
 ### What's "degraded mode"?
 
-When using Codex or Gemini, some features aren't available:
+When using Codex, Cline, or Aider, some features aren't available:
 - No parallel agents (sequential only)
 - No Task tool (subagents)
 - No MCP integration

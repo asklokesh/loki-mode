@@ -16,7 +16,8 @@ const MODEL_TO_PROVIDER = [
   ['claude-opus', 'claude'], ['claude-sonnet', 'claude'], ['claude-haiku', 'claude'],
   ['opus', 'claude'], ['sonnet', 'claude'], ['haiku', 'claude'], ['claude', 'claude'],
   ['gpt-4', 'codex'], ['gpt-5', 'codex'], ['gpt', 'codex'], ['codex', 'codex'], ['o1', 'codex'], ['o3', 'codex'],
-  ['gemini', 'gemini'],
+  ['cline', 'cline'],
+  ['aider', 'aider'],
 ];
 
 /**
@@ -429,7 +430,8 @@ export class LokiAnalytics extends LokiElement {
     const providerConfig = {
       claude: { label: 'Claude', color: 'var(--loki-accent)' },
       codex: { label: 'Codex', color: 'var(--loki-success)' },
-      gemini: { label: 'Gemini', color: 'var(--loki-info)' },
+      cline: { label: 'Cline', color: 'var(--loki-info)' },
+      aider: { label: 'Aider', color: 'var(--loki-blue)' },
       unknown: { label: 'Other', color: 'var(--loki-text-muted)' },
     };
 

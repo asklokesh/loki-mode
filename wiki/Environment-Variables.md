@@ -8,7 +8,7 @@ Complete reference for all Loki Mode environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, gemini |
+| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, cline, aider |
 | `LOKI_MAX_RETRIES` | `50` | Maximum retry attempts |
 | `LOKI_BASE_WAIT` | `60` | Base wait time (seconds) |
 | `LOKI_MAX_WAIT` | `3600` | Maximum wait time (seconds) |
@@ -89,7 +89,7 @@ OIDC is enabled when both `LOKI_OIDC_ISSUER` and `LOKI_OIDC_CLIENT_ID` are set. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_BRANCH_PROTECTION` | `false` | Auto-create feature branches for agent sessions |
-| `LOKI_GEMINI_RPM` | `15` | Gemini provider rate limit (requests per minute) |
+| `LOKI_CODEX_RPM` | `15` | Codex provider rate limit (requests per minute) |
 
 ---
 

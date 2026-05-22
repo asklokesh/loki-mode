@@ -80,9 +80,6 @@ claude login
 
 # Codex
 codex auth
-
-# Gemini
-gemini auth
 ```
 
 Credentials are managed by the provider CLIs, not Loki Mode.

@@ -21,9 +21,6 @@ const DEFAULT_PRICING = {
   haiku:  { input: 1.00,   output: 5.00,   label: 'Haiku 4.5',      provider: 'claude' },
   // OpenAI Codex
   'gpt-5.3-codex': { input: 1.50, output: 12.00, label: 'GPT-5.3 Codex', provider: 'codex' },
-  // Google Gemini
-  'gemini-3-pro':  { input: 1.25, output: 10.00, label: 'Gemini 3 Pro',   provider: 'gemini' },
-  'gemini-3-flash': { input: 0.10, output: 0.40, label: 'Gemini 3 Flash', provider: 'gemini' },
 };
 
 /**
@@ -322,7 +319,6 @@ export class LokiCostDashboard extends LokiElement {
     if (lower.includes('sonnet')) return 'sonnet';
     if (lower.includes('haiku')) return 'haiku';
     if (model.provider === 'codex' || lower.includes('gpt') || lower.includes('codex')) return 'codex';
-    if (model.provider === 'gemini' || lower.includes('gemini')) return 'gemini';
     return '';
   }
 
@@ -579,7 +575,6 @@ export class LokiCostDashboard extends LokiElement {
         .pricing-model.sonnet { color: var(--loki-sonnet); }
         .pricing-model.haiku { color: var(--loki-haiku); }
         .pricing-model.codex { color: var(--loki-blue); }
-        .pricing-model.gemini { color: var(--loki-green); }
 
         .pricing-meta {
           font-size: 10px;

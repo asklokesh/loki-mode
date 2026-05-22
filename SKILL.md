@@ -9,7 +9,7 @@ description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Tak
 
 **Spec in, product out.** A "spec" is whatever describes the work: a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket -- a PRD is one form of spec.
 
-**Multi-provider (stable since v5.0.0):** Claude/Codex/Gemini/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. See `skills/providers.md`. **Current track (v7.5.x):** Phase 1 RARV-C closure -- real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`, dead code cleanup.
+**Multi-provider (stable since v5.0.0):** Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. See `skills/providers.md`. **Current track (v7.5.x):** Phase 1 RARV-C closure -- real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`, dead code cleanup.
 
 **Runtime migration in progress:** A bash-to-Bun migration is underway on the `feat/bun-migration` branch. The first phase (shipped in v7.3.0) routes a small set of read-only commands -- `version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index` -- through a Bun runtime via `bin/loki`. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback is available with `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md` for the full plan.
 
@@ -93,17 +93,17 @@ These rules guide autonomous operation. Test results and code quality always tak
 
 **Default since v5.3.0 (reaffirmed in v7.5.13):** Haiku disabled for quality. Use `--allow-haiku` or `LOKI_ALLOW_HAIKU=true` to enable.
 
-| Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) | Gemini |
-|-----------|------|------------------|------------------------|------------------|--------|
-| Spec analysis, architecture, system design | **planning** | opus | opus | effort=xhigh | thinking=high |
-| Feature implementation, complex bugs | **development** | opus | sonnet | effort=high | thinking=medium |
-| Code review (planned: 3 parallel reviewers) | **development** | opus | sonnet | effort=high | thinking=medium |
-| Integration tests, E2E, deployment | **development** | opus | sonnet | effort=high | thinking=medium |
-| Unit tests, linting, docs, simple fixes | **fast** | sonnet | haiku | effort=low | thinking=low |
+| Task Type | Tier | Claude (default) | Claude (--allow-haiku) | Codex (GPT-5.3) |
+|-----------|------|------------------|------------------------|------------------|
+| Spec analysis, architecture, system design | **planning** | opus | opus | effort=xhigh |
+| Feature implementation, complex bugs | **development** | opus | sonnet | effort=high |
+| Code review (planned: 3 parallel reviewers) | **development** | opus | sonnet | effort=high |
+| Integration tests, E2E, deployment | **development** | opus | sonnet | effort=high |
+| Unit tests, linting, docs, simple fixes | **fast** | sonnet | haiku | effort=low |
 
 **Parallelization rule (Claude only):** Launch up to 10 agents simultaneously for independent tasks.
 
-**Degraded mode (Codex/Gemini/Cline/Aider):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
+**Degraded mode (Codex/Cline/Aider):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
 
 **Git worktree parallelism:** For true parallel feature development, use `--parallel` flag with run.sh. See `skills/parallel-workflows.md`.
 
@@ -210,7 +210,6 @@ loki start --issue 123                       # Explicit issue mode (overrides de
 # With provider selection (supports .md and .json PRDs)
 loki start --provider claude ./prd.md        # Default, full features
 loki start --provider codex ./prd.json       # GPT-5.3 Codex, degraded mode
-loki start --provider gemini ./prd.md        # Gemini 3 Pro, degraded mode
 loki start --provider cline ./prd.md         # Cline CLI, degraded mode
 loki start --provider aider ./prd.md         # Aider (18+ providers), degraded mode
 
@@ -225,7 +224,6 @@ loki start 123 --ship                        # Issue -> PR -> auto-merge
 **Provider capabilities:**
 - **Claude**: Opus 4.6, 1M context (beta), 128K output, adaptive thinking, agent teams, full features (Task tool, parallel agents, MCP)
 - **Codex**: GPT-5.3, 400K context, 128K output, MCP support, --full-auto mode, degraded (sequential only, no Task tool)
-- **Gemini**: Degraded mode (sequential only, no Task tool, 1M context)
 - **Cline**: Multi-provider CLI, degraded mode (sequential only, no Task tool)
 - **Aider**: 18+ provider backends, degraded mode (sequential only, no Task tool)
 
@@ -350,7 +348,7 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 | Feature | Added | Notes |
 |---------|-------|-------|
-| Multi-provider support (5 providers) | v5.0.0 | claude, codex, gemini, cline, aider -- see `providers/` |
+| Multi-provider support (4 providers) | v5.0.0 | claude, codex, cline, aider -- see `providers/` |
 | CONTINUITY.md working memory | v5.35.0 | Auto-managed by run.sh, updated each iteration |
 | Quality gates 3-reviewer system | v5.35.0 | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Memory System (episodic/semantic/procedural) | v5.15.0 | Full implementation in `memory/` |

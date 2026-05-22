@@ -40,8 +40,6 @@ iptables -A DOCKER-USER -p tcp --dport 53 -j ACCEPT
 iptables -A DOCKER-USER -d api.anthropic.com -p tcp --dport 443 -j ACCEPT
 # OpenAI (Codex)
 iptables -A DOCKER-USER -d api.openai.com -p tcp --dport 443 -j ACCEPT
-# Google (Gemini)
-iptables -A DOCKER-USER -d generativelanguage.googleapis.com -p tcp --dport 443 -j ACCEPT
 
 # Drop all other outbound traffic from the isolated network
 iptables -A DOCKER-USER -s 172.28.0.0/16 -j DROP

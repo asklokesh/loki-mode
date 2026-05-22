@@ -120,7 +120,7 @@ loki logs --follow  # Monitor progress
 
 ```bash
 loki start my-app.md --provider codex
-loki start my-app.md --provider gemini
+loki start my-app.md --provider cline
 ```
 
 ### Enable Parallel Mode

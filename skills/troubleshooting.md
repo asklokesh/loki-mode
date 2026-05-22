@@ -229,7 +229,7 @@ The circuit breaker prevents cascading failures by temporarily disabling operati
     "cooldown_until": "2025-01-20T10:40:42Z",
     "failure_window_start": "2025-01-20T10:34:50Z"
   },
-  "api/gemini": {
+  "api/codex": {
     "state": "HALF_OPEN",
     "failure_count": 0,
     "success_count": 1,

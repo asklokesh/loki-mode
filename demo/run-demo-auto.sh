@@ -64,7 +64,7 @@ clear
 # ==============================================================
 banner "LOKI MODE v5.42"
 echo -e "${BOLD}Multi-Agent Autonomous System${NC}"
-echo -e "${DIM}Claude Code | OpenAI Codex CLI | Google Gemini CLI${NC}"
+echo -e "${DIM}Claude Code | OpenAI Codex CLI | Cline | Aider${NC}"
 echo ""
 echo "PRD to Production -- Zero Human Intervention"
 echo ""
@@ -137,7 +137,7 @@ echo ""
 sleep 1.5
 
 step "Provider: Claude Code (full features)"
-dim "  Alternatives: --provider codex | --provider gemini"
+dim "  Alternatives: --provider codex | --provider cline | --provider aider"
 echo ""
 sleep 1
 
@@ -438,17 +438,17 @@ sleep 1.5
 banner "MULTI-PROVIDER SUPPORT"
 echo ""
 echo "  +--------------------+----------+-----------+-----------+"
-echo "  | Feature            | Claude   | Codex     | Gemini    |"
+echo "  | Feature            | Claude   | Codex     | Cline     |"
 echo "  +--------------------+----------+-----------+-----------+"
 echo "  | Full features      | Yes      | Degraded  | Degraded  |"
 echo "  | Parallel agents    | 10+      | No        | No        |"
 echo "  | Task tool          | Yes      | No        | No        |"
 echo "  | MCP integration    | Yes      | No        | No        |"
-echo "  | Context window     | 200K     | 128K      | 1M        |"
+echo "  | Context window     | 200K     | 128K      | varies    |"
 echo "  +--------------------+----------+-----------+-----------+"
 echo ""
 echo "  loki start ./prd.md --provider codex"
-echo "  loki start ./prd.md --provider gemini"
+echo "  loki start ./prd.md --provider cline"
 echo "  LOKI_PROVIDER=codex loki start ./prd.md"
 echo ""
 sleep 1.5

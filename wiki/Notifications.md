@@ -58,7 +58,7 @@ The Notifications section in the dashboard (keyboard shortcut: Cmd+0) has two ta
 
 ### Provider Support
 
-Notification triggers work with all providers (Claude, Codex, Gemini). The trigger evaluation reads from `.loki/` flat files which are provider-agnostic.
+Notification triggers work with all providers (Claude, Codex, Cline, Aider). The trigger evaluation reads from `.loki/` flat files which are provider-agnostic.
 
 ---
 
