@@ -159,12 +159,70 @@ print(json.dumps(d, sort_keys=True, separators=(',', ':')))
 " 2>/dev/null)
 
 if [ -n "$bash_canon" ] && [ "$bash_canon" = "$bun_canon" ]; then
-    ok "parity canonical JSON: bash and Bun bundles byte-identical"
+    ok "parity canonical JSON (no LSP): bash and Bun bundles byte-identical"
 else
-    bad "parity canonical JSON mismatch:
+    bad "parity canonical JSON (no LSP) mismatch:
   bash=$bash_canon
   bun =$bun_canon"
 fi
+
+# ---------- Case C: WITH-LSP parity (Phase G v7.5.24) ----------
+# Per Sonnet reviewer council finding on commit b1608d44: the prior parity
+# test only covered the no-LSP code path. This case exercises the WITH-LSP
+# branch in BOTH routes by injecting a fake `typescript-language-server`
+# binary into a controlled PATH dir and re-running both helpers from clean
+# TARGET_DIRs. The expected bundle gains a single `lsp-proxy` server entry
+# alongside `loki-mode`; bash and Bun must still emit byte-identical bundles.
+TMP_BASH_LSP=$(mktemp -d -t loki-parity-bash-lsp-XXXX)
+TMP_BUN_LSP=$(mktemp -d -t loki-parity-bun-lsp-XXXX)
+TMP_BIN=$(mktemp -d -t loki-parity-bin-XXXX)
+printf '#!/bin/sh\nexit 0\n' > "$TMP_BIN/typescript-language-server"
+chmod +x "$TMP_BIN/typescript-language-server"
+# Stub PATH so both routes see only our fake LSP binary. system `python3`
+# still needs to resolve, so include the dirname of python3 too.
+PY3_DIR=$(dirname "$(command -v python3)")
+# Include core util locations so bash helpers (mkdir, cmp, mv, rm, basename,
+# dirname, command, tr) and bun resolve correctly under the stubbed PATH.
+BUN_DIR=$(dirname "$(command -v bun)")
+LSP_PATH="$TMP_BIN:$PY3_DIR:$BUN_DIR:/usr/bin:/bin"
+
+# Bash route: TARGET_DIR fresh, PATH stubbed.
+PATH="$LSP_PATH" HOME="$TMP_HOME" TARGET_DIR="$TMP_BASH_LSP" loki_mcp_config_path >/dev/null
+
+# Bun route: same PATH stub, fresh TARGET_DIR.
+PATH="$LSP_PATH" HOME="$TMP_HOME" bun run --cwd "$LOKI_TS_DIR" - <<BUNEOF >/dev/null 2>&1
+import { mcpConfigPath } from "./src/providers/mcp_config.ts";
+mcpConfigPath("$TMP_BUN_LSP");
+BUNEOF
+
+bash_canon_lsp=$(_P="$TMP_BASH_LSP/.loki/mcp-config.json" python3 -c "
+import json, os
+p = os.environ['_P']
+with open(p) as f:
+    d = json.load(f)
+print(json.dumps(d, sort_keys=True, separators=(',', ':')))
+" 2>/dev/null)
+
+bun_canon_lsp=$(_P="$TMP_BUN_LSP/.loki/mcp-config.json" python3 -c "
+import json, os
+p = os.environ['_P']
+with open(p) as f:
+    d = json.load(f)
+print(json.dumps(d, sort_keys=True, separators=(',', ':')))
+" 2>/dev/null)
+
+# Both bundles must (a) be byte-identical AND (b) contain lsp-proxy.
+if [ -n "$bash_canon_lsp" ] \
+   && [ "$bash_canon_lsp" = "$bun_canon_lsp" ] \
+   && printf '%s' "$bash_canon_lsp" | grep -q '"lsp-proxy"'; then
+    ok "parity canonical JSON (WITH LSP): bash and Bun bundles byte-identical and contain lsp-proxy"
+else
+    bad "parity canonical JSON (WITH LSP) mismatch or missing lsp-proxy:
+  bash=$bash_canon_lsp
+  bun =$bun_canon_lsp"
+fi
+
+rm -rf "$TMP_BASH_LSP" "$TMP_BUN_LSP" "$TMP_BIN" 2>/dev/null
 
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
