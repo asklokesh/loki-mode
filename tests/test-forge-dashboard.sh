@@ -78,7 +78,21 @@ else
     fail "health endpoint missing"
 fi
 
-# 9. Migration apply emits a council review record under .loki/quality/forge-migrations/
+# 10. X-24: payments webhook endpoint declared
+if grep -q '"/forge/payments/{provider}/webhook"' "$ROOT/dashboard/forge_router.py"; then
+    pass "X-24: /forge/payments/{provider}/webhook declared"
+else
+    fail "payments webhook endpoint missing"
+fi
+
+# 11. X-25/X-30: OAuth callback endpoint declared
+if grep -q '"/forge/auth/callback/{provider}"' "$ROOT/dashboard/forge_router.py"; then
+    pass "X-25: /forge/auth/callback/{provider} declared"
+else
+    fail "OAuth callback endpoint missing"
+fi
+
+# 12. Migration apply emits a council review record under .loki/quality/forge-migrations/
 if run_py "
 import os, tempfile
 from forge.services.database import open_engine, migrate_apply

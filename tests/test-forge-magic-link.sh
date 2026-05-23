@@ -115,6 +115,38 @@ with tempfile.TemporaryDirectory() as d:
     assert magic_link_redeem(d, 123)['ok'] is False  # type: ignore
 print('OK')" | grep -q '^OK$'; then pass "malformed token rejected"; else fail "malformed accepted"; fi
 
+# 10. X-32: rate-limit per email (5/hour default)
+if run_py "
+import tempfile
+from forge.services.auth import magic_link_issue
+from forge.services.auth.magic_link import MagicLinkError
+from forge.services.gateway.rate_limit import reset as _rlreset
+_rlreset()
+with tempfile.TemporaryDirectory() as d:
+    # Burn the 5 mints/hour budget.
+    for _ in range(5):
+        magic_link_issue(d, 'u@x.com', rate_limit_per_hour=5)
+    try:
+        magic_link_issue(d, 'u@x.com', rate_limit_per_hour=5)
+    except MagicLinkError as e:
+        assert 'rate limit' in str(e), str(e)
+        print('OK')
+        raise SystemExit
+    raise AssertionError('rate limit not enforced')
+" | grep -q '^OK$'; then pass "X-32: magic-link rate-limit per email"; else fail "rate-limit broken"; fi
+
+# 11. X-32: separate emails do not share budget
+if run_py "
+import tempfile
+from forge.services.auth import magic_link_issue
+from forge.services.gateway.rate_limit import reset as _rlreset
+_rlreset()
+with tempfile.TemporaryDirectory() as d:
+    for _ in range(5): magic_link_issue(d, 'a@x.com', rate_limit_per_hour=5)
+    # b@ should still be allowed.
+    magic_link_issue(d, 'b@x.com', rate_limit_per_hour=5)
+print('OK')" | grep -q '^OK$'; then pass "X-32: separate emails separate buckets"; else fail "buckets shared"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

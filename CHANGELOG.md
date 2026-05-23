@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: webhook receivers, OAuth callback handler, magic-link rate limit
+
+X-24 POST /forge/payments/{provider}/webhook
+     Receives Stripe / Lemon Squeezy / Paddle webhooks, verifies the
+     signature with the provider-specific verifier from F-3/F-4, then
+     persists via record_webhook_event(). When a forge function named
+     <provider>_webhook is deployed we invoke it (fire-and-forget) so
+     the user app can act on subscription updates etc. inline.
+
+X-25 GET /forge/auth/callback/{provider}
+     OAuth callback. Logs (code, state, params) to
+     .loki/forge/auth/callbacks/<provider>-<state>.json (0600) and
+     delegates the actual token exchange to a forge function named
+     `oauth_exchange`. Loki itself NEVER calls the provider's token
+     endpoint - client_secret stays in the vault and only the forge
+     function holds it at runtime.
+
+X-32 Magic-link rate limiting per email (5 mints/hour default).
+     Reuses the existing forge.services.gateway.rate_limit token
+     bucket. New rate_limit_per_hour kwarg on magic_link.issue().
+     Degrades open if the rate-limit subsystem is unavailable.
+
+Tests: 2 new dashboard route assertions, 2 new magic-link rate-limit
+assertions. Project total continues to grow with no regressions.
+
 ### Follow-ups: email send adapters + backup/restore + health endpoint
 
 X-23 forge.services.email: Resend / SendGrid / Postmark adapters that

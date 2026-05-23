@@ -172,11 +172,8 @@ Last updated: 2026-05-18
 - [ ] X-23 Email send adapters (Resend/SendGrid/Postmark) so magic-link
       flow has a default email transport; agent currently has to deploy
       a forge function that calls the upstream API
-- [ ] X-24 Webhook receiver routes for Stripe/Paddle/LemonSqueezy under
-      the dashboard router; agent currently sees signature verifiers but
-      no HTTP receiver
-- [ ] X-25 OAuth callback handler routes per provider so the agent's
-      app can sign users in without manually wiring fetch + token-exchange
+- [x] X-24 Payments webhook receivers /forge/payments/<provider>/webhook
+- [x] X-25 OAuth callback handler /forge/auth/callback/<provider>
 - [x] X-26 Forge backup + restore (path-traversal-safe; master key excluded by default)
 - [ ] X-27 Schema diff visualization for the council review record
       (currently raw SQL; rendering needs a diff-friendly representation)
@@ -186,14 +183,10 @@ Last updated: 2026-05-18
 
 ## More tasks discovered
 
-- [ ] X-30 OAuth callback router wiring (X-25's other half - per-
-      provider /forge/auth/callback/<name> handlers that complete
-      the PKCE token exchange + issue a forge session JWT)
-- [ ] X-31 Webhook receiver routes /forge/payments/<provider>/webhook
-      that verify_webhook_signature() with the provider's specific
-      shape + persist via record_webhook_event()
-- [ ] X-32 Magic-link rate limiting per-email (use the existing
-      gateway/rate_limit.py token bucket; default 5/hour)
+- [x] X-30 OAuth callback router wiring (merged into X-25)
+- [x] X-31 Webhook receiver routes (merged into X-24)
+- [x] X-32 Magic-link rate limiting per-email (5/hour default, gateway
+      token-bucket reused)
 - [ ] X-33 Email-template registry so each transactional email
       (magic link, password reset, payment-failed, etc.) has a
       shared shape; per-product overrides

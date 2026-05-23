@@ -279,6 +279,123 @@ def register_forge_router(app) -> None:
         # dashboard WS manager so we inherit 30s keepalive + per-IP
         # rate limit. Each connected client subscribes via the bus.
 
+        # --- X-24: Payments webhook receivers ----------------------------
+
+        @app.post("/forge/payments/{provider}/webhook")
+        async def forge_payments_webhook(provider: str, req: Request) -> Any:
+            if provider not in ("stripe", "lemon-squeezy", "paddle"):
+                raise HTTPException(status_code=404,
+                                    detail=f"unsupported provider: {provider}")
+            d = _forge_dir()
+            body = await req.body()
+            headers = {k.lower(): v for k, v in req.headers.items()}
+            cfg_path = os.path.join(d, "payments", f"{provider}.json")
+            if not os.path.isfile(cfg_path):
+                raise HTTPException(status_code=503,
+                                    detail=f"{provider} not configured")
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            secret_ref = cfg.get("webhook_secret_ref")
+            if not secret_ref:
+                raise HTTPException(status_code=503,
+                                    detail="webhook_secret_ref unset")
+            try:
+                from forge.services.secrets import get_secret
+                secret = get_secret(d, secret_ref)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+            if secret is None:
+                raise HTTPException(status_code=503,
+                                    detail=f"webhook secret {secret_ref} missing from vault")
+            if provider == "stripe":
+                sig = headers.get("stripe-signature", "")
+                from forge.services.payments.stripe import verify_webhook_signature
+                verified = verify_webhook_signature(secret, body, sig)
+            elif provider == "lemon-squeezy":
+                sig = headers.get("x-signature", "")
+                from forge.services.payments.lemon_squeezy import verify_webhook_signature
+                verified = verify_webhook_signature(secret, body, sig)
+            else:  # paddle
+                sig = headers.get("paddle-signature", "")
+                from forge.services.payments.paddle import verify_webhook_signature
+                verified = verify_webhook_signature(secret, body, sig)
+            if not verified:
+                raise HTTPException(status_code=401, detail="invalid signature")
+            try:
+                event = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise HTTPException(status_code=400, detail="invalid JSON body")
+            try:
+                from forge.services.payments import record_webhook_event
+                record_webhook_event(d, provider, event)
+            except Exception as e:
+                logger.warning("webhook record failed: %s", e)
+            try:
+                from forge.services.functions import get_function, invoke
+                fn_name = f"{provider.replace('-', '_')}_webhook"
+                if get_function(d, fn_name):
+                    invoke(d, fn_name, payload=event)
+            except Exception:
+                pass
+            return {"ok": True,
+                    "received": event.get("type") or event.get("event_name")}
+
+        # --- X-25/X-30: OAuth callback handler ---------------------------
+
+        @app.get("/forge/auth/callback/{provider}")
+        async def forge_auth_callback(provider: str, req: Request) -> Any:
+            from forge.services.auth.providers import SUPPORTED_PROVIDERS
+            if provider not in SUPPORTED_PROVIDERS:
+                raise HTTPException(status_code=404,
+                                    detail=f"unsupported provider: {provider}")
+            params = dict(req.query_params)
+            code = params.get("code")
+            state = params.get("state")
+            if not code or not state:
+                raise HTTPException(status_code=400,
+                                    detail="missing code/state")
+            d = _forge_dir()
+            log_dir = os.path.join(d, "auth", "callbacks")
+            os.makedirs(log_dir, exist_ok=True)
+            import time as _time
+            rec = {
+                "provider": provider, "state": state,
+                "received_at": int(_time.time()),
+                "code": code,
+                "params": {k: v for k, v in params.items()
+                           if k not in ("code", "state")},
+            }
+            path = os.path.join(log_dir, f"{provider}-{state}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rec, f, indent=2, sort_keys=True)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            try:
+                from forge.services.functions import get_function, invoke
+                if get_function(d, "oauth_exchange"):
+                    res = invoke(d, "oauth_exchange", payload={
+                        "provider": provider, "state": state, "code": code,
+                        "params": rec["params"],
+                    })
+                    if res.get("ok"):
+                        try:
+                            return json.loads(res.get("stdout", "{}"))
+                        except json.JSONDecodeError:
+                            return {"raw": res.get("stdout", "")}
+                    return JSONResponse(status_code=502, content={
+                        "ok": False, "exit_code": res.get("exit_code"),
+                        "stderr": res.get("stderr"),
+                    })
+            except Exception as e:
+                return JSONResponse(status_code=500, content={"error": str(e)})
+            return {
+                "ok": True, "provider": provider, "state": state,
+                "hint": "deploy a forge function named 'oauth_exchange' "
+                        "to complete the token-exchange flow",
+            }
+
         from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
 
         @app.websocket("/forge/realtime/v1")

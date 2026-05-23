@@ -46,21 +46,41 @@ def issue(forge_dir: str, email: str,
           *, redirect_url: Optional[str] = None,
           ttl_seconds: int = _TOKEN_TTL_SECONDS,
           email_provider: Optional[str] = None,
-          link_template: Optional[str] = None) -> Dict[str, Any]:
+          link_template: Optional[str] = None,
+          rate_limit_per_hour: int = 5) -> Dict[str, Any]:
     """Mint a single-use magic-link token for `email`.
+
+    Rate-limited per email (default 5 mints/hour) via the shared
+    forge gateway rate-limiter so a leaked email address cannot be
+    used as a spam relay.
 
     If `email_provider` is supplied and the matching forge email
     adapter is configured, we also call send() to deliver the link.
-    `link_template` is the URL the user clicks (with {token}
-    substituted); defaults to "?token={token}" so callers can prefix
-    with their own host.
-
-    Returns the token plus expiry; with email delivery enabled, the
-    returned record carries an `email_record_id` so the caller can
-    audit.
     """
     if not isinstance(email, str) or not _EMAIL_RE.match(email):
         raise MagicLinkError("invalid email")
+    # Rate limit. X-32. Uses the gateway token bucket - one per
+    # (email, scope=magic_link). Capacity = rate_limit_per_hour;
+    # refill = rate_limit_per_hour / 3600s.
+    try:
+        from forge.services.gateway import check as _rl_check
+        capacity = max(1, int(rate_limit_per_hour))
+        refill = capacity / 3600.0
+        outcome = _rl_check(f"magic_link:{email}", scope="issue",
+                            cost=1.0, capacity=capacity,
+                            refill_per_sec=refill)
+        if not outcome.get("allowed"):
+            raise MagicLinkError(
+                f"rate limit exceeded for {email}; "
+                f"retry in {int(outcome.get('retry_after_ms', 0))}ms"
+            )
+    except MagicLinkError:
+        raise
+    except Exception:
+        # Rate limit subsystem unavailable: degrade open rather than
+        # block all magic links. This is consistent with how the
+        # gateway behaves when its bucket store is offline.
+        pass
     if redirect_url is not None and not (
         isinstance(redirect_url, str)
         and redirect_url.startswith(("http://", "https://"))
