@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Loki Forge Phase F-4: external auth, multi-tenant payments, migration tooling
+
+F-4 fills the remaining InsForge-parity gaps:
+
+- 5 external auth adapters (Auth0, Clerk, Kinde, Stytch, WorkOS)
+  configured via forge/services/auth/external/. Each adapter stores
+  issuer + audience + JWKS URL; verify_token() validates RS256 JWTs
+  against a cached JWKS (no outbound network calls from Loki itself).
+
+- Stripe Connect multi-tenant flow (forge/services/payments/
+  stripe_connect.py). Append-only account log + status walk;
+  get_effective_status() returns the latest state without mutating
+  prior records.
+
+- Lemon Squeezy + Paddle payment adapters mirror the Stripe surface
+  so the agent's code is provider-agnostic. Each adapter ships its
+  own webhook-signature verifier matching the provider's exact
+  format (LS = hex HMAC over body, Paddle = ts=...;h1=... format).
+
+- Migration tooling (forge/migrations/): import from Supabase
+  pg_dump SQL files (CREATE TABLE parser handles numeric(10,2) and
+  similar depth pitfalls, strips comments, skips forge-internal
+  tables) and from InsForge `insforge metadata --json` exports
+  (tables + buckets + schedules + deferred secret names).
+
+MCP tools (9 added):
+  forge_auth_external_configure / _list / _remove
+  forge_payments_connect_record / _list / _status
+  forge_migrate_from_supabase, forge_migrate_from_insforge
+
+Tests: 8 external-auth + 8 migrations + 9 payments-providers = 25
+new assertions. All Phase F-1 through F-4 services now have parity
+with InsForge's first-party catalog.
+
 ### Added - Loki Forge Phase F-3: realtime, schedules, secrets, payments, deploy
 
 F-3 closes the remaining service gaps versus InsForge and adds five

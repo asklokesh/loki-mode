@@ -848,3 +848,113 @@ def register(mcp) -> None:
                               default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    # --- External auth adapters (F-4) -------------------------------------
+
+    @mcp.tool()
+    async def forge_auth_external_configure(name: str, issuer: str,
+                                            audience: str,
+                                            jwks_url: Optional[str] = None,
+                                            extra: Optional[Dict[str, Any]] = None
+                                            ) -> str:
+        """Configure an external auth provider (auth0 / clerk / kinde /
+        stytch / workos). issuer + audience must match the tokens you
+        want to accept. jwks_url defaults to <issuer>/.well-known/jwks.json."""
+        _emit_event_safe("forge_auth_external_configure", "start")
+        try:
+            from forge.services.auth.external import configure
+            return json.dumps(configure(_forge_dir(), name, issuer=issuer,
+                                         audience=audience,
+                                         jwks_url=jwks_url, extra=extra),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_auth_external_list() -> str:
+        _emit_event_safe("forge_auth_external_list", "start")
+        try:
+            from forge.services.auth.external import list_external
+            return json.dumps({"adapters": list_external(_forge_dir())},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_auth_external_remove(name: str) -> str:
+        _emit_event_safe("forge_auth_external_remove", "start")
+        try:
+            from forge.services.auth.external import remove_external
+            return json.dumps({"removed": remove_external(_forge_dir(), name)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Stripe Connect (F-4) ---------------------------------------------
+
+    @mcp.tool()
+    async def forge_payments_connect_record(account_id: str,
+                                            owner_user_id: str,
+                                            account_type: str = "express",
+                                            country: Optional[str] = None,
+                                            metadata: Optional[Dict[str, Any]] = None
+                                            ) -> str:
+        _emit_event_safe("forge_payments_connect_record", "start")
+        try:
+            from forge.services.payments.stripe_connect import record_account
+            return json.dumps(record_account(_forge_dir(), account_id,
+                                              owner_user_id,
+                                              account_type=account_type,
+                                              country=country,
+                                              metadata=metadata),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_payments_connect_list(owner_user_id: Optional[str] = None
+                                          ) -> str:
+        _emit_event_safe("forge_payments_connect_list", "start")
+        try:
+            from forge.services.payments.stripe_connect import list_accounts
+            return json.dumps({"accounts": list_accounts(_forge_dir(),
+                                                          owner_user_id=owner_user_id)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_payments_connect_status(account_id: str) -> str:
+        _emit_event_safe("forge_payments_connect_status", "start")
+        try:
+            from forge.services.payments.stripe_connect import get_effective_status
+            return json.dumps({"account_id": account_id,
+                               "status": get_effective_status(_forge_dir(),
+                                                              account_id)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Migration tooling (F-4) ------------------------------------------
+
+    @mcp.tool()
+    async def forge_migrate_from_supabase(dump_path: str) -> str:
+        """Import a Supabase pg_dump SQL file. Parses CREATE TABLE
+        statements and applies equivalent forge migrations."""
+        _emit_event_safe("forge_migrate_from_supabase", "start",
+                         parameters={"dump_path": dump_path})
+        try:
+            from forge.migrations import import_from_supabase
+            return json.dumps(import_from_supabase(_forge_dir(), dump_path),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_migrate_from_insforge(export_path: str) -> str:
+        """Import an InsForge metadata --json export."""
+        _emit_event_safe("forge_migrate_from_insforge", "start")
+        try:
+            from forge.migrations import import_from_insforge
+            return json.dumps(import_from_insforge(_forge_dir(), export_path),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
