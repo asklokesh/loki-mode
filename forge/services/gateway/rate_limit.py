@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 @dataclass
@@ -73,3 +73,23 @@ def reset(api_key_id: Optional[str] = None) -> None:
             for k in list(_BUCKETS):
                 if k[0] == api_key_id:
                     _BUCKETS.pop(k, None)
+
+
+def snapshot() -> Dict[str, Any]:
+    """X-38: rate-limit telemetry. Return per-bucket state for the
+    dashboard endpoint to render. Keys are joined as 'id:scope'."""
+    now = time.time()
+    out: Dict[str, Any] = {"buckets": []}
+    with _LOCK:
+        for (key, scope), b in _BUCKETS.items():
+            _refill(b, now)
+            out["buckets"].append({
+                "id": key,
+                "scope": scope,
+                "capacity": b.capacity,
+                "tokens": round(b.tokens, 3),
+                "refill_rate": b.refill_rate,
+                "last_refill_age_seconds": round(now - b.last_refill_ts, 3),
+            })
+    out["buckets"].sort(key=lambda r: (r["id"], r["scope"]))
+    return out

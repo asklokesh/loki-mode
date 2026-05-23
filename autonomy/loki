@@ -2001,6 +2001,120 @@ cmd_resume() {
     fi
 }
 
+# X-35/X-40: forge CLI shorthands. These are thin wrappers around the
+# forge MCP surface for ops workflows where the operator wants to
+# inspect/promote/backup without spelunking through MCP. The agent
+# inside the RARV loop continues to use the MCP tools directly.
+
+cmd_forge() {
+    local subcommand="${1:-status}"
+    shift 2>/dev/null || true
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local skill_dir
+    skill_dir="$(dirname "$script_dir")"
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}python3 required for 'loki forge'${NC}" >&2
+        return 2
+    fi
+    case "$subcommand" in
+        status)
+            PYTHONPATH="$skill_dir" python3 - <<'PY' "${TARGET_DIR:-.}/.loki/forge"
+import json, os, sys
+forge_dir = sys.argv[1]
+out = {"forge_dir": forge_dir, "exists": os.path.isdir(forge_dir)}
+if out["exists"]:
+    try:
+        from forge.services.database import open_engine, introspect
+        if os.path.exists(os.path.join(forge_dir, "db.sqlite")):
+            snap = introspect(open_engine(forge_dir))
+            out["tables"] = [t["name"] for t in snap.get("tables", [])]
+    except Exception as e:
+        out["db_error"] = str(e)
+    try:
+        from forge.services.storage import list_buckets
+        out["buckets"] = [b["name"] for b in list_buckets(forge_dir)]
+    except Exception:
+        out["buckets"] = []
+    try:
+        from forge.services.functions import list_functions
+        out["functions"] = [f["name"] for f in list_functions(forge_dir)]
+    except Exception:
+        out["functions"] = []
+    try:
+        from forge.services.schedules import list_schedules, watchdog_status
+        out["schedules"] = [s["name"] for s in list_schedules(forge_dir)]
+        out["watchdog"] = watchdog_status(forge_dir)
+    except Exception:
+        out["schedules"] = []
+print(json.dumps(out, indent=2))
+PY
+            ;;
+        backup)
+            local out_path="${1:-./forge-backup.tar.gz}"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$out_path"
+import json, sys
+from forge.backup import backup
+try:
+    print(json.dumps(backup(sys.argv[1], sys.argv[2]), indent=2))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, indent=2))
+    sys.exit(1)
+PY
+            ;;
+        restore)
+            local in_path="${1:-./forge-backup.tar.gz}"
+            local force_flag="${2:-}"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$in_path" "$force_flag"
+import json, sys
+from forge.backup import restore
+force = sys.argv[3] in ("--force", "force", "1")
+try:
+    print(json.dumps(restore(sys.argv[2], sys.argv[1], force=force), indent=2))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, indent=2))
+    sys.exit(1)
+PY
+            ;;
+        promote)
+            local provider="${1:-railway}"
+            local from_env="${2:-dev}"
+            local to_env="${3:-prod}"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$provider" "$from_env" "$to_env"
+import json, sys
+from forge.services.deploy import promote
+try:
+    print(json.dumps(promote(sys.argv[1], sys.argv[2],
+                              from_env=sys.argv[3], to_env=sys.argv[4]),
+                     indent=2))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, indent=2))
+    sys.exit(1)
+PY
+            ;;
+        help|--help|-h|"")
+            cat <<'HELP'
+loki forge <subcommand>
+
+Subcommands:
+  status                              Live forge state snapshot
+  backup [path]                       Tar+gz .loki/forge/ to path
+                                      (default ./forge-backup.tar.gz)
+  restore <path> [--force]            Extract a backup into .loki/forge/
+  promote [provider] [from] [to]      Promote forge resources between
+                                      envs (default railway dev->prod)
+
+This is a thin wrapper over the forge MCP surface for ops workflows.
+Inside a RARV iteration the agent calls forge_* MCP tools directly.
+HELP
+            ;;
+        *)
+            echo "unknown subcommand: $subcommand" >&2
+            return 2
+            ;;
+    esac
+}
+
 # Show current status
 cmd_status() {
     # Check for flags
@@ -12248,6 +12362,14 @@ main() {
         pick)
             # v7.6.0: retro-pixel provider picker (LAP-parity feature)
             cmd_pick "$@"
+            ;;
+        forge)
+            # X-35/X-40: forge ops-cli wrappers (status / backup / restore / promote)
+            cmd_forge "$@"
+            ;;
+        promote)
+            # X-35: shorthand for `forge promote`
+            cmd_forge promote "$@"
             ;;
         state)
             cmd_state "$@"

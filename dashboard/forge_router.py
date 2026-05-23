@@ -208,6 +208,15 @@ def register_forge_router(app) -> None:
             "codes": codes,
         }
 
+    @app.get("/api/forge/gateway/rate-limit")
+    async def forge_gateway_rate_limit() -> Dict[str, Any]:
+        """X-38: rate-limit bucket telemetry."""
+        try:
+            from forge.services.gateway.rate_limit import snapshot
+            return snapshot()
+        except Exception as e:
+            return {"buckets": [], "error": str(e)}
+
     @app.get("/api/forge/database/diff/{migration_id}")
     async def forge_db_diff(migration_id: str) -> Dict[str, Any]:
         """X-11: rendered diff for one migration review record."""

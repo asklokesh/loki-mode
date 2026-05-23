@@ -195,7 +195,17 @@ Last updated: 2026-05-18
 
 ## Status
 
-Phase F-1..F-5 + X-12..X-23 + X-26 + X-29 complete on
-claude/compare-litellm-loki-Y8Ke1. Remaining: X-11, X-19, X-22, X-24,
-X-25, X-27, X-28, X-30..X-34. Will continue with X-24/X-25 (payment
-webhook receivers + OAuth callback routes) next.
+Phase F-1..F-5 + X-11..X-26 + X-28..X-34 complete on
+claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
+
+## More tasks discovered (next wave)
+
+- [x] X-35 `loki promote` CLI shorthand wrapping forge_deploy_promote
+- [ ] X-36 Compliance presets (healthcare/fintech/government) propagate
+      to forge sandbox config so backend resources match compliance tier
+- [ ] X-37 BMAD/OpenSpec integration with the detector so the agent's
+      epic/story queue can drive forge provisioning
+- [x] X-38 Rate-limit telemetry endpoint /api/forge/gateway/rate-limit
+- [ ] X-39 RLS predicate language: a tiny mini-DSL the agent compiles
+      into Postgres CREATE POLICY on promotion
+- [x] X-40 Forge CLI: `loki forge status / backup / restore / promote`

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: forge CLI wrappers + rate-limit telemetry + backup safety fix
+
+X-35 `loki promote [provider] [from] [to]` shorthand for
+     forge_deploy_promote so ops workflows don't have to go through
+     MCP. Dispatches to cmd_forge promote.
+
+X-40 `loki forge <status | backup | restore | promote>` CLI wrappers
+     over the forge MCP surface. Useful for CI/cron jobs.
+     `loki forge status` emits a JSON snapshot of every service's
+     live state; `loki forge backup <path>` tars the tree;
+     `loki forge restore <path> [--force]` extracts it.
+
+X-38 GET /api/forge/gateway/rate-limit returns per-(key, scope)
+     bucket telemetry (capacity, current tokens, refill rate, age
+     since last refill). Useful for surfacing in the dashboard or
+     piping to a metrics scraper.
+
+Bug fix in forge/backup.py: the path-traversal safety check
+compared `os.path.normpath(target)` against `os.path.abspath(forge_dir)`
+which raised false positives when forge_dir was relative ('./.loki/
+forge'). Fix: convert forge_dir to abspath at the top and use that
+consistently. Regression test in test-forge-backup.sh covers both
+the abuse case and the legitimate path-rooted case.
+
+Tests: 7 new CLI assertions. No regressions to any prior suite.
+
 ### Follow-ups: migration diff renderer, schedule watchdog, memory bridge
 
 X-11 forge.services.database.diff.render_diff(spec) returns structured

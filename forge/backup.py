@@ -63,18 +63,20 @@ def restore(backup_path: str, forge_dir: str, *,
         )
     os.makedirs(forge_dir, exist_ok=True)
     restored: List[str] = []
+    abs_forge_dir = os.path.abspath(forge_dir)
     with tarfile.open(backup_path, "r:*") as tf:
         for member in tf.getmembers():
-            # Refuse any member that tries to escape forge_dir.
-            target = os.path.normpath(os.path.join(forge_dir, member.name))
-            if not target.startswith(os.path.abspath(forge_dir) + os.sep) \
-               and target != os.path.abspath(forge_dir):
+            # Refuse any member that tries to escape forge_dir. Work in
+            # absolute paths only so the startswith check is unambiguous.
+            target = os.path.normpath(os.path.join(abs_forge_dir, member.name))
+            if target != abs_forge_dir \
+               and not target.startswith(abs_forge_dir + os.sep):
                 raise RuntimeError(
                     f"refusing tar member with absolute/parent path: {member.name}"
                 )
             if member.issym() or member.islnk():
                 continue  # never restore symlinks/hardlinks
-            tf.extract(member, path=forge_dir)
+            tf.extract(member, path=abs_forge_dir)
             restored.append(member.name)
     return {
         "schema": "loki.forge.backup.restore/v1",
