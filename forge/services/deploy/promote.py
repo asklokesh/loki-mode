@@ -99,17 +99,57 @@ def plan(forge_dir: str, provider: str, *,
     except Exception:
         state["secrets"] = []
 
+    # X-42: include RLS policy DDL in every plan so the deploy adapter
+    # applies them on promote.
+    state["rls_policies"] = _emit_rls_policies(state)
+
     if provider == "railway":
-        return _plan_railway(state, env)
-    if provider == "fly":
-        return _plan_fly(state, env)
-    if provider == "vercel":
-        return _plan_vercel(state, env)
-    if provider == "cloudflare":
-        return _plan_cloudflare(state, env)
-    if provider == "local":
-        return _plan_local(state, env)
-    raise DeployError(f"no planner for {provider}")
+        plan_out = _plan_railway(state, env)
+    elif provider == "fly":
+        plan_out = _plan_fly(state, env)
+    elif provider == "vercel":
+        plan_out = _plan_vercel(state, env)
+    elif provider == "cloudflare":
+        plan_out = _plan_cloudflare(state, env)
+    elif provider == "local":
+        plan_out = _plan_local(state, env)
+    else:
+        raise DeployError(f"no planner for {provider}")
+    plan_out["rls_policies"] = state["rls_policies"]
+    return plan_out
+
+
+def _emit_rls_policies(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """X-42: turn the dev-time RLS DSL records into Postgres CREATE
+    POLICY statements that the user-app applies on first connect to
+    the promoted Postgres. We never execute the SQL ourselves; the
+    deploy plan carries the statements as data so the user-app's
+    init script runs them."""
+    policies: List[Dict[str, Any]] = []
+    for t in (state.get("database") or {}).get("tables", []):
+        rls = t.get("rls") or {}
+        for pol in (rls.get("policies") or []):
+            predicate = pol.get("predicate") or ""
+            policy_name = pol.get("policy_name") or "default"
+            # Try compiling via the DSL first; fall back to the raw
+            # predicate (which the dev path already sanitized).
+            try:
+                from forge.services.database.rls_dsl import to_postgres
+                pg = to_postgres(predicate)
+            except Exception:
+                pg = predicate
+            policies.append({
+                "table": t["name"],
+                "policy_name": policy_name,
+                "predicate": predicate,
+                "postgres_using": pg,
+                "ddl": (
+                    f"ALTER TABLE {t['name']} ENABLE ROW LEVEL SECURITY;\n"
+                    f"CREATE POLICY {policy_name}_pol ON {t['name']} "
+                    f"USING ({pg});"
+                ),
+            })
+    return policies
 
 
 def _plan_railway(state: Dict[str, Any], env: str) -> Dict[str, Any]:

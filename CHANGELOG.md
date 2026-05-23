@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: S3 storage gateway + RLS DDL on promote
+
+X-42 forge_deploy_plan emits an `rls_policies[]` list with full
+     CREATE POLICY DDL (and ALTER TABLE ENABLE ROW LEVEL SECURITY)
+     for each table that has RLS metadata. The deploy adapter
+     applies these on first connect to the promoted Postgres so
+     dev-time RLS becomes prod-time enforcement.
+
+X-46 forge/services/storage/gateway.py - S3-compatible backend
+     gateway (s3 / r2 / b2 / tigris / minio / fs). Configures the
+     project to point at any S3-API endpoint; Loki itself never
+     holds the credentials (access_key_ref/secret_key_ref point to
+     the vault). SigV4 presigned URL generator is local-only - no
+     upstream call to mint URLs. Two new MCP tools:
+     forge_storage_gateway_configure / _status.
+
+Tests: 8 new assertions (X-42 rls_policies + X-46 SigV4 URLs +
+provider validation). No regressions.
+
 ### Follow-ups: OpenAPI generator + migration linter + oauth template + audit chain
 
 X-41 `loki forge status` JSON now surfaces the active compliance

@@ -1080,6 +1080,39 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_storage_gateway_configure(provider: str,
+                                              endpoint: Optional[str] = None,
+                                              bucket: Optional[str] = None,
+                                              region: str = "auto",
+                                              access_key_ref: Optional[str] = None,
+                                              secret_key_ref: Optional[str] = None
+                                              ) -> str:
+        """X-46: configure an S3-compatible storage backend (s3 / r2 /
+        b2 / tigris / minio / fs). Loki itself never holds the S3
+        credentials; the user-app's runtime client looks them up in the
+        vault via access_key_ref / secret_key_ref."""
+        _emit_event_safe("forge_storage_gateway_configure", "start")
+        try:
+            from forge.services.storage import configure_gateway
+            return json.dumps(configure_gateway(
+                _forge_dir(), provider=provider, endpoint=endpoint,
+                bucket=bucket, region=region,
+                access_key_ref=access_key_ref,
+                secret_key_ref=secret_key_ref), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_storage_gateway_status() -> str:
+        """X-46: get the configured S3-compatible storage backend."""
+        _emit_event_safe("forge_storage_gateway_status", "start")
+        try:
+            from forge.services.storage import get_gateway_config
+            return json.dumps(get_gateway_config(_forge_dir()), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_openapi_generate(out_path: str = "./forge-openapi.json",
                                      title: str = "Forge API",
                                      version: str = "v1") -> str:

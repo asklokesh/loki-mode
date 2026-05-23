@@ -213,14 +213,14 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 ## More tasks discovered (third wave)
 
 - [x] X-41 Surface compliance preset in `loki forge status` JSON
-- [ ] X-42 Materialize RLS DSL predicates on Postgres promotion (deploy adapter integration)
+- [x] X-42 Deploy plan emits rls_policies[] with CREATE POLICY DDL per table
 - [x] X-43 oauth_exchange forge function template (Bun runtime,
       base64-emitted by forge_auth_oauth_exchange_template MCP tool)
 - [ ] X-44 Dashboard UI panes for backend tab (X-27 follow-up)
 - [x] X-45 Audit-chain integration: forge_db_migrate reviews now also
       chain into dashboard/audit.py log_event when available
-- [ ] X-46 Storage backend pluggability: S3-compatible gateway adapter
-      next to the FS-backed default
+- [x] X-46 S3-compatible storage gateway (s3/r2/b2/tigris/minio/fs);
+      SigV4 presigned URL generator local-only (no upstream call)
 - [x] X-47 OpenAPI 3.1 schema generation matching the SDK shape
 - [x] X-48 Schema migration linter: warns on no-PK / NOT-NULL-without-default
       / forge-internal shadow / invalid index names

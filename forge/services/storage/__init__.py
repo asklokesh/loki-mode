@@ -24,3 +24,9 @@ from .buckets import (  # noqa: F401
 )
 from .cdn import sign_url, verify_url  # noqa: F401
 from .transform import register_transform_preset, list_transform_presets  # noqa: F401
+from .gateway import (  # noqa: F401
+    SUPPORTED_PROVIDERS as STORAGE_GATEWAY_PROVIDERS,
+    configure as configure_gateway,
+    get_config as get_gateway_config,
+    s3_presigned_url,
+)
