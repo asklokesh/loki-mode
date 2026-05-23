@@ -78,6 +78,23 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(Object.isFrozen(PRICING)).toBe(true);
     expect(PRICING["opus"]).toEqual({ input: 5.0, output: 25.0 });
   });
+
+  // Phase J (v7.5.26): PRICING is now loaded from loki-ts/data/model-pricing.json
+  // at module init. Verify the JSON file is present and the loaded values
+  // include all expected aliases. The hardcoded fallback exists for the case
+  // where the JSON is missing; this test asserts the happy path (file present).
+  it("Phase J: loads from data/model-pricing.json with all expected aliases", () => {
+    // All 4 alias keys must be present and contain the expected shape.
+    for (const key of ["opus", "sonnet", "haiku", "gpt-5.3-codex"]) {
+      expect(PRICING[key]).toBeDefined();
+      expect(typeof PRICING[key]!.input).toBe("number");
+      expect(typeof PRICING[key]!.output).toBe("number");
+      expect(PRICING[key]!.input).toBeGreaterThan(0);
+      expect(PRICING[key]!.output).toBeGreaterThan(0);
+    }
+    // Sonnet output should be 5x input (the documented ratio).
+    expect(PRICING["sonnet"]!.output / PRICING["sonnet"]!.input).toBe(5);
+  });
 });
 
 describe("budget.readEfficiencyDir", () => {

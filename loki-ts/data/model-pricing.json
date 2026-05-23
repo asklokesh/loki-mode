@@ -1,0 +1,12 @@
+{
+  "$schema_version": 1,
+  "_comment": "Rolling pricing table consumed by loki-ts/src/runner/budget.ts. Update this file when Anthropic / OpenAI / others publish new prices; no code change required. Pricing is USD per 1 million tokens. Aliases (opus/sonnet/haiku) point to the latest model of that family per providers/model_catalog.json.",
+  "_updated": "2026-05-22",
+  "_source": "https://www.anthropic.com/pricing + provider docs",
+  "pricing": {
+    "opus": { "input": 5.0, "output": 25.0 },
+    "sonnet": { "input": 3.0, "output": 15.0 },
+    "haiku": { "input": 1.0, "output": 5.0 },
+    "gpt-5.3-codex": { "input": 1.5, "output": 12.0 }
+  }
+}

@@ -13,16 +13,62 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { lokiDir } from "../util/paths.ts";
 
-// Hard-coded pricing tiers, USD per 1M tokens. Mirrors run.sh:7870-7876.
-// Do NOT load from external config -- bash hardcodes these values inline.
-export const PRICING: Readonly<Record<string, { input: number; output: number }>> = Object.freeze({
+// Phase J (v7.5.26): rolling pricing table extracted to
+// loki-ts/data/model-pricing.json so the pricing dict can be updated
+// without a code change (just JSON edit + release). Hardcoded fallback
+// preserved in `_FALLBACK_PRICING` for the case where the JSON file is
+// missing (e.g. broken install, bundle stripped). Both bash route and
+// Bun route still read the same pricing values (bash uses the hardcoded
+// values in run.sh:7870-7876 since shell-side JSON parsing is heavier
+// than the maintenance gain). The JSON file is the source of truth for
+// the Bun route; bash will catch up when it next ports cost calc.
+type PricingEntry = { input: number; output: number };
+type PricingMap = Record<string, PricingEntry>;
+
+const _FALLBACK_PRICING: PricingMap = {
   opus: { input: 5.0, output: 25.0 },
   sonnet: { input: 3.0, output: 15.0 },
   haiku: { input: 1.0, output: 5.0 },
   "gpt-5.3-codex": { input: 1.5, output: 12.0 },
-});
+};
+
+function _loadPricing(): PricingMap {
+  // Resolve relative to this module so the JSON is found in both source
+  // and bundled execution (bun --cwd works either way).
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const jsonPath = resolve(moduleDir, "..", "..", "data", "model-pricing.json");
+    if (!existsSync(jsonPath)) return _FALLBACK_PRICING;
+    const raw = JSON.parse(readFileSync(jsonPath, "utf8")) as Record<string, unknown>;
+    const pricing = raw["pricing"];
+    if (!pricing || typeof pricing !== "object") return _FALLBACK_PRICING;
+    const out: PricingMap = {};
+    for (const [key, value] of Object.entries(pricing as Record<string, unknown>)) {
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        typeof (value as PricingEntry).input === "number" &&
+        typeof (value as PricingEntry).output === "number"
+      ) {
+        out[key] = { input: (value as PricingEntry).input, output: (value as PricingEntry).output };
+      }
+    }
+    // Any required key missing? Fall back rather than ship partial.
+    for (const k of Object.keys(_FALLBACK_PRICING)) {
+      if (!(k in out)) return _FALLBACK_PRICING;
+    }
+    return out;
+  } catch {
+    return _FALLBACK_PRICING;
+  }
+}
+
+export const PRICING: Readonly<Record<string, { input: number; output: number }>> = Object.freeze(
+  _loadPricing(),
+);
 
 const DEFAULT_PRICING_KEY = "sonnet";
 

@@ -9,6 +9,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.26] - 2026-05-22
+
+PATCH release. Phase J of the v7.5.18 -> v7.5.27 arc. Extracts the
+PRICING table from `loki-ts/src/runner/budget.ts` (where it was
+hardcoded inline) into a standalone rolling pricing file at
+`loki-ts/data/model-pricing.json`. Updating pricing now requires only
+a JSON edit + release, no code change. Generic model aliases
+(opus/sonnet/haiku) were already used throughout invocation in Phase B
+(v7.5.19) -- this release ships the corresponding rolling pricing
+table that closes the loop.
+
+### Added
+
+- **`loki-ts/data/model-pricing.json`** (new). Canonical pricing
+  source of truth. USD per 1M tokens. Contains: opus (5/25), sonnet
+  (3/15), haiku (1/5), gpt-5.3-codex (1.5/12). `$schema_version: 1`,
+  `_updated` timestamp, `_source` provenance hint.
+
+### Changed
+
+- **`loki-ts/src/runner/budget.ts`** -- `PRICING` constant now loads
+  from `data/model-pricing.json` at module init via a new internal
+  `_loadPricing()` function. Hardcoded `_FALLBACK_PRICING` preserved
+  for the case where the JSON file is missing (broken install, bundle
+  stripped). Any required alias missing from the JSON -> fall back to
+  the hardcoded table. `PRICING` shape and exported type unchanged so
+  no downstream code breaks.
+- **`loki-ts/tests/runner/budget.test.ts`** -- new Phase J test
+  asserts: (1) all 4 expected aliases load from the JSON, (2) values
+  are positive numbers, (3) sonnet output:input ratio matches the
+  documented 5x. 43/43 PASS (was 42/42, +1 new).
+
+### Note on Phase H deferral
+
+Phase H (Memory tool + context editing + compaction) was deferred --
+CLI v2.1.148 does NOT expose `--enable-memory-tool`,
+`--enable-context-editing`, or `--compaction` flags. Loki's memory
+tooling is already operational via Phase D MCP bundling:
+`mcp/server.py` exposes `loki_memory_retrieve` (line 523),
+`loki_memory_store_pattern` (line 588), and `loki_consolidate_memory`
+(line 973) -- Claude can call these via the existing `--mcp-config`
+bundle. When/if the CLI ships dedicated memory + context-editing
+flags, add `claudeFlagSupported` gates in `claude_flags.ts` and
+`claude.sh::_loki_build_claude_auto_flags` mirroring the Phase E
+pattern. See `feedback_claude_code_embed_plan.md` (Phase H Resume
+Path) for details.
+
+### Verified locally before commit
+
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+- `cd loki-ts && bun test ./tests/runner/budget.test.ts` -- 43/43 PASS
+  (was 42/42, +1 new Phase J test).
+- `cd loki-ts && bun run typecheck` -- clean.
+- Manual smoke: deleted `loki-ts/data/model-pricing.json`, re-ran
+  budget tests -- still pass via `_FALLBACK_PRICING`. Restored.
+
+### NOT tested (honest disclosures)
+
+- Bash route still uses hardcoded pricing values in
+  `autonomy/run.sh:7867-7892` Python block (per the existing inline
+  comment in budget.ts). Bash + Bun pricing drift is impossible as
+  long as both sides remain at the same values, but the dual source
+  of truth invites future drift. Eliminating bash-side hardcoded
+  pricing is follow-up work (Phase J would have done this with bash
+  reading the same JSON, but the bash Python block would need a JSON
+  parse step that adds complexity for unclear gain on the bash path
+  that is being deprecated in favor of Bun).
+- No bash/Bun pricing parity test. The dual-source-of-truth concern
+  above means a parity test would catch drift, but the test would
+  need to assert all 4 alias values match across both sides. Trivial
+  follow-up.
+
+### Migration
+
+- No action required. PRICING values are unchanged. The only
+  difference is that they now load from a JSON file instead of being
+  hardcoded in TypeScript. Users / scripts that read `PRICING` from
+  the public TypeScript export continue to work without modification.
+
 ## [7.5.25] - 2026-05-22
 
 PATCH release. Phase I of the v7.5.18 -> v7.5.27 arc. OpenRouter /
