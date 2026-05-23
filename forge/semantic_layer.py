@@ -47,6 +47,14 @@ def render_prompt_block(forge_dir: str) -> str:
     if storage_block:
         parts.append(storage_block)
 
+    functions_block = _render_functions(forge_dir)
+    if functions_block:
+        parts.append(functions_block)
+
+    gateway_block = _render_gateway(forge_dir)
+    if gateway_block:
+        parts.append(gateway_block)
+
     parts.append(_render_mcp_hint())
 
     text = "\n".join(parts)
@@ -128,6 +136,44 @@ def _render_storage(forge_dir: str) -> str:
         cap_mb = int(b.get("max_file_size", 0) or 0) // (1024 * 1024)
         lines.append(f"  {b['name']} [{visibility}, <={cap_mb}MB/file]")
     return "\n".join(lines)
+
+
+def _render_functions(forge_dir: str) -> str:
+    froot = os.path.join(forge_dir, "functions")
+    if not os.path.isdir(froot):
+        return ""
+    try:
+        from .services.functions import list_functions
+        funcs = list_functions(forge_dir)
+    except Exception as e:
+        return f"Functions: (introspect failed: {e})"
+    if not funcs:
+        return ""
+    lines = [f"Edge functions ({len(funcs)}):"]
+    for fn in funcs:
+        triggers = ",".join(
+            t.get("type", "?") for t in (fn.get("triggers") or [])
+        )
+        lines.append(
+            f"  {fn['name']} [{fn.get('runtime')}, v{fn.get('active_version')}, "
+            f"triggers={triggers or 'http'}]"
+        )
+    return "\n".join(lines)
+
+
+def _render_gateway(forge_dir: str) -> str:
+    groot = os.path.join(forge_dir, "gateway")
+    if not os.path.isdir(groot):
+        return ""
+    try:
+        from .services.gateway import list_routes
+        routes = list_routes(forge_dir)
+    except Exception as e:
+        return f"Gateway: (introspect failed: {e})"
+    if not routes:
+        return ""
+    models = sorted({r.get("model") for r in routes if r.get("model")})
+    return f"Model gateway routes ({len(routes)}): {', '.join(models)}"
 
 
 def _render_mcp_hint() -> str:

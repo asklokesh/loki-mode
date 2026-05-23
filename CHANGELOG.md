@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Loki Forge Phase F-2: functions, gateway, dashboard router
+
+Continuation of F-2. Functions + Gateway + Dashboard read-only surface
++ council review records ship in this commit; auth + storage shipped
+in the previous commit (b45b8fb).
+
+Functions (forge/services/functions/):
+  deploy.py    Versioned function deploy under <forge_dir>/functions/<name>/
+               with manifest pinned to active_version. 25-version history
+               cap with automatic GC. Source size cap 4MB. Three runtimes
+               supported (bun / deno / python). Rollback flips the
+               active_version pointer atomically.
+  invoke.py    subprocess.run-based invocation with rlimit caps
+               (RLIMIT_AS = memory_mb, RLIMIT_CPU = 60s, RLIMIT_NPROC = 32).
+               Payload via stdin JSON; response via stdout JSON.
+               Timeouts honored from manifest. Runtime-missing surfaces
+               as a structured error rather than crashing the call.
+  logs.py     Per-run structured logs at <forge_dir>/functions/<name>/logs/.
+
+Gateway (forge/services/gateway/):
+  routing.py   Per-(model, provider) route registry. pick_route() sorts
+               by tier > p50 latency > cost-per-output-token. Usage
+               recorded as jsonl; usage_summary() returns 24h aggregate
+               by default.
+  rate_limit.py  Token-bucket per (api_key, scope). Default capacity 60,
+               refill 1/s. reset() for tests and ops.
+
+MCP tools (10 added):
+  forge_function_deploy / _list / _invoke / _logs / _delete / _rollback
+  forge_gateway_route_add / _list / _pick / _usage
+
+Council integration:
+  forge.services.database.migrate_apply now emits a structured review
+  record to .loki/quality/forge-migrations/<id>.json on every applied
+  migration. Schema: loki.forge.migration.review/v1. The existing
+  dashboard/audit + council surface can consume these without any
+  run.sh changes.
+
+Dashboard router (dashboard/forge_router.py):
+  Read-only /api/forge/* surface registered from dashboard/server.py
+  via optional import. Routes: /api/forge/state, /api/forge/database/
+  tables, /api/forge/database/migrations, /api/forge/storage/buckets,
+  /api/forge/functions, /api/forge/gateway/routes. Mutations stay in
+  MCP land; dashboard never lets a UI session reconfigure the user-app
+  backend.
+
+Semantic layer extended to surface functions and gateway routes in the
+prompt block.
+
+Tests: 22 functions + 10 gateway + 11 dashboard = 43 new assertions;
+project total 202/202 across 15 suites. Bun typecheck clean. No
+emojis.
+
+### Added - Loki Forge Phase F-2: auth + storage
+
+(Previous F-2 commit b45b8fb. Auth: HS256 JWT, 7 OAuth providers,
+PBKDF2 600k. Storage: buckets with sha256 content addressing, HMAC
+signed URLs, image-transform recipe registry. 30 new assertions.)
+
 ### Added - Loki Forge Phase F-1: integrated BaaS for the autonomous loop
 
 Closes the headline gap vs InsForge

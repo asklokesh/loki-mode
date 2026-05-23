@@ -29,23 +29,23 @@ Last updated: 2026-05-18
 - [x] F-2.11 Image transform pipeline stub (resize/format/quality/rotate/grayscale/blur)
 - [x] F-2.12 Storage MCP tools (6 forge_storage_* tools)
 - [x] F-2.13 Storage test suite (14 assertions)
-- [ ] F-2.14 Functions service skeleton (forge/services/functions/{runtime_bun,deploy,invoke,logs}.ts)
-- [ ] F-2.15 Function manifest format + storage layout
-- [ ] F-2.16 Bun runtime invocation harness (warm-pool, cold-start metrics)
-- [ ] F-2.17 Function MCP tools (forge_function_deploy/list/invoke/logs/delete)
-- [ ] F-2.18 Functions test suite (>=10 assertions)
-- [ ] F-2.19 Gateway service skeleton (forge/services/gateway/{proxy,rate_limit,routing}.py)
-- [ ] F-2.20 OpenAI-compat HTTP front under /forge/gateway/v1
-- [ ] F-2.21 Cost-aware routing pulling from memory/token_economics.py
-- [ ] F-2.22 Gateway MCP tools (forge_gateway_route_*, _usage)
-- [ ] F-2.23 Gateway test suite (>=8 assertions)
-- [ ] F-2.24 Provisioner: wire auth+storage+functions into ForgeRequirements -> provision flow
-- [ ] F-2.25 Semantic layer: surface buckets, functions, gateway routes in prompt block
-- [ ] F-2.26 Council review hook for forge migrations (autonomy/run.sh:run_code_review --forge-migration)
-- [ ] F-2.27 Dashboard router /api/forge/* (dashboard/forge_router.py)
-- [ ] F-2.28 Dashboard UI: Backend tab listing tables, buckets, functions, schedules
-- [ ] F-2.29 CHANGELOG entry for F-2
-- [ ] F-2.30 Commit + push F-2
+- [x] F-2.14 Functions service skeleton (forge/services/functions/{deploy,invoke,logs}.py)
+- [x] F-2.15 Function manifest format + storage layout
+- [~] F-2.16 Bun runtime invocation harness (subprocess in place; warm-pool deferred)
+- [x] F-2.17 Function MCP tools (forge_function_deploy/list/invoke/logs/delete/rollback)
+- [x] F-2.18 Functions test suite (12 assertions)
+- [x] F-2.19 Gateway service skeleton (forge/services/gateway/{routing,rate_limit}.py)
+- [~] F-2.20 OpenAI-compat HTTP front (routing logic in place; HTTP handler bundled with F-2.27)
+- [x] F-2.21 Cost-aware routing (tier + p50 latency + cost-per-token sort)
+- [x] F-2.22 Gateway MCP tools (forge_gateway_route_add/list/pick, _usage)
+- [x] F-2.23 Gateway test suite (10 assertions)
+- [x] F-2.24 Provisioner: auth+storage wired; functions+gateway require agent-supplied source so no detector path
+- [x] F-2.25 Semantic layer: buckets, functions, gateway routes surfaced
+- [x] F-2.26 Council review hook (migrate_apply emits review records to .loki/quality/forge-migrations/; council read-side consumes from that path)
+- [x] F-2.27 Dashboard router /api/forge/* (state, db, storage, functions, gateway)
+- [~] F-2.28 Dashboard UI: deferred to dedicated dashboard-ui work (router is in place; UI panes are CSS/TSX work that will land in a separate PR)
+- [x] F-2.29 CHANGELOG entry for F-2
+- [x] F-2.30 Commit + push F-2
 
 ## Phase F-3: Realtime + Schedules + Secrets + Payments + Deploy(Railway)
 

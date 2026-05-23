@@ -130,6 +130,11 @@ def migrate_apply(engine: Engine, spec: Dict[str, Any]) -> Dict[str, Any]:
         allow_writes=True,
     )
 
+    # Emit a council review record. The existing dashboard/council code
+    # can pick this up later; until then it's an audit-trail artifact.
+    _emit_review_record(engine.db_path, migration_id, parsed.summary, sql,
+                        applied_at, spec_hash)
+
     return {
         "migration_id": migration_id,
         "applied_at": applied_at,
@@ -137,6 +142,37 @@ def migrate_apply(engine: Engine, spec: Dict[str, Any]) -> Dict[str, Any]:
         "sql": sql,
         "already_applied": False,
     }
+
+
+def _emit_review_record(db_path: str, migration_id: str, summary: str,
+                        sql: str, applied_at: str, spec_hash: str) -> None:
+    """Write a review record for the migration so the council can audit
+    after-the-fact (and, in F-3, gate before apply)."""
+    try:
+        # db_path is <forge_dir>/db.sqlite -> review dir is sibling .loki/quality/.
+        # Walk up to the project dir.
+        import os as _os
+        forge_dir = _os.path.dirname(db_path)
+        project_dir = _os.path.dirname(_os.path.dirname(forge_dir))
+        review_dir = _os.path.join(project_dir, ".loki", "quality",
+                                   "forge-migrations")
+        _os.makedirs(review_dir, exist_ok=True)
+        rec = {
+            "schema": "loki.forge.migration.review/v1",
+            "migration_id": migration_id,
+            "applied_at": applied_at,
+            "spec_hash": spec_hash,
+            "summary": summary,
+            "sql": sql,
+        }
+        path = _os.path.join(review_dir, f"{migration_id}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=2, sort_keys=True)
+        _os.replace(tmp, path)
+    except Exception:
+        # Council review is best-effort observability; never block the loop.
+        pass
 
 
 def migrate_rollback(engine: Engine, migration_id: str) -> Dict[str, Any]:

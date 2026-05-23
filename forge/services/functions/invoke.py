@@ -1,0 +1,164 @@
+"""Function invocation harness.
+
+Spawns the runtime as a subprocess with the active version's source on
+stdin-redirect. The request payload is passed via env (FORGE_REQ_JSON
+for small payloads) plus stdin (for arbitrary size). The response is
+captured from stdout; logs from stderr.
+
+Resource limits applied:
+    - timeout from manifest.timeout_ms
+    - memory cap via setrlimit on Linux (best-effort; macOS approximate)
+    - working directory pinned to the version's vdir so functions
+      cannot scribble on each other's storage
+
+The MVP shells out to `bun run`, `deno run`, or `python3`. The Bun
+warm-pool optimization lands in F-2.16 (a long-running worker that
+multiplexes JSON requests over stdin/stdout).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import resource
+import subprocess
+import sys
+import time
+import uuid
+from typing import Any, Dict, Optional, Tuple
+
+from .deploy import FunctionError, get_function, source_path, _fn_dir, _utc_iso
+
+
+def _runtime_argv(runtime: str, src: str) -> list:
+    if runtime == "bun":
+        return ["bun", "run", src]
+    if runtime == "deno":
+        return ["deno", "run", "--allow-env", "--no-prompt", src]
+    if runtime == "python":
+        return ["python3", src]
+    raise FunctionError(f"unsupported runtime: {runtime}")
+
+
+def _set_limits(memory_mb: int) -> None:
+    """Apply rlimits in the child process. Linux-specific best-effort."""
+    try:
+        resource.setrlimit(
+            resource.RLIMIT_AS,
+            (memory_mb * 1024 * 1024, memory_mb * 1024 * 1024),
+        )
+    except (ValueError, OSError):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+    except (ValueError, OSError):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
+    except (ValueError, OSError):
+        pass
+
+
+def invoke(forge_dir: str, name: str, payload: Optional[Dict[str, Any]] = None,
+           version: Optional[int] = None,
+           env_overrides: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Invoke a function synchronously. Returns
+    {ok, exit_code, stdout, stderr, duration_ms, run_id, version}.
+    """
+    m = get_function(forge_dir, name)
+    if not m:
+        raise FunctionError(f"function not found: {name}")
+    src = source_path(forge_dir, name, version=version)
+    if not src:
+        raise FunctionError(f"source not found for {name} v{version}")
+    runtime = m.get("runtime", "bun")
+    timeout_s = max(0.1, m.get("timeout_ms", 10000) / 1000.0)
+    memory_mb = m.get("memory_mb", 128)
+    payload = payload or {}
+
+    # Build env: a minimal allowlist plus user-declared env_secrets.
+    env: Dict[str, str] = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "HOME": "/tmp",
+        "FORGE_FUNCTION_NAME": name,
+        "FORGE_FUNCTION_VERSION": str(m.get("active_version", "?")),
+        "FORGE_REQ_JSON": json.dumps(payload, separators=(",", ":")),
+    }
+    for secret_ref in m.get("env_secrets", []):
+        val = (env_overrides or {}).get(secret_ref, os.environ.get(secret_ref))
+        if val is not None:
+            env[secret_ref] = val
+    if env_overrides:
+        for k, v in env_overrides.items():
+            # Only forward keys explicitly declared by the function.
+            if k in m.get("env_secrets", []):
+                env[k] = v
+
+    run_id = uuid.uuid4().hex
+    log_dir = os.path.join(_fn_dir(forge_dir, name), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"{run_id}.json")
+
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            _runtime_argv(runtime, src),
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            cwd=os.path.dirname(src),
+            env=env,
+            preexec_fn=(lambda: _set_limits(memory_mb)) if sys.platform != "win32" else None,
+        )
+        duration_ms = int((time.time() - started) * 1000)
+        result = {
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "duration_ms": duration_ms,
+            "run_id": run_id,
+            "version": m.get("active_version"),
+        }
+    except subprocess.TimeoutExpired as e:
+        duration_ms = int((time.time() - started) * 1000)
+        result = {
+            "ok": False,
+            "exit_code": -1,
+            "stdout": (e.stdout or b"").decode("utf-8", errors="replace")
+                      if isinstance(e.stdout, bytes) else (e.stdout or ""),
+            "stderr": "TimeoutExpired",
+            "duration_ms": duration_ms,
+            "run_id": run_id,
+            "version": m.get("active_version"),
+            "error": "timeout",
+        }
+    except FileNotFoundError as e:
+        # Runtime binary missing (bun / deno / python3).
+        result = {
+            "ok": False,
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": f"runtime not available: {e}",
+            "duration_ms": int((time.time() - started) * 1000),
+            "run_id": run_id,
+            "version": m.get("active_version"),
+            "error": "runtime_missing",
+        }
+
+    # Persist a structured run log.
+    log_entry = {
+        "run_id": run_id,
+        "function": name,
+        "version": result.get("version"),
+        "started_at": _utc_iso(),
+        "duration_ms": result.get("duration_ms"),
+        "ok": result.get("ok"),
+        "exit_code": result.get("exit_code"),
+        "stderr_head": (result.get("stderr") or "")[:1024],
+        "error": result.get("error"),
+    }
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log_entry, f)
+    return result

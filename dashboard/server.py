@@ -755,6 +755,14 @@ app.add_middleware(
 from .api_v2 import router as api_v2_router
 app.include_router(api_v2_router)
 
+# Phase F-2: register Loki Forge read-only API surface (optional - falls
+# back to no-op if the forge package failed to import).
+try:
+    from .forge_router import register_forge_router
+    register_forge_router(app)
+except Exception as _forge_router_err:  # pragma: no cover - opt-in
+    logger.warning("forge_router registration skipped: %s", _forge_router_err)
+
 
 # Health endpoint
 @app.get("/health")

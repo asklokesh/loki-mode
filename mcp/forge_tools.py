@@ -409,3 +409,158 @@ def register(mcp) -> None:
                               default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    # --- Functions tools (F-2) --------------------------------------------
+
+    @mcp.tool()
+    async def forge_function_deploy(name: str, runtime: str, source_b64: str,
+                                    entry: str = "index",
+                                    env_secrets: Optional[List[str]] = None,
+                                    timeout_ms: int = 10000,
+                                    memory_mb: int = 128,
+                                    triggers: Optional[List[Dict[str, Any]]] = None
+                                    ) -> str:
+        """Deploy a new version of an edge function. runtime: bun, deno,
+        python. source_b64: base64-encoded source file. The manifest
+        promotes the new version on success; old versions retained for
+        rollback (up to 25).
+        """
+        _emit_event_safe("forge_function_deploy", "start",
+                         parameters={"name": name, "runtime": runtime})
+        try:
+            from forge.services.functions import deploy
+            res = deploy(_forge_dir(), name, runtime, source_b64,
+                         entry=entry, env_secrets=env_secrets,
+                         timeout_ms=timeout_ms, memory_mb=memory_mb,
+                         triggers=triggers)
+            return json.dumps(res, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_function_list() -> str:
+        """List all deployed edge functions with their manifests."""
+        _emit_event_safe("forge_function_list", "start")
+        try:
+            from forge.services.functions import list_functions
+            return json.dumps({"functions": list_functions(_forge_dir())},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_function_invoke(name: str,
+                                    payload: Optional[Dict[str, Any]] = None,
+                                    version: Optional[int] = None,
+                                    env_overrides: Optional[Dict[str, str]] = None
+                                    ) -> str:
+        """Invoke a forge function synchronously. Returns ok/exit_code/
+        stdout/stderr/duration_ms/run_id."""
+        _emit_event_safe("forge_function_invoke", "start",
+                         parameters={"name": name})
+        try:
+            from forge.services.functions import invoke
+            res = invoke(_forge_dir(), name, payload=payload,
+                         version=version, env_overrides=env_overrides)
+            return json.dumps(res, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_function_logs(name: str, limit: int = 100) -> str:
+        """Return recent run-log entries for a function (newest first)."""
+        _emit_event_safe("forge_function_logs", "start")
+        try:
+            from forge.services.functions import list_runs
+            return json.dumps({"runs": list_runs(_forge_dir(), name, limit)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_function_delete(name: str) -> str:
+        """Delete a function and all of its versions + logs."""
+        _emit_event_safe("forge_function_delete", "start",
+                         parameters={"name": name})
+        try:
+            from forge.services.functions import delete_function
+            return json.dumps({"deleted": delete_function(_forge_dir(), name)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_function_rollback(name: str, to_version: int) -> str:
+        """Switch the active_version pointer back to a prior deploy."""
+        _emit_event_safe("forge_function_rollback", "start")
+        try:
+            from forge.services.functions import rollback
+            return json.dumps(rollback(_forge_dir(), name, to_version),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Gateway tools (F-2) ----------------------------------------------
+
+    @mcp.tool()
+    async def forge_gateway_route_add(route: Dict[str, Any]) -> str:
+        """Register a model-gateway route. Shape:
+            {"model": "...", "provider": "anthropic|openai|google|...",
+             "base_url": "https://...", "api_key_ref": "SECRET_NAME",
+             "tier": 1, "cost_per_1m_input_tokens": 3.0,
+             "cost_per_1m_output_tokens": 15.0,
+             "p50_latency_ms_target": 1500}
+        """
+        _emit_event_safe("forge_gateway_route_add", "start")
+        try:
+            from forge.services.gateway import add_route
+            return json.dumps(add_route(_forge_dir(), route), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_gateway_route_list(model: Optional[str] = None) -> str:
+        """List configured gateway routes."""
+        _emit_event_safe("forge_gateway_route_list", "start")
+        try:
+            from forge.services.gateway import list_routes
+            return json.dumps({"routes": list_routes(_forge_dir(), model=model)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_gateway_usage(window_seconds: int = 86400,
+                                  model: Optional[str] = None) -> str:
+        """Return aggregated usage stats over the last window."""
+        _emit_event_safe("forge_gateway_usage", "start")
+        try:
+            from forge.services.gateway import usage_summary
+            data = usage_summary(_forge_dir(), model=model,
+                                  window_seconds=window_seconds)
+            return json.dumps({
+                "schema": "loki.forge.gateway.usage/v1",
+                "buckets": [
+                    {"model": k[0], "provider": k[1], **v}
+                    for k, v in data.items()
+                ],
+            }, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_gateway_route_pick(model: str) -> str:
+        """Pick the best route for a given model. Returns the chosen route
+        plus the routing rationale. Used internally by the OpenAI-compat
+        front; exposed here so the agent can verify routing decisions."""
+        _emit_event_safe("forge_gateway_route_pick", "start")
+        try:
+            from forge.services.gateway import pick_route, usage_summary
+            r = pick_route(_forge_dir(), model)
+            if r is None:
+                return json.dumps({"error": "no route for model", "model": model})
+            return json.dumps({
+                "route": r,
+                "usage": usage_summary(_forge_dir(), model=model),
+            }, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
