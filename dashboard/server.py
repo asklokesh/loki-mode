@@ -755,6 +755,25 @@ app.add_middleware(
 from .api_v2 import router as api_v2_router
 app.include_router(api_v2_router)
 
+# Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
+# sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
+# in web-app/server.py for `loki web` (port 57375). One source of truth, no
+# duplicated UIs. Import is best-effort: if web-app is missing (e.g. partial
+# install) the dashboard still starts; /lab/* returns 404 with a clear hint.
+_PURPLE_LAB_MOUNTED = False
+try:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _webapp_dir = _Path(__file__).resolve().parent.parent / "web-app"
+    if str(_webapp_dir) not in _sys.path:
+        _sys.path.insert(0, str(_webapp_dir))
+    import server as _purple_lab_server  # type: ignore[import-not-found]
+    app.mount("/lab", _purple_lab_server.app)
+    _PURPLE_LAB_MOUNTED = True
+    logger.info("Purple Lab mounted at /lab/ (Phase Merge-4)")
+except Exception as _e:  # noqa: BLE001
+    logger.warning("Purple Lab NOT mounted (Phase Merge-4): %s -- /lab/ will 404", _e)
+
 
 # Health endpoint
 @app.get("/health")

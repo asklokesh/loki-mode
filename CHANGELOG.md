@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.30] - 2026-05-23
+
+PATCH release. Phases Merge-4 + Merge-6 of the v7.5.29+ Purple-Lab-into-
+Dashboard true-integration arc. Purple Lab is now mounted into the
+Dashboard at `/lab/` and appears as a sidebar entry. Same React bundle,
+same FastAPI handlers -- one source of truth, no duplicated UI.
+
+### Architecture (Phases Merge-4 + Merge-6)
+
+- `dashboard/server.py:758-775` -- imports `web-app/server.py` and calls
+  `app.mount("/lab", _purple_lab_server.app)`. Best-effort import: if
+  web-app is missing (partial install), dashboard still starts; /lab/*
+  returns 404 with a clear log warning.
+- `dashboard/static/index.html` -- adds "Lab" entry to the sidebar nav
+  (after Escalations) and a corresponding `<div class="section-page"
+  id="page-lab">` containing an iframe pointing at `/lab/`.
+- `dashboard/static/index.html` switchSection JS -- lazy-loads the iframe
+  on first visit to the Lab section so the dashboard's initial paint
+  isn't blocked by the Purple Lab bundle download.
+- All 100 `/api/*` routes from Purple Lab now accessible via
+  `/lab/api/...` from the dashboard origin. WebSockets work via Starlette
+  Mount preserving the ws scope. Health probes work at `/lab/health`.
+
+### Backward compatibility
+
+- `loki web` standalone (port 57375) unchanged from v7.5.29 -- still uses
+  the same `web-app/server.py` standalone_app wrapper. Users get the
+  same UI at the same URL.
+- `loki dashboard` (port 57374) gains the Lab sidebar entry. Existing
+  dashboard users see one additional sidebar item; no removed surfaces.
+- Phase Merge-7 (deprecate `loki web` standalone in favor of unified
+  dashboard) deferred to a future release with explicit user-safety
+  banner per Rule 0.
+
+### NOT tested in this release
+
+- Real-browser iframe interaction across sections (only direct-page curl
+  and direct-URL screenshot were captured; iframe lazy-load happens at
+  JS click time which headless Chrome captures differently)
+- Cross-mount session sharing (Merge-5 scope -- start_session() collision
+  between dashboard.control and web-app handlers documented in
+  docs/MERGE-DEDUP-MAP.md, not yet unified)
+- WebSocket upgrade through the dashboard mount (Starlette docs assert
+  support; not empirically verified with a live WS client in this release)
+- Cookie / auth interaction across the mount boundary (Merge-2 audit
+  confirmed no cookies set at root path; no empirical test for token
+  isolation in mounted mode)
+- Phases Merge-5 (state dedup) and Merge-7 (deprecate standalone) remain
+  pending and ship as subsequent PATCH releases
+
+### Reviewer council
+
+3 reviewers (2 Opus + 1 Sonnet). Council review for v7.5.30 follows the
+same binding protocol as v7.5.29: unanimous APPROVE required before push.
+
 ## [7.5.29] - 2026-05-23
 
 PATCH release. Phase Merge-3 of the v7.5.29+ Purple Lab into Dashboard
