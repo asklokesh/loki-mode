@@ -47,6 +47,66 @@ def _signature(key: bytes, bucket: str, path: str, expires: int,
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
+def sign_upload_url(forge_dir: str, bucket: str, path: str, *,
+                    expires_in: int = 600,
+                    base_url: str = "",
+                    max_size: int = 50 * 1024 * 1024) -> str:
+    """X-81: mint a signed URL for client-side PUT uploads. Same HMAC
+    construction as sign_url but with method=PUT bound to the
+    signature so a GET-only URL cannot be reused for upload.
+
+    max_size is the client-side limit; the server enforces the bucket's
+    max_file_size on top.
+    """
+    if expires_in <= 0 or expires_in > 24 * 3600:
+        raise ValueError("upload expires_in must be in (0, 24h]")
+    key = _get_or_create_key(forge_dir, bucket)
+    expires = int(time.time()) + int(expires_in)
+    # Bind method PUT + max_size into the signature payload so the
+    # signature cannot be replayed for download or oversize.
+    msg = "|".join([
+        bucket, path, str(expires), "", "PUT", str(int(max_size))
+    ]).encode("utf-8")
+    sig = hmac.new(key, msg, hashlib.sha256).hexdigest()
+    qs = {
+        "method": "PUT",
+        "expires": str(expires),
+        "max_size": str(int(max_size)),
+        "sig": sig,
+    }
+    import urllib.parse as _u
+    url = (f"{base_url.rstrip('/')}/forge/storage/v1/"
+           f"{_u.quote(bucket)}/{_u.quote(path)}")
+    return url + "?" + _u.urlencode(qs)
+
+
+def verify_upload_url(forge_dir: str, bucket: str, path: str,
+                     qs: Dict[str, str]) -> Dict[str, str]:
+    """Validate a signed-upload-URL query string. Returns
+    {valid: 'true', max_size: '...'} on success; raises ValueError
+    otherwise."""
+    if qs.get("method") != "PUT":
+        raise ValueError("not a PUT-signed URL")
+    try:
+        expires = int(qs.get("expires", "0"))
+        max_size = int(qs.get("max_size", "0"))
+    except ValueError:
+        raise ValueError("invalid expires/max_size")
+    if expires < int(time.time()):
+        raise ValueError("expired")
+    if max_size <= 0:
+        raise ValueError("invalid max_size")
+    key = _get_or_create_key(forge_dir, bucket)
+    msg = "|".join([
+        bucket, path, str(expires), "", "PUT", str(max_size)
+    ]).encode("utf-8")
+    expected = hmac.new(key, msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, qs.get("sig", "")):
+        raise ValueError("bad signature")
+    return {"valid": "true", "method": "PUT",
+            "expires": str(expires), "max_size": str(max_size)}
+
+
 def sign_url(forge_dir: str, bucket: str, path: str, *,
              expires_in: int = 3600,
              base_url: str = "",

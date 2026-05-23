@@ -208,6 +208,22 @@ def register_forge_router(app) -> None:
             "codes": codes,
         }
 
+    @app.get("/api/forge/metrics")
+    async def forge_metrics() -> Any:
+        """X-79: Prometheus exposition for forge counters."""
+        from fastapi.responses import PlainTextResponse
+        try:
+            from forge.metrics import render
+            return PlainTextResponse(
+                render(_forge_dir()),
+                media_type="text/plain; version=0.0.4",
+            )
+        except Exception as e:
+            return PlainTextResponse(
+                f"# metrics error: {e}\n",
+                media_type="text/plain",
+            )
+
     @app.get("/api/forge/tail")
     async def forge_tail(source: str = "audit", lines: int = 100) -> Any:
         """X-71: tail the audit chain or a function's logs."""

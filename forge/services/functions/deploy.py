@@ -141,6 +141,20 @@ def deploy(forge_dir: str, name: str, runtime: str, source_b64: str,
         "size": len(source_bytes),
         "deployed_at": _utc_iso(),
     })
+    # X-78: signed-source attestation. We HMAC the source bytes with
+    # the project's master key so downstream verifiers can confirm
+    # this exact source was deployed by Loki. Best-effort; if the
+    # secrets vault is unavailable we skip the signature.
+    try:
+        import hmac as _hmac
+        import hashlib as _hashlib
+        from forge.services.secrets.vault import _master_key
+        sig = _hmac.new(_master_key(forge_dir),
+                        source_bytes, _hashlib.sha256).hexdigest()
+        versions[-1]["signature"] = sig
+    except Exception:
+        pass
+
     # Cap version history at 25 - older versions garbage-collected.
     if len(versions) > 25:
         for stale in versions[:-25]:

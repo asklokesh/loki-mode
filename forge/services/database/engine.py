@@ -54,6 +54,21 @@ class Engine:
         finally:
             cur.close()
 
+    def explain_analyze(self, sql: str,
+                        params: Optional[Sequence[Any]] = None) -> dict:
+        """X-76: explain + auto-analysis. Returns {plan, warnings[]}
+        where warnings flag SCAN steps that didn't use an index."""
+        plan = self.explain(sql, params)
+        warnings: List[str] = []
+        for row in plan:
+            detail = (row.get("detail") or "").upper()
+            if "SCAN" in detail and "USING INDEX" not in detail \
+               and "USING PRIMARY KEY" not in detail:
+                warnings.append(
+                    f"unindexed scan: {row.get('detail') or row}"
+                )
+        return {"plan": plan, "warnings": warnings}
+
     def query_page(self, sql: str, params: Optional[Sequence[Any]] = None,
                    *, limit: int = 100,
                    cursor: Optional[int] = None) -> dict:

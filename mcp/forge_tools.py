@@ -1142,6 +1142,38 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_db_explain_analyze(sql: str) -> str:
+        """X-76: EXPLAIN QUERY PLAN + analysis. Returns {plan, warnings[]}
+        where warnings flag unindexed SCAN steps."""
+        _emit_event_safe("forge_db_explain_analyze", "start")
+        try:
+            from forge.services.database import open_engine
+            return json.dumps(
+                open_engine(_forge_dir()).explain_analyze(sql),
+                default=str,
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_storage_signed_upload(bucket: str, path: str,
+                                          expires_in: int = 600,
+                                          max_size: int = 52428800,
+                                          base_url: str = "") -> str:
+        """X-81: mint a signed PUT URL for client-side direct uploads."""
+        _emit_event_safe("forge_storage_signed_upload", "start")
+        try:
+            from forge.services.storage import sign_upload_url
+            url = sign_upload_url(_forge_dir(), bucket, path,
+                                   expires_in=expires_in,
+                                   max_size=max_size,
+                                   base_url=base_url)
+            return json.dumps({"url": url, "method": "PUT",
+                                "max_size": max_size})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_db_seed(seeds: List[Dict[str, Any]]) -> str:
         """X-72: declarative seeding. seeds = [{"table": "users",
         "rows": [{...}, {...}]}]. Idempotent by content hash."""

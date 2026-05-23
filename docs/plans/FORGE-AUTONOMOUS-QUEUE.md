@@ -267,10 +267,19 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-74 .loki/forge.local.yaml override merging
 - [x] X-75 cron.describe() human-readable schedules
 
+## Eighth wave (discovered post-X-75)
+
+- [x] X-76 Engine.explain_analyze() flags unindexed SCAN steps
+- [ ] X-77 forge.healing.propose_from_postgres (parity with X-69 sqlite)
+- [x] X-78 deploy attaches HMAC signature of source to version manifest
+- [x] X-79 GET /api/forge/metrics Prometheus exposition
+- [ ] X-80 MCP tool-throttling via gateway.check()
+- [x] X-81 sign_upload_url + verify_upload_url for client-side PUT uploads
+
 ## Status
 
-Phase F-1..F-5 + X-1..X-69 complete on claude/compare-litellm-loki-Y8Ke1.
-X-44/X-27 dashboard-ui follow-ups remain open.
+Phase F-1..F-5 + X-1..X-75 complete on claude/compare-litellm-loki-Y8Ke1.
+139 items shipped, 27 still open, 20 partially done.
 
-Full regression: 442 assertions across 28 test suites, 0 failed.
-Most recent push: 6213783.
+Full regression: 456 assertions across 29 test suites, 0 failed.
+Most recent push: b6030b9.

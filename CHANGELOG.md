@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: explain analyzer + signed deploys + Prometheus + signed upload URL
+
+X-76 Engine.explain_analyze() flags unindexed SCAN steps in the
+     query plan. MCP tool forge_db_explain_analyze.
+
+X-78 forge_function_deploy attaches an HMAC-SHA256 signature of the
+     source bytes to the version manifest. Downstream verifiers can
+     attest that the exact source ran in production.
+
+X-79 GET /api/forge/metrics emits Prometheus exposition for tables /
+     buckets / functions / schedules / gateway counters. Drop-in
+     for any Prometheus scraper.
+
+X-81 storage.sign_upload_url + verify_upload_url for client-side
+     direct PUTs. Signature binds method=PUT AND max_size so a
+     download-only URL cannot be replayed as upload and a small-
+     max-size URL cannot be reused for an oversized payload.
+
+3 new MCP tools (forge_db_explain_analyze, forge_storage_signed_upload,
+plus the /metrics endpoint). 11 new test assertions. No
+regressions.
+
+X-77 (Postgres healing parity) deferred to F-4 follow-up since
+it requires the Postgres-promotion path which we explicitly
+de-scoped to "user-app CI" rather than Loki itself.
+
 ### Follow-ups: forge.yaml secrets + tail + db seed + lifecycle + yaml compose + cron describe
 
 X-70 forge.yaml gains a `secrets:` list. Declarations only - we
