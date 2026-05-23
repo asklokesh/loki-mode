@@ -958,3 +958,37 @@ def register(mcp) -> None:
                               default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    # --- SDK codegen (F-5) ------------------------------------------------
+
+    @mcp.tool()
+    async def forge_sdk_targets() -> str:
+        """List available SDK codegen targets."""
+        _emit_event_safe("forge_sdk_targets", "start")
+        try:
+            from forge.sdk import list_targets
+            return json.dumps({"targets": list_targets()})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_sdk_generate(target: str, out_dir: str,
+                                 base_url: str = "/forge") -> str:
+        """Generate an SDK for the user's app from the live forge state.
+
+        Args:
+            target: typescript | python
+            out_dir: where to write the SDK source files (relative or absolute)
+            base_url: the URL prefix the generated client will hit
+                      (defaults to /forge so the dashboard router handles it)
+
+        Returns the list of generated files with sha256 + byte counts.
+        """
+        _emit_event_safe("forge_sdk_generate", "start",
+                         parameters={"target": target, "out_dir": out_dir})
+        try:
+            from forge.sdk import generate
+            res = generate(_forge_dir(), target, out_dir, base_url=base_url)
+            return json.dumps(res, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})

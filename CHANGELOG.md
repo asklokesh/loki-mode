@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Loki Forge Phase F-5: SDK codegen
+
+Deterministic SDK generation from the live forge state. The agent
+calls forge_sdk_generate during the RARV iteration; the user-app's
+imports come up working in the next iteration with no manual
+plumbing.
+
+forge/sdk/codegen.py
+  generate(forge_dir, target, out_dir) -> file list
+  Each file gets its sha256 + byte count so repeated calls with
+  unchanged forge state produce byte-identical output (verified by
+  test). The codegen handles SQL type normalization (numeric ->
+  real, varchar -> text, timestamptz -> timestamp, etc.) so it
+  works with both forge-native SQLite and post-promotion Postgres.
+
+TypeScript SDK (types.ts + client.ts + index.ts + package.json):
+  - One interface per database table with optional fields for
+    nullable columns.
+  - ForgeClient with table accessors (list/get/insert), storage_X
+    helpers per bucket, fn_X invokers per function, subscribe()
+    for realtime channels.
+  - Bearer auth via opts.token (static or async resolver).
+
+Python SDK (types.py + client.py + __init__.py):
+  - dataclass per table; required fields first, optional with
+    None defaults after (matches Python's dataclass ordering rule).
+  - ForgeClient with the same shape as the TS client; httpx-based
+    transport (or user-supplied) so we don't force a dep.
+
+Identifier safety: kebab-cased function/bucket names are
+sanitized into valid TS/Python identifiers (fn_send_newsletter_digest,
+storage_user_uploads).
+
+Tests: 11 SDK assertions including deterministic-output check
+(same forge state -> identical bytes across two generate() calls).
+2 new MCP tools: forge_sdk_targets, forge_sdk_generate.
+
+Kotlin / Swift / Go targets share the same codegen shape and are
+deferred to follow-up emit modules; the underlying state_dump and
+type normalization don't change.
+
 ### Added - Loki Forge Phase F-4: external auth, multi-tenant payments, migration tooling
 
 F-4 fills the remaining InsForge-parity gaps:

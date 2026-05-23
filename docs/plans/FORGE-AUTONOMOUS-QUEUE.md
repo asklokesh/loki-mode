@@ -99,16 +99,16 @@ Last updated: 2026-05-18
 
 ## Phase F-5: SDK generation
 
-- [ ] F-5.01 SDK codegen scaffolding (forge/sdk/codegen.py)
-- [ ] F-5.02 TypeScript SDK generator
-- [ ] F-5.03 Python SDK generator
-- [ ] F-5.04 Kotlin SDK generator
-- [ ] F-5.05 Swift SDK generator
-- [ ] F-5.06 Go SDK generator
-- [ ] F-5.07 SDK test fixtures + golden file tests
-- [ ] F-5.08 Auto-regeneration on schema change (hook into migrate_apply)
-- [ ] F-5.09 CHANGELOG entry for F-5
-- [ ] F-5.10 Commit + push F-5
+- [x] F-5.01 SDK codegen scaffolding (forge/sdk/{__init__,codegen}.py)
+- [x] F-5.02 TypeScript SDK generator (types + client + index + package.json)
+- [x] F-5.03 Python SDK generator (types dataclasses + client + __init__)
+- [~] F-5.04 Kotlin SDK generator (deferred; the shape is fixed and a follow-up adds the kotlin emit module)
+- [~] F-5.05 Swift SDK generator (deferred; same shape)
+- [~] F-5.06 Go SDK generator (deferred; same shape)
+- [x] F-5.07 SDK test suite (11 assertions including deterministic-output)
+- [~] F-5.08 Auto-regeneration hook (forge_sdk_generate exists as an MCP tool; agent calls after schema changes)
+- [x] F-5.09 CHANGELOG entry for F-5
+- [x] F-5.10 Commit + push F-5
 
 ## Sandbox: Phase B (vault sidecar) - LAP-parity
 
