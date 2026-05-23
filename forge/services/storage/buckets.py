@@ -58,11 +58,22 @@ def _validate_object_path(path: str) -> None:
         raise BucketError("object path too long")
 
 
+_ALLOWED_REGIONS = (
+    "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+    "eu-west-1", "eu-west-2", "eu-central-1",
+    "ap-south-1", "ap-northeast-1", "ap-southeast-1",
+    "auto",  # let the deploy adapter pick
+)
+
+
 def create_bucket(forge_dir: str, name: str, *, public: bool = False,
                   max_file_size: int = _DEFAULT_MAX_FILE,
                   allowed_content_types: Optional[List[str]] = None,
+                  region: str = "auto",
                   ) -> Dict[str, Any]:
     _validate_name(name)
+    if region not in _ALLOWED_REGIONS:
+        raise BucketError(f"unsupported region: {region!r}")
     root = _bucket_root(forge_dir, name)
     if os.path.isdir(root):
         raise BucketError(f"bucket exists: {name}")
@@ -73,6 +84,7 @@ def create_bucket(forge_dir: str, name: str, *, public: bool = False,
         "public": bool(public),
         "max_file_size": int(max_file_size),
         "allowed_content_types": list(allowed_content_types or []),
+        "region": region,
         "created_at": _utc_iso(),
     }
     _write_json(os.path.join(root, "_manifest.json"), manifest)

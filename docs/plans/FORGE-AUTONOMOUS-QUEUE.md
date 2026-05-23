@@ -177,8 +177,7 @@ Last updated: 2026-05-18
 - [x] X-26 Forge backup + restore (path-traversal-safe; master key excluded by default)
 - [ ] X-27 Schema diff visualization for the council review record
       (currently raw SQL; rendering needs a diff-friendly representation)
-- [ ] X-28 Cron schedule tooling: lint expressions in CI before
-      forge_schedule_create accepts them
+- [x] X-28 Cron lint() with warnings for minute=*, DOM>28, next-3-fires
 - [x] X-29 /api/forge/health endpoint flipping RED on the FRG* codes
 
 ## More tasks discovered
@@ -187,11 +186,11 @@ Last updated: 2026-05-18
 - [x] X-31 Webhook receiver routes (merged into X-24)
 - [x] X-32 Magic-link rate limiting per-email (5/hour default, gateway
       token-bucket reused)
-- [ ] X-33 Email-template registry so each transactional email
-      (magic link, password reset, payment-failed, etc.) has a
-      shared shape; per-product overrides
-- [ ] X-34 Multi-region storage routing: forge_storage_bucket_create
-      gains a region field; signed URLs honor it
+- [x] X-33 Email template registry with built-in defaults
+      (magic_link, password_reset, invoice_failed, welcome) +
+      register_template + send_template
+- [x] X-34 Multi-region storage: bucket gains region field (validated
+      allowlist us-east-1/us-east-2/.../auto); default 'auto'
 - [x] X-23 (email adapters)
 
 ## Status

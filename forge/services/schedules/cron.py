@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 _ALIASES = {
@@ -90,6 +90,54 @@ def validate_expression(expr: str) -> None:
         )
     for i, f in enumerate(fields):
         _expand_field(f, *_BOUNDS[i])
+
+
+def lint(expr: str) -> Dict[str, Any]:
+    """X-28: Lint a cron expression. Returns a structured report with
+    warnings + the computed next fire times so CI can surface obvious
+    mistakes (e.g. minute=* effectively spamming, or a schedule that
+    will never fire on Feb 30)."""
+    report: Dict[str, Any] = {"expr": expr, "warnings": [], "errors": []}
+    try:
+        validate_expression(expr)
+    except CronError as e:
+        report["errors"].append(str(e))
+        return report
+    norm = _normalize(expr)
+    fields = norm.split()
+
+    # Warning: minute=* means "fire every minute" (1440 fires/day) -
+    # almost never what users want.
+    if fields[0] == "*":
+        report["warnings"].append(
+            "minute='*' fires every minute; consider '*/N' or a specific minute"
+        )
+
+    # Warning: DOM > 28 fails in some months (Feb 30).
+    for part in fields[2].split(","):
+        try:
+            v = int(part.split("/")[0].split("-")[0])
+            if v > 28:
+                report["warnings"].append(
+                    f"day-of-month={v} never fires in months shorter than {v}"
+                )
+                break
+        except ValueError:
+            pass
+
+    # Compute the next 3 fire times for surface visibility.
+    try:
+        import time as _time
+        fires = []
+        base = _time.time()
+        for _ in range(3):
+            n = next_fire_time(expr, after_ts=base)
+            fires.append(n)
+            base = n
+        report["next_fires"] = fires
+    except CronError as e:
+        report["errors"].append(f"could not compute next fires: {e}")
+    return report
 
 
 def next_fire_time(expr: str, *, after_ts: float = None) -> int:

@@ -277,6 +277,36 @@ else
     fail "list_objects filter broken"
 fi
 
+# 15. X-34: bucket gains region field
+if run_py "
+import tempfile
+from forge.services.storage import create_bucket, list_buckets
+with tempfile.TemporaryDirectory() as d:
+    create_bucket(d, 'avatars', region='us-west-2')
+    b = list_buckets(d)[0]
+    assert b['region'] == 'us-west-2', b
+print('OK')" | grep -q '^OK$'; then pass "X-34 storage region field"; else fail "region field missing"; fi
+
+# 16. X-34: bad region rejected
+if run_py "
+import tempfile
+from forge.services.storage import create_bucket, BucketError
+with tempfile.TemporaryDirectory() as d:
+    try: create_bucket(d, 'avatars', region='earth')
+    except BucketError: print('OK'); raise SystemExit
+    raise AssertionError('earth accepted')
+" | grep -q '^OK$'; then pass "X-34 bad region rejected"; else fail "bad region accepted"; fi
+
+# 17. X-34: default region is 'auto'
+if run_py "
+import tempfile
+from forge.services.storage import create_bucket, list_buckets
+with tempfile.TemporaryDirectory() as d:
+    create_bucket(d, 'avatars')
+    b = list_buckets(d)[0]
+    assert b['region'] == 'auto', b
+print('OK')" | grep -q '^OK$'; then pass "X-34 default region 'auto'"; else fail "default region wrong"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

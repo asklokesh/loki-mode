@@ -125,6 +125,29 @@ with tempfile.TemporaryDirectory() as d:
     assert seen == ['x'], seen
 print('OK')" | grep -q '^OK$'; then pass "tick invokes callback"; else fail "callback not invoked"; fi
 
+# 11. X-28: lint emits warnings for minute=*
+if run_py "
+from forge.services.schedules.cron import lint
+r = lint('* * * * *')
+assert r['errors'] == []
+assert any('minute' in w for w in r['warnings']), r
+assert 'next_fires' in r and len(r['next_fires']) == 3
+print('OK')" | grep -q '^OK$'; then pass "X-28 cron lint: minute=* warning"; else fail "minute=* warning missing"; fi
+
+# 12. X-28: lint warns for DOM>28
+if run_py "
+from forge.services.schedules.cron import lint
+r = lint('0 0 30 * *')
+assert any('day-of-month' in w for w in r['warnings']), r
+print('OK')" | grep -q '^OK$'; then pass "X-28 cron lint: DOM>28 warning"; else fail "DOM warning missing"; fi
+
+# 13. X-28: lint surfaces parse errors
+if run_py "
+from forge.services.schedules.cron import lint
+r = lint('99 * * * *')
+assert r['errors'], r
+print('OK')" | grep -q '^OK$'; then pass "X-28 cron lint: parse error surfaced"; else fail "parse error not surfaced"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

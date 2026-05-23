@@ -8,7 +8,7 @@ which schedules are due and invokes them.
 
 from __future__ import annotations
 
-from .cron import next_fire_time, validate_expression  # noqa: F401
+from .cron import next_fire_time, validate_expression, lint as lint_expression  # noqa: F401
 from .schedules import (  # noqa: F401
     ScheduleError,
     create,

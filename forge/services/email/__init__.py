@@ -20,3 +20,9 @@ from .adapters import (  # noqa: F401
     send,
     setup_provider,
 )
+from .templates import (  # noqa: F401
+    DEFAULT_TEMPLATES,
+    list_templates,
+    register_template,
+    send_template,
+)

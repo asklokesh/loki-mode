@@ -99,6 +99,49 @@ with tempfile.TemporaryDirectory() as d:
     assert len(list_sent(d, 'resend', limit=3)) == 3
 print('OK')" | grep -q '^OK$'; then pass "list_sent honors limit"; else fail "limit broken"; fi
 
+# 9. X-33: default templates available without explicit register
+if run_py "
+import tempfile
+from forge.services.email import list_templates, DEFAULT_TEMPLATES
+with tempfile.TemporaryDirectory() as d:
+    names = [t['name'] for t in list_templates(d)]
+    assert set(DEFAULT_TEMPLATES) <= set(names), names
+print('OK')" | grep -q '^OK$'; then pass "X-33 default templates loaded"; else fail "defaults missing"; fi
+
+# 10. X-33: register_template overrides defaults
+if run_py "
+import tempfile
+from forge.services.email import register_template, list_templates
+with tempfile.TemporaryDirectory() as d:
+    register_template(d, 'magic_link', subject='Sign in to MyApp',
+                      body_text='Click {link}')
+    t = next(t for t in list_templates(d) if t['name'] == 'magic_link')
+    assert t['subject'] == 'Sign in to MyApp'
+print('OK')" | grep -q '^OK$'; then pass "X-33 register override"; else fail "override not applied"; fi
+
+# 11. X-33: bad template name rejected
+if run_py "
+import tempfile
+from forge.services.email import register_template, EmailError
+with tempfile.TemporaryDirectory() as d:
+    try: register_template(d, 'BadName', subject='s', body_text='t')
+    except EmailError: print('OK'); raise SystemExit
+    raise AssertionError('bad name accepted')
+" | grep -q '^OK$'; then pass "X-33 bad template name rejected"; else fail "bad name accepted"; fi
+
+# 12. X-33: send_template substitutes context
+if run_py "
+import tempfile
+from forge.services.email import setup_provider, send_template, list_sent
+with tempfile.TemporaryDirectory() as d:
+    setup_provider(d, 'resend', api_key_ref='K', from_address='a@b.com')
+    send_template(d, 'resend', template='welcome', to='u@x.com',
+                  context={'product_name': 'Forgy', 'user_name': 'Alice',
+                          'dashboard_url': 'https://app/x'})
+    sent = list_sent(d, 'resend')[-1]
+    assert 'Forgy' in sent['subject'], sent['subject']
+print('OK')" | grep -q '^OK$'; then pass "X-33 send_template substitution"; else fail "substitution broken"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: cron lint, email templates, multi-region storage
+
+X-28 forge.services.schedules.cron.lint(expr) - structured cron
+     analysis. Returns errors[], warnings[] (minute='*' fires every
+     minute, day-of-month > 28 never fires in short months), plus
+     the next 3 fire times for visibility.
+
+X-33 forge.services.email.templates - registry with four built-in
+     defaults (magic_link, password_reset, invoice_failed, welcome).
+     register_template overrides any default; send_template renders
+     {key} substitutions from the supplied context. Defaults work
+     without explicit registration.
+
+X-34 forge.services.storage region field. create_bucket(..., region=)
+     validates against an allowlist (10 standard regions + 'auto').
+     Default 'auto' lets the deploy adapter pick.
+
+Tests: 3 schedule-lint + 4 email-template + 3 storage-region = 10
+new assertions. No regressions.
+
 ### Follow-ups: webhook receivers, OAuth callback handler, magic-link rate limit
 
 X-24 POST /forge/payments/{provider}/webhook
