@@ -255,11 +255,13 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-65 rate_limit.set_alert_hook() fires on every throttle
 - [x] X-66 Engine.explain() returns EXPLAIN QUERY PLAN
 - [x] X-67 export_secrets(confirm_destructive=True)
-- [ ] X-68 forge_function_warm: pre-spin a Bun process for cold-start cuts
-- [ ] X-69 Healing-mode integration with legacy DB schema introspection
+- [x] X-68 forge.services.functions.warm() pre-warms runtime
+- [x] X-69 forge.healing.propose_from_sqlite + apply_proposal
 
 ## Status
 
-Phase F-1..F-5 + X-1..X-60 complete on claude/compare-litellm-loki-Y8Ke1.
-X-44/X-27 UI panes deferred. Continuing the autonomous loop with the
-sixth wave (X-61..X-69) next.
+Phase F-1..F-5 + X-1..X-67 complete on claude/compare-litellm-loki-Y8Ke1.
+X-44/X-27 UI panes deferred. X-68 and X-69 carry forward as next-wave.
+
+Full regression: 434 assertions across 27 test suites, 0 failed.
+Most recent push: bab8317.

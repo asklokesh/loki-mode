@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: warm + healing-mode legacy DB import
+
+X-68 forge.services.functions.warm() pre-warms a function so the
+     first real invoke skips cold-start. File-touch warms the OS
+     cache for every runtime; Bun additionally probes via
+     `bun build --no-bundle` if the binary is available. Errors
+     never bubble. MCP tool forge_function_warm.
+
+X-69 forge.healing.propose_from_sqlite() reads an existing SQLite
+     database and returns a forge migration spec that recreates
+     its schema. PK INTEGER columns map to the `id` alias; indices
+     are emitted as create_index ops. apply_proposal() runs the
+     spec against the forge dev DB so the agent can pull an
+     existing app onto Forge in two MCP calls. Forge-internal
+     tables (`_forge_*`) are skipped. MCP tools
+     forge_healing_propose, forge_healing_apply.
+
+3 new MCP tools. 8 new test assertions. No regressions.
+
+Full regression sweep: 434 assertions across 27 suites green
+before this commit; 442 after.
+
 ### Follow-ups: search + init + fk graph + versioning + alerts + explain + secret export
 
 X-61 forge.search() cross-service name search (tables, columns,

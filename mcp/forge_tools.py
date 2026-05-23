@@ -1142,6 +1142,42 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_function_warm(name: str,
+                                  version: Optional[int] = None) -> str:
+        """X-68: pre-warm a forge function so the first real invoke
+        skips cold-start. Returns {ok, warmed, duration_ms}."""
+        _emit_event_safe("forge_function_warm", "start")
+        try:
+            from forge.services.functions import warm
+            return json.dumps(warm(_forge_dir(), name, version=version),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_healing_propose(legacy_db_path: str) -> str:
+        """X-69: read a legacy SQLite db and return a proposed forge
+        migration spec that would recreate its schema."""
+        _emit_event_safe("forge_healing_propose", "start")
+        try:
+            from forge.healing import propose_from_sqlite
+            return json.dumps(propose_from_sqlite(legacy_db_path),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_healing_apply(proposal: Dict[str, Any]) -> str:
+        """X-69: apply a healing proposal."""
+        _emit_event_safe("forge_healing_apply", "start")
+        try:
+            from forge.healing import apply_proposal
+            return json.dumps(apply_proposal(_forge_dir(), proposal),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_search(query: str, limit: int = 50) -> str:
         """X-61: cross-service name search across tables/columns/buckets/
         functions/schedules/secrets/realtime channels."""
