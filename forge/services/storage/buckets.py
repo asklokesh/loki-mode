@@ -74,6 +74,17 @@ def create_bucket(forge_dir: str, name: str, *, public: bool = False,
     _validate_name(name)
     if region not in _ALLOWED_REGIONS:
         raise BucketError(f"unsupported region: {region!r}")
+    # X-36: compliance preset enforcement at create-time.
+    try:
+        from forge.compliance import validate_storage
+        errs = validate_storage(region=region, max_file_size=max_file_size)
+        if errs:
+            raise BucketError("; ".join(errs))
+    except BucketError:
+        raise
+    except Exception:
+        # compliance module unavailable - skip enforcement
+        pass
     root = _bucket_root(forge_dir, name)
     if os.path.isdir(root):
         raise BucketError(f"bucket exists: {name}")

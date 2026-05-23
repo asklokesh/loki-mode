@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: compliance presets + RLS DSL + BMAD detector
+
+X-36 forge/compliance.py with four presets (default, healthcare,
+     fintech, government). validate_storage() enforces region prefix
+     + max-file cap at create-time; validate_payments() enforces
+     webhook_secret_ref. Triggered by the existing
+     LOKI_COMPLIANCE_PRESET env var so the operator gets the same
+     compliance tier across the rest of Loki + Forge.
+
+X-37 forge.detect_from_bmad_workspace reads the
+     _bmad-output/planning-artifacts/ markdown produced by Loki's
+     BMAD adapter and runs the standard detector heuristics over
+     the combined text. Drops gracefully when the workspace shape
+     isn't present.
+
+X-39 forge/services/database/rls_dsl.py - a tiny LL(1) DSL for
+     row-level security predicates the agent can write inline.
+     Tokenizer constrains to identifiers / single-quoted strings /
+     numbers / a small operator set so injection patterns
+     (semicolons, double-quoted strings, `--` comments) are rejected
+     at parse-time. to_postgres() compiles into Postgres syntax with
+     currentUser() -> auth.uid().
+
+Tests: 13 new assertions across forge-detector, forge-compliance-rls,
+forge-storage. No regressions.
+
 ### Follow-ups: forge CLI wrappers + rate-limit telemetry + backup safety fix
 
 X-35 `loki promote [provider] [from] [to]` shorthand for

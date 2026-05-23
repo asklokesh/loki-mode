@@ -26,6 +26,10 @@ __version__ = "0.1.0"
 # Surface the canonical entry points so callers (mcp/forge_tools.py, the
 # autonomy/forge_detector.sh hook, the dashboard router) do not have to
 # know the internal package layout.
-from .spec_detector import ForgeRequirements, detect_from_path  # noqa: F401
+from .spec_detector import (  # noqa: F401
+    ForgeRequirements,
+    detect_from_path,
+    detect_from_bmad_workspace,
+)
 from .semantic_layer import render_prompt_block  # noqa: F401
 from .provisioner import provision  # noqa: F401

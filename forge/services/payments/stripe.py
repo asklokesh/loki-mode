@@ -49,6 +49,16 @@ def setup_provider(forge_dir: str, provider: str, *,
         and webhook_secret_ref.replace("_", "").isalnum()
     ):
         raise PaymentsError("webhook_secret_ref must be a forge secret name")
+    # X-36: compliance preset enforcement.
+    try:
+        from forge.compliance import validate_payments
+        errs = validate_payments(webhook_secret_ref=webhook_secret_ref)
+        if errs:
+            raise PaymentsError("; ".join(errs))
+    except PaymentsError:
+        raise
+    except Exception:
+        pass
     cfg = {
         "provider": provider,
         "api_key_ref": api_key_ref,

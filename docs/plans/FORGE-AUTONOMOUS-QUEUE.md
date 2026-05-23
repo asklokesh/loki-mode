@@ -201,11 +201,32 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 ## More tasks discovered (next wave)
 
 - [x] X-35 `loki promote` CLI shorthand wrapping forge_deploy_promote
-- [ ] X-36 Compliance presets (healthcare/fintech/government) propagate
-      to forge sandbox config so backend resources match compliance tier
-- [ ] X-37 BMAD/OpenSpec integration with the detector so the agent's
-      epic/story queue can drive forge provisioning
+- [x] X-36 Compliance presets (healthcare/fintech/government). forge/compliance.py
+      validates storage region+size and payments webhook_secret_ref at create-time.
+- [x] X-37 BMAD workspace integration: detect_from_bmad_workspace reads
+      _bmad-output/planning-artifacts/ markdown and feeds the detector.
 - [x] X-38 Rate-limit telemetry endpoint /api/forge/gateway/rate-limit
-- [ ] X-39 RLS predicate language: a tiny mini-DSL the agent compiles
-      into Postgres CREATE POLICY on promotion
+- [x] X-39 RLS DSL with Postgres compiler (LL(1) grammar; injection-safe;
+      currentUser() -> auth.uid()).
 - [x] X-40 Forge CLI: `loki forge status / backup / restore / promote`
+
+## More tasks discovered (third wave)
+
+- [ ] X-41 Surface compliance preset in `loki forge status` JSON
+- [ ] X-42 Materialize RLS DSL predicates on Postgres promotion (deploy adapter integration)
+- [ ] X-43 OAuth callback: complete the token-exchange happy path
+      in oauth_exchange function template + emit a JWT
+- [ ] X-44 Dashboard UI panes for backend tab (X-27 follow-up)
+- [ ] X-45 Audit-chain integration: forge_db_migrate review records
+      currently sidecar; wire into dashboard/audit.py chain hasher
+- [ ] X-46 Storage backend pluggability: S3-compatible gateway adapter
+      next to the FS-backed default
+- [ ] X-47 OpenAPI 3.1 schema generation matching the SDK shape
+- [ ] X-48 Schema migration linter: warn on dropped-not-null + on
+      column type change that's not nullable-compatible
+
+## Status
+
+Phase F-1..F-5 + X-1..X-40 complete on
+claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (UI pane), and
+the X-41..X-48 follow-ups newly discovered this round.

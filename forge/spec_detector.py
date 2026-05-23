@@ -230,6 +230,44 @@ def detect_from_path(spec_path: str) -> ForgeRequirements:
     return detect_from_text(text)
 
 
+def detect_from_bmad_workspace(workspace_dir: str) -> ForgeRequirements:
+    """X-37: detect from a BMAD planning workspace.
+
+    Reads _bmad-output/planning-artifacts/prd-*.md and architecture.md
+    if present, concatenates them, and runs the standard detector
+    over the combined text. The detector heuristics work as-is because
+    BMAD PRDs use the same prose patterns as freeform PRDs.
+
+    Falls back gracefully when the workspace structure is absent.
+    """
+    if not isinstance(workspace_dir, str) or not os.path.isdir(workspace_dir):
+        return ForgeRequirements(none=True,
+                                 notes=[f"workspace not found: {workspace_dir}"])
+    bmad_dir = os.path.join(workspace_dir, "_bmad-output", "planning-artifacts")
+    if not os.path.isdir(bmad_dir):
+        return ForgeRequirements(none=True,
+                                 notes=["no _bmad-output/planning-artifacts/ found"])
+    combined: List[str] = []
+    for fname in sorted(os.listdir(bmad_dir)):
+        if not (fname.endswith(".md") or fname.endswith(".markdown")):
+            continue
+        if not (fname.startswith("prd-") or fname.startswith("architecture")
+                or fname.startswith("epics")):
+            continue
+        path = os.path.join(bmad_dir, fname)
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                combined.append(f"<!-- {fname} -->\n" + f.read())
+        except OSError:
+            continue
+    if not combined:
+        return ForgeRequirements(none=True,
+                                 notes=["bmad workspace has no detectable artifacts"])
+    req = detect_from_text("\n\n".join(combined))
+    req.notes.append(f"detected from BMAD workspace: {workspace_dir}")
+    return req
+
+
 def write_required_json(req: ForgeRequirements, forge_dir: str) -> str:
     """Persist ForgeRequirements to <forge_dir>/required.json. Returns the
     written path. Creates forge_dir if needed."""

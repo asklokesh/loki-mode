@@ -138,6 +138,22 @@ else
     fail "missing spec path raised or wrong result"
 fi
 
+# 12. X-37: BMAD workspace detection
+if run_py "
+import os
+from forge import detect_from_bmad_workspace
+wd = os.path.join('$ROOT', 'tests', 'fixtures', 'bmad')
+req = detect_from_bmad_workspace(wd)
+assert not req.none, 'BMAD workspace should detect something'
+print('OK')" | grep -q '^OK$'; then pass "X-37 BMAD workspace detect"; else fail "BMAD detect broken"; fi
+
+# 13. X-37: graceful fallback when path missing
+if run_py "
+from forge import detect_from_bmad_workspace
+req = detect_from_bmad_workspace('/nonexistent')
+assert req.none
+print('OK')" | grep -q '^OK$'; then pass "X-37 BMAD missing path safe"; else fail "BMAD missing path crashes"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
