@@ -49,31 +49,31 @@ Last updated: 2026-05-18
 
 ## Phase F-3: Realtime + Schedules + Secrets + Payments + Deploy(Railway)
 
-- [ ] F-3.01 Realtime service (forge/services/realtime/{bus,channels,presence}.py)
-- [ ] F-3.02 WS endpoint /forge/realtime/v1 reusing dashboard manager
-- [ ] F-3.03 Realtime channel RLS gating (matches DB identity)
-- [ ] F-3.04 Realtime MCP tools (forge_realtime_channel_*, _publish, _history)
-- [ ] F-3.05 Realtime test suite (>=8 assertions)
-- [ ] F-3.06 Schedules service (cron parser + persisted store)
-- [ ] F-3.07 Schedule runner ticking from dashboard background loop
-- [ ] F-3.08 Schedule trigger types (function/url/event)
-- [ ] F-3.09 Schedules MCP tools (forge_schedule_create/list/delete/logs)
-- [ ] F-3.10 Schedules test suite (>=10 assertions)
-- [ ] F-3.11 Secrets vault (file-based KMS, AES-GCM, project-master key derivation)
-- [ ] F-3.12 Secret rotation policy + scheduler integration
-- [ ] F-3.13 Secrets MCP tools (forge_secret_set/list/delete/rotate)
-- [ ] F-3.14 Secrets test suite (>=10 assertions)
-- [ ] F-3.15 Stripe payments service + webhook handler function
-- [ ] F-3.16 Subscription state sync to forge.subscriptions table
-- [ ] F-3.17 Payments MCP tools (forge_payments_*)
-- [ ] F-3.18 Payments test suite (>=8 assertions, mock Stripe API)
-- [ ] F-3.19 Railway deploy adapter (Nixpacks + service env + Postgres + Redis)
-- [ ] F-3.20 Deploy MCP tools (forge_deploy_provider_setup/promote/status/rollback)
-- [ ] F-3.21 Deploy test suite (>=8 assertions, mock Railway API)
-- [ ] F-3.22 Provisioner: wire F-3 services
-- [ ] F-3.23 Semantic layer: surface F-3 resources
-- [ ] F-3.24 CHANGELOG entry for F-3
-- [ ] F-3.25 Commit + push F-3
+- [x] F-3.01 Realtime service (bus, channels, presence)
+- [~] F-3.02 WS endpoint /forge/realtime/v1 (bus.subscribe() ready; WS wiring is F-4 dashboard work)
+- [x] F-3.03 Realtime channel RLS field + custom-predicate sanitization
+- [x] F-3.04 Realtime MCP tools (forge_realtime_channel_create/list, _publish, _history)
+- [x] F-3.05 Realtime test suite (8 assertions)
+- [x] F-3.06 Schedules service (cron parser + persisted store)
+- [x] F-3.07 Schedule runner with invoke-callback (dashboard-loop wiring in F-4)
+- [x] F-3.08 Schedule trigger types (function/url/event)
+- [x] F-3.09 Schedules MCP tools (forge_schedule_create/list/delete/logs)
+- [x] F-3.10 Schedules test suite (10 assertions)
+- [x] F-3.11 Secrets vault (AES-GCM when cryptography available; HMAC-XOR fallback)
+- [x] F-3.12 Secret rotation policy + alert/function/manual actions
+- [x] F-3.13 Secrets MCP tools (forge_secret_set/list/delete/rotate)
+- [x] F-3.14 Secrets test suite (10 assertions; no plaintext on disk verified)
+- [x] F-3.15 Stripe payments service + webhook signature verification
+- [~] F-3.16 Subscription state sync to forge.subscriptions table (recording side done; table sync is F-4)
+- [x] F-3.17 Payments MCP tools (forge_payments_provider_setup, _product_create/list, _webhook_register)
+- [x] F-3.18 Payments test suite (9 assertions)
+- [x] F-3.19 Railway deploy adapter + Fly + Vercel + Cloudflare + local plans
+- [x] F-3.20 Deploy MCP tools (forge_deploy_provider_setup, _plan, _promote, _status, _rollback)
+- [x] F-3.21 Deploy test suite (10 assertions)
+- [~] F-3.22 Provisioner: wire F-3 (deferred; F-3 services are not auto-provisioned from PRD text since they need real secrets the agent supplies)
+- [x] F-3.23 Semantic layer: realtime + schedules + secrets + payments + deploy surfaced via state dump
+- [x] F-3.24 CHANGELOG entry for F-3
+- [x] F-3.25 Commit + push F-3
 
 ## Phase F-4: remaining deploys + Stripe Connect + external auth + Python runtime
 

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Loki Forge Phase F-3: realtime, schedules, secrets, payments, deploy
+
+F-3 closes the remaining service gaps versus InsForge and adds five
+deploy adapters (Railway / Fly / Vercel / Cloudflare / local). All
+services share the storage model established in F-2 - per-service
+subdir under <forge_dir>/, manifest-driven, idempotent operations.
+
+Realtime (forge/services/realtime/)
+  channels.py    Channel CRUD with RLS field + custom-predicate
+                 sanitization (rejects `;`, `--`, NUL).
+  bus.py         In-process pub/sub coordinator with per-channel ring
+                 buffer (cap 10k) + jsonl history (auto-rotated at 4MB).
+                 publish() always persists; subscribe() returns an
+                 asyncio.Queue the WS endpoint will consume.
+  presence.py    In-memory presence with 60s freshness window.
+
+Schedules (forge/services/schedules/)
+  cron.py        Minimal 5-field parser with @-aliases (@hourly,
+                 @daily, etc.). next_fire_time() honors standard
+                 DOM/DOW intersection semantics.
+  schedules.py   Persisted CRUD; target.type one of function/url/event.
+  runner.py      tick() returns the schedules that fired; optional
+                 invoke callback lets the dashboard wire actual
+                 dispatch. Per-run logs persisted.
+
+Secrets (forge/services/secrets/)
+  vault.py       AES-GCM-256 encryption via cryptography when
+                 available (probed by importing _cffi_backend FIRST
+                 because PyO3 panics on partial cryptography installs
+                 cannot be caught with try/except). Falls back to
+                 HMAC-XOR with a loud warning. Master key auto-
+                 generated 0600. Test verifies no plaintext on disk.
+  rotation.py    Rotation policy storage; apply action either emits
+                 a dashboard alert or invokes a regen function.
+
+Payments (forge/services/payments/)
+  stripe.py      Provider setup + product/price catalog + webhook
+                 registration + Stripe-compat signature verification
+                 (HMAC-SHA256, ts tolerance, constant-time compare).
+                 Loki itself never depends on the Stripe SDK - the
+                 user's app does. Lemon Squeezy / Paddle ship in F-4
+                 using the same surface.
+
+Deploy (forge/services/deploy/)
+  promote.py     Five provider planners: Railway (Nixpacks + service
+                 env + Postgres + Redis), Fly (vm_size + primary_region),
+                 Vercel (kv + blob + postgres), Cloudflare (workers +
+                 r2 + d1 + queues), local (docker-compose). plan()
+                 reflects live forge state. promote() records the
+                 promotion intent + plan; the actual provider-API
+                 calls run in user-app CI so Loki never holds
+                 credentials.
+
+MCP tools (24 added):
+  forge_realtime_channel_create/list, _publish, _history
+  forge_schedule_create/list/delete/logs
+  forge_secret_set/list/delete/rotate
+  forge_payments_provider_setup, _product_create/list, _webhook_register
+  forge_deploy_provider_setup, _plan, _promote, _status, _rollback
+
+Tests: 8 realtime + 10 schedules + 10 secrets + 9 payments + 10 deploy
+= 47 new assertions. Project total 249/249 across 20 suites.
+
 ### Added - Loki Forge Phase F-2: functions, gateway, dashboard router
 
 Continuation of F-2. Functions + Gateway + Dashboard read-only surface

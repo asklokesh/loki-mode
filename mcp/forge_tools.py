@@ -564,3 +564,287 @@ def register(mcp) -> None:
             }, default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    # --- Realtime tools (F-3) ---------------------------------------------
+
+    @mcp.tool()
+    async def forge_realtime_channel_create(name: str, public: bool = False,
+                                            rls: str = "own-row",
+                                            custom_predicate: Optional[str] = None
+                                            ) -> str:
+        """Create a realtime channel. rls: public | own-row | own-or-public
+        | custom (with custom_predicate)."""
+        _emit_event_safe("forge_realtime_channel_create", "start")
+        try:
+            from forge.services.realtime import create_channel
+            res = create_channel(_forge_dir(), name, public=public, rls=rls,
+                                 custom_predicate=custom_predicate)
+            return json.dumps(res, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_realtime_channel_list() -> str:
+        _emit_event_safe("forge_realtime_channel_list", "start")
+        try:
+            from forge.services.realtime import list_channels
+            return json.dumps({"channels": list_channels(_forge_dir())},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_realtime_publish(channel: str,
+                                     payload: Dict[str, Any],
+                                     sender_user_id: Optional[str] = None
+                                     ) -> str:
+        """Publish a message to a channel. RLS gating is the caller's
+        responsibility (or the dashboard WS endpoint, when wired)."""
+        _emit_event_safe("forge_realtime_publish", "start")
+        try:
+            from forge.services.realtime import publish
+            res = publish(_forge_dir(), channel, payload,
+                          sender_user_id=sender_user_id)
+            return json.dumps(res, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_realtime_history(channel: str, limit: int = 100,
+                                     since_ms: Optional[int] = None) -> str:
+        _emit_event_safe("forge_realtime_history", "start")
+        try:
+            from forge.services.realtime import history
+            return json.dumps({"messages": history(_forge_dir(), channel,
+                                                    limit=limit,
+                                                    since_ms=since_ms)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Schedules tools (F-3) --------------------------------------------
+
+    @mcp.tool()
+    async def forge_schedule_create(name: str, cron: str,
+                                    target: Dict[str, Any],
+                                    payload: Optional[Dict[str, Any]] = None
+                                    ) -> str:
+        """Create a scheduled job. target is one of:
+            {"type": "function", "name": "<fn>"}
+            {"type": "url", "url": "https://..."}
+            {"type": "event", "topic": "<bus.topic>"}
+        cron is a standard 5-field expression or @hourly/@daily/etc.
+        """
+        _emit_event_safe("forge_schedule_create", "start")
+        try:
+            from forge.services.schedules import create
+            return json.dumps(create(_forge_dir(), name, cron, target,
+                                     payload=payload), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_schedule_list() -> str:
+        _emit_event_safe("forge_schedule_list", "start")
+        try:
+            from forge.services.schedules import list_schedules
+            return json.dumps({"schedules": list_schedules(_forge_dir())},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_schedule_delete(name: str) -> str:
+        _emit_event_safe("forge_schedule_delete", "start")
+        try:
+            from forge.services.schedules import delete
+            return json.dumps({"deleted": delete(_forge_dir(), name)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_schedule_logs(name: str, limit: int = 100) -> str:
+        _emit_event_safe("forge_schedule_logs", "start")
+        try:
+            from forge.services.schedules import list_runs
+            return json.dumps({"runs": list_runs(_forge_dir(), name, limit)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Secrets tools (F-3) ----------------------------------------------
+
+    @mcp.tool()
+    async def forge_secret_set(name: str, value: str) -> str:
+        """Store a secret value. Returns name + metadata; value never echoed."""
+        _emit_event_safe("forge_secret_set", "start",
+                         parameters={"name": name})
+        try:
+            from forge.services.secrets import set_secret
+            return json.dumps(set_secret(_forge_dir(), name, value),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_secret_list() -> str:
+        """List secret names + metadata. Values are NOT returned."""
+        _emit_event_safe("forge_secret_list", "start")
+        try:
+            from forge.services.secrets import list_secrets
+            return json.dumps({"secrets": list_secrets(_forge_dir())},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_secret_delete(name: str) -> str:
+        _emit_event_safe("forge_secret_delete", "start",
+                         parameters={"name": name})
+        try:
+            from forge.services.secrets import delete_secret
+            return json.dumps({"deleted": delete_secret(_forge_dir(), name)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_secret_rotate(name: str, cron: str = "@monthly",
+                                  action: str = "alert",
+                                  target: Optional[Dict[str, Any]] = None
+                                  ) -> str:
+        """Set a rotation policy for a secret. action: alert | function |
+        manual. cron is the rotation cadence (passed to the scheduler)."""
+        _emit_event_safe("forge_secret_rotate", "start")
+        try:
+            from forge.services.secrets import set_rotation_policy
+            return json.dumps(set_rotation_policy(_forge_dir(), name,
+                                                   cron=cron, action=action,
+                                                   target=target),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Payments tools (F-3) ---------------------------------------------
+
+    @mcp.tool()
+    async def forge_payments_provider_setup(provider: str,
+                                            api_key_ref: str,
+                                            api_version: Optional[str] = None,
+                                            webhook_secret_ref: Optional[str] = None
+                                            ) -> str:
+        """Configure a payments provider (stripe / lemon-squeezy / paddle)."""
+        _emit_event_safe("forge_payments_provider_setup", "start")
+        try:
+            from forge.services.payments import setup_provider
+            return json.dumps(setup_provider(_forge_dir(), provider,
+                                              api_key_ref=api_key_ref,
+                                              api_version=api_version,
+                                              webhook_secret_ref=webhook_secret_ref),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_payments_product_create(provider: str, name: str,
+                                            prices: List[Dict[str, Any]],
+                                            metadata: Optional[Dict[str, Any]] = None
+                                            ) -> str:
+        _emit_event_safe("forge_payments_product_create", "start")
+        try:
+            from forge.services.payments import create_product
+            return json.dumps(create_product(_forge_dir(), provider, name=name,
+                                              prices=prices, metadata=metadata),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_payments_product_list(provider: str) -> str:
+        _emit_event_safe("forge_payments_product_list", "start")
+        try:
+            from forge.services.payments import list_products
+            return json.dumps({"products": list_products(_forge_dir(), provider)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_payments_webhook_register(provider: str,
+                                              target_function: str,
+                                              events: List[str]) -> str:
+        _emit_event_safe("forge_payments_webhook_register", "start")
+        try:
+            from forge.services.payments import register_webhook
+            return json.dumps(register_webhook(_forge_dir(), provider,
+                                                target_function=target_function,
+                                                events=events),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # --- Deploy tools (F-3) -----------------------------------------------
+
+    @mcp.tool()
+    async def forge_deploy_provider_setup(provider: str,
+                                          credentials_ref: Optional[str] = None,
+                                          project_id: Optional[str] = None,
+                                          region: Optional[str] = None) -> str:
+        """Configure a deploy provider (railway / fly / vercel /
+        cloudflare / local). credentials_ref points to a forge secret."""
+        _emit_event_safe("forge_deploy_provider_setup", "start")
+        try:
+            from forge.services.deploy import setup_provider
+            return json.dumps(setup_provider(_forge_dir(), provider,
+                                              credentials_ref=credentials_ref,
+                                              project_id=project_id,
+                                              region=region),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_deploy_plan(provider: str, env: str = "prod") -> str:
+        """Render a deploy plan for inspection without applying."""
+        _emit_event_safe("forge_deploy_plan", "start")
+        try:
+            from forge.services.deploy import plan
+            return json.dumps(plan(_forge_dir(), provider, env=env),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_deploy_promote(provider: str,
+                                   from_env: str = "dev",
+                                   to_env: str = "prod") -> str:
+        """Promote forge resources from one env to another. Records the
+        promotion intent + the rendered plan; the actual provider-API
+        call runs in user-app CI."""
+        _emit_event_safe("forge_deploy_promote", "start")
+        try:
+            from forge.services.deploy import promote
+            return json.dumps(promote(_forge_dir(), provider,
+                                       from_env=from_env, to_env=to_env),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_deploy_status(provider: str, env: str = "prod") -> str:
+        _emit_event_safe("forge_deploy_status", "start")
+        try:
+            from forge.services.deploy import status
+            return json.dumps(status(_forge_dir(), provider, env=env),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_deploy_rollback(provider: str, env: str = "prod") -> str:
+        _emit_event_safe("forge_deploy_rollback", "start")
+        try:
+            from forge.services.deploy import rollback
+            return json.dumps(rollback(_forge_dir(), provider, env=env),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
