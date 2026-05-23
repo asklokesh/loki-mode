@@ -66,6 +66,22 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_db_query_page(sql: str, limit: int = 100,
+                                  cursor: int = 0) -> str:
+        """X-55: paginated SELECT. Returns {rows, next_cursor, has_more}.
+        Wrap your query in this when you expect more than ~1000 rows
+        back to avoid OOM and long-running SQLite scans."""
+        _emit_event_safe("forge_db_query_page", "start")
+        try:
+            from forge.services.database import open_engine
+            engine = open_engine(_forge_dir())
+            return json.dumps(engine.query_page(sql, limit=limit,
+                                                cursor=cursor),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_db_query(sql: str, allow_writes: bool = False) -> str:
         """Run one SQL statement against the user-app database. SELECTs are
         always allowed; writes require allow_writes=True and should usually
@@ -485,6 +501,39 @@ def register(mcp) -> None:
         try:
             from forge.services.functions import delete_function
             return json.dumps({"deleted": delete_function(_forge_dir(), name)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_job_enqueue(function: str,
+                                payload: Optional[Dict[str, Any]] = None,
+                                max_attempts: int = 5,
+                                not_before_ts: Optional[int] = None) -> str:
+        """X-57: enqueue a forge function for background execution.
+        Returns {job_id}. Retried up to max_attempts; dead-lettered
+        after that."""
+        _emit_event_safe("forge_job_enqueue", "start")
+        try:
+            from forge.services.functions import job_enqueue
+            return json.dumps(job_enqueue(_forge_dir(), function=function,
+                                          payload=payload,
+                                          max_attempts=max_attempts,
+                                          not_before_ts=not_before_ts),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_job_list(status: Optional[str] = None,
+                             limit: int = 100) -> str:
+        """X-57: list jobs. status filter: pending | completed | dead."""
+        _emit_event_safe("forge_job_list", "start")
+        try:
+            from forge.services.functions import list_jobs
+            return json.dumps({"jobs": list_jobs(_forge_dir(),
+                                                  status=status,
+                                                  limit=limit)},
+                              default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

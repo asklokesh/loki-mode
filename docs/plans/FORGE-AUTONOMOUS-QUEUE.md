@@ -236,6 +236,16 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-53 storage.upload_stream() chunked upload + size-cap + dedupe
 - [x] X-54 add_table soft_delete flag auto-injects deleted_at column
 
+## Fifth wave
+
+- [x] X-55 forge_db_query_page MCP tool routes to Engine.query_page()
+- [x] X-56 /api/forge/analytics rollup endpoint
+- [x] X-57 Background job queue with retry + dead-letter + not_before_ts;
+      ticked by the dashboard background loop
+- [x] X-58 forge.config.validate() catches typo'd keys + missing fields
+- [x] X-59 Email template i18n (compound key <name>@<locale> + fallback)
+- [x] X-60 audit_columns flag auto-injects created_by/updated_by/version
+
 ## Status
 
 Phase F-1..F-5 + X-1..X-48 (minus X-27/X-44 UI panes) complete on

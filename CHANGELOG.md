@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: analytics + job queue + config lint + i18n + audit cols
+
+X-55 forge_db_query_page MCP tool exposes the paginated SELECT
+     path via the agent surface.
+X-56 GET /api/forge/analytics rollup across all forge services.
+X-57 forge/services/functions/jobs.py - background job queue
+     (enqueue + tick + list). Retry-with-DLQ + not_before_ts.
+     Dashboard background loop ticks both schedules and jobs.
+X-58 forge.config.validate() lints forge.yaml before apply().
+X-59 Email template i18n (compound key <name>@<locale> + fallback).
+X-60 add_table audit_columns flag auto-injects created_by /
+     updated_by / version.
+
+14 new test assertions. 4 new MCP tools. No regressions.
+
 ### Follow-ups: pagination + stream upload + soft delete
 
 X-52 Engine.query_page(sql, limit, cursor) wraps the user's SELECT

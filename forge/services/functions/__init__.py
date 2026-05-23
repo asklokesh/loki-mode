@@ -28,3 +28,8 @@ from .deploy import (  # noqa: F401
 )
 from .invoke import invoke  # noqa: F401
 from .logs import list_runs, read_run_log  # noqa: F401
+from .jobs import (  # noqa: F401
+    enqueue as job_enqueue,
+    tick as job_tick,
+    list_jobs,
+)

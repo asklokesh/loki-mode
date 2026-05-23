@@ -340,6 +340,17 @@ def _compile(spec: MigrationSpec) -> str:
     return "\n".join(chunks)
 
 
+def _cols_have(cols: List[Any], name: str) -> bool:
+    """Return True if a column with the given name appears in `cols`
+    (mixed dict/string forms)."""
+    for c in cols:
+        if isinstance(c, dict) and c.get("name") == name:
+            return True
+        if isinstance(c, str) and c.split()[0] == name:
+            return True
+    return False
+
+
 def _compile_add_table(op: Dict[str, Any]) -> str:
     name = op.get("name")
     cols = op.get("columns") or []
@@ -347,15 +358,18 @@ def _compile_add_table(op: Dict[str, Any]) -> str:
         raise ValueError("add_table requires name + columns")
     # X-54: soft_delete flag auto-injects a deleted_at column.
     if op.get("soft_delete"):
-        already = False
-        for c in cols:
-            cname = (c.get("name") if isinstance(c, dict)
-                     else (c.split()[0] if isinstance(c, str) else ""))
-            if cname == "deleted_at":
-                already = True
-                break
-        if not already:
+        if not _cols_have(cols, "deleted_at"):
             cols = list(cols) + ["deleted_at timestamp"]
+    # X-60: audit_columns flag auto-injects created_by/updated_by/
+    # version. Idempotent. Often used together with soft_delete on
+    # write-heavy tables that need provenance.
+    if op.get("audit_columns"):
+        if not _cols_have(cols, "created_by"):
+            cols = list(cols) + ["created_by text"]
+        if not _cols_have(cols, "updated_by"):
+            cols = list(cols) + ["updated_by text"]
+        if not _cols_have(cols, "version"):
+            cols = list(cols) + ["version integer default(1)"]
     col_sql = []
     for c in cols:
         col_sql.append(_compile_column(c))

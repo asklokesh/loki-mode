@@ -98,6 +98,87 @@ def _parse_yaml_minimal(path: str) -> Dict[str, Any]:
     return out
 
 
+_ALLOWED_TOP_KEYS = {
+    "schema_version", "compliance_preset", "tables", "auth",
+    "storage", "schedules", "gateway", "secrets",
+}
+
+
+def validate(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """X-58: structural validation of a parsed forge.yaml. Returns
+    {errors, warnings}; never raises."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    if not isinstance(cfg, dict):
+        return {"errors": ["forge.yaml root must be a mapping"],
+                "warnings": []}
+    for k in cfg.keys():
+        if k not in _ALLOWED_TOP_KEYS:
+            warnings.append(
+                f"unknown top-level key: {k!r} "
+                f"(allowed: {sorted(_ALLOWED_TOP_KEYS)})"
+            )
+    sv = cfg.get("schema_version")
+    if sv not in (None, 1, "1"):
+        warnings.append(
+            f"unsupported schema_version: {sv!r} (only 1 is known)"
+        )
+    for t in cfg.get("tables") or []:
+        if not isinstance(t, dict):
+            errors.append(f"tables[]: must be a dict, got {type(t).__name__}")
+            continue
+        if not t.get("name"):
+            errors.append("tables[]: needs a `name`")
+        if "rls" in t and t["rls"] not in (
+            "public", "own-row", "own-or-public", "custom",
+        ):
+            warnings.append(
+                f"tables.{t.get('name')!r}: unknown rls {t['rls']!r}"
+            )
+        cols = t.get("columns")
+        if cols is not None and not isinstance(cols, list):
+            errors.append(
+                f"tables.{t.get('name')!r}: columns must be a list"
+            )
+    auth = cfg.get("auth") or {}
+    if not isinstance(auth, dict):
+        errors.append("auth: must be a mapping")
+    else:
+        for p in auth.get("providers") or []:
+            if not isinstance(p, str):
+                errors.append(f"auth.providers[]: each entry must be a string")
+    storage = cfg.get("storage") or {}
+    if not isinstance(storage, dict):
+        errors.append("storage: must be a mapping")
+    else:
+        for b in storage.get("buckets") or []:
+            if isinstance(b, str):
+                continue
+            if not isinstance(b, dict):
+                errors.append("storage.buckets[]: each entry must be string or dict")
+                continue
+            if not b.get("name"):
+                errors.append("storage.buckets[]: needs a `name`")
+    for s in cfg.get("schedules") or []:
+        if not isinstance(s, dict):
+            errors.append("schedules[]: each entry must be a dict")
+            continue
+        if not s.get("name") or not s.get("cron") or not s.get("target"):
+            errors.append(
+                f"schedules.{s.get('name')!r}: need name + cron + target"
+            )
+    for r in (cfg.get("gateway") or {}).get("routes") or []:
+        if not isinstance(r, dict):
+            errors.append("gateway.routes[]: each entry must be a dict")
+            continue
+        if not r.get("model") or not r.get("provider") or not r.get("base_url"):
+            errors.append(
+                f"gateway.routes.{r.get('model')!r}: "
+                f"need model + provider + base_url"
+            )
+    return {"errors": errors, "warnings": warnings}
+
+
 def apply(project_dir: str, forge_dir: Optional[str] = None,
           dryrun: bool = False) -> Dict[str, Any]:
     """Read forge.yaml + apply. Returns {applied, skipped, errors}."""
@@ -108,6 +189,12 @@ def apply(project_dir: str, forge_dir: Optional[str] = None,
     if not cfg:
         return {"applied": [], "skipped": ["forge_yaml_empty_or_unreadable"],
                 "errors": []}
+    # X-58: lint the structure before doing anything.
+    lint_report = validate(cfg)
+    if lint_report["errors"]:
+        return {"applied": [], "skipped": [],
+                "errors": [f"validation: {e}" for e in lint_report["errors"]],
+                "warnings": lint_report["warnings"]}
 
     fd = forge_dir or os.path.join(project_dir, ".loki", "forge")
     os.makedirs(fd, exist_ok=True)

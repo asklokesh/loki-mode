@@ -83,14 +83,24 @@ def _save(forge_dir: str, overrides: Dict[str, Dict[str, str]]) -> None:
     os.replace(tmp, p)
 
 
+_LOCALE_RE = __import__("re").compile(r"^[a-z]{2}(-[A-Z]{2})?$")
+
+
 def register_template(forge_dir: str, name: str, *,
                       subject: str,
                       body_text: str,
-                      body_html: Optional[str] = None) -> Dict[str, Any]:
+                      body_html: Optional[str] = None,
+                      locale: Optional[str] = None) -> Dict[str, Any]:
+    """X-59: register a transactional email template; optional `locale`
+    (e.g. 'en', 'en-US', 'fr', 'de-CH') stores a localized variant.
+    Default (locale=None) is the en fallback used when no localization
+    matches send_template's locale arg."""
     if not _NAME_RE.match(name or ""):
         raise EmailError(
             "template name must match ^[a-z][a-z0-9_-]{0,62}$"
         )
+    if locale is not None and not _LOCALE_RE.match(locale):
+        raise EmailError("locale must match ^[a-z]{2}(-[A-Z]{2})?$")
     if not isinstance(subject, str) or not subject:
         raise EmailError("subject required")
     if not isinstance(body_text, str) or not body_text:
@@ -105,12 +115,16 @@ def register_template(forge_dir: str, name: str, *,
             overrides = {}
     else:
         overrides = {}
-    overrides[name] = {
+    # When a locale is supplied we store under a compound key
+    # "<name>@<locale>" so the registry can hold multiple variants
+    # per template without churning the default entry.
+    key = name if locale is None else f"{name}@{locale}"
+    overrides[key] = {
         "subject": subject, "body_text": body_text,
         **({"body_html": body_html} if body_html else {}),
     }
     _save(forge_dir, overrides)
-    return {"name": name, **overrides[name]}
+    return {"name": key, **overrides[key]}
 
 
 def list_templates(forge_dir: str) -> List[Dict[str, Any]]:
@@ -128,9 +142,19 @@ def _render(tmpl: str, ctx: Dict[str, Any]) -> str:
 
 def send_template(forge_dir: str, provider: str, *,
                   template: str, to: str,
-                  context: Optional[Dict[str, Any]] = None
-                  ) -> Dict[str, Any]:
-    tmpl = _load(forge_dir).get(template)
+                  context: Optional[Dict[str, Any]] = None,
+                  locale: Optional[str] = None) -> Dict[str, Any]:
+    """X-59: send a transactional email by template name. Optional
+    `locale` resolves to <template>@<locale> first, then falls back
+    to <template>@<language-only>, then to the unlocalized default."""
+    db = _load(forge_dir)
+    tmpl = None
+    if locale:
+        tmpl = db.get(f"{template}@{locale}")
+        if tmpl is None and "-" in locale:
+            tmpl = db.get(f"{template}@{locale.split('-')[0]}")
+    if tmpl is None:
+        tmpl = db.get(template)
     if tmpl is None:
         raise EmailError(f"template not found: {template}")
     ctx = context or {}

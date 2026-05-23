@@ -208,6 +208,79 @@ def register_forge_router(app) -> None:
             "codes": codes,
         }
 
+    @app.get("/api/forge/analytics")
+    async def forge_analytics(window_seconds: int = 7 * 24 * 3600
+                              ) -> Dict[str, Any]:
+        """X-56: rollup across forge services. Tables row-count estimate,
+        bucket object/size counts, function call counts, gateway usage,
+        schedule tick history."""
+        d = _forge_dir()
+        out: Dict[str, Any] = {
+            "schema": "loki.forge.analytics/v1",
+            "window_seconds": window_seconds,
+        }
+        try:
+            from forge.services.database import open_engine, introspect
+            if os.path.exists(os.path.join(d, "db.sqlite")):
+                snap = introspect(open_engine(d))
+                out["tables"] = [
+                    {"name": t["name"],
+                     "row_count_estimate": t.get("row_count_estimate", 0)}
+                    for t in snap.get("tables", [])
+                ]
+            else:
+                out["tables"] = []
+        except Exception:
+            out["tables"] = []
+        try:
+            from forge.services.storage import list_buckets, list_objects
+            buckets = []
+            for b in list_buckets(d):
+                objs = list_objects(d, b["name"], limit=10000)
+                buckets.append({
+                    "name": b["name"],
+                    "objects": len(objs),
+                    "bytes": sum(o.get("size", 0) for o in objs),
+                })
+            out["buckets"] = buckets
+        except Exception:
+            out["buckets"] = []
+        try:
+            from forge.services.functions import list_functions, list_runs
+            fns = []
+            for fn in list_functions(d):
+                runs = list_runs(d, fn["name"], limit=10000)
+                fns.append({
+                    "name": fn["name"],
+                    "calls": len(runs),
+                    "ok": sum(1 for r in runs if r.get("ok")),
+                })
+            out["functions"] = fns
+        except Exception:
+            out["functions"] = []
+        try:
+            from forge.services.gateway import usage_summary
+            out["gateway_usage"] = [
+                {"model": k[0], "provider": k[1], **v}
+                for k, v in usage_summary(d,
+                                          window_seconds=window_seconds).items()
+            ]
+        except Exception:
+            out["gateway_usage"] = []
+        try:
+            from forge.services.schedules import list_schedules, list_runs as sr_list
+            sched = []
+            for s in list_schedules(d):
+                sched.append({
+                    "name": s["name"],
+                    "next_fire_ts": s.get("next_fire_ts"),
+                    "ticks": len(sr_list(d, s["name"])),
+                })
+            out["schedules"] = sched
+        except Exception:
+            out["schedules"] = []
+        return out
+
     @app.get("/api/forge/gateway/rate-limit")
     async def forge_gateway_rate_limit() -> Dict[str, Any]:
         """X-38: rate-limit bucket telemetry."""

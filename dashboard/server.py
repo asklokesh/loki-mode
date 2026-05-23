@@ -744,6 +744,15 @@ async def _forge_schedule_tick_loop() -> None:
                 if fired:
                     logger.info("forge schedule runner fired %d job(s)",
                                 len(fired))
+            # X-57: job queue tick
+            job_queue = _os.path.join(forge_dir, "functions", "jobs",
+                                       "queue.jsonl")
+            if _os.path.isfile(job_queue):
+                from forge.services.functions import job_tick
+                touched = job_tick(forge_dir)
+                if touched:
+                    logger.info("forge job queue processed %d job(s)",
+                                len(touched))
             bad_streak = 0
         except asyncio.CancelledError:
             raise
