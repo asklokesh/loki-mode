@@ -1841,6 +1841,9 @@ sandbox_resume_status() {
 #   VLT006 vault_unreachable         - vault opt-in but sidecar not responding
 #   AUD007 audit_chain_broken        - dashboard audit chain verification failed
 #   RES008 resource_limits_unset     - cpus/memory at defaults that LAP would flag
+#   FRG001 forge_provision_failed    - required.json present but db.sqlite missing
+#   FRG002 forge_detector_errors     - errors.log under .loki/forge/ is non-empty
+#   FRG003 forge_vault_fallback      - secrets vault on HMAC-XOR (cryptography missing)
 #===============================================================================
 
 # JSON-escape one value (handles ", \, control chars).
@@ -1993,6 +1996,29 @@ PY
             error:*)
                 audit_chain="error" ;;
         esac
+    fi
+
+    # v7.6.0 (Phase F-x): Loki Forge state checks. Surface forge issues
+    # via the same diagnose taxonomy so operators have a single tool to
+    # inspect "is my Loki install healthy".
+    local forge_dir_path="${TARGET_DIR:-.}/.loki/forge"
+    if [[ -d "$forge_dir_path" ]]; then
+        # FRG001: forge state directory exists but db.sqlite is missing - the
+        # detector ran but failed to materialize anything.
+        if [[ -f "$forge_dir_path/required.json" ]] \
+           && [[ ! -f "$forge_dir_path/db.sqlite" ]]; then
+            codes+=("$(_diag_emit FRG001 warn 'forge required.json present but db.sqlite missing; provisioning may have failed')")
+        fi
+        # FRG002: forge_detector errors.log non-empty.
+        if [[ -s "$forge_dir_path/errors.log" ]]; then
+            codes+=("$(_diag_emit FRG002 warn 'forge_detector reported errors; see .loki/forge/errors.log')")
+        fi
+        # FRG003: secrets vault uses HMAC-XOR fallback (cryptography missing).
+        if [[ -f "$forge_dir_path/secrets.vault" ]]; then
+            if grep -q '"HMAC-XOR"' "$forge_dir_path/secrets.vault" 2>/dev/null; then
+                codes+=("$(_diag_emit FRG003 warn 'forge secrets vault using HMAC-XOR fallback; install cryptography for AES-GCM')")
+            fi
+        fi
     fi
 
     # Stitch JSON output.

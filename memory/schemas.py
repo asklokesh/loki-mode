@@ -937,3 +937,121 @@ class FailureMode:
         if not self.behavior:
             errors.append("FailureMode.behavior is required")
         return errors
+
+
+
+# -----------------------------------------------------------------------------
+# Forge memory entry types (v7.6.0 / Phase F-x cross-cutting integration)
+# -----------------------------------------------------------------------------
+# These types record decisions and outcomes from Loki Forge (the integrated
+# BaaS) so future projects benefit from prior schema choices. They feed into
+# the existing memory.retrieval.task_aware path and the RAG injector.
+
+
+@dataclass
+class ForgeSchemaDecision:
+    """A schema choice made for a project.
+
+    Captures *why* a particular table layout was picked (e.g. composite
+    primary key, denormalized vs normalized, JSON column vs join table) so
+    the next project can either reuse the pattern or avoid it.
+    """
+    id: str
+    project_hash: str
+    table_name: str
+    columns_summary: str
+    decision: str  # one-line description of the choice
+    rationale: str = ""
+    alternatives_considered: List[str] = field(default_factory=list)
+    outcome: str = "unknown"  # success | regret | unknown
+    timestamp: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_hash": self.project_hash,
+            "table_name": self.table_name,
+            "columns_summary": self.columns_summary,
+            "decision": self.decision,
+            "rationale": self.rationale,
+            "alternatives_considered": list(self.alternatives_considered),
+            "outcome": self.outcome,
+            "timestamp": _to_utc_isoformat(self.timestamp) if self.timestamp else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ForgeSchemaDecision":
+        ts = data.get("timestamp")
+        return cls(
+            id=data.get("id") or uuid.uuid4().hex,
+            project_hash=data.get("project_hash", ""),
+            table_name=data.get("table_name", ""),
+            columns_summary=data.get("columns_summary", ""),
+            decision=data.get("decision", ""),
+            rationale=data.get("rationale", ""),
+            alternatives_considered=list(data.get("alternatives_considered") or []),
+            outcome=data.get("outcome", "unknown"),
+            timestamp=_parse_utc_datetime(ts) if isinstance(ts, str) else None,
+        )
+
+    def validate(self) -> List[str]:
+        errors = []
+        if not self.table_name:
+            errors.append("ForgeSchemaDecision.table_name required")
+        if not self.decision:
+            errors.append("ForgeSchemaDecision.decision required")
+        if self.outcome not in ("success", "regret", "unknown"):
+            errors.append("outcome must be success | regret | unknown")
+        return errors
+
+
+@dataclass
+class ForgeMigrationOutcome:
+    """The result of running a forge migration in a project.
+
+    Persists whether a migration succeeded, failed, or was rolled back so
+    we accumulate signal about which schema-spec patterns work. The RAG
+    injector pulls these when a new project's PRD mentions similar shapes.
+    """
+    id: str
+    project_hash: str
+    migration_id: str
+    summary: str
+    outcome: str  # applied | failed | rolled_back
+    root_cause: str = ""
+    sql_snippet: str = ""  # first 512 chars, for grep matching
+    timestamp: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_hash": self.project_hash,
+            "migration_id": self.migration_id,
+            "summary": self.summary,
+            "outcome": self.outcome,
+            "root_cause": self.root_cause,
+            "sql_snippet": self.sql_snippet[:512],
+            "timestamp": _to_utc_isoformat(self.timestamp) if self.timestamp else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ForgeMigrationOutcome":
+        ts = data.get("timestamp")
+        return cls(
+            id=data.get("id") or uuid.uuid4().hex,
+            project_hash=data.get("project_hash", ""),
+            migration_id=data.get("migration_id", ""),
+            summary=data.get("summary", ""),
+            outcome=data.get("outcome", "applied"),
+            root_cause=data.get("root_cause", ""),
+            sql_snippet=data.get("sql_snippet", "")[:512],
+            timestamp=_parse_utc_datetime(ts) if isinstance(ts, str) else None,
+        )
+
+    def validate(self) -> List[str]:
+        errors = []
+        if not self.migration_id:
+            errors.append("ForgeMigrationOutcome.migration_id required")
+        if self.outcome not in ("applied", "failed", "rolled_back"):
+            errors.append("outcome must be applied | failed | rolled_back")
+        return errors

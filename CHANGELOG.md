@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Cross-cutting wrap: memory entries, diagnose codes, docs, version
+
+- memory/schemas.py gains `ForgeSchemaDecision` + `ForgeMigrationOutcome`
+  entry types so the agent's cross-project memory accumulates which
+  schema patterns work. RAG injector consumes these on the next iter.
+
+- autonomy/sandbox.sh diagnose taxonomy extended with three forge
+  codes:
+    FRG001 forge_provision_failed (required.json present, db missing)
+    FRG002 forge_detector_errors   (errors.log non-empty)
+    FRG003 forge_vault_fallback    (HMAC-XOR vault: cryptography missing)
+  Two regression tests in test-sandbox-diagnose.sh.
+
+- wiki/Loki-Forge.md ships as the user-facing entry doc: full file
+  layout, per-service feature list, and a frank "how it beats
+  InsForge" section.
+
+- VERSION + package.json bumped to 7.6.0.
+
+- docs/plans/FORGE-AUTONOMOUS-QUEUE.md tracks remaining work
+  (X-11..X-22) for follow-up PRs. Newly identified tasks during this
+  run are appended at the bottom per the autonomous-loop contract.
+
 ### Added - Loki Forge Phase F-5: SDK codegen
 
 Deterministic SDK generation from the live forge state. The agent

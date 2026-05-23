@@ -111,6 +111,32 @@ else
     fail "empty egress allow yielded $empty_allow"
 fi
 
+# 11. FRG002: forge_detector errors.log triggers a code
+tmp2=$(mktemp -d)
+mkdir -p "$tmp2/.loki/forge"
+echo "boom" > "$tmp2/.loki/forge/errors.log"
+out_frg=$(cd "$tmp2" && bash "$SANDBOX" diagnose --json 2>/dev/null || true)
+if echo "$out_frg" | grep -q '"code":"FRG002"'; then
+    pass "FRG002 raised when forge errors.log non-empty"
+else
+    fail "FRG002 not raised"
+fi
+rm -rf "$tmp2"
+
+# 12. FRG003: HMAC-XOR vault triggers a code
+tmp3=$(mktemp -d)
+mkdir -p "$tmp3/.loki/forge"
+cat > "$tmp3/.loki/forge/secrets.vault" <<'JSON'
+{"version":1,"entries":{"X":{"alg":"HMAC-XOR","nonce":"x","ct":"x","mac":"x"}}}
+JSON
+out_frg3=$(cd "$tmp3" && bash "$SANDBOX" diagnose --json 2>/dev/null || true)
+if echo "$out_frg3" | grep -q '"code":"FRG003"'; then
+    pass "FRG003 raised when vault on HMAC-XOR fallback"
+else
+    fail "FRG003 not raised"
+fi
+rm -rf "$tmp3"
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
