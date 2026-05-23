@@ -213,6 +213,27 @@ def _emit_review_record(db_path: str, migration_id: str, summary: str,
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(rec, f, indent=2, sort_keys=True)
         _os.replace(tmp, path)
+
+        # X-45: chain into the dashboard audit log if available so every
+        # migration appears in the tamper-evident audit trail alongside
+        # the rest of Loki's security-sensitive events. Best-effort;
+        # never blocks the migration on observability failures.
+        try:
+            from dashboard import audit as _audit  # noqa: WPS433
+            if hasattr(_audit, "log_event"):
+                _audit.log_event(
+                    actor="forge",
+                    action="forge_migration_applied",
+                    resource=f"forge.migration:{migration_id}",
+                    outcome="success",
+                    metadata={
+                        "summary": summary,
+                        "spec_hash": spec_hash,
+                        "sql_head": sql[:200],
+                    },
+                )
+        except Exception:
+            pass
     except Exception:
         # Council review is best-effort observability; never block the loop.
         pass

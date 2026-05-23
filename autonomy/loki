@@ -2047,6 +2047,22 @@ if out["exists"]:
         out["watchdog"] = watchdog_status(forge_dir)
     except Exception:
         out["schedules"] = []
+# X-41: surface active compliance preset, independent of forge_dir existence
+# - the operator wants to see which preset is active even before provisioning.
+try:
+    from forge.compliance import current_preset
+    p = current_preset()
+    out["compliance"] = {
+        "name": p.name,
+        "default_rls": p.default_rls,
+        "max_file_mb": p.max_file_mb,
+        "storage_region_prefix": p.storage_region_prefix,
+        "require_webhook_secret": p.require_webhook_secret,
+        "require_audit_chain": p.require_audit_chain,
+        "require_fips_crypto": p.require_fips_crypto,
+    }
+except Exception:
+    pass
 print(json.dumps(out, indent=2))
 PY
             ;;

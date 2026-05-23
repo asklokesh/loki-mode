@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: OpenAPI generator + migration linter + oauth template + audit chain
+
+X-41 `loki forge status` JSON now surfaces the active compliance
+     preset (name + rule snapshot) so ops workflows can confirm the
+     enforced tier without spelunking through env vars.
+
+X-43 forge/services/auth/oauth_exchange_template.py - Bun TS template
+     for the oauth_exchange forge function. Drop into the user app
+     with one MCP call:
+       forge_function_deploy(name='oauth_exchange', runtime='bun',
+                             source_b64=forge_auth_oauth_exchange_template())
+     The dashboard's /forge/auth/callback/<provider> handler invokes
+     this function on every successful callback.
+
+X-45 forge_db_migrate review records now chain into dashboard/audit.py
+     log_event() when the dashboard module is available. Every
+     migration appears in the same tamper-evident audit log as the
+     rest of Loki's security-sensitive events.
+
+X-47 forge/sdk/openapi.py - OpenAPI 3.1 spec generator. Renders
+     /db/v1/<table>, /storage/v1/<bucket>/sign, /functions/v1/<name>
+     paths plus component schemas from the live forge state.
+     Deterministic; write_to(forge_dir, out_path) drops to disk.
+     New MCP tool forge_openapi_generate.
+
+X-48 forge/services/database/lint.py - migration spec linter.
+     Warns on no-PK tables, NOT NULL columns without DEFAULT (the
+     backfill foot-gun), set_rls=public ('check this is intentional'),
+     drop on a missing column. Errors on forge-internal table
+     shadowing, drop_table on _forge_*, invalid index names. New
+     MCP tool forge_db_lint.
+
+New MCP tools (4): forge_openapi_generate, forge_db_lint,
+forge_compliance_status, forge_auth_oauth_exchange_template.
+
+9 new test assertions. No regressions.
+
 ### Follow-ups: compliance presets + RLS DSL + BMAD detector
 
 X-36 forge/compliance.py with four presets (default, healthcare,

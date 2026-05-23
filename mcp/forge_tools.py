@@ -1080,6 +1080,78 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_openapi_generate(out_path: str = "./forge-openapi.json",
+                                     title: str = "Forge API",
+                                     version: str = "v1") -> str:
+        """X-47: emit an OpenAPI 3.1 spec from live forge state."""
+        _emit_event_safe("forge_openapi_generate", "start")
+        try:
+            from forge.sdk.openapi import write_to
+            return json.dumps(write_to(_forge_dir(), out_path), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_db_lint(spec: Dict[str, Any]) -> str:
+        """X-48: lint a proposed migration spec without applying. Returns
+        {errors[], warnings[], info[]}. Useful before forge_db_migrate."""
+        _emit_event_safe("forge_db_lint", "start")
+        try:
+            from forge.services.database.lint import lint_spec
+            from forge.services.database import open_engine, introspect
+            engine = open_engine(_forge_dir())
+            try:
+                schema = introspect(engine)
+            except Exception:
+                schema = None
+            return json.dumps(lint_spec(spec, current_schema=schema),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_compliance_status() -> str:
+        """X-41 helper: report the active compliance preset + its rules."""
+        _emit_event_safe("forge_compliance_status", "start")
+        try:
+            from forge.compliance import current_preset, list_presets
+            p = current_preset()
+            return json.dumps({
+                "active": p.name,
+                "rules": {
+                    "default_rls": p.default_rls,
+                    "max_file_mb": p.max_file_mb,
+                    "storage_region_prefix": p.storage_region_prefix,
+                    "require_webhook_secret": p.require_webhook_secret,
+                    "require_audit_chain": p.require_audit_chain,
+                    "require_fips_crypto": p.require_fips_crypto,
+                    "rate_limit_multiplier": p.rate_limit_multiplier,
+                    "notes": list(p.notes),
+                },
+                "available": list_presets(),
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_auth_oauth_exchange_template() -> str:
+        """X-43: return the oauth_exchange forge function template as
+        base64. Pass into forge_function_deploy(name='oauth_exchange',
+        runtime='bun', source_b64=<this>) to wire OAuth callbacks."""
+        _emit_event_safe("forge_auth_oauth_exchange_template", "start")
+        try:
+            from forge.services.auth.oauth_exchange_template import (
+                emit_template_b64, TEMPLATE_TS,
+            )
+            return json.dumps({
+                "source_b64": emit_template_b64(),
+                "runtime": "bun",
+                "size_bytes": len(TEMPLATE_TS),
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_sdk_generate(target: str, out_dir: str,
                                  base_url: str = "/forge") -> str:
         """Generate an SDK for the user's app from the live forge state.
