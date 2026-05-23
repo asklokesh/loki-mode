@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: HTTP gateway, realtime WS, 3 more SDKs, magic-link, autoregen
+
+Closes X-12 through X-21 from the autonomous-loop queue:
+
+- X-12: Dashboard background loop now ticks the schedules runner once
+  per second. Best-effort - bad_streak counter prevents log spam if
+  the loop fails repeatedly.
+
+- X-13: POST /forge/gateway/v1/chat/completions endpoint mounted on
+  the dashboard. Picks a route via pick_route(), delegates the
+  upstream call to a forge function named `gateway_dispatch` (so
+  Loki doesn't embed an HTTP client for every provider), records
+  usage on every call.
+
+- X-14: Realtime WebSocket endpoint at /forge/realtime/v1?channel=...
+  mounts on the existing dashboard manager. Replays last 20 history
+  messages on connect, then live-forwards from the bus. Private
+  channels require a token query param.
+
+- X-15/16/17: Kotlin + Swift + Go SDK emitters. Each ships a Types
+  file (data class / Codable struct / struct) and a thin Client
+  scaffold (URL builder + auth header) - users plug their preferred
+  HTTP client. Deterministic output verified.
+
+- X-18: forge.sdk.generate writes a pin file at .loki/forge/sdk/
+  .last_target.json. forge.services.database.migrate_apply checks
+  that pin and regenerates the SDK after every schema change. The
+  agent gets a fresh SDK without an extra MCP call.
+
+- X-20: magic-link auth flow. forge.services.auth.magic_link with
+  issue() + redeem() (single-use, expiry-aware, lazy user creation).
+  9 assertions including expired-token + reused-token rejection.
+
+- X-21: FRG001/FRG002/FRG003 sandbox diagnose codes for forge state
+  health, with regression tests in test-sandbox-diagnose.sh.
+
+2 MCP tools added: forge_auth_magic_link_issue,
+forge_auth_magic_link_redeem.
+
+Tests: 17 SDK assertions (was 11), 9 magic-link, 14 dashboard (was
+11), 12 sandbox-diagnose (was 10). Per-suite verification complete.
+
+7 new follow-up tasks queued in the autonomous-loop queue
+(X-23..X-29).
+
 ### Cross-cutting wrap: memory entries, diagnose codes, docs, version
 
 - memory/schemas.py gains `ForgeSchemaDecision` + `ForgeMigrationOutcome`

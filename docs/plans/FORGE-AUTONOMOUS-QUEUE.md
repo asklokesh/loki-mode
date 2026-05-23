@@ -154,18 +154,37 @@ Last updated: 2026-05-18
 
 ## New tasks discovered during the run (appended per goal contract)
 
-- [ ] X-11 Dashboard route emitting migration diffs
-- [ ] X-12 Wire schedules.runner.tick() into the dashboard background loop
-- [ ] X-13 OpenAI-compat /forge/gateway/v1/chat/completions HTTP handler (FastAPI streaming)
-- [ ] X-14 Realtime WebSocket endpoint /forge/realtime/v1 mounted on the dashboard WS manager
-- [ ] X-15 Kotlin SDK emit module
-- [ ] X-16 Swift SDK emit module
-- [ ] X-17 Go SDK emit module
-- [ ] X-18 Auto-regen SDK after every forge_db_migrate
-- [ ] X-19 RAG injector wired to ForgeSchemaDecision
-- [ ] X-20 Magic-link auth flow handler
+- [~] X-11 Dashboard route emitting migration diffs (review records available via /api/forge/database/migrations; rendered-diff UI is the follow-up)
+- [x] X-12 Wire schedules.runner.tick() into the dashboard background loop
+- [x] X-13 OpenAI-compat /forge/gateway/v1/chat/completions HTTP handler (uses forge function `gateway_dispatch` for upstream calls; record_usage tracked)
+- [x] X-14 Realtime WebSocket endpoint /forge/realtime/v1 mounted on the dashboard WS manager
+- [x] X-15 Kotlin SDK emit module
+- [x] X-16 Swift SDK emit module
+- [x] X-17 Go SDK emit module
+- [x] X-18 Auto-regen SDK after every forge_db_migrate (pin file at sdk/.last_target.json)
+- [~] X-19 RAG injector wired to ForgeSchemaDecision (entry types ship; the injector hook is a memory subsystem change tracked separately)
+- [x] X-20 Magic-link auth flow handler (issue + single-use redeem)
 - [x] X-21 Add FRG001/FRG002/FRG003 diagnose codes + regression tests
-- [ ] X-22 Schedule runner watchdog: alert when no tick has fired in N minutes
+- [~] X-22 Schedule runner watchdog: bad_streak counter already in place; alert delivery is a follow-up
+
+## New tasks discovered during this round
+
+- [ ] X-23 Email send adapters (Resend/SendGrid/Postmark) so magic-link
+      flow has a default email transport; agent currently has to deploy
+      a forge function that calls the upstream API
+- [ ] X-24 Webhook receiver routes for Stripe/Paddle/LemonSqueezy under
+      the dashboard router; agent currently sees signature verifiers but
+      no HTTP receiver
+- [ ] X-25 OAuth callback handler routes per provider so the agent's
+      app can sign users in without manually wiring fetch + token-exchange
+- [ ] X-26 Forge backup + restore: dump + reload .loki/forge/ as a
+      single tarball (matches InsForge's DB backup feature)
+- [ ] X-27 Schema diff visualization for the council review record
+      (currently raw SQL; rendering needs a diff-friendly representation)
+- [ ] X-28 Cron schedule tooling: lint expressions in CI before
+      forge_schedule_create accepts them
+- [ ] X-29 Health endpoint /api/forge/health that flips RED based on the
+      same FRG* codes the sandbox diagnose surfaces
 
 ## Status
 

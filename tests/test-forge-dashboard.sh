@@ -50,7 +50,28 @@ else
     fail "forge_router import not optional"
 fi
 
-# 6. Migration apply emits a council review record under .loki/quality/forge-migrations/
+# 6. X-13: gateway HTTP endpoint declared
+if grep -q '"/forge/gateway/v1/chat/completions"' "$ROOT/dashboard/forge_router.py"; then
+    pass "X-13: /forge/gateway/v1/chat/completions endpoint declared"
+else
+    fail "gateway endpoint missing"
+fi
+
+# 7. X-14: realtime WebSocket endpoint declared
+if grep -q 'websocket("/forge/realtime/v1")' "$ROOT/dashboard/forge_router.py"; then
+    pass "X-14: /forge/realtime/v1 WS endpoint declared"
+else
+    fail "realtime WS endpoint missing"
+fi
+
+# 8. X-12: schedule runner wired to dashboard background loop
+if grep -q '_forge_schedule_tick_loop' "$ROOT/dashboard/server.py"; then
+    pass "X-12: schedule tick loop wired"
+else
+    fail "schedule tick loop missing"
+fi
+
+# 9. Migration apply emits a council review record under .loki/quality/forge-migrations/
 if run_py "
 import os, tempfile
 from forge.services.database import open_engine, migrate_apply

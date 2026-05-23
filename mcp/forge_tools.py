@@ -972,6 +972,36 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_auth_magic_link_issue(email: str,
+                                          redirect_url: Optional[str] = None,
+                                          ttl_seconds: int = 600) -> str:
+        """Mint a single-use magic-link token for email. The caller's
+        forge function emails the token-bearing URL; we return the token
+        so the function can build a link like
+        https://app.example.com/auth/magic?token=<tok>."""
+        _emit_event_safe("forge_auth_magic_link_issue", "start")
+        try:
+            from forge.services.auth import magic_link_issue
+            return json.dumps(magic_link_issue(_forge_dir(), email,
+                                                redirect_url=redirect_url,
+                                                ttl_seconds=ttl_seconds),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_auth_magic_link_redeem(token: str) -> str:
+        """Redeem a magic-link token: creates the user if missing and
+        returns a session JWT. Single-use."""
+        _emit_event_safe("forge_auth_magic_link_redeem", "start")
+        try:
+            from forge.services.auth import magic_link_redeem
+            return json.dumps(magic_link_redeem(_forge_dir(), token),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_sdk_generate(target: str, out_dir: str,
                                  base_url: str = "/forge") -> str:
         """Generate an SDK for the user's app from the live forge state.

@@ -135,6 +135,12 @@ def migrate_apply(engine: Engine, spec: Dict[str, Any]) -> Dict[str, Any]:
     _emit_review_record(engine.db_path, migration_id, parsed.summary, sql,
                         applied_at, spec_hash)
 
+    # v7.6.0 (X-18): auto-regen the SDK if a prior generate() pinned a
+    # target. The pin file at <forge_dir>/sdk/.last_target.json records
+    # {target, out_dir}; we honor it best-effort - any failure is a
+    # warning, never a migration-blocking error.
+    _maybe_autoregen_sdk(engine.db_path)
+
     return {
         "migration_id": migration_id,
         "applied_at": applied_at,
@@ -142,6 +148,28 @@ def migrate_apply(engine: Engine, spec: Dict[str, Any]) -> Dict[str, Any]:
         "sql": sql,
         "already_applied": False,
     }
+
+
+def _maybe_autoregen_sdk(db_path: str) -> None:
+    """If <forge_dir>/sdk/.last_target.json exists, regenerate the SDK
+    against the same target + out_dir. Best-effort."""
+    try:
+        import os as _os
+        forge_dir = _os.path.dirname(db_path)
+        pin = _os.path.join(forge_dir, "sdk", ".last_target.json")
+        if not _os.path.isfile(pin):
+            return
+        with open(pin, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        target = cfg.get("target")
+        out_dir = cfg.get("out_dir")
+        if not target or not out_dir:
+            return
+        from forge.sdk import generate as _gen
+        _gen(forge_dir, target, out_dir,
+             base_url=cfg.get("base_url", "/forge"))
+    except Exception:
+        pass
 
 
 def _emit_review_record(db_path: str, migration_id: str, summary: str,

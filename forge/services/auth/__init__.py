@@ -36,3 +36,6 @@ from .sessions import (  # noqa: F401
     verify_token,
     ensure_auth_schema,
 )
+from .magic_link import issue as magic_link_issue  # noqa: F401
+from .magic_link import redeem as magic_link_redeem  # noqa: F401
+from .magic_link import MagicLinkError  # noqa: F401

@@ -168,6 +168,102 @@ with tempfile.TemporaryDirectory() as d:
     assert 'fn_send_newsletter_digest' in src
 print('OK')" | grep -q '^OK$'; then pass "python identifier sanitization"; else fail "python kebab-case unsafe"; fi
 
+# 12. kotlin: emits Types.kt + ForgeClient.kt with data class shape
+if run_py "
+import os, tempfile
+from forge.services.database import open_engine, migrate_apply
+from forge.sdk import generate
+with tempfile.TemporaryDirectory() as d:
+    e = open_engine(d)
+    migrate_apply(e, {'operations':[{'add_table':{'name':'orders',
+        'columns':['id pk','amount integer notnull']}}]})
+    out = os.path.join(d, 'out')
+    res = generate(d, 'kotlin', out)
+    fnames = sorted(os.path.basename(f['path']) for f in res['files'])
+    assert fnames == ['ForgeClient.kt','Types.kt'], fnames
+    types = open(os.path.join(out, 'Types.kt')).read()
+    assert 'data class Orders' in types
+    assert 'val id: Long' in types
+print('OK')" | grep -q '^OK$'; then pass "kotlin codegen"; else fail "kotlin codegen broken"; fi
+
+# 13. swift: emits Types.swift + ForgeClient.swift with Codable struct
+if run_py "
+import os, tempfile
+from forge.services.database import open_engine, migrate_apply
+from forge.sdk import generate
+with tempfile.TemporaryDirectory() as d:
+    e = open_engine(d)
+    migrate_apply(e, {'operations':[{'add_table':{'name':'orders',
+        'columns':['id pk','amount integer notnull','note text']}}]})
+    out = os.path.join(d, 'out')
+    generate(d, 'swift', out)
+    types = open(os.path.join(out, 'Types.swift')).read()
+    assert 'public struct Orders: Codable' in types
+    assert 'public let id: Int64' in types
+    assert 'public let note: String?' in types  # nullable
+print('OK')" | grep -q '^OK$'; then pass "swift codegen"; else fail "swift codegen broken"; fi
+
+# 14. go: emits types.go + client.go with pointer optionals
+if run_py "
+import os, tempfile
+from forge.services.database import open_engine, migrate_apply
+from forge.sdk import generate
+with tempfile.TemporaryDirectory() as d:
+    e = open_engine(d)
+    migrate_apply(e, {'operations':[{'add_table':{'name':'orders',
+        'columns':['id pk','amount integer notnull','note text']}}]})
+    out = os.path.join(d, 'out')
+    generate(d, 'go', out)
+    types = open(os.path.join(out, 'types.go')).read()
+    assert 'type Orders struct' in types
+    assert 'Id int64' in types
+    assert 'Note *string' in types  # pointer for nullable
+print('OK')" | grep -q '^OK$'; then pass "go codegen"; else fail "go codegen broken"; fi
+
+# 15. list_targets includes all 5
+if run_py "
+from forge.sdk import list_targets
+ts = set(list_targets())
+expected = {'typescript','python','kotlin','swift','go'}
+assert ts >= expected, ts - expected
+print('OK')" | grep -q '^OK$'; then pass "list_targets has 5"; else fail "list_targets missing targets"; fi
+
+# 16. X-18: pin file written after generate
+if run_py "
+import os, tempfile
+from forge.services.database import open_engine, migrate_apply
+from forge.sdk import generate
+with tempfile.TemporaryDirectory() as d:
+    e = open_engine(d)
+    migrate_apply(e, {'operations':[{'add_table':{'name':'a','columns':['id pk']}}]})
+    out = os.path.join(d, 'out')
+    generate(d, 'typescript', out)
+    pin = os.path.join(d, 'sdk', '.last_target.json')
+    assert os.path.exists(pin), 'pin file not written'
+    import json
+    cfg = json.load(open(pin))
+    assert cfg['target'] == 'typescript'
+    assert cfg['out_dir'] == os.path.abspath(out)
+print('OK')" | grep -q '^OK$'; then pass "X-18: SDK pin file"; else fail "pin not written"; fi
+
+# 17. X-18: migrate_apply auto-regenerates SDK
+if run_py "
+import os, tempfile
+from forge.services.database import open_engine, migrate_apply
+from forge.sdk import generate
+with tempfile.TemporaryDirectory() as d:
+    e = open_engine(d)
+    migrate_apply(e, {'operations':[{'add_table':{'name':'a','columns':['id pk']}}]})
+    out = os.path.join(d, 'out')
+    generate(d, 'typescript', out)
+    before = open(os.path.join(out, 'types.ts')).read()
+    # Apply another migration that changes the schema:
+    migrate_apply(e, {'operations':[{'add_table':{'name':'b','columns':['id pk','title text']}}]})
+    after = open(os.path.join(out, 'types.ts')).read()
+    assert before != after, 'types.ts unchanged after schema diff'
+    assert 'B' in after or 'interface B' in after
+print('OK')" | grep -q '^OK$'; then pass "X-18: migrate auto-regens SDK"; else fail "auto-regen broken"; fi
+
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

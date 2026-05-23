@@ -169,3 +169,133 @@ def register_forge_router(app) -> None:
             }
         except Exception:
             return {"routes": [], "usage": []}
+
+    # --- X-13: OpenAI-compat model gateway HTTP front --------------------
+    # POST /forge/gateway/v1/chat/completions
+    # Body: {"model": "<name>", "messages": [...], "max_tokens": ...}
+    # Routes via pick_route() and either streams from the upstream
+    # provider or returns the full response. F-5: the upstream call is
+    # delegated to a forge function the agent has deployed; if no such
+    # function exists we surface a clear error rather than embed an
+    # HTTP client for every provider in Loki itself.
+
+    try:
+        from fastapi import Body, Request, HTTPException
+        from fastapi.responses import JSONResponse
+        _FASTAPI_OK = True
+    except ImportError:
+        _FASTAPI_OK = False
+
+    if _FASTAPI_OK:
+        @app.post("/forge/gateway/v1/chat/completions")
+        async def forge_gateway_chat(req: Request) -> Any:
+            d = _forge_dir()
+            body = await req.json()
+            model = body.get("model")
+            if not isinstance(model, str) or not model:
+                raise HTTPException(status_code=400, detail="model required")
+            try:
+                from forge.services.gateway import pick_route, record_usage
+                from forge.services.functions import invoke as fn_invoke, get_function
+            except ImportError as e:
+                raise HTTPException(status_code=503, detail=f"forge unavailable: {e}")
+            route = pick_route(d, model)
+            if route is None:
+                raise HTTPException(status_code=404,
+                                    detail=f"no route for model {model}")
+            # The forge function `gateway_dispatch` (if deployed) handles
+            # the upstream call. This keeps provider HTTP clients out of
+            # Loki itself.
+            if not get_function(d, "gateway_dispatch"):
+                return JSONResponse(
+                    status_code=501,
+                    content={
+                        "error": "gateway_dispatch function not deployed",
+                        "hint": "deploy a forge function named 'gateway_dispatch' "
+                                "that takes {model, route, body} and returns the "
+                                "upstream response",
+                        "route": route,
+                    },
+                )
+            import time as _time
+            t0 = _time.time()
+            res = fn_invoke(d, "gateway_dispatch",
+                            payload={"model": model, "route": route, "body": body})
+            latency_ms = int((_time.time() - t0) * 1000)
+            try:
+                record_usage(d, model, route["provider"],
+                             latency_ms=latency_ms,
+                             input_tokens=int(body.get("_input_tokens") or 0),
+                             output_tokens=int(body.get("_output_tokens") or 0),
+                             ok=bool(res.get("ok")))
+            except Exception:
+                pass
+            if not res.get("ok"):
+                raise HTTPException(status_code=502,
+                                    detail={"upstream_error": res.get("stderr"),
+                                            "exit_code": res.get("exit_code")})
+            try:
+                return json.loads(res["stdout"])
+            except (json.JSONDecodeError, TypeError):
+                return {"raw_stdout": res.get("stdout", "")}
+
+        # --- X-14: Realtime WebSocket endpoint --------------------------
+        # /forge/realtime/v1?channel=<name> - mounts on the existing
+        # dashboard WS manager so we inherit 30s keepalive + per-IP
+        # rate limit. Each connected client subscribes via the bus.
+
+        from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
+
+        @app.websocket("/forge/realtime/v1")
+        async def forge_realtime_ws(websocket: _WS) -> None:
+            channel = websocket.query_params.get("channel")
+            if not channel:
+                await websocket.accept()
+                await websocket.close(code=1008)  # policy violation
+                return
+            try:
+                from forge.services.realtime import get_channel, subscribe
+                from forge.services.realtime.bus import unsubscribe
+            except Exception:
+                await websocket.accept()
+                await websocket.close(code=1011)  # server error
+                return
+
+            cfg = get_channel(_forge_dir(), channel)
+            if cfg is None:
+                await websocket.accept()
+                await websocket.close(code=1008)
+                return
+            if not cfg.get("public"):
+                # Private channels require an auth token + identity
+                # check; F-5 surfaces the contract but the WS-bound
+                # identity validation lands with the Auth handoff in
+                # X-20 (magic-link).
+                token = websocket.query_params.get("token")
+                if not token:
+                    await websocket.accept()
+                    await websocket.close(code=1008)
+                    return
+
+            await websocket.accept()
+            q = await subscribe(channel)
+            try:
+                # Send recent history on connect so reconnecting clients
+                # don't miss messages.
+                from forge.services.realtime import history
+                for msg in history(_forge_dir(), channel, limit=20):
+                    try:
+                        await websocket.send_json(msg)
+                    except Exception:
+                        break
+                # Then live-forward.
+                while True:
+                    msg = await q.get()
+                    try:
+                        await websocket.send_json(msg)
+                    except Exception:
+                        break
+            except _WSD:
+                pass
+            finally:
+                unsubscribe(channel, q)

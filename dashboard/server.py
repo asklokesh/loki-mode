@@ -707,14 +707,51 @@ async def lifespan(app: FastAPI):
         app.state.db_available = False
     _telemetry.send_telemetry("dashboard_start")
     push_task = asyncio.create_task(_push_loki_state_loop())
+    # v7.6.0: forge schedule runner. Ticks once per second; idempotent
+    # if no forge state is present. Lazily imports so the dashboard
+    # boots even without forge installed.
+    forge_tick_task = asyncio.create_task(_forge_schedule_tick_loop())
     yield
     # Shutdown
     push_task.cancel()
-    try:
-        await push_task
-    except (asyncio.CancelledError, Exception):
-        pass
+    forge_tick_task.cancel()
+    for t in (push_task, forge_tick_task):
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
     await close_db()
+
+
+async def _forge_schedule_tick_loop() -> None:
+    """Tick the forge schedule runner once per second.
+
+    Best-effort: any exception is logged once and the loop continues.
+    No-op when .loki/forge/schedules.json is missing.
+    """
+    import os as _os
+    bad_streak = 0
+    while True:
+        try:
+            forge_dir = _os.path.abspath(
+                _os.path.join(_os.getcwd(), ".loki", "forge")
+            )
+            sched_path = _os.path.join(forge_dir, "schedules",
+                                       "schedules.json")
+            if _os.path.isfile(sched_path):
+                from forge.services.schedules import tick
+                fired = tick(forge_dir)
+                if fired:
+                    logger.info("forge schedule runner fired %d job(s)",
+                                len(fired))
+            bad_streak = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            bad_streak += 1
+            if bad_streak <= 3:
+                logger.warning("forge schedule tick failed: %s", e)
+        await asyncio.sleep(1)
 
 
 # Create FastAPI app
