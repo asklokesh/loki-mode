@@ -281,5 +281,5 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 Phase F-1..F-5 + X-1..X-75 complete on claude/compare-litellm-loki-Y8Ke1.
 139 items shipped, 27 still open, 20 partially done.
 
-Full regression: 456 assertions across 29 test suites, 0 failed.
-Most recent push: b6030b9.
+Full regression: 467 assertions across 30 test suites, 0 failed.
+Most recent push: 4df01a7.
