@@ -141,6 +141,21 @@ def migrate_apply(engine: Engine, spec: Dict[str, Any]) -> Dict[str, Any]:
     # warning, never a migration-blocking error.
     _maybe_autoregen_sdk(engine.db_path)
 
+    # X-19: feed the memory bridge so RAG injector picks up successful
+    # migrations in future projects. Best-effort.
+    try:
+        import os as _os
+        forge_dir = _os.path.dirname(engine.db_path)
+        project_dir = _os.path.dirname(_os.path.dirname(forge_dir))
+        from forge.memory_bridge import record_migration_outcome
+        record_migration_outcome(project_dir,
+                                 migration_id=migration_id,
+                                 summary=parsed.summary,
+                                 outcome="applied",
+                                 sql_snippet=sql)
+    except Exception:
+        pass
+
     return {
         "migration_id": migration_id,
         "applied_at": applied_at,

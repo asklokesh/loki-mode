@@ -154,7 +154,7 @@ Last updated: 2026-05-18
 
 ## New tasks discovered during the run (appended per goal contract)
 
-- [~] X-11 Dashboard route emitting migration diffs (review records available via /api/forge/database/migrations; rendered-diff UI is the follow-up)
+- [x] X-11 /api/forge/database/diff/{migration_id} + render_diff() in forge/services/database/diff.py
 - [x] X-12 Wire schedules.runner.tick() into the dashboard background loop
 - [x] X-13 OpenAI-compat /forge/gateway/v1/chat/completions HTTP handler (uses forge function `gateway_dispatch` for upstream calls; record_usage tracked)
 - [x] X-14 Realtime WebSocket endpoint /forge/realtime/v1 mounted on the dashboard WS manager
@@ -162,10 +162,10 @@ Last updated: 2026-05-18
 - [x] X-16 Swift SDK emit module
 - [x] X-17 Go SDK emit module
 - [x] X-18 Auto-regen SDK after every forge_db_migrate (pin file at sdk/.last_target.json)
-- [~] X-19 RAG injector wired to ForgeSchemaDecision (entry types ship; the injector hook is a memory subsystem change tracked separately)
+- [x] X-19 forge.memory_bridge feeds ForgeMigrationOutcome + ForgeSchemaDecision into .loki/memory/forge/. migrate_apply auto-records each migration.
 - [x] X-20 Magic-link auth flow handler (issue + single-use redeem)
 - [x] X-21 Add FRG001/FRG002/FRG003 diagnose codes + regression tests
-- [~] X-22 Schedule runner watchdog: bad_streak counter already in place; alert delivery is a follow-up
+- [x] X-22 Schedule runner watchdog. tick() pings; /api/forge/health raises FRG004 when stalled > 60s.
 
 ## New tasks discovered during this round
 

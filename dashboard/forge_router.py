@@ -179,6 +179,24 @@ def register_forge_router(app) -> None:
                                       "message": "secrets vault on HMAC-XOR fallback"})
                 except OSError:
                     pass
+            # X-22: schedule runner watchdog.
+            try:
+                from forge.services.schedules import (
+                    watchdog_status, list_schedules,
+                )
+                if list_schedules(d):
+                    w = watchdog_status(d)
+                    if w.get("stalled"):
+                        codes.append({
+                            "code": "FRG004", "severity": "critical",
+                            "message": (
+                                f"schedule runner stalled: "
+                                f"{w.get('seconds_since_last_tick')}s "
+                                f"since last tick"
+                            ),
+                        })
+            except Exception:
+                pass
         severity_max = (max((c["severity"] for c in codes),
                             key=lambda s: {"info": 0, "warn": 1, "critical": 2}.get(s, 0))
                         if codes else "ok")
@@ -189,6 +207,38 @@ def register_forge_router(app) -> None:
             "status": severity_max,
             "codes": codes,
         }
+
+    @app.get("/api/forge/database/diff/{migration_id}")
+    async def forge_db_diff(migration_id: str) -> Dict[str, Any]:
+        """X-11: rendered diff for one migration review record."""
+        d = _forge_dir()
+        try:
+            from fastapi import HTTPException as _HE
+            from forge.services.database import open_engine
+            from forge.services.database.diff import render_diff
+            engine = open_engine(d)
+            rows = engine.execute(
+                "SELECT id, spec_json, summary, applied_at, sql "
+                "FROM _forge_migrations WHERE id = ?",
+                (migration_id,),
+            )
+            if not rows:
+                raise _HE(status_code=404, detail="migration not found")
+            rec = rows[0]
+            spec = json.loads(rec["spec_json"])
+            return {
+                "schema": "loki.forge.migration.diff/v1",
+                "migration_id": migration_id,
+                "summary": rec["summary"],
+                "applied_at": rec["applied_at"],
+                "diff": render_diff(spec),
+                "sql": rec["sql"],
+            }
+        except Exception as e:
+            from fastapi import HTTPException as _HE
+            if isinstance(e, _HE):
+                raise
+            raise _HE(status_code=500, detail=str(e))
 
     @app.get("/api/forge/gateway/routes")
     async def forge_gateway_routes(model: Optional[str] = None) -> Dict[str, Any]:

@@ -112,4 +112,12 @@ def tick(forge_dir: str, *, now_ts: Optional[float] = None,
     if changed:
         _save(forge_dir, items)
 
+    # X-22 watchdog: ping on every tick so /api/forge/health can detect
+    # a stalled scheduler loop.
+    try:
+        from .watchdog import ping
+        ping(forge_dir)
+    except Exception:
+        pass
+
     return fired

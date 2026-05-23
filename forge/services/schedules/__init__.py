@@ -18,3 +18,4 @@ from .schedules import (  # noqa: F401
     update,
 )
 from .runner import tick, list_runs  # noqa: F401
+from .watchdog import status as watchdog_status, ping as watchdog_ping  # noqa: F401

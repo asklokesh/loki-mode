@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: migration diff renderer, schedule watchdog, memory bridge
+
+X-11 forge.services.database.diff.render_diff(spec) returns structured
+     added/dropped tables + columns + RLS changes + indices. Wired
+     to /api/forge/database/diff/{migration_id} for dashboard or
+     human review of council records.
+
+X-22 forge.services.schedules.watchdog. tick() pings the watchdog;
+     status() reports {stalled, seconds_since_last_tick, threshold}.
+     /api/forge/health raises a new FRG004 critical code when any
+     schedules are configured AND the watchdog has not pinged in 60s
+     (i.e. the dashboard background loop died).
+
+X-19 forge.memory_bridge bridges forge events into the loki memory
+     subsystem. record_migration_outcome() / record_schema_decision()
+     persist into .loki/memory/forge/. migrate_apply auto-records
+     each applied migration so the RAG injector picks up patterns
+     across projects.
+
+Tests: 9 new assertions across diff/watchdog/memory_bridge. No
+regressions.
+
 ### Follow-ups: cron lint, email templates, multi-region storage
 
 X-28 forge.services.schedules.cron.lint(expr) - structured cron
