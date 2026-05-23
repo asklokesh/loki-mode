@@ -273,7 +273,7 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [ ] X-77 forge.healing.propose_from_postgres (parity with X-69 sqlite)
 - [x] X-78 deploy attaches HMAC signature of source to version manifest
 - [x] X-79 GET /api/forge/metrics Prometheus exposition
-- [ ] X-80 MCP tool-throttling via gateway.check()
+- [x] X-80 _check_tool_throttle helper + LOKI_FORGE_TOOL_RATE_PER_MIN env knob
 - [x] X-81 sign_upload_url + verify_upload_url for client-side PUT uploads
 
 ## Status

@@ -39,6 +39,35 @@ def _forge_dir() -> str:
     return os.path.abspath(os.path.join(os.getcwd(), ".loki", "forge"))
 
 
+# X-80: per-tool throttle (token-bucket reuse).
+_FORGE_TOOL_RATE_LIMIT_PER_MIN = int(
+    os.environ.get("LOKI_FORGE_TOOL_RATE_PER_MIN", "120")
+)
+
+
+def _check_tool_throttle(tool_name: str) -> Optional[Dict[str, Any]]:
+    """Return None when allowed; an error dict when over the rate
+    limit. Per-tool capacity is LOKI_FORGE_TOOL_RATE_PER_MIN (default
+    120/minute)."""
+    try:
+        from forge.services.gateway.rate_limit import check
+        outcome = check(f"forge_tool:{tool_name}", scope="mcp",
+                        cost=1.0,
+                        capacity=float(_FORGE_TOOL_RATE_LIMIT_PER_MIN),
+                        refill_per_sec=_FORGE_TOOL_RATE_LIMIT_PER_MIN / 60.0)
+        if outcome.get("allowed") == 0.0:
+            return {
+                "error": "forge_tool_rate_limited",
+                "tool": tool_name,
+                "retry_after_ms": outcome.get("retry_after_ms"),
+                "hint": ("LOKI_FORGE_TOOL_RATE_PER_MIN env var caps "
+                         "per-tool invocations per minute"),
+            }
+    except Exception:
+        pass
+    return None
+
+
 def register(mcp) -> None:
     """Register all forge_* tools on the FastMCP instance. Called once from
     mcp/server.py near the magic_tools / managed_tools registration block."""
