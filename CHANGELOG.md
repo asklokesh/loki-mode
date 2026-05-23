@@ -9,6 +9,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.28] - 2026-05-23
+
+PATCH release. Phase K MVP + Phase F bug fix + CLI help refresh + token
+rotation infra (NPM_TOKEN was rotated externally; v7.5.27 confirmed
+shipping to npm + Homebrew after the arc-closing release).
+
+### Phase K MVP (NEW): read-only KPI snapshot
+
+The originally-deferred Phase K (measurable accuracy + efficiency
+KPIs) ships an MVP layer today. No per-iteration emission, no
+dashboard panel, no benchmark harness yet -- those remain follow-ups.
+What ships today:
+
+- **`loki kpis`** -- new subcommand. Pretty-prints accuracy +
+  efficiency KPIs derived from existing `.loki/metrics/efficiency/*.json`
+  and `.loki/council/votes/round-*.json` state. Zero new
+  instrumentation; pure derivation. Missing files yield zero/null
+  with explicit notes (no silent failure).
+- **`loki kpis --json`** -- machine-readable snapshot. Schema:
+  `{schema_version, generated_at, loki_dir, efficiency:{...}, accuracy:{...}, notes:[...]}`.
+- **`loki kpis --help`** -- usage.
+
+Efficiency KPIs: iteration_count, total_cost_usd, avg_cost_per_iter,
+total_input_tokens, total_output_tokens, total_duration_ms,
+avg_duration_ms_per_iteration, model_breakdown, phase_breakdown,
+status_breakdown.
+
+Accuracy KPIs: council_rounds, unanimous_rate, approval_rate,
+iteration_success_rate.
+
+### Phase F bug fix (CRITICAL)
+
+Real user testing scenario 45 found that
+`loki_project_graph_discover` returned EMPTY env vars when the
+parent had `.loki/app.json` BUT member dirs had no thin pointers.
+Root cause: at `autonomy/lib/project-graph.sh:401-419`, when
+`explicit_members` from the parent manifest was non-empty BUT the
+sibling walker found 0 discovered members, the intersection produced
+an empty `final[]`, which then failed the `[ "${#final[@]}" -gt 0 ]`
+guard, so the discovered-members list stayed empty and the function
+returned 0 with empty env vars.
+
+Fix: when `members[]` is empty AFTER the sibling walker, adopt the
+explicit list from the parent manifest VERBATIM (no intersection
+needed). When discovered members exist, fall back to the existing
+intersection-narrow semantics.
+
+This unblocks the common "monorepo with one parent manifest, no
+thin pointers in each member" pattern documented in the v7.5.23
+migration notes. The bug was missed because the Phase F unit tests
+use fixtures with thin pointers in EVERY member.
+
+### CLI help refresh
+
+`loki --help` was outdated -- missing `kpis` command and showing
+stale examples. Updated:
+
+- Added `kpis [--json]` to commands list (line 431).
+- Replaced examples block with grouped 5-section examples (line 511):
+  Starting a session / Session ops + observability / Providers + model
+  routing / Cross-project context / Memory + learnings / Config +
+  dashboard.
+- Added Phase A-J feature note + opt-out env var summary at the
+  bottom.
+
+### Added
+
+- **`loki-ts/src/metrics/kpis.ts`** (new, ~210 lines). Pure functions
+  for KPI derivation. Exports `computeKpis(lokiDir)`, `formatKpisJson`,
+  `formatKpisHuman`. Reuses `EfficiencyRecord` + `readEfficiencyDir` +
+  `calculateCostFromRecords` from budget.ts (single source of truth
+  for cost math).
+- **`loki-ts/src/commands/kpis.ts`** (new, ~50 lines). CLI command
+  wrapper with `--json` and `--help` flag handling.
+- **`loki-ts/tests/metrics/kpis.test.ts`** (new, 7 tests). Covers
+  empty .loki/, efficiency aggregation, council unanimous/approval
+  rates, iteration_success_rate, malformed-JSON tolerance, JSON
+  format determinism, human-format label ordering.
+
+### Changed
+
+- **`loki-ts/src/cli.ts`** -- added `case "kpis"` dispatch to
+  `runKpis()` (right after doctor).
+- **`bin/loki`** -- added `kpis` to the Bun-route allowlist so the
+  shim routes `loki kpis` to Bun instead of falling through to bash
+  (bash would say "Unknown command: kpis").
+- **`autonomy/loki::show_help`** -- added `kpis` line + refreshed
+  examples + Phase A-J + env vars section.
+- **`autonomy/lib/project-graph.sh::loki_project_graph_discover`**
+  -- bug fix above (lines 401-430 logic restructured).
+
+### Verified locally before commit
+
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+- `cd loki-ts && bun test ./tests/metrics/kpis.test.ts` -- 7/7 PASS.
+- `cd loki-ts && bun run typecheck` -- clean.
+- `bash tests/test-project-graph.sh` -- 24/24 PASS (Phase F fix
+  preserves existing tests because the existing fixture uses thin
+  pointers; the regression was only triggered by parent-only
+  manifest pattern, which my real-user smoke test exercised).
+- `bash bin/loki kpis` (real CLI) -- emits live KPIs from this
+  repo's `.loki/metrics/efficiency/`: 5 iterations, total cost
+  $37.7308, opus tier.
+- `bash bin/loki --help` (real CLI) -- shows `kpis [--json]` in
+  Commands and refreshed examples.
+
+### Real-user testing summary
+
+47 scenarios run against the v7.5.27 npm tarball + source for
+v7.5.28. Result: 46 PASS, 1 BUG FOUND + FIXED (Phase F discover
+with parent-only manifest -- scenario 45).
+
+Scenarios covered: --version (3 forms), --help (2 forms), bare
+loki, provider list/show/info, doctor (+ Phase I env, + --json),
+status (+ --json), stats (+ --json + --efficiency), memory
+list/index/stats/search/--help, rollback --help, config show,
+secrets status/validate, completions bash/zsh, setup-skill (idempotent),
+telemetry/notify/github/sandbox/dashboard status, init --template
+(scaffold real PRD), cleanup, logs, heal --help, agent list,
+Phase D MCP bundle write from installed bundle, Phase J pricing
+JSON shipped + loaded, Phase F project-graph from installed
+bundle (BUG -> FIX), Phase B claude-flags helper from installed
+bundle, Phase C voter-agents JSON from installed bundle.
+
+### NPM_TOKEN rotation note
+
+NPM_TOKEN was rotated mid-session via `gh secret set NPM_TOKEN`
+(verified `gh secret list` shows updated timestamp). The v7.5.27
+Release workflow's publish-npm + publish-ts-sdk jobs were
+`gh run rerun --failed` and succeeded. All 4 distribution channels
+now at v7.5.27+:
+- npm: v7.5.27 (was v7.5.17 for the entire v7.5.18-v7.5.27 arc)
+- Homebrew: v7.5.27 (was skipped on every release of the arc)
+- Docker Hub: v7.5.27
+- PyPI: v7.5.27 + ts-sdk v7.5.27
+
+v7.5.28 will publish to all 4 on this push.
+
+### NOT tested (honest disclosures)
+
+- No per-iteration KPI emission yet. `loki kpis` is read-only; it
+  reads files written by the existing efficiency tracker. The
+  architect's full Phase K plan (per-iter emission, dashboard
+  panel, scripts/loki-bench.sh) remains deferred.
+- No bash route mirror for `loki kpis` (Bun-only command, shim
+  routes appropriately). Bash users still get the existing
+  `loki metrics` / `loki stats` surface unchanged.
+- Phase F fix tested via real CLI smoke (scenario 45 reran live);
+  no new unit-test fixture for the parent-only manifest case was
+  added. Trivial follow-up: extend test-project-graph.sh fixture.
+
 ## [7.5.27] - 2026-05-22
 
 PATCH release. Phase N of the v7.5.18 -> v7.5.27 arc, completing the

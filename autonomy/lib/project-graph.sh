@@ -398,23 +398,33 @@ for m in meta.get("members", []):
         out.append(os.path.realpath(p))
 print(":".join(out))
 ' "$parent_meta" "$parent_dir" 2>/dev/null)
-        # If explicit members declared, intersect with discovered members.
+        # Bug fix (v7.5.28, found via real CLI smoke): when only the parent
+        # has .loki/app.json (no thin pointers in members), the sibling
+        # walker's discovered `members` is empty -- in that case the
+        # explicit members[] from the parent manifest IS the authoritative
+        # member list (no intersection to apply). When discovered members
+        # exist, fall back to the intersection-narrow semantics.
         if [ -n "$explicit_members" ]; then
-            local final=()
-            local em
+            local em_arr=()
             IFS=':' read -r -a em_arr <<<"$explicit_members"
-            for em in "${em_arr[@]}"; do
-                local m
-                for m in "${members[@]}"; do
-                    if [ "$m" = "$em" ]; then
-                        final+=("$m")
-                        break
-                    fi
+            if [ "${#members[@]}" -eq 0 ]; then
+                # No sibling-discovered members -- adopt explicit list verbatim.
+                members=("${em_arr[@]}")
+            else
+                # Sibling-discovered members exist -- intersect with explicit.
+                local final=()
+                local em m
+                for em in "${em_arr[@]}"; do
+                    for m in "${members[@]}"; do
+                        if [ "$m" = "$em" ]; then
+                            final+=("$m")
+                            break
+                        fi
+                    done
                 done
-            done
-            # If explicit list narrows nothing, fall back to discovered.
-            if [ "${#final[@]}" -gt 0 ]; then
-                members=("${final[@]}")
+                if [ "${#final[@]}" -gt 0 ]; then
+                    members=("${final[@]}")
+                fi
             fi
         fi
     fi

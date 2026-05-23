@@ -94,6 +94,13 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runDoctor(rest);
     }
 
+    case "kpis": {
+      // Phase K MVP (v7.5.28): read-only KPI snapshot derived from
+      // existing .loki/ state. No new instrumentation.
+      const { runKpis } = await import("./commands/kpis.ts");
+      return runKpis(rest);
+    }
+
     case "rollback": {
       // v7.5.2: wire the checkpoint rollback API (was dead code per H4).
       const { runRollback } = await import("./commands/rollback.ts");
