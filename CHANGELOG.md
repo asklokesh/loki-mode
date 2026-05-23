@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: email send adapters + backup/restore + health endpoint
+
+X-23 forge.services.email: Resend / SendGrid / Postmark adapters that
+     share one surface (setup_provider / send / list_sent). When a
+     `email_dispatch` forge function is deployed we invoke it for the
+     upstream call; otherwise we record the message to sent.jsonl
+     (useful in dev and tests). Wired into magic_link.issue() via the
+     optional email_provider kwarg + link_template substitution.
+
+X-26 forge.backup: tar + gzip dump and restore for the entire
+     .loki/forge/ tree. Defaults exclude the master key file so
+     secrets do not silently round-trip across machines. restore()
+     rejects tar members with absolute or parent-traversal paths
+     (verified by test) and refuses to overwrite a non-empty forge
+     dir unless force=True.
+
+X-29 /api/forge/health endpoint on the dashboard router. Returns
+     {schema, ok, status, codes[]} mirroring the FRG* taxonomy that
+     sandbox diagnose surfaces - one place to poll for forge health.
+
+5 new MCP tools (forge_email_*, forge_backup, forge_restore).
+
+Tests: 8 email + 7 backup + 15 dashboard (was 14) = 30 new
+assertions. 6 new follow-up tasks queued (X-30..X-34).
+
 ### Follow-ups: HTTP gateway, realtime WS, 3 more SDKs, magic-link, autoregen
 
 Closes X-12 through X-21 from the autonomous-loop queue:

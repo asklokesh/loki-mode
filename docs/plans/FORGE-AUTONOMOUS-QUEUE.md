@@ -177,15 +177,33 @@ Last updated: 2026-05-18
       no HTTP receiver
 - [ ] X-25 OAuth callback handler routes per provider so the agent's
       app can sign users in without manually wiring fetch + token-exchange
-- [ ] X-26 Forge backup + restore: dump + reload .loki/forge/ as a
-      single tarball (matches InsForge's DB backup feature)
+- [x] X-26 Forge backup + restore (path-traversal-safe; master key excluded by default)
 - [ ] X-27 Schema diff visualization for the council review record
       (currently raw SQL; rendering needs a diff-friendly representation)
 - [ ] X-28 Cron schedule tooling: lint expressions in CI before
       forge_schedule_create accepts them
-- [ ] X-29 Health endpoint /api/forge/health that flips RED based on the
-      same FRG* codes the sandbox diagnose surfaces
+- [x] X-29 /api/forge/health endpoint flipping RED on the FRG* codes
+
+## More tasks discovered
+
+- [ ] X-30 OAuth callback router wiring (X-25's other half - per-
+      provider /forge/auth/callback/<name> handlers that complete
+      the PKCE token exchange + issue a forge session JWT)
+- [ ] X-31 Webhook receiver routes /forge/payments/<provider>/webhook
+      that verify_webhook_signature() with the provider's specific
+      shape + persist via record_webhook_event()
+- [ ] X-32 Magic-link rate limiting per-email (use the existing
+      gateway/rate_limit.py token bucket; default 5/hour)
+- [ ] X-33 Email-template registry so each transactional email
+      (magic link, password reset, payment-failed, etc.) has a
+      shared shape; per-product overrides
+- [ ] X-34 Multi-region storage routing: forge_storage_bucket_create
+      gains a region field; signed URLs honor it
+- [x] X-23 (email adapters)
 
 ## Status
 
-Current pointer: F-2.01
+Phase F-1..F-5 + X-12..X-23 + X-26 + X-29 complete on
+claude/compare-litellm-loki-Y8Ke1. Remaining: X-11, X-19, X-22, X-24,
+X-25, X-27, X-28, X-30..X-34. Will continue with X-24/X-25 (payment
+webhook receivers + OAuth callback routes) next.

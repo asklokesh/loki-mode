@@ -71,6 +71,13 @@ else
     fail "schedule tick loop missing"
 fi
 
+# 9. X-29: /api/forge/health endpoint declared
+if grep -q '"/api/forge/health"' "$ROOT/dashboard/forge_router.py"; then
+    pass "X-29: /api/forge/health declared"
+else
+    fail "health endpoint missing"
+fi
+
 # 9. Migration apply emits a council review record under .loki/quality/forge-migrations/
 if run_py "
 import os, tempfile

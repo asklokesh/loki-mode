@@ -990,6 +990,84 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_backup(out_path: str, gzip: bool = True,
+                           include_master_key: bool = False) -> str:
+        """Dump the entire .loki/forge/ tree into a tar(.gz) at out_path.
+        Excludes the master key file by default - restore on a different
+        machine regenerates it from LOKI_FORGE_MASTER_KEY env."""
+        _emit_event_safe("forge_backup", "start")
+        try:
+            from forge.backup import backup
+            return json.dumps(backup(_forge_dir(), out_path, gzip=gzip,
+                                      include_master_key=include_master_key),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_restore(backup_path: str, force: bool = False) -> str:
+        """Extract a forge backup tarball into the current project's
+        .loki/forge/. Refuses to overwrite an existing non-empty forge
+        dir unless force=True."""
+        _emit_event_safe("forge_restore", "start")
+        try:
+            from forge.backup import restore
+            return json.dumps(restore(backup_path, _forge_dir(),
+                                       force=force),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_email_provider_setup(provider: str, api_key_ref: str,
+                                         from_address: str,
+                                         from_name: Optional[str] = None
+                                         ) -> str:
+        """Configure an email provider (resend / sendgrid / postmark)."""
+        _emit_event_safe("forge_email_provider_setup", "start")
+        try:
+            from forge.services.email import setup_provider
+            return json.dumps(setup_provider(_forge_dir(), provider,
+                                              api_key_ref=api_key_ref,
+                                              from_address=from_address,
+                                              from_name=from_name),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_email_send(provider: str, to: str, subject: str,
+                               body_text: str,
+                               body_html: Optional[str] = None,
+                               headers: Optional[Dict[str, str]] = None
+                               ) -> str:
+        """Send an email via the configured provider (best-effort; needs
+        an `email_dispatch` forge function deployed to actually call the
+        upstream API)."""
+        _emit_event_safe("forge_email_send", "start")
+        try:
+            from forge.services.email import send
+            return json.dumps(send(_forge_dir(), provider, to=to,
+                                    subject=subject,
+                                    body_text=body_text,
+                                    body_html=body_html,
+                                    headers=headers),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_email_list_sent(provider: str, limit: int = 100) -> str:
+        """List recent outbound mail records."""
+        _emit_event_safe("forge_email_list_sent", "start")
+        try:
+            from forge.services.email import list_sent
+            return json.dumps({"sent": list_sent(_forge_dir(), provider, limit)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_auth_magic_link_redeem(token: str) -> str:
         """Redeem a magic-link token: creates the user if missing and
         returns a session JWT. Single-use."""

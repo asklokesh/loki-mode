@@ -44,10 +44,21 @@ def _path(forge_dir: str) -> str:
 
 def issue(forge_dir: str, email: str,
           *, redirect_url: Optional[str] = None,
-          ttl_seconds: int = _TOKEN_TTL_SECONDS) -> Dict[str, Any]:
-    """Mint a single-use magic-link token for `email`. Returns the token
-    plus expiry; the caller (forge function) is responsible for emailing
-    the token-bearing URL to the user."""
+          ttl_seconds: int = _TOKEN_TTL_SECONDS,
+          email_provider: Optional[str] = None,
+          link_template: Optional[str] = None) -> Dict[str, Any]:
+    """Mint a single-use magic-link token for `email`.
+
+    If `email_provider` is supplied and the matching forge email
+    adapter is configured, we also call send() to deliver the link.
+    `link_template` is the URL the user clicks (with {token}
+    substituted); defaults to "?token={token}" so callers can prefix
+    with their own host.
+
+    Returns the token plus expiry; with email delivery enabled, the
+    returned record carries an `email_record_id` so the caller can
+    audit.
+    """
     if not isinstance(email, str) or not _EMAIL_RE.match(email):
         raise MagicLinkError("invalid email")
     if redirect_url is not None and not (
@@ -70,9 +81,32 @@ def issue(forge_dir: str, email: str,
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, separators=(",", ":")) + "\n")
-    return {"token": token, "email": email,
-            "expires_at": rec["expires_at"],
-            "redirect_url": redirect_url}
+
+    response: Dict[str, Any] = {
+        "token": token,
+        "email": email,
+        "expires_at": rec["expires_at"],
+        "redirect_url": redirect_url,
+    }
+
+    if email_provider:
+        try:
+            from forge.services.email import send
+            tmpl = link_template or "?token={token}"
+            link = tmpl.replace("{token}", token)
+            sent = send(forge_dir, email_provider, to=email,
+                        subject="Your sign-in link",
+                        body_text=(f"Click to sign in: {link}\n\n"
+                                   "If you did not request this, ignore."),
+                        body_html=(f"<p>Click to sign in: "
+                                   f"<a href=\"{link}\">{link}</a></p>"
+                                   "<p>If you did not request this, ignore.</p>"))
+            response["email_record_id"] = sent.get("id")
+            response["email_status"] = sent.get("status")
+        except Exception as e:
+            response["email_error"] = str(e)
+
+    return response
 
 
 def redeem(forge_dir: str, token: str) -> Dict[str, Any]:
