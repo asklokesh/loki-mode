@@ -69,17 +69,46 @@ def provision(req: ForgeRequirements, forge_dir: str,
         except Exception as e:
             errors.append(f"db provisioning failed: {e}")
 
-    # F-2 placeholders so we don't silently lose detected requirements.
+    # F-2: auth providers - register each one with default config (the
+    # agent supplies client_id later via forge_auth_provider_add).
+    if req.auth_providers:
+        try:
+            from .services.auth import add_provider
+            for p in req.auth_providers:
+                try:
+                    add_provider(forge_dir, p, {"_provisioned_by": "detector"})
+                except ValueError as e:
+                    # Already registered or unsupported - record but continue.
+                    skipped.append(f"auth_provider:{p}: {e}")
+        except Exception as e:
+            errors.append(f"auth provisioning failed: {e}")
+
+    # F-2: storage buckets - create one per detected name. Default to
+    # private; the agent flips public on specific buckets as needed.
+    if req.buckets:
+        try:
+            from .services.storage import create_bucket, list_buckets
+            existing = {b["name"] for b in list_buckets(forge_dir)}
+            for b in req.buckets:
+                if b in existing:
+                    skipped.append(f"bucket:{b}: already exists")
+                    continue
+                try:
+                    create_bucket(forge_dir, b, public=(b == "public-assets"))
+                except Exception as e:
+                    skipped.append(f"bucket:{b}: {e}")
+        except Exception as e:
+            errors.append(f"storage provisioning failed: {e}")
+
+    # F-2/F-3 placeholders so we don't silently lose detected requirements.
     for kind, items in (
-        ("auth_providers", req.auth_providers),
-        ("buckets", req.buckets),
         ("functions", req.functions),
         ("schedules", req.schedules),
         ("realtime_channels", req.realtime_channels),
         ("payments", req.payments),
     ):
         if items:
-            skipped.append(f"{kind}={items} (Phase F-2)")
+            skipped.append(f"{kind}={items} (Phase F-3)")
 
     return ProvisionResult(forge_dir=forge_dir,
                            db_migrations=db_results,

@@ -39,6 +39,14 @@ def render_prompt_block(forge_dir: str) -> str:
     if db_block:
         parts.append(db_block)
 
+    auth_block = _render_auth(forge_dir)
+    if auth_block:
+        parts.append(auth_block)
+
+    storage_block = _render_storage(forge_dir)
+    if storage_block:
+        parts.append(storage_block)
+
     parts.append(_render_mcp_hint())
 
     text = "\n".join(parts)
@@ -87,11 +95,50 @@ def _render_db(forge_dir: str) -> str:
     return "\n".join(lines)
 
 
+def _render_auth(forge_dir: str) -> str:
+    auth_dir = os.path.join(forge_dir, "auth", "providers")
+    if not os.path.isdir(auth_dir):
+        return ""
+    try:
+        from .services.auth import list_providers, list_users
+        providers = list_providers(forge_dir)
+        user_count = len(list_users(forge_dir, limit=1000))
+    except Exception as e:
+        return f"Auth: (introspect failed: {e})"
+    if not providers:
+        return ""
+    names = ", ".join(p.get("_provider", "?") for p in providers)
+    return f"Auth providers ({len(providers)}): {names}; users={user_count}"
+
+
+def _render_storage(forge_dir: str) -> str:
+    sroot = os.path.join(forge_dir, "storage")
+    if not os.path.isdir(sroot):
+        return ""
+    try:
+        from .services.storage import list_buckets
+        buckets = list_buckets(forge_dir)
+    except Exception as e:
+        return f"Storage: (introspect failed: {e})"
+    if not buckets:
+        return ""
+    lines = [f"Storage buckets ({len(buckets)}):"]
+    for b in buckets:
+        visibility = "public" if b.get("public") else "private"
+        cap_mb = int(b.get("max_file_size", 0) or 0) // (1024 * 1024)
+        lines.append(f"  {b['name']} [{visibility}, <={cap_mb}MB/file]")
+    return "\n".join(lines)
+
+
 def _render_mcp_hint() -> str:
     return (
         "MCP tools available for backend mutations (call directly inside the iteration):\n"
-        "  forge_db_query, forge_db_introspect, forge_db_migrate, "
-        "forge_db_migrate_dryrun, forge_db_migrate_rollback"
+        "  forge_db_query, forge_db_introspect, forge_db_migrate,\n"
+        "  forge_db_migrate_dryrun, forge_db_migrate_rollback,\n"
+        "  forge_auth_provider_add, forge_auth_user_create, forge_auth_user_list,\n"
+        "  forge_storage_bucket_create, forge_storage_signed_url,\n"
+        "  forge_storage_transform_preset, forge_storage_list_objects,\n"
+        "  forge_state_dump"
     )
 
 
