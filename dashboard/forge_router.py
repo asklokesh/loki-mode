@@ -208,6 +208,35 @@ def register_forge_router(app) -> None:
             "codes": codes,
         }
 
+    @app.get("/api/forge/tail")
+    async def forge_tail(source: str = "audit", lines: int = 100) -> Any:
+        """X-71: tail the audit chain or a function's logs."""
+        from fastapi.responses import JSONResponse as _JR
+        d = _forge_dir()
+        if source == "audit":
+            try:
+                from dashboard import audit as _audit
+                if hasattr(_audit, "_get_current_log_file"):
+                    p = str(_audit._get_current_log_file())
+                    if os.path.isfile(p):
+                        with open(p, "r", encoding="utf-8") as f:
+                            tail = f.readlines()[-max(1, min(lines, 10000)):]
+                        return {"source": "audit", "lines": tail}
+                return {"source": "audit", "lines": [],
+                        "warning": "no audit log"}
+            except Exception as e:
+                return _JR(status_code=500, content={"error": str(e)})
+        if source.startswith("function:"):
+            name = source.split(":", 1)[1]
+            try:
+                from forge.services.functions import list_runs
+                runs = list_runs(d, name, limit=lines)
+                return {"source": source, "runs": runs}
+            except Exception as e:
+                return _JR(status_code=500, content={"error": str(e)})
+        return _JR(status_code=400,
+                   content={"error": "source must be 'audit' or 'function:<name>'"})
+
     @app.get("/api/forge/analytics")
     async def forge_analytics(window_seconds: int = 7 * 24 * 3600
                               ) -> Dict[str, Any]:

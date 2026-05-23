@@ -1142,6 +1142,55 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_db_seed(seeds: List[Dict[str, Any]]) -> str:
+        """X-72: declarative seeding. seeds = [{"table": "users",
+        "rows": [{...}, {...}]}]. Idempotent by content hash."""
+        _emit_event_safe("forge_db_seed", "start")
+        try:
+            from forge.services.database import open_engine, seed as _seed
+            return json.dumps(_seed(open_engine(_forge_dir()), seeds),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_storage_lifecycle(name: str,
+                                       delete_after_days: Optional[int] = None
+                                       ) -> str:
+        """X-73: set a bucket lifecycle policy (delete_after_days=N).
+        Pass delete_after_days=None to clear."""
+        _emit_event_safe("forge_storage_lifecycle", "start")
+        try:
+            from forge.services.storage import set_lifecycle
+            return json.dumps(set_lifecycle(_forge_dir(), name,
+                                             delete_after_days=delete_after_days),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_storage_gc(bucket: str) -> str:
+        """X-73: GC objects past the bucket's lifecycle policy."""
+        _emit_event_safe("forge_storage_gc", "start")
+        try:
+            from forge.services.storage import garbage_collect_lifecycle
+            return json.dumps(garbage_collect_lifecycle(_forge_dir(), bucket),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_cron_describe(expr: str) -> str:
+        """X-75: render a cron expression as a human-readable sentence."""
+        _emit_event_safe("forge_cron_describe", "start")
+        try:
+            from forge.services.schedules import describe_expression
+            return json.dumps({"expr": expr,
+                                "description": describe_expression(expr)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_function_warm(name: str,
                                   version: Optional[int] = None) -> str:
         """X-68: pre-warm a forge function so the first real invoke

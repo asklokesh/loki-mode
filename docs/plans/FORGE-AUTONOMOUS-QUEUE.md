@@ -258,10 +258,19 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-68 forge.services.functions.warm() pre-warms runtime
 - [x] X-69 forge.healing.propose_from_sqlite + apply_proposal
 
+## Seventh wave (discovered post-X-69)
+
+- [x] X-70 forge.yaml secrets list (declarations + rotation policy, never values)
+- [x] X-71 /api/forge/tail endpoint for audit + function logs
+- [x] X-72 forge.services.database.seed() idempotent by content hash
+- [x] X-73 set_lifecycle + garbage_collect_lifecycle
+- [x] X-74 .loki/forge.local.yaml override merging
+- [x] X-75 cron.describe() human-readable schedules
+
 ## Status
 
-Phase F-1..F-5 + X-1..X-67 complete on claude/compare-litellm-loki-Y8Ke1.
-X-44/X-27 UI panes deferred. X-68 and X-69 carry forward as next-wave.
+Phase F-1..F-5 + X-1..X-69 complete on claude/compare-litellm-loki-Y8Ke1.
+X-44/X-27 dashboard-ui follow-ups remain open.
 
-Full regression: 434 assertions across 27 test suites, 0 failed.
-Most recent push: bab8317.
+Full regression: 442 assertions across 28 test suites, 0 failed.
+Most recent push: 6213783.

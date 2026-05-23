@@ -22,6 +22,8 @@ from .buckets import (  # noqa: F401
     upload,
     upload_stream,
     download,
+    set_lifecycle,
+    garbage_collect_lifecycle,
 )
 from .cdn import sign_url, verify_url  # noqa: F401
 from .transform import register_transform_preset, list_transform_presets  # noqa: F401

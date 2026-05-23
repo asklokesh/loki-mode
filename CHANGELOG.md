@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: forge.yaml secrets + tail + db seed + lifecycle + yaml compose + cron describe
+
+X-70 forge.yaml gains a `secrets:` list. Declarations only - we
+     never store values in yaml. When a value is set via vault and
+     the rotation policy is declared, apply() wires the policy.
+
+X-71 GET /api/forge/tail returns the last N lines of the audit log
+     or a forge function's run history.
+
+X-72 forge.services.database.seed(engine, [{table, rows[]}])
+     applies declarative row sets. Idempotent by content_hash;
+     persists into a _forge_seeds ledger.
+
+X-73 storage.set_lifecycle(bucket, delete_after_days=N) +
+     garbage_collect_lifecycle(bucket) honor the policy. Bounds
+     enforced (1..3650 days).
+
+X-74 forge.config also reads .loki/forge.local.yaml and deep-merges
+     it onto the project-root config so individual devs can override
+     compliance preset / additional resources without touching the
+     committed forge.yaml.
+
+X-75 cron.describe(expr) produces a human-readable sentence ('daily
+     at 08:30 UTC', 'every 15 minutes', 'weekly on Monday', ...).
+
+5 new MCP tools (forge_db_seed, forge_storage_lifecycle,
+forge_storage_gc, forge_cron_describe, plus the tail endpoint).
+14 new test assertions. No regressions.
+
 ### Follow-ups: warm + healing-mode legacy DB import
 
 X-68 forge.services.functions.warm() pre-warms a function so the

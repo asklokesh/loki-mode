@@ -52,6 +52,33 @@ def find_config(project_dir: str) -> Optional[str]:
     return None
 
 
+def find_local_override(project_dir: str) -> Optional[str]:
+    """X-74: per-developer override at .loki/forge.local.yaml. Merged
+    into the project-root config when apply() runs."""
+    for name in ("forge.local.yaml", "forge.local.yml"):
+        path = os.path.join(project_dir, ".loki", name)
+        if os.path.isfile(path) and not os.path.islink(path):
+            return path
+    return None
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """X-74: simple deep merge. Lists are concatenated; dicts merged;
+    scalars from override win."""
+    out = dict(base)
+    for k, v in override.items():
+        if k in out:
+            if isinstance(out[k], dict) and isinstance(v, dict):
+                out[k] = _deep_merge(out[k], v)
+            elif isinstance(out[k], list) and isinstance(v, list):
+                out[k] = out[k] + v
+            else:
+                out[k] = v
+        else:
+            out[k] = v
+    return out
+
+
 def _parse_yaml(path: str) -> Dict[str, Any]:
     """Lightweight YAML parser - same approach as autonomy/run.sh's
     parse_simple_yaml fallback. We don't pull in PyYAML to keep the
@@ -189,6 +216,12 @@ def apply(project_dir: str, forge_dir: Optional[str] = None,
     if not cfg:
         return {"applied": [], "skipped": ["forge_yaml_empty_or_unreadable"],
                 "errors": []}
+    # X-74: merge with per-developer override if present.
+    override_path = find_local_override(project_dir)
+    if override_path:
+        override = _parse_yaml(override_path)
+        if override:
+            cfg = _deep_merge(cfg, override)
     # X-58: lint the structure before doing anything.
     lint_report = validate(cfg)
     if lint_report["errors"]:
@@ -281,6 +314,38 @@ def apply(project_dir: str, forge_dir: Optional[str] = None,
             applied.append({"schedule": s["name"]})
         except Exception as e:
             skipped.append(f"schedule:{s['name']}: {e}")
+
+    # X-70: secrets (names + rotation policy only - values are never
+    # in yaml). The agent declares which secrets the project NEEDS;
+    # operator/CI populates the values via forge_secret_set.
+    for sec in (cfg.get("secrets") or []):
+        if isinstance(sec, str):
+            name, rotation = sec, None
+        elif isinstance(sec, dict):
+            name = sec.get("name")
+            rotation = sec.get("rotation")
+        else:
+            continue
+        if not name:
+            continue
+        skipped.append(f"secret_declared:{name}")
+        if rotation and not dryrun:
+            try:
+                from forge.services.secrets import (
+                    set_rotation_policy, list_secrets,
+                )
+                # Skip if no value yet - rotation policy requires the
+                # secret exists.
+                if any(s["name"] == name for s in list_secrets(fd)):
+                    set_rotation_policy(fd, name,
+                                        cron=rotation.get("cron", "@monthly"),
+                                        action=rotation.get("action", "alert"),
+                                        target=rotation.get("target"))
+                    applied.append({"secret_rotation": name})
+                else:
+                    skipped.append(f"secret_rotation:{name}: value not set yet")
+            except Exception as e:
+                skipped.append(f"secret_rotation:{name}: {e}")
 
     # Gateway routes.
     for r in (cfg.get("gateway") or {}).get("routes") or []:

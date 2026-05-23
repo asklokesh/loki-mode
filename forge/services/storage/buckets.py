@@ -111,6 +111,76 @@ def delete_bucket(forge_dir: str, name: str) -> bool:
     return True
 
 
+def set_lifecycle(forge_dir: str, name: str, *,
+                  delete_after_days: Optional[int] = None,
+                  ) -> Dict[str, Any]:
+    """X-73: set a lifecycle policy on a bucket. delete_after_days = N
+    will be honored by garbage_collect_lifecycle()."""
+    _validate_name(name)
+    root = _bucket_root(forge_dir, name)
+    mpath = os.path.join(root, "_manifest.json")
+    if not os.path.exists(mpath):
+        raise BucketError(f"bucket not found: {name}")
+    with open(mpath, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    if delete_after_days is not None:
+        if not (1 <= int(delete_after_days) <= 365 * 10):
+            raise BucketError("delete_after_days must be 1..3650")
+        manifest["delete_after_days"] = int(delete_after_days)
+    else:
+        manifest.pop("delete_after_days", None)
+    _write_json(mpath, manifest)
+    return manifest
+
+
+def garbage_collect_lifecycle(forge_dir: str, bucket: str,
+                              *, now_ts: Optional[float] = None
+                              ) -> Dict[str, Any]:
+    """X-73: honor the bucket's delete_after_days policy. Returns count
+    of object index records pruned. Blob files (content-addressed) are
+    left in place since they may be referenced by other paths."""
+    _validate_name(bucket)
+    root = _bucket_root(forge_dir, bucket)
+    mpath = os.path.join(root, "_manifest.json")
+    if not os.path.exists(mpath):
+        raise BucketError(f"bucket not found: {bucket}")
+    with open(mpath, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    days = manifest.get("delete_after_days")
+    if not days:
+        return {"pruned": 0, "policy": "none"}
+    import time as _time
+    cutoff = (now_ts if now_ts is not None else _time.time()) - days * 86400
+    idx_dir = os.path.join(root, "_index")
+    pruned = 0
+    if os.path.isdir(idx_dir):
+        for f in list(os.listdir(idx_dir)):
+            if not f.endswith(".json"):
+                continue
+            entry_path = os.path.join(idx_dir, f)
+            try:
+                with open(entry_path, "r", encoding="utf-8") as eh:
+                    entry = json.load(eh)
+            except (OSError, json.JSONDecodeError):
+                continue
+            uploaded = entry.get("uploaded_at", "")
+            try:
+                ts = (_time.mktime(_time.strptime(uploaded, "%Y-%m-%dT%H:%M:%SZ"))
+                      if uploaded else 0)
+            except ValueError:
+                ts = 0
+            if ts < cutoff:
+                try:
+                    os.remove(entry_path)
+                    versions = entry_path[:-5] + ".versions.jsonl"
+                    if os.path.exists(versions):
+                        os.remove(versions)
+                    pruned += 1
+                except OSError:
+                    pass
+    return {"pruned": pruned, "policy": f"delete_after_{days}d"}
+
+
 def list_buckets(forge_dir: str) -> List[Dict[str, Any]]:
     sroot = os.path.join(forge_dir, "storage")
     if not os.path.isdir(sroot):

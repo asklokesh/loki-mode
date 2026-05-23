@@ -18,3 +18,4 @@ from __future__ import annotations
 from .engine import Engine, open_engine  # noqa: F401
 from .introspect import introspect  # noqa: F401
 from .migrate import migrate_apply, migrate_dryrun, migrate_rollback, MigrationSpec  # noqa: F401
+from .seed import seed  # noqa: F401

@@ -92,6 +92,59 @@ def validate_expression(expr: str) -> None:
         _expand_field(f, *_BOUNDS[i])
 
 
+def describe(expr: str) -> str:
+    """X-75: render a cron expression as a human-readable sentence.
+
+    Best-effort - covers the common shapes (every minute, hourly at
+    minute N, daily at HH:MM, weekly on DOW at HH:MM, monthly on DOM).
+    Falls back to a structured description for shapes we don't have a
+    pretty mapping for.
+    """
+    expr = _normalize(expr)
+    fields = expr.split()
+    if len(fields) != 5:
+        return f"invalid cron expression: {expr!r}"
+    minute, hour, dom, month, dow = fields
+    DAYS = {"0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday",
+            "4": "Thursday", "5": "Friday", "6": "Saturday"}
+
+    # @-style aliases (after _normalize re-expands them, we still
+    # check the original input first for the obvious cases).
+    if minute == "*" and hour == "*" and dom == "*" and month == "*" and dow == "*":
+        return "every minute"
+    if minute == "0" and hour == "*" and dom == "*" and month == "*" and dow == "*":
+        return "hourly at :00"
+    if minute.startswith("*/") and hour == "*" and dom == "*" and month == "*" and dow == "*":
+        try:
+            n = int(minute[2:])
+            return f"every {n} minute{'s' if n != 1 else ''}"
+        except ValueError:
+            pass
+    try:
+        m_int = int(minute)
+        h_int = int(hour)
+    except ValueError:
+        return f"cron {expr!r}"
+
+    if dom == "*" and month == "*" and dow == "*":
+        return f"daily at {h_int:02d}:{m_int:02d} UTC"
+    if dom == "*" and month == "*" and dow in DAYS:
+        return f"weekly on {DAYS[dow]} at {h_int:02d}:{m_int:02d} UTC"
+    if dow == "*" and month == "*":
+        try:
+            d = int(dom)
+            return (f"monthly on day {d} at {h_int:02d}:{m_int:02d} UTC")
+        except ValueError:
+            pass
+    if dow == "*":
+        try:
+            d = int(dom); mm = int(month)
+            return (f"yearly on {mm:02d}-{d:02d} at {h_int:02d}:{m_int:02d} UTC")
+        except ValueError:
+            pass
+    return f"cron {expr!r} (custom)"
+
+
 def lint(expr: str) -> Dict[str, Any]:
     """X-28: Lint a cron expression. Returns a structured report with
     warnings + the computed next fire times so CI can surface obvious
