@@ -41,9 +41,22 @@ def introspect(engine: Engine) -> Dict[str, Any]:
             "rls": _rls_for(engine, tname),
             "row_count_estimate": _row_count(engine, tname),
         })
+    # X-63: foreign-key adjacency list. Each entry: {table, column,
+    # references_table, references_column}.
+    fk_graph: List[Dict[str, Any]] = []
+    for t in tables:
+        for fk in t.get("foreign_keys", []):
+            fk_graph.append({
+                "table": t["name"],
+                "column": fk.get("column"),
+                "references_table": fk.get("references_table"),
+                "references_column": fk.get("references_column"),
+            })
+
     return {
         "schema": _INTROSPECT_SCHEMA,
         "tables": tables,
+        "fk_graph": fk_graph,
         "internal": {
             "migrations": _migration_history(engine),
         },

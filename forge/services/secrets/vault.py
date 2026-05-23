@@ -231,6 +231,32 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
     return out
 
 
+def export_secrets(forge_dir: str, *,
+                   confirm_destructive: bool = False) -> Dict[str, str]:
+    """X-67: one-shot emergency dump of every secret value.
+
+    GATE: requires confirm_destructive=True so the agent cannot
+    inadvertently export secrets via a routine MCP call. The values
+    are returned in clear; the caller is responsible for not piping
+    them into logs / events / commits.
+    """
+    if not confirm_destructive:
+        raise SecretError(
+            "export_secrets requires confirm_destructive=True - this "
+            "returns secret values in clear and is an audit-significant "
+            "operation"
+        )
+    data = _load(forge_dir)
+    key = _master_key(forge_dir)
+    out: Dict[str, str] = {}
+    for name, ent in data["entries"].items():
+        try:
+            out[name] = _decrypt(ent, key)
+        except Exception as e:
+            out[name] = f"__decrypt_error__: {e}"
+    return out
+
+
 def delete_secret(forge_dir: str, name: str) -> bool:
     data = _load(forge_dir)
     if name not in data["entries"]:

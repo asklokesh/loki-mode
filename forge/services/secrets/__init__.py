@@ -19,6 +19,7 @@ from __future__ import annotations
 from .vault import (  # noqa: F401
     SecretError,
     delete_secret,
+    export_secrets,
     get_secret,
     list_secrets,
     set_secret,

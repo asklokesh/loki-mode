@@ -1142,6 +1142,53 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_search(query: str, limit: int = 50) -> str:
+        """X-61: cross-service name search across tables/columns/buckets/
+        functions/schedules/secrets/realtime channels."""
+        _emit_event_safe("forge_search", "start")
+        try:
+            from forge.search import search as _search
+            return json.dumps({"results": _search(_forge_dir(), query, limit)},
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_init(force: bool = False) -> str:
+        """X-62: scaffold a forge.yaml at the project root."""
+        _emit_event_safe("forge_init", "start")
+        try:
+            from forge.scaffold import init
+            return json.dumps(init(os.getcwd(), force=force), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_db_explain(sql: str) -> str:
+        """X-66: EXPLAIN QUERY PLAN for a SELECT. Read-only."""
+        _emit_event_safe("forge_db_explain", "start")
+        try:
+            from forge.services.database import open_engine
+            return json.dumps({
+                "plan": open_engine(_forge_dir()).explain(sql),
+            }, default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_secret_export(confirm_destructive: bool = False) -> str:
+        """X-67: one-shot emergency dump of every secret value in clear.
+        REQUIRES confirm_destructive=True. Audit-significant."""
+        _emit_event_safe("forge_secret_export", "start")
+        try:
+            from forge.services.secrets import export_secrets
+            return json.dumps(export_secrets(_forge_dir(),
+                                              confirm_destructive=confirm_destructive),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_audit_verify() -> str:
         """X-50: verify migration review records against the engine
         ledger + dashboard audit chain. Returns {ok, errors, warnings,

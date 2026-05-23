@@ -175,15 +175,47 @@ def upload(forge_dir: str, bucket: str, path: str, content: bytes,
         root, "_index",
         hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json",
     )
+    # X-64: append the new entry to the per-path version log before
+    # overwriting the head pointer. The version log is canonical; the
+    # head .json is a convenience cache.
+    versions_path = idx_path[:-5] + ".versions.jsonl"
+    with open(versions_path, "a", encoding="utf-8") as vf:
+        vf.write(json.dumps(entry, separators=(",", ":")) + "\n")
     _write_json(idx_path, entry)
     return entry
 
 
-def download(forge_dir: str, bucket: str, path: str) -> Tuple[bytes, Dict[str, Any]]:
-    """Fetch object bytes + metadata. Raises BucketError if missing."""
+def download(forge_dir: str, bucket: str, path: str,
+             version: Optional[int] = None) -> Tuple[bytes, Dict[str, Any]]:
+    """Fetch object bytes + metadata. Raises BucketError if missing.
+
+    X-64: version selector. None (default) returns the current head;
+    positive integers walk back through the version history kept in
+    a sidecar jsonl file.
+    """
     _validate_name(bucket)
     _validate_object_path(path)
     root = _bucket_root(forge_dir, bucket)
+    if version is not None:
+        if version < 1:
+            raise BucketError("version must be >= 1")
+        versions_path = os.path.join(
+            root, "_index",
+            hashlib.sha256(path.encode("utf-8")).hexdigest() + ".versions.jsonl",
+        )
+        if not os.path.isfile(versions_path):
+            raise BucketError(f"no version history for {bucket}/{path}")
+        with open(versions_path, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if version > len(lines):
+            raise BucketError(f"version {version} out of range "
+                              f"(max {len(lines)})")
+        meta = json.loads(lines[version - 1])
+        blob_path = os.path.join(root, "blobs", meta["sha"][:2], meta["sha"][2:])
+        if not os.path.exists(blob_path):
+            raise BucketError(f"blob missing for {bucket}/{path} v{version}")
+        with open(blob_path, "rb") as bf:
+            return bf.read(), meta
     idx_path = os.path.join(
         root, "_index",
         hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json",

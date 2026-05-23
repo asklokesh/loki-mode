@@ -35,13 +35,28 @@ def _refill(b: Bucket, now: float) -> None:
     b.last_refill_ts = now
 
 
+_ALERT_HOOK = None
+
+
+def set_alert_hook(hook) -> None:
+    """X-65: register a callable fired on every throttled check.
+    Hook receives {api_key_id, scope, retry_after_ms}.
+    Set to None to disable."""
+    global _ALERT_HOOK
+    _ALERT_HOOK = hook
+
+
 def check(api_key_id: str, scope: str = "requests",
           *, cost: float = 1.0,
           capacity: float = 60.0,
           refill_per_sec: float = 1.0) -> Dict[str, float]:
-    """Check + consume. Returns {allowed, remaining, retry_after_ms}."""
+    """Check + consume. Returns {allowed, remaining, retry_after_ms}.
+    Fires the X-65 alert hook on throttle (hook exceptions never
+    block the caller)."""
     now = time.time()
     key = (api_key_id, scope)
+    throttled = False
+    retry_after = 0.0
     with _LOCK:
         b = _BUCKETS.get(key)
         if b is None:
@@ -51,11 +66,22 @@ def check(api_key_id: str, scope: str = "requests",
         _refill(b, now)
         if b.tokens >= cost:
             b.tokens -= cost
-            return {"allowed": 1.0, "remaining": b.tokens, "retry_after_ms": 0.0}
-        deficit = cost - b.tokens
-        retry_after = (deficit / b.refill_rate) * 1000.0 if b.refill_rate > 0 else -1.0
-        return {"allowed": 0.0, "remaining": b.tokens,
-                "retry_after_ms": retry_after}
+            outcome = {"allowed": 1.0, "remaining": b.tokens,
+                       "retry_after_ms": 0.0}
+        else:
+            deficit = cost - b.tokens
+            retry_after = ((deficit / b.refill_rate) * 1000.0
+                            if b.refill_rate > 0 else -1.0)
+            outcome = {"allowed": 0.0, "remaining": b.tokens,
+                       "retry_after_ms": retry_after}
+            throttled = True
+    if throttled and _ALERT_HOOK is not None:
+        try:
+            _ALERT_HOOK({"api_key_id": api_key_id, "scope": scope,
+                         "retry_after_ms": retry_after})
+        except Exception:
+            pass
+    return outcome
 
 
 def record(api_key_id: str, scope: str, tokens: float) -> None:

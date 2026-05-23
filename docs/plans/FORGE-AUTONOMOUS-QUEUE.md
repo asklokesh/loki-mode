@@ -246,7 +246,20 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-59 Email template i18n (compound key <name>@<locale> + fallback)
 - [x] X-60 audit_columns flag auto-injects created_by/updated_by/version
 
+## Sixth wave
+
+- [x] X-61 forge.search() cross-service name search
+- [x] X-62 forge.scaffold.init() writes starter forge.yaml
+- [x] X-63 introspect emits fk_graph
+- [x] X-64 Bucket object versioning (download(..., version=N))
+- [x] X-65 rate_limit.set_alert_hook() fires on every throttle
+- [x] X-66 Engine.explain() returns EXPLAIN QUERY PLAN
+- [x] X-67 export_secrets(confirm_destructive=True)
+- [ ] X-68 forge_function_warm: pre-spin a Bun process for cold-start cuts
+- [ ] X-69 Healing-mode integration with legacy DB schema introspection
+
 ## Status
 
-Phase F-1..F-5 + X-1..X-48 (minus X-27/X-44 UI panes) complete on
-claude/compare-litellm-loki-Y8Ke1.
+Phase F-1..F-5 + X-1..X-60 complete on claude/compare-litellm-loki-Y8Ke1.
+X-44/X-27 UI panes deferred. Continuing the autonomous loop with the
+sixth wave (X-61..X-69) next.

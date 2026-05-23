@@ -37,6 +37,23 @@ class Engine:
                 _CONNS[db_path] = conn
             self._conn = conn
 
+    def explain(self, sql: str,
+                params: Optional[Sequence[Any]] = None) -> List[dict]:
+        """X-66: return EXPLAIN QUERY PLAN rows. Read-only; rejects
+        multi-statement and write SQL."""
+        if not isinstance(sql, str):
+            raise TypeError("sql must be a string")
+        if _first_keyword(sql) not in ("SELECT", "WITH"):
+            raise PermissionError("explain only supports read queries")
+        if ";" in sql.strip().rstrip(";"):
+            raise ValueError("explain takes a single statement")
+        cur = self._conn.execute("EXPLAIN QUERY PLAN " + sql,
+                                  list(params or []))
+        try:
+            return [dict(row) for row in cur.fetchall()]
+        finally:
+            cur.close()
+
     def query_page(self, sql: str, params: Optional[Sequence[Any]] = None,
                    *, limit: int = 100,
                    cursor: Optional[int] = None) -> dict:

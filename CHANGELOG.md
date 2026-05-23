@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: search + init + fk graph + versioning + alerts + explain + secret export
+
+X-61 forge.search() cross-service name search (tables, columns,
+     buckets, functions, schedules, secrets, channels). Scored
+     output, exact-match wins. MCP tool forge_search.
+
+X-62 forge.scaffold.init() writes a starter forge.yaml at the
+     project root. Refuses overwrite unless force=True. MCP tool
+     forge_init.
+
+X-63 forge_db_introspect now emits an `fk_graph` adjacency list
+     {table, column, references_table, references_column} as a
+     top-level field alongside `tables`.
+
+X-64 Bucket upload appends every put to a per-path versions.jsonl;
+     download accepts version=N to walk back. Test verifies v1/v3
+     are retrievable after v3 head.
+
+X-65 forge.services.gateway.rate_limit.set_alert_hook() registers
+     a callable invoked on every throttled check. Hook exceptions
+     never block the caller.
+
+X-66 Engine.explain(sql) returns the EXPLAIN QUERY PLAN rows.
+     Read-only; rejects multi-statement and write SQL. MCP tool
+     forge_db_explain.
+
+X-67 export_secrets(confirm_destructive=True) emergency dump of
+     every secret value in clear. Gated by the kwarg so a routine
+     MCP call cannot leak. MCP tool forge_secret_export.
+
+15 new test assertions. No regressions.
+
 ### Follow-ups: analytics + job queue + config lint + i18n + audit cols
 
 X-55 forge_db_query_page MCP tool exposes the paginated SELECT
