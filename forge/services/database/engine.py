@@ -37,6 +37,40 @@ class Engine:
                 _CONNS[db_path] = conn
             self._conn = conn
 
+    def query_page(self, sql: str, params: Optional[Sequence[Any]] = None,
+                   *, limit: int = 100,
+                   cursor: Optional[int] = None) -> dict:
+        """X-52: simple cursor pagination over a SELECT statement.
+
+        Adds `LIMIT N OFFSET cursor` (cursor=0 by default) and returns
+        {rows, next_cursor, has_more}. The query MUST be a SELECT; we
+        don't permit pagination over mutations.
+        """
+        if not isinstance(sql, str):
+            raise TypeError("sql must be a string")
+        if _first_keyword(sql) not in ("SELECT", "WITH", "PRAGMA"):
+            raise PermissionError("query_page only supports read queries")
+        if ";" in sql.strip().rstrip(";"):
+            raise ValueError("query_page takes a single statement")
+        limit = max(1, min(int(limit), 10000))
+        offset = max(0, int(cursor or 0))
+        # We wrap the user's query in a sub-select to avoid stomping on
+        # any LIMIT they wrote.
+        wrapped = f"SELECT * FROM ({sql}) LIMIT ? OFFSET ?"
+        cur = self._conn.execute(wrapped, list(params or []) + [limit + 1, offset])
+        try:
+            rows = [dict(r) for r in cur.fetchall()]
+        finally:
+            cur.close()
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+        return {
+            "rows": rows,
+            "next_cursor": offset + len(rows) if has_more else None,
+            "has_more": has_more,
+        }
+
     def execute(
         self,
         sql: str,

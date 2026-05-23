@@ -199,6 +199,93 @@ def download(forge_dir: str, bucket: str, path: str) -> Tuple[bytes, Dict[str, A
         return bf.read(), meta
 
 
+def upload_stream(forge_dir: str, bucket: str, path: str,
+                  chunks, content_type: Optional[str] = None,
+                  expected_size: Optional[int] = None
+                  ) -> Dict[str, Any]:
+    """X-53: streaming upload variant of upload().
+
+    `chunks` is an iterable of bytes (e.g. from a file iterator).
+    We hash on-the-fly so we don't materialize the whole payload in
+    memory. Caller MUST pass expected_size when bucket has
+    max_file_size enforcement (otherwise we error after partial
+    write and clean up the temp file).
+    """
+    _validate_name(bucket)
+    _validate_object_path(path)
+    root = _bucket_root(forge_dir, bucket)
+    manifest_path = os.path.join(root, "_manifest.json")
+    if not os.path.exists(manifest_path):
+        raise BucketError(f"bucket not found: {bucket}")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    cap = int(manifest.get("max_file_size", _DEFAULT_MAX_FILE))
+    if expected_size is not None and expected_size > cap:
+        raise BucketError("file exceeds bucket max_file_size")
+
+    ctype = content_type
+    if not ctype:
+        ctype, _ = mimetypes.guess_type(path)
+        ctype = ctype or "application/octet-stream"
+    allowed = manifest.get("allowed_content_types") or []
+    if allowed and ctype not in allowed:
+        raise BucketError(f"content-type {ctype!r} not in allowlist")
+
+    # Stage to a tmp file, hash on the fly, then content-address the
+    # final destination so we keep the dedupe property.
+    blobs_root = os.path.join(root, "blobs")
+    os.makedirs(blobs_root, exist_ok=True)
+    import hashlib as _hashlib
+    import tempfile as _tempfile
+    h = _hashlib.sha256()
+    tmp_fd, tmp_name = _tempfile.mkstemp(dir=blobs_root, prefix=".stream-")
+    total = 0
+    try:
+        with os.fdopen(tmp_fd, "wb") as out:
+            for chunk in chunks:
+                if not isinstance(chunk, (bytes, bytearray)):
+                    raise BucketError("stream must yield bytes")
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > cap:
+                    raise BucketError(
+                        f"stream exceeds bucket max_file_size ({cap} bytes)"
+                    )
+                h.update(chunk)
+                out.write(chunk)
+        sha = h.hexdigest()
+        shard_dir = os.path.join(blobs_root, sha[:2])
+        os.makedirs(shard_dir, exist_ok=True)
+        blob_path = os.path.join(shard_dir, sha[2:])
+        if os.path.exists(blob_path):
+            # Already have an identical blob; drop the tmp file.
+            os.remove(tmp_name)
+        else:
+            os.replace(tmp_name, blob_path)
+    except Exception:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
+        raise
+
+    entry = {
+        "path": path,
+        "sha": sha,
+        "size": total,
+        "ctype": ctype,
+        "uploaded_at": _utc_iso(),
+    }
+    idx_path = os.path.join(
+        root, "_index",
+        hashlib.sha256(path.encode("utf-8")).hexdigest() + ".json",
+    )
+    _write_json(idx_path, entry)
+    return entry
+
+
 def list_objects(forge_dir: str, bucket: str, prefix: str = "",
                  limit: int = 1000) -> List[Dict[str, Any]]:
     _validate_name(bucket)

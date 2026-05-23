@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: pagination + stream upload + soft delete
+
+X-52 Engine.query_page(sql, limit, cursor) wraps the user's SELECT
+     in a `SELECT * FROM (...) LIMIT N OFFSET cursor` and returns
+     {rows, next_cursor, has_more}. Refuses writes and multi-
+     statement input.
+
+X-53 storage.upload_stream() takes an iterator of bytes chunks and
+     writes content-addressed without ever holding the whole payload
+     in memory. Honors the bucket's max_file_size cap (aborts +
+     cleans up the temp file). Keeps the existing dedupe property.
+
+X-54 add_table now accepts a `soft_delete: true` flag that injects
+     a `deleted_at timestamp` column automatically (idempotent if
+     the agent also declared the column explicitly).
+
+Tests: 8 new assertions. No regressions.
+
 ### Follow-ups: forge.yaml + bootstrap CLI + audit verify
 
 X-49/X-51 forge.yaml at the project root + forge.config.apply()

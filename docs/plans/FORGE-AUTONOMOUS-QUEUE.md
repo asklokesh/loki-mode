@@ -232,9 +232,9 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-50 forge.audit_verify.verify() walks review records + ledger
       and detects tampered spec_hash. CLI: `loki forge audit`.
 - [x] X-51 `loki forge bootstrap` = the one-shot wizard.
-- [ ] X-52 forge_db_query result-row pagination + cursor support
-- [ ] X-53 forge_storage_upload streaming for large files
-- [ ] X-54 Per-table soft delete
+- [x] X-52 Engine.query_page() cursor pagination over SELECTs
+- [x] X-53 storage.upload_stream() chunked upload + size-cap + dedupe
+- [x] X-54 add_table soft_delete flag auto-injects deleted_at column
 
 ## Status
 

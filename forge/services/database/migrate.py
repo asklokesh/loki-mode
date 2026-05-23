@@ -345,6 +345,17 @@ def _compile_add_table(op: Dict[str, Any]) -> str:
     cols = op.get("columns") or []
     if not name or not cols:
         raise ValueError("add_table requires name + columns")
+    # X-54: soft_delete flag auto-injects a deleted_at column.
+    if op.get("soft_delete"):
+        already = False
+        for c in cols:
+            cname = (c.get("name") if isinstance(c, dict)
+                     else (c.split()[0] if isinstance(c, str) else ""))
+            if cname == "deleted_at":
+                already = True
+                break
+        if not already:
+            cols = list(cols) + ["deleted_at timestamp"]
     col_sql = []
     for c in cols:
         col_sql.append(_compile_column(c))

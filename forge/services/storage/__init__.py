@@ -20,6 +20,7 @@ from .buckets import (  # noqa: F401
     list_buckets,
     list_objects,
     upload,
+    upload_stream,
     download,
 )
 from .cdn import sign_url, verify_url  # noqa: F401
