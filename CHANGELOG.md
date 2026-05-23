@@ -9,7 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
-## [7.5.30] - 2026-05-23
+## [7.5.31] - 2026-05-23
+
+PATCH release. Phase Merge-7 (lite) of the v7.5.29+ Purple-Lab-into-
+Dashboard true-integration arc + comprehensive permutation testing artifact.
+
+### Changes
+
+- `autonomy/loki` cmd_web_help -- adds a "Note (since v7.5.30)" banner
+  pointing users at the new Lab sidebar entry in `loki dashboard`. The
+  standalone `loki web` is explicitly preserved (Rule 0); both modes
+  serve the same React bundle. This is the soft-deprecation path: a
+  visible migration hint without breaking any existing workflow.
+- `artifacts/merge3-7-permutation-report.md` (new) -- 24-scenario CLI
+  permutation test report (23 PASS / 1 pre-existing non-Merge failure)
+  + 20-screenshot UI permutation summary across dashboard sidebar
+  pages and Purple Lab pages via mount. SDLC fleet role coverage
+  table included.
+- `artifacts/merge3-screenshots/` (5 PNGs from v7.5.29 standalone test)
+- `artifacts/merge4-screens/` (15 PNGs from v7.5.30 mount test)
+
+### NOT done (deferred to subsequent releases)
+
+- Phase Merge-5 (state dedup): The 4 conceptual overlaps documented in
+  `docs/MERGE-DEDUP-MAP.md` (start_session, memory access, checkpoints,
+  council/quality) remain coexisting. Both surfaces work; the
+  dedup-and-unify refactor needs its own planning cycle.
+- Hard deprecation of `loki web` standalone (removing the command entirely)
+  -- the user-safety Rule 0 requires keeping it working for at least 2
+  minor releases after the merge ships.
+
 
 PATCH release. Phases Merge-4 + Merge-6 of the v7.5.29+ Purple-Lab-into-
 Dashboard true-integration arc. Purple Lab is now mounted into the

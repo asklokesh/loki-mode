@@ -3689,6 +3689,12 @@ cmd_web_help() {
     echo "  loki web                  Start Purple Lab and open in browser"
     echo "  loki web --no-open        Start without opening browser"
     echo "  loki web stop             Stop the Purple Lab server"
+    echo ""
+    echo "Note (since v7.5.30):"
+    echo "  Purple Lab is also embedded in the Dashboard as a Lab sidebar entry."
+    echo "  Run 'loki dashboard start' and click 'Lab' to use the same UI"
+    echo "  without spawning a second port. 'loki web' standalone remains"
+    echo "  supported (Rule 0); both modes serve the same React bundle."
 }
 
 cmd_web_start() {
