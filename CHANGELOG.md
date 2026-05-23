@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.5.27] - 2026-05-22
+
+PATCH release. Phase N of the v7.5.18 -> v7.5.27 arc, completing the
+10-phase roadmap (9 shipped, H deferred -- see v7.5.26 release notes
+for H rationale). Adds upper-bound version pins to all Python
+requirements so a fresh `pip install -r requirements.txt` cannot
+silently pull a future-major-version break.
+
+### Changed
+
+- **`mcp/requirements.txt`** -- upper bounds added:
+  - `mcp>=1.0.0` -> `mcp>=1.0.0,<2.0.0`
+  - `chromadb>=1.0.0` -> `chromadb>=1.0.0,<2.0.0`
+  - `anthropic>=0.40` -> `anthropic>=0.40,<1.0.0`
+- **`dashboard/requirements.txt`** -- upper bounds added on all 7
+  packages:
+  - `fastapi>=0.100.0,<1.0.0`
+  - `uvicorn>=0.20.0,<1.0.0`
+  - `sqlalchemy>=2.0.0,<3.0.0`
+  - `aiosqlite>=0.19.0,<1.0.0`
+  - `greenlet>=3.0.0,<4.0.0`
+  - `pydantic>=2.0.0,<3.0.0`
+  - `websockets>=12.0,<16.0`
+
+### Verified locally before commit
+
+- Clean `python3 -m venv` then `pip install -r mcp/requirements.txt`:
+  resolves to mcp 1.27.1, chromadb 1.5.9, anthropic 0.104.1 (all
+  within new ranges).
+- Clean `pip install -r dashboard/requirements.txt`: resolves to
+  fastapi 0.136.1, uvicorn 0.47.0, sqlalchemy 2.0.49, aiosqlite
+  0.22.1, greenlet 3.5.1, pydantic 2.13.4, websockets 15.0.1 (all
+  within new ranges).
+- `bash scripts/local-ci.sh` -- 21/21 PASS.
+- All 9 prior bash tests + 783 Bun tests + 19 Python tests still
+  PASS (no regression).
+
+### NOT tested (honest disclosures)
+
+- Python 3.9 / 3.10 / 3.11 install resolution -- only tested on
+  Python 3.14 (system) on macOS. Lower Python versions may resolve
+  to different versions within the new ranges.
+- Windows pip resolution (the new ranges should work but not
+  verified on Windows).
+- Long-tail edge case where chromadb's transitive deps pull
+  websockets >=16 (chromadb 1.5.x in our venv test pulled
+  websockets 16.0 transitively for the `mcp/requirements.txt`
+  install; the dashboard's `<16.0` cap is honored only when
+  resolving dashboard alone. In a combined install pip will
+  pick the intersection.)
+
+### Migration
+
+- No action required for users on the existing installed versions.
+  The upper bounds only restrict NEW installs from pulling a future
+  major. Already-installed environments continue to work.
+- When a new tested major drops (e.g. fastapi 1.0.0, pydantic 3.0.0),
+  update the upper bound in this file and ship a new release.
+
+### Arc complete
+
+This release closes the v7.5.18 -> v7.5.27 main arc. 9 of 10 phases
+shipped with unanimous 3-reviewer council; Phase H deferred until
+Claude CLI exposes --enable-memory-tool / --enable-context-editing /
+--compaction flags (Loki's memory tooling is already operational via
+Phase D MCP bundle).
+
+Post-arc work (deferred to separate releases):
+- Phase K: Measurable accuracy + efficiency KPIs
+- Phase L: Disclosed-default-on telemetry (BLOCKED on user ack of
+  disclosed-default-on design)
+- Phase M: BMAD-METHOD v6 integration (proposal, new work)
+- Phase H: re-evaluate when Claude CLI ships the dedicated flags
+
+See `~/.claude/projects/-Users-lokesh-git-loki-mode/memory/project_v7_5_18_arc_status.md`
+for the complete arc retrospective.
+
 ## [7.5.26] - 2026-05-22
 
 PATCH release. Phase J of the v7.5.18 -> v7.5.27 arc. Extracts the

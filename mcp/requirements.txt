@@ -1,3 +1,9 @@
-mcp>=1.0.0
-chromadb>=1.0.0
-anthropic>=0.40
+# Loki Mode MCP server dependencies.
+# Phase N (v7.5.27): added upper bounds to cap risk of a future major-version
+# break installing on a fresh `pip install`. Tested locally against the upper
+# end of the installed range on this Mac:
+#   mcp 1.27.0, chromadb 1.5.1, anthropic 0.40+
+# Update upper bound when a new tested major drops.
+mcp>=1.0.0,<2.0.0
+chromadb>=1.0.0,<2.0.0
+anthropic>=0.40,<1.0.0
