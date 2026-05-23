@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Follow-ups: forge.yaml + bootstrap CLI + audit verify
+
+X-49/X-51 forge.yaml at the project root + forge.config.apply()
+     idempotently provisions declared tables, auth providers,
+     storage buckets, schedules, and gateway routes from the yaml.
+     `loki forge bootstrap [dryrun]` CLI wrapper. Symlinked yaml
+     files rejected (path-traversal hardening). New MCP tool
+     forge_bootstrap.
+
+X-50 forge/audit_verify.py - walks .loki/quality/forge-migrations/
+     review records, cross-references the engine ledger for
+     spec_hash, and verifies the dashboard audit chain when
+     present. Detects tampered review records (regression-tested).
+     `loki forge audit` CLI wrapper; exits 3 on chain mismatch.
+     New MCP tool forge_audit_verify.
+
+Tests: 9 new assertions covering missing config, symlink reject,
+PyYAML happy path, dryrun safety, audit happy + tampered paths.
+
 ### Follow-ups: S3 storage gateway + RLS DDL on promote
 
 X-42 forge_deploy_plan emits an `rls_policies[]` list with full

@@ -2108,6 +2108,38 @@ except Exception as e:
     sys.exit(1)
 PY
             ;;
+        audit)
+            # X-50: forge audit chain verification
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}"
+import json, sys
+from forge.audit_verify import verify
+try:
+    rep = verify(sys.argv[1])
+    print(json.dumps(rep, indent=2))
+    sys.exit(0 if rep['ok'] else 3)
+except Exception as e:
+    print(json.dumps({"error": str(e)}, indent=2))
+    sys.exit(1)
+PY
+            ;;
+        bootstrap)
+            # X-49 / X-51: read forge.yaml + provision
+            local apply_arg="${1:-apply}"
+            local dryrun="false"
+            if [[ "$apply_arg" == "dryrun" || "$apply_arg" == "--dryrun" ]]; then
+                dryrun="true"
+            fi
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$dryrun"
+import json, sys
+from forge.config import apply
+dryrun = sys.argv[2] == "true"
+try:
+    print(json.dumps(apply(sys.argv[1], dryrun=dryrun), indent=2))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, indent=2))
+    sys.exit(1)
+PY
+            ;;
         help|--help|-h|"")
             cat <<'HELP'
 loki forge <subcommand>
@@ -2119,6 +2151,13 @@ Subcommands:
   restore <path> [--force]            Extract a backup into .loki/forge/
   promote [provider] [from] [to]      Promote forge resources between
                                       envs (default railway dev->prod)
+  audit                               Verify migration review records
+                                      against the engine ledger + the
+                                      dashboard audit chain (exit 3
+                                      on mismatch)
+  bootstrap [dryrun|--dryrun]         Read forge.yaml at the project
+                                      root and provision declared
+                                      resources (idempotent)
 
 This is a thin wrapper over the forge MCP surface for ops workflows.
 Inside a RARV iteration the agent calls forge_* MCP tools directly.

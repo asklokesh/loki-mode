@@ -225,8 +225,18 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 - [x] X-48 Schema migration linter: warns on no-PK / NOT-NULL-without-default
       / forge-internal shadow / invalid index names
 
+## Fourth wave
+
+- [x] X-49 forge.yaml at project root + forge.config.apply() reads it
+      idempotently. CLI: `loki forge bootstrap [dryrun]`.
+- [x] X-50 forge.audit_verify.verify() walks review records + ledger
+      and detects tampered spec_hash. CLI: `loki forge audit`.
+- [x] X-51 `loki forge bootstrap` = the one-shot wizard.
+- [ ] X-52 forge_db_query result-row pagination + cursor support
+- [ ] X-53 forge_storage_upload streaming for large files
+- [ ] X-54 Per-table soft delete
+
 ## Status
 
-Phase F-1..F-5 + X-1..X-40 complete on
-claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (UI pane), and
-the X-41..X-48 follow-ups newly discovered this round.
+Phase F-1..F-5 + X-1..X-48 (minus X-27/X-44 UI panes) complete on
+claude/compare-litellm-loki-Y8Ke1.

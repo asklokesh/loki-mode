@@ -1080,6 +1080,32 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_bootstrap(dryrun: bool = False) -> str:
+        """X-49: read forge.yaml at the project root and provision
+        declared resources. Idempotent."""
+        _emit_event_safe("forge_bootstrap", "start")
+        try:
+            from forge.config import apply
+            project_dir = os.getcwd()
+            return json.dumps(apply(project_dir, dryrun=dryrun),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_audit_verify() -> str:
+        """X-50: verify migration review records against the engine
+        ledger + dashboard audit chain. Returns {ok, errors, warnings,
+        checked_reviews}."""
+        _emit_event_safe("forge_audit_verify", "start")
+        try:
+            from forge.audit_verify import verify
+            project_dir = os.getcwd()
+            return json.dumps(verify(project_dir), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_storage_gateway_configure(provider: str,
                                               endpoint: Optional[str] = None,
                                               bucket: Optional[str] = None,
