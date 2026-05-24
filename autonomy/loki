@@ -1470,6 +1470,26 @@ cmd_start() {
     # Record session start time for efficiency tracking
     record_session_start
 
+    # UT2-13: Write cli-provider marker when --provider was explicitly passed.
+    # This lets cmd_status_json report provider_source="cli" for the lifetime
+    # of this session (24-hour heuristic). Atomic write via .tmp + mv.
+    # v7.7.11 (council fix): validate provider against canonical set BEFORE
+    # writing so a typo like `--provider xyz` does not pollute status output
+    # with bogus state for 24h. Also write current PID alongside so the reader
+    # can drop the marker when the originating process is no longer alive
+    # (SIGKILL / crash paths that skip our cleanup hooks).
+    case "$provider" in
+        claude|codex|cline|aider)
+            mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
+            printf '%s:%s:%s\n' "$provider" "$(date +%s)" "$$" \
+                > "$LOKI_DIR/state/.cli-provider.tmp" 2>/dev/null \
+                && mv "$LOKI_DIR/state/.cli-provider.tmp" \
+                      "$LOKI_DIR/state/cli-provider" 2>/dev/null || true
+            ;;
+        '') : ;;  # no --provider passed
+        *)  log_warn "UT2-13: skipped cli-provider marker (unknown provider '$provider')" ;;
+    esac
+
     # Emit learning signal: user preference for provider selection (SYN-018)
     if [ -n "$provider" ]; then
         # User explicitly chose a provider
@@ -2272,6 +2292,41 @@ dashboard_port = sys.argv[3]
 env_provider = sys.argv[4]
 result = {}
 
+# UT2-13: Helper -- read cli-provider marker written by --provider flag dispatch.
+# v7.7.11 (council fix): file format is now '<provider>:<unix_ts>:<pid>' so we
+# can drop the marker when the originating process is gone (SIGKILL / crash
+# paths that bypassed our cleanup hooks). Also validates provider name against
+# canonical set so a typo writing the file can't pollute status output.
+# Legacy format '<provider>:<unix_ts>' still parses (no PID liveness check).
+# Returns (provider_name, True) when valid; (None, False) otherwise.
+def _read_cli_provider(loki_dir):
+    cli_file = os.path.join(loki_dir, 'state', 'cli-provider')
+    if not os.path.isfile(cli_file):
+        return None, False
+    try:
+        content = open(cli_file).read().strip()
+        parts = content.split(':')
+        if len(parts) < 2:
+            return None, False
+        prov = parts[0]
+        ts = int(parts[1])
+        if prov not in ('claude', 'codex', 'cline', 'aider'):
+            return None, False
+        if time.time() - ts > 86400:
+            return None, False
+        # If a PID is present, drop the marker when that process is gone.
+        if len(parts) >= 3:
+            try:
+                pid = int(parts[2])
+                if pid > 0:
+                    os.kill(pid, 0)
+            except (ValueError, ProcessLookupError, PermissionError):
+                # PID missing/dead/cross-uid -> treat as stale.
+                return None, False
+        return prov, True
+    except Exception:
+        return None, False
+
 # Version
 version_file = os.path.join(skill_dir, 'VERSION')
 if os.path.isfile(version_file):
@@ -2285,8 +2340,17 @@ if not os.path.isdir(loki_dir):
     result['status'] = 'inactive'
     result['phase'] = None
     result['iteration'] = 0
-    result['provider'] = env_provider if os.environ.get('LOKI_PROVIDER', '') else 'claude'
-    result['provider_source'] = 'env' if os.environ.get('LOKI_PROVIDER', '') else 'default'
+    # UT2-13: CLI check first (inactive path -- loki_dir may not exist yet).
+    _cli_prov, _cli_set = _read_cli_provider(loki_dir)
+    if _cli_set:
+        result['provider'] = _cli_prov
+        result['provider_source'] = 'cli'
+    elif os.environ.get('LOKI_PROVIDER', ''):
+        result['provider'] = env_provider
+        result['provider_source'] = 'env'
+    else:
+        result['provider'] = 'claude'
+        result['provider_source'] = 'default'
     result['dashboard_url'] = None
     result['pid'] = None
     result['elapsed_time'] = 0
@@ -2345,7 +2409,9 @@ else:
         result['iteration'] = 0
 
 # Provider + provider_source (v7.7.2 B-5 clarity: surface WHY this
-# value won the resolution race: 'saved' vs 'env' vs 'default').
+# value won the resolution race: 'cli' > 'saved' > 'env' > 'default').
+# UT2-13: cli source is checked FIRST -- overrides saved/env/default.
+_cli_prov, _cli_set = _read_cli_provider(loki_dir)
 provider_file = os.path.join(loki_dir, 'state', 'provider')
 if os.path.isfile(provider_file):
     try:
@@ -2356,7 +2422,10 @@ if os.path.isfile(provider_file):
 else:
     saved = ''
 env_set = os.environ.get('LOKI_PROVIDER', '') != ''
-if saved:
+if _cli_set:
+    result['provider'] = _cli_prov
+    result['provider_source'] = 'cli'
+elif saved:
     result['provider'] = saved
     result['provider_source'] = 'saved'
 elif env_set:
@@ -4736,6 +4805,18 @@ cmd_run() {
                 if [[ -n "${2:-}" ]]; then
                     provider_override="$2"
                     start_args+=("--provider" "$2")
+                    # UT2-13: Record CLI provider at parse time (atomic write).
+                    # v7.7.11 (council fix): validate against canonical set; include
+                    # PID so reader can drop the marker when originating process is gone.
+                    case "$2" in
+                        claude|codex|cline|aider)
+                            mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
+                            printf '%s:%s:%s\n' "$2" "$(date +%s)" "$$" \
+                                > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
+                                && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
+                                      "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
+                            ;;
+                    esac
                     shift 2
                 else
                     echo -e "${RED}--provider requires a value${NC}"
@@ -4745,6 +4826,17 @@ cmd_run() {
             --provider=*)
                 provider_override="${1#*=}"
                 start_args+=("--provider" "$provider_override")
+                # UT2-13: Record CLI provider at parse time (atomic write).
+                # v7.7.11 (council fix): validate + include PID.
+                case "$provider_override" in
+                    claude|codex|cline|aider)
+                        mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
+                        printf '%s:%s:%s\n' "$provider_override" "$(date +%s)" "$$" \
+                            > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
+                            && mv "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" \
+                                  "${LOKI_DIR:-.loki}/state/cli-provider" 2>/dev/null || true
+                        ;;
+                esac
                 shift
                 ;;
             --parallel|--bg|--background|--simple|--complex|--no-dashboard|--sandbox|--no-plan)

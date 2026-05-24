@@ -492,6 +492,24 @@
       font-size: 13px;
       color: var(--loki-text-secondary);
     }
+
+    /* USAGE.md markdown render styles */
+    .usage-md { max-height: 480px; overflow: auto; padding: 12px; background: var(--loki-bg-secondary, #111); border-radius: 4px; color: var(--loki-text-primary, #eee); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; }
+    .usage-md h1 { font-size: 1.35rem; font-weight: 600; margin: 0.75em 0 0.4em; border-bottom: 1px solid var(--loki-border, #333); padding-bottom: 4px; }
+    .usage-md h2 { font-size: 1.15rem; font-weight: 600; margin: 0.75em 0 0.4em; }
+    .usage-md h3 { font-size: 1rem; font-weight: 600; margin: 0.65em 0 0.3em; }
+    .usage-md p { margin: 0.4em 0; }
+    .usage-md ul, .usage-md ol { margin: 0.4em 0 0.4em 1.5em; padding: 0; }
+    .usage-md li { margin: 0.15em 0; }
+    .usage-md pre { background: var(--loki-bg-tertiary, #0a0a0a); border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0.5em 0; }
+    .usage-md pre code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; background: none; padding: 0; white-space: pre; }
+    .usage-md code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; background: var(--loki-bg-tertiary, #0a0a0a); padding: 1px 4px; border-radius: 3px; }
+    .usage-md blockquote { border-left: 3px solid var(--loki-accent, #553de9); margin: 0.5em 0; padding: 4px 12px; color: var(--loki-text-secondary, #888); }
+    .usage-md hr { border: none; border-top: 1px solid var(--loki-border, #333); margin: 0.75em 0; }
+    .usage-md strong { font-weight: 600; }
+    .usage-md em { font-style: italic; }
+    .usage-md a { color: var(--loki-accent, #553de9); text-decoration: none; }
+    .usage-md a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -707,10 +725,148 @@
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">How to Run (USAGE.md)</h3>
             <div id="usage-doc-panel" style="background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
               <div id="usage-doc-meta" style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Loading...</div>
-              <pre id="usage-doc-content" style="margin: 0; padding: 12px; background: var(--loki-bg-secondary, #111); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--loki-text-primary, #eee); max-height: 480px; overflow: auto;"></pre>
+              <div id="usage-doc-content" class="usage-md"></div>
             </div>
             <script>
               (function(){
+                // Minimal markdown-to-HTML converter for USAGE.md content.
+                // Handles: fenced code blocks, headings, horizontal rules,
+                // blockquotes, unordered/ordered lists, inline bold/italic/code,
+                // and paragraphs. Script tags are stripped from non-code text.
+                function renderUsageMarkdown(md) {
+                  if (!md) return '';
+                  var lines = md.split('
+');
+                  var html = '';
+                  var i = 0;
+                  var inList = null; // 'ul' or 'ol'
+
+                  function escapeHtml(s) {
+                    return s.replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;');
+                  }
+
+                  function closeList() {
+                    if (inList) { html += '</' + inList + '>'; inList = null; }
+                  }
+
+                  function inlineFormat(s) {
+                    // Escape HTML first (outside code spans)
+                    // Process inline code spans before escaping the rest
+                    var BT = '`'; // backtick -- avoid literal backtick inside template literal
+                    var result = '';
+                    var codeSpanRe = new RegExp('(' + BT + '[^' + BT + ']+' + BT + ')');
+                    var chunks = s.split(codeSpanRe);
+                    for (var ci = 0; ci < chunks.length; ci++) {
+                      var ch = chunks[ci];
+                      if (ch.charAt(0) === BT && ch.charAt(ch.length - 1) === BT && ch.length > 2) {
+                        result += '<code>' + escapeHtml(ch.slice(1, -1)) + '</code>';
+                      } else {
+                        var esc = escapeHtml(ch);
+                        // strip any residual <script tags that survived escaping (defensive)
+                        esc = esc.replace(/&lt;script/gi, '&lt;sc​ript');
+                        esc = esc.replace(/**([^*]+)**/g, '<strong>$1</strong>');
+                        esc = esc.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+                        esc = esc.replace(/*([^*]+)*/g, '<em>$1</em>');
+                        esc = esc.replace(/_([^_]+)_/g, '<em>$1</em>');
+                        // v7.7.11 XSS guard (Opus 1 council): only allow http/https/mailto/anchor/relative href.
+                        // javascript: / data: / vbscript: are stripped to a plain code span so the URL stays visible
+                        // but is not clickable. USAGE.md absorbs agent output + PRD text; treat as untrusted.
+                        esc = esc.replace(/[([^]]+)](([^)]+))/g, function(_m, label, url){
+                          var safe = /^(https?://|mailto:|#|/(?!/))/.test(url);
+                          if (safe) return '<a href="' + url + '" rel="noopener noreferrer">' + label + '</a>';
+                          return '<code>' + label + ' (' + url + ')</code>';
+                        });
+                        result += esc;
+                      }
+                    }
+                    return result;
+                  }
+
+                  while (i < lines.length) {
+                    var line = lines[i];
+
+                    // Fenced code block (BT3 = three backticks)
+                    var BT3 = '```';
+                    if (line.slice(0, 3) === BT3) {
+                      closeList();
+                      var lang = line.slice(3).trim();
+                      var codeLines = [];
+                      i++;
+                      while (i < lines.length && lines[i].slice(0, 3) !== BT3) {
+                        codeLines.push(lines[i]);
+                        i++;
+                      }
+                      var codeContent = escapeHtml(codeLines.join('
+'));
+                      html += '<pre><code' + (lang ? ' class="language-' + escapeHtml(lang) + '"' : '') + '>' + codeContent + '</code></pre>';
+                      i++;
+                      continue;
+                    }
+
+                    // Headings
+                    var hMatch = line.match(/^(#{1,6})s+(.*)/);
+                    if (hMatch) {
+                      closeList();
+                      var level = hMatch[1].length;
+                      html += '<h' + level + '>' + inlineFormat(hMatch[2]) + '</h' + level + '>';
+                      i++;
+                      continue;
+                    }
+
+                    // Horizontal rule
+                    if (/^(-{3,}|*{3,}|_{3,})$/.test(line.trim())) {
+                      closeList();
+                      html += '<hr>';
+                      i++;
+                      continue;
+                    }
+
+                    // Blockquote
+                    if (/^>/.test(line)) {
+                      closeList();
+                      html += '<blockquote>' + inlineFormat(line.replace(/^>s?/, '')) + '</blockquote>';
+                      i++;
+                      continue;
+                    }
+
+                    // Unordered list
+                    var ulMatch = line.match(/^(s*[-*+])s+(.*)/);
+                    if (ulMatch) {
+                      if (inList !== 'ul') { closeList(); html += '<ul>'; inList = 'ul'; }
+                      html += '<li>' + inlineFormat(ulMatch[2]) + '</li>';
+                      i++;
+                      continue;
+                    }
+
+                    // Ordered list
+                    var olMatch = line.match(/^s*d+.s+(.*)/);
+                    if (olMatch) {
+                      if (inList !== 'ol') { closeList(); html += '<ol>'; inList = 'ol'; }
+                      html += '<li>' + inlineFormat(olMatch[1]) + '</li>';
+                      i++;
+                      continue;
+                    }
+
+                    // Blank line
+                    if (line.trim() === '') {
+                      closeList();
+                      i++;
+                      continue;
+                    }
+
+                    // Paragraph
+                    closeList();
+                    html += '<p>' + inlineFormat(line) + '</p>';
+                    i++;
+                  }
+
+                  closeList();
+                  return html;
+                }
+
                 function loadUsage(){
                   fetch('/api/usage').then(function(r){ return r.json(); }).then(function(j){
                     var meta = document.getElementById('usage-doc-meta');
@@ -718,13 +874,13 @@
                     if (!meta || !body) return;
                     if (!j || !j.exists){
                       meta.textContent = 'USAGE.md not generated yet. Loki writes it at the end of each session.';
-                      body.textContent = '';
+                      body.innerHTML = '';
                       return;
                     }
                     var size = j.size > 1024 ? (j.size/1024).toFixed(1) + ' KB' : j.size + ' B';
                     var when = j.mtime ? new Date(j.mtime*1000).toLocaleString() : '';
                     meta.textContent = j.path + '  (' + size + (j.truncated ? ', truncated' : '') + ', ' + when + ')';
-                    body.textContent = j.content || '';
+                    body.innerHTML = renderUsageMarkdown(j.content || '');
                   }).catch(function(e){
                     var meta = document.getElementById('usage-doc-meta');
                     if (meta) meta.textContent = 'Failed to load USAGE.md: ' + (e && e.message ? e.message : 'unknown');

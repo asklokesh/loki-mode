@@ -9,6 +9,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.11] - 2026-05-24
+
+PATCH release. Bundle of UT2-12 (USAGE markdown render with XSS guard),
+UT2-13 (provider_source "cli" plumbing with name validation + PID liveness),
+bun-parity flake instrumentation, and Forge plan doc extraction from
+closed PR #161. Three-reviewer council (2 Opus + 1 Sonnet) unanimous
+APPROVE after one fix iteration on real defects surfaced by Opus reviewers.
+
+### Added
+
+- **UT2-12 USAGE markdown rendering** (`dashboard-ui/scripts/build-standalone.js`):
+  `renderUsageMarkdown()` function converts USAGE.md fenced code blocks,
+  headings, lists, blockquotes, inline code, bold/italic, and links to
+  HTML. Replaces the `<pre>` text-only panel with a styled `<div class=
+  "usage-md">`. CSS scoped to `.usage-md` so zero style bleed elsewhere.
+  Test: `tests/test-usage-markdown-render.sh` 11/11 PASS.
+- **UT2-12 XSS guard** (council fix from Opus 1 REJECT iteration): link
+  href construction now validates URL against scheme allowlist
+  `^(https?://|mailto:|#|/(?!/))`. `javascript:`, `data:`, `vbscript:`,
+  `file:`, and `//evil.com` protocol-relative URLs render as inert
+  `<code>label (url)</code>` instead of clickable links. USAGE.md absorbs
+  agent output and PRD text; treat as untrusted.
+- **UT2-13 provider_source "cli"** (`autonomy/loki`): `--provider <name>`
+  flag dispatch in `cmd_start` and `cmd_run` writes
+  `.loki/state/cli-provider` so `loki status --json` reports
+  `provider_source: "cli"` for the session. Cascade order: cli > saved
+  > env > default. 24-hour heuristic + PID liveness check. Cleanup hooks
+  in autonomy/run.sh STOP/double-Ctrl+C/normal-end paths (shipped in
+  v7.7.10 via staging race; harmless rm of file that didn't exist yet).
+  Test: `tests/test-provider-source-cli.sh` 8/8 PASS.
+- **UT2-13 provider name validation** (council fix from Opus 2 CONCERN):
+  write sites now wrap in `case "$provider" in claude|codex|cline|aider)
+  ... ;; esac` so a typo like `--provider xyz` cannot pollute status
+  output. Reader (`_read_cli_provider`) also validates against the
+  canonical set before returning, defense in depth.
+- **UT2-13 PID liveness** (council fix from Opus 1 CONCERN): cli-provider
+  marker format extended from `<provider>:<unix_ts>` to
+  `<provider>:<unix_ts>:<pid>`. Reader runs `os.kill(pid, 0)` and treats
+  dead PIDs as stale. Bounds the SIGKILL/crash leak case where 24h
+  heuristic alone misleads. Legacy 2-field format still parses for
+  backward compat.
+- **bun-parity flake instrumentation** (`scripts/local-ci.sh`): on any
+  diff between bash and Bun routes, persist raw + normalized outputs +
+  unified diff to `.loki/local-ci-flake/<UTC-timestamp>/<label>.*` BEFORE
+  the trap wipes the tmp dir. Root cause for the recurring first-attempt
+  flake still NOT identified after 100-iteration tight-loop reproduction
+  attempt, but next real flake will produce evidence on disk for
+  root-cause analysis. Retry wrapper from v7.7.6 preserved unchanged.
+- **Forge plan docs extracted from closed PR #161**: `docs/plans/FORGE-
+  AUTONOMOUS-QUEUE.md` (312 lines) + `docs/plans/ULTRAPLAN-FORGE-BAAS.md`
+  (612 lines). Architectural artifacts preserved for future reference.
+
+### Verified
+
+- 3-reviewer council (2 Opus + 1 Sonnet), unanimous APPROVE after one
+  remediation cycle. First-pass: REJECT (Opus 1, XSS), CONCERN (Opus 2,
+  provider validation), APPROVE (Sonnet). Remediated. Re-review:
+  APPROVE / APPROVE.
+- Test totals: UT2-12 11/11, UT2-13 8/8, local-ci 23/23.
+- bun-parity instrumentation self-tested on 3-entry matrix, no false
+  flake triggers.
+
+### NOT tested
+
+- bun-parity flake root cause: instrumentation shipped, but the next
+  real flake is what produces actionable evidence. Could take 1-5
+  releases before captured.
+- jdtls end-to-end on a real Java fixture (jdtls binary not on local
+  PATH; only LSP detection logic tested).
+- v7.7.10 staging race retro: 3 `rm -f cli-provider` cleanup lines
+  shipped in v7.7.10 before the corresponding write path existed.
+  Harmless (file would be absent) but not a clean ship boundary.
+
+### Cleanup
+
+```
+lsof -ti:57374 | xargs kill -9 2>/dev/null || true
+rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
+```
+
 ## [7.7.10] - 2026-05-24
 
 PATCH release. F-3 USAGE.md port hallucination fix (defect in v7.7.3 intelligent regen).

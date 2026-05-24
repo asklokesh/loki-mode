@@ -170,6 +170,14 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     set -uo pipefail
     PARITY_TMP=$(mktemp -d)
     trap "rm -rf $PARITY_TMP" EXIT
+    # Flake-capture: when a parity attempt fails we copy the offending
+    # bash/bun pair (raw + normalized + unified diff) into a persistent
+    # directory under .loki/local-ci-flake/<UTC-timestamp>/ BEFORE the
+    # tmp trap wipes them. This converts the next real flake into root
+    # cause evidence instead of another lost data point (tracked in
+    # UT2-10 -- v7.7.6 added retry, root cause still unknown after 100
+    # tight-loop reproductions failed to trigger).
+    FLAKE_DIR=".loki/local-ci-flake/$(date -u +%Y%m%dT%H%M%SZ)"
     MATRIX=("version|--version|text" "provider-show|provider show|text" "provider-list|provider list|text" "memory-list|memory list|text" "status|status|text" "status-json|status --json|json" "stats|stats|text" "stats-json|stats --json|json" "doctor|doctor|text" "doctor-json|doctor --json|json")
     ATTEMPT=0
     while [ "$ATTEMPT" -lt 2 ]; do
@@ -178,7 +186,16 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     for entry in "${MATRIX[@]}"; do
       label="${entry%%|*}"; rest="${entry#*|}"; args="${rest%|*}"; mode="${rest##*|}"
       LOKI_LEGACY_BASH=1 bash bin/loki $args > "$PARITY_TMP/$label.bash" 2>&1 || true
-      bash bin/loki $args > "$PARITY_TMP/$label.bun" 2>&1 || true
+      # v7.7.11 root-cause fix for the recurring first-attempt flake:
+      # bin/loki resolves to loki-ts/dist/loki.js when present, which has
+      # __LOKI_BUILD_VERSION__ baked in at build time. Whenever VERSION is
+      # bumped locally but dist not rebuilt, the bun route reports the
+      # stale build-time version, producing a doctor-json / version diff
+      # vs bash (which reads VERSION live). BUN_FROM_SOURCE=1 forces the
+      # shim to use src/cli.ts which calls readFileSync(VERSION) live so
+      # both routes see the same value. Safe: src/ is always present in
+      # the repo, and CI never runs local-ci.sh from an npm install.
+      BUN_FROM_SOURCE=1 bash bin/loki $args > "$PARITY_TMP/$label.bun" 2>&1 || true
       if [ "$mode" = "json" ]; then
         # v7.4.12: also floor the disk.available_gb value because Python
         # json.dumps emits 58.0 while JS JSON.stringify emits 58 -- same
@@ -186,7 +203,16 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
         # can drift by 1GB between two near-simultaneous calls.
         jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.s" 2>/dev/null || true
         jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.s"  2>/dev/null || true
-        diff -q "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
+        if ! diff -q "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" >/dev/null 2>&1; then
+          echo "DIFF: $label (attempt $ATTEMPT)"
+          BAD=$((BAD+1))
+          mkdir -p "$FLAKE_DIR" 2>/dev/null || true
+          cp "$PARITY_TMP/$label.bash"   "$FLAKE_DIR/$label.bash.raw"  2>/dev/null || true
+          cp "$PARITY_TMP/$label.bun"    "$FLAKE_DIR/$label.bun.raw"   2>/dev/null || true
+          cp "$PARITY_TMP/$label.bash.s" "$FLAKE_DIR/$label.bash.norm" 2>/dev/null || true
+          cp "$PARITY_TMP/$label.bun.s"  "$FLAKE_DIR/$label.bun.norm"  2>/dev/null || true
+          diff -u "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" > "$FLAKE_DIR/$label.attempt${ATTEMPT}.diff" 2>/dev/null || true
+        fi
       else
         # v7.4.12: normalize jittery disk-space values (1GB drift can
         # happen between bash and Bun reads on busy systems).
@@ -207,17 +233,31 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
             | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
             > "$dst"
         done
-        diff -q "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" >/dev/null 2>&1 || { echo "DIFF: $label"; BAD=$((BAD+1)); }
+        if ! diff -q "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" >/dev/null 2>&1; then
+          echo "DIFF: $label (attempt $ATTEMPT)"
+          BAD=$((BAD+1))
+          mkdir -p "$FLAKE_DIR" 2>/dev/null || true
+          cp "$PARITY_TMP/$label.bash"      "$FLAKE_DIR/$label.bash.raw"  2>/dev/null || true
+          cp "$PARITY_TMP/$label.bun"       "$FLAKE_DIR/$label.bun.raw"   2>/dev/null || true
+          cp "$PARITY_TMP/$label.bash.norm" "$FLAKE_DIR/$label.bash.norm" 2>/dev/null || true
+          cp "$PARITY_TMP/$label.bun.norm"  "$FLAKE_DIR/$label.bun.norm"  2>/dev/null || true
+          diff -u "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" > "$FLAKE_DIR/$label.attempt${ATTEMPT}.diff" 2>/dev/null || true
+        fi
       fi
     done
       if [ "$BAD" = "0" ]; then
         break
       fi
       if [ "$ATTEMPT" -lt 2 ]; then
-        echo "bun-parity attempt $ATTEMPT had $BAD mismatch(es); retrying once after 1s cooldown..."
+        echo "bun-parity attempt $ATTEMPT had $BAD mismatch(es); flake artifacts in $FLAKE_DIR; retrying once after 1s cooldown..."
         sleep 1
       fi
     done
+    if [ "$BAD" != "0" ]; then
+      echo "bun-parity both attempts failed; investigate $FLAKE_DIR/*.diff" >&2
+    elif [ "$ATTEMPT" -gt 1 ]; then
+      echo "bun-parity passed on attempt $ATTEMPT; first-attempt flake artifacts preserved in $FLAKE_DIR for root cause analysis"
+    fi
     [ "$BAD" = "0" ]
   '
 else
