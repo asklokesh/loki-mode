@@ -105,6 +105,10 @@ def create(forge_dir: str, name: str, cron: str,
         rec["bus_channel"] = bus_channel
     if tags:
         # N-103: validate tag shape so /metrics labels stay safe.
+        # N-112: cap at 8 tags so cardinality on the metric axis
+        # stays bounded.
+        if len(tags) > 8:
+            raise ScheduleError("at most 8 tags per schedule (N-112)")
         import re as _re
         cleaned = []
         for t in tags:

@@ -76,17 +76,25 @@ def purge_runs(forge_dir: str, name: str, *,
     """
     if (older_than_days is None) == (keep_last_n is None):
         raise ValueError("pass exactly one of older_than_days/keep_last_n")
-    d = _logs_dir(forge_dir, name)
-    if not os.path.isdir(d):
-        return 0
-    files = [e for e in os.listdir(d) if e.endswith(".json")]
+    # Validate up-front so the cap fires regardless of whether the
+    # logs dir exists yet (N-81 / N-115).
     if older_than_days is not None:
         if not isinstance(older_than_days, int) or older_than_days <= 0:
             raise ValueError("older_than_days must be a positive int")
         if older_than_days > 365:
             raise ValueError("older_than_days capped at 365; use a smaller value")
+    if keep_last_n is not None:
+        if not isinstance(keep_last_n, int) or keep_last_n < 1:
+            raise ValueError("keep_last_n must be a positive int")
+        if keep_last_n > 10000:
+            raise ValueError("keep_last_n capped at 10000")
+    d = _logs_dir(forge_dir, name)
+    if not os.path.isdir(d):
+        return 0
+    files = [e for e in os.listdir(d) if e.endswith(".json")]
+    if older_than_days is not None:
         import time as _t
-        cutoff = _t.time() - older_than_days * 86400
+        cutoff = _t.time() - older_than_days * 86400  # type: ignore[operator]
         removed = 0
         for e in files:
             path = os.path.join(d, e)
@@ -97,9 +105,7 @@ def purge_runs(forge_dir: str, name: str, *,
             except OSError:
                 continue
         return removed
-    # keep_last_n branch
-    if not isinstance(keep_last_n, int) or keep_last_n < 1:
-        raise ValueError("keep_last_n must be a positive int")
+    # keep_last_n branch (validated up-front).
     paths = [os.path.join(d, e) for e in files]
     paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     removed = 0

@@ -2254,6 +2254,7 @@ PY
             local label_arg=""
             local json_flag="false"
             local filter_prefix=""
+            local filter_exclude=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
@@ -2261,16 +2262,20 @@ PY
                     --filter)
                         # N-110: --filter prefix=forge_secrets_ keeps only
                         # metric lines whose name starts with the prefix.
+                        # N-119: --filter exclude=forge_email_ drops the
+                        # given prefix instead (negative match).
                         local kv="${2:-}"
                         if [[ "$kv" == prefix=* ]]; then
                             filter_prefix="${kv#prefix=}"
+                        elif [[ "$kv" == exclude=* ]]; then
+                            filter_exclude="${kv#exclude=}"
                         fi
                         shift 2
                         ;;
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude"
 import json, re, sys
 from forge.metrics import render
 labels = {}
@@ -2292,29 +2297,30 @@ if raw:
                 sys.exit(2)
             labels[k] = v
 text = render(sys.argv[1], labels=labels)
-# N-110: when prefix filter given, drop metric lines (HELP/TYPE/blank
-# stay through) whose name doesn't start with the prefix.
+# N-110/N-119: prefix keeps matching names; exclude drops them.
 filter_prefix = sys.argv[4] if len(sys.argv) > 4 else ""
-if filter_prefix:
+filter_exclude = sys.argv[5] if len(sys.argv) > 5 else ""
+def _name_of(s):
+    if s.startswith("# HELP ") or s.startswith("# TYPE "):
+        parts = s[7:].split(" ", 1)
+        return parts[0] if len(parts) == 2 else ""
+    if s and not s.startswith("#"):
+        return s.split("{", 1)[0].split(" ", 1)[0]
+    return ""
+if filter_prefix or filter_exclude:
     keep = []
-    cur_help = None
-    cur_type = None
     for ln in text.splitlines():
         s = ln.strip()
-        if s.startswith("# HELP "):
-            parts = s[7:].split(" ", 1)
-            if len(parts) == 2 and parts[0].startswith(filter_prefix):
-                keep.append(ln)
-        elif s.startswith("# TYPE "):
-            parts = s[7:].split(" ", 1)
-            if len(parts) == 2 and parts[0].startswith(filter_prefix):
-                keep.append(ln)
-        elif s and not s.startswith("#"):
-            name = s.split("{", 1)[0].split(" ", 1)[0]
-            if name.startswith(filter_prefix):
-                keep.append(ln)
-        elif not s:
+        if not s or (s.startswith("#") and not s.startswith("# HELP ")
+                     and not s.startswith("# TYPE ")):
             keep.append(ln)
+            continue
+        name = _name_of(s)
+        if filter_prefix and not name.startswith(filter_prefix):
+            continue
+        if filter_exclude and name.startswith(filter_exclude):
+            continue
+        keep.append(ln)
     text = "\n".join(keep) + "\n"
 if sys.argv[3] != "true":
     print(text, end="")
@@ -2396,7 +2402,14 @@ PY
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
                     --max-iterations) watch_max_iter="${2:-0}"; shift 2 ;;
                     --watch) watch_interval="${2:-5}"; shift 2 ;;
-                    --once) watch_max_iter="1"; watch_interval="${watch_interval:-1}"; shift ;;
+                    --once)
+                        # N-109/N-118: --once means a single iteration.
+                        # If --history is also set, don't force a
+                        # watch_interval so the --history branch wins
+                        # (a single snapshot rotated into history).
+                        watch_max_iter="1"
+                        shift
+                        ;;
                     *) shift ;;
                 esac
             done
@@ -2446,15 +2459,15 @@ PY
             if [[ -n "$watch_interval" ]]; then
                 # N-83: refuse to start when another --watch is already
                 # running in the same forge_dir. Watermark file removed
-                # on clean exit (trap).
-                local watch_wm="${TARGET_DIR:-.}/.loki/forge/.doctor-watch.pid"
-                mkdir -p "$(dirname "$watch_wm")"
-                if [[ -f "$watch_wm" ]] && kill -0 "$(cat "$watch_wm" 2>/dev/null)" 2>/dev/null; then
-                    echo "error: another forge doctor --watch is already running (pid $(cat "$watch_wm"))" >&2
+                # on clean exit (trap on a global-scoped name).
+                LOKI_DOCTOR_WATCH_WM="${TARGET_DIR:-.}/.loki/forge/.doctor-watch.pid"
+                mkdir -p "$(dirname "$LOKI_DOCTOR_WATCH_WM")"
+                if [[ -f "$LOKI_DOCTOR_WATCH_WM" ]] && kill -0 "$(cat "$LOKI_DOCTOR_WATCH_WM" 2>/dev/null)" 2>/dev/null; then
+                    echo "error: another forge doctor --watch is already running (pid $(cat "$LOKI_DOCTOR_WATCH_WM"))" >&2
                     return 2
                 fi
-                echo $$ > "$watch_wm"
-                trap 'rm -f "$watch_wm"' EXIT INT TERM
+                echo $$ > "$LOKI_DOCTOR_WATCH_WM"
+                trap 'rm -f "$LOKI_DOCTOR_WATCH_WM" 2>/dev/null || true' EXIT INT TERM
                 # Recurse into a polling loop. Run doctor once per
                 # interval and print only the diff between successive
                 # status snapshots. Ctrl-C exits.
@@ -2571,6 +2584,10 @@ Subcommands:
                                       project root forge.yaml. --strict
                                       promotes warnings to errors. Exits
                                       2 when errors found.
+
+Short aliases (N-91 / N-101):
+  s = status   m = metrics   doc = doctor
+  l = lint     a = audit     h   = help
 
 This is a thin wrapper over the forge MCP surface for ops workflows.
 Inside a RARV iteration the agent calls forge_* MCP tools directly.

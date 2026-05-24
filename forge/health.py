@@ -100,10 +100,21 @@ def compute_health(forge_dir: str, *,
         max((c["severity"] for c in codes), key=lambda s: _SEVERITY_RANK.get(s, 0))
         if codes else "ok"
     )
+    # N-111: surface the latest OpenAPI x-generated-at when available
+    # so /api/forge/health gives one GET for both spec freshness and
+    # FRG codes. Best-effort - generation failure leaves the field
+    # unset rather than blocking the health check.
+    spec_ts = None
+    try:
+        from forge.sdk.openapi import generate as _gen
+        spec_ts = _gen(forge_dir)["info"].get("x-generated-at")
+    except Exception:
+        pass
     return {
         "schema": "loki.forge.health/v1",
         "forge_dir": forge_dir,
         "ok": not codes,
         "status": severity_max,
         "codes": codes,
+        "openapi_generated_at": spec_ts,
     }

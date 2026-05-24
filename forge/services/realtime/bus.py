@@ -76,7 +76,11 @@ def load_channel_caps(forge_dir: str) -> Dict[str, Any]:
     """N-94: rehydrate persisted ring caps. Call at startup so
     operator-configured caps survive process restart. Accepts both
     legacy {channel: cap} ints and N-104 {channel: {cap, ts, actor}}
-    dicts."""
+    dicts.
+    N-113: returned shape preserves both forms verbatim - callers
+    that need to distinguish operator-tuned from legacy auto caps
+    can check `isinstance(v, dict)` on each value.
+    """
     p = _caps_path(forge_dir)
     if not os.path.isfile(p):
         return {}

@@ -148,15 +148,24 @@ def list_templates(forge_dir: str, *,
     return [{"name": k, **v} for k, v in sorted(overrides.items())]
 
 
-def unset_template(forge_dir: str, name: str) -> bool:
+def unset_template(forge_dir: str, name: str, *,
+                   force: bool = False) -> bool:
     """N-60: drop the default entry AND every locale variant in one
     atomic write. Returns True when at least one entry was removed,
     False when no override existed (the built-in default still
     applies in that case).
+    N-114: rejects names matching a built-in DEFAULT_TEMPLATES entry
+    unless `force=True` so the operator cannot accidentally drop the
+    system templates.
     """
     if not _NAME_RE.match(name or ""):
         raise EmailError(
             "template name must match ^[a-z][a-z0-9_-]{0,62}$"
+        )
+    if not force and name in DEFAULT_TEMPLATES:
+        raise EmailError(
+            f"refusing to drop built-in default {name!r}; "
+            "pass force=True to override"
         )
     p = _path(forge_dir)
     if not os.path.isfile(p):

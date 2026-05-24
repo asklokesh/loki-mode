@@ -365,28 +365,54 @@ Format:
 
 ## Next-up wave 9 (discovered during N-101..N-110)
 
-- [ ] N-111 OpenAPI `x-generated-at` exposed via /api/forge/health
+- [x] N-111 OpenAPI `x-generated-at` exposed via /api/forge/health
             so a single GET surfaces both spec freshness and codes
-- [ ] N-112 Schedules: `tags=[]` validated to <=8 tags per schedule
+- [x] N-112 Schedules: `tags=[]` validated to <=8 tags per schedule
             so cardinality stays bounded on the metric axis
-- [ ] N-113 Bus: `load_channel_caps` returns the loaded map as the
+- [x] N-113 Bus: `load_channel_caps` returns the loaded map as the
             shape-aware dict (cap or {cap,actor}) so callers can
             distinguish operator-tuned from legacy auto caps
-- [ ] N-114 Email: `unset_template` rejects names that match a
+- [x] N-114 Email: `unset_template` rejects names that match a
             built-in default with `force=False` (so the operator
             can't accidentally drop the system templates)
-- [ ] N-115 Function logs: `purge_runs(keep_last_n=...)` rejects
+- [x] N-115 Function logs: `purge_runs(keep_last_n=...)` rejects
             `keep_last_n > 10000` so the call stays bounded
-- [ ] N-116 Secrets vault: `rotations` REST helper that returns
+- [x] N-116 Secrets vault: `rotations` REST helper that returns
             the parsed rotations.jsonl as JSON
-- [ ] N-117 Healing v2 envelope: include `total_ops` so callers can
+- [x] N-117 Healing v2 envelope: include `total_ops` so callers can
             compute success rate without summing
-- [ ] N-118 Doctor: `--once` honors `--history` so the single
+- [x] N-118 Doctor: `--once` honors `--history` so the single
             snapshot still rotates into the history dir
-- [ ] N-119 Forge metrics `--filter`: also accept `--filter exclude=...`
+- [x] N-119 Forge metrics `--filter`: also accept `--filter exclude=...`
             for negative match
-- [ ] N-120 `loki forge` help block lists the alias short forms so
+- [x] N-120 `loki forge` help block lists the alias short forms so
             operators discover them
+
+## Next-up wave 10 (discovered during N-111..N-120)
+
+- [ ] N-121 `loki forge metrics` accepts `--filter prefix=A --filter
+            exclude=B` together (both filters compose)
+- [ ] N-122 Health: `openapi_generated_at` cached for 60s so the
+            /api/forge/health probe stays cheap under load
+- [ ] N-123 Schedules: `bus_channel` defaults to a per-tag channel
+            `_system.schedules.<tag>` when a single tag is set
+- [ ] N-124 Email defaults: `is_default(name)` helper so callers
+            can ask before calling unset_template
+- [ ] N-125 Function logs: `purge_runs` records the action in a
+            `purges.jsonl` audit file so operators see when disk
+            was reclaimed
+- [ ] N-126 Secrets: `list_rotations(name=...)` filter so callers
+            can see just one secret's history
+- [ ] N-127 Healing v2: per-op `attempt_ms` so callers see which
+            migrations were slow
+- [ ] N-128 Doctor history: `--history-list` lists current files
+            with sizes + ages
+- [ ] N-129 Forge metrics: `--no-help` skips HELP/TYPE lines for
+            short scraping setups
+- [ ] N-130 `loki forge audit --json` (alias for plain audit when
+            stdout is a pipe) — symmetry with metrics --json
+
+## Loop continuation
 
 ## Loop continuation
 

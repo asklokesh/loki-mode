@@ -369,6 +369,29 @@ def rotate_value(forge_dir: str, name: str,
     return res
 
 
+def list_rotations(forge_dir: str) -> List[Dict[str, Any]]:
+    """N-116: parse rotations.jsonl into a list of records so
+    callers don't have to read the raw file. Most recent last
+    (file is append-only)."""
+    p = os.path.join(forge_dir, "secrets", "rotations.jsonl")
+    if not os.path.isfile(p):
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
 def delete_secret(forge_dir: str, name: str) -> bool:
     data = _load(forge_dir)
     if name not in data["entries"]:
