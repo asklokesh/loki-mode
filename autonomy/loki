@@ -2196,6 +2196,16 @@ print(json.dumps(out, indent=2))
 sys.exit(2 if out["errors"] else 0)
 PY
             ;;
+        metrics)
+            # N-30: render Prometheus exposition text without
+            # requiring the dashboard process. Useful for scraping
+            # via cron or piping into local Prometheus.
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge"
+import sys
+from forge.metrics import render
+print(render(sys.argv[1]), end="")
+PY
+            ;;
         doctor)
             # N-06: combine sandbox diagnose + forge health into a
             # single CLI report. Works without the dashboard running;
@@ -2268,6 +2278,8 @@ loki forge <subcommand>
 
 Subcommands:
   status                              Live forge state snapshot
+  metrics                             Render Prometheus exposition
+                                      text locally (no dashboard).
   doctor [--watch SECONDS]            Combined sandbox diagnose +
                                       forge health (no dashboard).
                                       Exits 2 on critical codes.

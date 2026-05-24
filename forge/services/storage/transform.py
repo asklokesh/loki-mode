@@ -43,11 +43,44 @@ def _presets_path(forge_dir: str, bucket: str) -> str:
     return os.path.join(forge_dir, "storage", bucket, "_transforms.json")
 
 
+def _is_revoked(forge_dir: str, bucket: str, name: str) -> bool:
+    """N-28: True when `name` appears in the bucket's .revoked.jsonl."""
+    audit_path = os.path.join(os.path.dirname(_presets_path(forge_dir, bucket)),
+                              ".revoked.jsonl")
+    if not os.path.isfile(audit_path):
+        return False
+    try:
+        with open(audit_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("name") == name:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def register_transform_preset(forge_dir: str, bucket: str,
-                              preset: Dict[str, Any]) -> Dict[str, Any]:
+                              preset: Dict[str, Any],
+                              *, force: bool = False) -> Dict[str, Any]:
     name = preset.get("name")
     if not isinstance(name, str) or not _PRESET_NAME_RE.match(name):
         raise ValueError("preset name must match ^[a-z][a-z0-9_-]{0,31}$")
+    # N-28: a name previously dropped via revoke_transform_preset is
+    # blocked from re-registration unless the caller explicitly opts
+    # in via force=True. This prevents accidentally restoring a
+    # known-bad preset during an incident replay.
+    if not force and _is_revoked(forge_dir, bucket, name):
+        raise ValueError(
+            f"preset {name!r} was previously revoked for bucket "
+            f"{bucket!r}; pass force=True to override"
+        )
     ops = preset.get("ops")
     if not isinstance(ops, list) or not ops:
         raise ValueError("preset must include a non-empty ops list")

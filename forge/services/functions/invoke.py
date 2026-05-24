@@ -74,6 +74,14 @@ def warm(forge_dir: str, name: str,
     m = get_function(forge_dir, name)
     if not m:
         return {"ok": False, "error": "function_not_found", "warmed": False}
+    # N-29: respect manifest warm_disabled so cost-sensitive operators
+    # can skip the warm pre-touch on functions where the cold start
+    # is acceptable. Returns a structured skip result so the metrics
+    # counter (N-15) does not increment.
+    if m.get("warm_disabled") is True:
+        return {"ok": True, "warmed": False, "skipped": True,
+                "reason": "warm_disabled",
+                "runtime": m.get("runtime", "bun")}
     src = source_path(forge_dir, name, version=version)
     if not src:
         return {"ok": False, "error": "source_missing", "warmed": False}

@@ -158,13 +158,52 @@ Format:
 - [x] N-27 Audit verify: optional `--quiet` returns only the boolean
            ok+counts, suppresses warnings (CI workflows want the gate
            result not the chatter)
-- [ ] N-28 Storage transforms: `register_transform_preset` rejects a
+- [x] N-28 Storage transforms: `register_transform_preset` rejects a
            name that was previously revoked unless `force=True` (so
            operators don't accidentally restore a known-bad preset)
-- [ ] N-29 Function warm: opt-out via manifest `warm_disabled=True`
+- [x] N-29 Function warm: opt-out via manifest `warm_disabled=True`
            so cost-sensitive operators can skip the warm pre-touch
-- [ ] N-30 `loki forge metrics` CLI that calls render() locally so
+- [x] N-30 `loki forge metrics` CLI that calls render() locally so
            operators can scrape without running the dashboard
+
+## Next-up wave 3 (discovered during N-16..N-30)
+
+- [ ] N-31 `loki forge metrics --label key=val,...` appends static
+           labels so multi-environment scrapers can disambiguate
+- [ ] N-32 Warm pool: surface `warm_disabled` count in /metrics so
+           dashboards see how many functions opted out
+- [ ] N-33 Storage transforms: `list_revoked_presets(bucket)` for
+           audit-trail surfacing (currently only `_is_revoked` private)
+- [ ] N-34 Magic-link `redirect` arg supports a configurable
+           allow-list of hostnames to prevent open-redirect abuse
+           even within http(s) targets
+- [ ] N-35 OpenAPI Error enum: declare a `discriminator` so generated
+           clients can switch on `error` at the type-system level
+- [ ] N-36 Audit verify `--quiet`: machine-readable single-line
+           exit summary (`ok=true checks=7 warns=3 errs=0`) for
+           shell-pipeline gates
+- [ ] N-37 Healing `propose_from_sqlite`: include `source_table_count`
+           in the proposal so callers can see how many legacy tables
+           were considered vs accepted
+- [ ] N-38 Presence: emit `presence:refresh` event when set_presence
+           is called on an already-present user (currently silent;
+           clients may want to track keep-alives)
+- [ ] N-39 Forge doctor: include `git rev-parse HEAD` in the report
+           so support tickets correlate code state with diagnostics
+- [ ] N-40 Function deploy: persist `deployed_by_user_id` from caller
+           context so audit reviews see operator attribution
+- [ ] N-41 Secrets: `last_used_at` per secret so operators can
+           identify candidates for rotation/removal
+- [ ] N-42 Storage gateway: probe timeout configurable from
+           `.loki/config.yaml` (currently hard-coded to 3s in probe,
+           2s in doctor)
+- [ ] N-43 Realtime bus: persist a `_meta` envelope around system
+           messages so consumers can filter `__presence__` events
+           from user payloads without sniffing fields
+- [ ] N-44 Schedules: surface `next_fire_ts` in /metrics so dashboards
+           can predict when load spikes will hit
+- [ ] N-45 `loki forge metrics --json` alternative output for
+           operators who want structured data not exposition text
 
 ## Loop continuation
 
