@@ -8714,6 +8714,66 @@ except Exception as e:
 PYEOF
 }
 
+# v7.7.3 F-3 fix: intelligent USAGE.md regeneration. Called at session end
+# (after completion-promise fulfilled). Reads the FINAL project state
+# (file tree + package manifests + recent commits) and asks Claude
+# (haiku tier) to emit a USAGE.md tailored to the actual stack.
+#
+# Best-effort: any failure (no provider, network, parse) returns silently
+# without disrupting completion. Costs ~$0.01-0.05 per session (one
+# haiku call). Set LOKI_INTELLIGENT_USAGE=0 to skip entirely.
+_intelligent_usage_regen() {
+    local target_dir="${TARGET_DIR:-.}"
+    local usage_path="$target_dir/USAGE.md"
+    # Find a working `claude` binary; if absent, bail silently.
+    if ! command -v claude >/dev/null 2>&1; then
+        return 0
+    fi
+    # Snapshot project state. Keep it small (< ~4 KiB) so the prompt
+    # stays cache-stable across sessions.
+    local _tree _manifests _commits _state_prompt
+    _tree=$(cd "$target_dir" && find . -maxdepth 3 -type f \
+        -not -path './node_modules/*' -not -path './.loki/*' \
+        -not -path './.git/*' -not -path './venv/*' -not -path './.venv/*' \
+        -not -path './dist/*' -not -path './build/*' 2>/dev/null | head -30)
+    # Capture package manifests inline so the model sees real scripts.
+    _manifests=""
+    for f in package.json requirements.txt pyproject.toml Cargo.toml go.mod composer.json Gemfile; do
+        if [ -f "$target_dir/$f" ]; then
+            _manifests="${_manifests}=== $f ===\n$(head -50 "$target_dir/$f" 2>/dev/null)\n\n"
+        fi
+    done
+    _commits=$(cd "$target_dir" && git log --oneline -10 2>/dev/null || true)
+
+    log_info "Regenerating USAGE.md from final project state (intelligent mode)..."
+    local _ic_prompt="You are writing a USAGE.md for the project below. Detect the stack from the manifest files; emit a concise (under 100 lines) Markdown doc with sections: ## Prerequisites, ## Install, ## Start, ## Verify (2-3 copy-paste curl/browser/CLI commands with expected output), ## Stop. Use the ACTUAL command names from package.json scripts or pyproject entry points -- never generic placeholders. Output ONLY the Markdown body (no code-fence wrapper, no preamble).
+
+=== Project tree (max 30 files, 3 levels deep) ===
+${_tree}
+
+=== Manifest files ===
+${_manifests}
+
+=== Last 10 commits ===
+${_commits}"
+
+    # Use haiku for cheap, fast generation. --dangerously-skip-permissions
+    # because this is a one-shot non-interactive call.
+    local _ic_out
+    _ic_out=$(printf '%s' "$_ic_prompt" \
+        | timeout 60 claude --dangerously-skip-permissions --model haiku -p - 2>/dev/null \
+        | head -200)
+    # Sanity check: response must look like Markdown (starts with # or ##).
+    if [ -z "$_ic_out" ] || ! printf '%s' "$_ic_out" | head -1 | grep -qE '^#'; then
+        log_info "Intelligent USAGE regen returned non-Markdown or empty; keeping existing USAGE.md."
+        return 0
+    fi
+    printf '%s\n' "$_ic_out" > "$usage_path"
+    log_info "USAGE.md regenerated intelligently from final project state -> $usage_path"
+    return 0
+}
+
+
 # Magic Modules COMPOUND: record successful component patterns (v6.77.0)
 # Called at end of each iteration to capture generated/updated components
 # as semantic memory patterns via magic.core.memory_bridge.
@@ -11544,6 +11604,16 @@ if __name__ == "__main__":
                     log_header "TASK COMPLETION CLAIMED (via loki_complete_task)"
                 fi
                 log_info "Explicit completion signal detected."
+                # v7.7.3 F-3 fix: intelligent USAGE.md regeneration. The static
+                # USAGE_DOC_INSTRUCTION in build_prompt gets the agent to write
+                # SOMETHING; this hook re-runs a cheap model call with the FINAL
+                # project state to refine that output (or write it if missing).
+                # Default-on per the "no user flag" mandate; set
+                # LOKI_INTELLIGENT_USAGE=0 to disable. Best-effort: failures
+                # never block completion.
+                if [ "${LOKI_INTELLIGENT_USAGE:-1}" != "0" ]; then
+                    _intelligent_usage_regen 2>/dev/null || true
+                fi
                 # Run memory consolidation on successful completion
                 log_info "Running memory consolidation..."
                 run_memory_consolidation

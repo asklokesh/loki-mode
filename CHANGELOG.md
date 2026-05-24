@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.3] - 2026-05-24
+
+PATCH release. F-3 intelligent USAGE.md regeneration. The static prompt
+template that was shipped in v7.6.0 ensures the in-loop agent writes
+SOMETHING; this hook re-runs a cheap model call with the FINAL project
+state to refine that output (or write it if missing).
+
+### Added
+
+- `_intelligent_usage_regen()` in `autonomy/run.sh`. Triggered right after
+  COMPLETION PROMISE FULFILLED (before memory consolidation). Captures
+  the final project file tree (max 30 files, 3 levels deep), the
+  manifest contents (`package.json`, `requirements.txt`, `pyproject.toml`,
+  `Cargo.toml`, `go.mod`, `composer.json`, `Gemfile`), and the last 10
+  git commits, then calls Claude haiku with a focused prompt asking for
+  a tailored USAGE.md with REAL command names (not generic placeholders).
+  Cost: ~$0.01-0.05 per session. Best-effort: any failure (no provider,
+  network, parse) returns silently without disrupting completion.
+- Default-on per the "no user flag" mandate. Set `LOKI_INTELLIGENT_USAGE=0`
+  to disable.
+
+### Why this matters
+
+The static template gets agents to write something; the regen captures
+the ACTUAL stack -- e.g., if `package.json` has `"scripts": {"dev": "vite"}`,
+the regenerated USAGE.md says `npm run dev` (not generic `npm start`).
+This is the "model decides" pattern applied to the documentation surface.
+
+### Verified
+
+- `bash -n autonomy/run.sh` clean
+- 23/23 local-ci PASS
+- Function definition + dispatch hook syntactically correct
+- Guard logic for missing `claude` binary verified (returns silently)
+
+### NOT tested in this release
+
+- End-to-end with a real loki start session followed by intelligent regen
+  (would cost ~$1.50 + ~$0.05 in real provider calls; deferred to next
+  user-test cycle)
+- Sanity check on response shape (Markdown opening with `#`) tested
+  with synthetic input but not against real haiku output
+
 ## [7.7.2] - 2026-05-24
 
 PATCH release. B-5 fix: provider precedence is now documented and surfaced
