@@ -2213,18 +2213,21 @@ PY
             ;;
         metrics)
             # N-30: render Prometheus exposition text without
-            # requiring the dashboard process. Useful for scraping
-            # via cron or piping into local Prometheus.
+            # requiring the dashboard process.
             # N-31: --label key=val,key2=val2 appends static labels.
+            # N-45: --json returns the same data as a structured
+            # object so operators don't have to re-parse exposition.
             local label_arg=""
+            local json_flag="false"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
+                    --json) json_flag="true"; shift ;;
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg"
-import sys
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag"
+import json, re, sys
 from forge.metrics import render
 labels = {}
 raw = sys.argv[2]
@@ -2235,7 +2238,45 @@ if raw:
             k, v = k.strip(), v.strip()
             if k and v:
                 labels[k] = v
-print(render(sys.argv[1], labels=labels), end="")
+text = render(sys.argv[1], labels=labels)
+if sys.argv[3] != "true":
+    print(text, end="")
+else:
+    # Parse the exposition text into [{name, labels, value, help, type}, ...]
+    out = []
+    helps, types = {}, {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("# HELP "):
+            parts = line[7:].split(" ", 1)
+            if len(parts) == 2:
+                helps[parts[0]] = parts[1]
+            continue
+        if line.startswith("# TYPE "):
+            parts = line[7:].split(" ", 1)
+            if len(parts) == 2:
+                types[parts[0]] = parts[1]
+            continue
+        if line.startswith("#"):
+            continue
+        m = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)(\{([^}]*)\})?\s+(.+)$', line)
+        if not m:
+            continue
+        name, _, lbls, val = m.groups()
+        lab = {}
+        if lbls:
+            for kv in re.findall(r'(\w+)="([^"]*)"', lbls):
+                lab[kv[0]] = kv[1]
+        try:
+            value = float(val)
+        except ValueError:
+            value = val
+        out.append({"name": name, "labels": lab, "value": value,
+                    "help": helps.get(name), "type": types.get(name)})
+    print(json.dumps({"schema": "loki.forge.metrics/v1",
+                      "metrics": out}, indent=2))
 PY
             ;;
         doctor)

@@ -197,13 +197,52 @@ Format:
 - [x] N-42 Storage gateway: probe timeout configurable from
            `.loki/config.yaml` (currently hard-coded to 3s in probe,
            2s in doctor)
-- [ ] N-43 Realtime bus: persist a `_meta` envelope around system
+- [x] N-43 Realtime bus: persist a `_meta` envelope around system
            messages so consumers can filter `__presence__` events
            from user payloads without sniffing fields
-- [ ] N-44 Schedules: surface `next_fire_ts` in /metrics so dashboards
+- [x] N-44 Schedules: surface `next_fire_ts` in /metrics so dashboards
            can predict when load spikes will hit
-- [ ] N-45 `loki forge metrics --json` alternative output for
+- [x] N-45 `loki forge metrics --json` alternative output for
            operators who want structured data not exposition text
+
+## Next-up wave 4 (discovered during N-31..N-45)
+
+- [ ] N-46 `loki forge metrics --json` emits a top-level `timestamp`
+           so monotonic scrapes can sort chronologically
+- [ ] N-47 Audit verify summary line includes `git_head` (when in
+           a repo) so CI logs correlate audit state with code state
+- [ ] N-48 Secrets vault: surface `unused_for_days` derived field
+           in list_secrets() when last_used_at is set (saves clients
+           computing wallclock math)
+- [ ] N-49 Function deploy: `deployed_by_user_id` validated against
+           the auth users table when caller supplies one and the
+           table exists (catches typos before they hit audit)
+- [ ] N-50 Presence: `presence:refresh` carries `since_join_ms` so
+           clients can compute session duration without re-sampling
+- [ ] N-51 OpenAPI: per-route `operationId` derived from path so
+           generated clients have stable method names
+- [ ] N-52 Storage `list_revoked_presets` includes a derived
+           `still_revoked` boolean (False if same name was later
+           re-registered with force=True)
+- [ ] N-53 `loki forge doctor --history N` writes the last N reports
+           to disk so support tickets ship a baseline trend
+- [ ] N-54 Schedules: `pause(name)` / `resume(name)` companions to
+           the existing `enabled` toggle that also emit an event
+           so dashboards see the transition live
+- [ ] N-55 Forge metrics: `forge_secrets_total` + `forge_secrets_weak`
+           gauges so dashboards see vault posture without a separate
+           `weak_secrets()` call
+- [ ] N-56 Healing: emit `loki.forge.healing.proposal/v1` proposal
+           to `.loki/healing/proposal.json` so subsequent runs can
+           diff against the previous proposal
+- [ ] N-57 Bus history pagination: `history(..., before_ms=...)`
+           companion to `since_ms` for backward walks
+- [ ] N-58 Function logs: `list_runs(..., outcome='error')` filter
+           so dashboards can show just the failures
+- [ ] N-59 Audit verify: optional `--scope migrations|chain|all` so
+           callers can run just the half they need
+- [ ] N-60 Email: `unset_template(name)` mirror of `register_template`
+           that drops the default AND all locales atomically
 
 ## Loop continuation
 

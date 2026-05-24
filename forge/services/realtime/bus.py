@@ -33,6 +33,9 @@ def _hist_path(forge_dir: str, channel: str) -> str:
     return os.path.join(forge_dir, "realtime", "history", f"{channel}.jsonl")
 
 
+_SYSTEM_SENDERS = ("__presence__",)
+
+
 def publish(forge_dir: str, channel: str, payload: Any,
             sender_user_id: Optional[str] = None) -> Dict[str, Any]:
     """Publish a message to a channel. Returns the persisted record.
@@ -40,13 +43,23 @@ def publish(forge_dir: str, channel: str, payload: Any,
     The bus does NOT enforce channel RLS here; the surface (HTTP/WS
     endpoint, MCP tool) is responsible for checking the channel's
     `rls` field before calling publish() so the bus stays simple.
+
+    N-43: every record carries a `_meta` envelope with `system: bool`
+    + `source` ("system" for known internal senders like __presence__,
+    otherwise "user"). Lets consumers filter or branch on origin
+    without sniffing the sender field directly.
     """
+    is_system = sender_user_id in _SYSTEM_SENDERS
     rec = {
         "id": uuid.uuid4().hex,
         "ts": int(time.time() * 1000),  # epoch ms
         "channel": channel,
         "sender": sender_user_id,
         "payload": payload,
+        "_meta": {
+            "system": is_system,
+            "source": "system" if is_system else "user",
+        },
     }
     # Persist to ring buffer + disk.
     with _LOCK:
