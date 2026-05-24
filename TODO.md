@@ -96,9 +96,9 @@ Format:
            warnings to errors (CI gate for "no unknown keys")
 - [x] N-02 `forge_db_query_page` honors a max wall-clock budget per call
            (kill the cursor when SQLite scan exceeds N ms)
-- [ ] N-03 Storage gateway: probe the S3-compat endpoint on configure()
+- [x] N-03 Storage gateway: probe the S3-compat endpoint on configure()
            and return a clear error if HEAD on the bucket fails
-- [ ] N-04 Realtime channel presence -> emits leave/join messages on the
+- [x] N-04 Realtime channel presence -> emits leave/join messages on the
            bus so subscribers can render "who is online" without polling
 - [ ] N-05 Healing mode: walk fk_graph after propose_from_sqlite and
            re-order migrations so referenced tables are created first

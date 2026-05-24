@@ -29,7 +29,9 @@ from .cdn import sign_url, verify_url, sign_upload_url, verify_upload_url  # noq
 from .transform import register_transform_preset, list_transform_presets  # noqa: F401
 from .gateway import (  # noqa: F401
     SUPPORTED_PROVIDERS as STORAGE_GATEWAY_PROVIDERS,
+    StorageProbeError,
     configure as configure_gateway,
     get_config as get_gateway_config,
+    probe_bucket as probe_storage_bucket,
     s3_presigned_url,
 )

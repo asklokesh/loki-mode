@@ -28,16 +28,61 @@ import hmac
 import json
 import os
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 
 SUPPORTED_PROVIDERS = ("fs", "s3", "r2", "b2", "tigris", "minio")
 
 
+class StorageProbeError(RuntimeError):
+    """Raised when probe() fails to confirm the bucket is reachable.
+
+    The message names the endpoint, the bucket, and the HTTP status (or
+    the underlying socket/HTTP error) so the operator can fix the
+    misconfiguration without reading the SDK stack trace.
+    """
+
+
 def _config_path(forge_dir: str) -> str:
     return os.path.join(forge_dir, "storage", ".gateway.json")
+
+
+def probe_bucket(*, endpoint: str, bucket: str,
+                 timeout_s: float = 3.0) -> Dict[str, Any]:
+    """N-03: HEAD the bucket and return {ok, status, error}.
+
+    No SigV4 - this is the unauthenticated reachability check. A
+    private bucket returning 403 still counts as "reachable" because
+    the endpoint exists and answered; a DNS failure or connection
+    refused returns ok=False with a clear error string. Used by
+    configure(probe=True) to fail fast on misconfigured endpoints.
+    """
+    if not endpoint or not endpoint.startswith(("https://", "http://")):
+        raise ValueError("endpoint must be an http(s) URL")
+    if not bucket:
+        raise ValueError("bucket required")
+    url = f"{endpoint.rstrip('/')}/{urllib.parse.quote(bucket)}/"
+    req = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return {"ok": True, "status": resp.status, "url": url}
+    except urllib.error.HTTPError as e:
+        # 401/403 means the endpoint answered; reachability confirmed.
+        if e.code in (401, 403, 404):
+            return {"ok": True, "status": e.code, "url": url,
+                    "note": "endpoint reachable; auth/visibility may "
+                            "require credentials"}
+        return {"ok": False, "status": e.code, "url": url,
+                "error": f"HTTP {e.code} {e.reason}"}
+    except (urllib.error.URLError, socket.timeout, socket.gaierror,
+            ConnectionError, TimeoutError) as e:
+        return {"ok": False, "status": None, "url": url,
+                "error": f"{type(e).__name__}: {e}"}
 
 
 def configure(forge_dir: str, *,
@@ -46,7 +91,9 @@ def configure(forge_dir: str, *,
               bucket: Optional[str] = None,
               region: str = "auto",
               access_key_ref: Optional[str] = None,
-              secret_key_ref: Optional[str] = None) -> Dict[str, Any]:
+              secret_key_ref: Optional[str] = None,
+              probe: bool = False,
+              probe_timeout_s: float = 3.0) -> Dict[str, Any]:
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"unsupported provider: {provider!r}")
     if provider != "fs":
@@ -58,6 +105,14 @@ def configure(forge_dir: str, *,
             raise ValueError("access_key_ref must be a forge secret name")
         if secret_key_ref and not secret_key_ref.replace("_", "").isalnum():
             raise ValueError("secret_key_ref must be a forge secret name")
+        if probe:
+            result = probe_bucket(endpoint=endpoint, bucket=bucket,
+                                  timeout_s=probe_timeout_s)
+            if not result.get("ok"):
+                raise StorageProbeError(
+                    f"bucket probe failed for {provider}://{bucket} "
+                    f"at {endpoint}: {result.get('error')}"
+                )
     cfg = {
         "provider": provider,
         "endpoint": endpoint,
