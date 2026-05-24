@@ -263,22 +263,59 @@ Format:
 - [x] N-67 Storage transforms: `unrevoke_preset(name)` ceremonial
            companion to revoke - removes the audit line so a name
            can be re-registered without `force=True`
-- [ ] N-68 Doctor history: `--history-prune <days>` companion that
+- [x] N-68 Doctor history: `--history-prune <days>` companion that
            drops reports older than N days regardless of cap
-- [ ] N-69 Schedules: `bus_channel` config so events route to a
+- [x] N-69 Schedules: `bus_channel` config so events route to a
            per-tenant channel instead of the global `_system.schedules`
-- [ ] N-70 Healing diff: `unchanged_tables` field complementing
+- [x] N-70 Healing diff: `unchanged_tables` field complementing
            added/removed so callers can see the steady state
-- [ ] N-71 Bus history: `count(channel)` helper that returns just
+- [x] N-71 Bus history: `count(channel)` helper that returns just
            the per-channel size for dashboards
-- [ ] N-72 Forge metrics: `forge_email_templates_total` + locale
+- [x] N-72 Forge metrics: `forge_email_templates_total` + locale
            variants gauge so operators see registry size
-- [ ] N-73 Function runs: `purge_runs(name, older_than_days=N)` so
+- [x] N-73 Function runs: `purge_runs(name, older_than_days=N)` so
            operators can bound disk usage without an external job
-- [ ] N-74 OpenAPI: include a top-level `servers:` entry pointing
+- [x] N-74 OpenAPI: include a top-level `servers:` entry pointing
            at the dashboard root so generated clients have a base URL
-- [ ] N-75 Doctor: gate `--watch` interval to >=1s so a typo doesn't
+- [x] N-75 Doctor: gate `--watch` interval to >=1s so a typo doesn't
            pin the CPU at 100%
+
+## Next-up wave 6 (discovered during N-61..N-75)
+
+- [ ] N-76 Doctor `--history-prune` writes a one-line summary of how
+           many files were dropped (currently silent)
+- [ ] N-77 Schedules: `bus_channel` validated against the channel
+           name regex on create() so typos surface here
+- [ ] N-78 Healing diff: `column_changes` field per shared table
+           (added/removed/retyped columns) so operators see the
+           subtler drift beyond table presence
+- [ ] N-79 Bus history: `channel_count` returns the per-channel
+           sizes for ALL channels in a single dict for dashboards
+- [ ] N-80 Email templates metrics: per-name gauge so dashboards
+           see which templates have locale coverage
+- [ ] N-81 Function `purge_runs` rejects older_than_days > 365 to
+           prevent accidental wipes
+- [ ] N-82 OpenAPI: include a top-level `info.contact` block with
+           the project's GitHub URL when present in package.json
+- [ ] N-83 Doctor `--watch` writes a watermark file so a second
+           --watch process refuses to start (prevents duplicate
+           emit floods in the same shell)
+- [ ] N-84 Secrets vault: `rotate_value` records who rotated when
+           caller passes `rotated_by_user_id`
+- [ ] N-85 Realtime bus: cap `_RING` per-channel size declared as
+           a configurable kwarg on publish (currently hard-coded 10k)
+- [ ] N-86 Forge audit: `--scope` accepts `chain,migrations` (comma
+           list) so callers can run both halves without 'all'
+- [ ] N-87 Storage: `unrevoke_preset` returns the number of audit
+           lines removed so callers see how often the name was
+           re-revoked
+- [ ] N-88 Healing: emit `loki.forge.healing.applied/v2` with
+           per-operation success status so apply_proposal callers
+           know which ops landed and which errored
+- [ ] N-89 OpenAPI: per-tag `externalDocs` pointing at the wiki
+           section for that surface
+- [ ] N-90 `loki forge` help block lists every subcommand with one
+           line per command (no nested cases get lost)
 
 ## Loop continuation
 

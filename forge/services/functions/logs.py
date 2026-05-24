@@ -47,6 +47,33 @@ def list_runs(forge_dir: str, name: str, limit: int = 100,
     return out
 
 
+def purge_runs(forge_dir: str, name: str, *,
+               older_than_days: int = 30) -> int:
+    """N-73: drop run log files older than N days. Returns the
+    number of files removed. Use this from a scheduled job to bound
+    disk usage. older_than_days <= 0 raises ValueError.
+    """
+    if not isinstance(older_than_days, int) or older_than_days <= 0:
+        raise ValueError("older_than_days must be a positive int")
+    d = _logs_dir(forge_dir, name)
+    if not os.path.isdir(d):
+        return 0
+    import time as _t
+    cutoff = _t.time() - older_than_days * 86400
+    removed = 0
+    for e in os.listdir(d):
+        if not e.endswith(".json"):
+            continue
+        path = os.path.join(d, e)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def read_run_log(forge_dir: str, name: str, run_id: str) -> Optional[Dict[str, Any]]:
     path = os.path.join(_logs_dir(forge_dir, name), f"{run_id}.json")
     if not os.path.isfile(path):

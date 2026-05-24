@@ -62,6 +62,8 @@ def diff_proposal(project_dir: str,
     return {
         "added_tables": sorted(curr_tables - prev_tables),
         "removed_tables": sorted(prev_tables - curr_tables),
+        # N-70: explicit unchanged set so dashboards see steady state.
+        "unchanged_tables": sorted(curr_tables & prev_tables),
         "prev_path": prev_path if os.path.isfile(prev_path) else None,
     }
 

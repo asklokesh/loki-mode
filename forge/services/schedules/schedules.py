@@ -52,7 +52,8 @@ def _save(forge_dir: str, items: List[Dict[str, Any]]) -> None:
 
 
 def create(forge_dir: str, name: str, cron: str,
-           target: Dict[str, Any], payload: Optional[Dict[str, Any]] = None
+           target: Dict[str, Any], payload: Optional[Dict[str, Any]] = None,
+           *, bus_channel: Optional[str] = None
            ) -> Dict[str, Any]:
     if not _NAME_RE.match(name or ""):
         raise ScheduleError("name must match ^[a-z][a-z0-9_-]{1,62}$")
@@ -91,6 +92,8 @@ def create(forge_dir: str, name: str, cron: str,
         "next_fire_ts": next_fire_time(cron),
         "enabled": True,
     }
+    if bus_channel:
+        rec["bus_channel"] = bus_channel
     items.append(rec)
     _save(forge_dir, items)
     return rec
@@ -141,10 +144,15 @@ def delete(forge_dir: str, name: str) -> bool:
 
 def _emit_schedule_event(forge_dir: str, name: str, event: str) -> None:
     """N-54: publish a schedule:* event on the realtime bus so
-    dashboards see pause/resume transitions live."""
+    dashboards see pause/resume transitions live.
+    N-69: when the schedule defines `bus_channel`, route the event
+    to that channel instead of the global `_system.schedules`.
+    """
     try:
         from forge.services.realtime.bus import publish as _pub
-        _pub(forge_dir, f"_system.schedules", {
+        sched = get(forge_dir, name)
+        channel = (sched or {}).get("bus_channel") or "_system.schedules"
+        _pub(forge_dir, channel, {
             "type": event, "schedule": name,
         }, sender_user_id="__schedules__")
     except Exception:

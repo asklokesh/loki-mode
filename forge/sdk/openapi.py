@@ -273,6 +273,13 @@ def generate(forge_dir: str, *, title: str = "Forge API",
             {"name": "storage", "description": "Object storage + signed URLs"},
             {"name": "functions", "description": "Edge function invocation"},
         ],
+        # N-74: declare the dashboard root as the default server so
+        # generated clients have a base URL out of the box. Operators
+        # override via OpenAPI's standard `servers:` swap.
+        "servers": [
+            {"url": "http://127.0.0.1:57374",
+             "description": "local dashboard"},
+        ],
         "paths": paths,
         "components": {"schemas": schemas},
     }

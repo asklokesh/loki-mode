@@ -21,7 +21,7 @@ from .channels import (  # noqa: F401
     get_channel,
     list_channels,
 )
-from .bus import publish, subscribe, history  # noqa: F401
+from .bus import publish, subscribe, history, count as channel_count  # noqa: F401
 from .presence import (  # noqa: F401
     set_presence,
     clear_presence,

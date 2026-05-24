@@ -29,7 +29,7 @@ from .deploy import (  # noqa: F401
     verify_signature,
 )
 from .invoke import invoke, warm  # noqa: F401
-from .logs import list_runs, read_run_log  # noqa: F401
+from .logs import list_runs, purge_runs, read_run_log  # noqa: F401
 from .jobs import (  # noqa: F401
     enqueue as job_enqueue,
     tick as job_tick,

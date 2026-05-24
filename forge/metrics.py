@@ -200,6 +200,20 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
         lines.append(f'forge_secrets_stale{{bucket="90d"}} {stale_90}')
     except Exception:
         pass
+    # Email templates (N-72).
+    try:
+        from forge.services.email import list_templates
+        rows = list_templates(forge_dir)
+        defaults = sum(1 for r in rows if "@" not in r.get("name", ""))
+        variants = sum(1 for r in rows if "@" in r.get("name", ""))
+        lines.append("# HELP forge_email_templates_total Default templates")
+        lines.append("# TYPE forge_email_templates_total gauge")
+        lines.append(f"forge_email_templates_total {defaults}")
+        lines.append("# HELP forge_email_template_locales Locale variants")
+        lines.append("# TYPE forge_email_template_locales gauge")
+        lines.append(f"forge_email_template_locales {variants}")
+    except Exception:
+        pass
     # Gateway.
     try:
         from forge.services.gateway import usage_summary

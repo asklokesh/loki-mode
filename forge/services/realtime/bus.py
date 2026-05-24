@@ -148,6 +148,29 @@ def history(forge_dir: str, channel: str, *,
     return out[-limit:]
 
 
+def count(forge_dir: str, channel: str) -> int:
+    """N-71: per-channel history size for dashboards. Uses the ring
+    buffer when populated; falls back to a disk-line count otherwise.
+    Best-effort: returns 0 on read errors so callers don't have to
+    handle exceptions."""
+    with _LOCK:
+        ring = _RING.get(channel)
+        if ring:
+            return len(ring)
+    path = _hist_path(forge_dir, channel)
+    if not os.path.isfile(path):
+        return 0
+    try:
+        n = 0
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+        return n
+    except OSError:
+        return 0
+
+
 def reset(channel: Optional[str] = None) -> None:
     """Test helper: drop in-memory state."""
     with _LOCK:

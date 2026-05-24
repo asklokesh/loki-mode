@@ -2323,13 +2323,32 @@ PY
             # baseline trend.
             local watch_interval=""
             local history_cap=""
+            local history_prune_days=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --history) history_cap="${2:-10}"; shift 2 ;;
+                    --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
                     --watch) shift; watch_interval="${1:-5}"; shift 2>/dev/null || true; break ;;
                     *) shift ;;
                 esac
             done
+            # N-68: --history-prune drops reports older than N days,
+            # independent of the cap. Runs before history rotation so
+            # both filters apply.
+            if [[ -n "$history_prune_days" ]]; then
+                local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
+                if [[ -d "$hist_dir" ]]; then
+                    find "$hist_dir" -name 'doctor-*.json' -type f \
+                        -mtime +"$history_prune_days" -delete 2>/dev/null || true
+                fi
+            fi
+            # N-75: refuse --watch intervals shorter than 1s.
+            if [[ -n "$watch_interval" ]]; then
+                if [[ "$watch_interval" -lt 1 ]] 2>/dev/null; then
+                    echo "error: --watch interval must be >=1s" >&2
+                    return 2
+                fi
+            fi
             if [[ -n "$watch_interval" ]]; then
                 :  # fall through to the existing watch loop below
             fi
