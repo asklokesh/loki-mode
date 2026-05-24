@@ -120,6 +120,13 @@ def create(forge_dir: str, name: str, cron: str,
                 raise ScheduleError(
                     f"invalid tag {t!r}: ^[a-z0-9_:-]{{1,32}}$"
                 )
+            # N-142: reject leading/trailing colons + all-punctuation.
+            if t.startswith(":") or t.endswith(":") \
+               or not any(c.isalnum() for c in t):
+                raise ScheduleError(
+                    f"tag {t!r} must contain alphanumeric chars and "
+                    "cannot start/end with ':'"
+                )
             cleaned.append(t)
         rec["tags"] = sorted(set(cleaned))
     items.append(rec)

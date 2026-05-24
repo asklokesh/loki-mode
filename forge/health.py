@@ -132,4 +132,11 @@ def compute_health(forge_dir: str, *,
         # can debug staleness during incident response.
         "openapi_cached_until": int(_OPENAPI_TS_CACHE["expires_at"])
                                 if _OPENAPI_TS_CACHE["expires_at"] else None,
+        # N-141: same expires_at as RFC3339 so dashboards don't have
+        # to convert from epoch.
+        "openapi_cached_until_iso": (
+            _t.strftime("%Y-%m-%dT%H:%M:%SZ",
+                        _t.gmtime(_OPENAPI_TS_CACHE["expires_at"]))
+            if _OPENAPI_TS_CACHE["expires_at"] else None
+        ),
     }

@@ -312,6 +312,12 @@ def weak_secrets(forge_dir: str, *,
     return rows
 
 
+def weak_secrets_count(forge_dir: str) -> int:
+    """N-145: integer count shortcut for ultra-cheap dashboard
+    widgets that don't need the row list."""
+    return len(weak_secrets(forge_dir))
+
+
 def export_secrets(forge_dir: str, *,
                    confirm_destructive: bool = False) -> Dict[str, str]:
     """X-67: one-shot emergency dump of every secret value.

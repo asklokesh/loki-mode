@@ -297,12 +297,26 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
             target = next(iter(op))
             spec = {"operations": [op]}
         if dry_run:
+            # N-146: surface the SQL that WOULD run so operators can
+            # review before flipping dry_run=False. Best-effort - if
+            # the compiler signature drifts, preview_sql stays None.
+            preview_sql = None
+            try:
+                from forge.services.database import migrate as _migrate
+                # Find a public compiler if available; otherwise skip.
+                compile_fn = getattr(_migrate, "_compile_spec_sql", None) \
+                             or getattr(_migrate, "compile_spec_sql", None)
+                if compile_fn:
+                    preview_sql = compile_fn(spec)
+            except Exception:
+                pass
             ops_status.append({
                 "op": next(iter(op)),
                 "target": target,
                 "ok": True,
                 "dry_run": True,
                 "attempt_ms": 0,
+                "preview_sql": preview_sql,
             })
             continue
         import time as _t

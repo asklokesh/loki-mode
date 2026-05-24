@@ -2125,6 +2125,7 @@ PY
             # N-47: summary line includes git_head when in a repo.
             local quiet_flag="false"
             local summary_flag="false"
+            local color_flag="false"
             local scope_arg="all"
             local git_head=""
             git_head=$(git rev-parse HEAD 2>/dev/null || true)
@@ -2132,21 +2133,20 @@ PY
                 case "$1" in
                     --quiet) quiet_flag="true"; shift ;;
                     --summary) summary_flag="true"; shift ;;
+                    --color) color_flag="true"; shift ;;
                     --scope) scope_arg="${2:-all}"; shift 2 ;;
-                    # N-130: --json is a no-op symmetry alias - the
-                    # default audit output is already JSON. Accepting
-                    # the flag keeps the CLI consistent with metrics.
                     --json) shift ;;
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag" "$git_head" "$scope_arg"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag" "$git_head" "$scope_arg" "$color_flag"
 import json, sys
 from forge.audit_verify import verify
 quiet = sys.argv[2] == "true"
 summary = sys.argv[3] == "true"
 git_head = sys.argv[4]
 scope = sys.argv[5] if len(sys.argv) > 5 else "all"
+color = len(sys.argv) > 6 and sys.argv[6] == "true"
 # N-86: accept a comma list - both halves -> all.
 if "," in scope:
     parts = {p.strip() for p in scope.split(",") if p.strip()}
@@ -2175,6 +2175,12 @@ try:
         )
         if git_head:
             line += f" git_head={git_head}"
+        # N-149: colorize when requested. ANSI: 32=green, 31=red.
+        if color:
+            if rep.get("ok"):
+                line = f"\033[32m{line}\033[0m"
+            else:
+                line = f"\033[31m{line}\033[0m"
         print(line)
     elif quiet:
         rep = {
@@ -2261,11 +2267,17 @@ PY
             local filter_prefix=""
             local filter_exclude=""
             local no_help_flag="false"
+            local watch_metrics=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
                     --json) json_flag="true"; shift ;;
                     --no-help) no_help_flag="true"; shift ;;
+                    --watch)
+                        # N-148: poll + re-print every N seconds.
+                        watch_metrics="${2:-5}"
+                        shift 2
+                        ;;
                     --filter)
                         # N-110: --filter prefix=forge_secrets_ keeps only
                         # metric lines whose name starts with the prefix.
@@ -2282,7 +2294,23 @@ PY
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude" "$no_help_flag"
+            if [[ -n "$watch_metrics" ]]; then
+    if [[ "$watch_metrics" -lt 1 ]] 2>/dev/null; then
+        echo "error: --watch interval must be >=1s" >&2
+        return 2
+    fi
+    while true; do
+        echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+        PYTHONPATH="$skill_dir" python3 -c "
+from forge.metrics import render
+import sys
+print(render(sys.argv[1]), end='')
+" "${TARGET_DIR:-.}/.loki/forge"
+        sleep "$watch_metrics"
+    done
+    return 0
+fi
+PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude" "$no_help_flag"
 import json, re, sys
 from forge.metrics import render
 labels = {}
@@ -2420,11 +2448,17 @@ PY
                     --history-list)
                         # N-128: list current files with size + age.
                         # N-137: --json emits a structured array.
+                        # N-147: --tail N keeps only the last N entries.
                         local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
                         local json_out="false"
-                        if [[ "${2:-}" == "--json" ]]; then
-                            json_out="true"; shift
-                        fi
+                        local tail_n=""
+                        while [[ -n "${2:-}" && "${2:0:2}" == "--" ]]; do
+                            case "${2:-}" in
+                                --json) json_out="true"; shift ;;
+                                --tail) tail_n="${3:-0}"; shift 2 ;;
+                                *) break ;;
+                            esac
+                        done
                         if [[ "$json_out" == "true" ]]; then
                             PYTHONPATH="$skill_dir" python3 - <<PY "$hist_dir"
 import json, os, sys, time
@@ -2446,9 +2480,15 @@ print(json.dumps({"schema": "loki.forge.doctor.history/v1",
                   "files": out}, indent=2))
 PY
                         elif [[ -d "$hist_dir" ]]; then
-                            find "$hist_dir" -name 'doctor-*.json' -type f \
-                                -printf '%f %s %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
-                                | sort -r
+                            if [[ -n "$tail_n" ]]; then
+                                find "$hist_dir" -name 'doctor-*.json' -type f \
+                                    -printf '%f %s %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
+                                    | sort -r | head -n "$tail_n"
+                            else
+                                find "$hist_dir" -name 'doctor-*.json' -type f \
+                                    -printf '%f %s %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
+                                    | sort -r
+                            fi
                         fi
                         return 0
                         ;;

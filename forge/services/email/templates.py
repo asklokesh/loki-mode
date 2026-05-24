@@ -203,6 +203,28 @@ def unset_template(forge_dir: str, name: str, *,
     return removed
 
 
+def list_dropped_defaults(forge_dir: str) -> List[Dict[str, Any]]:
+    """N-143: parsed dropped_defaults.jsonl. Dashboards use this to
+    show which built-ins were force-dropped (and when)."""
+    p = os.path.join(forge_dir, "email", "dropped_defaults.jsonl")
+    if not os.path.isfile(p):
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
 def is_default(name: str) -> bool:
     """N-124: True when `name` is shipped as a built-in default
     template. Callers can use this to surface a warning before

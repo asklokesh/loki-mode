@@ -121,6 +121,29 @@ def purge_runs(forge_dir: str, name: str, *,
     return removed
 
 
+def list_purges(forge_dir: str, name: str) -> List[Dict[str, Any]]:
+    """N-144: parsed purges.jsonl for a function so dashboards see
+    when disk was reclaimed and by how much."""
+    import json as _json
+    p = os.path.join(_logs_dir(forge_dir, name), "purges.jsonl")
+    if not os.path.isfile(p):
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
 def _record_purge(forge_dir: str, name: str, mode: str, arg: int,
                   removed: int) -> None:
     """N-125: append a purge record so operators see when disk was

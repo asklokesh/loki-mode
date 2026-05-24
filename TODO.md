@@ -437,30 +437,39 @@ Format:
 
 ## Next-up wave 12 (discovered during N-131..N-140)
 
-- [ ] N-141 Health `openapi_cached_until` exposed as RFC3339 too
+- [x] N-141 Health `openapi_cached_until` exposed as RFC3339 too
             so dashboards can render without conversion
-- [ ] N-142 Schedules `tags` validated for max length 32 chars (done
+- [x] N-142 Schedules `tags` validated for max length 32 chars (done
             in regex) AND each char count - the regex permits
             "::::::" so add a check that excludes leading/trailing
             colons
-- [ ] N-143 Email `dropped_defaults.jsonl` exposed via
+- [x] N-143 Email `dropped_defaults.jsonl` exposed via
             `list_dropped_defaults(forge_dir)` so dashboards see
             which built-ins were force-dropped
-- [ ] N-144 Function `purges.jsonl` exposed via
+- [x] N-144 Function `purges.jsonl` exposed via
             `list_purges(name)` so dashboards see disk reclaim history
-- [ ] N-145 Secrets: `weak_secrets` adds `count` shortcut returning
+- [x] N-145 Secrets: `weak_secrets` adds `count` shortcut returning
             just the integer for ultra-cheap dashboard widgets
-- [ ] N-146 Healing: `apply_proposal(dry_run=True)` returns the
+- [x] N-146 Healing: `apply_proposal(dry_run=True)` returns the
             sql that WOULD be applied per op so operators can review
-- [ ] N-147 Doctor `--history-list --tail N` keeps just the last N
+- [x] N-147 Doctor `--history-list --tail N` keeps just the last N
             entries in the list (CLI-side limit)
-- [ ] N-148 Forge metrics: `--watch SECONDS` polls and re-prints
+- [x] N-148 Forge metrics: `--watch SECONDS` polls and re-prints
             (parity with doctor --watch)
-- [ ] N-149 `loki forge audit --summary --color` colorizes
+- [x] N-149 `loki forge audit --summary --color` colorizes
             ok=true green / errs>0 red for human eyes
-- [ ] N-150 OpenAPI `info.x-generated-at` ISO emitted in UTC always
+- [x] N-150 OpenAPI `info.x-generated-at` ISO emitted in UTC always
             even when local TZ has DST (current code already uses
             gmtime, but add explicit Z assertion in tests)
+
+## Status snapshot
+
+**150 N-* items shipped across 12 waves**, plus all original
+Phase F (F-1..F-5), all X-1..X-88 cross-cutting items, and the
+Phase A sandbox enhancements. Test suite has grown to 60+ test
+files with 600+ assertions, all green.
+
+## Loop continuation
 
 ## Loop continuation
 
