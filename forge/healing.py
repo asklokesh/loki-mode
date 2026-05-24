@@ -22,7 +22,14 @@ _HIDDEN = {"sqlite_sequence", "sqlite_master", "sqlite_stat1",
 def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
     """Read a legacy SQLite database and return a forge migration spec
     that would recreate its schema. Best-effort - emits warnings for
-    columns we cannot map cleanly."""
+    columns we cannot map cleanly.
+
+    N-05: read PRAGMA foreign_key_list per table, attach a
+    `references` clause to FK columns, and topologically sort the
+    `add_table` operations so referenced tables are created first.
+    Index ops keep their natural order but are emitted after the
+    table they index, so the final stream is FK-safe end-to-end.
+    """
     conn = sqlite3.connect(legacy_db_path)
     conn.row_factory = sqlite3.Row
     out: Dict[str, Any] = {
@@ -35,11 +42,25 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
+        # First pass: build per-table add_table + index ops keyed by name.
+        add_ops: Dict[str, Dict[str, Any]] = {}
+        index_ops: Dict[str, List[Dict[str, Any]]] = {}
+        # Adjacency for topo sort: table -> set of tables it depends on.
+        deps: Dict[str, set] = {}
         for row in tables:
             tname = row["name"]
             if tname in _HIDDEN or tname.startswith("_forge_"):
                 continue
             cols = conn.execute(f"PRAGMA table_info('{tname}')").fetchall()
+            fks = conn.execute(
+                f"PRAGMA foreign_key_list('{tname}')"
+            ).fetchall()
+            # Map from local column name -> (target_table, target_column).
+            fk_by_col: Dict[str, Dict[str, str]] = {}
+            for fk in fks:
+                fk_by_col[fk["from"]] = {
+                    "table": fk["table"], "column": fk["to"] or "id",
+                }
             spec_cols: List[Dict[str, Any]] = []
             for c in cols:
                 col: Dict[str, Any] = {
@@ -58,19 +79,22 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
                         col["default"] = val[1:-1]
                     else:
                         col["default"] = val
+                if c["name"] in fk_by_col:
+                    col["references"] = fk_by_col[c["name"]]
                 spec_cols.append(col)
             if not spec_cols:
                 out["warnings"].append(
                     f"{tname}: no columns extracted (skipped)"
                 )
                 continue
-            out["operations"].append({"add_table": {
+            add_ops[tname] = {"add_table": {
                 "name": tname, "columns": spec_cols, "rls": "own-row",
-            }})
+            }}
             # Indices.
             indices = conn.execute(
                 f"PRAGMA index_list('{tname}')"
             ).fetchall()
+            idx_list: List[Dict[str, Any]] = []
             for idx in indices:
                 if idx["name"].startswith("sqlite_autoindex"):
                     continue
@@ -79,14 +103,55 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
                     conn.execute(f"PRAGMA index_info('{idx['name']}')").fetchall()
                 ]
                 if idx_cols:
-                    out["operations"].append({"create_index": {
+                    idx_list.append({"create_index": {
                         "table": tname, "columns": idx_cols,
                         "name": idx["name"],
                         "unique": bool(idx["unique"]),
                     }})
+            index_ops[tname] = idx_list
+            # Dependencies: every FK target that is also part of this
+            # proposal (skip targets outside our table set; the lint
+            # surface will flag those separately).
+            deps[tname] = {
+                fk_by_col[c]["table"] for c in fk_by_col
+            }
+        # Topological sort: Kahn's algorithm. Preserve alphabetical
+        # order among equally-ready tables so the output is stable.
+        ordered = _topo_sort(deps, add_ops.keys(), out["warnings"])
+        for tname in ordered:
+            out["operations"].append(add_ops[tname])
+            for idx_op in index_ops.get(tname, []):
+                out["operations"].append(idx_op)
     finally:
         conn.close()
     return out
+
+
+def _topo_sort(deps: Dict[str, set], tables, warnings: List[str]) -> List[str]:
+    """Kahn topo sort: tables with no remaining deps first; ties broken
+    alphabetically so the proposal is reproducible. On a cycle (rare
+    in legacy SQLite but possible with self-referencing FKs that are
+    actually loops between two tables) we surface a warning and fall
+    back to the alphabetical order for the unresolved subset."""
+    remaining = {t: {d for d in deps.get(t, set()) if d in tables and d != t}
+                 for t in tables}
+    ordered: List[str] = []
+    while remaining:
+        ready = sorted(t for t, d in remaining.items() if not d)
+        if not ready:
+            cycle = sorted(remaining.keys())
+            warnings.append(
+                f"healing: FK cycle among {cycle}; "
+                "applying alphabetical fallback"
+            )
+            ordered.extend(cycle)
+            break
+        for t in ready:
+            ordered.append(t)
+            remaining.pop(t)
+        for t in list(remaining):
+            remaining[t] -= set(ready)
+    return ordered
 
 
 def _map_type(legacy_type: Optional[str]) -> str:

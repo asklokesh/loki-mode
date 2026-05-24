@@ -100,7 +100,7 @@ Format:
            and return a clear error if HEAD on the bucket fails
 - [x] N-04 Realtime channel presence -> emits leave/join messages on the
            bus so subscribers can render "who is online" without polling
-- [ ] N-05 Healing mode: walk fk_graph after propose_from_sqlite and
+- [x] N-05 Healing mode: walk fk_graph after propose_from_sqlite and
            re-order migrations so referenced tables are created first
 - [ ] N-06 `loki forge doctor`: combine sandbox diagnose + /api/forge/health
            into a single CLI command (no dashboard needed)
