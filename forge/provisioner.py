@@ -83,6 +83,52 @@ def provision(req: ForgeRequirements, forge_dir: str,
         except Exception as e:
             errors.append(f"auth provisioning failed: {e}")
 
+        # F-2.05: auto-provision a users table the user-app can JOIN
+        # against. Skipped when the agent already declared its own.
+        if not dryrun:
+            try:
+                declared = any(t.name == "users"
+                               for t in (req.tables or []))
+                if not declared:
+                    # Module-level imports already bring open_engine +
+                    # migrate_apply into scope; introspect needs a lazy
+                    # import. Re-binding open_engine here would shadow
+                    # it as a local and trigger UnboundLocalError up
+                    # the function from the earlier write site.
+                    from .services.database import introspect as _intro
+                    engine = open_engine(forge_dir)
+                    try:
+                        existing = {t["name"] for t in
+                                    _intro(engine).get("tables", [])}
+                    except Exception:
+                        existing = set()
+                    if "users" not in existing:
+                        spec = {
+                            "summary": "forge auth: ensure users table",
+                            "operations": [{"add_table": {
+                                "name": "users",
+                                "columns": [
+                                    "id pk",
+                                    "email text unique",
+                                    "password_hash text",
+                                    "oauth_subject text",
+                                    "created_at timestamp default(now())",
+                                    "last_login_at timestamp",
+                                ],
+                                "rls": "own-row",
+                            }}],
+                        }
+                        try:
+                            res = migrate_apply(engine, spec)
+                            db_results.append({
+                                "table": "users (auth)",
+                                "migration_id": res["migration_id"],
+                            })
+                        except Exception as e:
+                            skipped.append(f"users-auth-table: {e}")
+            except Exception as e:
+                skipped.append(f"users-auth-table: {e}")
+
     # F-2: storage buckets - create one per detected name. Default to
     # private; the agent flips public on specific buckets as needed.
     if req.buckets:

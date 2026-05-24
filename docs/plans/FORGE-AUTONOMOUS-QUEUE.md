@@ -20,7 +20,7 @@ Last updated: 2026-05-18
 - [x] F-2.02 JWT signing + verification (HS256; RS256 deferred to F-3)
 - [x] F-2.03 OAuth provider scaffolding (Google, GitHub, Apple, Microsoft, GitLab, Discord, Slack) with PKCE flow
 - [~] F-2.04 Magic-link / passwordless auth (provider names registered; flow handler deferred)
-- [~] F-2.05 User table auto-migration when auth detected (provisioner registers providers; user table auto-mig deferred to forge.users table sync)
+- [x] F-2.05 Provisioner auto-creates users table when auth providers detected (operator-declared schema preserved)
 - [x] F-2.06 Auth MCP tools (forge_auth_provider_add/remove/user_create/user_list/session_revoke)
 - [x] F-2.07 Auth test suite (16 assertions)
 - [x] F-2.08 Storage service skeleton (forge/services/storage/{buckets,cdn,transform}.py)
@@ -64,7 +64,7 @@ Last updated: 2026-05-18
 - [x] F-3.13 Secrets MCP tools (forge_secret_set/list/delete/rotate)
 - [x] F-3.14 Secrets test suite (10 assertions; no plaintext on disk verified)
 - [x] F-3.15 Stripe payments service + webhook signature verification
-- [~] F-3.16 Subscription state sync to forge.subscriptions table (recording side done; table sync is F-4)
+- [x] F-3.16 Stripe customer.subscription.* events upsert into a forge subscriptions table (auto-created on first event)
 - [x] F-3.17 Payments MCP tools (forge_payments_provider_setup, _product_create/list, _webhook_register)
 - [x] F-3.18 Payments test suite (9 assertions)
 - [x] F-3.19 Railway deploy adapter + Fly + Vercel + Cloudflare + local plans

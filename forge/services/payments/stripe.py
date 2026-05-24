@@ -174,7 +174,63 @@ def record_webhook_event(forge_dir: str, provider: str,
     rec = {**event, "received_at": int(time.time())}
     _append_jsonl(os.path.join(_provider_dir(forge_dir, provider),
                                "webhook_events.jsonl"), rec)
+    # F-3.16: mirror subscription state into the forge DB.
+    if provider == "stripe":
+        _sync_subscription_state(forge_dir, event)
     return rec
+
+
+def _sync_subscription_state(forge_dir: str,
+                              event: Dict[str, Any]) -> None:
+    """Best-effort upsert of subscription state from a Stripe webhook.
+    Creates the `subscriptions` table on first call. Never raises."""
+    etype = (event.get("type") or "")
+    if not etype.startswith("customer.subscription."):
+        return
+    obj = (event.get("data") or {}).get("object") or {}
+    if not isinstance(obj, dict):
+        return
+    sub_id = obj.get("id")
+    if not sub_id:
+        return
+    try:
+        from forge.services.database import (
+            open_engine, introspect, migrate_apply,
+        )
+        engine = open_engine(forge_dir)
+        try:
+            tables = {t["name"] for t in introspect(engine).get("tables", [])}
+        except Exception:
+            tables = set()
+        if "subscriptions" not in tables:
+            try:
+                migrate_apply(engine, {
+                    "summary": "forge payments: ensure subscriptions table",
+                    "operations": [{"add_table": {
+                        "name": "subscriptions",
+                        "columns": [
+                            "id pk",
+                            "external_id text unique notnull",
+                            "customer_id text",
+                            "status text",
+                            "updated_at timestamp default(now())",
+                        ],
+                        "rls": "own-row",
+                    }}],
+                })
+            except Exception:
+                return
+        engine.execute(
+            "INSERT INTO subscriptions (external_id, customer_id, status) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(external_id) DO UPDATE SET "
+            "customer_id = excluded.customer_id, "
+            "status = excluded.status",
+            (sub_id, obj.get("customer"), obj.get("status")),
+            allow_writes=True,
+        )
+    except Exception:
+        pass
 
 
 def sync_catalog(forge_dir: str, provider: str,
