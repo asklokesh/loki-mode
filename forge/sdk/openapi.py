@@ -127,6 +127,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
         schemas[schema_name] = _table_schema(t)
         paths[f"/db/v1/{t['name']}"] = {
             "get": {
+                "operationId": f"db_list_{t['name']}",
                 "summary": f"list {t['name']}",
                 "responses": {
                     "200": {
@@ -143,6 +144,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                 },
             },
             "post": {
+                "operationId": f"db_insert_{t['name']}",
                 "summary": f"insert {t['name']}",
                 "requestBody": {
                     "required": True,
@@ -165,6 +167,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
         }
         paths[f"/db/v1/{t['name']}/{{id}}"] = {
             "get": {
+                "operationId": f"db_get_{t['name']}",
                 "summary": f"get {t['name']} by id",
                 "parameters": [{
                     "name": "id", "in": "path", "required": True,
@@ -187,6 +190,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
     for b in state.get("buckets", []) or []:
         paths[f"/storage/v1/{b['name']}/sign"] = {
             "post": {
+                "operationId": f"storage_sign_{b['name']}",
                 "summary": f"sign {b['name']} url",
                 "requestBody": {
                     "required": True,
@@ -224,6 +228,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
     for fn in state.get("functions", []) or []:
         paths[f"/functions/v1/{fn['name']}"] = {
             "post": {
+                "operationId": f"function_invoke_{fn['name']}",
                 "summary": f"invoke {fn['name']}",
                 "requestBody": {
                     "content": {"application/json": {

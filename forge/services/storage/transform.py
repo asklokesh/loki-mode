@@ -47,8 +47,12 @@ def list_revoked_presets(forge_dir: str, bucket: str) -> List[Dict[str, Any]]:
     """N-33: read the .revoked.jsonl audit trail for a bucket.
 
     Returns the list of revocation records in chronological order
-    {name, revoked_at, ops}. Use this in incident reviews to confirm
-    a known-bad preset stayed dropped.
+    {name, revoked_at, ops, still_revoked}. Use this in incident
+    reviews to confirm a known-bad preset stayed dropped.
+
+    N-52: `still_revoked` is False when a later register call with
+    force=True re-introduced the same name. Lets dashboards show the
+    "currently shadowing" set without the operator computing the diff.
     """
     audit_path = os.path.join(os.path.dirname(_presets_path(forge_dir, bucket)),
                               ".revoked.jsonl")
@@ -67,6 +71,10 @@ def list_revoked_presets(forge_dir: str, bucket: str) -> List[Dict[str, Any]]:
                     continue
     except OSError:
         pass
+    # Cross-reference the live registry to compute still_revoked.
+    live = {p["name"] for p in list_transform_presets(forge_dir, bucket)}
+    for rec in out:
+        rec["still_revoked"] = rec.get("name") not in live
     return out
 
 

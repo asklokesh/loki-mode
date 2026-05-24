@@ -54,16 +54,31 @@ def set_presence(channel: str, user_id: str, *,
         "metadata": dict(metadata or {}),
     }
     is_new = False
+    existing_joined_at: Optional[int] = None
     with _LOCK:
-        is_new = user_id not in _STATE[channel]
+        existing = _STATE[channel].get(user_id)
+        is_new = existing is None
+        if is_new:
+            # Stamp join time on the new record so subsequent refreshes
+            # can compute since_join_ms (N-50).
+            rec["joined_at_ms"] = int(now * 1000)
+        else:
+            # Preserve original join time across refreshes.
+            existing_joined_at = existing.get("joined_at_ms")
+            if existing_joined_at:
+                rec["joined_at_ms"] = existing_joined_at
         _STATE[channel][user_id] = rec
     if is_new:
         _emit(forge_dir, channel, "presence:join", user_id, rec["metadata"])
     else:
         # N-38: emit a refresh marker on an already-present user so
-        # clients tracking keep-alives can react. Distinct event type
-        # so existing 'presence:join' listeners are unaffected.
-        _emit(forge_dir, channel, "presence:refresh", user_id, rec["metadata"])
+        # clients tracking keep-alives can react.
+        # N-50: include since_join_ms so clients can compute session
+        # duration without re-sampling.
+        extra = dict(rec["metadata"])
+        if existing_joined_at:
+            extra["__since_join_ms"] = int(now * 1000) - existing_joined_at
+        _emit(forge_dir, channel, "presence:refresh", user_id, extra)
     return rec
 
 

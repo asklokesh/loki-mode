@@ -217,14 +217,14 @@ Format:
 - [x] N-49 Function deploy: `deployed_by_user_id` validated against
            the auth users table when caller supplies one and the
            table exists (catches typos before they hit audit)
-- [ ] N-50 Presence: `presence:refresh` carries `since_join_ms` so
+- [x] N-50 Presence: `presence:refresh` carries `since_join_ms` so
            clients can compute session duration without re-sampling
-- [ ] N-51 OpenAPI: per-route `operationId` derived from path so
+- [x] N-51 OpenAPI: per-route `operationId` derived from path so
            generated clients have stable method names
-- [ ] N-52 Storage `list_revoked_presets` includes a derived
+- [x] N-52 Storage `list_revoked_presets` includes a derived
            `still_revoked` boolean (False if same name was later
            re-registered with force=True)
-- [ ] N-53 `loki forge doctor --history N` writes the last N reports
+- [x] N-53 `loki forge doctor --history N` writes the last N reports
            to disk so support tickets ship a baseline trend
 - [ ] N-54 Schedules: `pause(name)` / `resume(name)` companions to
            the existing `enabled` toggle that also emit an event

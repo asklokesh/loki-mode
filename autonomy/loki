@@ -2293,11 +2293,38 @@ PY
             # the sandbox block is best-effort (skipped silently if
             # sandbox.sh / docker are unavailable).
             # N-20: --watch <seconds> loops and emits diffs.
+            # N-53: --history <N> rotates the last N reports under
+            # .loki/forge/doctor-history/ so support tickets ship a
+            # baseline trend.
             local watch_interval=""
-            if [[ "${1:-}" == "--watch" ]]; then
-                shift
-                watch_interval="${1:-5}"
-                shift 2>/dev/null || true
+            local history_cap=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --history) history_cap="${2:-10}"; shift 2 ;;
+                    --watch) shift; watch_interval="${1:-5}"; shift 2>/dev/null || true; break ;;
+                    *) shift ;;
+                esac
+            done
+            if [[ -n "$watch_interval" ]]; then
+                :  # fall through to the existing watch loop below
+            fi
+            if [[ -n "$history_cap" && -z "$watch_interval" ]]; then
+                local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
+                mkdir -p "$hist_dir"
+                local stamp
+                stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                # Capture stdout to both the screen and the history file.
+                # Swallow the inner doctor's non-zero exit (critical-code
+                # status) so pipefail does not kill the rotation step.
+                (TARGET_DIR="${TARGET_DIR:-.}" cmd_forge doctor 2>&1 || true) \
+                    | tee "$hist_dir/doctor-$stamp.json"
+                # Rotate to the last N files.
+                ls -t "$hist_dir"/doctor-*.json 2>/dev/null \
+                    | tail -n +"$((history_cap+1))" \
+                    | xargs -r rm -f
+                return 0
+            fi
+            if [[ -n "$watch_interval" ]]; then
                 # Recurse into a polling loop. Run doctor once per
                 # interval and print only the diff between successive
                 # status snapshots. Ctrl-C exits.

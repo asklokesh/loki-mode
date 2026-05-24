@@ -47,7 +47,9 @@ with tempfile.TemporaryDirectory() as d:
     set_presence('room', 'u1', metadata={'v': 2}, forge_dir=d)
     h = history(d, 'room', limit=10)
     refresh = [m for m in h if m['payload']['type'] == 'presence:refresh'][0]
-    assert refresh['payload']['metadata'] == {'v': 2}, refresh
+    meta = refresh['payload']['metadata']
+    # User-provided metadata is a subset (N-50 may add __since_join_ms).
+    assert meta.get('v') == 2, meta
 print('OK')" | grep -q '^OK$'; then pass "N-38 refresh carries metadata"; else fail "metadata stale"; fi
 
 echo ""
