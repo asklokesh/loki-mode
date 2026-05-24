@@ -13999,7 +13999,7 @@ if total_removed > 0:
         index)
             # Show or rebuild the memory index layer
             if [ "${2:-}" = "rebuild" ]; then
-                python3 -c "
+                PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 try:
     from memory.layers import IndexLayer
     layer = IndexLayer('.loki/memory')
@@ -14023,7 +14023,7 @@ except Exception as e:
         consolidate)
             # Run consolidation pipeline
             local hours="${2:-24}"
-            LOKI_HOURS="$hours" python3 -c "
+            LOKI_HOURS="$hours" PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 import os
 try:
     from memory.consolidation import ConsolidationPipeline
@@ -14060,7 +14060,7 @@ except Exception as e:
                 echo "Usage: loki memory retrieve <query>"
                 exit 1
             fi
-            LOKI_QUERY="$query" python3 -c "
+            LOKI_QUERY="$query" PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 import os
 try:
     from memory.retrieval import MemoryRetrieval
@@ -14091,7 +14091,7 @@ except Exception as e:
                 echo "Usage: loki memory episode <id>"
                 exit 1
             fi
-            LOKI_ID="$id" python3 -c "
+            LOKI_ID="$id" PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 import os
 try:
     from memory.engine import MemoryEngine
@@ -14115,7 +14115,7 @@ except Exception as e:
             local id="${2:-}"
             if [ -z "$id" ]; then
                 # List all patterns
-                python3 -c "
+                PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 try:
     from memory.engine import MemoryEngine
     engine = MemoryEngine(base_path='.loki/memory')
@@ -14133,7 +14133,7 @@ except Exception as e:
     print(f'Error: {e}')
 " 2>/dev/null
             else
-                LOKI_ID="$id" python3 -c "
+                LOKI_ID="$id" PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
 import os
 try:
     from memory.engine import MemoryEngine

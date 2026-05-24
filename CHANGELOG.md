@@ -9,6 +9,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.6.0] - 2026-05-23
+
+MINOR release. Real-user validation cycle for the v7.5.29-v7.5.31 Purple-Lab-
+into-Dashboard merge arc, plus a critical route-ordering bug fix that real-
+user Playwright testing surfaced.
+
+### Critical fix: 22 Purple Lab API routes were dead code
+
+`web-app/server.py` had `@app.get("/{full_path:path}")` (the SPA catch-all)
+defined at line 7725, BEFORE the `/api/magic/*`, `/api/deploy/*`,
+`/api/sessions/{id}/github/actions/*`, and `/api/sessions/{id}/docs/*`
+routes (lines 7764+, 7939+, 8175+, 8484+). FastAPI registers in source order
+so the catch-all matched first and the 22 specific endpoints never
+registered. They silently returned `text/html` (the SPA index) instead of
+JSON. Magic Modules, Vercel/Netlify deploy, GitHub Actions integration,
+and docs-generation were all dead in `loki web` standalone AND the
+dashboard `/lab/` mount.
+
+Surfaced by: real-user Playwright session on `/lab/magic` captured
+`SyntaxError: Unexpected token '<'` in the browser console.
+
+Fix: moved `serve_spa` to the END of `web-app/server.py` (after all
+`@app.<verb>` registrations). Verified: `/lab/api/magic/components` now
+returns `application/json` `{"count":0,"components":[]}`; SPA fallback
+still works for unknown paths.
+
+### Real-user end-to-end validation (the user-test cycle)
+
+Acted as a real user installing v7.5.31 from npm, writing a real fullstack
+PRD (Express + HTML notes app), running `loki start`, then running the
+generated app. Captured everything in `artifacts/USER-TEST-REPORT-v7.6.0.md`
+and `artifacts/ut-screenshots/`.
+
+| UT | Scenario | Result |
+|---|---|---|
+| UT-1 | Install latest via bun | PASS |
+| UT-2 | `loki doctor` text + JSON | PASS (18 required checks) |
+| UT-3 | `loki start` on real fullstack PRD | PASS in 180s, cost $1.48 |
+| UT-3a | Run the generated app, verify 7 acceptance criteria | PASS 7/7 (curl + browser screenshot) |
+| UT-4 | Playwright clicks all 14 dashboard sidebar entries | PASS 14/14, 0 console errors |
+| UT-5 | Direct page.goto on 11 Purple Lab routes via /lab/ mount | PASS 11/11, 1 real error found (the route bug above) |
+| UT-6 | `loki memory` on real data | PARTIAL (index + timeline OK; retrieve + pattern broken -- B-2 below) |
+| UT-7 | `loki provider list/show` | PASS |
+| UT-8 | `loki kpis` + JSON validation | PASS (real $1.48 from UT-3 reflected) |
+
+### Other bugs documented (NOT yet fixed; v7.6.1 / v7.7.0)
+
+- **B-2**: `loki memory retrieve` and `loki memory pattern` crash with
+  `No module named 'memory'` when run from a project directory outside
+  the Loki source tree. PYTHONPATH issue in `autonomy/loki cmd_memory`.
+- **B-3**: After a real session, `loki memory index` shows empty topics
+  and `loki memory economics` says "No token economics data" even though
+  episodes ARE written to `.loki/memory/episodic/` and `loki kpis` correctly
+  reports the cost. The enrichment / read path is disconnected from the
+  write path.
+- **B-4**: `loki nonexistent-cmd` exits 0 instead of non-zero
+  (pre-existing, not a Merge regression).
+- **B-5**: `LOKI_PROVIDER` env override does not reflect in `loki status`
+  output (may be by design; needs clarifying log line).
+
+### Feature requests captured for follow-up
+
+- **F-1**: USAGE.md should be auto-generated for every `loki start`
+  (not only when the PRD asks). v7.6.0 ships with the prompt-template
+  approach OR a documented best practice in `templates/`.
+- **F-2**: Memory browser in Dashboard -- users should be able to click
+  through `.loki/memory/episodic/*`, `learnings/*`, `ledgers/*` and read
+  individual records.
+- **F-3**: "Intelligent, not static" -- nothing hardcoded for testing,
+  higher-tier model decides scaffolding. Multi-release effort.
+
+### Reviewer council + workflows
+
+Per the binding 3-reviewer protocol (2 Opus + 1 Sonnet). Local-CI runs
+on the changes. All 6 GH workflows tracked post-push.
+
 ## [7.5.31] - 2026-05-23
 
 PATCH release. Phase Merge-7 (lite) of the v7.5.29+ Purple-Lab-into-

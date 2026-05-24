@@ -2689,6 +2689,167 @@ async def get_memory_timeline():
 
 
 # ---------------------------------------------------------------------------
+# Memory File Browser (v7.6.0) - generic drill-down into .loki/memory/
+# ---------------------------------------------------------------------------
+# Exposes raw episodic/learnings/ledgers/handoffs files plus root-level
+# notes (decisions.md, mistakes.md, patterns.md, investigation-*.md, etc.)
+# so the dashboard can let users click through what the agent has stored.
+#
+# Safety: type is a whitelisted enum; path is validated by resolving against
+# the memory directory and rejecting anything outside it (also rejects
+# absolute paths and ".." segments before resolution).
+
+_MEMORY_FILE_TYPES = {
+    "episodic": "episodic",
+    "learnings": "learnings",
+    "ledgers": "ledgers",
+    "handoffs": "handoffs",
+    "semantic": "semantic",
+    "skills": "skills",
+    "root": "",  # files directly under .loki/memory/
+}
+
+_MEMORY_FILE_MAX_BYTES = 2 * 1024 * 1024  # 2 MiB cap per file read
+
+
+def _safe_memory_path(rel_path: str) -> _Path:
+    """Resolve rel_path under .loki/memory/ and reject traversal attempts.
+
+    Raises HTTPException(400) on bad input, HTTPException(403) on traversal.
+    """
+    if not rel_path or not isinstance(rel_path, str):
+        raise HTTPException(status_code=400, detail="path required")
+    # Reject NULs and absolute paths up front
+    if "\x00" in rel_path or rel_path.startswith("/") or rel_path.startswith("\\"):
+        raise HTTPException(status_code=400, detail="invalid path")
+    # Reject explicit traversal segments before touching the filesystem
+    parts = rel_path.replace("\\", "/").split("/")
+    if any(p == ".." for p in parts):
+        raise HTTPException(status_code=403, detail="path traversal blocked")
+    memory_dir = _get_loki_dir() / "memory"
+    try:
+        real_memory = os.path.realpath(str(memory_dir))
+    except Exception:
+        raise HTTPException(status_code=500, detail="memory dir unavailable")
+    candidate = memory_dir / rel_path
+    try:
+        resolved = os.path.realpath(str(candidate))
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid path")
+    # Must live strictly under real_memory (not be it, not escape via symlink)
+    if not (resolved == real_memory or resolved.startswith(real_memory + os.sep)):
+        raise HTTPException(status_code=403, detail="path outside memory dir")
+    return _Path(resolved)
+
+
+@app.get("/api/memory/files", dependencies=[Depends(auth.require_scope("read"))])
+async def list_memory_files(
+    type: str = Query(default="root", description="One of: episodic, learnings, ledgers, handoffs, semantic, skills, root"),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    """List files under a memory subdirectory.
+
+    Returns: {type, dir, files: [{path, name, size, modified, kind}]}
+    `path` is relative to .loki/memory/ and safe to pass back to /api/memory/file.
+    """
+    if type not in _MEMORY_FILE_TYPES:
+        raise HTTPException(status_code=400, detail=f"unknown type; expected one of {sorted(_MEMORY_FILE_TYPES)}")
+    sub = _MEMORY_FILE_TYPES[type]
+    memory_dir = _get_loki_dir() / "memory"
+    target_dir = memory_dir / sub if sub else memory_dir
+    if not target_dir.exists():
+        return {"type": type, "dir": str(target_dir), "files": []}
+
+    real_memory = os.path.realpath(str(memory_dir))
+    entries: list[dict[str, Any]] = []
+
+    if type == "root":
+        # Only files directly under .loki/memory/ (don't descend into subdirs)
+        iterator = (p for p in target_dir.iterdir() if p.is_file())
+    elif type == "episodic":
+        # Episodic is organized by date subdirectory; walk one level.
+        def _ep_iter():
+            for child in target_dir.iterdir():
+                if child.is_file():
+                    yield child
+                elif child.is_dir():
+                    for f in child.iterdir():
+                        if f.is_file():
+                            yield f
+        iterator = _ep_iter()
+    else:
+        # Flat directory listing (learnings, ledgers, handoffs, semantic, skills)
+        iterator = (p for p in target_dir.rglob("*") if p.is_file())
+
+    for f in iterator:
+        try:
+            resolved = os.path.realpath(str(f))
+            if not resolved.startswith(real_memory + os.sep):
+                continue  # skip symlinks escaping the memory dir
+            rel = os.path.relpath(resolved, real_memory)
+            st = f.stat()
+            entries.append({
+                "path": rel,
+                "name": f.name,
+                "size": st.st_size,
+                "modified": st.st_mtime,
+                "kind": f.suffix.lstrip(".").lower() or "txt",
+            })
+        except Exception:
+            continue
+        if len(entries) >= limit:
+            break
+
+    # Newest first
+    entries.sort(key=lambda e: e["modified"], reverse=True)
+    return {"type": type, "dir": str(target_dir), "files": entries}
+
+
+@app.get("/api/memory/file", dependencies=[Depends(auth.require_scope("read"))])
+async def get_memory_file(
+    path: str = Query(..., min_length=1, max_length=512, description="Path relative to .loki/memory/"),
+):
+    """Read a single file under .loki/memory/ with strict path-traversal guards.
+
+    Returns: {path, name, size, modified, kind, content, truncated}
+    JSON files are returned with content as a string; the caller can JSON.parse.
+    """
+    target = _safe_memory_path(path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="not a file")
+    try:
+        st = target.stat()
+    except Exception:
+        raise HTTPException(status_code=500, detail="stat failed")
+    truncated = False
+    try:
+        if st.st_size > _MEMORY_FILE_MAX_BYTES:
+            with open(target, "rb") as fh:
+                raw = fh.read(_MEMORY_FILE_MAX_BYTES)
+            truncated = True
+        else:
+            with open(target, "rb") as fh:
+                raw = fh.read()
+        # Decode as UTF-8 with replacement so we never 500 on a stray byte.
+        content = raw.decode("utf-8", errors="replace")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"read failed: {e}")
+    return {
+        "path": path,
+        "name": target.name,
+        "size": st.st_size,
+        "modified": st.st_mtime,
+        "kind": target.suffix.lstrip(".").lower() or "txt",
+        "content": content,
+        "truncated": truncated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Memory Search & Stats (v6.15.0) - SQLite FTS5 powered
 # ---------------------------------------------------------------------------
 

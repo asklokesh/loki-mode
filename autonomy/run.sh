@@ -9189,6 +9189,13 @@ build_prompt() {
     # Context Memory Instructions (integrated with new memory system)
     local memory_instruction="MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory."
 
+    # USAGE.md instruction (v7.6.0) -- always-on end-user handoff doc.
+    # REGARDLESS of whether the PRD mentions it, the agent MUST write USAGE.md
+    # at the project root before signaling completion. This becomes the
+    # canonical "how do I run and verify this" artifact surfaced to the user
+    # and to the dashboard/Purple Lab UI.
+    local usage_doc_instruction="USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it."
+
     # Load existing context if resuming
     local context_injection=""
     if [ $retry -gt 0 ]; then
@@ -9518,15 +9525,15 @@ except Exception:
         else
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode with PRD at $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode with PRD at $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             else
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             fi
         fi
@@ -9567,6 +9574,7 @@ except Exception:
         else
             printf 'You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.\n'
         fi
+        printf '%s\n' "$usage_doc_instruction"
         printf '</loki_system>\n'
         printf '[CACHE_BREAKPOINT]\n'
 
@@ -9597,6 +9605,7 @@ except Exception:
     printf '%s\n' "$sdlc_instruction"
     printf '%s\n' "$autonomous_suffix"
     printf '%s\n' "$memory_instruction"
+    printf '%s\n' "$usage_doc_instruction"
     # For codebase-analysis mode (no PRD), analysis_instruction is part of the
     # static prefix so it remains cache-stable.
     if [ -z "$prd" ]; then

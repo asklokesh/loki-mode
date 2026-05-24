@@ -180,11 +180,13 @@ function completionInstruction(
   iteration: number,
   maxIterations: number,
 ): string {
-  // run.sh:8941-8945
+  // run.sh:9170-9172 -- v7.6.0 parity fix: bash includes FALLBACK clause in
+  // both branches (COMPLETION_PROMISE set and NO COMPLETION PROMISE SET).
+  // TS previously omitted them, causing ~82 bytes of divergence per fixture.
   if (completionPromise.length > 0) {
-    return `COMPLETION_PROMISE: [${completionPromise}]. When all PRD requirements are implemented, tests pass, and the PRD checklist is at or near 100%, invoke the loki_complete_task MCP tool with your completion_statement and evidence (cite tests that passed, checklist items verified, files created/modified). Do NOT emit a completion string in prose -- use the tool call.`;
+    return `COMPLETION_PROMISE: [${completionPromise}]. When all PRD requirements are implemented, tests pass, and the PRD checklist is at or near 100%, invoke the loki_complete_task MCP tool with your completion_statement and evidence (cite tests that passed, checklist items verified, files created/modified). Do NOT emit a completion string in prose -- use the tool call. FALLBACK: if the loki_complete_task tool is not available in your environment, instead run \`touch .loki/signals/COMPLETION_REQUESTED\` (optionally write a one-line statement to that file via \`echo 'statement' > .loki/signals/COMPLETION_REQUESTED\`); the runner detects this file and treats it as a completion claim.`;
   }
-  return `NO COMPLETION PROMISE SET. Continue finding improvements. The Completion Council will evaluate your progress periodically. Iteration ${iteration} of max ${maxIterations}. If you do decide the task is complete, invoke the loki_complete_task MCP tool with a structured statement and evidence rather than emitting prose.`;
+  return `NO COMPLETION PROMISE SET. Continue finding improvements. The Completion Council will evaluate your progress periodically. Iteration ${iteration} of max ${maxIterations}. If you do decide the task is complete, invoke the loki_complete_task MCP tool with a structured statement and evidence rather than emitting prose. FALLBACK if that tool is unavailable: \`touch .loki/signals/COMPLETION_REQUESTED\`.`;
 }
 
 function autonomousSuffix(perpetual: boolean, completionPromise: string): string {
@@ -207,6 +209,12 @@ const ANALYSIS_INSTRUCTION =
 const MEMORY_INSTRUCTION =
   // run.sh:8962
   `MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory.`;
+
+// USAGE.md instruction (v7.6.0) -- always-on end-user handoff doc.
+// Parity with bash: run.sh build_prompt() $usage_doc_instruction.
+// Lives in the cache-stable prefix so it is byte-identical across iterations.
+const USAGE_DOC_INSTRUCTION =
+  `USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it.`;
 
 // ---------------------------------------------------------------------------
 // load_ledger_context (run.sh:8126) -- newest LEDGER-*.md, head -100 lines.
@@ -1050,6 +1058,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(sdlcText);
   lines.push(autonomyText);
   lines.push(MEMORY_INSTRUCTION);
+  lines.push(USAGE_DOC_INSTRUCTION);
   if (prd === null || prd.length === 0) {
     lines.push(ANALYSIS_INSTRUCTION);
   }
@@ -1107,6 +1116,7 @@ function buildStaticFirstDegraded(opts: BuildPromptOpts, sections: ResolvedSecti
       "You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.",
     );
   }
+  lines.push(USAGE_DOC_INSTRUCTION);
   lines.push("</loki_system>");
   lines.push("[CACHE_BREAKPOINT]");
   lines.push(`<dynamic_context iteration="${iteration}" retry="${retry}">`);
@@ -1152,14 +1162,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(
@@ -1204,6 +1214,7 @@ export const _internals = {
   sdlcInstruction,
   ANALYSIS_INSTRUCTION,
   MEMORY_INSTRUCTION,
+  USAGE_DOC_INSTRUCTION,
   loadLedgerContext,
   loadHandoffContext,
   loadStartupLearnings,

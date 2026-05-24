@@ -7720,35 +7720,14 @@ async def get_audit_log() -> JSONResponse:
 
 # ---------------------------------------------------------------------------
 # Static file serving (built React app)
+# IMPORTANT: serve_spa was previously defined here at line 7725, BEFORE the
+# /api/magic, /api/deploy, /api/sessions/.../github/actions, and
+# /api/sessions/.../docs route registrations. FastAPI registers routes in
+# definition order, so the catch-all '/{full_path:path}' silently swallowed
+# those 22 endpoints (they returned index.html instead of JSON). Moved to
+# the very end of the file just before standalone_app in v7.6.0 so all
+# specific API routes register first.
 # ---------------------------------------------------------------------------
-
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str) -> FileResponse:
-    """Serve the React SPA and static assets from dist/.
-
-    The Vite build is configured with base: '/lab/' (Phase Merge-3), so the
-    bundled HTML references assets at '/lab/assets/...'. Under the canonical
-    standalone_app (and dashboard's Merge-4 mount), Starlette's Mount strips
-    '/lab' from the scope path before dispatch, so this handler usually sees
-    'assets/...' directly and the strip below is a no-op. The strip is
-    retained as defense-in-depth for direct-`app` invocations (e.g. tests or
-    operators running `uvicorn server:app` instead of `server:standalone_app`).
-    """
-    index = DIST_DIR / "index.html"
-    if not index.exists():
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Web app not built. Run: cd web-app && npm run build"},
-        )
-    # Resolve to the dist directory, tolerating the /lab/ base in standalone mode.
-    relative = full_path[4:] if full_path.startswith("lab/") else full_path
-    requested = DIST_DIR / relative
-    if relative and requested.is_file() and str(requested.resolve()).startswith(str(DIST_DIR.resolve())):
-        import mimetypes
-        content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
-        return FileResponse(str(requested), media_type=content_type)
-    # SPA fallback: return index.html for all non-file routes
-    return FileResponse(str(index))
 
 
 # ---------------------------------------------------------------------------
@@ -8647,6 +8626,45 @@ async def docs_get_file(session_id: str, filename: str) -> Response:
         return JSONResponse(status_code=500, content={"error": "Cannot read doc file"})
 
     return Response(content=content, media_type="text/markdown")
+
+
+# ---------------------------------------------------------------------------
+# SPA catch-all (MUST be last @app route -- see comment at the old serve_spa
+# location higher in this file). Any path that isn't matched by a specific
+# @app.get/post/... above falls through here and serves the React bundle.
+# v7.6.0 bug fix: previously this was at line 7725 and silently swallowed
+# 22 downstream API routes (/api/magic/*, /api/deploy/*, /api/sessions/.../
+# github/actions/*, /api/sessions/.../docs/*) which returned text/html
+# instead of JSON. Real-user test (Playwright on /lab/magic) surfaced it.
+# ---------------------------------------------------------------------------
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str) -> FileResponse:
+    """Serve the React SPA and static assets from dist/.
+
+    The Vite build is configured with base: '/lab/' (Phase Merge-3), so the
+    bundled HTML references assets at '/lab/assets/...'. Under the canonical
+    standalone_app (and dashboard's Merge-4 mount), Starlette's Mount strips
+    '/lab' from the scope path before dispatch, so this handler usually sees
+    'assets/...' directly and the strip below is a no-op. The strip is
+    retained as defense-in-depth for direct-`app` invocations (e.g. tests or
+    operators running `uvicorn server:app` instead of `server:standalone_app`).
+    """
+    index = DIST_DIR / "index.html"
+    if not index.exists():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Web app not built. Run: cd web-app && npm run build"},
+        )
+    # Resolve to the dist directory, tolerating the /lab/ base in standalone mode.
+    relative = full_path[4:] if full_path.startswith("lab/") else full_path
+    requested = DIST_DIR / relative
+    if relative and requested.is_file() and str(requested.resolve()).startswith(str(DIST_DIR.resolve())):
+        import mimetypes
+        content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+        return FileResponse(str(requested), media_type=content_type)
+    # SPA fallback: return index.html for all non-file routes
+    return FileResponse(str(index))
 
 
 # ---------------------------------------------------------------------------

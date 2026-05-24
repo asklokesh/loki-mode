@@ -700,6 +700,86 @@ function generateStandaloneHTML(bundleCode) {
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
           </div>
           <div>
+            <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory Files</h3>
+            <div id="memory-files-panel" style="background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+              <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;" id="memory-files-tabs"></div>
+              <div style="display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; min-height: 280px;">
+                <div id="memory-files-list" style="border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 8px; max-height: 480px; overflow-y: auto; font-size: 12px;">Loading...</div>
+                <div id="memory-files-viewer" style="border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 12px; max-height: 480px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--loki-text-primary, #eee);">Select a file to view its contents.</div>
+              </div>
+            </div>
+            <script>
+              (function(){
+                var TYPES = [
+                  {id: 'root', label: 'Notes'},
+                  {id: 'episodic', label: 'Episodes'},
+                  {id: 'learnings', label: 'Learnings'},
+                  {id: 'ledgers', label: 'Ledgers'},
+                  {id: 'handoffs', label: 'Handoffs'},
+                  {id: 'semantic', label: 'Semantic'},
+                  {id: 'skills', label: 'Skills'}
+                ];
+                var state = {type: 'root', files: [], selected: null};
+                var tabsEl = document.getElementById('memory-files-tabs');
+                var listEl = document.getElementById('memory-files-list');
+                var viewEl = document.getElementById('memory-files-viewer');
+                function esc(s){ var d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; }
+                function fmtSize(n){ if (n < 1024) return n + ' B'; if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB'; return (n/1024/1024).toFixed(2) + ' MB'; }
+                function fmtTime(ts){ try { return new Date(ts*1000).toLocaleString(); } catch(e){ return ''; } }
+                function renderTabs(){
+                  tabsEl.innerHTML = TYPES.map(function(t){
+                    var active = t.id === state.type;
+                    return '<button data-type="' + t.id + '" style="padding: 5px 10px; font-size: 11px; border-radius: 4px; border: 1px solid ' + (active ? 'var(--loki-accent, #553de9)' : 'var(--loki-border, #333)') + '; background: ' + (active ? 'var(--loki-accent, #553de9)' : 'transparent') + '; color: ' + (active ? '#fff' : 'var(--loki-text-primary, #ccc)') + '; cursor: pointer;">' + esc(t.label) + '</button>';
+                  }).join('');
+                  Array.prototype.forEach.call(tabsEl.querySelectorAll('button'), function(b){
+                    b.addEventListener('click', function(){ loadType(b.getAttribute('data-type')); });
+                  });
+                }
+                function renderList(){
+                  if (!state.files.length){ listEl.innerHTML = '<div style="color: var(--loki-text-muted, #888); padding: 8px;">No files in this section.</div>'; return; }
+                  listEl.innerHTML = state.files.map(function(f){
+                    var active = state.selected && state.selected.path === f.path;
+                    return '<div data-path="' + esc(f.path) + '" style="padding: 6px 8px; border-radius: 3px; cursor: pointer; margin-bottom: 2px; background: ' + (active ? 'var(--loki-accent, #553de9)' : 'transparent') + '; color: ' + (active ? '#fff' : 'inherit') + ';" title="' + esc(f.path) + '"><div style="font-weight: 500;">' + esc(f.name) + '</div><div style="font-size: 10px; color: ' + (active ? 'rgba(255,255,255,0.8)' : 'var(--loki-text-muted, #888)') + ';">' + fmtSize(f.size) + ' -- ' + esc(fmtTime(f.modified)) + '</div></div>';
+                  }).join('');
+                  Array.prototype.forEach.call(listEl.querySelectorAll('div[data-path]'), function(d){
+                    d.addEventListener('click', function(){ loadFile(d.getAttribute('data-path')); });
+                  });
+                }
+                function renderViewer(file){
+                  if (!file){ viewEl.textContent = 'Select a file to view its contents.'; return; }
+                  var header = file.name + '  (' + fmtSize(file.size) + (file.truncated ? ', truncated' : '') + ')\n' + file.path + '\n\n';
+                  var body = file.content || '';
+                  if (file.kind === 'json'){
+                    try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(e){ /* leave raw */ }
+                  }
+                  viewEl.textContent = header + body;
+                }
+                function loadType(t){
+                  state.type = t; state.selected = null;
+                  renderTabs(); renderViewer(null);
+                  listEl.innerHTML = 'Loading...';
+                  fetch('/api/memory/files?type=' + encodeURIComponent(t) + '&limit=500')
+                    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                    .then(function(j){ state.files = (j && j.files) || []; renderList(); })
+                    .catch(function(e){ listEl.innerHTML = '<div style="color: var(--loki-red, #e74c3c); padding: 8px;">Failed: ' + esc(e.message) + '</div>'; });
+                }
+                function loadFile(p){
+                  state.selected = state.files.filter(function(f){ return f.path === p; })[0] || {path: p};
+                  renderList();
+                  viewEl.textContent = 'Loading ' + p + '...';
+                  fetch('/api/memory/file?path=' + encodeURIComponent(p))
+                    .then(function(r){ if (!r.ok) return r.json().then(function(j){ throw new Error(j.detail || ('HTTP ' + r.status)); }); return r.json(); })
+                    .then(function(j){ renderViewer(j); })
+                    .catch(function(e){ viewEl.textContent = 'Failed: ' + e.message; });
+                }
+                // Initialize when Insights becomes visible (or immediately if already visible)
+                function init(){ renderTabs(); loadType('root'); }
+                if (document.getElementById('page-insights')){ init(); }
+                else { document.addEventListener('DOMContentLoaded', init); }
+              })();
+            </script>
+          </div>
+          <div>
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Learning Metrics</h3>
             <loki-learning-dashboard id="learning-dashboard" time-range="7d"></loki-learning-dashboard>
           </div>
