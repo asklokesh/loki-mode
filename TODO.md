@@ -246,21 +246,21 @@ Format:
 
 ## Next-up wave 5 (discovered during N-46..N-60)
 
-- [ ] N-61 `loki forge metrics --json` includes a `prev_timestamp`
+- [x] N-61 `loki forge metrics --json` includes a `prev_timestamp`
            when called twice within process lifetime so deltas can
            be computed without state-keeping by the caller
-- [ ] N-62 Audit verify: `--scope` CLI flag on `loki forge audit`
+- [x] N-62 Audit verify: `--scope` CLI flag on `loki forge audit`
            (currently only the Python API supports scope=...)
-- [ ] N-63 Secrets `unused_for_days` threshold in /metrics so
+- [x] N-63 Secrets `unused_for_days` threshold in /metrics so
            dashboards see how many are >90 days stale
-- [ ] N-64 Function deploy: `deployed_by_user_id` exposed in
+- [x] N-64 Function deploy: `deployed_by_user_id` exposed in
            list_functions() so dashboards can show attribution per
            version without reading each manifest
-- [ ] N-65 Presence: `gc_presence` returns `(evicted, remaining)`
+- [x] N-65 Presence: `gc_presence` returns `(evicted, remaining)`
            tuple so callers can graph both halves in one pass
-- [ ] N-66 OpenAPI: paths-by-tag grouping (`tags: [db, storage,
+- [x] N-66 OpenAPI: paths-by-tag grouping (`tags: [db, storage,
            functions]`) so generated SDKs split into modules cleanly
-- [ ] N-67 Storage transforms: `unrevoke_preset(name)` ceremonial
+- [x] N-67 Storage transforms: `unrevoke_preset(name)` ceremonial
            companion to revoke - removes the audit line so a name
            can be re-registered without `force=True`
 - [ ] N-68 Doctor history: `--history-prune <days>` companion that

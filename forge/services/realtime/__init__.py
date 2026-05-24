@@ -27,4 +27,5 @@ from .presence import (  # noqa: F401
     clear_presence,
     list_presence,
     gc_presence,
+    gc_presence_with_count,
 )

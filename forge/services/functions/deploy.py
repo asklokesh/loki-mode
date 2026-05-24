@@ -216,9 +216,22 @@ def list_functions(forge_dir: str) -> List[Dict[str, Any]]:
             continue
         try:
             with open(mpath, "r", encoding="utf-8") as f:
-                out.append(json.load(f))
+                manifest = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
+        # N-64: surface attribution for the active version at the top
+        # level so dashboards don't have to walk versions[].
+        active = manifest.get("active_version")
+        if active is not None:
+            for v in manifest.get("versions", []):
+                if v.get("version") == active:
+                    if v.get("deployed_by_user_id"):
+                        manifest["last_deployed_by_user_id"] = \
+                            v["deployed_by_user_id"]
+                    if v.get("deployed_at"):
+                        manifest["last_deployed_at"] = v["deployed_at"]
+                    break
+        out.append(manifest)
     return out
 
 

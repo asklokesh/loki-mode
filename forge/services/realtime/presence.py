@@ -134,3 +134,15 @@ def gc_presence(channel: str, *,
     for uid in expired:
         _emit(forge_dir, channel, "presence:leave", uid)
     return expired
+
+
+def gc_presence_with_count(channel: str, *,
+                           forge_dir: Optional[str] = None) -> Dict[str, Any]:
+    """N-65: gc_presence companion that also reports the post-GC
+    roster size so callers can graph both halves in one pass.
+    Returns {evicted: [user_ids], remaining: int}.
+    """
+    evicted = gc_presence(channel, forge_dir=forge_dir)
+    with _LOCK:
+        remaining = len(_STATE.get(channel, {}))
+    return {"evicted": evicted, "remaining": remaining}

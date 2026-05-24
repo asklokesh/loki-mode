@@ -176,7 +176,7 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
                 )
     except Exception:
         pass
-    # Secrets (N-55).
+    # Secrets (N-55, N-63).
     try:
         from forge.services.secrets.vault import list_secrets, weak_secrets
         rows = list_secrets(forge_dir)
@@ -187,6 +187,17 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
         lines.append("# HELP forge_secrets_weak Secrets on HMAC-XOR fallback")
         lines.append("# TYPE forge_secrets_weak gauge")
         lines.append(f"forge_secrets_weak {len(weak)}")
+        # N-63: stale buckets so dashboards see rotation candidates.
+        stale_30 = sum(1 for r in rows
+                       if isinstance(r.get("unused_for_days"), int)
+                       and r["unused_for_days"] > 30)
+        stale_90 = sum(1 for r in rows
+                       if isinstance(r.get("unused_for_days"), int)
+                       and r["unused_for_days"] > 90)
+        lines.append("# HELP forge_secrets_stale Secrets unused longer than the bucket")
+        lines.append("# TYPE forge_secrets_stale gauge")
+        lines.append(f'forge_secrets_stale{{bucket="30d"}} {stale_30}')
+        lines.append(f'forge_secrets_stale{{bucket="90d"}} {stale_90}')
     except Exception:
         pass
     # Gateway.

@@ -31,6 +31,7 @@ from .transform import (  # noqa: F401
     list_transform_presets,
     list_revoked_presets,
     revoke_transform_preset,
+    unrevoke_preset,
 )
 from .gateway import (  # noqa: F401
     SUPPORTED_PROVIDERS as STORAGE_GATEWAY_PROVIDERS,

@@ -2115,23 +2115,29 @@ PY
             # N-47: summary line includes git_head when in a repo.
             local quiet_flag="false"
             local summary_flag="false"
+            local scope_arg="all"
             local git_head=""
             git_head=$(git rev-parse HEAD 2>/dev/null || true)
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --quiet) quiet_flag="true"; shift ;;
                     --summary) summary_flag="true"; shift ;;
+                    --scope) scope_arg="${2:-all}"; shift 2 ;;
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag" "$git_head"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag" "$git_head" "$scope_arg"
 import json, sys
 from forge.audit_verify import verify
 quiet = sys.argv[2] == "true"
 summary = sys.argv[3] == "true"
 git_head = sys.argv[4]
+scope = sys.argv[5] if len(sys.argv) > 5 else "all"
+if scope not in ("all", "migrations", "chain"):
+    print(json.dumps({"error": f"unknown scope {scope!r}"}))
+    sys.exit(1)
 try:
-    rep = verify(sys.argv[1])
+    rep = verify(sys.argv[1], scope=scope)
     if summary:
         line = (
             f"ok={'true' if rep.get('ok') else 'false'} "
@@ -2281,9 +2287,28 @@ else:
             value = val
         out.append({"name": name, "labels": lab, "value": value,
                     "help": helps.get(name), "type": types.get(name)})
+    import os as _os
     import time as _t
+    # N-61: persist last-scrape timestamp so callers can compute
+    # deltas without state-keeping. Stored in forge_dir.
+    state_path = _os.path.join(sys.argv[1], ".metrics_last_scrape")
+    prev_ts = None
+    try:
+        if _os.path.isfile(state_path):
+            with open(state_path, "r") as fp:
+                prev_ts = int(fp.read().strip())
+    except Exception:
+        pass
+    now_ts = int(_t.time())
+    try:
+        _os.makedirs(sys.argv[1], exist_ok=True)
+        with open(state_path, "w") as fp:
+            fp.write(str(now_ts))
+    except Exception:
+        pass
     print(json.dumps({"schema": "loki.forge.metrics/v1",
-                      "timestamp": int(_t.time()),
+                      "timestamp": now_ts,
+                      "prev_timestamp": prev_ts,
                       "metrics": out}, indent=2))
 PY
             ;;
