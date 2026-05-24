@@ -21,6 +21,41 @@ from typing import Any, Dict, List
 from .codegen import _state_dump, _norm_type, _pascal
 
 
+def _err_resp(description: str) -> Dict[str, Any]:
+    return {
+        "description": description,
+        "content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/Error"},
+        }},
+    }
+
+
+# N-09: shared error response bank. Routes attach the subset they
+# actually emit; reading the spec tells the consumer exactly which
+# 4xx codes to handle. The Error schema is registered once in
+# components below so $ref resolution stays clean.
+_ERR = {
+    "401": _err_resp("unauthorized - missing or invalid auth token"),
+    "403": _err_resp("forbidden - row-level policy denied this caller"),
+    "404": _err_resp("not found"),
+    "422": _err_resp("unprocessable entity - request body failed validation"),
+}
+
+_ERROR_SCHEMA = {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+        "error": {"type": "string",
+                  "description": "short machine-readable error code"},
+        "message": {"type": "string",
+                    "description": "human-readable explanation"},
+        "detail": {"type": "object",
+                   "additionalProperties": True,
+                   "description": "optional structured detail"},
+    },
+}
+
+
 _TYPE_OPENAPI = {
     "id": {"type": "integer"},
     "integer": {"type": "integer"},
@@ -56,6 +91,8 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                             },
                         }},
                     },
+                    "401": _ERR["401"],
+                    "403": _ERR["403"],
                 },
             },
             "post": {
@@ -73,6 +110,9 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                             "schema": {"$ref": f"#/components/schemas/{schema_name}"},
                         }},
                     },
+                    "401": _ERR["401"],
+                    "403": _ERR["403"],
+                    "422": _ERR["422"],
                 },
             },
         }
@@ -90,7 +130,9 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                             "schema": {"$ref": f"#/components/schemas/{schema_name}"},
                         }},
                     },
-                    "404": {"description": "not found"},
+                    "401": _ERR["401"],
+                    "403": _ERR["403"],
+                    "404": _ERR["404"],
                 },
             },
         }
@@ -113,16 +155,22 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                         },
                     }},
                 },
-                "responses": {"200": {
-                    "description": "ok",
-                    "content": {"application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {"url": {"type": "string",
-                                                   "format": "uri"}},
-                        },
-                    }},
-                }},
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {"application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {"url": {"type": "string",
+                                                       "format": "uri"}},
+                            },
+                        }},
+                    },
+                    "401": _ERR["401"],
+                    "403": _ERR["403"],
+                    "404": _ERR["404"],
+                    "422": _ERR["422"],
+                },
             },
         }
 
@@ -149,10 +197,15 @@ def generate(forge_dir: str, *, title: str = "Forge API",
                             },
                         }},
                     },
+                    "401": _ERR["401"],
+                    "403": _ERR["403"],
+                    "404": _ERR["404"],
+                    "422": _ERR["422"],
                 },
             },
         }
 
+    schemas["Error"] = _ERROR_SCHEMA
     return {
         "openapi": "3.1.0",
         "info": {"title": title, "version": version},

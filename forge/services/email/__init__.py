@@ -25,4 +25,5 @@ from .templates import (  # noqa: F401
     list_templates,
     register_template,
     send_template,
+    unset_locale,
 )

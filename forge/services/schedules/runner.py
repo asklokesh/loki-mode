@@ -102,6 +102,12 @@ def tick(forge_dir: str, *, now_ts: Optional[float] = None,
                 detail = str(e)
         _record_run(forge_dir, s, outcome, detail)
         s["last_fire_ts"] = int(now)
+        # N-12: persist the most recent run outcome on the schedule
+        # record so list_schedules() surfaces ok/error without the
+        # caller scanning the per-run JSON files.
+        s["last_run_outcome"] = outcome
+        s["last_run_at"] = int(now)
+        s["last_run_detail"] = detail
         # X-83: retry-on-fail. When the invoke returned an error,
         # leave next_fire_ts close to now (with exponential backoff
         # up to max_retries) instead of jumping to the next cron

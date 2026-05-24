@@ -529,6 +529,35 @@ def register_forge_router(app) -> None:
                         "to complete the token-exchange flow",
             }
 
+        # --- N-10: magic-link redeem ------------------------------------
+
+        @app.get("/forge/auth/magic/redeem")
+        async def forge_magic_redeem(token: str = "") -> Any:
+            """N-10: HTTP handler over magic_link.redeem(). Returns a
+            session JWT on success; mirrors the OAuth callback shape so
+            clients can treat magic-link and OAuth identically.
+            Maps redeem() error codes onto standard HTTP statuses:
+                invalid_token_shape -> 422
+                consumed_or_unknown -> 404
+                expired             -> 410
+            """
+            if not token:
+                raise HTTPException(status_code=422,
+                                    detail="token query param required")
+            from forge.services.auth import magic_link_redeem
+            result = magic_link_redeem(_forge_dir(), token)
+            if result.get("ok"):
+                return result
+            err = result.get("error", "unknown")
+            status = {
+                "invalid_token_shape": 422,
+                "consumed_or_unknown": 404,
+                "expired": 410,
+            }.get(err, 400)
+            return JSONResponse(status_code=status, content={
+                "ok": False, "error": err,
+            })
+
         from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
 
         @app.websocket("/forge/realtime/v1")

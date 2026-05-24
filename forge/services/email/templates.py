@@ -132,6 +132,40 @@ def list_templates(forge_dir: str) -> List[Dict[str, Any]]:
     return [{"name": k, **v} for k, v in sorted(merged.items())]
 
 
+def unset_locale(forge_dir: str, name: str, locale: str) -> bool:
+    """N-11: drop a localized variant of a template without touching
+    the default (locale=None) entry. Returns True when a variant was
+    removed, False when no matching variant existed. Refuses to drop
+    the default by raising EmailError if `locale` is None - operators
+    should call delete logic intentionally for that.
+    """
+    if locale is None:
+        raise EmailError(
+            "unset_locale refuses to drop the default; pass an "
+            "explicit locale like 'en' or 'fr-CA'"
+        )
+    if not _NAME_RE.match(name or ""):
+        raise EmailError(
+            "template name must match ^[a-z][a-z0-9_-]{0,62}$"
+        )
+    if not _LOCALE_RE.match(locale):
+        raise EmailError("locale must match ^[a-z]{2}(-[A-Z]{2})?$")
+    p = _path(forge_dir)
+    if not os.path.isfile(p):
+        return False
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            overrides = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    key = f"{name}@{locale}"
+    if key not in overrides:
+        return False
+    del overrides[key]
+    _save(forge_dir, overrides)
+    return True
+
+
 def _render(tmpl: str, ctx: Dict[str, Any]) -> str:
     def repl(m):
         key = m.group(1)

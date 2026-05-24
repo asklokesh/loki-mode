@@ -108,13 +108,13 @@ Format:
            before invoke (X-78 was attest-only; this enforces)
 - [x] N-08 Secrets vault: KDF iteration count surfaced in
            list_secrets() so an operator can spot fallback HMAC-XOR rows
-- [ ] N-09 OpenAPI: include responses for every error code our routes
+- [x] N-09 OpenAPI: include responses for every error code our routes
            can emit (401/403/404/422) for spec correctness
-- [ ] N-10 Magic-link: dashboard endpoint `/auth/magic/redeem?token=...`
+- [x] N-10 Magic-link: dashboard endpoint `/auth/magic/redeem?token=...`
            wires the existing redeem() into an HTTP handler
-- [ ] N-11 Email templates: `unset_locale()` so the operator can remove
+- [x] N-11 Email templates: `unset_locale()` so the operator can remove
            a localized variant without wiping the default
-- [ ] N-12 Schedules: surface `last_run_outcome` (ok/error) in `list()`
+- [x] N-12 Schedules: surface `last_run_outcome` (ok/error) in `list()`
 - [ ] N-13 Audit verify: walk the dashboard chain hash AND the per-file
            review records in one pass (currently sequential)
 - [ ] N-14 Storage transforms: register a `revoke_preset(name)` for
