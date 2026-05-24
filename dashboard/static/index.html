@@ -702,6 +702,40 @@
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Learning Metrics</h3>
             <loki-learning-dashboard id="learning-dashboard" time-range="7d"></loki-learning-dashboard>
           </div>
+          <!-- v7.7.1 F-1 follow-up: How to Run (USAGE.md) -->
+          <div>
+            <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">How to Run (USAGE.md)</h3>
+            <div id="usage-doc-panel" style="background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+              <div id="usage-doc-meta" style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Loading...</div>
+              <pre id="usage-doc-content" style="margin: 0; padding: 12px; background: var(--loki-bg-secondary, #111); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--loki-text-primary, #eee); max-height: 480px; overflow: auto;"></pre>
+            </div>
+            <script>
+              (function(){
+                function loadUsage(){
+                  fetch('/api/usage').then(function(r){ return r.json(); }).then(function(j){
+                    var meta = document.getElementById('usage-doc-meta');
+                    var body = document.getElementById('usage-doc-content');
+                    if (!meta || !body) return;
+                    if (!j || !j.exists){
+                      meta.textContent = 'USAGE.md not generated yet. Loki writes it at the end of each session.';
+                      body.textContent = '';
+                      return;
+                    }
+                    var size = j.size > 1024 ? (j.size/1024).toFixed(1) + ' KB' : j.size + ' B';
+                    var when = j.mtime ? new Date(j.mtime*1000).toLocaleString() : '';
+                    meta.textContent = j.path + '  (' + size + (j.truncated ? ', truncated' : '') + ', ' + when + ')';
+                    body.textContent = j.content || '';
+                  }).catch(function(e){
+                    var meta = document.getElementById('usage-doc-meta');
+                    if (meta) meta.textContent = 'Failed to load USAGE.md: ' + (e && e.message ? e.message : 'unknown');
+                  });
+                }
+                loadUsage();
+                // Re-poll on interval so a fresh USAGE.md appears after a session.
+                setInterval(loadUsage, 15000);
+              })();
+            </script>
+          </div>
         </div>
       </div>
 

@@ -5207,6 +5207,46 @@ async def get_checklist():
         return {"status": "error", "categories": [], "summary": {"total": 0, "verified": 0, "failing": 0, "pending": 0}}
 
 
+@app.get("/api/usage")
+async def get_usage_doc():
+    """v7.7.1 F-1 follow-up: return the auto-generated USAGE.md from the
+    project root so Dashboard + Lab can surface "how to run / test the app".
+
+    Returns {exists: bool, content: str|None, path: str, size: int, mtime: float}.
+    Path-traversal hardened: resolves to PROJECT_ROOT/USAGE.md verbatim, no
+    user-controlled path component. Reads up to 256 KiB; truncates with a
+    `truncated: true` flag if larger.
+    """
+    loki_dir = _get_loki_dir()
+    project_root = loki_dir.parent
+    usage_path = project_root / "USAGE.md"
+    out = {
+        "exists": False,
+        "content": None,
+        "path": str(usage_path),
+        "size": 0,
+        "mtime": 0.0,
+        "truncated": False,
+    }
+    if not usage_path.is_file():
+        return out
+    try:
+        st = usage_path.stat()
+        out["exists"] = True
+        out["size"] = st.st_size
+        out["mtime"] = st.st_mtime
+        MAX_BYTES = 256 * 1024  # 256 KiB cap
+        if st.st_size > MAX_BYTES:
+            out["truncated"] = True
+            with usage_path.open("r", encoding="utf-8", errors="replace") as f:
+                out["content"] = f.read(MAX_BYTES) + "\n\n... [truncated]"
+        else:
+            out["content"] = usage_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        out["error"] = str(e)
+    return out
+
+
 @app.get("/api/checklist/summary")
 async def get_checklist_summary():
     """Get checklist verification summary."""

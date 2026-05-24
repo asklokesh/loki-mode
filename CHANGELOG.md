@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.1] - 2026-05-24
+
+PATCH release. F-1 follow-up: USAGE.md surfaced in Dashboard UI.
+
+### Added
+
+- `GET /api/usage` endpoint on Dashboard server: returns the project's
+  USAGE.md as JSON `{exists, content, path, size, mtime, truncated}`.
+  Path-traversal hardened (resolves to PROJECT_ROOT/USAGE.md verbatim,
+  no user-controlled path component). 256 KiB read cap; truncates with
+  flag if larger.
+- "How to Run (USAGE.md)" panel in Dashboard Insights section. Renders
+  the markdown as preformatted text inside a styled panel, with file
+  size + path + mtime metadata. Polls every 15s so a fresh USAGE.md
+  appears within seconds of session completion.
+- When USAGE.md is absent, panel shows clear placeholder text:
+  "USAGE.md not generated yet. Loki writes it at the end of each session."
+
+### Verified
+
+- `curl /api/usage` returns `exists: false` when no USAGE.md exists
+- `curl /api/usage` returns full content when USAGE.md present
+- Dashboard rebuilt; "How to Run (USAGE.md)" + "usage-doc-panel" present
+  3 times in static HTML (script + container + meta)
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- Markdown rendering (panel shows preformatted text, not HTML-rendered
+  markdown). Adding a markdown renderer would require shipping the
+  `marked` library; preformatted is sufficient for v7.7.1.
+- Purple Lab `/lab/api/usage` not added; Lab gets it via dashboard mount
+  in v7.6.0+, so `<iframe>` to /lab/ inherits the surface implicitly
+  but a dedicated tab in the Lab React UI is queued for v7.7.2.
+
 ## [7.7.0] - 2026-05-24
 
 MINOR release. Intelligent LSP grounding for agents -- auto-spawned per
