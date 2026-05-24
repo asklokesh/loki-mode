@@ -128,4 +128,8 @@ def compute_health(forge_dir: str, *,
         "status": severity_max,
         "codes": codes,
         "openapi_generated_at": spec_ts,
+        # N-131: expose when the cached spec ts expires so operators
+        # can debug staleness during incident response.
+        "openapi_cached_until": int(_OPENAPI_TS_CACHE["expires_at"])
+                                if _OPENAPI_TS_CACHE["expires_at"] else None,
     }

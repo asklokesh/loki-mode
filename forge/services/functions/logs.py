@@ -138,6 +138,18 @@ def _record_purge(forge_dir: str, name: str, mode: str, arg: int,
                 "arg": arg,
                 "removed": removed,
             }) + "\n")
+        # N-134: rotate when the file passes 1000 lines so it never
+        # grows unbounded. Keeps the most recent 1000.
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            if len(lines) > 1000:
+                tmp = p + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.writelines(lines[-1000:])
+                os.replace(tmp, p)
+        except OSError:
+            pass
     except OSError:
         pass
 

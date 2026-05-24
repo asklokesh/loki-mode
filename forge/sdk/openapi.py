@@ -279,6 +279,8 @@ def generate(forge_dir: str, *, title: str = "Forge API",
         "title": title, "version": version,
         "x-generated-at": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.gmtime(_now))
                           + f".{_ms:03d}Z",
+        # N-140: epoch ms so machines parse without strptime.
+        "x-generated-at-epoch-ms": int(_now * 1000),
     }
     try:
         for cand in (os.path.join(os.path.dirname(forge_dir), "..", "package.json"),

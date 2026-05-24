@@ -2170,7 +2170,8 @@ try:
             f"checks={rep.get('checked_reviews', 0)} "
             f"warns={len(rep.get('warnings') or [])} "
             f"errs={len(rep.get('errors') or [])} "
-            f"dashboard_audit={rep.get('dashboard_audit')}"
+            f"dashboard_audit={rep.get('dashboard_audit')} "
+            f"scope={scope}"  # N-139
         )
         if git_head:
             line += f" git_head={git_head}"
@@ -2314,6 +2315,10 @@ def _name_of(s):
         return s.split("{", 1)[0].split(" ", 1)[0]
     return ""
 if filter_prefix or filter_exclude:
+    # N-138: filter_prefix accepts a comma list - keep names that
+    # start with ANY of the prefixes.
+    prefixes = [p for p in (filter_prefix or "").split(",") if p]
+    excludes = [p for p in (filter_exclude or "").split(",") if p]
     keep = []
     for ln in text.splitlines():
         s = ln.strip()
@@ -2322,9 +2327,9 @@ if filter_prefix or filter_exclude:
             keep.append(ln)
             continue
         name = _name_of(s)
-        if filter_prefix and not name.startswith(filter_prefix):
+        if prefixes and not any(name.startswith(p) for p in prefixes):
             continue
-        if filter_exclude and name.startswith(filter_exclude):
+        if excludes and any(name.startswith(p) for p in excludes):
             continue
         keep.append(ln)
     text = "\n".join(keep) + "\n"
@@ -2414,8 +2419,33 @@ PY
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
                     --history-list)
                         # N-128: list current files with size + age.
+                        # N-137: --json emits a structured array.
                         local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
-                        if [[ -d "$hist_dir" ]]; then
+                        local json_out="false"
+                        if [[ "${2:-}" == "--json" ]]; then
+                            json_out="true"; shift
+                        fi
+                        if [[ "$json_out" == "true" ]]; then
+                            PYTHONPATH="$skill_dir" python3 - <<PY "$hist_dir"
+import json, os, sys, time
+d = sys.argv[1]
+out = []
+if os.path.isdir(d):
+    for e in sorted(os.listdir(d), reverse=True):
+        if not e.startswith("doctor-") or not e.endswith(".json"):
+            continue
+        p = os.path.join(d, e)
+        try:
+            st = os.stat(p)
+            out.append({"file": e, "size": st.st_size,
+                        "mtime": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                               time.gmtime(st.st_mtime))})
+        except OSError:
+            continue
+print(json.dumps({"schema": "loki.forge.doctor.history/v1",
+                  "files": out}, indent=2))
+PY
+                        elif [[ -d "$hist_dir" ]]; then
                             find "$hist_dir" -name 'doctor-*.json' -type f \
                                 -printf '%f %s %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
                                 | sort -r

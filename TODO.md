@@ -414,26 +414,55 @@ Format:
 
 ## Next-up wave 11 (discovered during N-121..N-130)
 
-- [ ] N-131 Health: an `openapi_cached_until` field exposes when
+- [x] N-131 Health: an `openapi_cached_until` field exposes when
             the cached spec ts expires so operators can debug
-- [ ] N-132 Schedules: tag values normalized to lower-case on
+- [x] N-132 Schedules: tag values normalized to lower-case on
             create so `Acme` and `acme` don't fork channels
-- [ ] N-133 Email: `unset_template(name, force=True)` records the
+- [x] N-133 Email: `unset_template(name, force=True)` records the
             override in a `dropped_defaults.jsonl` audit trail
-- [ ] N-134 Function purges.jsonl: cap entries at 1000 so it never
+- [x] N-134 Function purges.jsonl: cap entries at 1000 so it never
             grows unbounded
-- [ ] N-135 Secrets: `list_rotations` accepts `since_ts` filter so
+- [x] N-135 Secrets: `list_rotations` accepts `since_ts` filter so
             dashboards can show "rotations in the last 7 days"
-- [ ] N-136 Healing v2: surface aggregate `total_attempt_ms` on
+- [x] N-136 Healing v2: surface aggregate `total_attempt_ms` on
             the envelope so callers see total wallclock
-- [ ] N-137 Doctor `--history-list` accepts `--json` for structured
+- [x] N-137 Doctor `--history-list` accepts `--json` for structured
             output (parity with metrics --json)
-- [ ] N-138 Forge metrics: `--filter prefix=...` accepts multiple
+- [x] N-138 Forge metrics: `--filter prefix=...` accepts multiple
             comma-separated prefixes
-- [ ] N-139 `loki forge audit` summary line includes scope so
+- [x] N-139 `loki forge audit` summary line includes scope so
             CI knows which half ran
-- [ ] N-140 OpenAPI `info.x-generated-at` also emitted as
+- [x] N-140 OpenAPI `info.x-generated-at` also emitted as
             `info.x-generated-at-epoch-ms` so machines parse easier
+
+## Next-up wave 12 (discovered during N-131..N-140)
+
+- [ ] N-141 Health `openapi_cached_until` exposed as RFC3339 too
+            so dashboards can render without conversion
+- [ ] N-142 Schedules `tags` validated for max length 32 chars (done
+            in regex) AND each char count - the regex permits
+            "::::::" so add a check that excludes leading/trailing
+            colons
+- [ ] N-143 Email `dropped_defaults.jsonl` exposed via
+            `list_dropped_defaults(forge_dir)` so dashboards see
+            which built-ins were force-dropped
+- [ ] N-144 Function `purges.jsonl` exposed via
+            `list_purges(name)` so dashboards see disk reclaim history
+- [ ] N-145 Secrets: `weak_secrets` adds `count` shortcut returning
+            just the integer for ultra-cheap dashboard widgets
+- [ ] N-146 Healing: `apply_proposal(dry_run=True)` returns the
+            sql that WOULD be applied per op so operators can review
+- [ ] N-147 Doctor `--history-list --tail N` keeps just the last N
+            entries in the list (CLI-side limit)
+- [ ] N-148 Forge metrics: `--watch SECONDS` polls and re-prints
+            (parity with doctor --watch)
+- [ ] N-149 `loki forge audit --summary --color` colorizes
+            ok=true green / errs>0 red for human eyes
+- [ ] N-150 OpenAPI `info.x-generated-at` ISO emitted in UTC always
+            even when local TZ has DST (current code already uses
+            gmtime, but add explicit Z assertion in tests)
+
+## Loop continuation
 
 ## Loop continuation
 

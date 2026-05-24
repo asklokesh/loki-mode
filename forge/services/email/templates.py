@@ -167,6 +167,20 @@ def unset_template(forge_dir: str, name: str, *,
             f"refusing to drop built-in default {name!r}; "
             "pass force=True to override"
         )
+    # N-133: when force-dropping a built-in default, leave an audit
+    # trail so operators can correlate later "where did the welcome
+    # email go?" questions with the action that caused it.
+    if force and name in DEFAULT_TEMPLATES:
+        try:
+            import time as _t
+            audit_p = os.path.join(forge_dir, "email", "dropped_defaults.jsonl")
+            os.makedirs(os.path.dirname(audit_p), exist_ok=True)
+            with open(audit_p, "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "name": name, "ts": int(_t.time()), "forced": True,
+                }) + "\n")
+        except OSError:
+            pass
     p = _path(forge_dir)
     if not os.path.isfile(p):
         return False

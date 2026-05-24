@@ -112,6 +112,10 @@ def create(forge_dir: str, name: str, cron: str,
         import re as _re
         cleaned = []
         for t in tags:
+            # N-132: normalize to lower-case so 'Acme' and 'acme'
+            # don't fork channels.
+            if isinstance(t, str):
+                t = t.lower()
             if not isinstance(t, str) or not _re.match(r"^[a-z0-9_:-]{1,32}$", t):
                 raise ScheduleError(
                     f"invalid tag {t!r}: ^[a-z0-9_:-]{{1,32}}$"

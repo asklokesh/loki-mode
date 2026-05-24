@@ -370,12 +370,16 @@ def rotate_value(forge_dir: str, name: str,
 
 
 def list_rotations(forge_dir: str, *,
-                   name: Optional[str] = None) -> List[Dict[str, Any]]:
+                   name: Optional[str] = None,
+                   since_ts: Optional[int] = None
+                   ) -> List[Dict[str, Any]]:
     """N-116: parse rotations.jsonl into a list of records so
     callers don't have to read the raw file. Most recent last
     (file is append-only).
     N-126: optional `name=` filter returns just that secret's
-    history."""
+    history.
+    N-135: optional `since_ts=` filter returns only rotations newer
+    than the unix timestamp (handy for "last 7 days" dashboards)."""
     p = os.path.join(forge_dir, "secrets", "rotations.jsonl")
     if not os.path.isfile(p):
         return []
@@ -394,6 +398,9 @@ def list_rotations(forge_dir: str, *,
         return []
     if name is not None:
         out = [r for r in out if r.get("name") == name]
+    if since_ts is not None:
+        out = [r for r in out
+               if isinstance(r.get("ts"), int) and r["ts"] >= int(since_ts)]
     return out
 
 

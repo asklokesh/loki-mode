@@ -338,4 +338,7 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
         # N-117: total_ops so callers can compute success rate
         # without summing applied + errors themselves.
         "total_ops": len(ops_status),
+        # N-136: aggregate wallclock so dashboards graph apply latency.
+        "total_attempt_ms": sum(int(op.get("attempt_ms", 0))
+                                for op in ops_status),
     }
