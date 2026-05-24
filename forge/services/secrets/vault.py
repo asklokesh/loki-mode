@@ -225,7 +225,18 @@ def get_secret(forge_dir: str, name: str) -> Optional[str]:
     ent = data["entries"].get(name)
     if not ent:
         return None
-    return _decrypt(ent, _master_key(forge_dir))
+    value = _decrypt(ent, _master_key(forge_dir))
+    # N-41: stamp last_used_at on successful decryption so operators
+    # can spot stale secrets that no caller has fetched in months.
+    # Best-effort - file write failure must not block the value
+    # return.
+    try:
+        import time as _t
+        ent["last_used_at"] = int(_t.time())
+        _save(forge_dir, data)
+    except Exception:
+        pass
+    return value
 
 
 def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
@@ -253,6 +264,9 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
             "fallback": alg == "HMAC-XOR",
             "created_at": ent.get("created_at"),
             "updated_at": ent.get("updated_at"),
+            # N-41: surfaces last get_secret() time so operators
+            # can identify rotation/removal candidates.
+            "last_used_at": ent.get("last_used_at"),
         })
     return out
 

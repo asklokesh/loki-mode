@@ -2274,11 +2274,23 @@ PY
             # leaves git_head=null.
             local git_head=""
             git_head=$(git rev-parse HEAD 2>/dev/null || true)
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$sb_json" "$git_head"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$sb_json" "$git_head" "${TARGET_DIR:-.}"
 import json, sys
-forge_dir, sb_raw, git_head = sys.argv[1], sys.argv[2], sys.argv[3]
+forge_dir, sb_raw, git_head, project = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 from forge.health import compute_health
-health = compute_health(forge_dir)
+# N-42: read forge.yaml storage.probe_timeout_s if available.
+probe_timeout = 2.0
+try:
+    from forge.config import find_config, _parse_yaml
+    p = find_config(project)
+    if p:
+        cfg = _parse_yaml(p) or {}
+        s = (cfg.get("storage") or {}).get("probe_timeout_s")
+        if isinstance(s, (int, float)) and 0 < s <= 60:
+            probe_timeout = float(s)
+except Exception:
+    pass
+health = compute_health(forge_dir, probe_timeout_s=probe_timeout)
 sandbox = None
 if sb_raw:
     try:

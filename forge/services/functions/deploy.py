@@ -65,7 +65,8 @@ def _utc_iso() -> str:
 def deploy(forge_dir: str, name: str, runtime: str, source_b64: str,
            *, entry: str = "index", env_secrets: Optional[List[str]] = None,
            timeout_ms: int = 10000, memory_mb: int = 128,
-           triggers: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+           triggers: Optional[List[Dict[str, Any]]] = None,
+           deployed_by_user_id: Optional[str] = None) -> Dict[str, Any]:
     """Deploy a new version of a function. Returns its manifest entry."""
     _validate_name(name)
     if runtime not in _ALLOWED_RUNTIMES:
@@ -135,12 +136,20 @@ def deploy(forge_dir: str, name: str, runtime: str, source_b64: str,
         "active_version": next_v,
     })
     versions = manifest.get("versions", [])
-    versions.append({
+    version_entry = {
         "version": next_v,
         "sha": sha,
         "size": len(source_bytes),
         "deployed_at": _utc_iso(),
-    })
+    }
+    # N-40: attribute the deploy to the caller's user_id when supplied
+    # so audit reviews see who shipped each version. None on legacy
+    # / unattended deploys.
+    if deployed_by_user_id is not None:
+        if not isinstance(deployed_by_user_id, str) or not deployed_by_user_id:
+            raise FunctionError("deployed_by_user_id must be a non-empty string")
+        version_entry["deployed_by_user_id"] = deployed_by_user_id
+    versions.append(version_entry)
     # X-78: signed-source attestation. We HMAC the source bytes with
     # the project's master key so downstream verifiers can confirm
     # this exact source was deployed by Loki. Best-effort; if the

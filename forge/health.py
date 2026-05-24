@@ -15,9 +15,17 @@ from typing import Any, Dict, List
 _SEVERITY_RANK = {"info": 0, "warn": 1, "critical": 2}
 
 
-def compute_health(forge_dir: str) -> Dict[str, Any]:
+def compute_health(forge_dir: str, *,
+                   probe_timeout_s: float = 2.0) -> Dict[str, Any]:
     """Return the same shape as /api/forge/health. No I/O against
-    the network; only the local forge_dir is read."""
+    the network; only the local forge_dir is read.
+
+    N-42: `probe_timeout_s` controls the storage gateway HEAD probe
+    timeout. Defaults to 2s (matches the previous hard-coded value);
+    callers can lower it for fast scrape paths or raise it for slow
+    cross-region endpoints. The doctor CLI surfaces this via the
+    forge.yaml `storage.probe_timeout_s` key.
+    """
     codes: List[Dict[str, Any]] = []
     if os.path.isdir(forge_dir):
         if os.path.isfile(os.path.join(forge_dir, "required.json")) \
@@ -75,7 +83,7 @@ def compute_health(forge_dir: str) -> Dict[str, Any]:
                and cfg.get("endpoint") and cfg.get("bucket"):
                 pr = probe_storage_bucket(
                     endpoint=cfg["endpoint"], bucket=cfg["bucket"],
-                    timeout_s=2.0,
+                    timeout_s=probe_timeout_s,
                 )
                 if not pr.get("ok"):
                     codes.append({

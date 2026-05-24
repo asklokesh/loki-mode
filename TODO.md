@@ -190,11 +190,11 @@ Format:
            clients may want to track keep-alives)
 - [x] N-39 Forge doctor: include `git rev-parse HEAD` in the report
            so support tickets correlate code state with diagnostics
-- [ ] N-40 Function deploy: persist `deployed_by_user_id` from caller
+- [x] N-40 Function deploy: persist `deployed_by_user_id` from caller
            context so audit reviews see operator attribution
-- [ ] N-41 Secrets: `last_used_at` per secret so operators can
+- [x] N-41 Secrets: `last_used_at` per secret so operators can
            identify candidates for rotation/removal
-- [ ] N-42 Storage gateway: probe timeout configurable from
+- [x] N-42 Storage gateway: probe timeout configurable from
            `.loki/config.yaml` (currently hard-coded to 3s in probe,
            2s in doctor)
 - [ ] N-43 Realtime bus: persist a `_meta` envelope around system
