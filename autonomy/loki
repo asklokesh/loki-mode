@@ -14259,20 +14259,25 @@ except Exception as e:
             # .loki/metrics/efficiency/iter-*.json. Unify: prefer the
             # canonical kpis source; fall back to the legacy file for
             # backward compat with pre-v7.6.6 sessions.
+            # v7.7.7 fix: also check iteration-*.json (the canonical filename)
+            # in addition to iter-*.json. Use a portable glob check (no compgen)
+            # so the function works in any POSIX shell, not just bash.
             local _eff_dir=".loki/metrics/efficiency"
             local _legacy_file=".loki/memory/token_economics.json"
             local _have_iters=0
             if [ -d "$_eff_dir" ]; then
-                if compgen -G "$_eff_dir/iter-*.json" >/dev/null 2>&1; then
+                if ls "$_eff_dir"/iteration-*.json >/dev/null 2>&1 || ls "$_eff_dir"/iter-*.json >/dev/null 2>&1; then
                     _have_iters=1
                 fi
             fi
             if [ "$_have_iters" -eq 1 ]; then
                 PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PYEOF' 2>/dev/null
 import json, glob, os, sys
-files = sorted(glob.glob('.loki/metrics/efficiency/iter-*.json'))
+# v7.7.7 fix: canonical filename is `iteration-N.json`, NOT `iter-N.json`.
+# We glob both for compat with any older runs.
+files = sorted(set(glob.glob('.loki/metrics/efficiency/iteration-*.json') + glob.glob('.loki/metrics/efficiency/iter-*.json')))
 totals = {
-    'source': '.loki/metrics/efficiency/iter-*.json',
+    'source': '.loki/metrics/efficiency/iteration-*.json',
     'iterations': len(files),
     'total_input_tokens': 0,
     'total_output_tokens': 0,

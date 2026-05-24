@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.7] - 2026-05-24
+
+PATCH release. Real-user end-to-end validation surfaced 3 bugs in the
+B-3 memory-enrichment chain that synthetic tests had missed. All fixed.
+
+### Fixed
+
+- **B-3a v2 (non-git projects)**: v7.6.4 capture-on-completion only
+  worked when target_dir was a git repo. Real-user test on
+  /tmp/loki-validate (no git init) produced `files_modified: []` because
+  `git rev-parse HEAD` failed silently. Now: detect git vs non-git up
+  front; for non-git dirs, use a `find -newer .loki/state/orchestrator.json`
+  snapshot diff with noise-dir exclusion. Belt-and-suspenders: if find
+  returns nothing, fall back to a plain `find -maxdepth 3` listing
+  capped at 50 files. Works in any project, git or not.
+- **B-3b filename mismatch**: v7.6.4 looked for
+  `.loki/metrics/efficiency/iter-N.json` but the actual filename is
+  `iteration-N.json`. Tokens never got loaded into the episode.
+  Now both filenames are checked.
+- **B-3d glob + portability**: `loki memory economics` used `compgen -G`
+  which is bash-only and only matched `iter-*.json`. Switched to
+  portable `ls` checks with both `iteration-*.json` and `iter-*.json`
+  patterns. Python `glob` already dedups via `set()`. Verified end-to-end:
+  real session shows 10,279 tokens, $0.7064 (was "No data" before).
+
+### Verified
+
+- Real session on /tmp/loki-validate (Express PRD, no git init):
+  `loki memory economics` now returns full JSON with iteration count,
+  token totals, cost, model/phase breakdown
+- bash -n autonomy/run.sh + autonomy/loki clean
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- B-3a v2 against a real git repo (the previous git-only path is
+  unchanged so should still work, but no regression test was added)
+- F-3 intelligent USAGE regen quality (separate bug: real-user test
+  showed regen got the port wrong -- said "port 3000" when server.js
+  was on 3001). Tracked as a follow-up; likely needs the planning-tier
+  model to read server.js content instead of just inferring from
+  package.json. Deferred.
+
 ## [7.7.6] - 2026-05-24
 
 PATCH release. Build-system reliability: every release in v7.6.2..v7.7.5

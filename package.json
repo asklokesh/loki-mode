@@ -1,6 +1,6 @@
 {
   "name": "loki-mode",
-  "version": "7.7.6",
+  "version": "7.7.7",
   "description": "Loki Mode by Autonomi. Multi-agent autonomous SDLC framework. Spec to deployed app: PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. 4 AI providers (Claude Code, OpenAI Codex, Cline, Aider). 11 quality gates.",
   "keywords": [
     "agent",

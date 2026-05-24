@@ -8826,35 +8826,87 @@ auto_capture_episode() {
     # rolled the new files into HEAD. Now diff against the iteration-start
     # SHA captured at the top of the retry loop. Falls back to HEAD~1 if the
     # start SHA env is unset (older direct callers).
+    # v7.7.7 fix: previously only captured files when target_dir was a git
+    # repo. Real-user test on /tmp/loki-validate (no git init) produced
+    # `files_modified: []` because git rev-parse failed silently and the
+    # fallback also required git. Now: detect git-vs-non-git up front, and
+    # for non-git dirs use a `find` snapshot diff against the timestamp
+    # captured when loki created .loki/ (initialized_at). Skips standard
+    # noise dirs (.loki, node_modules, .git, venv, .venv, dist, build).
     local files_modified=""
     local _diff_base="${_LOKI_ITER_START_SHA:-}"
-    if [ -z "$_diff_base" ]; then
-        _diff_base=$(cd "$target_dir" && git rev-parse HEAD~1 2>/dev/null || echo "")
+    local _is_git=0
+    if (cd "$target_dir" && git rev-parse --is-inside-work-tree >/dev/null 2>&1); then
+        _is_git=1
     fi
-    if [ -n "$_diff_base" ]; then
-        files_modified=$(cd "$target_dir" && git diff --name-only "$_diff_base" HEAD 2>/dev/null | head -50 | tr '\n' '|' || true)
-        # Also include unstaged changes (in case auto-commit didn't run)
-        local _unstaged
-        _unstaged=$(cd "$target_dir" && git diff --name-only HEAD 2>/dev/null | head -20 | tr '\n' '|' || true)
-        if [ -n "$_unstaged" ]; then
-            files_modified="${files_modified}${_unstaged}"
+    if [ "$_is_git" -eq 1 ]; then
+        if [ -z "$_diff_base" ]; then
+            _diff_base=$(cd "$target_dir" && git rev-parse HEAD~1 2>/dev/null || echo "")
+        fi
+        if [ -n "$_diff_base" ]; then
+            files_modified=$(cd "$target_dir" && git diff --name-only "$_diff_base" HEAD 2>/dev/null | head -50 | tr '\n' '|' || true)
+            # Also include unstaged changes (in case auto-commit didn't run)
+            local _unstaged
+            _unstaged=$(cd "$target_dir" && git diff --name-only HEAD 2>/dev/null | head -20 | tr '\n' '|' || true)
+            if [ -n "$_unstaged" ]; then
+                files_modified="${files_modified}${_unstaged}"
+            fi
+        else
+            # Git repo but no prior commit (e.g. fresh init) -- list untracked.
+            files_modified=$(cd "$target_dir" && git ls-files --others --exclude-standard 2>/dev/null | head -50 | tr '\n' '|' || true)
         fi
     else
-        # No git history yet (initial commit) -- list all tracked + untracked.
-        files_modified=$(cd "$target_dir" && git ls-files --others --exclude-standard 2>/dev/null | head -50 | tr '\n' '|' || true)
+        # NOT a git repo: snapshot diff via find. Use .loki/ mtime as the
+        # iteration-start reference (loki creates .loki/ on session start).
+        # `-newer` on directory mtime gives a rough but useful set of files
+        # modified DURING this session. Skip noise dirs.
+        local _ref_file="${target_dir}/.loki/state/orchestrator.json"
+        if [ ! -f "$_ref_file" ]; then
+            _ref_file="${target_dir}/.loki"
+        fi
+        if [ -e "$_ref_file" ]; then
+            files_modified=$(cd "$target_dir" && find . -type f -newer "$_ref_file" \
+                -not -path './.loki/*' \
+                -not -path './node_modules/*' \
+                -not -path './.git/*' \
+                -not -path './venv/*' \
+                -not -path './.venv/*' \
+                -not -path './dist/*' \
+                -not -path './build/*' \
+                2>/dev/null | head -50 | sed 's|^\./||' | tr '\n' '|' || true)
+        fi
+        # Belt-and-suspenders: if find returned nothing, fall back to a
+        # plain listing of non-noise files (every visible file, capped at 50).
+        if [ -z "$files_modified" ]; then
+            files_modified=$(cd "$target_dir" && find . -maxdepth 3 -type f \
+                -not -path './.loki/*' \
+                -not -path './node_modules/*' \
+                -not -path './.git/*' \
+                2>/dev/null | head -50 | sed 's|^\./||' | tr '\n' '|' || true)
+        fi
     fi
 
     # Collect last git commit if any
     local git_commit=""
     git_commit=$(cd "$target_dir" && git rev-parse --short HEAD 2>/dev/null || true)
 
-    # v7.6.4 B-3a fix: aggregate per-iteration efficiency metrics into the
-    # episode so `tokens_used` / `cost_usd` / `input_tokens` / `output_tokens`
-    # are no longer always 0. Source: `.loki/metrics/efficiency/iter-N.json`
-    # (same source `loki kpis` reads from).
-    local _iter_metrics_file="$target_dir/.loki/metrics/efficiency/iter-${iteration}.json"
+    # v7.6.4 B-3a fix + v7.7.7 filename fix: the actual filename is
+    # `iteration-N.json` (not `iter-N.json` as v7.6.4 erroneously assumed).
+    # Real-user test on /tmp/loki-validate showed `iteration-1.json` in
+    # .loki/metrics/efficiency/. We now check both the canonical name and
+    # the legacy `iter-N.json` for backward compat with any older runs.
+    local _iter_metrics_file=""
+    for _candidate in \
+        "$target_dir/.loki/metrics/efficiency/iteration-${iteration}.json" \
+        "$target_dir/.loki/metrics/efficiency/iter-${iteration}.json" \
+    ; do
+        if [ -f "$_candidate" ]; then
+            _iter_metrics_file="$_candidate"
+            break
+        fi
+    done
     local _iter_tokens_in=0 _iter_tokens_out=0 _iter_cost=0
-    if [ -f "$_iter_metrics_file" ]; then
+    if [ -n "$_iter_metrics_file" ]; then
         _iter_tokens_in=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(int(d.get('input_tokens', 0) or 0))" 2>/dev/null || echo 0)
         _iter_tokens_out=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(int(d.get('output_tokens', 0) or 0))" 2>/dev/null || echo 0)
         _iter_cost=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(float(d.get('cost_usd', 0) or 0))" 2>/dev/null || echo 0)
