@@ -226,6 +226,18 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
                 lines.append(
                     f'forge_email_template_coverage{{name="{base}"}} {n}'
                 )
+            # N-95: bucket distribution so dashboards graph coverage
+            # without iterating per name. Buckets: 1, 2-5, 6-10, >10.
+            b1 = sum(1 for n in per_name.values() if n == 1)
+            b5 = sum(1 for n in per_name.values() if 2 <= n <= 5)
+            b10 = sum(1 for n in per_name.values() if 6 <= n <= 10)
+            bx = sum(1 for n in per_name.values() if n > 10)
+            lines.append("# HELP forge_email_locales_bucket Template count by locale coverage bucket")
+            lines.append("# TYPE forge_email_locales_bucket gauge")
+            lines.append(f'forge_email_locales_bucket{{bucket="1"}} {b1}')
+            lines.append(f'forge_email_locales_bucket{{bucket="2-5"}} {b5}')
+            lines.append(f'forge_email_locales_bucket{{bucket="6-10"}} {b10}')
+            lines.append(f'forge_email_locales_bucket{{bucket=">10"}} {bx}')
     except Exception:
         pass
     # Gateway.

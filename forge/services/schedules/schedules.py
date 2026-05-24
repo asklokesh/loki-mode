@@ -136,6 +136,19 @@ def update(forge_dir: str, name: str, **fields: Any) -> Dict[str, Any]:
                 if t.get("type") not in _ALLOWED_TARGET_TYPES:
                     raise ScheduleError("invalid target.type")
                 s["target"] = t
+            if "bus_channel" in fields:
+                # N-93: same validation as create() so typos surface
+                # in update() too.
+                bc = fields["bus_channel"]
+                if bc is None or bc == "":
+                    s.pop("bus_channel", None)
+                else:
+                    import re as _re
+                    if not _re.match(r"^[a-z][a-z0-9_.\-]{1,63}$", bc):
+                        raise ScheduleError(
+                            "bus_channel must match ^[a-z][a-z0-9_.\\-]{1,63}$"
+                        )
+                    s["bus_channel"] = bc
             _save(forge_dir, items)
             return s
     raise ScheduleError(f"schedule not found: {name}")

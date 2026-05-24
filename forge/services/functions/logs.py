@@ -12,7 +12,8 @@ def _logs_dir(forge_dir: str, name: str) -> str:
 
 
 def list_runs(forge_dir: str, name: str, limit: int = 100,
-              *, outcome: Optional[str] = None) -> List[Dict[str, Any]]:
+              *, outcome: Optional[str] = None,
+              since_ts: Optional[int] = None) -> List[Dict[str, Any]]:
     """List recent function runs.
 
     N-58: `outcome` filters to a subset:
@@ -41,6 +42,21 @@ def list_runs(forge_dir: str, name: str, limit: int = 100,
             continue
         if outcome == "error" and rec.get("ok"):
             continue
+        # N-96: since_ts filters out runs older than the cutoff so
+        # pollers only see new entries. started_at is an ISO string;
+        # parse to epoch if present.
+        if since_ts is not None:
+            started = rec.get("started_at")
+            ts = 0
+            if isinstance(started, str):
+                try:
+                    import time as _t
+                    ts = int(_t.mktime(_t.strptime(
+                        started, "%Y-%m-%dT%H:%M:%SZ")))
+                except Exception:
+                    ts = 0
+            if ts < int(since_ts):
+                continue
         out.append(rec)
         if len(out) >= cap:
             break

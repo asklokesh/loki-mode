@@ -280,13 +280,25 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
     return out
 
 
-def weak_secrets(forge_dir: str) -> List[Dict[str, Any]]:
+def weak_secrets(forge_dir: str, *,
+                 unused_for_days: Optional[int] = None
+                 ) -> List[Dict[str, Any]]:
     """N-22: subset of list_secrets() that is on the insecure HMAC-XOR
     fallback. Use this in CI to fail builds that promote with weak
     secrets, or surface in a dashboard banner. The shape mirrors
     list_secrets() so callers can render it the same way.
+
+    N-97: when `unused_for_days` is set, also requires
+    unused_for_days >= the threshold so dashboards can surface the
+    "weak AND stale" rotation candidates first.
     """
-    return [r for r in list_secrets(forge_dir) if r.get("fallback")]
+    rows = [r for r in list_secrets(forge_dir) if r.get("fallback")]
+    if unused_for_days is not None:
+        cutoff = int(unused_for_days)
+        rows = [r for r in rows
+                if isinstance(r.get("unused_for_days"), int)
+                and r["unused_for_days"] >= cutoff]
+    return rows
 
 
 def export_secrets(forge_dir: str, *,

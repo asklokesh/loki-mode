@@ -269,12 +269,17 @@ def _map_type(legacy_type: Optional[str]) -> str:
     return "text"
 
 
-def apply_proposal(forge_dir: str, proposal: Dict[str, Any]) -> Dict[str, Any]:
+def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
+                   *, dry_run: bool = False) -> Dict[str, Any]:
     """Apply the migration spec returned by propose_from_sqlite.
 
     N-88: returns a v2 envelope with per-op status entries so callers
     can map each input op to its outcome. Top-level `applied` and
     `errors` are preserved for v1-compatible consumers.
+
+    N-99: `dry_run=True` reports `ok=True` for every op without
+    invoking migrate_apply; useful for previewing what would land
+    before actually writing.
     """
     from forge.services.database import open_engine, migrate_apply
     engine = open_engine(forge_dir)
@@ -291,6 +296,14 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any]) -> Dict[str, Any]:
         else:
             target = next(iter(op))
             spec = {"operations": [op]}
+        if dry_run:
+            ops_status.append({
+                "op": next(iter(op)),
+                "target": target,
+                "ok": True,
+                "dry_run": True,
+            })
+            continue
         try:
             res = migrate_apply(engine, spec)
             applied.append(res["migration_id"])

@@ -29,20 +29,58 @@ _SUBSCRIBERS: Dict[str, List["asyncio.Queue[Dict[str, Any]]"]] = defaultdict(lis
 _RING: Dict[str, Deque[Dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_HISTORY_CAP))
 
 
-def set_channel_cap(channel: str, cap: int) -> None:
-    """N-85: configure a custom ring cap for `channel`. Must be called
-    before the first publish or it has no effect for older messages.
+def _caps_path(forge_dir: str) -> str:
+    return os.path.join(forge_dir, "realtime", "ring_caps.json")
+
+
+def set_channel_cap(channel: str, cap: int, *,
+                    forge_dir: Optional[str] = None) -> None:
+    """N-85: configure a custom ring cap for `channel`.
+    N-94: when `forge_dir` is supplied, the cap also persists to
+    realtime/ring_caps.json so it survives process restart - call
+    `load_channel_caps(forge_dir)` at startup to rehydrate.
     cap must be in [1, 1_000_000]; values outside the range are
     rejected so a typo can't blow the heap."""
     if not isinstance(cap, int) or cap < 1 or cap > 1_000_000:
         raise ValueError("cap must be an int in [1, 1000000]")
     with _LOCK:
-        # Always replace so subsequent publishes see the new maxlen.
         old = _RING.get(channel)
         new_ring: Deque[Dict[str, Any]] = deque(
             (list(old)[-cap:] if old else []), maxlen=cap
         )
         _RING[channel] = new_ring
+    if forge_dir:
+        try:
+            p = _caps_path(forge_dir)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            caps: Dict[str, int] = {}
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    caps = json.load(f)
+            caps[channel] = cap
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(caps, f, indent=2, sort_keys=True)
+            os.replace(tmp, p)
+        except OSError:
+            pass
+
+
+def load_channel_caps(forge_dir: str) -> Dict[str, int]:
+    """N-94: rehydrate persisted ring caps. Call at startup so
+    operator-configured caps survive process restart."""
+    p = _caps_path(forge_dir)
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            caps = json.load(f)
+        for ch, cap in caps.items():
+            if isinstance(cap, int) and 1 <= cap <= 1_000_000:
+                set_channel_cap(ch, cap)
+        return caps
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _hist_path(forge_dir: str, channel: str) -> str:

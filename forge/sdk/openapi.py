@@ -267,7 +267,14 @@ def generate(forge_dir: str, *, title: str = "Forge API",
     # N-82: read repo URL from a package.json sibling so generated
     # clients carry the project's contact info. Best-effort - missing
     # file omits the contact block.
-    info: Dict[str, Any] = {"title": title, "version": version}
+    import time as _t
+    # N-92: x-generated-at timestamp so consumers can detect a fresh
+    # spec without diffing the whole document. Standard OpenAPI
+    # extension prefix.
+    info: Dict[str, Any] = {
+        "title": title, "version": version,
+        "x-generated-at": _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime()),
+    }
     try:
         for cand in (os.path.join(os.path.dirname(forge_dir), "..", "package.json"),
                      "package.json"):

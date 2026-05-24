@@ -319,27 +319,51 @@ Format:
 
 ## Next-up wave 7 (discovered during N-76..N-90)
 
-- [ ] N-91 `loki forge` aliases for common subcommands (e.g. `loki
+- [x] N-91 `loki forge` aliases for common subcommands (e.g. `loki
            forge doc` -> `doctor`, `loki forge m` -> `metrics`)
-- [ ] N-92 OpenAPI: emit `info.x-generated-at` timestamp so consumers
+- [x] N-92 OpenAPI: emit `info.x-generated-at` timestamp so consumers
            detect regenerated specs
-- [ ] N-93 Schedules `update()` re-validates `bus_channel` when the
+- [x] N-93 Schedules `update()` re-validates `bus_channel` when the
            field is changed (currently only `create()` validates)
-- [ ] N-94 Bus `set_channel_cap` persists to disk so it survives
+- [x] N-94 Bus `set_channel_cap` persists to disk so it survives
            process restart (currently in-memory only)
-- [ ] N-95 Email metrics: emit `forge_email_template_locales_per_name`
+- [x] N-95 Email metrics: emit `forge_email_template_locales_per_name`
            histogram-style bucket so dashboards see distribution
-- [ ] N-96 Function logs: `list_runs` accepts a `since_ts` filter
+- [x] N-96 Function logs: `list_runs` accepts a `since_ts` filter
            so callers can poll for new failures only
-- [ ] N-97 Secrets `weak_secrets` adds an `unused_for_days` filter
+- [x] N-97 Secrets `weak_secrets` adds an `unused_for_days` filter
            so dashboards can surface "weak AND stale" rotation
            candidates first
-- [ ] N-98 Forge metrics `--label` rejects label keys that contain
+- [x] N-98 Forge metrics `--label` rejects label keys that contain
            non-prometheus characters with a clear error
-- [ ] N-99 Healing `apply_proposal` accepts `dry_run=True` so
+- [x] N-99 Healing `apply_proposal` accepts `dry_run=True` so
            operators can preview the per-op status without writing
-- [ ] N-100 Doctor `--watch` adds `--max-iterations N` for CI runs
+- [x] N-100 Doctor `--watch` adds `--max-iterations N` for CI runs
            that need a bounded watch (currently infinite loop only)
+
+## Next-up wave 8 (discovered during N-91..N-100)
+
+- [ ] N-101 `loki forge h` alias for help (parity with other aliases)
+- [ ] N-102 OpenAPI `x-generated-at` uses RFC3339 with milliseconds
+            so re-generations within a second still differ
+- [ ] N-103 Schedules: a `tags: [...]` field with /metrics gauges
+            tagged by it so multi-tenant dashboards can group
+- [ ] N-104 Bus: `set_channel_cap` persists with timestamp + actor
+            field so audits can see who tuned it
+- [ ] N-105 Email: `list_templates(include_defaults=False)` so the
+            caller can see only operator-registered overrides
+- [ ] N-106 Function logs: `purge_runs(name, keep_last_n=N)` keep-N
+            companion to `older_than_days`
+- [ ] N-107 Secrets: `weak_secrets(forge_dir, hard=True)` raises
+            instead of returning so CI can use a single call-and-exit
+- [ ] N-108 Healing: `apply_proposal` records `dry_run_count` on
+            the v2 envelope so callers can tell preview from real
+- [ ] N-109 Doctor `--watch`: emit a `--once` companion that runs
+            doctor exactly once and exits, regardless of interval
+- [ ] N-110 `loki forge metrics` accepts `--filter prefix=forge_secrets_`
+            so scrapers can carve out subsets
+
+## Loop continuation
 
 ## Loop continuation
 

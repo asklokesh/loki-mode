@@ -2009,6 +2009,14 @@ cmd_resume() {
 cmd_forge() {
     local subcommand="${1:-status}"
     shift 2>/dev/null || true
+    # N-91: short aliases so common subcommands need fewer keystrokes.
+    case "$subcommand" in
+        doc) subcommand="doctor" ;;
+        m) subcommand="metrics" ;;
+        s) subcommand="status" ;;
+        l) subcommand="lint" ;;
+        a) subcommand="audit" ;;
+    esac
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local skill_dir
@@ -2256,12 +2264,21 @@ from forge.metrics import render
 labels = {}
 raw = sys.argv[2]
 if raw:
+    # N-98: prometheus label names match [a-zA-Z_][a-zA-Z0-9_]*.
+    _LBL_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
     for pair in raw.split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
             k, v = k.strip(), v.strip()
-            if k and v:
-                labels[k] = v
+            if not k or not v:
+                continue
+            if not _LBL_RE.match(k):
+                print(json.dumps({
+                    "error": f"invalid label key {k!r}: "
+                             "must match [a-zA-Z_][a-zA-Z0-9_]*"
+                }))
+                sys.exit(2)
+            labels[k] = v
 text = render(sys.argv[1], labels=labels)
 if sys.argv[3] != "true":
     print(text, end="")
@@ -2336,11 +2353,13 @@ PY
             local watch_interval=""
             local history_cap=""
             local history_prune_days=""
+            local watch_max_iter=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --history) history_cap="${2:-10}"; shift 2 ;;
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
-                    --watch) shift; watch_interval="${1:-5}"; shift 2>/dev/null || true; break ;;
+                    --max-iterations) watch_max_iter="${2:-0}"; shift 2 ;;
+                    --watch) watch_interval="${2:-5}"; shift 2 ;;
                     *) shift ;;
                 esac
             done
@@ -2403,6 +2422,7 @@ PY
                 # interval and print only the diff between successive
                 # status snapshots. Ctrl-C exits.
                 local prev=""
+                local iter=0
                 while true; do
                     local now
                     now=$(cmd_forge doctor 2>&1 || true)
@@ -2410,6 +2430,11 @@ PY
                         echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
                         echo "$now"
                         prev="$now"
+                    fi
+                    iter=$((iter+1))
+                    # N-100: stop after N iterations when --max-iterations is set.
+                    if [[ -n "$watch_max_iter" && "$iter" -ge "$watch_max_iter" ]] 2>/dev/null; then
+                        return 0
                     fi
                     sleep "$watch_interval"
                 done
