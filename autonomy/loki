@@ -6915,7 +6915,9 @@ cmd_doctor() {
 
 # JSON output for loki doctor --json
 cmd_doctor_json() {
-    python3 -c "
+    local _loki_version
+    _loki_version=$(get_version)
+    LOKI_VERSION="$_loki_version" python3 -c "
 import json, os, subprocess, sys, shutil
 
 def get_version(cmd, args=None):
@@ -7008,6 +7010,7 @@ elif disk_status == 'fail': fail_count += 1
 elif disk_status == 'warn': warn_count += 1
 
 result = {
+    'loki_mode_version': os.environ.get('LOKI_VERSION', 'unknown'),
     'checks': checks,
     'disk': {
         'available_gb': disk_gb,

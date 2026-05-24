@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.6.1] - 2026-05-23
+
+PATCH release. Systematic bug-hunt against live v7.6.0 with empirical
+validation per finding. Fixed 3 real bugs surfaced by the hunt; retracted
+3 fabrications (test-script errors in my own audit); documented 5
+deferred bugs with clear reasons.
+
+### Fixed
+
+- **B-7** `dashboard/server.py:3027` -- `get_learning_metrics` raised
+  `TypeError: unsupported operand type(s) for +: 'int' and 'str'` when
+  legacy events stored `confidence` as a string. Added `_as_num()`
+  coercion helper. Endpoint now returns valid JSON 200 instead of 500.
+- **B-10** `dashboard/server.py:6400` `serve_spa_catchall` -- requests
+  to non-existent `/api/*`, `/lab/api/*`, or `/ws/*` paths previously
+  fell through and returned the SPA `index.html` with `text/html`
+  content-type. JSON clients silently failed. Now returns
+  `JSONResponse 404 {"error":"Not Found","path":...}`. SPA fallback
+  for actual SPA routes still works.
+- **B-9** `autonomy/loki cmd_doctor_json` -- `loki doctor --json`
+  was missing the `loki_mode_version` field that other surfaces
+  (`status --json`, `kpis --json`, `--version`) all expose. Added.
+  Tools parsing doctor output can now read which Loki version
+  produced the report.
+
+### Retracted (my own test-script fabrications)
+
+- B-4, B-6, B-8 -- I previously claimed `loki nonexistent-cmd`,
+  `loki start ./nonexistent.md`, and `loki provider set foobar` all
+  exited 0. They actually exit 1 correctly. My test script used
+  `${PIPESTATUS[0]}` after command substitution (which doesn't capture
+  pipeline status) and `echo "exit: $?"` after a pkill chain (which
+  captures pkill's exit code, not loki's). Re-tested with direct
+  capture: all three return exit 1 as expected. Loki was never broken;
+  my audit was.
+- "v73.31 display bug" earlier -- visual misread of "v7.5.31" in a
+  lower-resolution screenshot. v7.6.1 dashboard shows "v7.6.1"
+  correctly. Never had a display bug.
+
+### Deferred to v7.6.2
+
+- **B-3** memory write/read pipeline disconnect (4 sub-bugs: empty
+  action_log, tokens_used=0, topics never extracted, economics reads
+  from different source than kpis). Needs a refactor of the episode
+  writer + topic extractor + economics aggregator.
+- **B-11** `loki quick --help` hangs until timeout.
+- **B-12** `loki serve --help` actually starts the dashboard (terrible
+  UX, not security-critical because dashboard binds 127.0.0.1).
+- **B-13** 7 subcommands (`cleanup`, `import`, `pause`, `resume`,
+  `setup-skill`, `stats`, `version`) ignore `--help` and execute the
+  action. `cleanup` and `import` are mildly destructive.
+- **B-14** audit `mcp/server.py` for the same SPA catch-all class as
+  B-10 (not yet checked).
+
+### By design (doc-only follow-up)
+
+- **B-5** `LOKI_PROVIDER` env doesn't override `loki status` because
+  the saved value in `.loki/state/provider` takes precedence. This is
+  consistent across all 10 provider-resolution sites in `autonomy/loki`.
+  Adding precedence-order docs to `loki provider --help` in a future
+  release.
+
+### Full report
+
+See `artifacts/BUG-HUNT-REPORT-v7.6.1.md` for the empirical validation
+table per bug, repro commands, root-cause traces, and fix verification.
+
 ## [7.6.0] - 2026-05-23
 
 MINOR release. Real-user validation cycle for the v7.5.29-v7.5.31 Purple-Lab-

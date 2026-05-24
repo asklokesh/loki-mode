@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
+import { getVersion } from "../version.ts";
 
 // ---------- Types (mirror cmd_doctor_json shape) ------------------------------
 
@@ -49,6 +50,10 @@ export type SentruxCheck = {
 };
 
 export type DoctorJson = {
+  // v7.6.1 B-9 fix: surface the active loki version so tools parsing this
+  // JSON know which release produced the report. Mirrors the bash side
+  // (autonomy/loki:cmd_doctor_json) which now sets LOKI_VERSION env.
+  loki_mode_version: string;
   checks: ToolCheck[];
   disk: DiskCheck;
   sentrux: SentruxCheck;
@@ -333,6 +338,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   else warnings++;
 
   return {
+    loki_mode_version: getVersion(),
     checks,
     disk,
     sentrux,

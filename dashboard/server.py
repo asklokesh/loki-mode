@@ -3023,9 +3023,20 @@ async def get_learning_metrics(
 
     total_count = len(events) + len(all_signals)
 
-    # Calculate average confidence across both sources
-    total_conf = sum(e.get("data", {}).get("confidence", 0) for e in events)
-    total_conf += sum(s.get("confidence", 0) for s in all_signals)
+    # Calculate average confidence across both sources. Coerce values to float
+    # because some legacy events/signals stored confidence as a string, which
+    # made sum() raise TypeError: unsupported operand type(s) for +: 'int' and 'str'.
+    # B-7 fix (v7.6.1): silently skip non-numeric confidence values.
+    def _as_num(v: object) -> float:
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    total_conf = sum(_as_num(e.get("data", {}).get("confidence", 0)) for e in events)
+    total_conf += sum(_as_num(s.get("confidence", 0)) for s in all_signals)
 
     # Load aggregation data from file if available
     aggregation = {
@@ -6388,7 +6399,21 @@ async def get_escalation(filename: str):
 # ---------------------------------------------------------------------------
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa_catchall(full_path: str):
-    """Serve static files or fall back to index.html for SPA routing."""
+    """Serve static files or fall back to index.html for SPA routing.
+
+    v7.6.1 B-10 fix: requests under /api/, /lab/api/, or /ws/ that fall through
+    here are missing routes, not SPA navigation. Returning index.html (text/html)
+    silently masks 404s and breaks JSON clients (the dashboard UI's loki-memory-browser
+    pinged /api/learning/metrics expecting JSON and got an HTML SPA on prior
+    failures). Return a JSON 404 instead so clients fail loud.
+    """
+    # API paths that fell through are real 404s, not SPA routes.
+    api_like = full_path.startswith("api/") or full_path.startswith("lab/api/") or full_path.startswith("ws/")
+    if api_like:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Not Found", "path": f"/{full_path}"},
+        )
     if STATIC_DIR:
         static_root = os.path.realpath(STATIC_DIR)
         # Try to serve the exact file first (e.g. /vite.svg, /manifest.json)
