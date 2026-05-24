@@ -270,7 +270,7 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 ## Eighth wave (discovered post-X-75)
 
 - [x] X-76 Engine.explain_analyze() flags unindexed SCAN steps
-- [ ] X-77 forge.healing.propose_from_postgres (parity with X-69 sqlite)
+- [x] X-77 forge.healing_postgres - live (psycopg) + pg_dump file paths
 - [x] X-78 deploy attaches HMAC signature of source to version manifest
 - [x] X-79 GET /api/forge/metrics Prometheus exposition
 - [x] X-80 _check_tool_throttle helper + LOKI_FORGE_TOOL_RATE_PER_MIN env knob

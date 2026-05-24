@@ -1265,6 +1265,37 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_healing_propose_postgres(connection_string: str,
+                                             schema: str = "public") -> str:
+        """X-77: read a legacy Postgres database via information_schema
+        and return a forge migration spec. Apply via forge_healing_apply."""
+        _emit_event_safe("forge_healing_propose_postgres", "start")
+        try:
+            from forge.healing_postgres import propose_from_postgres
+            return json.dumps(propose_from_postgres(connection_string,
+                                                     schema=schema),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def forge_healing_propose_pgdump(dump_path: str) -> str:
+        """X-77: parse a pg_dump --schema-only file and return the same
+        proposal shape. No Postgres connection required."""
+        _emit_event_safe("forge_healing_propose_pgdump", "start")
+        try:
+            import os as _os
+            if not _os.path.isfile(dump_path):
+                return json.dumps({"error": "dump file not found",
+                                    "path": dump_path})
+            with open(dump_path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            from forge.healing_postgres import propose_from_pgdump
+            return json.dumps(propose_from_pgdump(text), default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_healing_propose(legacy_db_path: str) -> str:
         """X-69: read a legacy SQLite db and return a proposed forge
         migration spec that would recreate its schema."""
