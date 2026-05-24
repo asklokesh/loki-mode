@@ -22,6 +22,7 @@ from .vault import (  # noqa: F401
     export_secrets,
     get_secret,
     list_secrets,
+    rotate_value,
     set_secret,
 )
 from .rotation import (  # noqa: F401

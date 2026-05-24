@@ -199,4 +199,26 @@ def invoke(forge_dir: str, name: str, payload: Optional[Dict[str, Any]] = None,
     }
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(log_entry, f)
+
+    # X-84: surface the most recent timeout on the function manifest so
+    # `forge diagnose` and dashboard surfaces can warn about a function
+    # that's chronically slow. Best-effort; never blocks the response.
+    # (_fn_dir is already imported at module top - re-importing here
+    # would shadow it as a local and trigger UnboundLocalError above.)
+    if result.get("error") == "timeout":
+        try:
+            manifest_path = os.path.join(_fn_dir(forge_dir, name),
+                                          "manifest.json")
+            if os.path.exists(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as mf:
+                    mani = json.load(mf)
+                mani["last_timeout_ms"] = result.get("duration_ms")
+                mani["last_timeout_at"] = _utc_iso()
+                mani["timeout_count"] = int(mani.get("timeout_count", 0)) + 1
+                tmp = manifest_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as mf:
+                    json.dump(mani, mf, indent=2, sort_keys=True)
+                os.replace(tmp, manifest_path)
+        except Exception:
+            pass
     return result

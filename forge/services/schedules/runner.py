@@ -102,6 +102,28 @@ def tick(forge_dir: str, *, now_ts: Optional[float] = None,
                 detail = str(e)
         _record_run(forge_dir, s, outcome, detail)
         s["last_fire_ts"] = int(now)
+        # X-83: retry-on-fail. When the invoke returned an error,
+        # leave next_fire_ts close to now (with exponential backoff
+        # up to max_retries) instead of jumping to the next cron
+        # boundary. Default max_retries=3 if not declared.
+        if outcome == "error":
+            attempts = int(s.get("_retry_attempts", 0)) + 1
+            max_retries = int(s.get("max_retries", 3))
+            if attempts <= max_retries:
+                # Backoff: 30s * 2^(attempt-1) capped at 1 hour.
+                backoff = min(30 * (2 ** (attempts - 1)), 3600)
+                s["next_fire_ts"] = int(now) + backoff
+                s["_retry_attempts"] = attempts
+                s["_last_retry_detail"] = detail
+                changed = True
+                fired.append(s)
+                continue
+            # Out of retries - clear counter and advance to next cron tick.
+            s["_retry_attempts"] = 0
+            s["_last_retry_detail"] = None
+        else:
+            s["_retry_attempts"] = 0
+            s["_last_retry_detail"] = None
         try:
             s["next_fire_ts"] = next_fire_time(s["cron"], after_ts=now)
         except Exception:

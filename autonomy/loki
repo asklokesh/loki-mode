@@ -2140,6 +2140,37 @@ except Exception as e:
     sys.exit(1)
 PY
             ;;
+        lint)
+            # X-82: structural + cron-schedule lint over forge.yaml
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}"
+import json, sys
+project = sys.argv[1]
+out = {"schema": "loki.forge.lint/v1", "errors": [], "warnings": []}
+try:
+    from forge.config import find_config, _parse_yaml, validate
+    p = find_config(project)
+    if p is None:
+        out["warnings"].append("no forge.yaml at project root")
+    else:
+        cfg = _parse_yaml(p) or {}
+        rep = validate(cfg)
+        out["errors"].extend(rep["errors"])
+        out["warnings"].extend(rep["warnings"])
+        # Per-schedule cron lint.
+        from forge.services.schedules import lint_expression
+        for s in cfg.get("schedules") or []:
+            if isinstance(s, dict) and s.get("cron"):
+                cr = lint_expression(s["cron"])
+                for e in cr["errors"]:
+                    out["errors"].append(f"schedule:{s.get('name')!r}: {e}")
+                for w in cr["warnings"]:
+                    out["warnings"].append(f"schedule:{s.get('name')!r}: {w}")
+except Exception as e:
+    out["errors"].append(f"lint error: {e}")
+print(json.dumps(out, indent=2))
+sys.exit(2 if out["errors"] else 0)
+PY
+            ;;
         help|--help|-h|"")
             cat <<'HELP'
 loki forge <subcommand>
@@ -2158,6 +2189,9 @@ Subcommands:
   bootstrap [dryrun|--dryrun]         Read forge.yaml at the project
                                       root and provision declared
                                       resources (idempotent)
+  lint                                Structural + cron lint over the
+                                      project root forge.yaml. Exits
+                                      2 when errors found.
 
 This is a thin wrapper over the forge MCP surface for ops workflows.
 Inside a RARV iteration the agent calls forge_* MCP tools directly.

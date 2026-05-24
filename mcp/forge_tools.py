@@ -786,6 +786,19 @@ def register(mcp) -> None:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def forge_secret_rotate_value(name: str, new_value: str) -> str:
+        """X-85: rotate a secret's value in place (re-encrypt with a
+        fresh nonce, drop a rotation marker for the dashboard)."""
+        _emit_event_safe("forge_secret_rotate_value", "start",
+                         parameters={"name": name})
+        try:
+            from forge.services.secrets import rotate_value
+            return json.dumps(rotate_value(_forge_dir(), name, new_value),
+                              default=str)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
     async def forge_secret_rotate(name: str, cron: str = "@monthly",
                                   action: str = "alert",
                                   target: Optional[Dict[str, Any]] = None

@@ -257,6 +257,34 @@ def export_secrets(forge_dir: str, *,
     return out
 
 
+def rotate_value(forge_dir: str, name: str,
+                 new_value: str) -> Dict[str, Any]:
+    """X-85: rotate a secret's value in place. Re-encrypts with a
+    fresh nonce, bumps updated_at, preserves created_at. Returns
+    {name, alg, updated_at, rotated}."""
+    if not _KEY_RE_OK(name):
+        raise SecretError("invalid secret name")
+    data = _load(forge_dir)
+    if name not in data["entries"]:
+        raise SecretError(f"secret not found: {name}")
+    # set_secret already round-trips correctly; the difference is
+    # the explicit semantic + audit signal (we record a rotation
+    # marker so the dashboard can see the event).
+    res = set_secret(forge_dir, name, new_value)
+    res["rotated"] = True
+    # Drop a rotation marker file the dashboard can surface.
+    try:
+        d = os.path.join(forge_dir, "secrets", "rotations.jsonl")
+        os.makedirs(os.path.dirname(d), exist_ok=True)
+        with open(d, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"name": name,
+                                "ts": int(time.time()),
+                                "kind": "value_rotated"}) + "\n")
+    except OSError:
+        pass
+    return res
+
+
 def delete_secret(forge_dir: str, name: str) -> bool:
     data = _load(forge_dir)
     if name not in data["entries"]:
