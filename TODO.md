@@ -104,9 +104,9 @@ Format:
            re-order migrations so referenced tables are created first
 - [x] N-06 `loki forge doctor`: combine sandbox diagnose + /api/forge/health
            into a single CLI command (no dashboard needed)
-- [ ] N-07 Function deploy: verify the previously-recorded signature
+- [x] N-07 Function deploy: verify the previously-recorded signature
            before invoke (X-78 was attest-only; this enforces)
-- [ ] N-08 Secrets vault: KDF iteration count surfaced in
+- [x] N-08 Secrets vault: KDF iteration count surfaced in
            list_secrets() so an operator can spot fallback HMAC-XOR rows
 - [ ] N-09 OpenAPI: include responses for every error code our routes
            can emit (401/403/404/422) for spec correctness

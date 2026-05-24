@@ -25,6 +25,8 @@ from .deploy import (  # noqa: F401
     list_functions,
     list_versions,
     rollback,
+    source_path,
+    verify_signature,
 )
 from .invoke import invoke, warm  # noqa: F401
 from .logs import list_runs, read_run_log  # noqa: F401

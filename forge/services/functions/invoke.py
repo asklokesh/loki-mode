@@ -27,7 +27,10 @@ import time
 import uuid
 from typing import Any, Dict, Optional, Tuple
 
-from .deploy import FunctionError, get_function, source_path, _fn_dir, _utc_iso
+from .deploy import (
+    FunctionError, get_function, source_path, verify_signature,
+    _fn_dir, _utc_iso,
+)
 
 
 def _runtime_argv(runtime: str, src: str) -> list:
@@ -109,6 +112,17 @@ def invoke(forge_dir: str, name: str, payload: Optional[Dict[str, Any]] = None,
     src = source_path(forge_dir, name, version=version)
     if not src:
         raise FunctionError(f"source not found for {name} v{version}")
+    # N-07: verify the deploy-time HMAC signature against the on-disk
+    # source bytes before spawning the runtime. A mismatch means the
+    # source file was modified after deploy; refuse to execute. Legacy
+    # versions with no recorded signature pass through (verify_signature
+    # returns ok=True signature_present=False) so this stays back-compat.
+    vsig = verify_signature(forge_dir, name, version=version)
+    if not vsig.get("ok"):
+        raise FunctionError(
+            f"function {name} v{vsig.get('version')} signature "
+            f"verification failed: {vsig.get('reason')}"
+        )
     runtime = m.get("runtime", "bun")
     timeout_s = max(0.1, m.get("timeout_ms", 10000) / 1000.0)
     memory_mb = m.get("memory_mb", 128)

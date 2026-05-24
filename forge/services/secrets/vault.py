@@ -132,6 +132,13 @@ def _encrypt(value: str, key: bytes) -> Dict[str, str]:
             "alg": "AES-GCM-256",
             "nonce": _b64e(nonce),
             "ct": _b64e(ct),
+            # N-08: master key path is "raw32" (32 random bytes from
+            # secrets.token_bytes, no PBKDF2). When operators promote
+            # to a passphrase-derived key, we'll bump these to "pbkdf2"
+            # + 600000 and the existing list_secrets surface will
+            # reflect the change without code changes.
+            "kdf": "raw32",
+            "kdf_iterations": 0,
         }
     # Fallback: HMAC-XOR. Warn loudly the first time.
     sys.stderr.write(
@@ -156,6 +163,10 @@ def _encrypt(value: str, key: bytes) -> Dict[str, str]:
         "nonce": _b64e(nonce),
         "ct": _b64e(ct),
         "mac": _b64e(mac),
+        # N-08: HMAC-XOR rows have no KDF; expose this so list_secrets()
+        # can flag them as the insecure fallback.
+        "kdf": "none",
+        "kdf_iterations": 0,
     }
 
 
@@ -218,13 +229,28 @@ def get_secret(forge_dir: str, name: str) -> Optional[str]:
 
 
 def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
-    """Returns names + metadata only; values never echoed."""
+    """Returns names + metadata only; values never echoed.
+
+    N-08: includes `kdf` and `kdf_iterations` so an operator can spot
+    rows that fell back to HMAC-XOR (kdf='none', iterations=0). Old
+    entries written before this field landed get defaults inferred
+    from `alg` so existing vaults still report sensibly.
+    """
     data = _load(forge_dir)
     out: List[Dict[str, Any]] = []
     for name, ent in sorted(data["entries"].items()):
+        alg = ent.get("alg")
+        kdf = ent.get("kdf")
+        if kdf is None:
+            # Back-compat default: AES-GCM rows used raw32 master key;
+            # HMAC-XOR rows had no KDF.
+            kdf = "raw32" if alg == "AES-GCM-256" else "none"
         out.append({
             "name": name,
-            "alg": ent.get("alg"),
+            "alg": alg,
+            "kdf": kdf,
+            "kdf_iterations": int(ent.get("kdf_iterations", 0)),
+            "fallback": alg == "HMAC-XOR",
             "created_at": ent.get("created_at"),
             "updated_at": ent.get("updated_at"),
         })

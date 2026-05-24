@@ -226,6 +226,58 @@ def rollback(forge_dir: str, name: str, to_version: int) -> Dict[str, Any]:
     return m
 
 
+def verify_signature(forge_dir: str, name: str,
+                     version: Optional[int] = None) -> Dict[str, Any]:
+    """N-07: recompute the HMAC over the on-disk source bytes and
+    compare against the signature recorded at deploy time.
+
+    Returns {ok, reason, version, signature_present}:
+        - ok=True signature_present=False: no signature on file
+          (legacy deploy / master_key unavailable at deploy time);
+          invoke() treats this as a soft pass so back-compat holds.
+        - ok=True signature_present=True: recompute matched.
+        - ok=False: mismatch or source missing.
+    Never raises - the caller decides whether a mismatch is fatal.
+    """
+    m = get_function(forge_dir, name)
+    if not m:
+        return {"ok": False, "reason": "function_not_found",
+                "signature_present": False, "version": version}
+    v = version if version is not None else m.get("active_version")
+    if v is None:
+        return {"ok": False, "reason": "no_active_version",
+                "signature_present": False, "version": None}
+    ver = next((x for x in m.get("versions", [])
+                if x.get("version") == v), None)
+    if ver is None:
+        return {"ok": False, "reason": "version_not_recorded",
+                "signature_present": False, "version": v}
+    sig = ver.get("signature")
+    if not sig:
+        return {"ok": True, "reason": "no_signature_on_record",
+                "signature_present": False, "version": v}
+    src = source_path(forge_dir, name, version=v)
+    if not src:
+        return {"ok": False, "reason": "source_missing",
+                "signature_present": True, "version": v}
+    try:
+        import hmac as _hmac
+        import hashlib as _hashlib
+        from forge.services.secrets.vault import _master_key
+        with open(src, "rb") as f:
+            actual = _hmac.new(_master_key(forge_dir), f.read(),
+                               _hashlib.sha256).hexdigest()
+    except Exception as e:
+        return {"ok": False, "reason": f"hmac_error: {e}",
+                "signature_present": True, "version": v}
+    if not _hmac.compare_digest(actual, sig):
+        return {"ok": False, "reason": "signature_mismatch",
+                "signature_present": True, "version": v,
+                "expected": sig, "actual": actual}
+    return {"ok": True, "reason": "verified",
+            "signature_present": True, "version": v}
+
+
 def source_path(forge_dir: str, name: str,
                 version: Optional[int] = None) -> Optional[str]:
     """Resolve the on-disk path to the source file for a given version
