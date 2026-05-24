@@ -23,6 +23,7 @@ from .adapters import (  # noqa: F401
 from .templates import (  # noqa: F401
     DEFAULT_TEMPLATES,
     clear_locales,
+    is_default,
     list_templates,
     register_template,
     send_template,

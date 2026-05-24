@@ -184,11 +184,22 @@ def _emit_schedule_event(forge_dir: str, name: str, event: str) -> None:
     dashboards see pause/resume transitions live.
     N-69: when the schedule defines `bus_channel`, route the event
     to that channel instead of the global `_system.schedules`.
+    N-123: when no explicit bus_channel AND the schedule has exactly
+    one tag, route to `_system.schedules.<tag>` so per-tenant
+    dashboards see only their slice without operator setup.
     """
     try:
         from forge.services.realtime.bus import publish as _pub
-        sched = get(forge_dir, name)
-        channel = (sched or {}).get("bus_channel") or "_system.schedules"
+        sched = get(forge_dir, name) or {}
+        channel = sched.get("bus_channel")
+        if not channel:
+            tags = sched.get("tags") or []
+            if len(tags) == 1:
+                # Sanitize tag chars not legal in channel names.
+                safe = tags[0].replace(":", "-")
+                channel = f"_system.schedules.{safe}"
+            else:
+                channel = "_system.schedules"
         _pub(forge_dir, channel, {
             "type": event, "schedule": name,
         }, sender_user_id="__schedules__")

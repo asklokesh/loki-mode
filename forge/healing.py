@@ -302,8 +302,11 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
                 "target": target,
                 "ok": True,
                 "dry_run": True,
+                "attempt_ms": 0,
             })
             continue
+        import time as _t
+        t0 = _t.time()
         try:
             res = migrate_apply(engine, spec)
             applied.append(res["migration_id"])
@@ -312,6 +315,8 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
                 "target": target,
                 "ok": True,
                 "migration_id": res["migration_id"],
+                # N-127: attempt duration so callers can see slow ops.
+                "attempt_ms": int((_t.time() - t0) * 1000),
             })
         except Exception as e:
             errors.append(str(e))
@@ -320,6 +325,7 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
                 "target": target,
                 "ok": False,
                 "error": str(e),
+                "attempt_ms": int((_t.time() - t0) * 1000),
             })
     return {
         "schema": "loki.forge.healing.applied/v2",

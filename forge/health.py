@@ -14,6 +14,10 @@ from typing import Any, Dict, List
 
 _SEVERITY_RANK = {"info": 0, "warn": 1, "critical": 2}
 
+# N-122: cache the openapi spec timestamp for 60s so /api/forge/health
+# stays cheap under load.
+_OPENAPI_TS_CACHE: Dict[str, Any] = {"value": None, "expires_at": 0}
+
 
 def compute_health(forge_dir: str, *,
                    probe_timeout_s: float = 2.0) -> Dict[str, Any]:
@@ -100,14 +104,21 @@ def compute_health(forge_dir: str, *,
         max((c["severity"] for c in codes), key=lambda s: _SEVERITY_RANK.get(s, 0))
         if codes else "ok"
     )
-    # N-111: surface the latest OpenAPI x-generated-at when available
-    # so /api/forge/health gives one GET for both spec freshness and
-    # FRG codes. Best-effort - generation failure leaves the field
-    # unset rather than blocking the health check.
+    # N-111/N-122: surface the latest OpenAPI x-generated-at when
+    # available so /api/forge/health gives one GET for both spec
+    # freshness and FRG codes. Cached for 60s so the probe stays
+    # cheap under load.
+    import time as _t
     spec_ts = None
     try:
-        from forge.sdk.openapi import generate as _gen
-        spec_ts = _gen(forge_dir)["info"].get("x-generated-at")
+        now = _t.time()
+        if _OPENAPI_TS_CACHE["expires_at"] > now:
+            spec_ts = _OPENAPI_TS_CACHE["value"]
+        else:
+            from forge.sdk.openapi import generate as _gen
+            spec_ts = _gen(forge_dir)["info"].get("x-generated-at")
+            _OPENAPI_TS_CACHE["value"] = spec_ts
+            _OPENAPI_TS_CACHE["expires_at"] = now + 60
     except Exception:
         pass
     return {

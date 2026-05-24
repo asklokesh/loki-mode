@@ -189,6 +189,13 @@ def unset_template(forge_dir: str, name: str, *,
     return removed
 
 
+def is_default(name: str) -> bool:
+    """N-124: True when `name` is shipped as a built-in default
+    template. Callers can use this to surface a warning before
+    invoking unset_template(force=True)."""
+    return name in DEFAULT_TEMPLATES
+
+
 def clear_locales(forge_dir: str, name: str) -> List[str]:
     """N-25: drop every localized variant for `name` in one call.
     The default (locale=None) entry is preserved. Returns the list

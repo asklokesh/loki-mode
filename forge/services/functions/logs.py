@@ -104,6 +104,8 @@ def purge_runs(forge_dir: str, name: str, *,
                     removed += 1
             except OSError:
                 continue
+        _record_purge(forge_dir, name, "older_than_days",
+                      older_than_days, removed)
         return removed
     # keep_last_n branch (validated up-front).
     paths = [os.path.join(d, e) for e in files]
@@ -115,7 +117,29 @@ def purge_runs(forge_dir: str, name: str, *,
             removed += 1
         except OSError:
             continue
+    _record_purge(forge_dir, name, "keep_last_n", keep_last_n, removed)
     return removed
+
+
+def _record_purge(forge_dir: str, name: str, mode: str, arg: int,
+                  removed: int) -> None:
+    """N-125: append a purge record so operators see when disk was
+    reclaimed and by how much. Best-effort - never blocks the
+    caller's return."""
+    import json as _json
+    import time as _t
+    p = os.path.join(_logs_dir(forge_dir, name), "purges.jsonl")
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(_json.dumps({
+                "ts": int(_t.time()),
+                "mode": mode,
+                "arg": arg,
+                "removed": removed,
+            }) + "\n")
+    except OSError:
+        pass
 
 
 def read_run_log(forge_dir: str, name: str, run_id: str) -> Optional[Dict[str, Any]]:

@@ -390,27 +390,52 @@ Format:
 
 ## Next-up wave 10 (discovered during N-111..N-120)
 
-- [ ] N-121 `loki forge metrics` accepts `--filter prefix=A --filter
+- [x] N-121 `loki forge metrics` accepts `--filter prefix=A --filter
             exclude=B` together (both filters compose)
-- [ ] N-122 Health: `openapi_generated_at` cached for 60s so the
+- [x] N-122 Health: `openapi_generated_at` cached for 60s so the
             /api/forge/health probe stays cheap under load
-- [ ] N-123 Schedules: `bus_channel` defaults to a per-tag channel
+- [x] N-123 Schedules: `bus_channel` defaults to a per-tag channel
             `_system.schedules.<tag>` when a single tag is set
-- [ ] N-124 Email defaults: `is_default(name)` helper so callers
+- [x] N-124 Email defaults: `is_default(name)` helper so callers
             can ask before calling unset_template
-- [ ] N-125 Function logs: `purge_runs` records the action in a
+- [x] N-125 Function logs: `purge_runs` records the action in a
             `purges.jsonl` audit file so operators see when disk
             was reclaimed
-- [ ] N-126 Secrets: `list_rotations(name=...)` filter so callers
+- [x] N-126 Secrets: `list_rotations(name=...)` filter so callers
             can see just one secret's history
-- [ ] N-127 Healing v2: per-op `attempt_ms` so callers see which
+- [x] N-127 Healing v2: per-op `attempt_ms` so callers see which
             migrations were slow
-- [ ] N-128 Doctor history: `--history-list` lists current files
+- [x] N-128 Doctor history: `--history-list` lists current files
             with sizes + ages
-- [ ] N-129 Forge metrics: `--no-help` skips HELP/TYPE lines for
+- [x] N-129 Forge metrics: `--no-help` skips HELP/TYPE lines for
             short scraping setups
-- [ ] N-130 `loki forge audit --json` (alias for plain audit when
+- [x] N-130 `loki forge audit --json` (alias for plain audit when
             stdout is a pipe) — symmetry with metrics --json
+
+## Next-up wave 11 (discovered during N-121..N-130)
+
+- [ ] N-131 Health: an `openapi_cached_until` field exposes when
+            the cached spec ts expires so operators can debug
+- [ ] N-132 Schedules: tag values normalized to lower-case on
+            create so `Acme` and `acme` don't fork channels
+- [ ] N-133 Email: `unset_template(name, force=True)` records the
+            override in a `dropped_defaults.jsonl` audit trail
+- [ ] N-134 Function purges.jsonl: cap entries at 1000 so it never
+            grows unbounded
+- [ ] N-135 Secrets: `list_rotations` accepts `since_ts` filter so
+            dashboards can show "rotations in the last 7 days"
+- [ ] N-136 Healing v2: surface aggregate `total_attempt_ms` on
+            the envelope so callers see total wallclock
+- [ ] N-137 Doctor `--history-list` accepts `--json` for structured
+            output (parity with metrics --json)
+- [ ] N-138 Forge metrics: `--filter prefix=...` accepts multiple
+            comma-separated prefixes
+- [ ] N-139 `loki forge audit` summary line includes scope so
+            CI knows which half ran
+- [ ] N-140 OpenAPI `info.x-generated-at` also emitted as
+            `info.x-generated-at-epoch-ms` so machines parse easier
+
+## Loop continuation
 
 ## Loop continuation
 

@@ -2133,6 +2133,10 @@ PY
                     --quiet) quiet_flag="true"; shift ;;
                     --summary) summary_flag="true"; shift ;;
                     --scope) scope_arg="${2:-all}"; shift 2 ;;
+                    # N-130: --json is a no-op symmetry alias - the
+                    # default audit output is already JSON. Accepting
+                    # the flag keeps the CLI consistent with metrics.
+                    --json) shift ;;
                     *) shift ;;
                 esac
             done
@@ -2255,10 +2259,12 @@ PY
             local json_flag="false"
             local filter_prefix=""
             local filter_exclude=""
+            local no_help_flag="false"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
                     --json) json_flag="true"; shift ;;
+                    --no-help) no_help_flag="true"; shift ;;
                     --filter)
                         # N-110: --filter prefix=forge_secrets_ keeps only
                         # metric lines whose name starts with the prefix.
@@ -2275,7 +2281,7 @@ PY
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude" "$no_help_flag"
 import json, re, sys
 from forge.metrics import render
 labels = {}
@@ -2322,6 +2328,12 @@ if filter_prefix or filter_exclude:
             continue
         keep.append(ln)
     text = "\n".join(keep) + "\n"
+# N-129: --no-help drops HELP/TYPE lines for short scrapers.
+no_help = (len(sys.argv) > 6 and sys.argv[6] == "true")
+if no_help:
+    text = "\n".join(ln for ln in text.splitlines()
+                     if not ln.startswith("# HELP ")
+                     and not ln.startswith("# TYPE ")) + "\n"
 if sys.argv[3] != "true":
     print(text, end="")
 else:
@@ -2400,6 +2412,16 @@ PY
                 case "$1" in
                     --history) history_cap="${2:-10}"; shift 2 ;;
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
+                    --history-list)
+                        # N-128: list current files with size + age.
+                        local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
+                        if [[ -d "$hist_dir" ]]; then
+                            find "$hist_dir" -name 'doctor-*.json' -type f \
+                                -printf '%f %s %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null \
+                                | sort -r
+                        fi
+                        return 0
+                        ;;
                     --max-iterations) watch_max_iter="${2:-0}"; shift 2 ;;
                     --watch) watch_interval="${2:-5}"; shift 2 ;;
                     --once)
