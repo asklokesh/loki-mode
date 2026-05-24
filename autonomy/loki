@@ -2179,12 +2179,60 @@ print(json.dumps(out, indent=2))
 sys.exit(2 if out["errors"] else 0)
 PY
             ;;
+        doctor)
+            # N-06: combine sandbox diagnose + forge health into a
+            # single CLI report. Works without the dashboard running;
+            # the sandbox block is best-effort (skipped silently if
+            # sandbox.sh / docker are unavailable).
+            local sb_script="$skill_dir/autonomy/sandbox.sh"
+            local sb_json=""
+            if [[ -x "$sb_script" || -f "$sb_script" ]]; then
+                sb_json=$(bash "$sb_script" diagnose --json 2>/dev/null || true)
+            fi
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$sb_json"
+import json, sys
+forge_dir, sb_raw = sys.argv[1], sys.argv[2]
+from forge.health import compute_health
+health = compute_health(forge_dir)
+sandbox = None
+if sb_raw:
+    try:
+        sandbox = json.loads(sb_raw)
+    except Exception:
+        sandbox = {"raw": sb_raw[:512]}
+codes = list(health.get("codes") or [])
+if isinstance(sandbox, dict):
+    for c in (sandbox.get("codes") or []):
+        if isinstance(c, dict):
+            codes.append(c)
+        elif isinstance(c, str):
+            codes.append({"code": c, "severity": "warn",
+                          "source": "sandbox"})
+rank = {"info": 0, "warn": 1, "critical": 2}
+status = (max((c.get("severity", "info") for c in codes),
+              key=lambda s: rank.get(s, 0)) if codes else "ok")
+out = {
+    "schema": "loki.forge.doctor/v1",
+    "forge_dir": forge_dir,
+    "ok": not codes,
+    "status": status,
+    "codes": codes,
+    "health": health,
+    "sandbox": sandbox,
+}
+print(json.dumps(out, indent=2))
+sys.exit(2 if status == "critical" else 0)
+PY
+            ;;
         help|--help|-h|"")
             cat <<'HELP'
 loki forge <subcommand>
 
 Subcommands:
   status                              Live forge state snapshot
+  doctor                              Combined sandbox diagnose +
+                                      forge health (no dashboard).
+                                      Exits 2 on critical codes.
   backup [path]                       Tar+gz .loki/forge/ to path
                                       (default ./forge-backup.tar.gz)
   restore <path> [--force]            Extract a backup into .loki/forge/

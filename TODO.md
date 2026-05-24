@@ -102,7 +102,7 @@ Format:
            bus so subscribers can render "who is online" without polling
 - [x] N-05 Healing mode: walk fk_graph after propose_from_sqlite and
            re-order migrations so referenced tables are created first
-- [ ] N-06 `loki forge doctor`: combine sandbox diagnose + /api/forge/health
+- [x] N-06 `loki forge doctor`: combine sandbox diagnose + /api/forge/health
            into a single CLI command (no dashboard needed)
 - [ ] N-07 Function deploy: verify the previously-recorded signature
            before invoke (X-78 was attest-only; this enforces)

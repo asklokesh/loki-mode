@@ -158,55 +158,11 @@ def register_forge_router(app) -> None:
     @app.get("/api/forge/health")
     async def forge_health() -> Dict[str, Any]:
         """X-29 health check. Flips RED based on the same FRG* codes the
-        sandbox diagnose surfaces. Lightweight; safe to poll."""
-        d = _forge_dir()
-        codes: list = []
-        if os.path.isdir(d):
-            if os.path.isfile(os.path.join(d, "required.json")) \
-               and not os.path.isfile(os.path.join(d, "db.sqlite")):
-                codes.append({"code": "FRG001", "severity": "warn",
-                              "message": "required.json present but db.sqlite missing"})
-            errlog = os.path.join(d, "errors.log")
-            if os.path.isfile(errlog) and os.path.getsize(errlog) > 0:
-                codes.append({"code": "FRG002", "severity": "warn",
-                              "message": "forge_detector errors.log non-empty"})
-            vault = os.path.join(d, "secrets.vault")
-            if os.path.isfile(vault):
-                try:
-                    text = open(vault, "r", encoding="utf-8", errors="replace").read()
-                    if '"HMAC-XOR"' in text:
-                        codes.append({"code": "FRG003", "severity": "warn",
-                                      "message": "secrets vault on HMAC-XOR fallback"})
-                except OSError:
-                    pass
-            # X-22: schedule runner watchdog.
-            try:
-                from forge.services.schedules import (
-                    watchdog_status, list_schedules,
-                )
-                if list_schedules(d):
-                    w = watchdog_status(d)
-                    if w.get("stalled"):
-                        codes.append({
-                            "code": "FRG004", "severity": "critical",
-                            "message": (
-                                f"schedule runner stalled: "
-                                f"{w.get('seconds_since_last_tick')}s "
-                                f"since last tick"
-                            ),
-                        })
-            except Exception:
-                pass
-        severity_max = (max((c["severity"] for c in codes),
-                            key=lambda s: {"info": 0, "warn": 1, "critical": 2}.get(s, 0))
-                        if codes else "ok")
-        return {
-            "schema": "loki.forge.health/v1",
-            "forge_dir": d,
-            "ok": not codes,
-            "status": severity_max,
-            "codes": codes,
-        }
+        sandbox diagnose surfaces. Lightweight; safe to poll. N-06:
+        delegated to forge.health.compute_health so `loki forge doctor`
+        and this route never drift."""
+        from forge.health import compute_health
+        return compute_health(_forge_dir())
 
     @app.get("/api/forge/metrics")
     async def forge_metrics() -> Any:
