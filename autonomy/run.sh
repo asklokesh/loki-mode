@@ -8755,16 +8755,77 @@ _intelligent_usage_regen() {
             _manifests="${_manifests}=== $f ===\n$(head -50 "$target_dir/$f" 2>/dev/null)\n\n"
         fi
     done
+    # v7.7.10 F-3 fix: include entrypoint file content so the model can read
+    # the ACTUAL port / host bindings instead of guessing from package.json
+    # scripts (which often imply port 3000 by convention but server.js may
+    # bind a different port like 3001). Without this the regen wrote
+    # "curl http://localhost:3000" for projects where the server bound 3001.
+    local _entrypoints=""
+    local _ep_candidates=""
+    # Detect entrypoint from package.json main field if present
+    if [ -f "$target_dir/package.json" ]; then
+        local _pkg_main
+        _pkg_main=$(python3 -c "import json,sys; d=json.load(open('$target_dir/package.json'));print(d.get('main') or '')" 2>/dev/null)
+        [ -n "$_pkg_main" ] && _ep_candidates="$_ep_candidates $_pkg_main"
+        # Extract files referenced in `scripts.start` and `scripts.dev`
+        local _pkg_scripts
+        _pkg_scripts=$(python3 -c "import json,re,sys; d=json.load(open('$target_dir/package.json'));s=d.get('scripts',{});c=' '.join([s.get('start',''),s.get('dev','')]);[print(t) for t in re.findall(r'[\\w/.-]+\\.(?:js|mjs|cjs|ts|mts|cts|py)\\b',c)]" 2>/dev/null)
+        [ -n "$_pkg_scripts" ] && _ep_candidates="$_ep_candidates $_pkg_scripts"
+    fi
+    # Fallback convention names for common stacks
+    for _ep in server.js server.ts server.mjs index.js index.ts app.js app.ts \
+               main.py app.py server.py manage.py wsgi.py asgi.py \
+               main.go cmd/server/main.go src/main.rs src/index.ts dist/server.js \
+               build/server.js; do
+        _ep_candidates="$_ep_candidates $_ep"
+    done
+    # Read first 80 lines of up to 3 unique existing candidates, scrubbing
+    # common secret-bearing lines before they ship to the haiku endpoint.
+    # v7.7.10 privacy guard: replaces lines matching API_KEY/SECRET/PASSWORD/
+    # TOKEN/PRIVATE_KEY/AUTH/CREDENTIAL/BEARER assignments with [REDACTED]
+    # so default-on regen does not exfiltrate hardcoded secrets. Port-binding
+    # lines (listen/run/ListenAndServe with numeric literals) are preserved.
+    # Opt out entirely with LOKI_INTELLIGENT_USAGE_INCLUDE_SOURCE=0.
+    local _include_source="${LOKI_INTELLIGENT_USAGE_INCLUDE_SOURCE:-1}"
+    local _seen="" _count=0
+    for _ep in $_ep_candidates; do
+        # Skip duplicates and non-existent files
+        case " $_seen " in *" $_ep "*) continue ;; esac
+        _seen="$_seen $_ep"
+        if [ -f "$target_dir/$_ep" ]; then
+            local _ep_body
+            if [ "$_include_source" = "0" ]; then
+                _ep_body="(entrypoint source omitted: LOKI_INTELLIGENT_USAGE_INCLUDE_SOURCE=0)"
+            else
+                # Scrub: any line whose text contains a credential keyword
+                # has its value (everything after the first `:` or `=`)
+                # replaced with [REDACTED]. Then any literal high-entropy
+                # token shape (stripe sk-, github ghp_/ghs_, slack xox, GCP
+                # AIza, AWS AKIA) is replaced inline. Port-binding lines
+                # (no credential keyword) pass through unchanged.
+                _ep_body=$(head -80 "$target_dir/$_ep" 2>/dev/null \
+                    | sed -E \
+                        -e '/[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Kk][Ee][Yy]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Bb][Ee][Aa][Rr][Ee][Rr]/ s/[:=].*$/= [REDACTED]/' \
+                        -e 's/(sk-[A-Za-z0-9_-]{16,}|pk_[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{16,}|ghs_[A-Za-z0-9]{16,}|xox[bpoa]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{32,}|AKIA[A-Z0-9]{12,})/[REDACTED]/g')
+            fi
+            _entrypoints="${_entrypoints}=== Entrypoint: $_ep ===\n${_ep_body}\n\n"
+            _count=$((_count + 1))
+            [ "$_count" -ge 3 ] && break
+        fi
+    done
     _commits=$(cd "$target_dir" && git log --oneline -10 2>/dev/null || true)
 
     log_info "Regenerating USAGE.md from final project state (intelligent mode)..."
-    local _ic_prompt="You are writing a USAGE.md for the project below. Detect the stack from the manifest files; emit a concise (under 100 lines) Markdown doc with sections: ## Prerequisites, ## Install, ## Start, ## Verify (2-3 copy-paste curl/browser/CLI commands with expected output), ## Stop. Use the ACTUAL command names from package.json scripts or pyproject entry points -- never generic placeholders. Output ONLY the Markdown body (no code-fence wrapper, no preamble).
+    local _ic_prompt="You are writing a USAGE.md for the project below. Detect the stack from the manifest files; emit a concise (under 100 lines) Markdown doc with sections: ## Prerequisites, ## Install, ## Start, ## Verify (2-3 copy-paste curl/browser/CLI commands with expected output), ## Stop. Use the ACTUAL command names from package.json scripts or pyproject entry points -- never generic placeholders. For ports, read the ENTRYPOINT file contents below (server.listen / app.listen / app.run / http.ListenAndServe / uvicorn.run port arg) -- do NOT infer port from script names or convention. If the entrypoint reads from process.env.PORT with a literal default, use the literal default. Output ONLY the Markdown body (no code-fence wrapper, no preamble).
 
 === Project tree (max 30 files, 3 levels deep) ===
 ${_tree}
 
 === Manifest files ===
 ${_manifests}
+
+=== Entrypoint file contents (port bindings live here, NOT in package.json) ===
+${_entrypoints}
 
 === Last 10 commits ===
 ${_commits}"
@@ -12136,6 +12197,8 @@ cleanup() {
         # v7.5.12: Kill any running provider pipeline first, before slow cleanup.
         kill_provider_child 2>/dev/null || true
         rm -f "$loki_dir/STOP" "$loki_dir/PAUSE" "$loki_dir/PAUSED.md" 2>/dev/null
+        # UT2-13: Clear cli-provider marker on session end.
+        rm -f "$loki_dir/state/cli-provider" 2>/dev/null || true
         if type app_runner_cleanup &>/dev/null; then
             app_runner_cleanup
         fi
@@ -12183,6 +12246,8 @@ except (json.JSONDecodeError, OSError): pass
         stop_status_monitor
         kill_all_registered
         rm -f "$loki_dir/loki.pid" "$loki_dir/PAUSE" 2>/dev/null
+        # UT2-13: Clear cli-provider marker on session end.
+        rm -f "$loki_dir/state/cli-provider" 2>/dev/null || true
         # Clean up per-session PID file if running with session ID
         if [ -n "${LOKI_SESSION_ID:-}" ]; then
             rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null
@@ -12789,6 +12854,8 @@ main() {
     stop_status_monitor
     local loki_dir="${TARGET_DIR:-.}/.loki"
     rm -f "$loki_dir/loki.pid" 2>/dev/null
+    # UT2-13: Clear cli-provider marker on normal session end.
+    rm -f "$loki_dir/state/cli-provider" 2>/dev/null || true
     # Clean up per-session PID file if running with session ID
     if [ -n "${LOKI_SESSION_ID:-}" ]; then
         rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" 2>/dev/null

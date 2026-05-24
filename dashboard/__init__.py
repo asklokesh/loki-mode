@@ -7,7 +7,7 @@ Modules:
     control: Session control API (start/stop/pause/resume)
 """
 
-__version__ = "7.7.9"
+__version__ = "7.7.10"
 
 # Expose the control app for easy import
 try:

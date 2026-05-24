@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.10] - 2026-05-24
+
+PATCH release. F-3 USAGE.md port hallucination fix (defect in v7.7.3 intelligent regen).
+
+### Fixed
+
+- `_intelligent_usage_regen` in `autonomy/run.sh` now includes the actual
+  entrypoint file content (server.js / app.py / main.go / etc.) in the haiku
+  prompt, not just `package.json` manifests. Resolves a defect where regen
+  wrote `curl http://localhost:3000` for projects whose `server.js` bound a
+  different port (e.g. `3001`). Detection cascade: `package.json#main` ->
+  `package.json#scripts.start|dev` referenced files -> convention names
+  (server.js, server.ts, index.js, app.js, main.py, app.py, server.py,
+  manage.py, main.go, src/main.rs, src/index.ts, dist/server.js, etc.).
+  Captures first 80 lines of up to 3 unique existing candidates.
+- Prompt also instructs the model: read port bindings from the entrypoint
+  (server.listen / app.listen / app.run / http.ListenAndServe / uvicorn.run),
+  do NOT infer port from script names or convention.
+
+### Added
+
+- Secret scrubber on entrypoint capture: lines containing any of API_KEY,
+  SECRET, PASSWORD, TOKEN, PRIVATE_KEY, CREDENTIAL, BEARER (case-insensitive)
+  have their value after `:` or `=` replaced with `[REDACTED]` before the
+  prompt ships to the haiku endpoint. Literal high-entropy token shapes
+  (stripe `sk-`, github `ghp_`/`ghs_`, slack `xox`, GCP `AIza`, AWS `AKIA`)
+  also redacted inline. Port-binding lines (no keyword) pass through.
+- `LOKI_INTELLIGENT_USAGE_INCLUDE_SOURCE=0` opt-out: when set, the prompt
+  emits a placeholder instead of any entrypoint source content. For users
+  who want the regen but distrust the scrubber for their codebase.
+- `tests/test-f3-port-detection.sh` -- 6 fixtures producing 13 assertions:
+  Express port 3001, Flask port 5050, Go port 8080, package.json scripts
+  fallback, hardcoded-secrets scrubbing (API_KEY/stripe-token/password
+  redacted but port preserved), and env-var opt-out producing placeholder.
+  Offline (does not call claude), runs in local-ci.
+
+### Verified
+
+- F-3 unit test 13/13 PASS on local fixtures including secret-scrub +
+  opt-out paths.
+
+### NOT tested
+
+- End-to-end real `loki start` session against EC2Renter (requires user cost
+  authorization ~$5-10). The unit test exercises the detection logic offline;
+  full provider validation deferred.
+- Behavior when entrypoint file uses dynamic port (e.g. `Number(process.env.PORT)`
+  with no literal default). Heuristic: model will still see `process.env.PORT`
+  in the source and should write that into Verify section. NOT tested.
+
+### Cleanup
+
+```
+lsof -ti:57374 | xargs kill -9 2>/dev/null || true
+rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
+```
+
 ## [7.7.9] - 2026-05-24
 
 PATCH release. v7.7.0 LSP acceptance criterion #4 (Java coverage).
