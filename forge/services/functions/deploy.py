@@ -148,6 +148,36 @@ def deploy(forge_dir: str, name: str, runtime: str, source_b64: str,
     if deployed_by_user_id is not None:
         if not isinstance(deployed_by_user_id, str) or not deployed_by_user_id:
             raise FunctionError("deployed_by_user_id must be a non-empty string")
+        # N-49: when the auth users table exists, verify the supplied
+        # user_id maps to a real row so typos surface here rather
+        # than in the audit log days later. Missing users table = no
+        # check (back-compat for deploys before auth is provisioned).
+        try:
+            import sqlite3 as _sql
+            db_path = os.path.join(forge_dir, "db.sqlite")
+            if os.path.isfile(db_path):
+                conn = _sql.connect(db_path)
+                try:
+                    row = conn.execute(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type='table' AND name='users'"
+                    ).fetchone()
+                    if row:
+                        hit = conn.execute(
+                            "SELECT 1 FROM users WHERE id = ? LIMIT 1",
+                            (deployed_by_user_id,)
+                        ).fetchone()
+                        if not hit:
+                            raise FunctionError(
+                                f"deployed_by_user_id {deployed_by_user_id!r} "
+                                "not found in users table"
+                            )
+                finally:
+                    conn.close()
+        except FunctionError:
+            raise
+        except Exception:
+            pass
         version_entry["deployed_by_user_id"] = deployed_by_user_id
     versions.append(version_entry)
     # X-78: signed-source attestation. We HMAC the source bytes with

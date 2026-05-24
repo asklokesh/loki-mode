@@ -207,14 +207,14 @@ Format:
 
 ## Next-up wave 4 (discovered during N-31..N-45)
 
-- [ ] N-46 `loki forge metrics --json` emits a top-level `timestamp`
+- [x] N-46 `loki forge metrics --json` emits a top-level `timestamp`
            so monotonic scrapes can sort chronologically
-- [ ] N-47 Audit verify summary line includes `git_head` (when in
+- [x] N-47 Audit verify summary line includes `git_head` (when in
            a repo) so CI logs correlate audit state with code state
-- [ ] N-48 Secrets vault: surface `unused_for_days` derived field
+- [x] N-48 Secrets vault: surface `unused_for_days` derived field
            in list_secrets() when last_used_at is set (saves clients
            computing wallclock math)
-- [ ] N-49 Function deploy: `deployed_by_user_id` validated against
+- [x] N-49 Function deploy: `deployed_by_user_id` validated against
            the auth users table when caller supplies one and the
            table exists (catches typos before they hit audit)
 - [ ] N-50 Presence: `presence:refresh` carries `since_join_ms` so

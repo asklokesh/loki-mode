@@ -256,6 +256,14 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
             # Back-compat default: AES-GCM rows used raw32 master key;
             # HMAC-XOR rows had no KDF.
             kdf = "raw32" if alg == "AES-GCM-256" else "none"
+        last_used_at = ent.get("last_used_at")
+        # N-48: derive unused_for_days from last_used_at (or
+        # created_at when never used). Saves callers wallclock math.
+        import time as _t
+        ref = last_used_at if last_used_at else ent.get("created_at")
+        unused_days = None
+        if isinstance(ref, int) and ref > 0:
+            unused_days = int((_t.time() - ref) / 86400)
         out.append({
             "name": name,
             "alg": alg,
@@ -266,7 +274,8 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
             "updated_at": ent.get("updated_at"),
             # N-41: surfaces last get_secret() time so operators
             # can identify rotation/removal candidates.
-            "last_used_at": ent.get("last_used_at"),
+            "last_used_at": last_used_at,
+            "unused_for_days": unused_days,
         })
     return out
 

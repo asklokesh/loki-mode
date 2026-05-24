@@ -2111,10 +2111,12 @@ PY
         audit)
             # X-50: forge audit chain verification
             # N-27: --quiet collapses the report to JSON counts.
-            # N-36: --summary emits a single shell-friendly line:
-            #   ok=true checks=N warns=M errs=K dashboard_audit=ok
+            # N-36: --summary emits a single shell-friendly line.
+            # N-47: summary line includes git_head when in a repo.
             local quiet_flag="false"
             local summary_flag="false"
+            local git_head=""
+            git_head=$(git rev-parse HEAD 2>/dev/null || true)
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --quiet) quiet_flag="true"; shift ;;
@@ -2122,21 +2124,25 @@ PY
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag" "$summary_flag" "$git_head"
 import json, sys
 from forge.audit_verify import verify
 quiet = sys.argv[2] == "true"
 summary = sys.argv[3] == "true"
+git_head = sys.argv[4]
 try:
     rep = verify(sys.argv[1])
     if summary:
-        print(
+        line = (
             f"ok={'true' if rep.get('ok') else 'false'} "
             f"checks={rep.get('checked_reviews', 0)} "
             f"warns={len(rep.get('warnings') or [])} "
             f"errs={len(rep.get('errors') or [])} "
             f"dashboard_audit={rep.get('dashboard_audit')}"
         )
+        if git_head:
+            line += f" git_head={git_head}"
+        print(line)
     elif quiet:
         rep = {
             "ok": rep.get("ok"),
@@ -2275,7 +2281,9 @@ else:
             value = val
         out.append({"name": name, "labels": lab, "value": value,
                     "help": helps.get(name), "type": types.get(name)})
+    import time as _t
     print(json.dumps({"schema": "loki.forge.metrics/v1",
+                      "timestamp": int(_t.time()),
                       "metrics": out}, indent=2))
 PY
             ;;
