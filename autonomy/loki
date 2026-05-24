@@ -1869,6 +1869,23 @@ except (json.JSONDecodeError, OSError): pass
 
 # Kill orphaned processes from crashed sessions
 cmd_cleanup() {
+    # v7.6.2 B-13 fix: --help must print help, not run cleanup as a side effect.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- cleanup orphaned processes${NC}"
+            echo ""
+            echo "Usage: loki cleanup [options]"
+            echo ""
+            echo "Scans \$LOKI_DIR/pids/ for stale PID registrations from prior runs"
+            echo "and kills processes whose PID file points at a dead process."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h   Show this help and exit"
+            echo ""
+            echo "Side effects: kills processes registered under .loki/pids/."
+            return 0
+            ;;
+    esac
     local pids_dir="$LOKI_DIR/pids"
     local killed=0
     local stale=0
@@ -1949,6 +1966,23 @@ cmd_cleanup() {
 
 # Pause after current session
 cmd_pause() {
+    # v7.6.2 B-13 fix: --help must print help, not act on session state.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- pause active session${NC}"
+            echo ""
+            echo "Usage: loki pause [options]"
+            echo ""
+            echo "Marks the active session as paused. The runner detects this on"
+            echo "the next iteration boundary and halts cleanly until 'loki resume'."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h   Show this help and exit"
+            echo ""
+            echo "See also: loki resume, loki stop"
+            return 0
+            ;;
+    esac
     if [ ! -d "$LOKI_DIR" ]; then
         echo -e "${YELLOW}No .loki directory found.${NC}"
         echo "No active session to pause."
@@ -1990,6 +2024,23 @@ cmd_pause() {
 
 # Resume paused execution
 cmd_resume() {
+    # v7.6.2 B-13 fix: --help must print help, not act on session state.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- resume paused session${NC}"
+            echo ""
+            echo "Usage: loki resume [options]"
+            echo ""
+            echo "Clears the paused flag and lets the autonomous runner continue"
+            echo "from where 'loki pause' stopped it."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h   Show this help and exit"
+            echo ""
+            echo "See also: loki pause, loki start"
+            return 0
+            ;;
+    esac
     if [ ! -d "$LOKI_DIR" ]; then
         echo -e "${YELLOW}No .loki directory found.${NC}"
         echo "No session to resume. Start a session with: loki start"
@@ -2428,6 +2479,25 @@ print(json.dumps(result, indent=2))
 
 # Session statistics
 cmd_stats() {
+    # v7.6.2 B-13 fix: --help must print help, not render the stats panel.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- session statistics${NC}"
+            echo ""
+            echo "Usage: loki stats [options]"
+            echo ""
+            echo "Prints session-level statistics: tasks completed, iterations,"
+            echo "tokens used, cost, council votes, gate verdicts."
+            echo ""
+            echo "Options:"
+            echo "  --json          JSON output (machine-readable)"
+            echo "  --efficiency    Include cost/token efficiency breakdown"
+            echo "  --help, -h      Show this help and exit"
+            echo ""
+            echo "See also: loki kpis, loki status"
+            return 0
+            ;;
+    esac
     local show_json=false
     local show_efficiency=false
 
@@ -4083,6 +4153,23 @@ cmd_web_status() {
 
 # Import GitHub issues
 cmd_import() {
+    # v7.6.2 B-13 fix: --help must print help, not start an import.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- import GitHub issues into the queue${NC}"
+            echo ""
+            echo "Usage: loki import [options]"
+            echo ""
+            echo "Imports issues from the current repo's GitHub project into"
+            echo ".loki/queue/ so loki start picks them up as tasks."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h   Show this help and exit"
+            echo ""
+            echo "Side effects: makes GitHub API calls, writes to .loki/queue/."
+            return 0
+            ;;
+    esac
     if [ ! -d "$LOKI_DIR" ]; then
         mkdir -p "$LOKI_DIR/queue"
     fi
@@ -6289,6 +6376,23 @@ cmd_config_path() {
 
 # Set up skill symlinks for all providers
 cmd_setup_skill() {
+    # v7.6.2 B-13 fix: --help must print help, not install skills.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- install Loki skill into provider CLIs${NC}"
+            echo ""
+            echo "Usage: loki setup-skill [options]"
+            echo ""
+            echo "Installs the Loki Mode skill into each detected provider CLI's"
+            echo "skills directory: ~/.claude/skills/, ~/.codex/skills/, etc."
+            echo ""
+            echo "Options:"
+            echo "  --help, -h   Show this help and exit"
+            echo ""
+            echo "Side effects: writes symlinks/files under ~/.<provider>/skills/loki-mode/."
+            return 0
+            ;;
+    esac
     echo -e "${BOLD}Loki Mode Skill Setup${NC}"
     echo ""
 
@@ -7231,6 +7335,18 @@ SENTRUX_RULES_EOF
 
 # Show version
 cmd_version() {
+    # v7.6.2 B-13 fix: --help prints help; bare invocation prints version.
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- print version${NC}"
+            echo ""
+            echo "Usage: loki version"
+            echo ""
+            echo "Prints 'Loki Mode vX.Y.Z' from the VERSION file shipped with"
+            echo "the package. Equivalent to 'loki --version' and 'loki -v'."
+            return 0
+            ;;
+    esac
     echo "Loki Mode v$(get_version)"
 }
 
@@ -12135,10 +12251,10 @@ main() {
             cmd_cleanup "$@"
             ;;
         pause)
-            cmd_pause
+            cmd_pause "$@"
             ;;
         resume)
-            cmd_resume
+            cmd_resume "$@"
             ;;
         status)
             cmd_status "$@"
@@ -12156,6 +12272,27 @@ main() {
             cmd_logs "$@"
             ;;
         serve)
+            # v7.6.2 B-12 fix: 'serve --help' previously routed to 'cmd_api start --help'
+            # which started the dashboard as a side effect instead of printing help.
+            case "${1:-}" in
+                --help|-h|help)
+                    echo -e "${BOLD}Loki Mode -- start dashboard API server${NC}"
+                    echo ""
+                    echo "Usage: loki serve [options]"
+                    echo ""
+                    echo "Alias for 'loki api start'. Starts the dashboard HTTP API"
+                    echo "server (FastAPI, port 57374 by default)."
+                    echo ""
+                    echo "Options:"
+                    echo "  --host HOST    Bind host (default: 127.0.0.1)"
+                    echo "  --port PORT    Bind port (default: 57374)"
+                    echo "  --help, -h     Show this help and exit"
+                    echo ""
+                    echo "Side effects: starts a long-running HTTP server bound to a TCP port."
+                    echo "Stop with: loki dashboard stop"
+                    return 0
+                    ;;
+            esac
             cmd_api start "$@"
             ;;
         api)
@@ -12168,7 +12305,7 @@ main() {
             cmd_notify "$@"
             ;;
         import)
-            cmd_import
+            cmd_import "$@"
             ;;
         github)
             cmd_github "$@"
@@ -12313,7 +12450,7 @@ main() {
             cmd_code "$@"
             ;;
         version|--version|-v)
-            cmd_version
+            cmd_version "$@"
             ;;
 	completions)
             cmd_completions "$@"

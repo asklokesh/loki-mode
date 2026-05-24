@@ -237,14 +237,34 @@ export class LokiOverview extends LokiElement {
     const dotClass = s.status === 'running' ? 'active' : s.status === 'crashed' ? 'error' : 'offline';
     const label = (s.status || 'unknown').toUpperCase();
     const port = s.port ? `:${s.port}` : '';
+    // v7.6.2 B-16 fix: when App Runner has a URL, make the whole card clickable
+    // to open the running app in a new tab. The backend `/api/app-runner/status`
+    // returns `url` for compose / npm / python servers. Fall back to
+    // http://localhost:<port> when only a port is present and status is running.
+    let appUrl = s.url && typeof s.url === 'string' ? s.url : null;
+    if (!appUrl && s.port && s.status === 'running') {
+      appUrl = `http://localhost:${s.port}`;
+    }
+    const inner = `
+      <div class="card-label">App Runner${appUrl ? ' <span style="font-size:10px;color:var(--loki-text-muted);">(click to open)</span>' : ''}</div>
+      <div class="card-value small-text">
+        <span class="status-dot ${dotClass}"></span>
+        ${label}${port}
+      </div>
+      ${s.method ? `<div style="font-size:10px;color:var(--loki-text-muted);margin-top:2px;">${this._escapeHtml(s.method)}</div>` : ''}
+    `;
+    if (appUrl) {
+      return `
+        <a class="overview-card overview-card-link" href="${this._escapeHtml(appUrl)}" target="_blank" rel="noopener noreferrer"
+           style="text-decoration:none;color:inherit;display:block;cursor:pointer;"
+           title="Open ${this._escapeHtml(appUrl)} in new tab">
+          ${inner}
+        </a>
+      `;
+    }
     return `
       <div class="overview-card">
-        <div class="card-label">App Runner</div>
-        <div class="card-value small-text">
-          <span class="status-dot ${dotClass}"></span>
-          ${label}${port}
-        </div>
-        ${s.method ? `<div style="font-size:10px;color:var(--loki-text-muted);margin-top:2px;">${this._escapeHtml(s.method)}</div>` : ''}
+        ${inner}
       </div>
     `;
   }

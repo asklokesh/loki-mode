@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.6.2] - 2026-05-23
+
+PATCH release. Critical real-user bug fixes surfaced by a live `loki start`
+session on a fullstack project (EC2Renter). Plus CLI `--help` correctness
+fixes from the v7.6.1 bug-hunt.
+
+### Fixed (critical real-user bugs)
+
+- **B-15 CRITICAL**: Dashboard server was killed mid-session by
+  `kill_provider_child()`'s `pkill -KILL -P $$` cascade. Dashboard PID
+  (started via nohup) remained a direct child of the run.sh until the OS
+  reparented it, so the SIGKILL caught it. User saw 200+ browser
+  `ERR_CONNECTION_REFUSED` errors and "Dashboard server is not running"
+  after just one iteration. Fix: `kill_provider_child()` now reads
+  `.loki/pids/*.pid` and `.loki/dashboard/dashboard.pid`, builds a
+  protected-PID set, and skips those PIDs in both SIGTERM and SIGKILL
+  passes. Provider pipeline children still get killed normally; dashboard
+  and app-runner survive.
+
+- **B-17 CRITICAL**: Completion council fired "COMPLETION PROMISE FULFILLED"
+  on the very same iteration that "CODE REVIEW BLOCKED" with
+  Critical/High findings. False success signal. Fix: completion-check
+  inspects the `gate_failures` accumulator; if it contains `code_review`
+  or `code_review_ESCALATED`, the completion claim is rejected with a
+  clear log and the iteration continues. Memory consolidation and notify
+  are NOT triggered on a blocked iteration.
+
+- **B-18 HIGH**: Static analysis silently skipped every `.ts` / `.tsx`
+  file with "tsc not on PATH; node --check cannot parse" when the
+  project didn't have `typescript` on PATH. Real-world JS/TS projects
+  shipped zero static-analysis coverage. Fix: fallback chain --
+  `tsc` (if installed) -> `bun --check` (Bun has built-in TS) ->
+  `npx --yes -p typescript@latest tsc`. Files are now actually checked.
+
+- **B-16 HIGH**: APP RUNNER tile in Dashboard Overview showed status
+  text but wasn't clickable. User couldn't open the running app from
+  the tile. Fix: `loki-overview.js _renderAppRunnerCard` now wraps the
+  tile in an `<a target="_blank">` when `appRunner.url` is set (or
+  falls back to `http://localhost:<port>` when status is running and
+  only port is exposed). Tile label adds " (click to open)" hint.
+  Static dashboard rebuilt with the change.
+
+### Fixed (CLI --help correctness from v7.6.1 hunt)
+
+- **B-12**: `loki serve --help` previously routed to `cmd_api start --help`
+  which started the dashboard HTTP server on port 57374 as a side effect.
+  Now the dispatcher intercepts `--help` and prints help text without
+  spawning the server.
+- **B-13**: 7 commands (`cleanup`, `import`, `pause`, `resume`,
+  `setup-skill`, `stats`, `version`) ignored `--help` and executed the
+  underlying action. `cleanup --help` was killing processes;
+  `import --help` was making GitHub API calls. Each command now has an
+  explicit `--help` guard at function entry. Also fixed the dispatch for
+  `pause`, `resume`, `import`, `version` to pass `"$@"` so the guard
+  sees the flag.
+
+### Verified
+
+- All 8 `<cmd> --help` invocations: output contains "Usage:" + exit 0 +
+  no side effect (no port bound, no PID file written, no GitHub calls)
+- 23/23 local-ci PASS (incl. bun-parity matrix 10/10)
+- `bash -n autonomy/run.sh` and `bash -n autonomy/loki` clean
+- Dashboard static rebuilt and contains the new clickable-card markup
+
+### NOT tested in this release
+
+- B-15: did not run a full `loki start` end-to-end to confirm the
+  dashboard stays up across an iteration with code-review BLOCK
+  (requires ~3 minutes of real provider time and budget; reasoning
+  trace verified)
+- B-17: did not exercise the new gate_failures completion guard with
+  a real BLOCK + completion-promise scenario (synthetic gate-failures
+  string verified via shellcheck of the case statement)
+- B-18: `bun --check` and `npx tsc` fallbacks not run against a real
+  TS project in this commit; will validate on next user-test cycle
+- B-16: clickable card markup verified in built HTML; not clicked in
+  a real browser end-to-end (requires a running app with a URL)
+
 ## [7.6.1] - 2026-05-23
 
 PATCH release. Systematic bug-hunt against live v7.6.0 with empirical

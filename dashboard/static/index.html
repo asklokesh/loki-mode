@@ -570,10 +570,6 @@
           <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           Escalations
         </button>
-        <button class="nav-link" data-section="lab" id="nav-lab">
-          <svg viewBox="0 0 24 24"><path d="M9 2v6l-5 9a2 2 0 002 3h12a2 2 0 002-3l-5-9V2"/><line x1="9" y1="2" x2="15" y2="2"/></svg>
-          Lab
-        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -667,7 +663,10 @@
                 }
                 function renderViewer(file){
                   if (!file){ viewEl.textContent = 'Select a file to view its contents.'; return; }
-                  var header = file.name + '  (' + fmtSize(file.size) + (file.truncated ? ', truncated' : '') + ')\n' + file.path + '\n\n';
+                  var header = file.name + '  (' + fmtSize(file.size) + (file.truncated ? ', truncated' : '') + ')
+' + file.path + '
+
+';
                   var body = file.content || '';
                   if (file.kind === 'json'){
                     try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(e){ /* leave raw */ }
@@ -797,25 +796,6 @@
           <h2 class="section-page-title">Escalations</h2>
         </div>
         <loki-escalations id="escalations-panel"></loki-escalations>
-      </div>
-
-      <!-- Phase Merge-6: Purple Lab as a sidebar entry. Mounted at /lab/
-           by dashboard/server.py (Phase Merge-4). iframe loads the same
-           React bundle that 'loki web' standalone serves -- one source
-           of truth, no duplicated UI. -->
-      <div class="section-page" id="page-lab">
-        <div class="section-page-header">
-          <h2 class="section-page-title">Lab</h2>
-          <p style="color:var(--text-muted);font-size:13px;margin-top:4px;">
-            Purple Lab -- PRD input, build watch, Magic Modules, templates.
-            <a href="/lab/" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">Open in new tab &rarr;</a>
-          </p>
-        </div>
-        <iframe id="lab-iframe" src="about:blank" data-src="/lab/"
-                title="Purple Lab"
-                style="width:100%;height:calc(100vh - 200px);min-height:600px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);"
-                loading="lazy">
-        </iframe>
       </div>
     </main>
   </div>
@@ -1359,14 +1339,22 @@ var LokiDashboard=(()=>{var wt=Object.defineProperty;var ae=Object.getOwnPropert
           <div class="card-label">App Runner</div>
           <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Waiting...":"Not started"}</div>
         </div>
-      `;let a={running:"var(--loki-green, #22c55e)",starting:"var(--loki-yellow, #f59e0b)",crashed:"var(--loki-red, #ef4444)",stopped:"var(--loki-text-muted, #a1a1aa)"}[t.status]||"var(--loki-text-muted)",i=t.status==="running"?"active":t.status==="crashed"?"error":"offline",s=(t.status||"unknown").toUpperCase(),r=t.port?`:${t.port}`:"";return`
+      `;let a={running:"var(--loki-green, #22c55e)",starting:"var(--loki-yellow, #f59e0b)",crashed:"var(--loki-red, #ef4444)",stopped:"var(--loki-text-muted, #a1a1aa)"}[t.status]||"var(--loki-text-muted)",i=t.status==="running"?"active":t.status==="crashed"?"error":"offline",s=(t.status||"unknown").toUpperCase(),r=t.port?`:${t.port}`:"",o=t.url&&typeof t.url=="string"?t.url:null;!o&&t.port&&t.status==="running"&&(o=`http://localhost:${t.port}`);let n=`
+      <div class="card-label">App Runner${o?' <span style="font-size:10px;color:var(--loki-text-muted);">(click to open)</span>':""}</div>
+      <div class="card-value small-text">
+        <span class="status-dot ${i}"></span>
+        ${s}${r}
+      </div>
+      ${t.method?`<div style="font-size:10px;color:var(--loki-text-muted);margin-top:2px;">${this._escapeHtml(t.method)}</div>`:""}
+    `;return o?`
+        <a class="overview-card overview-card-link" href="${this._escapeHtml(o)}" target="_blank" rel="noopener noreferrer"
+           style="text-decoration:none;color:inherit;display:block;cursor:pointer;"
+           title="Open ${this._escapeHtml(o)} in new tab">
+          ${n}
+        </a>
+      `:`
       <div class="overview-card">
-        <div class="card-label">App Runner</div>
-        <div class="card-value small-text">
-          <span class="status-dot ${i}"></span>
-          ${s}${r}
-        </div>
-        ${t.method?`<div style="font-size:10px;color:var(--loki-text-muted);margin-top:2px;">${this._escapeHtml(t.method)}</div>`:""}
+        ${n}
       </div>
     `}_renderPlaywrightCard(){let t=this._playwrightResults;if(!t||t==="null"||!t.verified_at)return`
         <div class="overview-card">
@@ -13266,13 +13254,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Scroll main content to top on section switch
     mainContent.scrollTop = 0;
     localStorage.setItem('loki-active-section', sectionId);
-    // Phase Merge-6: lazy-load the Purple Lab iframe on first visit
-    if (sectionId === 'lab') {
-      var lab = document.getElementById('lab-iframe');
-      if (lab && lab.src === 'about:blank' && lab.dataset.src) {
-        lab.src = lab.dataset.src;
-      }
-    }
   }
 
   navLinks.forEach(function(link) {

@@ -5634,13 +5634,29 @@ enforce_static_analysis() {
                             if [ "$_ts_project_mode" -eq 1 ]; then
                                 continue
                             fi
+                            # v7.6.2 B-18 fix: previously skipped TS/TSX files when
+                            # tsc wasn't on PATH, leaving them silently unchecked.
+                            # Now fall back to `npx --yes -p typescript@latest tsc`
+                            # (uses the cached npm install), then to `bun tsc`
+                            # (Bun has built-in TypeScript), before giving up.
                             if command -v tsc &>/dev/null; then
                                 tsc --noEmit --allowJs --jsx preserve --target esnext "$f" 2>&1 || {
                                     findings=$((findings + 1))
                                     details="${details}TS syntax error: $f. "
                                 }
+                            elif command -v bun &>/dev/null; then
+                                # Bun has built-in TypeScript via `bun --check`.
+                                bun --check "$f" 2>&1 || {
+                                    findings=$((findings + 1))
+                                    details="${details}TS syntax error (bun --check): $f. "
+                                }
+                            elif command -v npx &>/dev/null; then
+                                npx --yes -p typescript@latest tsc --noEmit --allowJs --jsx preserve --target esnext "$f" 2>&1 || {
+                                    findings=$((findings + 1))
+                                    details="${details}TS syntax error (npx tsc): $f. "
+                                }
                             else
-                                log_info "Static analysis: skipping $f (tsc not on PATH; node --check cannot parse .ts/.tsx)"
+                                log_info "Static analysis: skipping $f (no tsc, bun, or npx available)"
                             fi
                             ;;
                         *)
@@ -11439,7 +11455,22 @@ if __name__ == "__main__":
             #       promise text appears in the iteration output.
             # The check_completion_promise() helper encapsulates both.
             # BUG-RUN-001: Use per-iteration output, not stale daily log.
-            if check_completion_promise "$iter_output"; then
+            #
+            # v7.6.2 B-17 fix: completion was firing even when code review
+            # BLOCKED the iteration with Critical/High findings. That's a false
+            # success signal -- review-blocked iterations cannot be considered
+            # complete. Check the gate_failures accumulator for code_review and
+            # refuse completion until the review passes.
+            local _gate_block_for_completion=""
+            case "${gate_failures:-}" in
+                *code_review,*|*code_review_ESCALATED*) _gate_block_for_completion="code_review" ;;
+            esac
+            if [ -n "$_gate_block_for_completion" ] && check_completion_promise "$iter_output"; then
+                log_warn "Completion claim rejected: code review is BLOCKED for this iteration (Critical/High findings). Fix review issues before completion."
+                log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"
+                _gate_block_for_completion=""
+                # Fall through; the gate-failed loop continues normally
+            elif check_completion_promise "$iter_output"; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then
                     log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
@@ -11551,13 +11582,57 @@ LOKI_PROVIDER_ACTIVE=0
 # v7.5.12: Kill provider pipeline children with SIGTERM, then SIGKILL escalation.
 # Uses pkill -P $$ to target direct children only (the pipeline subshells).
 # Returns 0 if anything was killed, 1 if no children present.
+#
+# v7.6.2 B-15 fix: previously `pkill -P $$` was indiscriminate -- it caught
+# the dashboard server (started via nohup but still parented to this shell
+# until the OS reparents it). The dashboard PID 29716 was killed mid-session
+# after "Aggregating verdicts", breaking the browser UI. Now we explicitly
+# exclude any PID registered in .loki/pids/ (dashboard, app-runner, etc.).
 kill_provider_child() {
     local killed=0
-    # First pass: SIGTERM to direct children of this shell. Pipeline subshells
-    # for `claude -p | tee | python` are direct children of $$.
-    if pkill -TERM -P $$ 2>/dev/null; then
-        killed=1
+    local protected_pids=""
+    # Build list of PIDs that MUST survive a provider kill (dashboard, app-runner,
+    # status monitor, resource monitor). These are recorded as PID files when
+    # cmd_dashboard_start / cmd_api_start spawn them.
+    local pid_root="${TARGET_DIR:-.}/.loki/pids"
+    if [ -d "$pid_root" ]; then
+        local pid_file pid
+        for pid_file in "$pid_root"/*.pid; do
+            [ -f "$pid_file" ] || continue
+            pid=$(cat "$pid_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                protected_pids="${protected_pids} ${pid}"
+            fi
+        done
     fi
+    # Also protect the dashboard PID file at .loki/dashboard/dashboard.pid (older path).
+    local dash_pid_file="${TARGET_DIR:-.}/.loki/dashboard/dashboard.pid"
+    if [ -f "$dash_pid_file" ]; then
+        local dpid
+        dpid=$(cat "$dash_pid_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+        if [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
+            protected_pids="${protected_pids} ${dpid}"
+        fi
+    fi
+
+    # Helper: returns 0 if $1 is in protected_pids list.
+    _is_protected() {
+        local target="$1"
+        local p
+        for p in $protected_pids; do
+            [ "$p" = "$target" ] && return 0
+        done
+        return 1
+    }
+
+    # First pass: SIGTERM each direct child individually so we can skip protected PIDs.
+    local child_pid
+    for child_pid in $(pgrep -P $$ 2>/dev/null); do
+        if _is_protected "$child_pid"; then
+            continue
+        fi
+        kill -TERM "$child_pid" 2>/dev/null && killed=1
+    done
     # Also kill provider leaf processes by name in case they were reparented.
     local proc
     for proc in claude codex aider cline; do
@@ -11567,18 +11642,27 @@ kill_provider_child() {
     # Brief wait for graceful exit (max ~2s).
     local i=0
     while [ $i -lt 20 ]; do
-        if ! pgrep -P $$ >/dev/null 2>&1; then
+        local survivors=""
+        for child_pid in $(pgrep -P $$ 2>/dev/null); do
+            if ! _is_protected "$child_pid"; then
+                survivors="${survivors} ${child_pid}"
+            fi
+        done
+        if [ -z "$survivors" ]; then
             break
         fi
         sleep 0.1
         i=$((i + 1))
     done
 
-    # Escalate to SIGKILL for any survivors.
-    if pgrep -P $$ >/dev/null 2>&1; then
-        pkill -KILL -P $$ 2>/dev/null || true
+    # Escalate to SIGKILL for unprotected survivors only.
+    for child_pid in $(pgrep -P $$ 2>/dev/null); do
+        if _is_protected "$child_pid"; then
+            continue
+        fi
+        kill -KILL "$child_pid" 2>/dev/null
         killed=1
-    fi
+    done
 
     LOKI_PROVIDER_ACTIVE=0
     if [ $killed -eq 1 ]; then
