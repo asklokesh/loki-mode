@@ -59,6 +59,11 @@ def set_presence(channel: str, user_id: str, *,
         _STATE[channel][user_id] = rec
     if is_new:
         _emit(forge_dir, channel, "presence:join", user_id, rec["metadata"])
+    else:
+        # N-38: emit a refresh marker on an already-present user so
+        # clients tracking keep-alives can react. Distinct event type
+        # so existing 'presence:join' listeners are unaffected.
+        _emit(forge_dir, channel, "presence:refresh", user_id, rec["metadata"])
     return rec
 
 

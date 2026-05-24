@@ -177,18 +177,18 @@ Format:
 - [x] N-34 Magic-link `redirect` arg supports a configurable
            allow-list of hostnames to prevent open-redirect abuse
            even within http(s) targets
-- [ ] N-35 OpenAPI Error enum: declare a `discriminator` so generated
+- [x] N-35 OpenAPI Error enum: declare a `discriminator` so generated
            clients can switch on `error` at the type-system level
-- [ ] N-36 Audit verify `--quiet`: machine-readable single-line
+- [x] N-36 Audit verify `--quiet`: machine-readable single-line
            exit summary (`ok=true checks=7 warns=3 errs=0`) for
            shell-pipeline gates
-- [ ] N-37 Healing `propose_from_sqlite`: include `source_table_count`
+- [x] N-37 Healing `propose_from_sqlite`: include `source_table_count`
            in the proposal so callers can see how many legacy tables
            were considered vs accepted
-- [ ] N-38 Presence: emit `presence:refresh` event when set_presence
+- [x] N-38 Presence: emit `presence:refresh` event when set_presence
            is called on an already-present user (currently silent;
            clients may want to track keep-alives)
-- [ ] N-39 Forge doctor: include `git rev-parse HEAD` in the report
+- [x] N-39 Forge doctor: include `git rev-parse HEAD` in the report
            so support tickets correlate code state with diagnostics
 - [ ] N-40 Function deploy: persist `deployed_by_user_id` from caller
            context so audit reviews see operator attribution

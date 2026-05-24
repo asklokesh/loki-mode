@@ -73,7 +73,34 @@ _ERROR_SCHEMA = {
                    "additionalProperties": True,
                    "description": "optional structured detail"},
     },
+    # N-35: discriminator on `error` lets generated clients switch at
+    # the type-system level. Each code maps to a per-code envelope
+    # declared below (Error_<code>); the envelopes intersect with the
+    # base Error via `allOf` so the schema stays compatible with
+    # generators that don't honor discriminator.
+    "discriminator": {
+        "propertyName": "error",
+        "mapping": {
+            code: f"#/components/schemas/Error_{code}"
+            for code in _ERROR_CODES
+        },
+    },
 }
+
+
+def _per_code_error_schemas() -> Dict[str, Any]:
+    """Per-code envelopes for the discriminator mapping. Each is a
+    thin allOf over the base Error with `error` pinned to its constant."""
+    out: Dict[str, Any] = {}
+    for code in _ERROR_CODES:
+        out[f"Error_{code}"] = {
+            "allOf": [
+                {"$ref": "#/components/schemas/Error"},
+                {"type": "object",
+                 "properties": {"error": {"const": code}}},
+            ],
+        }
+    return out
 
 
 _TYPE_OPENAPI = {
@@ -226,6 +253,7 @@ def generate(forge_dir: str, *, title: str = "Forge API",
         }
 
     schemas["Error"] = _ERROR_SCHEMA
+    schemas.update(_per_code_error_schemas())
     return {
         "openapi": "3.1.0",
         "info": {"title": title, "version": version},

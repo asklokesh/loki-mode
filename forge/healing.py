@@ -42,6 +42,10 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
+        # N-37: surface how many legacy tables we considered before
+        # filtering (hidden + forge-internal) so callers can see the
+        # accept/skip ratio.
+        out["source_table_count"] = len(tables)
         # First pass: build per-table add_table + index ops keyed by name.
         add_ops: Dict[str, Dict[str, Any]] = {}
         index_ops: Dict[str, List[Dict[str, Any]]] = {}
@@ -138,6 +142,8 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
             out["operations"].append(add_ops[tname])
             for idx_op in index_ops.get(tname, []):
                 out["operations"].append(idx_op)
+        # N-37: surface accepted count (the topo-sorted add_tables).
+        out["accepted_table_count"] = len(ordered)
     finally:
         conn.close()
     return out
