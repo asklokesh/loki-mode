@@ -2010,12 +2010,14 @@ cmd_forge() {
     local subcommand="${1:-status}"
     shift 2>/dev/null || true
     # N-91: short aliases so common subcommands need fewer keystrokes.
+    # N-101: h -> help.
     case "$subcommand" in
         doc) subcommand="doctor" ;;
         m) subcommand="metrics" ;;
         s) subcommand="status" ;;
         l) subcommand="lint" ;;
         a) subcommand="audit" ;;
+        h) subcommand="help" ;;
     esac
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2251,14 +2253,24 @@ PY
             # object so operators don't have to re-parse exposition.
             local label_arg=""
             local json_flag="false"
+            local filter_prefix=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
                     --json) json_flag="true"; shift ;;
+                    --filter)
+                        # N-110: --filter prefix=forge_secrets_ keeps only
+                        # metric lines whose name starts with the prefix.
+                        local kv="${2:-}"
+                        if [[ "$kv" == prefix=* ]]; then
+                            filter_prefix="${kv#prefix=}"
+                        fi
+                        shift 2
+                        ;;
                     *) shift ;;
                 esac
             done
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag"
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix"
 import json, re, sys
 from forge.metrics import render
 labels = {}
@@ -2280,6 +2292,30 @@ if raw:
                 sys.exit(2)
             labels[k] = v
 text = render(sys.argv[1], labels=labels)
+# N-110: when prefix filter given, drop metric lines (HELP/TYPE/blank
+# stay through) whose name doesn't start with the prefix.
+filter_prefix = sys.argv[4] if len(sys.argv) > 4 else ""
+if filter_prefix:
+    keep = []
+    cur_help = None
+    cur_type = None
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith("# HELP "):
+            parts = s[7:].split(" ", 1)
+            if len(parts) == 2 and parts[0].startswith(filter_prefix):
+                keep.append(ln)
+        elif s.startswith("# TYPE "):
+            parts = s[7:].split(" ", 1)
+            if len(parts) == 2 and parts[0].startswith(filter_prefix):
+                keep.append(ln)
+        elif s and not s.startswith("#"):
+            name = s.split("{", 1)[0].split(" ", 1)[0]
+            if name.startswith(filter_prefix):
+                keep.append(ln)
+        elif not s:
+            keep.append(ln)
+    text = "\n".join(keep) + "\n"
 if sys.argv[3] != "true":
     print(text, end="")
 else:
@@ -2360,6 +2396,7 @@ PY
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
                     --max-iterations) watch_max_iter="${2:-0}"; shift 2 ;;
                     --watch) watch_interval="${2:-5}"; shift 2 ;;
+                    --once) watch_max_iter="1"; watch_interval="${watch_interval:-1}"; shift ;;
                     *) shift ;;
                 esac
             done

@@ -162,6 +162,8 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
             # N-44: surface next_fire_ts per schedule so dashboards
             # can predict when load spikes will hit. Unix epoch
             # seconds; 0 when the schedule is parked.
+            # N-103: include `tag` label per emitted tag so multi-
+            # tenant dashboards can group.
             lines.append(
                 "# HELP forge_schedule_next_fire_ts "
                 "Unix epoch seconds of next scheduled fire"
@@ -170,10 +172,13 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
                 "# TYPE forge_schedule_next_fire_ts gauge"
             )
             for s in scheds:
-                lines.append(
-                    f'forge_schedule_next_fire_ts{{name="{s.get("name", "")}"}} '
-                    f'{int(s.get("next_fire_ts") or 0)}'
-                )
+                tags = s.get("tags") or [""]
+                for tag in tags:
+                    tag_label = f',tag="{tag}"' if tag else ""
+                    lines.append(
+                        f'forge_schedule_next_fire_ts{{name="{s.get("name", "")}"'
+                        f'{tag_label}}} {int(s.get("next_fire_ts") or 0)}'
+                    )
     except Exception:
         pass
     # Secrets (N-55, N-63).

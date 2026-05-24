@@ -53,7 +53,8 @@ def _save(forge_dir: str, items: List[Dict[str, Any]]) -> None:
 
 def create(forge_dir: str, name: str, cron: str,
            target: Dict[str, Any], payload: Optional[Dict[str, Any]] = None,
-           *, bus_channel: Optional[str] = None
+           *, bus_channel: Optional[str] = None,
+           tags: Optional[List[str]] = None
            ) -> Dict[str, Any]:
     if not _NAME_RE.match(name or ""):
         raise ScheduleError("name must match ^[a-z][a-z0-9_-]{1,62}$")
@@ -102,6 +103,17 @@ def create(forge_dir: str, name: str, cron: str,
     }
     if bus_channel:
         rec["bus_channel"] = bus_channel
+    if tags:
+        # N-103: validate tag shape so /metrics labels stay safe.
+        import re as _re
+        cleaned = []
+        for t in tags:
+            if not isinstance(t, str) or not _re.match(r"^[a-z0-9_:-]{1,32}$", t):
+                raise ScheduleError(
+                    f"invalid tag {t!r}: ^[a-z0-9_:-]{{1,32}}$"
+                )
+            cleaned.append(t)
+        rec["tags"] = sorted(set(cleaned))
     items.append(rec)
     _save(forge_dir, items)
     return rec

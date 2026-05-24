@@ -281,7 +281,8 @@ def list_secrets(forge_dir: str) -> List[Dict[str, Any]]:
 
 
 def weak_secrets(forge_dir: str, *,
-                 unused_for_days: Optional[int] = None
+                 unused_for_days: Optional[int] = None,
+                 hard: bool = False
                  ) -> List[Dict[str, Any]]:
     """N-22: subset of list_secrets() that is on the insecure HMAC-XOR
     fallback. Use this in CI to fail builds that promote with weak
@@ -291,6 +292,11 @@ def weak_secrets(forge_dir: str, *,
     N-97: when `unused_for_days` is set, also requires
     unused_for_days >= the threshold so dashboards can surface the
     "weak AND stale" rotation candidates first.
+
+    N-107: when `hard=True` and any weak rows match, raise
+    SecretError listing the offending names so CI scripts can
+    `python -c 'weak_secrets(d, hard=True)'` and rely on the exit
+    code without parsing output.
     """
     rows = [r for r in list_secrets(forge_dir) if r.get("fallback")]
     if unused_for_days is not None:
@@ -298,6 +304,11 @@ def weak_secrets(forge_dir: str, *,
         rows = [r for r in rows
                 if isinstance(r.get("unused_for_days"), int)
                 and r["unused_for_days"] >= cutoff]
+    if hard and rows:
+        names = ", ".join(r["name"] for r in rows)
+        raise SecretError(
+            f"weak secrets present: {names} (hard=True)"
+        )
     return rows
 
 

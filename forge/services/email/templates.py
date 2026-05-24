@@ -127,9 +127,25 @@ def register_template(forge_dir: str, name: str, *,
     return {"name": key, **overrides[key]}
 
 
-def list_templates(forge_dir: str) -> List[Dict[str, Any]]:
+def list_templates(forge_dir: str, *,
+                   include_defaults: bool = True
+                   ) -> List[Dict[str, Any]]:
+    """N-105: when include_defaults=False, only entries the operator
+    has registered (overrides on disk) are returned - the built-in
+    DEFAULT_TEMPLATES are excluded so the caller sees just their
+    customizations."""
     merged = _load(forge_dir)
-    return [{"name": k, **v} for k, v in sorted(merged.items())]
+    if include_defaults:
+        return [{"name": k, **v} for k, v in sorted(merged.items())]
+    p = _path(forge_dir)
+    if not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            overrides = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [{"name": k, **v} for k, v in sorted(overrides.items())]
 
 
 def unset_template(forge_dir: str, name: str) -> bool:

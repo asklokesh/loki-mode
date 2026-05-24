@@ -326,4 +326,7 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
         "applied": applied,
         "errors": errors,
         "ops": ops_status,
+        # N-108: explicit dry_run_count so callers can tell preview
+        # results from real applies (also useful when ops mix the two).
+        "dry_run_count": sum(1 for op in ops_status if op.get("dry_run")),
     }

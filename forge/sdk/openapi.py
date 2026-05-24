@@ -271,9 +271,14 @@ def generate(forge_dir: str, *, title: str = "Forge API",
     # N-92: x-generated-at timestamp so consumers can detect a fresh
     # spec without diffing the whole document. Standard OpenAPI
     # extension prefix.
+    # N-102: emit RFC3339 with milliseconds so two regenerations
+    # within the same second still differ.
+    _now = _t.time()
+    _ms = int((_now - int(_now)) * 1000)
     info: Dict[str, Any] = {
         "title": title, "version": version,
-        "x-generated-at": _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime()),
+        "x-generated-at": _t.strftime("%Y-%m-%dT%H:%M:%S", _t.gmtime(_now))
+                          + f".{_ms:03d}Z",
     }
     try:
         for cand in (os.path.join(os.path.dirname(forge_dir), "..", "package.json"),

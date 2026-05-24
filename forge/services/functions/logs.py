@@ -64,31 +64,49 @@ def list_runs(forge_dir: str, name: str, limit: int = 100,
 
 
 def purge_runs(forge_dir: str, name: str, *,
-               older_than_days: int = 30) -> int:
-    """N-73: drop run log files older than N days. Returns the
-    number of files removed. Use this from a scheduled job to bound
-    disk usage. older_than_days <= 0 raises ValueError.
+               older_than_days: Optional[int] = None,
+               keep_last_n: Optional[int] = None) -> int:
+    """N-73: drop old run log files. Returns the number of files
+    removed.
+
+    Pass exactly one of `older_than_days` or `keep_last_n`:
+        - older_than_days (1..365): mtime-based purge.
+        - N-106 keep_last_n (>=1): keep the N newest files, drop
+          the rest. Sorting is by mtime.
     """
-    if not isinstance(older_than_days, int) or older_than_days <= 0:
-        raise ValueError("older_than_days must be a positive int")
-    # N-81: cap at 365 days so a typo doesn't accidentally wipe the
-    # whole log directory.
-    if older_than_days > 365:
-        raise ValueError("older_than_days capped at 365; use a smaller value")
+    if (older_than_days is None) == (keep_last_n is None):
+        raise ValueError("pass exactly one of older_than_days/keep_last_n")
     d = _logs_dir(forge_dir, name)
     if not os.path.isdir(d):
         return 0
-    import time as _t
-    cutoff = _t.time() - older_than_days * 86400
+    files = [e for e in os.listdir(d) if e.endswith(".json")]
+    if older_than_days is not None:
+        if not isinstance(older_than_days, int) or older_than_days <= 0:
+            raise ValueError("older_than_days must be a positive int")
+        if older_than_days > 365:
+            raise ValueError("older_than_days capped at 365; use a smaller value")
+        import time as _t
+        cutoff = _t.time() - older_than_days * 86400
+        removed = 0
+        for e in files:
+            path = os.path.join(d, e)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.unlink(path)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
+    # keep_last_n branch
+    if not isinstance(keep_last_n, int) or keep_last_n < 1:
+        raise ValueError("keep_last_n must be a positive int")
+    paths = [os.path.join(d, e) for e in files]
+    paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     removed = 0
-    for e in os.listdir(d):
-        if not e.endswith(".json"):
-            continue
-        path = os.path.join(d, e)
+    for p in paths[keep_last_n:]:
         try:
-            if os.path.getmtime(path) < cutoff:
-                os.unlink(path)
-                removed += 1
+            os.unlink(p)
+            removed += 1
         except OSError:
             continue
     return removed

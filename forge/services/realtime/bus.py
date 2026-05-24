@@ -34,13 +34,14 @@ def _caps_path(forge_dir: str) -> str:
 
 
 def set_channel_cap(channel: str, cap: int, *,
-                    forge_dir: Optional[str] = None) -> None:
+                    forge_dir: Optional[str] = None,
+                    actor: Optional[str] = None) -> None:
     """N-85: configure a custom ring cap for `channel`.
-    N-94: when `forge_dir` is supplied, the cap also persists to
-    realtime/ring_caps.json so it survives process restart - call
-    `load_channel_caps(forge_dir)` at startup to rehydrate.
-    cap must be in [1, 1_000_000]; values outside the range are
-    rejected so a typo can't blow the heap."""
+    N-94: when `forge_dir` is supplied, the cap also persists.
+    N-104: when `actor` is also supplied, the persisted entry is a
+    {cap, ts, actor} dict so audit reviews see who tuned it. The
+    older plain-int format on disk continues to work for old caps.
+    """
     if not isinstance(cap, int) or cap < 1 or cap > 1_000_000:
         raise ValueError("cap must be an int in [1, 1000000]")
     with _LOCK:
@@ -53,11 +54,16 @@ def set_channel_cap(channel: str, cap: int, *,
         try:
             p = _caps_path(forge_dir)
             os.makedirs(os.path.dirname(p), exist_ok=True)
-            caps: Dict[str, int] = {}
+            caps: Dict[str, Any] = {}
             if os.path.isfile(p):
                 with open(p, "r", encoding="utf-8") as f:
                     caps = json.load(f)
-            caps[channel] = cap
+            import time as _t
+            if actor:
+                caps[channel] = {"cap": cap, "ts": int(_t.time()),
+                                 "actor": actor}
+            else:
+                caps[channel] = cap
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(caps, f, indent=2, sort_keys=True)
@@ -66,16 +72,19 @@ def set_channel_cap(channel: str, cap: int, *,
             pass
 
 
-def load_channel_caps(forge_dir: str) -> Dict[str, int]:
+def load_channel_caps(forge_dir: str) -> Dict[str, Any]:
     """N-94: rehydrate persisted ring caps. Call at startup so
-    operator-configured caps survive process restart."""
+    operator-configured caps survive process restart. Accepts both
+    legacy {channel: cap} ints and N-104 {channel: {cap, ts, actor}}
+    dicts."""
     p = _caps_path(forge_dir)
     if not os.path.isfile(p):
         return {}
     try:
         with open(p, "r", encoding="utf-8") as f:
             caps = json.load(f)
-        for ch, cap in caps.items():
+        for ch, val in caps.items():
+            cap = val.get("cap") if isinstance(val, dict) else val
             if isinstance(cap, int) and 1 <= cap <= 1_000_000:
                 set_channel_cap(ch, cap)
         return caps

@@ -343,25 +343,52 @@ Format:
 
 ## Next-up wave 8 (discovered during N-91..N-100)
 
-- [ ] N-101 `loki forge h` alias for help (parity with other aliases)
-- [ ] N-102 OpenAPI `x-generated-at` uses RFC3339 with milliseconds
+- [x] N-101 `loki forge h` alias for help (parity with other aliases)
+- [x] N-102 OpenAPI `x-generated-at` uses RFC3339 with milliseconds
             so re-generations within a second still differ
-- [ ] N-103 Schedules: a `tags: [...]` field with /metrics gauges
+- [x] N-103 Schedules: a `tags: [...]` field with /metrics gauges
             tagged by it so multi-tenant dashboards can group
-- [ ] N-104 Bus: `set_channel_cap` persists with timestamp + actor
+- [x] N-104 Bus: `set_channel_cap` persists with timestamp + actor
             field so audits can see who tuned it
-- [ ] N-105 Email: `list_templates(include_defaults=False)` so the
+- [x] N-105 Email: `list_templates(include_defaults=False)` so the
             caller can see only operator-registered overrides
-- [ ] N-106 Function logs: `purge_runs(name, keep_last_n=N)` keep-N
+- [x] N-106 Function logs: `purge_runs(name, keep_last_n=N)` keep-N
             companion to `older_than_days`
-- [ ] N-107 Secrets: `weak_secrets(forge_dir, hard=True)` raises
+- [x] N-107 Secrets: `weak_secrets(forge_dir, hard=True)` raises
             instead of returning so CI can use a single call-and-exit
-- [ ] N-108 Healing: `apply_proposal` records `dry_run_count` on
+- [x] N-108 Healing: `apply_proposal` records `dry_run_count` on
             the v2 envelope so callers can tell preview from real
-- [ ] N-109 Doctor `--watch`: emit a `--once` companion that runs
+- [x] N-109 Doctor `--watch`: emit a `--once` companion that runs
             doctor exactly once and exits, regardless of interval
-- [ ] N-110 `loki forge metrics` accepts `--filter prefix=forge_secrets_`
+- [x] N-110 `loki forge metrics` accepts `--filter prefix=forge_secrets_`
             so scrapers can carve out subsets
+
+## Next-up wave 9 (discovered during N-101..N-110)
+
+- [ ] N-111 OpenAPI `x-generated-at` exposed via /api/forge/health
+            so a single GET surfaces both spec freshness and codes
+- [ ] N-112 Schedules: `tags=[]` validated to <=8 tags per schedule
+            so cardinality stays bounded on the metric axis
+- [ ] N-113 Bus: `load_channel_caps` returns the loaded map as the
+            shape-aware dict (cap or {cap,actor}) so callers can
+            distinguish operator-tuned from legacy auto caps
+- [ ] N-114 Email: `unset_template` rejects names that match a
+            built-in default with `force=False` (so the operator
+            can't accidentally drop the system templates)
+- [ ] N-115 Function logs: `purge_runs(keep_last_n=...)` rejects
+            `keep_last_n > 10000` so the call stays bounded
+- [ ] N-116 Secrets vault: `rotations` REST helper that returns
+            the parsed rotations.jsonl as JSON
+- [ ] N-117 Healing v2 envelope: include `total_ops` so callers can
+            compute success rate without summing
+- [ ] N-118 Doctor: `--once` honors `--history` so the single
+            snapshot still rotates into the history dir
+- [ ] N-119 Forge metrics `--filter`: also accept `--filter exclude=...`
+            for negative match
+- [ ] N-120 `loki forge` help block lists the alias short forms so
+            operators discover them
+
+## Loop continuation
 
 ## Loop continuation
 
