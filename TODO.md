@@ -115,12 +115,56 @@ Format:
 - [x] N-11 Email templates: `unset_locale()` so the operator can remove
            a localized variant without wiping the default
 - [x] N-12 Schedules: surface `last_run_outcome` (ok/error) in `list()`
-- [ ] N-13 Audit verify: walk the dashboard chain hash AND the per-file
+- [x] N-13 Audit verify: walk the dashboard chain hash AND the per-file
            review records in one pass (currently sequential)
-- [ ] N-14 Storage transforms: register a `revoke_preset(name)` for
+- [x] N-14 Storage transforms: register a `revoke_preset(name)` for
            security incidents (currently only `register_transform_preset`)
-- [ ] N-15 Forge metrics: emit `forge_function_warm_total` counter when
+- [x] N-15 Forge metrics: emit `forge_function_warm_total` counter when
            warm() succeeds so dashboards see the warm-pool effectiveness
+
+## Next-up wave 2 (discovered during N-01..N-15)
+
+- [ ] N-16 `forge_db_query_page` MCP tool exposes `budget_ms` arg in
+           its JSON-schema description so agents discover the knob
+- [ ] N-17 Storage `probe_bucket` reachable via `loki forge doctor`
+           when a non-fs gateway is configured (currently doctor only
+           checks FRG codes; should fail loudly when the configured
+           bucket is unreachable)
+- [ ] N-18 Presence `presence:leave` emitted ONCE per logical
+           transition (currently list_presence emits leave for each
+           stale eviction even if observers haven't queried list)
+- [ ] N-19 Healing FK topo: detect cross-schema FK references and
+           surface as warning (currently only tracks targets that
+           appear in the proposal's table set)
+- [ ] N-20 `forge forge doctor --watch` polls every N seconds and
+           emits diffs (operator wants live status during a deploy)
+- [ ] N-21 Function signature verification: include the verify result
+           in invoke()'s response dict (current contract drops the
+           signature_present flag once verify passes)
+- [ ] N-22 Secrets `weak_secrets()` helper that returns just the
+           subset of list_secrets() where fallback=True (saves the
+           operator from filtering client-side)
+- [ ] N-23 OpenAPI Error schema: emit an `enum` of all error codes
+           our routes actually return so consumers can generate
+           typed clients
+- [ ] N-24 Magic-link redeem route honors `?redirect=` so the browser
+           lands on the operator's app after success (currently always
+           returns JSON)
+- [ ] N-25 Email templates: `clear_locales(name)` companion that
+           drops every locale variant in one call (operator wants
+           wholesale revert without a per-locale loop)
+- [ ] N-26 Schedules: surface `last_run_outcome` distribution counter
+           in /metrics so dashboards see error rate over time
+- [ ] N-27 Audit verify: optional `--quiet` returns only the boolean
+           ok+counts, suppresses warnings (CI workflows want the gate
+           result not the chatter)
+- [ ] N-28 Storage transforms: `register_transform_preset` rejects a
+           name that was previously revoked unless `force=True` (so
+           operators don't accidentally restore a known-bad preset)
+- [ ] N-29 Function warm: opt-out via manifest `warm_disabled=True`
+           so cost-sensitive operators can skip the warm pre-touch
+- [ ] N-30 `loki forge metrics` CLI that calls render() locally so
+           operators can scrape without running the dashboard
 
 ## Loop continuation
 

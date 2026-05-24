@@ -26,7 +26,11 @@ from .buckets import (  # noqa: F401
     garbage_collect_lifecycle,
 )
 from .cdn import sign_url, verify_url, sign_upload_url, verify_upload_url  # noqa: F401
-from .transform import register_transform_preset, list_transform_presets  # noqa: F401
+from .transform import (  # noqa: F401
+    register_transform_preset,
+    list_transform_presets,
+    revoke_transform_preset,
+)
 from .gateway import (  # noqa: F401
     SUPPORTED_PROVIDERS as STORAGE_GATEWAY_PROVIDERS,
     StorageProbeError,

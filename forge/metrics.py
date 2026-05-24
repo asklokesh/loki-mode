@@ -70,6 +70,16 @@ def render(forge_dir: str) -> str:
                 f'forge_function_invocations_total{{name="{fn["name"]}"}} '
                 f'{len(runs)}'
             )
+        # N-15: warm-pool effectiveness counter. Surfaced even when
+        # warm_count is 0 so dashboards can graph the gauge across
+        # all functions without a special-case for never-warmed ones.
+        lines.append("# HELP forge_function_warm_total Successful warm() calls")
+        lines.append("# TYPE forge_function_warm_total counter")
+        for fn in fns:
+            lines.append(
+                f'forge_function_warm_total{{name="{fn["name"]}"}} '
+                f'{int(fn.get("warm_count", 0))}'
+            )
     except Exception:
         pass
     # Schedules.

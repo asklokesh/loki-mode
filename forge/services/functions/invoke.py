@@ -93,6 +93,24 @@ def warm(forge_dir: str, name: str,
                         capture_output=True, timeout=5, check=False)
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
+        # N-15: persist a warm counter on the manifest so the metrics
+        # render() can emit forge_function_warm_total{name="..."} and
+        # operators can see how often the warm-pool actually saved a
+        # cold start. Best-effort; failures here never block warm().
+        try:
+            manifest_path = os.path.join(_fn_dir(forge_dir, name),
+                                          "manifest.json")
+            if os.path.exists(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as mf:
+                    mani = json.load(mf)
+                mani["warm_count"] = int(mani.get("warm_count", 0)) + 1
+                mani["last_warm_at"] = _utc_iso()
+                tmp = manifest_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as mf:
+                    json.dump(mani, mf, indent=2, sort_keys=True)
+                os.replace(tmp, manifest_path)
+        except Exception:
+            pass
         return {"ok": True, "warmed": True,
                 "duration_ms": int((time.time() - t0) * 1000),
                 "runtime": runtime}

@@ -115,3 +115,45 @@ def list_transform_presets(forge_dir: str, bucket: str) -> List[Dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return []
     return list(db.values())
+
+
+def revoke_transform_preset(forge_dir: str, bucket: str,
+                            name: str) -> bool:
+    """N-14: remove a preset and append a `.revoked.jsonl` audit line.
+
+    Use this for security incidents - e.g. a preset that proxied user
+    content through a now-untrusted transform. Returns True when a
+    preset was removed, False when no such preset existed. The audit
+    line records the revocation so operators can correlate it with
+    the incident timeline.
+    """
+    path = _presets_path(forge_dir, bucket)
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            db = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if name not in db:
+        return False
+    removed = db.pop(name)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+    # Audit trail: append a line per revocation so the incident
+    # response timeline survives even when the preset file is
+    # later rewritten.
+    audit_path = os.path.join(os.path.dirname(path), ".revoked.jsonl")
+    import time as _t
+    try:
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "name": name,
+                "revoked_at": int(_t.time()),
+                "ops": removed.get("ops"),
+            }, separators=(",", ":")) + "\n")
+    except OSError:
+        pass
+    return True
