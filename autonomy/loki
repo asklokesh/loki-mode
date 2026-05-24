@@ -6933,7 +6933,7 @@ cmd_doctor() {
     # here so users know which languages get agent-side symbol grounding.
     local _lsp_found=0 _lsp_bin
     local _lsp_list=""
-    for _lsp_bin in pyright-langserver pylsp typescript-language-server gopls rust-analyzer; do
+    for _lsp_bin in pyright-langserver pylsp typescript-language-server gopls rust-analyzer jdtls; do
         if command -v "$_lsp_bin" >/dev/null 2>&1; then
             _lsp_found=$((_lsp_found + 1))
             _lsp_list="${_lsp_list:+$_lsp_list, }${_lsp_bin}"

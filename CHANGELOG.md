@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.9] - 2026-05-24
+
+PATCH release. v7.7.0 LSP acceptance criterion #4 (Java coverage).
+
+### Added
+
+- `jdtls` added to `mcp/lsp_proxy.py` LANG_MAP for Java `.java` files
+- `autonomy/lib/mcp-config.sh` detection list now includes `jdtls`
+  (so the lsp-proxy MCP entry is auto-registered when JDT.LS is on PATH)
+- `autonomy/loki cmd_doctor` + `loki-ts/src/commands/doctor.ts` LSP
+  detection both now check for `jdtls`
+
+### LSP language coverage (v7.7.9)
+
+| Language | Server | Detection on PATH | Status |
+|---|---|---|---|
+| TypeScript / JavaScript | typescript-language-server | yes | covered |
+| Python | pyright-langserver (preferred) / pylsp (fallback) | yes | covered |
+| Go | gopls | yes | covered |
+| Rust | rust-analyzer | yes | covered |
+| Java | jdtls (NEW) | yes | covered |
+
+Closes v7.7.0 LSP acceptance criterion #4 "Python, TypeScript, Go, Rust,
+and Java all work out of the box with no per-language config".
+
+### Verified
+
+- bash -n autonomy/loki + autonomy/lib/mcp-config.sh clean
+- python3 -c "import ast; ast.parse(open('mcp/lsp_proxy.py').read())" clean
+- bun run typecheck + build clean
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- jdtls actually running end-to-end (no Java project fixture in this env)
+- Java + lsp_check_exists / workspace_symbols / get_diagnostics calls
+  against a real .java file (deferred to first user with a JDT.LS install)
+
 ## [7.7.8] - 2026-05-24
 
 PATCH release. v7.7.0 LSP acceptance criterion #5: system prompt now

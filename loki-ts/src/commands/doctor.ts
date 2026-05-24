@@ -549,6 +549,7 @@ async function runText(): Promise<number> {
       "typescript-language-server",
       "gopls",
       "rust-analyzer",
+      "jdtls",
     ];
     const found: string[] = [];
     for (const bin of lspBins) {

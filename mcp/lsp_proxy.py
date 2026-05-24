@@ -106,6 +106,14 @@ LANG_MAP: Dict[str, Tuple[str, List[str], str, List[str]]] = {
         'rust', ['.rs'],
         'rust-analyzer', [],
     ),
+    # v7.7.9: Java via Eclipse JDT.LS. The launcher script name varies by
+    # install method (`jdtls` from Homebrew, `jdt-language-server` from
+    # tarball). We register `jdtls` as the canonical binary; users with
+    # the tarball need to symlink or alias.
+    'java': (
+        'java', ['.java'],
+        'jdtls', [],
+    ),
 }
 
 

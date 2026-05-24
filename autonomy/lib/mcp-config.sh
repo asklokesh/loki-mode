@@ -72,7 +72,7 @@ loki_mcp_config_path() {
     # check_exists/workspace_symbols tools; pylsp retained as fallback).
     local lsp_detected=0
     local lsp_bin
-    for lsp_bin in typescript-language-server pyright-langserver pylsp gopls rust-analyzer; do
+    for lsp_bin in typescript-language-server pyright-langserver pylsp gopls rust-analyzer jdtls; do
         if command -v "$lsp_bin" >/dev/null 2>&1; then
             lsp_detected=1
             break
