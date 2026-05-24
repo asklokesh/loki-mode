@@ -14212,9 +14212,63 @@ except Exception as e:
             ;;
 
         economics)
-            # Show token economics
-            if [ -f ".loki/memory/token_economics.json" ]; then
-                cat .loki/memory/token_economics.json | python3 -m json.tool 2>/dev/null || echo "Error parsing token economics JSON"
+            # v7.6.6 B-3d fix: previously only read .loki/memory/token_economics.json
+            # which is rarely written by current sessions, so users saw
+            # "No token economics data" while `loki kpis` correctly read
+            # .loki/metrics/efficiency/iter-*.json. Unify: prefer the
+            # canonical kpis source; fall back to the legacy file for
+            # backward compat with pre-v7.6.6 sessions.
+            local _eff_dir=".loki/metrics/efficiency"
+            local _legacy_file=".loki/memory/token_economics.json"
+            local _have_iters=0
+            if [ -d "$_eff_dir" ]; then
+                if compgen -G "$_eff_dir/iter-*.json" >/dev/null 2>&1; then
+                    _have_iters=1
+                fi
+            fi
+            if [ "$_have_iters" -eq 1 ]; then
+                PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PYEOF' 2>/dev/null
+import json, glob, os, sys
+files = sorted(glob.glob('.loki/metrics/efficiency/iter-*.json'))
+totals = {
+    'source': '.loki/metrics/efficiency/iter-*.json',
+    'iterations': len(files),
+    'total_input_tokens': 0,
+    'total_output_tokens': 0,
+    'total_tokens': 0,
+    'total_cost_usd': 0.0,
+    'total_duration_ms': 0,
+    'by_model': {},
+    'by_phase': {},
+}
+def _num(x, cast=float, default=0):
+    try:
+        return cast(x) if x is not None else default
+    except (TypeError, ValueError):
+        return default
+for f in files:
+    try:
+        d = json.load(open(f))
+    except Exception:
+        continue
+    ti = int(_num(d.get('input_tokens'), int))
+    to = int(_num(d.get('output_tokens'), int))
+    co = float(_num(d.get('cost_usd'), float))
+    du = int(_num(d.get('duration_ms'), int))
+    totals['total_input_tokens'] += ti
+    totals['total_output_tokens'] += to
+    totals['total_tokens'] += ti + to
+    totals['total_cost_usd'] += co
+    totals['total_duration_ms'] += du
+    m = d.get('model') or 'unknown'
+    totals['by_model'][m] = totals['by_model'].get(m, 0) + 1
+    p = d.get('phase') or 'unknown'
+    totals['by_phase'][p] = totals['by_phase'].get(p, 0) + 1
+print(json.dumps(totals, indent=2))
+PYEOF
+            elif [ -f "$_legacy_file" ]; then
+                # Backward compat: pre-v7.6.6 sessions wrote here.
+                cat "$_legacy_file" | python3 -m json.tool 2>/dev/null || echo "Error parsing token economics JSON"
             else
                 echo "No token economics data. Run a session first."
             fi

@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.6.5] - 2026-05-24
+
+PATCH release. B-3c + B-3d fixes complete the memory enrichment chain
+started in v7.6.4. After this release, episodes, index, and economics
+all reflect real session activity end-to-end.
+
+### Fixed
+
+- **B-3c**: `.loki/memory/index.json topics: []` always empty after a
+  fresh session because the topic update path was only triggered by
+  consolidated patterns. Users had to run `loki memory consolidate`
+  manually for `loki memory index` and the Dashboard Memory Files panel
+  to show anything. Fix: `MemoryEngine.store_episode` now also calls
+  the new `_update_index_with_episode()` which stamps a lightweight
+  topic into `index.json` derived from the episode's phase + goal +
+  files_modified. Multiple episodes in the same phase share a topic and
+  aggregate cost / tokens / files_touched. Consolidation still refines
+  topics from patterns afterward.
+- **B-3d**: `loki memory economics` said "No token economics data" while
+  `loki kpis` correctly read `.loki/metrics/efficiency/iter-*.json`.
+  Two readers, two sources. Fix: `loki memory economics` now prefers
+  the canonical kpis source -- aggregates all `iter-*.json` files into
+  totals (input/output tokens, cost, duration, by_model, by_phase) and
+  prints as JSON. Falls back to legacy `token_economics.json` for
+  pre-v7.6.5 sessions. Verified: 2-iteration fixture -> 18,733 tokens,
+  $2.077, model + phase breakdown.
+
+### Verified
+
+- Synthetic episode store -> `index.json.topics` has 1 topic with
+  `episode_ids`, `files_touched`, `total_tokens`, `total_cost_usd`
+- 23/23 local-ci PASS
+- No regression: `_update_index_with_pattern` (the consolidation path)
+  unchanged
+
+### NOT tested in this release
+
+- End-to-end with a real loki start session (validated next user-test).
+- Behavior on .loki/memory dirs with >10k existing episodes (no scale
+  test; the per-episode index write is O(1) so should hold).
+
 ## [7.6.4] - 2026-05-23
 
 PATCH release. B-3a + B-3b combined fix: episodes now capture real

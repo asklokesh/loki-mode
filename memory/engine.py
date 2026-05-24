@@ -308,11 +308,78 @@ class MemoryEngine:
         # Update timeline with action summary
         self._update_timeline_with_episode(trace_dict)
 
+        # v7.6.5 B-3c fix: previously index.json topics were ONLY populated by
+        # consolidated patterns, so a real session that wrote 5 episodes left
+        # topics:[] until the user manually ran `loki memory consolidate`.
+        # Now every episode also stamps a lightweight topic into index.json
+        # derived from its phase + goal keywords. Topic count grows
+        # monotonically with episodes; consolidation still refines them.
+        self._update_index_with_episode(trace_dict)
+
         # Queue for embedding if embeddings are enabled
         if self._embedding_func is not None:
             self._queue_for_embedding(episode_id, "episodic", trace_dict)
 
         return episode_id
+
+    def _update_index_with_episode(self, episode: Dict[str, Any]) -> None:
+        """Stamp a lightweight topic into index.json from an episode.
+
+        v7.6.5 B-3c fix. Keeps the index alive between consolidation cycles
+        so the dashboard Memory Files panel and `loki memory index` show
+        real topics immediately after a session ends.
+        """
+        try:
+            index = self.storage.read_json("index.json") or {
+                "version": "1.1.0",
+                "topics": [],
+                "total_memories": 0,
+            }
+            context = episode.get("context", {}) if isinstance(episode.get("context"), dict) else {}
+            phase = (context.get("phase") or episode.get("phase") or "general").lower()
+            goal = (context.get("goal") or episode.get("goal") or "")[:200]
+            # Topic id = phase. Multiple episodes in the same phase share a topic.
+            topic_id = phase or "general"
+            now = datetime.now(timezone.utc).isoformat()
+            episode_id = episode.get("id")
+            cost = float(episode.get("cost_usd", 0) or 0)
+            tokens = int(episode.get("tokens_used", 0) or 0)
+            files = list(episode.get("files_modified", []) or [])
+
+            found = None
+            for topic in index.get("topics", []):
+                if topic.get("id") == topic_id:
+                    found = topic
+                    break
+            if found is None:
+                index.setdefault("topics", []).append({
+                    "id": topic_id,
+                    "summary": goal or f"Activity in phase {topic_id}",
+                    "episode_ids": [episode_id] if episode_id else [],
+                    "episode_count": 1,
+                    "total_cost_usd": cost,
+                    "total_tokens": tokens,
+                    "files_touched": files[:20],
+                    "first_seen": now,
+                    "last_accessed": now,
+                    "relevance_score": 0.5,
+                })
+                index["total_memories"] = index.get("total_memories", 0) + 1
+            else:
+                if episode_id and episode_id not in found.get("episode_ids", []):
+                    found.setdefault("episode_ids", []).append(episode_id)
+                found["episode_count"] = found.get("episode_count", 0) + 1
+                found["total_cost_usd"] = float(found.get("total_cost_usd", 0) or 0) + cost
+                found["total_tokens"] = int(found.get("total_tokens", 0) or 0) + tokens
+                merged = set(found.get("files_touched", []) or []) | set(files[:20])
+                found["files_touched"] = sorted(merged)[:50]
+                found["last_accessed"] = now
+
+            index["last_updated"] = now
+            self.storage.write_json("index.json", index)
+        except Exception:  # noqa: BLE001
+            # Never let index update break episode storage.
+            pass
 
     def get_episode(self, episode_id: str) -> Optional[EpisodeTrace]:
         """
