@@ -10,8 +10,44 @@ import os
 from typing import List
 
 
-def render(forge_dir: str) -> str:
-    """Return the Prometheus exposition text for the current forge state."""
+def _label_str(labels: dict) -> str:
+    """Render `{a="b",c="d"}` or '' if no labels. Static-label augment."""
+    if not labels:
+        return ""
+    return "{" + ",".join(f'{k}="{v}"' for k, v in sorted(labels.items())) + "}"
+
+
+def _merge_labels(line: str, extra: dict) -> str:
+    """Inject extra labels into an exposition line that may already have a
+    `{}` block. Lines without metrics (HELP/TYPE/blank) pass through."""
+    if not extra:
+        return line
+    s = line.lstrip()
+    if not s or s.startswith("#"):
+        return line
+    if "{" in s:
+        # Already has labels - insert before the closing brace.
+        head, _, rest = line.partition("{")
+        inner, _, tail = rest.partition("}")
+        existing = inner.strip()
+        new_inner = ",".join(
+            [existing] +
+            [f'{k}="{v}"' for k, v in sorted(extra.items())]
+        ).strip(",")
+        return f"{head}{{{new_inner}}}{tail}"
+    # No labels yet - add a {} block before the value.
+    name, sep, value = line.partition(" ")
+    return f"{name}{_label_str(extra)}{sep}{value}"
+
+
+def render(forge_dir: str, *, labels: dict = None) -> str:
+    """Return the Prometheus exposition text for the current forge state.
+
+    N-31: `labels` is a flat {key: value} dict whose pairs are appended
+    to every metric line. Use for static dimensions (env, region, host)
+    so a multi-environment scraper can disambiguate without renaming
+    series.
+    """
     if not os.path.isdir(forge_dir):
         return "# forge state directory not present\n"
     lines: List[str] = []
@@ -80,6 +116,14 @@ def render(forge_dir: str) -> str:
                 f'forge_function_warm_total{{name="{fn["name"]}"}} '
                 f'{int(fn.get("warm_count", 0))}'
             )
+        # N-32: opt-out count so operators can see how many functions
+        # disabled warm. Surfaced as a gauge (the count fluctuates as
+        # manifests are flipped).
+        warm_disabled_n = sum(1 for fn in fns
+                              if fn.get("warm_disabled") is True)
+        lines.append("# HELP forge_function_warm_disabled Functions with warm_disabled=True")
+        lines.append("# TYPE forge_function_warm_disabled gauge")
+        lines.append(f"forge_function_warm_disabled {warm_disabled_n}")
     except Exception:
         pass
     # Schedules.
@@ -137,4 +181,6 @@ def render(forge_dir: str) -> str:
             )
     except Exception:
         pass
+    if labels:
+        lines = [_merge_labels(ln, labels) for ln in lines]
     return "\n".join(lines) + "\n"

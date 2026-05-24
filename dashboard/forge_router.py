@@ -563,6 +563,28 @@ def register_forge_router(app) -> None:
                             status_code=400,
                             detail="redirect must be an absolute http(s) URL"
                         )
+                    # N-34: when LOKI_FORGE_MAGIC_REDIRECT_ALLOW is set,
+                    # check the redirect hostname against the allow-list
+                    # (comma-separated). Empty allow-list = unrestricted
+                    # (back-compat). Prevents open-redirect abuse.
+                    allow_env = os.environ.get(
+                        "LOKI_FORGE_MAGIC_REDIRECT_ALLOW", ""
+                    ).strip()
+                    if allow_env:
+                        allowed = {h.strip().lower() for h in allow_env.split(",")
+                                   if h.strip()}
+                        host = (parsed.hostname or "").lower()
+                        # Exact match or *.suffix match.
+                        ok_host = host in allowed or any(
+                            a.startswith("*.") and host.endswith(a[1:])
+                            for a in allowed
+                        )
+                        if not ok_host:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"redirect host {host!r} not in "
+                                       "LOKI_FORGE_MAGIC_REDIRECT_ALLOW"
+                            )
                     sep = "&" if parsed.query else "?"
                     jwt = result.get("token") or result.get("jwt") or ""
                     target = f"{redirect}{sep}{urlencode({'session': jwt})}"

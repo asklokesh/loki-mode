@@ -43,6 +43,33 @@ def _presets_path(forge_dir: str, bucket: str) -> str:
     return os.path.join(forge_dir, "storage", bucket, "_transforms.json")
 
 
+def list_revoked_presets(forge_dir: str, bucket: str) -> List[Dict[str, Any]]:
+    """N-33: read the .revoked.jsonl audit trail for a bucket.
+
+    Returns the list of revocation records in chronological order
+    {name, revoked_at, ops}. Use this in incident reviews to confirm
+    a known-bad preset stayed dropped.
+    """
+    audit_path = os.path.join(os.path.dirname(_presets_path(forge_dir, bucket)),
+                              ".revoked.jsonl")
+    if not os.path.isfile(audit_path):
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with open(audit_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
 def _is_revoked(forge_dir: str, bucket: str, name: str) -> bool:
     """N-28: True when `name` appears in the bucket's .revoked.jsonl."""
     audit_path = os.path.join(os.path.dirname(_presets_path(forge_dir, bucket)),

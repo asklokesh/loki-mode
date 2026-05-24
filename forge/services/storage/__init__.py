@@ -29,6 +29,7 @@ from .cdn import sign_url, verify_url, sign_upload_url, verify_upload_url  # noq
 from .transform import (  # noqa: F401
     register_transform_preset,
     list_transform_presets,
+    list_revoked_presets,
     revoke_transform_preset,
 )
 from .gateway import (  # noqa: F401

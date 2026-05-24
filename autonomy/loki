@@ -2200,10 +2200,27 @@ PY
             # N-30: render Prometheus exposition text without
             # requiring the dashboard process. Useful for scraping
             # via cron or piping into local Prometheus.
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge"
+            # N-31: --label key=val,key2=val2 appends static labels.
+            local label_arg=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --label) label_arg="${2:-}"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg"
 import sys
 from forge.metrics import render
-print(render(sys.argv[1]), end="")
+labels = {}
+raw = sys.argv[2]
+if raw:
+    for pair in raw.split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k and v:
+                labels[k] = v
+print(render(sys.argv[1], labels=labels), end="")
 PY
             ;;
         doctor)

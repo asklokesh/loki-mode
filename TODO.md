@@ -168,13 +168,13 @@ Format:
 
 ## Next-up wave 3 (discovered during N-16..N-30)
 
-- [ ] N-31 `loki forge metrics --label key=val,...` appends static
+- [x] N-31 `loki forge metrics --label key=val,...` appends static
            labels so multi-environment scrapers can disambiguate
-- [ ] N-32 Warm pool: surface `warm_disabled` count in /metrics so
+- [x] N-32 Warm pool: surface `warm_disabled` count in /metrics so
            dashboards see how many functions opted out
-- [ ] N-33 Storage transforms: `list_revoked_presets(bucket)` for
+- [x] N-33 Storage transforms: `list_revoked_presets(bucket)` for
            audit-trail surfacing (currently only `_is_revoked` private)
-- [ ] N-34 Magic-link `redirect` arg supports a configurable
+- [x] N-34 Magic-link `redirect` arg supports a configurable
            allow-list of hostnames to prevent open-redirect abuse
            even within http(s) targets
 - [ ] N-35 OpenAPI Error enum: declare a `discriminator` so generated
