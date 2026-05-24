@@ -26,7 +26,7 @@ def register_forge_router(app) -> None:
     """Register /api/forge/* on the given FastAPI app. Idempotent."""
     # Import lazily so the dashboard does not pull forge transitively.
     try:
-        from fastapi import HTTPException
+        from fastapi import HTTPException, Request
     except ImportError:
         # No FastAPI in this env - dashboard would have failed earlier
         # so skip registration silently.
@@ -154,6 +154,32 @@ def register_forge_router(app) -> None:
             return {"functions": list_functions(d)}
         except Exception:
             return {"functions": []}
+
+    from fastapi import Header
+
+    @app.get("/api/forge/openapi")
+    async def forge_openapi(if_none_match: Optional[str] = Header(default=None)) -> Any:
+        """N-160: serve the live OpenAPI spec with a content-hash
+        Etag so HTTP caches short-circuit unchanged regenerations.
+        Etag is the sha256 of the spec body with the volatile
+        x-generated-at* fields stripped, so successive calls with
+        the same underlying state produce identical etags."""
+        import hashlib
+        from forge.sdk.openapi import generate as _gen
+        from fastapi.responses import JSONResponse as _JR, Response as _R
+        spec = _gen(_forge_dir())
+        info_copy = dict(spec.get("info") or {})
+        info_copy.pop("x-generated-at", None)
+        info_copy.pop("x-generated-at-epoch-ms", None)
+        body_for_hash = dict(spec)
+        body_for_hash["info"] = info_copy
+        h = hashlib.sha256(
+            json.dumps(body_for_hash, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        etag = f'W/"{h}"'
+        if if_none_match == etag:
+            return _R(status_code=304)
+        return _JR(content=spec, headers={"ETag": etag})
 
     @app.get("/api/forge/health")
     async def forge_health() -> Dict[str, Any]:

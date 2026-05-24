@@ -310,6 +310,17 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
                     preview_sql = compile_fn(spec)
             except Exception:
                 pass
+            # N-156: row-count probe of the target table when one
+            # exists so operators see data-loss risk for drop_table.
+            row_count = None
+            try:
+                if target:
+                    rows = engine.execute(
+                        f"SELECT count(*) AS c FROM {target}"
+                    )
+                    row_count = int(rows[0].get("c", 0)) if rows else 0
+            except Exception:
+                row_count = None
             ops_status.append({
                 "op": next(iter(op)),
                 "target": target,
@@ -317,6 +328,7 @@ def apply_proposal(forge_dir: str, proposal: Dict[str, Any],
                 "dry_run": True,
                 "attempt_ms": 0,
                 "preview_sql": preview_sql,
+                "target_row_count": row_count,
             })
             continue
         import time as _t

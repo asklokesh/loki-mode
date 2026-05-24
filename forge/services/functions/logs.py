@@ -121,9 +121,11 @@ def purge_runs(forge_dir: str, name: str, *,
     return removed
 
 
-def list_purges(forge_dir: str, name: str) -> List[Dict[str, Any]]:
+def list_purges(forge_dir: str, name: str, *,
+                since_ts: Optional[int] = None) -> List[Dict[str, Any]]:
     """N-144: parsed purges.jsonl for a function so dashboards see
-    when disk was reclaimed and by how much."""
+    when disk was reclaimed and by how much.
+    N-154: optional since_ts filter for time-window dashboards."""
     import json as _json
     p = os.path.join(_logs_dir(forge_dir, name), "purges.jsonl")
     if not os.path.isfile(p):
@@ -141,6 +143,9 @@ def list_purges(forge_dir: str, name: str) -> List[Dict[str, Any]]:
                     continue
     except OSError:
         return []
+    if since_ts is not None:
+        out = [r for r in out
+               if isinstance(r.get("ts"), int) and r["ts"] >= int(since_ts)]
     return out
 
 

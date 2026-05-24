@@ -203,9 +203,13 @@ def unset_template(forge_dir: str, name: str, *,
     return removed
 
 
-def list_dropped_defaults(forge_dir: str) -> List[Dict[str, Any]]:
+def list_dropped_defaults(forge_dir: str, *,
+                          since_ts: Optional[int] = None
+                          ) -> List[Dict[str, Any]]:
     """N-143: parsed dropped_defaults.jsonl. Dashboards use this to
-    show which built-ins were force-dropped (and when)."""
+    show which built-ins were force-dropped (and when).
+    N-153: optional since_ts filter returns drops newer than the
+    epoch second."""
     p = os.path.join(forge_dir, "email", "dropped_defaults.jsonl")
     if not os.path.isfile(p):
         return []
@@ -222,6 +226,9 @@ def list_dropped_defaults(forge_dir: str) -> List[Dict[str, Any]]:
                     continue
     except OSError:
         return []
+    if since_ts is not None:
+        out = [r for r in out
+               if isinstance(r.get("ts"), int) and r["ts"] >= int(since_ts)]
     return out
 
 

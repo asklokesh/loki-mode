@@ -2166,6 +2166,8 @@ try:
     rep = verify(sys.argv[1], scope=scope)
     if summary:
         line = (
+            # N-159: mode= prefix so log parsers route quickly.
+            f"mode=summary "
             f"ok={'true' if rep.get('ok') else 'false'} "
             f"checks={rep.get('checked_reviews', 0)} "
             f"warns={len(rep.get('warnings') or [])} "
@@ -2268,6 +2270,7 @@ PY
             local filter_exclude=""
             local no_help_flag="false"
             local watch_metrics=""
+            local watch_metrics_max=""
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --label) label_arg="${2:-}"; shift 2 ;;
@@ -2276,6 +2279,11 @@ PY
                     --watch)
                         # N-148: poll + re-print every N seconds.
                         watch_metrics="${2:-5}"
+                        shift 2
+                        ;;
+                    --max-iterations)
+                        # N-158: bound the watch loop (CI use).
+                        watch_metrics_max="${2:-1}"
                         shift 2
                         ;;
                     --filter)
@@ -2299,6 +2307,7 @@ PY
         echo "error: --watch interval must be >=1s" >&2
         return 2
     fi
+    local _iter=0
     while true; do
         echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
         PYTHONPATH="$skill_dir" python3 -c "
@@ -2306,6 +2315,10 @@ from forge.metrics import render
 import sys
 print(render(sys.argv[1]), end='')
 " "${TARGET_DIR:-.}/.loki/forge"
+        _iter=$((_iter+1))
+        if [[ -n "$watch_metrics_max" && "$_iter" -ge "$watch_metrics_max" ]] 2>/dev/null; then
+            return 0
+        fi
         sleep "$watch_metrics"
     done
     return 0
@@ -2445,6 +2458,37 @@ PY
                 case "$1" in
                     --history) history_cap="${2:-10}"; shift 2 ;;
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
+                    --history-stats)
+                        # N-157: aggregate stats (count, bytes, oldest, newest).
+                        local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
+                        PYTHONPATH="$skill_dir" python3 - <<PY "$hist_dir"
+import json, os, sys, time
+d = sys.argv[1]
+out = {"count": 0, "total_bytes": 0, "oldest": None, "newest": None}
+if os.path.isdir(d):
+    entries = []
+    for e in os.listdir(d):
+        if e.startswith("doctor-") and e.endswith(".json"):
+            p = os.path.join(d, e)
+            try:
+                st = os.stat(p)
+                entries.append((e, st.st_size, st.st_mtime))
+            except OSError:
+                continue
+    out["count"] = len(entries)
+    out["total_bytes"] = sum(e[1] for e in entries)
+    if entries:
+        oldest = min(entries, key=lambda x: x[2])
+        newest = max(entries, key=lambda x: x[2])
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        out["oldest"] = {"file": oldest[0],
+                         "mtime": time.strftime(fmt, time.gmtime(oldest[2]))}
+        out["newest"] = {"file": newest[0],
+                         "mtime": time.strftime(fmt, time.gmtime(newest[2]))}
+print(json.dumps(out, indent=2))
+PY
+                        return 0
+                        ;;
                     --history-list)
                         # N-128: list current files with size + age.
                         # N-137: --json emits a structured array.

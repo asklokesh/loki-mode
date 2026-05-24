@@ -312,10 +312,11 @@ def weak_secrets(forge_dir: str, *,
     return rows
 
 
-def weak_secrets_count(forge_dir: str) -> int:
-    """N-145: integer count shortcut for ultra-cheap dashboard
-    widgets that don't need the row list."""
-    return len(weak_secrets(forge_dir))
+def weak_secrets_count(forge_dir: str, *,
+                       unused_for_days: Optional[int] = None) -> int:
+    """N-145/N-155: integer count shortcut for ultra-cheap dashboard
+    widgets. Accepts unused_for_days for "weak AND stale" counts."""
+    return len(weak_secrets(forge_dir, unused_for_days=unused_for_days))
 
 
 def export_secrets(forge_dir: str, *,

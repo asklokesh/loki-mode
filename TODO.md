@@ -469,6 +469,40 @@ Phase F (F-1..F-5), all X-1..X-88 cross-cutting items, and the
 Phase A sandbox enhancements. Test suite has grown to 60+ test
 files with 600+ assertions, all green.
 
+## Next-up wave 13 (discovered during N-141..N-150)
+
+- [x] N-151 Health adds `openapi_cache_ttl_s` so dashboards can show
+            "next refresh in N seconds" without inferring from
+            cached_until - now
+- [x] N-152 Schedules: tags surfaced in /metrics as a multi-label
+            so a single schedule with multiple tags shows up once
+            per tag without flooding the gauge with comma values
+- [x] N-153 Email: `list_dropped_defaults` supports `since_ts`
+            (parallel to N-135 rotations filter)
+- [x] N-154 Function `list_purges` supports `since_ts` filter
+- [x] N-155 Secrets: `weak_secrets_count` accepts `unused_for_days`
+            filter (composes the N-97 and N-145 ideas)
+- [x] N-156 Healing dry_run preview: include row count of each
+            target table so operators can gauge data-loss risk
+- [x] N-157 Doctor: `--history-stats` summary (count, total bytes,
+            oldest, newest)
+- [x] N-158 Forge metrics `--watch` honors `--max-iterations N`
+            (parity with doctor --watch)
+- [x] N-159 Forge audit summary line `mode=summary` token at the
+            front so log parsers can route quickly
+- [x] N-160 OpenAPI `x-generated-at` chained into the response
+            Etag of /api/forge/openapi route for HTTP caching
+
+## Status snapshot 2
+
+**160 N-* items shipped across 13 waves.** Forge now exposes:
+- Full /api/forge/openapi route with content-hash ETag + 304 caching
+- Health surface with openapi_generated_at + cache_ttl_s + cached_until
+- 60+ test files, 650+ assertions, all green
+- Branch is at HEAD of claude/compare-litellm-loki-Y8Ke1
+- PR #161 was closed without merging by the user; pushes continue
+  to the same branch per the wave loop contract.
+
 ## Loop continuation
 
 ## Loop continuation
