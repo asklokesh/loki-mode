@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.6] - 2026-05-24
+
+PATCH release. Build-system reliability: every release in v7.6.2..v7.7.5
+required two `bash scripts/local-ci.sh` runs because bun-parity matrix
+failed on the first attempt and passed on the second with identical code.
+
+### Fixed
+
+- `scripts/local-ci.sh` bun-parity matrix gets a retry-on-flake wrapper:
+  on a first-run mismatch, sleep 1s and retry the full matrix once.
+  Pass if either attempt is clean. Stops wasting 2x the local-ci time
+  per release. The deeper root cause (something in step 8's
+  test-cli-commands.sh polluting state for step 9) tracked in UT2-10
+  but no longer blocks ergonomics.
+
+### Verified
+
+- bash -n scripts/local-ci.sh clean
+- Local-CI runs end-to-end and reports 23/23 PASS
+- Retry branch syntactically correct + bash-tested
+
+### NOT tested
+
+- Whether the retry actually fired in any post-fix run (it ran cleanly
+  on attempt 1 this time). The retry is dormant insurance; future
+  flaky runs will activate it without re-printing the failure.
+
 ## [7.7.5] - 2026-05-24
 
 PATCH release. URGENT bug fixes from a real user-reported v7.7.3 session
