@@ -68,9 +68,11 @@ loki_mcp_config_path() {
     # Phase G: detect supported LSP binaries on PATH. The lsp-proxy server
     # routes by language at runtime, so we register it once when ANY of the
     # supported binaries is present (multiple binaries -> still one entry).
+    # v7.7.0: also detect pyright-langserver (preferred Python LSP for the new
+    # check_exists/workspace_symbols tools; pylsp retained as fallback).
     local lsp_detected=0
     local lsp_bin
-    for lsp_bin in typescript-language-server pylsp gopls rust-analyzer; do
+    for lsp_bin in typescript-language-server pyright-langserver pylsp gopls rust-analyzer; do
         if command -v "$lsp_bin" >/dev/null 2>&1; then
             lsp_detected=1
             break

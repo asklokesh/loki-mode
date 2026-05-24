@@ -6905,6 +6905,23 @@ cmd_doctor() {
         echo -e "  ${YELLOW}WARN${NC}  ChromaDB - not running (docker start loki-chroma)"
         warn_count=$((warn_count + 1))
     fi
+    # LSP servers check (v7.7.0): auto-detected by mcp.lsp_proxy; reported
+    # here so users know which languages get agent-side symbol grounding.
+    local _lsp_found=0 _lsp_bin
+    local _lsp_list=""
+    for _lsp_bin in pyright-langserver pylsp typescript-language-server gopls rust-analyzer; do
+        if command -v "$_lsp_bin" >/dev/null 2>&1; then
+            _lsp_found=$((_lsp_found + 1))
+            _lsp_list="${_lsp_list:+$_lsp_list, }${_lsp_bin}"
+        fi
+    done
+    if [ "$_lsp_found" -gt 0 ]; then
+        echo -e "  ${GREEN}PASS${NC}  LSP servers detected ($_lsp_found): $_lsp_list"
+        pass_count=$((pass_count + 1))
+    else
+        echo -e "  ${YELLOW}WARN${NC}  LSP servers - none on PATH (install for symbol grounding: npm i -g pyright typescript-language-server; brew install gopls)"
+        warn_count=$((warn_count + 1))
+    fi
     # MiroFish check (optional service)
     local _mf_url="${LOKI_MIROFISH_URL:-http://localhost:5001}"
     if docker inspect loki-mirofish &>/dev/null 2>&1 || [[ -n "${LOKI_MIROFISH_URL:-}" ]]; then

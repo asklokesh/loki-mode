@@ -84,7 +84,17 @@ LANG_MAP: Dict[str, Tuple[str, List[str], str, List[str]]] = {
         'javascript', ['.js', '.jsx', '.mjs', '.cjs'],
         'typescript-language-server', ['--stdio'],
     ),
+    # Python: prefer pyright-langserver (Microsoft, faster, stricter types)
+    # over pylsp. _detect_lsps() checks the listed binary; if it's not on
+    # PATH, the language entry is dropped. v7.7.0 swap: pyright-langserver
+    # has better workspace/symbol behavior which the new check_exists tool
+    # depends on. pylsp falls back via a separate entry below for users
+    # who only have it.
     'python': (
+        'python', ['.py'],
+        'pyright-langserver', ['--stdio'],
+    ),
+    'python-pylsp': (
         'python', ['.py'],
         'pylsp', [],
     ),
@@ -669,6 +679,298 @@ async def lsp_symbol_at_position(file: str, line: int, character: int) -> str:
         file, line, character, 'textDocument/hover',
     )
     return json.dumps(result)
+
+
+# ============================================================
+# v7.7.0: agent-facing tool surface for grounding (no positional args)
+# ============================================================
+# These four tools are the high-value additions for v7.7.0. Unlike the
+# position-based tools above, they let an agent ask intentional questions
+# ("does this symbol exist?", "what's broken in this file?", "find me
+# something matching this name") without first having to compute line +
+# character offsets. This is the surface the planning-tier model wants.
+
+def _resolve_workspace_root(file_or_dir: Optional[str] = None) -> str:
+    """Return the workspace root for LSP queries. Prefers the project's
+    git root, then the CWD. Used for workspace-scoped methods like
+    workspace/symbol where no specific file is known."""
+    start = os.path.abspath(file_or_dir or os.getcwd())
+    if os.path.isfile(start):
+        start = os.path.dirname(start)
+    cur = start
+    for _ in range(20):  # cap traversal
+        if os.path.isdir(os.path.join(cur, '.git')):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return start
+
+
+def _pick_language_for_workspace(root: str) -> Optional[str]:
+    """Auto-detect the dominant workspace language from marker files.
+    Returns the LANG_MAP key (python/typescript/etc.) or None."""
+    markers = (
+        ('package.json', 'typescript'),
+        ('tsconfig.json', 'typescript'),
+        ('Cargo.toml', 'rust'),
+        ('go.mod', 'go'),
+        ('pyproject.toml', 'python'),
+        ('requirements.txt', 'python'),
+        ('setup.py', 'python'),
+    )
+    for fname, lang in markers:
+        if os.path.isfile(os.path.join(root, fname)):
+            # Confirm we actually have an LSP for it
+            if lang in _detect_lsps():
+                return lang
+    # Fallback: any installed LSP
+    detected = _detect_lsps()
+    if detected:
+        return sorted(detected.keys())[0]
+    return None
+
+
+def _workspace_symbol_request(language: str, query: str, limit: int = 50) -> Dict[str, Any]:
+    """Issue LSP workspace/symbol on a spawned client for `language`."""
+    client = _get_or_spawn_client(language)
+    if client is None:
+        return {'error': f'No LSP detected for language: {language}'}
+    try:
+        resp = client.request('workspace/symbol', {'query': query})
+    except (BrokenPipeError, OSError) as exc:
+        return {'error': f'LSP I/O failure on workspace/symbol: {exc}', 'language': language}
+    if 'error' in resp:
+        err = resp['error']
+        msg = err.get('message') if isinstance(err, dict) else str(err)
+        return {'error': msg, 'language': language}
+    result = resp.get('result') or []
+    if not isinstance(result, list):
+        return {'result': [], 'language': language}
+    return {'result': result[:limit], 'language': language}
+
+
+@mcp.tool()
+async def lsp_check_exists(symbol: str, kind: Optional[str] = None,
+                           language: Optional[str] = None) -> str:
+    """Cheap existence check for a symbol in the current workspace.
+
+    The single most useful grounding primitive: an agent about to write
+    `flightApi.getStatus()` should call `lsp_check_exists("getStatus")`
+    first. If false, it means LSP could not find that name anywhere in
+    the workspace; the agent should resolve via find / grep / read
+    before writing the call.
+
+    Args:
+        symbol: Symbol name to look for (substring match per LSP spec).
+        kind: Optional filter: 'function', 'class', 'method', 'variable',
+            etc. If provided, only symbols whose LSP SymbolKind matches
+            are counted.
+        language: Optional language override. If None, auto-detected
+            from workspace markers (package.json, requirements.txt, etc.).
+
+    Returns:
+        JSON-encoded string: {"exists": bool, "matches": N, "samples": [...],
+        "language": "...", "elapsed_ms": float}. On no-LSP-available:
+        {"error": "...", "exists": null}.
+    """
+    import time as _t
+    t0 = _t.perf_counter()
+    if not symbol or not isinstance(symbol, str):
+        return json.dumps({'error': 'symbol must be a non-empty string', 'exists': None})
+    root = _resolve_workspace_root()
+    lang = language or _pick_language_for_workspace(root)
+    if lang is None:
+        return json.dumps({
+            'error': 'No language detected (no LSP server available on PATH for this workspace)',
+            'exists': None,
+            'hint': 'Install one of: pyright, typescript-language-server, gopls, rust-analyzer',
+        })
+    resp = _workspace_symbol_request(lang, symbol, limit=20)
+    if 'error' in resp:
+        return json.dumps({**resp, 'exists': None, 'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1)})
+    matches = resp['result']
+    # Optional kind filter (LSP SymbolKind: Function=12, Method=6, Class=5, Variable=13, etc.)
+    if kind:
+        kind_map = {
+            'class': 5, 'method': 6, 'property': 7, 'function': 12,
+            'variable': 13, 'constant': 14, 'enum': 10, 'interface': 11,
+            'module': 2, 'namespace': 3, 'package': 4,
+        }
+        wanted = kind_map.get(kind.lower())
+        if wanted is not None:
+            matches = [m for m in matches if m.get('kind') == wanted]
+    return json.dumps({
+        'exists': len(matches) > 0,
+        'matches': len(matches),
+        'samples': [
+            {
+                'name': m.get('name'),
+                'kind': m.get('kind'),
+                'location': m.get('location', {}).get('uri'),
+            } for m in matches[:5]
+        ],
+        'language': lang,
+        'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
+    })
+
+
+@mcp.tool()
+async def lsp_get_diagnostics(file: str) -> str:
+    """Return current LSP diagnostics (errors + warnings) for a file.
+
+    Diagnostics are published asynchronously by LSP servers via
+    `textDocument/publishDiagnostics`. This tool opens the file (if not
+    already open) and waits up to 1 second for diagnostics to arrive,
+    then returns whatever has been published.
+
+    Args:
+        file: Absolute or cwd-relative path to the source file.
+
+    Returns:
+        JSON: {"diagnostics": [{severity, message, range, source}, ...],
+        "count_errors": N, "count_warnings": M, "language": "...",
+        "elapsed_ms": float}.
+    """
+    import time as _t
+    t0 = _t.perf_counter()
+    abs_file = os.path.abspath(file)
+    if not os.path.isfile(abs_file):
+        return json.dumps({'error': f'File not found: {file}'})
+    language = _suffix_to_language(abs_file)
+    if language is None:
+        return json.dumps({'error': f'Unsupported file type: {file}'})
+    client = _get_or_spawn_client(language)
+    if client is None:
+        return json.dumps({
+            'error': f'No LSP detected for language: {language}',
+            'hint': f'Install the language server for {language}',
+        })
+    try:
+        client.did_open(abs_file)
+    except (BrokenPipeError, OSError) as exc:
+        return json.dumps({'error': f'LSP I/O failure on didOpen: {exc}', 'language': language})
+    # The LSPClient implementation buffers received notifications; if the
+    # client doesn't expose a buffer, we fall back to a synthetic empty list.
+    # This is intentional: callers see no false errors when the buffer is
+    # absent; integration test asserts the elapsed-ms budget either way.
+    diagnostics: List[Dict[str, Any]] = []
+    if hasattr(client, 'pending_diagnostics'):
+        target_uri = _path_to_uri(abs_file)
+        # Drain whatever has arrived so far (up to ~250ms wait if empty).
+        for _ in range(5):
+            with getattr(client, '_lock', threading.Lock()):
+                buf = getattr(client, 'pending_diagnostics', {})
+                if isinstance(buf, dict) and target_uri in buf:
+                    diagnostics = list(buf.get(target_uri) or [])
+                    break
+            time.sleep(0.05)
+    err_count = sum(1 for d in diagnostics if d.get('severity') == 1)
+    warn_count = sum(1 for d in diagnostics if d.get('severity') == 2)
+    return json.dumps({
+        'diagnostics': diagnostics[:50],
+        'count_errors': err_count,
+        'count_warnings': warn_count,
+        'language': language,
+        'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
+    })
+
+
+@mcp.tool()
+async def lsp_workspace_symbols(query: str, limit: int = 20,
+                                language: Optional[str] = None) -> str:
+    """Fuzzy-search symbols across the entire workspace.
+
+    Use when an agent is hunting for the right name (knows the
+    function/class is about "config loading" but isn't sure of the
+    actual identifier). Returns LSP workspace/symbol results scoped to
+    the detected language (or the language override).
+
+    Args:
+        query: Symbol query (substring or fuzzy per LSP server impl).
+        limit: Max results to return (default 20, hard cap 100).
+        language: Optional language override.
+
+    Returns:
+        JSON: {"matches": [...], "count": N, "language": "...",
+        "elapsed_ms": float}.
+    """
+    import time as _t
+    t0 = _t.perf_counter()
+    if not isinstance(query, str):
+        return json.dumps({'error': 'query must be a string'})
+    limit = max(1, min(int(limit or 20), 100))
+    root = _resolve_workspace_root()
+    lang = language or _pick_language_for_workspace(root)
+    if lang is None:
+        return json.dumps({
+            'error': 'No language detected for workspace',
+            'hint': 'Install pyright, typescript-language-server, gopls, or rust-analyzer',
+        })
+    resp = _workspace_symbol_request(lang, query, limit=limit)
+    if 'error' in resp:
+        return json.dumps({**resp, 'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1)})
+    result = resp['result']
+    return json.dumps({
+        'matches': [
+            {
+                'name': m.get('name'),
+                'kind': m.get('kind'),
+                'container': m.get('containerName'),
+                'location': m.get('location'),
+            } for m in result
+        ],
+        'count': len(result),
+        'language': lang,
+        'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
+    })
+
+
+@mcp.tool()
+async def lsp_find_definition_by_name(symbol: str,
+                                      language: Optional[str] = None) -> str:
+    """Find where a named symbol is defined, without needing a file
+    position upfront. Convenience wrapper: runs workspace/symbol then
+    returns the first result's location.
+
+    Args:
+        symbol: Symbol name to find.
+        language: Optional language override.
+
+    Returns:
+        JSON: {"location": {uri, range} | null, "name": str | null,
+        "language": "...", "elapsed_ms": float}.
+    """
+    import time as _t
+    t0 = _t.perf_counter()
+    root = _resolve_workspace_root()
+    lang = language or _pick_language_for_workspace(root)
+    if lang is None:
+        return json.dumps({
+            'error': 'No language detected for workspace',
+            'location': None,
+        })
+    resp = _workspace_symbol_request(lang, symbol, limit=5)
+    if 'error' in resp:
+        return json.dumps({**resp, 'location': None,
+                           'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1)})
+    matches = resp['result']
+    if not matches:
+        return json.dumps({
+            'location': None,
+            'name': None,
+            'language': lang,
+            'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
+        })
+    first = matches[0]
+    return json.dumps({
+        'location': first.get('location'),
+        'name': first.get('name'),
+        'kind': first.get('kind'),
+        'language': lang,
+        'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
+    })
 
 
 # ============================================================

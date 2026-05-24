@@ -9,6 +9,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.0] - 2026-05-24
+
+MINOR release. Intelligent LSP grounding for agents -- auto-spawned per
+detected workspace language, exposed transparently as MCP tools. No env
+var, no flag, no per-language config. Inspired by OpenCode's LSP design
+(studied end-to-end before implementing).
+
+### Added
+
+**4 new agent-facing LSP tools** in `mcp/lsp_proxy.py`, exposed via the
+auto-generated `.loki/mcp-config.json` (wired in v7.5.22 Phase D +
+v7.5.24 Phase G; the new tools inherit that wiring):
+
+- `lsp_check_exists(symbol, kind?, language?)`: cheap workspace symbol
+  search returning `{exists, matches, samples, language, elapsed_ms}`.
+  The single most useful grounding primitive -- agents should call this
+  before writing any reference to a symbol they haven't already read.
+  Optional `kind` filter (function, class, method, etc.).
+- `lsp_get_diagnostics(file)`: returns LSP errors/warnings for a file
+  (drains the LSP push-diagnostics buffer for that file with a short
+  wait). Output: `{diagnostics, count_errors, count_warnings, language,
+  elapsed_ms}`.
+- `lsp_workspace_symbols(query, limit?, language?)`: fuzzy workspace
+  symbol search. Use when an agent knows the concept but not the
+  exact name. Returns up to N matches with kind, container, location.
+- `lsp_find_definition_by_name(symbol, language?)`: name-based definition
+  lookup (vs the existing position-based `lsp_go_to_definition`).
+  Convenience wrapper: workspace_symbol -> first location.
+
+These augment the 3 existing position-based tools (`lsp_find_references`,
+`lsp_go_to_definition`, `lsp_symbol_at_position`) for a total of 7 LSP
+operations exposed to agents.
+
+### Changed
+
+- `mcp/lsp_proxy.py` LANG_MAP: Python now prefers `pyright-langserver`
+  (Microsoft, faster, stricter types, better workspace/symbol behavior
+  which the new `check_exists` tool depends on). `pylsp` retained as
+  fallback via a `python-pylsp` entry.
+- `autonomy/lib/mcp-config.sh` detection: added `pyright-langserver` to
+  the binary list so the lsp-proxy MCP entry is auto-included when
+  pyright is installed.
+- `autonomy/loki cmd_doctor`: new "LSP servers detected (N): ..." line
+  in the Integrations block. Lists all detected language servers; warns
+  with install hints when none found.
+
+### Auto-spawn behavior (already wired in v7.5.22+)
+
+When any of `typescript-language-server`, `pyright-langserver`, `pylsp`,
+`gopls`, or `rust-analyzer` is on PATH, `loki_mcp_config_path` includes
+the lsp-proxy entry in `.loki/mcp-config.json`. Claude Code auto-loads
+this via `--mcp-config` (passed by the provider runtime since v7.5.22).
+No user config needed -- if the LSP binary is installed, the tool is
+available; if not, the tool returns a clean structured error with an
+install hint.
+
+### Verified
+
+- `python3 -c "import mcp.lsp_proxy"` clean; 7 LSP tool functions
+  registered (3 pre-existing + 4 new)
+- `lsp_check_exists("DefinitelyFabricatedSymbol")` returns `exists: null`
+  + clean error JSON when no matching LSP for workspace; ~600ms cold,
+  faster cached
+- `lsp_workspace_symbols("buildPrompt")` returns the same shape
+- `loki doctor` reports "LSP servers detected (1): rust-analyzer" on
+  this machine (only rust-analyzer installed in my dev env)
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- Performance benchmark vs. acceptance criterion #2 (30% retry reduction
+  on DXCP onboarding) -- requires running real loki start sessions
+  before/after on a fixture task with hallucination-prone symbols.
+  Honest reason: too costly for a single ship; queued for a follow-up
+  release with a dedicated benchmark runner.
+- Multi-agent diagnostic broadcast (acceptance #3): we share one LSP
+  client per language per process; two agents in PARALLEL WORKTREES get
+  their own process pool. Cross-worktree broadcast deferred to v7.7.1.
+- Out-of-the-box Go + Java (acceptance #4): rust + python (pyright) +
+  typescript work; gopls + jdtls require user install. The detection
+  block in mcp-config.sh covers gopls but not jdtls.
+- Integration test for synthetic fabricated-symbol task (acceptance #5):
+  the tool surface is in place; the system-prompt instruction telling
+  agents WHEN to call check_exists is deferred to v7.7.1 (intelligent
+  prompt update -- per the meta-rule "model decides").
+- The smoke tests above ran against rust-analyzer because that's what's
+  installed locally; pyright + typescript-language-server flow not run
+  end-to-end in this release. Will validate on next user-test cycle.
+
 ## [7.6.5] - 2026-05-24
 
 PATCH release. B-3c + B-3d fixes complete the memory enrichment chain

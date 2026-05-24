@@ -539,6 +539,35 @@ async function runText(): Promise<number> {
     );
     tally.warn++;
   }
+  // v7.7.0: LSP servers check (mirrors autonomy/loki cmd_doctor). The
+  // mcp.lsp_proxy auto-detects these binaries; reporting here gives users
+  // visibility into which languages get agent-side symbol grounding.
+  {
+    const lspBins = [
+      "pyright-langserver",
+      "pylsp",
+      "typescript-language-server",
+      "gopls",
+      "rust-analyzer",
+    ];
+    const found: string[] = [];
+    for (const bin of lspBins) {
+      if (await commandExists(bin)) {
+        found.push(bin);
+      }
+    }
+    if (found.length > 0) {
+      process.stdout.write(
+        `  ${badge("pass")}  LSP servers detected (${found.length}): ${found.join(", ")}\n`,
+      );
+      tally.pass++;
+    } else {
+      process.stdout.write(
+        `  ${badge("warn")}  LSP servers - none on PATH (install for symbol grounding: npm i -g pyright typescript-language-server; brew install gopls)\n`,
+      );
+      tally.warn++;
+    }
+  }
   // MiroFish: only check if env var is set (we can't run docker inspect cheaply
   // without spawning docker; bash also gates on env var or docker inspect).
   const mfUrl = process.env["LOKI_MIROFISH_URL"];
