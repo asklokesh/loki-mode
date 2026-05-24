@@ -137,3 +137,31 @@ def delete(forge_dir: str, name: str) -> bool:
         return False
     _save(forge_dir, new)
     return True
+
+
+def _emit_schedule_event(forge_dir: str, name: str, event: str) -> None:
+    """N-54: publish a schedule:* event on the realtime bus so
+    dashboards see pause/resume transitions live."""
+    try:
+        from forge.services.realtime.bus import publish as _pub
+        _pub(forge_dir, f"_system.schedules", {
+            "type": event, "schedule": name,
+        }, sender_user_id="__schedules__")
+    except Exception:
+        pass
+
+
+def pause(forge_dir: str, name: str) -> Dict[str, Any]:
+    """N-54: disable a schedule and emit `schedule:paused`. Idempotent
+    when already paused: still emits so observers can drop watchdog
+    timers safely."""
+    res = update(forge_dir, name, enabled=False)
+    _emit_schedule_event(forge_dir, name, "schedule:paused")
+    return res
+
+
+def resume(forge_dir: str, name: str) -> Dict[str, Any]:
+    """N-54: re-enable a schedule and emit `schedule:resumed`."""
+    res = update(forge_dir, name, enabled=True)
+    _emit_schedule_event(forge_dir, name, "schedule:resumed")
+    return res

@@ -11,12 +11,59 @@ Postgres-promotion path.
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 from typing import Any, Dict, List, Optional
 
 
 _HIDDEN = {"sqlite_sequence", "sqlite_master", "sqlite_stat1",
            "sqlite_stat2", "sqlite_stat3", "sqlite_stat4"}
+
+
+def write_proposal(project_dir: str, proposal: Dict[str, Any]) -> str:
+    """N-56: persist a proposal to .loki/healing/proposal.json so the
+    next propose call can diff against the previous run. Returns the
+    absolute path written."""
+    out_dir = os.path.join(project_dir, ".loki", "healing")
+    os.makedirs(out_dir, exist_ok=True)
+    p = os.path.join(out_dir, "proposal.json")
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(proposal, f, indent=2, sort_keys=True)
+    os.replace(tmp, p)
+    return os.path.abspath(p)
+
+
+def diff_proposal(project_dir: str,
+                  current: Dict[str, Any]) -> Dict[str, Any]:
+    """N-56: compare `current` to the persisted previous proposal.
+    Returns {added_tables, removed_tables, prev_path}. When no prior
+    proposal exists, added_tables = all current tables."""
+    prev_path = os.path.join(project_dir, ".loki", "healing",
+                             "proposal.json")
+    prev_tables: set = set()
+    if os.path.isfile(prev_path):
+        try:
+            with open(prev_path, "r", encoding="utf-8") as f:
+                prev = json.load(f)
+            prev_tables = {
+                op["add_table"]["name"]
+                for op in prev.get("operations", [])
+                if "add_table" in op
+            }
+        except (OSError, json.JSONDecodeError):
+            pass
+    curr_tables = {
+        op["add_table"]["name"]
+        for op in current.get("operations", [])
+        if "add_table" in op
+    }
+    return {
+        "added_tables": sorted(curr_tables - prev_tables),
+        "removed_tables": sorted(prev_tables - curr_tables),
+        "prev_path": prev_path if os.path.isfile(prev_path) else None,
+    }
 
 
 def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:

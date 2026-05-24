@@ -104,15 +104,23 @@ def unsubscribe(channel: str, q: "asyncio.Queue[Dict[str, Any]]") -> None:
 
 def history(forge_dir: str, channel: str, *,
             limit: int = 100,
-            since_ms: Optional[int] = None) -> List[Dict[str, Any]]:
+            since_ms: Optional[int] = None,
+            before_ms: Optional[int] = None) -> List[Dict[str, Any]]:
     """Return recent history for a channel. Reads from the ring buffer
-    when available (fast) and falls back to disk if the ring is cold."""
+    when available (fast) and falls back to disk if the ring is cold.
+
+    N-57: `before_ms` is the backward-walk companion to `since_ms`.
+    When set, only messages with ts < before_ms are returned (handy
+    for paginating backwards through a channel's history).
+    """
     limit = max(1, min(int(limit), _HISTORY_CAP))
     with _LOCK:
         ring = list(_RING.get(channel, []))
     if ring:
         if since_ms is not None:
             ring = [m for m in ring if m.get("ts", 0) >= int(since_ms)]
+        if before_ms is not None:
+            ring = [m for m in ring if m.get("ts", 0) < int(before_ms)]
         return ring[-limit:]
 
     # Cold ring - load from disk.
@@ -131,6 +139,8 @@ def history(forge_dir: str, channel: str, *,
                 except json.JSONDecodeError:
                     continue
                 if since_ms is not None and rec.get("ts", 0) < int(since_ms):
+                    continue
+                if before_ms is not None and rec.get("ts", 0) >= int(before_ms):
                     continue
                 out.append(rec)
     except OSError:

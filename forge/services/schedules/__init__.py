@@ -20,6 +20,8 @@ from .schedules import (  # noqa: F401
     delete,
     get,
     list_schedules,
+    pause,
+    resume,
     update,
 )
 from .runner import tick, list_runs  # noqa: F401

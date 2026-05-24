@@ -176,6 +176,19 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
                 )
     except Exception:
         pass
+    # Secrets (N-55).
+    try:
+        from forge.services.secrets.vault import list_secrets, weak_secrets
+        rows = list_secrets(forge_dir)
+        weak = weak_secrets(forge_dir)
+        lines.append("# HELP forge_secrets_total Total secrets in the vault")
+        lines.append("# TYPE forge_secrets_total gauge")
+        lines.append(f"forge_secrets_total {len(rows)}")
+        lines.append("# HELP forge_secrets_weak Secrets on HMAC-XOR fallback")
+        lines.append("# TYPE forge_secrets_weak gauge")
+        lines.append(f"forge_secrets_weak {len(weak)}")
+    except Exception:
+        pass
     # Gateway.
     try:
         from forge.services.gateway import usage_summary

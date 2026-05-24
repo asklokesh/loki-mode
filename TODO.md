@@ -226,16 +226,16 @@ Format:
            re-registered with force=True)
 - [x] N-53 `loki forge doctor --history N` writes the last N reports
            to disk so support tickets ship a baseline trend
-- [ ] N-54 Schedules: `pause(name)` / `resume(name)` companions to
+- [x] N-54 Schedules: `pause(name)` / `resume(name)` companions to
            the existing `enabled` toggle that also emit an event
            so dashboards see the transition live
-- [ ] N-55 Forge metrics: `forge_secrets_total` + `forge_secrets_weak`
+- [x] N-55 Forge metrics: `forge_secrets_total` + `forge_secrets_weak`
            gauges so dashboards see vault posture without a separate
            `weak_secrets()` call
-- [ ] N-56 Healing: emit `loki.forge.healing.proposal/v1` proposal
+- [x] N-56 Healing: emit `loki.forge.healing.proposal/v1` proposal
            to `.loki/healing/proposal.json` so subsequent runs can
            diff against the previous proposal
-- [ ] N-57 Bus history pagination: `history(..., before_ms=...)`
+- [x] N-57 Bus history pagination: `history(..., before_ms=...)`
            companion to `since_ms` for backward walks
 - [ ] N-58 Function logs: `list_runs(..., outcome='error')` filter
            so dashboards can show just the failures
