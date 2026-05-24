@@ -92,9 +92,9 @@ Format:
 
 ## Next-up (added per the contract; loop continues to consume these)
 
-- [ ] N-01 forge.config validate gains a `--strict` mode that promotes
+- [x] N-01 forge.config validate gains a `--strict` mode that promotes
            warnings to errors (CI gate for "no unknown keys")
-- [ ] N-02 `forge_db_query_page` honors a max wall-clock budget per call
+- [x] N-02 `forge_db_query_page` honors a max wall-clock budget per call
            (kill the cursor when SQLite scan exceeds N ms)
 - [ ] N-03 Storage gateway: probe the S3-compat endpoint on configure()
            and return a clear error if HEAD on the bucket fails

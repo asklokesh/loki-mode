@@ -131,9 +131,14 @@ _ALLOWED_TOP_KEYS = {
 }
 
 
-def validate(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def validate(cfg: Dict[str, Any], *, strict: bool = False) -> Dict[str, Any]:
     """X-58: structural validation of a parsed forge.yaml. Returns
-    {errors, warnings}; never raises."""
+    {errors, warnings}; never raises.
+
+    N-01: when strict=True every warning is promoted to an error so
+    CI can gate on "no unknown keys / unknown rls / unsupported
+    schema_version" rather than tolerating drift.
+    """
     errors: List[str] = []
     warnings: List[str] = []
     if not isinstance(cfg, dict):
@@ -203,7 +208,12 @@ def validate(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 f"gateway.routes.{r.get('model')!r}: "
                 f"need model + provider + base_url"
             )
-    return {"errors": errors, "warnings": warnings}
+    # N-01 strict mode: promote warnings to errors.
+    if strict and warnings:
+        for w in warnings:
+            errors.append(f"strict: {w}")
+        warnings = []
+    return {"errors": errors, "warnings": warnings, "strict": bool(strict)}
 
 
 def apply(project_dir: str, forge_dir: Optional[str] = None,

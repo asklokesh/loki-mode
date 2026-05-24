@@ -2142,10 +2142,18 @@ PY
             ;;
         lint)
             # X-82: structural + cron-schedule lint over forge.yaml
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}"
+            # N-01: --strict promotes warnings to errors
+            local strict_arg="${1:-}"
+            local strict_flag="false"
+            if [[ "$strict_arg" == "--strict" ]]; then
+                strict_flag="true"
+            fi
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$strict_flag"
 import json, sys
 project = sys.argv[1]
-out = {"schema": "loki.forge.lint/v1", "errors": [], "warnings": []}
+strict = sys.argv[2] == "true"
+out = {"schema": "loki.forge.lint/v1", "errors": [], "warnings": [],
+       "strict": strict}
 try:
     from forge.config import find_config, _parse_yaml, validate
     p = find_config(project)
@@ -2153,7 +2161,7 @@ try:
         out["warnings"].append("no forge.yaml at project root")
     else:
         cfg = _parse_yaml(p) or {}
-        rep = validate(cfg)
+        rep = validate(cfg, strict=strict)
         out["errors"].extend(rep["errors"])
         out["warnings"].extend(rep["warnings"])
         # Per-schedule cron lint.
@@ -2189,8 +2197,9 @@ Subcommands:
   bootstrap [dryrun|--dryrun]         Read forge.yaml at the project
                                       root and provision declared
                                       resources (idempotent)
-  lint                                Structural + cron lint over the
-                                      project root forge.yaml. Exits
+  lint [--strict]                     Structural + cron lint over the
+                                      project root forge.yaml. --strict
+                                      promotes warnings to errors. Exits
                                       2 when errors found.
 
 This is a thin wrapper over the forge MCP surface for ops workflows.

@@ -71,12 +71,18 @@ class Engine:
 
     def query_page(self, sql: str, params: Optional[Sequence[Any]] = None,
                    *, limit: int = 100,
-                   cursor: Optional[int] = None) -> dict:
+                   cursor: Optional[int] = None,
+                   budget_ms: Optional[int] = None) -> dict:
         """X-52: simple cursor pagination over a SELECT statement.
 
         Adds `LIMIT N OFFSET cursor` (cursor=0 by default) and returns
         {rows, next_cursor, has_more}. The query MUST be a SELECT; we
         don't permit pagination over mutations.
+
+        N-02: when `budget_ms` is set, the VM is interrupted if the
+        scan exceeds the wall-clock budget. On timeout we raise
+        sqlite3.OperationalError("query budget exceeded"). The budget
+        is per-call; subsequent calls reset their own clocks.
         """
         if not isinstance(sql, str):
             raise TypeError("sql must be a string")
@@ -89,11 +95,38 @@ class Engine:
         # We wrap the user's query in a sub-select to avoid stomping on
         # any LIMIT they wrote.
         wrapped = f"SELECT * FROM ({sql}) LIMIT ? OFFSET ?"
-        cur = self._conn.execute(wrapped, list(params or []) + [limit + 1, offset])
+
+        budget_active = budget_ms is not None and int(budget_ms) > 0
+        deadline: Optional[float] = None
+        if budget_active:
+            import time as _t
+            deadline = _t.monotonic() + (int(budget_ms) / 1000.0)
+
+            def _handler(_t=_t, _deadline=deadline):
+                # Return non-zero to abort the running statement.
+                return 1 if _t.monotonic() > _deadline else 0
+
+            # Fire the handler roughly every 1000 VM ops. SQLite raises
+            # OperationalError("interrupted") when the handler aborts.
+            self._conn.set_progress_handler(_handler, 1000)
         try:
-            rows = [dict(r) for r in cur.fetchall()]
+            cur = self._conn.execute(
+                wrapped, list(params or []) + [limit + 1, offset]
+            )
+            try:
+                rows = [dict(r) for r in cur.fetchall()]
+            finally:
+                cur.close()
+        except sqlite3.OperationalError as e:
+            if budget_active and "interrupted" in str(e).lower():
+                raise sqlite3.OperationalError(
+                    f"query budget exceeded ({budget_ms}ms)"
+                ) from e
+            raise
         finally:
-            cur.close()
+            if budget_active:
+                # Clear the handler so it doesn't leak into other calls.
+                self._conn.set_progress_handler(None, 0)
         has_more = len(rows) > limit
         if has_more:
             rows = rows[:limit]

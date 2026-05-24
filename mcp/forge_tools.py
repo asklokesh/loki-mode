@@ -96,16 +96,22 @@ def register(mcp) -> None:
 
     @mcp.tool()
     async def forge_db_query_page(sql: str, limit: int = 100,
-                                  cursor: int = 0) -> str:
+                                  cursor: int = 0,
+                                  budget_ms: int = 0) -> str:
         """X-55: paginated SELECT. Returns {rows, next_cursor, has_more}.
         Wrap your query in this when you expect more than ~1000 rows
-        back to avoid OOM and long-running SQLite scans."""
+        back to avoid OOM and long-running SQLite scans.
+        N-02: pass budget_ms > 0 to abort the scan if it exceeds the
+        wall-clock budget; the call returns {error: 'query budget
+        exceeded (Nms)'} instead of hanging."""
         _emit_event_safe("forge_db_query_page", "start")
         try:
             from forge.services.database import open_engine
             engine = open_engine(_forge_dir())
-            return json.dumps(engine.query_page(sql, limit=limit,
-                                                cursor=cursor),
+            kwargs = {"limit": limit, "cursor": cursor}
+            if budget_ms and int(budget_ms) > 0:
+                kwargs["budget_ms"] = int(budget_ms)
+            return json.dumps(engine.query_page(sql, **kwargs),
                               default=str)
         except Exception as e:
             return json.dumps({"error": str(e)})
