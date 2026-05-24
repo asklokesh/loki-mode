@@ -237,12 +237,48 @@ Format:
            diff against the previous proposal
 - [x] N-57 Bus history pagination: `history(..., before_ms=...)`
            companion to `since_ms` for backward walks
-- [ ] N-58 Function logs: `list_runs(..., outcome='error')` filter
+- [x] N-58 Function logs: `list_runs(..., outcome='error')` filter
            so dashboards can show just the failures
-- [ ] N-59 Audit verify: optional `--scope migrations|chain|all` so
+- [x] N-59 Audit verify: optional `--scope migrations|chain|all` so
            callers can run just the half they need
-- [ ] N-60 Email: `unset_template(name)` mirror of `register_template`
+- [x] N-60 Email: `unset_template(name)` mirror of `register_template`
            that drops the default AND all locales atomically
+
+## Next-up wave 5 (discovered during N-46..N-60)
+
+- [ ] N-61 `loki forge metrics --json` includes a `prev_timestamp`
+           when called twice within process lifetime so deltas can
+           be computed without state-keeping by the caller
+- [ ] N-62 Audit verify: `--scope` CLI flag on `loki forge audit`
+           (currently only the Python API supports scope=...)
+- [ ] N-63 Secrets `unused_for_days` threshold in /metrics so
+           dashboards see how many are >90 days stale
+- [ ] N-64 Function deploy: `deployed_by_user_id` exposed in
+           list_functions() so dashboards can show attribution per
+           version without reading each manifest
+- [ ] N-65 Presence: `gc_presence` returns `(evicted, remaining)`
+           tuple so callers can graph both halves in one pass
+- [ ] N-66 OpenAPI: paths-by-tag grouping (`tags: [db, storage,
+           functions]`) so generated SDKs split into modules cleanly
+- [ ] N-67 Storage transforms: `unrevoke_preset(name)` ceremonial
+           companion to revoke - removes the audit line so a name
+           can be re-registered without `force=True`
+- [ ] N-68 Doctor history: `--history-prune <days>` companion that
+           drops reports older than N days regardless of cap
+- [ ] N-69 Schedules: `bus_channel` config so events route to a
+           per-tenant channel instead of the global `_system.schedules`
+- [ ] N-70 Healing diff: `unchanged_tables` field complementing
+           added/removed so callers can see the steady state
+- [ ] N-71 Bus history: `count(channel)` helper that returns just
+           the per-channel size for dashboards
+- [ ] N-72 Forge metrics: `forge_email_templates_total` + locale
+           variants gauge so operators see registry size
+- [ ] N-73 Function runs: `purge_runs(name, older_than_days=N)` so
+           operators can bound disk usage without an external job
+- [ ] N-74 OpenAPI: include a top-level `servers:` entry pointing
+           at the dashboard root so generated clients have a base URL
+- [ ] N-75 Doctor: gate `--watch` interval to >=1s so a typo doesn't
+           pin the CPU at 100%
 
 ## Loop continuation
 

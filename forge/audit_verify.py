@@ -27,7 +27,14 @@ import os
 from typing import Any, Dict, List
 
 
-def verify(project_dir: str) -> Dict[str, Any]:
+class _ChainSkipped(Exception):
+    """Internal signal for N-59 scope='migrations' path."""
+    pass
+
+
+def verify(project_dir: str, *, scope: str = "all") -> Dict[str, Any]:
+    """N-59: scope='all' (default), 'migrations', or 'chain'. Skips
+    the opposite half when scope is one of the two."""
     out: Dict[str, Any] = {
         "schema": "loki.forge.audit.verify/v1",
         "ok": True,
@@ -68,7 +75,15 @@ def verify(project_dir: str) -> Dict[str, Any]:
     # happens here too; we record the result on the report.
     chain_index: Dict[str, Dict[str, Any]] = {}
     out["dashboard_audit"] = "not_initialized"
+    # N-59: skip the chain block when scope='migrations'.
+    if scope == "migrations":
+        out["dashboard_audit"] = "skipped"
+        skip_chain = True
+    else:
+        skip_chain = False
     try:
+        if skip_chain:
+            raise _ChainSkipped()
         from dashboard import audit as _audit
         if hasattr(_audit, "_compute_chain_hash") \
            and hasattr(_audit, "_get_current_log_file"):
@@ -125,8 +140,14 @@ def verify(project_dir: str) -> Dict[str, Any]:
                 out["dashboard_audit"] = "ok" if chain_ok else "invalid"
                 if not chain_ok:
                     out["ok"] = False
+    except _ChainSkipped:
+        pass
     except Exception as e:
         out["warnings"].append(f"dashboard audit check skipped: {e}")
+
+    # N-59: skip the per-review walk when scope='chain'.
+    if scope == "chain":
+        return out
 
     for f in sorted(os.listdir(rev_dir)):
         if not f.endswith(".json"):
