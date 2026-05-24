@@ -2184,6 +2184,27 @@ PY
             # single CLI report. Works without the dashboard running;
             # the sandbox block is best-effort (skipped silently if
             # sandbox.sh / docker are unavailable).
+            # N-20: --watch <seconds> loops and emits diffs.
+            local watch_interval=""
+            if [[ "${1:-}" == "--watch" ]]; then
+                shift
+                watch_interval="${1:-5}"
+                shift 2>/dev/null || true
+                # Recurse into a polling loop. Run doctor once per
+                # interval and print only the diff between successive
+                # status snapshots. Ctrl-C exits.
+                local prev=""
+                while true; do
+                    local now
+                    now=$(cmd_forge doctor 2>&1 || true)
+                    if [[ "$now" != "$prev" ]]; then
+                        echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+                        echo "$now"
+                        prev="$now"
+                    fi
+                    sleep "$watch_interval"
+                done
+            fi
             local sb_script="$skill_dir/autonomy/sandbox.sh"
             local sb_json=""
             if [[ -x "$sb_script" || -f "$sb_script" ]]; then
@@ -2230,9 +2251,10 @@ loki forge <subcommand>
 
 Subcommands:
   status                              Live forge state snapshot
-  doctor                              Combined sandbox diagnose +
+  doctor [--watch SECONDS]            Combined sandbox diagnose +
                                       forge health (no dashboard).
                                       Exits 2 on critical codes.
+                                      --watch polls + prints diffs.
   backup [path]                       Tar+gz .loki/forge/ to path
                                       (default ./forge-backup.tar.gz)
   restore <path> [--force]            Extract a backup into .loki/forge/

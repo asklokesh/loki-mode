@@ -141,6 +141,12 @@ def invoke(forge_dir: str, name: str, payload: Optional[Dict[str, Any]] = None,
             f"function {name} v{vsig.get('version')} signature "
             f"verification failed: {vsig.get('reason')}"
         )
+    # N-21: preserve the verify result so callers can see whether the
+    # invocation ran against a signed or legacy-unsigned version.
+    signature_info = {
+        "verified": vsig.get("reason") == "verified",
+        "signature_present": vsig.get("signature_present", False),
+    }
     runtime = m.get("runtime", "bun")
     timeout_s = max(0.1, m.get("timeout_ms", 10000) / 1000.0)
     memory_mb = m.get("memory_mb", 128)
@@ -253,4 +259,6 @@ def invoke(forge_dir: str, name: str, payload: Optional[Dict[str, Any]] = None,
                 os.replace(tmp, manifest_path)
         except Exception:
             pass
+    # N-21: attach the signature verification result to the response.
+    result["signature"] = signature_info
     return result

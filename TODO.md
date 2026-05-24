@@ -133,15 +133,15 @@ Format:
 - [x] N-18 Presence `presence:leave` emitted ONCE per logical
            transition (currently list_presence emits leave for each
            stale eviction even if observers haven't queried list)
-- [ ] N-19 Healing FK topo: detect cross-schema FK references and
+- [x] N-19 Healing FK topo: detect cross-schema FK references and
            surface as warning (currently only tracks targets that
            appear in the proposal's table set)
-- [ ] N-20 `forge forge doctor --watch` polls every N seconds and
+- [x] N-20 `forge forge doctor --watch` polls every N seconds and
            emits diffs (operator wants live status during a deploy)
-- [ ] N-21 Function signature verification: include the verify result
+- [x] N-21 Function signature verification: include the verify result
            in invoke()'s response dict (current contract drops the
            signature_present flag once verify passes)
-- [ ] N-22 Secrets `weak_secrets()` helper that returns just the
+- [x] N-22 Secrets `weak_secrets()` helper that returns just the
            subset of list_secrets() where fallback=True (saves the
            operator from filtering client-side)
 - [ ] N-23 OpenAPI Error schema: emit an `enum` of all error codes

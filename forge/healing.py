@@ -110,11 +110,27 @@ def propose_from_sqlite(legacy_db_path: str) -> Dict[str, Any]:
                     }})
             index_ops[tname] = idx_list
             # Dependencies: every FK target that is also part of this
-            # proposal (skip targets outside our table set; the lint
-            # surface will flag those separately).
+            # proposal. N-19: targets outside the proposal's table set
+            # (cross-schema or dropped tables) surface as warnings so
+            # operators see the dangling reference before apply.
             deps[tname] = {
                 fk_by_col[c]["table"] for c in fk_by_col
             }
+        # N-19: surface FK targets that are not in the proposal's
+        # table set. These usually mean a cross-schema reference (the
+        # legacy DB attached another schema) or a table the operator
+        # already dropped; in both cases the migration will fail at
+        # apply time without this hint.
+        known = set(add_ops.keys())
+        for tname, dep_set in deps.items():
+            for target in sorted(dep_set):
+                if target == tname:
+                    continue  # self-reference is fine
+                if target not in known:
+                    out["warnings"].append(
+                        f"healing: {tname}.<fk> references unknown "
+                        f"table {target!r} (cross-schema or dropped)"
+                    )
         # Topological sort: Kahn's algorithm. Preserve alphabetical
         # order among equally-ready tables so the output is stable.
         ordered = _topo_sort(deps, add_ops.keys(), out["warnings"])
