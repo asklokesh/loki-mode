@@ -8749,13 +8749,45 @@ auto_capture_episode() {
         return
     fi
 
-    # Collect git context: files modified in this iteration
+    # v7.6.4 B-3a fix: previously `git diff --name-only HEAD` only captured
+    # UNSTAGED changes -- always empty after loki's per-iteration auto-commit
+    # rolled the new files into HEAD. Now diff against the iteration-start
+    # SHA captured at the top of the retry loop. Falls back to HEAD~1 if the
+    # start SHA env is unset (older direct callers).
     local files_modified=""
-    files_modified=$(cd "$target_dir" && git diff --name-only HEAD 2>/dev/null | head -20 | tr '\n' '|' || true)
+    local _diff_base="${_LOKI_ITER_START_SHA:-}"
+    if [ -z "$_diff_base" ]; then
+        _diff_base=$(cd "$target_dir" && git rev-parse HEAD~1 2>/dev/null || echo "")
+    fi
+    if [ -n "$_diff_base" ]; then
+        files_modified=$(cd "$target_dir" && git diff --name-only "$_diff_base" HEAD 2>/dev/null | head -50 | tr '\n' '|' || true)
+        # Also include unstaged changes (in case auto-commit didn't run)
+        local _unstaged
+        _unstaged=$(cd "$target_dir" && git diff --name-only HEAD 2>/dev/null | head -20 | tr '\n' '|' || true)
+        if [ -n "$_unstaged" ]; then
+            files_modified="${files_modified}${_unstaged}"
+        fi
+    else
+        # No git history yet (initial commit) -- list all tracked + untracked.
+        files_modified=$(cd "$target_dir" && git ls-files --others --exclude-standard 2>/dev/null | head -50 | tr '\n' '|' || true)
+    fi
 
     # Collect last git commit if any
     local git_commit=""
     git_commit=$(cd "$target_dir" && git rev-parse --short HEAD 2>/dev/null || true)
+
+    # v7.6.4 B-3a fix: aggregate per-iteration efficiency metrics into the
+    # episode so `tokens_used` / `cost_usd` / `input_tokens` / `output_tokens`
+    # are no longer always 0. Source: `.loki/metrics/efficiency/iter-N.json`
+    # (same source `loki kpis` reads from).
+    local _iter_metrics_file="$target_dir/.loki/metrics/efficiency/iter-${iteration}.json"
+    local _iter_tokens_in=0 _iter_tokens_out=0 _iter_cost=0
+    if [ -f "$_iter_metrics_file" ]; then
+        _iter_tokens_in=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(int(d.get('input_tokens', 0) or 0))" 2>/dev/null || echo 0)
+        _iter_tokens_out=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(int(d.get('output_tokens', 0) or 0))" 2>/dev/null || echo 0)
+        _iter_cost=$(python3 -c "import json; d=json.load(open('$_iter_metrics_file')); print(float(d.get('cost_usd', 0) or 0))" 2>/dev/null || echo 0)
+    fi
+    local _iter_tokens_total=$((_iter_tokens_in + _iter_tokens_out))
 
     # Determine outcome
     local outcome="success"
@@ -8774,6 +8806,8 @@ auto_capture_episode() {
     _LOKI_DURATION="$duration" _LOKI_OUTCOME="$outcome" \
     _LOKI_FILES_MODIFIED="$files_modified" _LOKI_GIT_COMMIT="$git_commit" \
     _LOKI_EPISODE_PATH_FILE="$episode_path_file" \
+    _LOKI_TOKENS_IN="$_iter_tokens_in" _LOKI_TOKENS_OUT="$_iter_tokens_out" \
+    _LOKI_TOKENS_TOTAL="$_iter_tokens_total" _LOKI_COST_USD="$_iter_cost" \
     python3 << 'PYEOF' 2>/dev/null || true
 import sys
 import os
@@ -8810,6 +8844,32 @@ try:
     trace.duration_seconds = int(duration) if duration.isdigit() else 0
     trace.git_commit = git_commit if git_commit else None
     trace.files_modified = [f for f in files_modified.split('|') if f] if files_modified else []
+
+    # v7.6.4 B-3a + B-3b fix: hydrate tokens + cost from the iteration's
+    # efficiency metrics file (same source `loki kpis` reads). Backward
+    # compat: zero stays zero on missing metrics.
+    try:
+        trace.tokens_used = int(os.environ.get('_LOKI_TOKENS_TOTAL', '0') or 0)
+    except (TypeError, ValueError):
+        trace.tokens_used = 0
+    # Try to set the input/output/cost fields if the schema accepts them.
+    for attr, env_key, caster in (
+        ('input_tokens', '_LOKI_TOKENS_IN', int),
+        ('output_tokens', '_LOKI_TOKENS_OUT', int),
+        ('cost_usd', '_LOKI_COST_USD', float),
+    ):
+        try:
+            value = caster(os.environ.get(env_key, '0') or 0)
+            setattr(trace, attr, value)
+        except (AttributeError, TypeError, ValueError):
+            pass
+    # files_modified -> artifacts_produced shadow (so .artifacts_produced
+    # reflects what was created if the schema has that field separately).
+    try:
+        if not getattr(trace, 'artifacts_produced', None):
+            trace.artifacts_produced = list(trace.files_modified)
+    except AttributeError:
+        pass
 
     engine.store_episode(trace)
 
@@ -10710,6 +10770,12 @@ except Exception as exc:
         echo ""
 
         save_state $retry "running" 0
+
+        # v7.6.4 B-3a fix: capture iteration-start git SHA so auto_capture_episode
+        # can diff against this baseline (not just HEAD, which is empty after
+        # loki's per-iteration auto-commit makes the new files HEAD).
+        _LOKI_ITER_START_SHA=$(cd "${TARGET_DIR:-.}" && git rev-parse HEAD 2>/dev/null || echo "")
+        export _LOKI_ITER_START_SHA
 
         # Run AI provider with live output
         local start_time=$(date +%s)

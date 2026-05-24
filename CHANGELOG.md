@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.6.4] - 2026-05-23
+
+PATCH release. B-3a + B-3b combined fix: episodes now capture real
+`files_modified`, `tokens_used`, `input_tokens`, `output_tokens`,
+`cost_usd`, and `artifacts_produced` instead of all-zero / empty.
+
+### Fixed
+
+- **B-3a**: Episode writer's `git diff --name-only HEAD` always returned
+  empty because loki's per-iteration auto-commit had already rolled the
+  new files into HEAD. Fix: capture `_LOKI_ITER_START_SHA` at the top of
+  the retry loop (before the provider invocation), then diff against that
+  baseline. Adds unstaged changes too (in case auto-commit didn't run).
+  Falls back to `HEAD~1` and to `git ls-files --others` for the very
+  first iteration.
+- **B-3b**: Episode `tokens_used: 0` even when `loki kpis` reported
+  thousands. Fix: episode writer now reads
+  `.loki/metrics/efficiency/iter-N.json` (same source `loki kpis` uses)
+  and populates `tokens_used`, `input_tokens`, `output_tokens`, and
+  `cost_usd` on the EpisodeTrace. setattr is wrapped in try/except so
+  schema fields that don't exist on older versions are ignored.
+- Adjacent: `artifacts_produced` is shadow-populated from
+  `files_modified` when the schema field exists and isn't already set.
+
+### Verified
+
+- `bash -n autonomy/run.sh` clean
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- End-to-end with a real loki start session (would cost ~$1.50 and
+  ~3 minutes). Will validate in the next user-test cycle.
+- Schema-level test that `EpisodeTrace.input_tokens` and `.cost_usd`
+  fields exist on the current schema (the writer uses setattr +
+  try/except so missing fields are safe).
+
 ## [7.6.3] - 2026-05-23
 
 PATCH release. B-11 fix.
