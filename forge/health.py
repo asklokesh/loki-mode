@@ -61,6 +61,33 @@ def compute_health(forge_dir: str) -> Dict[str, Any]:
                     })
         except Exception:
             pass
+        # N-17: when a non-fs storage gateway is configured, probe the
+        # bucket so doctor fails loudly if the endpoint or credentials
+        # drifted. The probe itself runs unauthenticated (HEAD); 401/403
+        # count as reachable (private buckets) so the only critical
+        # case is an actual network/DNS failure.
+        try:
+            from forge.services.storage import (
+                get_gateway_config, probe_storage_bucket,
+            )
+            cfg = get_gateway_config(forge_dir)
+            if cfg.get("provider") not in (None, "fs") \
+               and cfg.get("endpoint") and cfg.get("bucket"):
+                pr = probe_storage_bucket(
+                    endpoint=cfg["endpoint"], bucket=cfg["bucket"],
+                    timeout_s=2.0,
+                )
+                if not pr.get("ok"):
+                    codes.append({
+                        "code": "FRG005", "severity": "critical",
+                        "message": (
+                            f"storage gateway probe failed for "
+                            f"{cfg.get('provider')}://{cfg['bucket']} "
+                            f"at {cfg['endpoint']}: {pr.get('error')}"
+                        ),
+                    })
+        except Exception:
+            pass
     severity_max = (
         max((c["severity"] for c in codes), key=lambda s: _SEVERITY_RANK.get(s, 0))
         if codes else "ok"

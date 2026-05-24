@@ -85,7 +85,32 @@ def list_presence(channel: str, *,
                 expired.append(uid)
                 continue
             out.append(rec)
+    # N-18: emit leave exactly once per logical transition. The
+    # eviction happened under the lock above, so a concurrent caller
+    # racing on the same channel cannot re-emit because the user is
+    # already gone from _STATE.
     for uid in expired:
         _emit(forge_dir, channel, "presence:leave", uid)
     out.sort(key=lambda r: r["last_seen"], reverse=True)
     return out
+
+
+def gc_presence(channel: str, *,
+                forge_dir: Optional[str] = None) -> List[str]:
+    """N-18: drain expired users from a channel without returning
+    the live roster. Use this from a scheduler/dashboard tick when
+    you want presence:leave events to fire even if no client polls
+    list_presence. Returns the list of user_ids that were evicted.
+    Safe to call concurrently with list_presence - the same lock
+    guarantees a single leave per logical transition.
+    """
+    now = time.time()
+    expired: List[str] = []
+    with _LOCK:
+        for uid, rec in list(_STATE.get(channel, {}).items()):
+            if now - rec["last_seen"] > _FRESHNESS_S:
+                del _STATE[channel][uid]
+                expired.append(uid)
+    for uid in expired:
+        _emit(forge_dir, channel, "presence:leave", uid)
+    return expired

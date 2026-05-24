@@ -124,13 +124,13 @@ Format:
 
 ## Next-up wave 2 (discovered during N-01..N-15)
 
-- [ ] N-16 `forge_db_query_page` MCP tool exposes `budget_ms` arg in
+- [x] N-16 `forge_db_query_page` MCP tool exposes `budget_ms` arg in
            its JSON-schema description so agents discover the knob
-- [ ] N-17 Storage `probe_bucket` reachable via `loki forge doctor`
+- [x] N-17 Storage `probe_bucket` reachable via `loki forge doctor`
            when a non-fs gateway is configured (currently doctor only
            checks FRG codes; should fail loudly when the configured
            bucket is unreachable)
-- [ ] N-18 Presence `presence:leave` emitted ONCE per logical
+- [x] N-18 Presence `presence:leave` emitted ONCE per logical
            transition (currently list_presence emits leave for each
            stale eviction even if observers haven't queried list)
 - [ ] N-19 Healing FK topo: detect cross-schema FK references and

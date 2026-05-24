@@ -98,12 +98,24 @@ def register(mcp) -> None:
     async def forge_db_query_page(sql: str, limit: int = 100,
                                   cursor: int = 0,
                                   budget_ms: int = 0) -> str:
-        """X-55: paginated SELECT. Returns {rows, next_cursor, has_more}.
-        Wrap your query in this when you expect more than ~1000 rows
-        back to avoid OOM and long-running SQLite scans.
-        N-02: pass budget_ms > 0 to abort the scan if it exceeds the
-        wall-clock budget; the call returns {error: 'query budget
-        exceeded (Nms)'} instead of hanging."""
+        """Paginated SELECT against the forge SQLite engine. Returns
+        {rows, next_cursor, has_more}. Wrap your query in this when
+        you expect more than ~1000 rows back to avoid OOM and long
+        SQLite scans.
+
+        Args:
+            sql: a single SELECT/WITH/PRAGMA statement. Multi-statement
+                strings are rejected.
+            limit: page size in [1, 10000]. Default 100.
+            cursor: offset to resume from. Pass `next_cursor` from the
+                previous response to walk forward.
+            budget_ms: optional wall-clock cap in milliseconds. When
+                set > 0, the scan is aborted if it exceeds the budget
+                and the call returns {error: "query budget exceeded
+                (Nms)"} instead of hanging. Use this when an agent
+                might issue a query against an unindexed column on a
+                large table. Default 0 (no budget enforced).
+        """
         _emit_event_safe("forge_db_query_page", "start")
         try:
             from forge.services.database import open_engine
