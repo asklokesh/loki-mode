@@ -41,11 +41,31 @@ _ERR = {
     "422": _err_resp("unprocessable entity - request body failed validation"),
 }
 
+# N-23: enumerate every error code our routes actually emit so
+# consumers can generate typed clients. Adding a new code requires
+# extending this list AND the route that returns it - that coupling
+# is intentional (the spec is the contract).
+_ERROR_CODES = (
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "validation_failed",
+    "rate_limited",
+    "row_level_policy_denied",
+    "missing_field",
+    "invalid_field",
+    "method_not_allowed",
+    "conflict",
+    "payload_too_large",
+    "internal",
+)
+
 _ERROR_SCHEMA = {
     "type": "object",
     "required": ["error"],
     "properties": {
         "error": {"type": "string",
+                  "enum": list(_ERROR_CODES),
                   "description": "short machine-readable error code"},
         "message": {"type": "string",
                     "description": "human-readable explanation"},

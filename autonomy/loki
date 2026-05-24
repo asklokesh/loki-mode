@@ -2110,13 +2110,30 @@ PY
             ;;
         audit)
             # X-50: forge audit chain verification
-            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}"
+            # N-27: --quiet collapses the report to {ok, checked_reviews,
+            # errors_count, warnings_count} so CI workflows can gate
+            # without parsing the chatty surface.
+            local quiet_flag="false"
+            if [[ "${1:-}" == "--quiet" ]]; then
+                quiet_flag="true"
+                shift
+            fi
+            PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}" "$quiet_flag"
 import json, sys
 from forge.audit_verify import verify
+quiet = sys.argv[2] == "true"
 try:
     rep = verify(sys.argv[1])
+    if quiet:
+        rep = {
+            "ok": rep.get("ok"),
+            "checked_reviews": rep.get("checked_reviews", 0),
+            "errors_count": len(rep.get("errors") or []),
+            "warnings_count": len(rep.get("warnings") or []),
+            "dashboard_audit": rep.get("dashboard_audit"),
+        }
     print(json.dumps(rep, indent=2))
-    sys.exit(0 if rep['ok'] else 3)
+    sys.exit(0 if rep.get('ok') else 3)
 except Exception as e:
     print(json.dumps({"error": str(e)}, indent=2))
     sys.exit(1)

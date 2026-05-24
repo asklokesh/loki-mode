@@ -144,18 +144,18 @@ Format:
 - [x] N-22 Secrets `weak_secrets()` helper that returns just the
            subset of list_secrets() where fallback=True (saves the
            operator from filtering client-side)
-- [ ] N-23 OpenAPI Error schema: emit an `enum` of all error codes
+- [x] N-23 OpenAPI Error schema: emit an `enum` of all error codes
            our routes actually return so consumers can generate
            typed clients
-- [ ] N-24 Magic-link redeem route honors `?redirect=` so the browser
+- [x] N-24 Magic-link redeem route honors `?redirect=` so the browser
            lands on the operator's app after success (currently always
            returns JSON)
-- [ ] N-25 Email templates: `clear_locales(name)` companion that
+- [x] N-25 Email templates: `clear_locales(name)` companion that
            drops every locale variant in one call (operator wants
            wholesale revert without a per-locale loop)
-- [ ] N-26 Schedules: surface `last_run_outcome` distribution counter
+- [x] N-26 Schedules: surface `last_run_outcome` distribution counter
            in /metrics so dashboards see error rate over time
-- [ ] N-27 Audit verify: optional `--quiet` returns only the boolean
+- [x] N-27 Audit verify: optional `--quiet` returns only the boolean
            ok+counts, suppresses warnings (CI workflows want the gate
            result not the chatter)
 - [ ] N-28 Storage transforms: `register_transform_preset` rejects a

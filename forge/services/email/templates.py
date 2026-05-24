@@ -132,6 +132,34 @@ def list_templates(forge_dir: str) -> List[Dict[str, Any]]:
     return [{"name": k, **v} for k, v in sorted(merged.items())]
 
 
+def clear_locales(forge_dir: str, name: str) -> List[str]:
+    """N-25: drop every localized variant for `name` in one call.
+    The default (locale=None) entry is preserved. Returns the list
+    of locales that were removed so the caller can log them.
+    """
+    if not _NAME_RE.match(name or ""):
+        raise EmailError(
+            "template name must match ^[a-z][a-z0-9_-]{0,62}$"
+        )
+    p = _path(forge_dir)
+    if not os.path.isfile(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            overrides = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    prefix = f"{name}@"
+    removed = []
+    for key in list(overrides.keys()):
+        if key.startswith(prefix):
+            removed.append(key[len(prefix):])
+            del overrides[key]
+    if removed:
+        _save(forge_dir, overrides)
+    return removed
+
+
 def unset_locale(forge_dir: str, name: str, locale: str) -> bool:
     """N-11: drop a localized variant of a template without touching
     the default (locale=None) entry. Returns True when a variant was

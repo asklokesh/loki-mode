@@ -532,7 +532,8 @@ def register_forge_router(app) -> None:
         # --- N-10: magic-link redeem ------------------------------------
 
         @app.get("/forge/auth/magic/redeem")
-        async def forge_magic_redeem(token: str = "") -> Any:
+        async def forge_magic_redeem(token: str = "",
+                                     redirect: str = "") -> Any:
             """N-10: HTTP handler over magic_link.redeem(). Returns a
             session JWT on success; mirrors the OAuth callback shape so
             clients can treat magic-link and OAuth identically.
@@ -540,6 +541,13 @@ def register_forge_router(app) -> None:
                 invalid_token_shape -> 422
                 consumed_or_unknown -> 404
                 expired             -> 410
+
+            N-24: when `redirect=` is supplied AND it parses as a
+            safe http(s) URL, on success we 302 to that URL with the
+            session JWT appended as `?session=...`. Lets operators
+            wire the magic link straight into their app without a
+            JSON intermediate step. Unsafe schemes (javascript:,
+            data:, file://, ...) are rejected with 400.
             """
             if not token:
                 raise HTTPException(status_code=422,
@@ -547,6 +555,19 @@ def register_forge_router(app) -> None:
             from forge.services.auth import magic_link_redeem
             result = magic_link_redeem(_forge_dir(), token)
             if result.get("ok"):
+                if redirect:
+                    from urllib.parse import urlparse, urlencode
+                    parsed = urlparse(redirect)
+                    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="redirect must be an absolute http(s) URL"
+                        )
+                    sep = "&" if parsed.query else "?"
+                    jwt = result.get("token") or result.get("jwt") or ""
+                    target = f"{redirect}{sep}{urlencode({'session': jwt})}"
+                    from fastapi.responses import RedirectResponse
+                    return RedirectResponse(url=target, status_code=302)
                 return result
             err = result.get("error", "unknown")
             status = {

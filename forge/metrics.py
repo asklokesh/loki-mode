@@ -94,6 +94,27 @@ def render(forge_dir: str) -> str:
             lines.append("# HELP forge_schedule_ticks_total Ticks since runner start")
             lines.append("# TYPE forge_schedule_ticks_total counter")
             lines.append(f'forge_schedule_ticks_total {w.get("ticks_total", 0)}')
+            # N-26: per-schedule last_run_outcome distribution. Counters
+            # by outcome so dashboards can graph the error rate without
+            # walking the per-run JSON files.
+            outcomes: dict = {}
+            for s in scheds:
+                key = (s.get("name", ""),
+                       (s.get("last_run_outcome") or "none"))
+                outcomes[key] = outcomes.get(key, 0) + 1
+            if outcomes:
+                lines.append(
+                    "# HELP forge_schedule_last_outcome "
+                    "Last run outcome per schedule (counter; 1 per row)"
+                )
+                lines.append(
+                    "# TYPE forge_schedule_last_outcome gauge"
+                )
+                for (name, outcome), n in sorted(outcomes.items()):
+                    lines.append(
+                        f'forge_schedule_last_outcome{{name="{name}",'
+                        f'outcome="{outcome}"}} {n}'
+                    )
     except Exception:
         pass
     # Gateway.
