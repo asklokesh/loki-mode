@@ -119,7 +119,7 @@ LOKI_PROVIDER=codex loki start ./prd.md
 6. Backward compatibility gate (healing mode - behavioral preservation, v6.67.0)
 
 ### Legacy System Healing (introduced v6.67.0)
-- **Current in v7.7.3**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
+- **Current in v7.7.4**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
 - **Inspired by**: Amazon AGI Lab's "How Agentic AI Helps Heal Systems We Can't Replace"
 - **CLI**: `loki heal <path> [--phase archaeology|stabilize|isolate|modernize|validate]` (`autonomy/loki:9916`)
 - **Principles**: Friction-as-semantics, failure-first learning, universal adapters, incremental healing, institutional knowledge preservation
@@ -212,6 +212,23 @@ See `.claude/projects/-Users-lokesh-git-loki-mode/memory/CODEBASE-KNOWLEDGE-GRAP
 
 ## Development Guidelines
 
+### Standing SDLC fleet pattern (v7.7.4)
+
+**Binding for ANY non-trivial change** (new feature touching >3 files, bug fix in agent runtime / council / memory / auto-spawn, MINOR or MAJOR release, cross-route parity change, or anything the user has flagged as critical).
+
+Six roles, executed by the integrator (the Claude Code session driving the work):
+
+1. **Architect** (1 Plan agent, opus): designs the change end-to-end before any code. Outputs `docs/<TOPIC>-PLAN.md`.
+2. **Product Owner** (the integrator, NOT an agent): locks scope via `AskUserQuestion` before implementation. Never guesses.
+3. **Dev Fleet** (3-5 principal engineers, opus, in parallel via single-message multi-Agent calls): implement independent slices. Each gets a self-contained task with binding constraints (no version bumps, no commits, no emojis, no em dashes).
+4. **SDET** (1-2 agents, opus): write tests + capture UI screenshots. Output under `artifacts/<release>-screens/`.
+5. **Council Reviewers** (3 agents in parallel: 2 Opus + 1 Sonnet): independent review with `VOTE: APPROVE | CONCERN | REJECT`. **Unanimous APPROVE required.** Any CONCERN/REJECT: read source, validate, fix, RE-RUN entire council. Loop until 3-of-3 APPROVE. "2-of-3 is good enough" is NEVER acceptable.
+6. **Real-User QA** (integrator after release ships): `bun install -g loki-mode@<NEW>` from fresh PATH, exercise the new feature, capture screenshots.
+
+Full reference: `skills/sdlc-fleet.md` (includes the v7.6.0 LSP integration as a concrete demonstrated example).
+
+Skip rules: pure typo fixes, docs-only edits, reverts, true emergency hotfixes.
+
 ### Feedback Loop Requirement (CRITICAL)
 
 Before documenting ANY feature, installation method, or capability:
@@ -283,7 +300,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.7.3 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.7.4 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

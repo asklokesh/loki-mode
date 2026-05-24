@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.4] - 2026-05-24
+
+PATCH release. Documents-only ship: standing SDLC fleet pattern from
+the v7.6.0 demonstrated workflow now codified as a binding rule.
+
+### Added
+
+- `skills/sdlc-fleet.md`: the 6-role SDLC fleet pattern (architect,
+  product owner, dev fleet in parallel, SDET, 3-reviewer council with
+  unanimous APPROVE gate, real-user QA). Includes when-to-invoke vs.
+  skip rules, parallel-execution rules, honest-acknowledgements
+  pattern, and a v7.6.0 reference run showing the pattern works
+  end-to-end.
+- `CLAUDE.md` "Standing SDLC fleet pattern" section: binding for any
+  non-trivial change (new feature >3 files, bug fix in agent runtime /
+  council / memory / auto-spawn, MINOR or MAJOR release, cross-route
+  parity change, or anything user-flagged as critical). Skip rules
+  spelled out: typo fixes, docs-only edits, reverts, true emergency
+  hotfixes.
+
+### Why this matters
+
+Per the user mandate "make sure agent teams with senior most developers,
+Loki architects, sdet team and council of reviewers exist and coordinate
+and work in parallel". This release makes the pattern STANDING (not
+session-by-session). Future Claude Code sessions invoking this codebase
+will load `CLAUDE.md` and `skills/sdlc-fleet.md` and follow the same
+6-role pattern automatically.
+
+### Verified
+
+- skills/sdlc-fleet.md exists + readable
+- CLAUDE.md references it in the new Development Guidelines section
+- v7.6.0 reference run section accurately describes what happened
+  (architect plan + 3 parallel engineers + SDET + 2-round council +
+  real-user QA on Python Flask vs dev's Node test)
+- 23/23 local-ci PASS
+
+### NOT tested in this release
+
+- Docs-only release; no runtime code changed.
+
 ## [7.7.3] - 2026-05-24
 
 PATCH release. F-3 intelligent USAGE.md regeneration. The static prompt
