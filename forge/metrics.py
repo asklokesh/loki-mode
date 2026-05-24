@@ -7,7 +7,7 @@ Prometheus exposition format. No external dependency.
 from __future__ import annotations
 
 import os
-from typing import List
+from typing import Dict, List
 
 
 def _label_str(labels: dict) -> str:
@@ -200,7 +200,7 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
         lines.append(f'forge_secrets_stale{{bucket="90d"}} {stale_90}')
     except Exception:
         pass
-    # Email templates (N-72).
+    # Email templates (N-72, N-80).
     try:
         from forge.services.email import list_templates
         rows = list_templates(forge_dir)
@@ -212,6 +212,20 @@ def render(forge_dir: str, *, labels: dict = None) -> str:
         lines.append("# HELP forge_email_template_locales Locale variants")
         lines.append("# TYPE forge_email_template_locales gauge")
         lines.append(f"forge_email_template_locales {variants}")
+        # N-80: per-name locale coverage gauge so dashboards see which
+        # templates have how many variants.
+        per_name: Dict[str, int] = {}
+        for r in rows:
+            name = r.get("name", "")
+            base = name.split("@", 1)[0]
+            per_name[base] = per_name.get(base, 0) + 1
+        if per_name:
+            lines.append("# HELP forge_email_template_coverage Default + variants per template name")
+            lines.append("# TYPE forge_email_template_coverage gauge")
+            for base, n in sorted(per_name.items()):
+                lines.append(
+                    f'forge_email_template_coverage{{name="{base}"}} {n}'
+                )
     except Exception:
         pass
     # Gateway.

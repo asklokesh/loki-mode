@@ -55,6 +55,10 @@ def purge_runs(forge_dir: str, name: str, *,
     """
     if not isinstance(older_than_days, int) or older_than_days <= 0:
         raise ValueError("older_than_days must be a positive int")
+    # N-81: cap at 365 days so a typo doesn't accidentally wipe the
+    # whole log directory.
+    if older_than_days > 365:
+        raise ValueError("older_than_days capped at 365; use a smaller value")
     d = _logs_dir(forge_dir, name)
     if not os.path.isdir(d):
         return 0

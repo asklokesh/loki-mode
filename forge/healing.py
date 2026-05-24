@@ -43,27 +43,50 @@ def diff_proposal(project_dir: str,
     prev_path = os.path.join(project_dir, ".loki", "healing",
                              "proposal.json")
     prev_tables: set = set()
+    prev_table_cols: Dict[str, Dict[str, str]] = {}
     if os.path.isfile(prev_path):
         try:
             with open(prev_path, "r", encoding="utf-8") as f:
                 prev = json.load(f)
-            prev_tables = {
-                op["add_table"]["name"]
-                for op in prev.get("operations", [])
-                if "add_table" in op
-            }
+            for op in prev.get("operations", []):
+                if "add_table" in op:
+                    t = op["add_table"]
+                    prev_tables.add(t["name"])
+                    prev_table_cols[t["name"]] = {
+                        c["name"]: c.get("type", "")
+                        for c in t.get("columns", [])
+                    }
         except (OSError, json.JSONDecodeError):
             pass
-    curr_tables = {
-        op["add_table"]["name"]
-        for op in current.get("operations", [])
-        if "add_table" in op
-    }
+    curr_tables: set = set()
+    curr_table_cols: Dict[str, Dict[str, str]] = {}
+    for op in current.get("operations", []):
+        if "add_table" in op:
+            t = op["add_table"]
+            curr_tables.add(t["name"])
+            curr_table_cols[t["name"]] = {
+                c["name"]: c.get("type", "")
+                for c in t.get("columns", [])
+            }
+    # N-78: per-shared-table column drift detection.
+    column_changes: Dict[str, Dict[str, List[str]]] = {}
+    for tname in sorted(curr_tables & prev_tables):
+        prev_c = prev_table_cols.get(tname, {})
+        curr_c = curr_table_cols.get(tname, {})
+        added = sorted(set(curr_c) - set(prev_c))
+        removed = sorted(set(prev_c) - set(curr_c))
+        retyped = sorted([n for n in (set(curr_c) & set(prev_c))
+                          if curr_c[n] != prev_c[n]])
+        if added or removed or retyped:
+            column_changes[tname] = {
+                "added": added, "removed": removed, "retyped": retyped,
+            }
     return {
         "added_tables": sorted(curr_tables - prev_tables),
         "removed_tables": sorted(prev_tables - curr_tables),
         # N-70: explicit unchanged set so dashboards see steady state.
         "unchanged_tables": sorted(curr_tables & prev_tables),
+        "column_changes": column_changes,
         "prev_path": prev_path if os.path.isfile(prev_path) else None,
     }
 
@@ -247,26 +270,47 @@ def _map_type(legacy_type: Optional[str]) -> str:
 
 
 def apply_proposal(forge_dir: str, proposal: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply the migration spec returned by propose_from_sqlite."""
+    """Apply the migration spec returned by propose_from_sqlite.
+
+    N-88: returns a v2 envelope with per-op status entries so callers
+    can map each input op to its outcome. Top-level `applied` and
+    `errors` are preserved for v1-compatible consumers.
+    """
     from forge.services.database import open_engine, migrate_apply
     engine = open_engine(forge_dir)
     applied: List[str] = []
     errors: List[str] = []
+    ops_status: List[Dict[str, Any]] = []
     for op in proposal.get("operations", []):
         if "add_table" in op:
+            target = op["add_table"].get("name")
             spec = {
-                "summary": f"healing: ensure {op['add_table'].get('name')}",
+                "summary": f"healing: ensure {target}",
                 "operations": [op],
             }
         else:
+            target = next(iter(op))
             spec = {"operations": [op]}
         try:
             res = migrate_apply(engine, spec)
             applied.append(res["migration_id"])
+            ops_status.append({
+                "op": next(iter(op)),
+                "target": target,
+                "ok": True,
+                "migration_id": res["migration_id"],
+            })
         except Exception as e:
             errors.append(str(e))
+            ops_status.append({
+                "op": next(iter(op)),
+                "target": target,
+                "ok": False,
+                "error": str(e),
+            })
     return {
-        "schema": "loki.forge.healing.applied/v1",
+        "schema": "loki.forge.healing.applied/v2",
         "applied": applied,
         "errors": errors,
+        "ops": ops_status,
     }

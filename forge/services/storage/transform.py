@@ -43,17 +43,17 @@ def _presets_path(forge_dir: str, bucket: str) -> str:
     return os.path.join(forge_dir, "storage", bucket, "_transforms.json")
 
 
-def unrevoke_preset(forge_dir: str, bucket: str, name: str) -> bool:
+def unrevoke_preset(forge_dir: str, bucket: str, name: str) -> int:
     """N-67: remove `name`'s entries from .revoked.jsonl so it can be
-    re-registered without force=True. Returns True when at least one
-    audit line was dropped, False when no record matched. The action
-    itself is logged on a sibling .unrevoked.jsonl so the trail stays
+    re-registered without force=True. N-87: returns the number of
+    audit lines dropped (0 when no record matched). The action itself
+    is logged on a sibling .unrevoked.jsonl so the trail stays
     bidirectional.
     """
     audit_path = os.path.join(os.path.dirname(_presets_path(forge_dir, bucket)),
                               ".revoked.jsonl")
     if not os.path.isfile(audit_path):
-        return False
+        return 0
     kept: List[str] = []
     removed = 0
     try:
@@ -72,9 +72,9 @@ def unrevoke_preset(forge_dir: str, bucket: str, name: str) -> bool:
                     continue
                 kept.append(stripped)
     except OSError:
-        return False
+        return 0
     if not removed:
-        return False
+        return 0
     tmp = audit_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         for ln in kept:
@@ -93,7 +93,7 @@ def unrevoke_preset(forge_dir: str, bucket: str, name: str) -> bool:
             }, separators=(",", ":")) + "\n")
     except OSError:
         pass
-    return True
+    return removed
 
 
 def list_revoked_presets(forge_dir: str, bucket: str) -> List[Dict[str, Any]]:

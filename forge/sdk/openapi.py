@@ -264,14 +264,39 @@ def generate(forge_dir: str, *, title: str = "Forge API",
 
     schemas["Error"] = _ERROR_SCHEMA
     schemas.update(_per_code_error_schemas())
+    # N-82: read repo URL from a package.json sibling so generated
+    # clients carry the project's contact info. Best-effort - missing
+    # file omits the contact block.
+    info: Dict[str, Any] = {"title": title, "version": version}
+    try:
+        for cand in (os.path.join(os.path.dirname(forge_dir), "..", "package.json"),
+                     "package.json"):
+            if os.path.isfile(cand):
+                with open(cand, "r", encoding="utf-8") as f:
+                    pkg = json.load(f)
+                repo = pkg.get("repository") or {}
+                url = repo if isinstance(repo, str) else repo.get("url")
+                if url:
+                    info["contact"] = {"name": pkg.get("name", "forge"),
+                                       "url": url}
+                break
+    except Exception:
+        pass
     return {
         "openapi": "3.1.0",
-        "info": {"title": title, "version": version},
+        "info": info,
         # N-66: tag manifest so generators split SDKs into modules.
+        # N-89: per-tag externalDocs points at the wiki section.
         "tags": [
-            {"name": "db", "description": "Database CRUD"},
-            {"name": "storage", "description": "Object storage + signed URLs"},
-            {"name": "functions", "description": "Edge function invocation"},
+            {"name": "db", "description": "Database CRUD",
+             "externalDocs": {"description": "wiki",
+                              "url": "https://github.com/asklokesh/loki-mode/wiki/Forge-DB"}},
+            {"name": "storage", "description": "Object storage + signed URLs",
+             "externalDocs": {"description": "wiki",
+                              "url": "https://github.com/asklokesh/loki-mode/wiki/Forge-Storage"}},
+            {"name": "functions", "description": "Edge function invocation",
+             "externalDocs": {"description": "wiki",
+                              "url": "https://github.com/asklokesh/loki-mode/wiki/Forge-Functions"}},
         ],
         # N-74: declare the dashboard root as the default server so
         # generated clients have a base URL out of the box. Operators

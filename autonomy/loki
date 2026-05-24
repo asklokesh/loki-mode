@@ -2133,6 +2133,18 @@ quiet = sys.argv[2] == "true"
 summary = sys.argv[3] == "true"
 git_head = sys.argv[4]
 scope = sys.argv[5] if len(sys.argv) > 5 else "all"
+# N-86: accept a comma list - both halves -> all.
+if "," in scope:
+    parts = {p.strip() for p in scope.split(",") if p.strip()}
+    if parts == {"chain", "migrations"} or parts == {"migrations", "chain"}:
+        scope = "all"
+    elif parts == {"chain"}:
+        scope = "chain"
+    elif parts == {"migrations"}:
+        scope = "migrations"
+    else:
+        print(json.dumps({"error": f"unknown scope {scope!r}"}))
+        sys.exit(1)
 if scope not in ("all", "migrations", "chain"):
     print(json.dumps({"error": f"unknown scope {scope!r}"}))
     sys.exit(1)
@@ -2335,11 +2347,18 @@ PY
             # N-68: --history-prune drops reports older than N days,
             # independent of the cap. Runs before history rotation so
             # both filters apply.
+            # N-76: emit a one-line summary of how many files were
+            # dropped so operators see the action took effect.
             if [[ -n "$history_prune_days" ]]; then
                 local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
                 if [[ -d "$hist_dir" ]]; then
+                    local before_n
+                    before_n=$(find "$hist_dir" -name 'doctor-*.json' -type f 2>/dev/null | wc -l | tr -d ' ')
                     find "$hist_dir" -name 'doctor-*.json' -type f \
                         -mtime +"$history_prune_days" -delete 2>/dev/null || true
+                    local after_n
+                    after_n=$(find "$hist_dir" -name 'doctor-*.json' -type f 2>/dev/null | wc -l | tr -d ' ')
+                    echo "history-prune: dropped $((before_n - after_n)) of $before_n files older than ${history_prune_days}d"
                 fi
             fi
             # N-75: refuse --watch intervals shorter than 1s.
@@ -2369,6 +2388,17 @@ PY
                 return 0
             fi
             if [[ -n "$watch_interval" ]]; then
+                # N-83: refuse to start when another --watch is already
+                # running in the same forge_dir. Watermark file removed
+                # on clean exit (trap).
+                local watch_wm="${TARGET_DIR:-.}/.loki/forge/.doctor-watch.pid"
+                mkdir -p "$(dirname "$watch_wm")"
+                if [[ -f "$watch_wm" ]] && kill -0 "$(cat "$watch_wm" 2>/dev/null)" 2>/dev/null; then
+                    echo "error: another forge doctor --watch is already running (pid $(cat "$watch_wm"))" >&2
+                    return 2
+                fi
+                echo $$ > "$watch_wm"
+                trap 'rm -f "$watch_wm"' EXIT INT TERM
                 # Recurse into a polling loop. Run doctor once per
                 # interval and print only the diff between successive
                 # status snapshots. Ctrl-C exits.
@@ -2448,21 +2478,30 @@ loki forge <subcommand>
 
 Subcommands:
   status                              Live forge state snapshot
-  metrics                             Render Prometheus exposition
+  metrics [--label k=v,...] [--json]  Render Prometheus exposition
                                       text locally (no dashboard).
+                                      --label adds static labels;
+                                      --json returns a structured
+                                      envelope with timestamp +
+                                      prev_timestamp.
   doctor [--watch SECONDS]            Combined sandbox diagnose +
-                                      forge health (no dashboard).
-                                      Exits 2 on critical codes.
+         [--history N]                forge health (no dashboard).
+         [--history-prune DAYS]       Exits 2 on critical codes.
                                       --watch polls + prints diffs.
+                                      --history rotates last N reports.
+                                      --history-prune drops by age.
   backup [path]                       Tar+gz .loki/forge/ to path
                                       (default ./forge-backup.tar.gz)
   restore <path> [--force]            Extract a backup into .loki/forge/
   promote [provider] [from] [to]      Promote forge resources between
                                       envs (default railway dev->prod)
-  audit                               Verify migration review records
-                                      against the engine ledger + the
+  audit [--quiet] [--summary]         Verify migration review records
+        [--scope ALL|MIG|CHAIN|...]   against the engine ledger + the
                                       dashboard audit chain (exit 3
-                                      on mismatch)
+                                      on mismatch). --quiet emits
+                                      counts only; --summary emits a
+                                      single shell line; --scope runs
+                                      one half (comma list accepted).
   bootstrap [dryrun|--dryrun]         Read forge.yaml at the project
                                       root and provision declared
                                       resources (idempotent)

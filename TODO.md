@@ -282,40 +282,64 @@ Format:
 
 ## Next-up wave 6 (discovered during N-61..N-75)
 
-- [ ] N-76 Doctor `--history-prune` writes a one-line summary of how
+- [x] N-76 Doctor `--history-prune` writes a one-line summary of how
            many files were dropped (currently silent)
-- [ ] N-77 Schedules: `bus_channel` validated against the channel
+- [x] N-77 Schedules: `bus_channel` validated against the channel
            name regex on create() so typos surface here
-- [ ] N-78 Healing diff: `column_changes` field per shared table
+- [x] N-78 Healing diff: `column_changes` field per shared table
            (added/removed/retyped columns) so operators see the
            subtler drift beyond table presence
-- [ ] N-79 Bus history: `channel_count` returns the per-channel
+- [x] N-79 Bus history: `channel_count` returns the per-channel
            sizes for ALL channels in a single dict for dashboards
-- [ ] N-80 Email templates metrics: per-name gauge so dashboards
+- [x] N-80 Email templates metrics: per-name gauge so dashboards
            see which templates have locale coverage
-- [ ] N-81 Function `purge_runs` rejects older_than_days > 365 to
+- [x] N-81 Function `purge_runs` rejects older_than_days > 365 to
            prevent accidental wipes
-- [ ] N-82 OpenAPI: include a top-level `info.contact` block with
+- [x] N-82 OpenAPI: include a top-level `info.contact` block with
            the project's GitHub URL when present in package.json
-- [ ] N-83 Doctor `--watch` writes a watermark file so a second
+- [x] N-83 Doctor `--watch` writes a watermark file so a second
            --watch process refuses to start (prevents duplicate
            emit floods in the same shell)
-- [ ] N-84 Secrets vault: `rotate_value` records who rotated when
+- [x] N-84 Secrets vault: `rotate_value` records who rotated when
            caller passes `rotated_by_user_id`
-- [ ] N-85 Realtime bus: cap `_RING` per-channel size declared as
+- [x] N-85 Realtime bus: cap `_RING` per-channel size declared as
            a configurable kwarg on publish (currently hard-coded 10k)
-- [ ] N-86 Forge audit: `--scope` accepts `chain,migrations` (comma
+- [x] N-86 Forge audit: `--scope` accepts `chain,migrations` (comma
            list) so callers can run both halves without 'all'
-- [ ] N-87 Storage: `unrevoke_preset` returns the number of audit
+- [x] N-87 Storage: `unrevoke_preset` returns the number of audit
            lines removed so callers see how often the name was
            re-revoked
-- [ ] N-88 Healing: emit `loki.forge.healing.applied/v2` with
+- [x] N-88 Healing: emit `loki.forge.healing.applied/v2` with
            per-operation success status so apply_proposal callers
            know which ops landed and which errored
-- [ ] N-89 OpenAPI: per-tag `externalDocs` pointing at the wiki
+- [x] N-89 OpenAPI: per-tag `externalDocs` pointing at the wiki
            section for that surface
-- [ ] N-90 `loki forge` help block lists every subcommand with one
+- [x] N-90 `loki forge` help block lists every subcommand with one
            line per command (no nested cases get lost)
+
+## Next-up wave 7 (discovered during N-76..N-90)
+
+- [ ] N-91 `loki forge` aliases for common subcommands (e.g. `loki
+           forge doc` -> `doctor`, `loki forge m` -> `metrics`)
+- [ ] N-92 OpenAPI: emit `info.x-generated-at` timestamp so consumers
+           detect regenerated specs
+- [ ] N-93 Schedules `update()` re-validates `bus_channel` when the
+           field is changed (currently only `create()` validates)
+- [ ] N-94 Bus `set_channel_cap` persists to disk so it survives
+           process restart (currently in-memory only)
+- [ ] N-95 Email metrics: emit `forge_email_template_locales_per_name`
+           histogram-style bucket so dashboards see distribution
+- [ ] N-96 Function logs: `list_runs` accepts a `since_ts` filter
+           so callers can poll for new failures only
+- [ ] N-97 Secrets `weak_secrets` adds an `unused_for_days` filter
+           so dashboards can surface "weak AND stale" rotation
+           candidates first
+- [ ] N-98 Forge metrics `--label` rejects label keys that contain
+           non-prometheus characters with a clear error
+- [ ] N-99 Healing `apply_proposal` accepts `dry_run=True` so
+           operators can preview the per-op status without writing
+- [ ] N-100 Doctor `--watch` adds `--max-iterations N` for CI runs
+           that need a bounded watch (currently infinite loop only)
 
 ## Loop continuation
 

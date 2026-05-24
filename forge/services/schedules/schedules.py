@@ -81,6 +81,14 @@ def create(forge_dir: str, name: str, cron: str,
     items = _load(forge_dir)
     if any(s.get("name") == name for s in items):
         raise ScheduleError(f"schedule exists: {name}")
+    # N-77: validate bus_channel format up front so typos surface
+    # here instead of silently routing to a non-existent stream.
+    if bus_channel is not None:
+        import re as _re
+        if not _re.match(r"^[a-z][a-z0-9_.\-]{1,63}$", bus_channel):
+            raise ScheduleError(
+                f"bus_channel must match ^[a-z][a-z0-9_.\\-]{{1,63}}$"
+            )
     rec = {
         "id": uuid.uuid4().hex,
         "name": name,

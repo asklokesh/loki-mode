@@ -29,6 +29,22 @@ _SUBSCRIBERS: Dict[str, List["asyncio.Queue[Dict[str, Any]]"]] = defaultdict(lis
 _RING: Dict[str, Deque[Dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_HISTORY_CAP))
 
 
+def set_channel_cap(channel: str, cap: int) -> None:
+    """N-85: configure a custom ring cap for `channel`. Must be called
+    before the first publish or it has no effect for older messages.
+    cap must be in [1, 1_000_000]; values outside the range are
+    rejected so a typo can't blow the heap."""
+    if not isinstance(cap, int) or cap < 1 or cap > 1_000_000:
+        raise ValueError("cap must be an int in [1, 1000000]")
+    with _LOCK:
+        # Always replace so subsequent publishes see the new maxlen.
+        old = _RING.get(channel)
+        new_ring: Deque[Dict[str, Any]] = deque(
+            (list(old)[-cap:] if old else []), maxlen=cap
+        )
+        _RING[channel] = new_ring
+
+
 def _hist_path(forge_dir: str, channel: str) -> str:
     return os.path.join(forge_dir, "realtime", "history", f"{channel}.jsonl")
 
@@ -146,6 +162,36 @@ def history(forge_dir: str, channel: str, *,
     except OSError:
         return []
     return out[-limit:]
+
+
+def count_all(forge_dir: str) -> Dict[str, int]:
+    """N-79: per-channel history sizes for ALL channels currently
+    in the ring buffer OR with a disk file under realtime/history/.
+    Returns {channel: size}. Best-effort - errors per channel are
+    suppressed so a single bad file does not blank the report."""
+    out: Dict[str, int] = {}
+    with _LOCK:
+        for ch, ring in _RING.items():
+            out[ch] = len(ring)
+    hist_root = os.path.join(forge_dir, "realtime", "history")
+    if os.path.isdir(hist_root):
+        for entry in os.listdir(hist_root):
+            if not entry.endswith(".jsonl"):
+                continue
+            ch = entry[:-len(".jsonl")]
+            if ch in out:
+                continue  # ring buffer wins
+            try:
+                n = 0
+                with open(os.path.join(hist_root, entry), "r",
+                          encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            n += 1
+                out[ch] = n
+            except OSError:
+                continue
+    return out
 
 
 def count(forge_dir: str, channel: str) -> int:

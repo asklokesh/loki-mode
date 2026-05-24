@@ -108,7 +108,7 @@ with tempfile.TemporaryDirectory() as d:
     register_transform_preset(d, 'images',
         {'name': 'thumb', 'ops': [{'resize': {'w': 50, 'h': 50}}]})
     revoke_transform_preset(d, 'images', 'thumb')
-    assert unrevoke_preset(d, 'images', 'thumb') is True
+    assert unrevoke_preset(d, 'images', 'thumb') >= 1
     trail = list_revoked_presets(d, 'images')
     assert not any(r['name'] == 'thumb' for r in trail), trail
     # Re-register without force should now succeed
