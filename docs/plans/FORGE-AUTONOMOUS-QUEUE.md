@@ -281,5 +281,32 @@ claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
 Phase F-1..F-5 + X-1..X-75 complete on claude/compare-litellm-loki-Y8Ke1.
 139 items shipped, 27 still open, 20 partially done.
 
-Full regression: 467 assertions across 30 test suites, 0 failed.
-Most recent push: 4df01a7.
+## Ninth wave
+
+- [ ] X-82 `loki forge lint` CLI: run forge.config.validate on the
+      project root yaml + cron.lint on each declared schedule
+- [ ] X-83 Schedule retry-on-fail: when a schedule's invoke returns
+      error, re-fire at next tick up to max_retries (separate from
+      jobs queue retries)
+- [ ] X-84 Function timeout exponential backoff: TimeoutExpired in
+      invoke() bumps a per-function `last_timeout_ms` we surface
+      via diagnose
+- [ ] X-85 `forge_secret_rotate_value` MCP tool: actually rotate the
+      value in place (re-encrypt, bump version) instead of just
+      writing the rotation policy
+- [ ] X-86 OpenAPI: include /forge/storage/v1/<bucket>/<path> with
+      method PUT for signed-upload destinations (X-81 parity)
+- [ ] X-87 forge.config: declarative gateway routes already in apply();
+      missing the apply path for forge.yaml schedules + secrets
+      validation - tighten with a unit test
+- [ ] X-88 Audit-chain regression: ensure forge_db_migrate's audit
+      entry survives audit.verify even when migrate runs twice with
+      the same spec (idempotency must not break the chain)
+
+## Status
+
+Phase F-1..F-5 + X-1..X-81 complete on claude/compare-litellm-loki-Y8Ke1.
+PR open: https://github.com/asklokesh/loki-mode/pull/161
+
+Full regression: 473 assertions across 31 test suites, 0 failed.
+Most recent push: 5f42e98.
