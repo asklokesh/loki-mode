@@ -541,24 +541,47 @@ async def query_audit_logs(
 
 @router.get("/audit/verify", dependencies=[Depends(auth.require_scope("audit"))])
 async def verify_audit_integrity():
-    """Verify audit log integrity across all log files."""
-    if not audit.AUDIT_DIR.exists():
-        return {"valid": True, "files_checked": 0, "results": []}
+    """Verify audit log integrity across all log files.
 
-    log_files = sorted(audit.AUDIT_DIR.glob("audit-*.jsonl"))
+    v7.7.15 (council fix): delegates to `audit.verify_all_logs()` which
+    threads the chain hash across rotated daily files. The previous
+    per-file loop always started each file from genesis "0"*64, so any
+    log file beyond the first ever rotated false-negatived. Per-file
+    breakdown still returned alongside the aggregate verdict for
+    operator visibility.
+    """
+    aggregate = audit.verify_all_logs()
+
+    # Per-file breakdown for operator visibility (sorted by mtime
+    # to match the aggregate chain-walk order)
     results = []
-    all_valid = True
-
-    for log_file in log_files:
-        result = audit.verify_log_integrity(str(log_file))
-        result["file"] = log_file.name
-        results.append(result)
-        if not result["valid"]:
-            all_valid = False
+    if audit.AUDIT_DIR.exists():
+        log_files = sorted(audit.AUDIT_DIR.glob("audit-*.jsonl"),
+                          key=lambda p: p.stat().st_mtime)
+        prev_hash = "0" * 64
+        for log_file in log_files:
+            if not audit._file_has_integrity(str(log_file)):
+                results.append({
+                    "file": log_file.name,
+                    "valid": True,
+                    "skipped_pre_integrity": True,
+                    "entries_checked": 0,
+                })
+                continue
+            r = audit.verify_log_integrity(str(log_file), start_hash=prev_hash)
+            r["file"] = log_file.name
+            results.append(r)
+            if r.get("valid"):
+                prev_hash = r.get("last_hash", prev_hash)
 
     return {
-        "valid": all_valid,
-        "files_checked": len(log_files),
+        "valid": aggregate["valid"],
+        "files_checked": aggregate["files_checked"],
+        "files_skipped": aggregate.get("files_skipped", 0),
+        "entries_checked": aggregate.get("entries_checked", 0),
+        "genesis_file": aggregate.get("genesis_file"),
+        "first_tampered_file": aggregate.get("first_tampered_file"),
+        "first_tampered_line": aggregate.get("first_tampered_line"),
         "results": results,
     }
 

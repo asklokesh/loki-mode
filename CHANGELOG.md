@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.15] - 2026-05-27
+
+PATCH release. **Critical audit chain verification fix.** The wiki and
+README claim "SHA-256 chain-hashed tamper-evident audit entries." The
+write side correctly chained across rotated daily log files via
+`_recover_last_hash`. The verify side always started from genesis
+`"0"*64`, so any audit log beyond the first-ever silently failed
+verification (false negative). Empirically reproduced on real
+`~/.loki/dashboard/audit/audit-2026-05-04.jsonl` (595 entries; the
+verifier returned `valid=False` while the chain was actually intact).
+
+### Fixed
+
+- **`dashboard/audit.py::verify_log_integrity`**: now accepts an
+  optional `start_hash` parameter (defaults to genesis for backward
+  compat); returns a new `last_hash` field for chain threading;
+  fixed a pre-existing None-return bug on empty files.
+- **New `dashboard/audit.py::verify_all_logs()`**: walks
+  `AUDIT_DIR/audit-*.jsonl` in mtime order (NOT lexicographic --
+  rotated files have name shape `audit-DATE.HHMMSS.jsonl` which sorts
+  BEFORE `audit-DATE.jsonl` because `.1 < .j` in ASCII; the prior
+  global glob would have broken chain ordering for any user who hit
+  size-based rotation). Threads chain hash across files. Skips
+  pre-integrity-era files (integrity hashing was enabled mid-history;
+  pre-integrity logs have no `_integrity_hash` field). Returns
+  aggregate dict with `valid`, `files_checked`, `files_skipped`,
+  `entries_checked`, `first_tampered_file`, `first_tampered_line`,
+  `genesis_file`.
+- **`dashboard/api_v2.py::verify_audit_integrity` endpoint**: was
+  also calling `verify_log_integrity` per-file without threading
+  `start_hash`, so the `/audit/verify` HTTP endpoint gave callers a
+  false sense of security. Now delegates aggregate verdict to
+  `verify_all_logs()`; per-file breakdown still returned for operator
+  visibility but uses mtime sort + threaded `start_hash`.
+- **Pre-integrity skip**: `_file_has_integrity()` helper peeks line 1
+  for `_integrity_hash`; files without it are silently skipped from
+  the chain. Reported in response as `files_skipped` count for
+  transparency.
+
+### Added
+
+- `tests/test-audit-chain-cross-file.sh` (5/5 PASS):
+  - `verify_all_logs` on real production audit dir reports
+    `valid=True, files_checked=23, files_skipped=2,
+    entries_checked=8872, genesis=audit-2026-02-14.jsonl`
+  - Synthetic 2-file chain validates across rotation
+  - Tampering on line 2 detected at correct file + line
+  - Single-file `verify_log_integrity` backward-compat (no
+    `start_hash`) still works on the genesis-anchored first file
+  - Rotated file with `audit-DATE.HHMMSS.jsonl` name sorts in mtime
+    order (locks in the council-flagged regression)
+
+### Verified
+
+- Council: 2 Opus + 1 Sonnet unanimous APPROVE after 1 fix cycle.
+  Opus 1 APPROVE first-pass with non-blocking notes. Opus 2 CONCERN
+  on (a) dead code at function tail, (b) rotated file lexicographic
+  sort -> both fixed, re-review APPROVE. Sonnet CONCERN on (a) same
+  dead code, (b) api_v2.py endpoint not using new function -> both
+  fixed, re-review APPROVE.
+- Local-CI 23/23 PASS first attempt after fixes.
+
+### NOT tested
+
+- Concurrent writers during `verify_all_logs` walk (no file locking;
+  best-effort snapshot; `verify_all_logs` may false-negative on a
+  partial last line if log_event fires mid-read). Document as
+  "verify when quiescent" assumption.
+- Mid-stream pre-integrity boundary (file whose line 1 has no hash
+  but later lines do, e.g. from operator toggling
+  `LOKI_AUDIT_NO_INTEGRITY`). `_file_has_integrity` only peeks line 1
+  so such a file would be wrongly skipped entirely. Realistic only
+  with manual env-var flipping.
+- Real npm-installed package end-to-end smoke (will run post-publish).
+
 ## [7.7.14] - 2026-05-27
 
 PATCH release. **Critical LSP regression fix** that has been silently

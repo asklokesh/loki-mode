@@ -408,15 +408,27 @@ def is_audit_enabled() -> bool:
     return ENTERPRISE_AUDIT_ENABLED
 
 
-def verify_log_integrity(log_file: str) -> dict:
+def verify_log_integrity(log_file: str, start_hash: Optional[str] = None) -> dict:
     """Verify the integrity chain of a JSONL audit log file.
 
-    Reads each line, recomputes the chain hash from the genesis hash,
-    and compares it to the stored _integrity_hash. If any entry has been
-    tampered with, all subsequent hashes will also fail to match.
+    Reads each line, recomputes the chain hash, and compares to the
+    stored _integrity_hash. If any entry has been tampered with, all
+    subsequent hashes will also fail to match.
+
+    v7.7.15 fix: now accepts an optional `start_hash`. Audit logs rotate
+    daily and `_recover_last_hash()` carries the chain across file
+    boundaries at WRITE time. Without `start_hash`, verifying any log
+    file beyond the first-ever produces a false-negative (the file's
+    first entry was hashed against the PREVIOUS file's last hash, not
+    against the genesis "0"*64). Pass the previous file's final hash to
+    verify correctly, or use the new `verify_all_logs()` wrapper to
+    verify the entire chain across all rotated files.
 
     Args:
         log_file: Path to the JSONL audit log file to verify.
+        start_hash: Optional 64-hex starting hash for the chain. If
+            omitted, uses the genesis hash "0"*64 (correct only for the
+            very first audit log ever created on this machine).
 
     Returns:
         A dict with:
@@ -424,8 +436,10 @@ def verify_log_integrity(log_file: str) -> dict:
           - entries_checked (int): Number of entries verified.
           - first_tampered_line (int | None): 1-based line number of the
             first entry where the hash chain broke, or None if valid.
+          - last_hash (str): The final hash in this file (caller chains
+            this into the next file's verification).
     """
-    prev_hash = "0" * 64  # Genesis hash
+    prev_hash = start_hash if start_hash is not None else ("0" * 64)
     entries_checked = 0
 
     try:
@@ -442,6 +456,7 @@ def verify_log_integrity(log_file: str) -> dict:
                         "valid": False,
                         "entries_checked": entries_checked,
                         "first_tampered_line": line_num,
+                        "last_hash": prev_hash,
                     }
 
                 stored_hash = entry.pop("_integrity_hash", None)
@@ -451,6 +466,7 @@ def verify_log_integrity(log_file: str) -> dict:
                         "valid": False,
                         "entries_checked": entries_checked,
                         "first_tampered_line": line_num,
+                        "last_hash": prev_hash,
                     }
 
                 entry_json = json.dumps(entry, sort_keys=True, default=str)
@@ -461,12 +477,108 @@ def verify_log_integrity(log_file: str) -> dict:
                         "valid": False,
                         "entries_checked": entries_checked,
                         "first_tampered_line": line_num,
+                        "last_hash": prev_hash,
                     }
 
                 prev_hash = stored_hash
                 entries_checked += 1
 
     except FileNotFoundError:
-        return {"valid": True, "entries_checked": 0, "first_tampered_line": None}
+        return {"valid": True, "entries_checked": 0, "first_tampered_line": None,
+                "last_hash": prev_hash}
 
-    return {"valid": True, "entries_checked": entries_checked, "first_tampered_line": None}
+    # Normal exit (no rows or all rows passed): valid + carry last_hash forward
+    return {"valid": True, "entries_checked": entries_checked,
+            "first_tampered_line": None, "last_hash": prev_hash}
+
+
+def _file_has_integrity(log_file: str) -> bool:
+    """Return True iff the first non-empty entry in `log_file` has an
+    `_integrity_hash` field. Used by `verify_all_logs` to skip
+    pre-integrity-era files entirely (integrity hashing was introduced
+    after some audit logs already existed)."""
+    try:
+        with open(log_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    return False
+                return "_integrity_hash" in entry
+    except OSError:
+        return False
+    return False
+
+
+def verify_all_logs() -> dict:
+    """v7.7.15: verify the entire audit chain across all rotated log files.
+
+    Walks `AUDIT_DIR/audit-*.jsonl` in chronological order, threading
+    the chain hash from one file to the next via `start_hash`. Skips
+    files from the pre-integrity era (files whose first entry has no
+    `_integrity_hash` field, because integrity hashing was introduced
+    after some audit logs already existed).
+
+    Returns:
+        A dict with:
+          - valid (bool): True if the entire cross-file chain is intact.
+          - files_checked (int): Count of integrity-bearing files inspected.
+          - files_skipped (int): Count of pre-integrity files skipped.
+          - entries_checked (int): Total entries verified across all files.
+          - first_tampered_file (str | None): Path to the first file
+            whose chain broke, or None if valid.
+          - first_tampered_line (int | None): 1-based line number in
+            that file where the chain broke, or None if valid.
+          - genesis_file (str | None): Path to the first integrity-bearing
+            log file (the chain's genesis on this machine), or None if
+            no integrity-bearing files exist.
+    """
+    if not AUDIT_DIR.exists():
+        return {"valid": True, "files_checked": 0, "files_skipped": 0,
+                "entries_checked": 0, "first_tampered_file": None,
+                "first_tampered_line": None, "genesis_file": None}
+    # v7.7.15 council fix (Opus 2): rotated files have name shape
+    # `audit-YYYY-MM-DD.HHMMSS.jsonl` (from `_rotate_logs_if_needed` at
+    # line 167). Lexicographic sort puts `audit-2026-05-04.123456.jsonl`
+    # BEFORE `audit-2026-05-04.jsonl` (because `.1` < `.j` ASCII), which
+    # would break chain ordering and false-negative on any user who hit
+    # size-based rotation. Sort by mtime instead -- mirrors what
+    # `_cleanup_old_logs` already does at line 178.
+    files = sorted(AUDIT_DIR.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
+    prev_hash = "0" * 64
+    total_entries = 0
+    files_checked = 0
+    files_skipped = 0
+    genesis_file = None
+    for log_file in files:
+        if genesis_file is None and not _file_has_integrity(str(log_file)):
+            files_skipped += 1
+            continue
+        if genesis_file is None:
+            genesis_file = str(log_file)
+        result = verify_log_integrity(str(log_file), start_hash=prev_hash)
+        files_checked += 1
+        total_entries += result.get("entries_checked", 0)
+        if not result.get("valid", False):
+            return {
+                "valid": False,
+                "files_checked": files_checked,
+                "files_skipped": files_skipped,
+                "entries_checked": total_entries,
+                "first_tampered_file": str(log_file),
+                "first_tampered_line": result.get("first_tampered_line"),
+                "genesis_file": genesis_file,
+            }
+        prev_hash = result.get("last_hash", prev_hash)
+    return {
+        "valid": True,
+        "files_checked": files_checked,
+        "files_skipped": files_skipped,
+        "entries_checked": total_entries,
+        "first_tampered_file": None,
+        "first_tampered_line": None,
+        "genesis_file": genesis_file,
+    }
