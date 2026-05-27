@@ -101,6 +101,37 @@ else:
         result['iteration'] = 0
 
 # Provider + provider_source (v7.7.2 B-5 clarity, parity with bash)
+# v7.7.12 (UT2-13 parity fix): read cli-provider marker FIRST so the bun
+# route reports provider_source='cli' identically to bash route. Without
+# this, --provider flag works for state but status --json silently
+# downgrades the source field, breaking parity.
+def _read_cli_provider_bun(loki_dir):
+    cli_file = os.path.join(loki_dir, 'state', 'cli-provider')
+    if not os.path.isfile(cli_file):
+        return None
+    try:
+        content = open(cli_file).read().strip()
+        parts = content.split(':')
+        if len(parts) < 2:
+            return None
+        prov = parts[0]
+        ts = int(parts[1])
+        if prov not in ('claude', 'codex', 'cline', 'aider'):
+            return None
+        if time.time() - ts > 86400:
+            return None
+        if len(parts) >= 3:
+            try:
+                pid = int(parts[2])
+                if pid > 0:
+                    os.kill(pid, 0)
+            except (ValueError, ProcessLookupError, PermissionError):
+                return None
+        return prov
+    except Exception:
+        return None
+
+cli_prov = _read_cli_provider_bun(loki_dir)
 provider_file = os.path.join(loki_dir, 'state', 'provider')
 if os.path.isfile(provider_file):
     try:
@@ -111,7 +142,10 @@ if os.path.isfile(provider_file):
 else:
     saved = ''
 env_set = os.environ.get('LOKI_PROVIDER', '') != ''
-if saved:
+if cli_prov:
+    result['provider'] = cli_prov
+    result['provider_source'] = 'cli'
+elif saved:
     result['provider'] = saved
     result['provider_source'] = 'saved'
 elif env_set:

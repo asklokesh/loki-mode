@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.12] - 2026-05-24
+
+PATCH release. UT2-13 bash-vs-bun route parity fix surfaced by real-user
+validation of v7.7.11 from npm. Without this fix, --provider flag
+write semantics worked but `loki status --json` silently downgraded
+provider_source to "default" for all npm-installed users (because the
+default route is Bun, not bash).
+
+### Fixed
+
+- `loki-ts/src/commands/status.ts` embedded Python now reads
+  `.loki/state/cli-provider` BEFORE the saved/env/default cascade,
+  matching `autonomy/loki::cmd_status_json::_read_cli_provider` byte for
+  byte. Includes provider name validation against {claude, codex, cline,
+  aider} canonical set + PID liveness check via os.kill(pid, 0). Legacy
+  2-field marker format still parses for backward compat.
+- Real-user validation: `bun install -g loki-mode@7.7.11` + manual
+  cli-provider marker check showed bash=cli but bun=default. v7.7.12
+  restores parity: both routes report provider_source=cli identically.
+
+### Added
+
+- `tests/test-status-cli-provider-parity.sh` (9/9 PASS): asserts bash
+  and bun routes report identical provider + provider_source for valid
+  cli-provider marker, invalid provider name (xyz), and dead PID
+  (999999) cases. Runs in local-ci; prevents future bash/bun drift.
+
+### Verified
+
+- Real-user CLI smoke from npm registry: loki --version, loki doctor
+  --json (11 checks valid), loki status --json (parses, fields present),
+  loki provider list (4 providers: claude/codex/cline/aider; Gemini
+  correctly absent per v7.5.18 removal).
+- Both bash route (LOKI_LEGACY_BASH=1) and bun route
+  (BUN_FROM_SOURCE=1) report identical provider_source=cli after
+  v7.7.12 parity fix.
+
+### NOT tested
+
+- Docker image (Docker daemon not running on local machine; relies on
+  Release workflow publish-docker job which the post-release watcher
+  will verify).
+- Real `loki start --provider codex` end-to-end session (would write
+  the cli-provider marker via cmd_start dispatch + run a session; not
+  exercised since the unit + parity tests cover the reader cascade).
+
 ## [7.7.11] - 2026-05-24
 
 PATCH release. Bundle of UT2-12 (USAGE markdown render with XSS guard),
