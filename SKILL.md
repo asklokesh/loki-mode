@@ -9,9 +9,9 @@ description: Multi-agent autonomous startup system. Triggers on "Loki Mode". Tak
 
 **Spec in, product out.** A "spec" is whatever describes the work: a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket -- a PRD is one form of spec.
 
-**Multi-provider (stable since v5.0.0):** Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. See `skills/providers.md`. **Current track (v7.5.x):** Phase 1 RARV-C closure -- real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`, dead code cleanup.
+**Multi-provider (stable since v5.0.0):** Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers. Gemini deprecated v7.5.18. See `skills/providers.md`. **Current track (v7.7.x):** LSP grounding as first-class agent tool (v7.7.0-v7.7.9; lsp_get_diagnostics actually-returns-diagnostics regression fix v7.7.14), provider_source cli (v7.7.11-v7.7.12 bash/bun parity), Docker/bash-3.2 robustness (v7.7.13), Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
 
-**Runtime migration in progress:** A bash-to-Bun migration is underway on the `feat/bun-migration` branch. The first phase (shipped in v7.3.0) routes a small set of read-only commands -- `version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index` -- through a Bun runtime via `bin/loki`. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback is available with `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md` for the full plan.
+**Runtime migration:** Bash-to-Bun migration. Read-only commands (`version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index`) flow through Bun runtime via `bin/loki` since v7.3.0. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback: `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md`.
 
 ---
 

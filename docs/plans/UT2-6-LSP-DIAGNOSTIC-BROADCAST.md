@@ -34,6 +34,18 @@ So v1 keeps the N-process model and adds a publish/subscribe channel. v2 (out of
 
 ## 3. Prerequisite: fix the orphan `pending_diagnostics` reference
 
+> **UPDATE 2026-05-27 (v7.7.14):** RESOLVED. The fix described below
+> shipped in v7.7.14. `LSPClient` now spawns a dedicated daemon reader
+> thread at end of `start()` that owns `proc.stdout`, routes responses
+> by id to per-request `Queue`s, and routes `publishDiagnostics` into
+> `self.pending_diagnostics`. `request()` parks on its Queue instead
+> of reading stdout. Re-spawn after crash drains old reader cleanly.
+> Reader-death drain pushes error sentinel to all pending waiters.
+> See `mcp/lsp_proxy.py` and `tests/test-lsp-diagnostics-regression.sh`
+> (5/5 PASS). The broadcast layer described in sections 4-13 can now
+> be built on top of a working reader. The section below is kept for
+> historical context.
+
 `lsp_proxy.py` line 867 (in `lsp_get_diagnostics`) reads:
 
 ```python

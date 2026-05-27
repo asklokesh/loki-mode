@@ -2,7 +2,55 @@
 
 For the complete release history and detailed changes, see the main [CHANGELOG.md](../CHANGELOG.md) in the repository root.
 
-## Recent Releases
+## Recent Releases (current track: v7.7.x)
+
+### [7.7.14] - 2026-05-27
+
+Fixed:
+- **Critical LSP regression** silently broken since v7.7.0. `lsp_get_diagnostics` returned empty array unconditionally because `LSPClient` had no notification reader thread; `request()` busy-read loop dropped every `publishDiagnostics`. Now a dedicated daemon reader thread owns `proc.stdout`, routes responses to per-request Queues, routes `publishDiagnostics` into `pending_diagnostics`. Re-spawn after crash cleanly stops old reader; reader-death drains pending waiters with error sentinel (no hangs).
+
+### [7.7.13] - 2026-05-27
+
+Fixed:
+- `loki start` no-PRD crash on bash 3.2 (macOS default) — `args[@]: unbound variable`. Safe expansion `${args[@]+"${args[@]}"}` applied at exec/nohup sites.
+- `docker run --rm asklokesh/loki-mode start` exited without input. Now detects non-TTY stdin and auto-confirms with clear warning.
+
+### [7.7.12] - 2026-05-27
+
+Fixed:
+- Bash/bun status parity for UT2-13 `provider_source: "cli"`. Bun route did not read `.loki/state/cli-provider`, so 99% of npm users saw `default` after `--provider <name>`.
+
+### [7.7.11] - 2026-05-24
+
+Added:
+- USAGE.md markdown rendering with XSS guard (link href scheme allowlist)
+- `provider_source: "cli"` cascade with provider name validation + PID liveness
+- bun-parity flake root-cause fix (`BUN_FROM_SOURCE=1` in matrix)
+- Forge plan docs (FORGE-AUTONOMOUS-QUEUE.md, ULTRAPLAN-FORGE-BAAS.md) extracted from PR #161
+
+### [7.7.10] - 2026-05-24
+
+Fixed:
+- F-3 USAGE.md port hallucination via entrypoint file capture + secret scrubber + `LOKI_INTELLIGENT_USAGE_INCLUDE_SOURCE=0` opt-out
+
+### [7.7.9] - 2026-05-24
+
+Added:
+- jdtls (Java) in LSP detection list (mcp/lsp_proxy.py + autonomy/lib/mcp-config.sh)
+
+### [7.7.8] - 2026-05-24
+
+Added:
+- LSP grounding instruction in agent system prompt (use lsp_check_exists before writing API calls)
+
+### [7.7.0 - 7.7.7] - 2026-05-22 to 2026-05-24
+
+Added:
+- LSP grounding as first-class agent tool: `lsp_check_exists`, `lsp_get_diagnostics`, `lsp_workspace_symbols`, `lsp_find_definition_by_name`, `lsp_find_references` via `mcp/lsp_proxy.py`. Supports pyright, typescript-language-server, gopls, rust-analyzer, jdtls. (Note: `lsp_get_diagnostics` was silently broken until v7.7.14 fix.)
+
+---
+
+## Historical Releases
 
 ### [5.42.2] - 2026-02-15
 
