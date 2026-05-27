@@ -1373,8 +1373,20 @@ cmd_start() {
         # No PRD file specified -- warn and confirm before starting
         # Auto-confirm in CI environments or when LOKI_AUTO_CONFIRM is set
         # LOKI_AUTO_CONFIRM takes precedence when explicitly set;
-        # fall back to CI env var only when LOKI_AUTO_CONFIRM is unset
+        # fall back to CI env var only when LOKI_AUTO_CONFIRM is unset.
+        # v7.7.13 fix (user-reported Docker bug): also auto-confirm when stdin
+        # is not a TTY. Without this, `docker run --rm asklokesh/loki-mode
+        # start` showed the prompt then exited because the user didn't pass
+        # `-it` to docker, so stdin was closed and `read` returned EOF with
+        # an empty string; the script kept going but the user only saw the
+        # prompt before the next bug fired. Now non-TTY callers get a clean
+        # auto-confirm path identical to CI.
         local _auto_confirm="${LOKI_AUTO_CONFIRM:-${CI:-false}}"
+        if [[ "$_auto_confirm" != "true" ]] && [ ! -t 0 ]; then
+            _auto_confirm="true"
+            echo -e "${YELLOW}Warning: No PRD file specified, stdin not a TTY (e.g. docker run without -it). Auto-confirming.${NC}"
+            echo -e "${YELLOW}Tip: pass docker run -it ... or set LOKI_AUTO_CONFIRM=true to suppress this warning.${NC}"
+        fi
         if [[ "$_auto_confirm" == "true" ]]; then
             echo -e "${YELLOW}Warning: No PRD file specified. Auto-confirming (CI mode).${NC}"
         else
@@ -1448,7 +1460,8 @@ cmd_start() {
         # Load memory context before sandbox start (errors don't block startup)
         load_memory_context "$prd_file" || true
         emit_event session cli start "provider=$effective_provider" "sandbox=true" "prd_path=${prd_file:-}"
-        exec "$SANDBOX_SH" start "${args[@]}"
+        # v7.7.13 fix: safe empty-array expansion (see line 1551 comment).
+        exec "$SANDBOX_SH" start ${args[@]+"${args[@]}"}
     fi
 
     # Load memory context before starting (errors don't block startup)
@@ -1548,7 +1561,11 @@ cmd_start() {
         loki_project_graph_discover "$_pg_target" || true
     fi
 
-    exec "$RUN_SH" "${args[@]}"
+    # v7.7.13 fix (user-reported bug): `"${args[@]}"` triggers "unbound
+    # variable" under bash 3.2 (macOS default) + `set -u` when args is empty.
+    # User report: `loki start` with no PRD on /Users/lokesh/git/anonima
+    # crashed at this line. Safe expansion guards against empty arrays.
+    exec "$RUN_SH" ${args[@]+"${args[@]}"}
 }
 
 # Check if session is running
@@ -11294,7 +11311,8 @@ cmd_trigger() {
             [[ -n "$secret" ]] && args+=("--secret" "$secret")
             [[ -n "$dry_run_flag" ]] && args+=("--dry-run")
             mkdir -p .loki/triggers
-            nohup python3 "$trigger_server_script" "${args[@]}" \
+            # v7.7.13 fix: safe empty-array expansion (bash 3.2 + set -u).
+            nohup python3 "$trigger_server_script" ${args[@]+"${args[@]}"} \
                 > .loki/triggers/server.log 2>&1 &
             local server_pid=$!
             echo "$server_pid" > "$pid_file"

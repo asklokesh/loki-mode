@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.13] - 2026-05-27
+
+PATCH release. Two user-reported P0 bugs on real-user smoke from npm
+and Docker.
+
+### Fixed
+
+- **`loki start` (no PRD) crashes with `args[@]: unbound variable`**
+  on bash 3.2 (macOS default). User repro on `~/git/anonima`:
+  ```
+  $ loki start
+  Generate PRD from codebase and start? [Y/n] Y
+  Starting Loki Mode...
+  .../autonomy/loki: line 1551: args[@]: unbound variable
+  ```
+  Root cause: under bash 3.2 + `set -u`, `"${args[@]}"` on an empty
+  array throws "unbound variable". The "no PRD" code path never
+  populated `args`, so the exec at line 1551 (and the sandbox exec at
+  line 1451, and the trigger server nohup at line 11302) fired the
+  bug. Fixed by switching to the safe expansion pattern
+  `${args[@]+"${args[@]}"}` which only expands when the array is
+  defined-with-elements. Sites without potential-empty risk
+  (run_args initialized non-empty, etc.) left unchanged.
+
+- **`docker run --rm asklokesh/loki-mode start` exits without taking
+  input.** User repro:
+  ```
+  $ docker run --rm asklokesh/loki-mode start
+  Generate PRD from codebase and start? [Y/n] %
+  ```
+  Root cause: user did not pass `-it` so stdin is closed. The `read
+  -r confirm` returned EOF with empty string; the cmd_start fell
+  through to the same args[@] bug above. Now the cmd_start prompt
+  detects `[ ! -t 0 ]` (non-TTY stdin) and auto-confirms with a
+  clear warning that suggests `docker run -it` or
+  `LOKI_AUTO_CONFIRM=true`.
+
+### Added
+
+- `tests/test-empty-args-no-prd.sh` (6/6 PASS): asserts the safe
+  expansion pattern works on bash 3.2 semantics; asserts the old
+  pattern correctly fails (proving the bug exists); greps for any
+  remaining unsafe exec/nohup/eval array expansions in autonomy/loki;
+  verifies the non-TTY auto-confirm branch + `-t 0` check are
+  present; bash -n syntax validation.
+
+### Verified
+
+- End-to-end reproducer in /tmp/loki-bug-repro: both the user's TTY
+  scenario AND Docker scenario (`< /dev/null` to simulate closed
+  stdin) now get past the previously-crashing point and show the
+  Loki ASCII banner instead of the args[@] error.
+- 6/6 unit assertions on bash 3.2.
+- Real-user repro path manually executed: `loki start` from a fresh
+  directory with no PRD on bash 3.2 + `< /dev/null` (docker emul) =
+  no crash, clear warning, auto-confirmed.
+
+### NOT tested
+
+- Live Docker pull + run of v7.7.13 image (Docker daemon not
+  running on the local machine; relies on Release workflow
+  publish-docker job to push the image, and on the user re-running
+  `docker run --rm asklokesh/loki-mode:7.7.13 start` from their own
+  Docker setup to confirm).
+- `loki start <bad-prd-path>` and other error paths that may have
+  similar empty-array exec paths (only the user-reported sites
+  were audited).
+
 ## [7.7.12] - 2026-05-24
 
 PATCH release. UT2-13 bash-vs-bun route parity fix surfaced by real-user
