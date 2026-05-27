@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.16] - 2026-05-27
+
+PATCH release. CI workflow fix: v7.7.15's `tests/test-audit-chain-cross-file.sh`
+failed the GitHub Actions "Shell tests" job on shellcheck SC2164
+(`cd /Users/lokesh/git/loki-mode` without `|| exit`). The hardcoded
+absolute path also meant Test 1 (production audit dir verification)
+would have failed even if shellcheck passed, since CI runners do not
+have `~/.loki/dashboard/audit/`.
+
+### Fixed
+
+- `tests/test-audit-chain-cross-file.sh`: portable `cd` via
+  `$(dirname "${BASH_SOURCE[0]}")/..` with `|| exit 1` (resolves
+  shellcheck SC2164). Python interpreter resolved via
+  `command -v python3.12 || command -v python3` instead of hardcoded
+  `/opt/homebrew/bin/python3.12`.
+- Test 1 (production audit dir): now gracefully SKIPs when
+  `~/.loki/dashboard/audit/` is absent or empty (CI runners, fresh
+  installs) instead of failing. Result tally now reports
+  `passed=N failed=N skipped=N` so CI can distinguish "real check
+  passed" vs "no data available."
+
+### Verified
+
+- `shellcheck tests/test-audit-chain-cross-file.sh` clean (zero
+  warnings, zero errors).
+- Test still 5/5 PASS on this dev machine (real audit dir present).
+- On CI runners, expected outcome: Test 1 SKIP + Tests 2-5 PASS.
+
+### NOT tested
+
+- Actual GitHub Actions Shell tests run on the v7.7.16 commit (will
+  verify post-push).
+
 ## [7.7.15] - 2026-05-27
 
 PATCH release. **Critical audit chain verification fix.** The wiki and

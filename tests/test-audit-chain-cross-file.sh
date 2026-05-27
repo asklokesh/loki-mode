@@ -14,27 +14,50 @@
 # lets callers verify a single file given the prior file's last hash.
 set -u
 
-PY=/opt/homebrew/bin/python3.12
+PY=$(command -v python3.12 || command -v python3)
 PASS=0
 FAIL=0
-ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }
-bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+SKIP=0
+ok()   { PASS=$((PASS+1)); echo "PASS: $1"; }
+bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+skip() { SKIP=$((SKIP+1)); echo "SKIP: $1"; }
 
-cd /Users/lokesh/git/loki-mode
+# Portable cd to repo root (find via the script's own location)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
 
-# Test 1: new verify_all_logs() returns valid=True on real production audit dir
-$PY <<'PYEOF' 2>&1 | tail -1 | grep -q "VERIFY_ALL_OK" && \
-  ok "verify_all_logs returns valid=True on production audit dir" || \
-  bad "verify_all_logs returned valid=False on production audit dir"
-import sys
+# Test 1: new verify_all_logs() returns valid=True on real production audit dir.
+# Gracefully skips when no real audit data exists (e.g. CI runners, fresh
+# install). The value of this test is "shipped code works on real data on
+# this dev machine"; CI exercises the synthetic tests below.
+RESULT=$($PY <<'PYEOF' 2>&1 | tail -1
+import sys, os
 sys.path.insert(0, '.')
 from dashboard import audit
-r = audit.verify_all_logs()
-if r['valid'] and r['entries_checked'] > 0:
-    print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
+home = os.path.expanduser('~')
+real_dir = os.path.join(home, '.loki', 'dashboard', 'audit')
+if not os.path.isdir(real_dir):
+    print("VERIFY_ALL_NO_DATA")
 else:
-    print(f"VERIFY_ALL_FAIL: {r}")
+    import glob
+    if not glob.glob(os.path.join(real_dir, 'audit-*.jsonl')):
+        print("VERIFY_ALL_NO_DATA")
+    else:
+        r = audit.verify_all_logs()
+        if r['valid'] and r['entries_checked'] > 0:
+            print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
+        elif r['valid'] and r['entries_checked'] == 0:
+            print("VERIFY_ALL_NO_DATA")
+        else:
+            print(f"VERIFY_ALL_FAIL: {r}")
 PYEOF
+)
+case "$RESULT" in
+    VERIFY_ALL_OK*) ok "verify_all_logs returns valid=True on production audit dir ($RESULT)" ;;
+    VERIFY_ALL_NO_DATA) skip "verify_all_logs production-dir test (no real audit data on this host; CI runners have none)" ;;
+    *) bad "verify_all_logs unexpected result: $RESULT" ;;
+esac
 
 # Test 2: synthetic 2-file chain with real log_event() calls
 $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "SYNTH_OK" && \
@@ -229,5 +252,5 @@ PYEOF
 rm -rf /tmp/loki-audit-test-v7715-*
 
 echo ""
-echo "Results: $PASS passed, $FAIL failed"
+echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 [ "$FAIL" -eq 0 ]
