@@ -49,6 +49,18 @@ export type SentruxCheck = {
   required: "optional";
 };
 
+// v7.7.17: memory subsystem health surface. Mirrors the bash side
+// (autonomy/loki:cmd_doctor_json) which reports the latest entries from
+// .loki/memory/.errors.log (rotated by memory/error_log.py). Sibling of
+// checks/disk/sentrux; not counted in the summary tally to preserve
+// backwards-compatible numbers.
+export type MemoryHealth = {
+  errors_log_path: string | null;
+  recent_errors: string[];
+  recent_error_count: number;
+  status: Status;
+};
+
 export type DoctorJson = {
   // v7.6.1 B-9 fix: surface the active loki version so tools parsing this
   // JSON know which release produced the report. Mirrors the bash side
@@ -57,6 +69,7 @@ export type DoctorJson = {
   checks: ToolCheck[];
   disk: DiskCheck;
   sentrux: SentruxCheck;
+  memory: MemoryHealth;
   summary: {
     passed: number;
     failed: number;
@@ -318,12 +331,65 @@ async function checkSentrux(): Promise<SentruxCheck> {
   return { found, version, status, required: "optional" };
 }
 
+// v7.7.17: read the memory subsystem error log surface for doctor --json.
+// Resolves the log path via LOKI_DIR env (set by loki invocations) with a
+// cwd-relative `.loki/memory/.errors.log` fallback. Never throws; returns
+// an empty list on any read failure (matches bash side behaviour).
+//
+// v7.7.17 council fix (Opus 2):
+//   (a) Tail-only read (last 64 KB) so an oversize log cannot OOM the
+//       doctor command. Mirrors memory/error_log.py read_recent_errors.
+//   (b) Path parity: emit RELATIVE path (join only, no resolve) to match
+//       the bash side's os.path.join output exactly. Bash uses relative;
+//       Bun was emitting absolute, breaking the parity matrix.
+async function checkMemoryHealth(): Promise<MemoryHealth> {
+  const { openSync, statSync, readSync, closeSync, existsSync } =
+    await import("node:fs");
+  const { join } = await import("node:path");
+  const TAIL_BYTES = 64 * 1024;
+  const lokiDir = process.env["LOKI_DIR"] ?? ".loki";
+  const logPath = join(lokiDir, "memory", ".errors.log");
+  let recent: string[] = [];
+  let exists = false;
+  try {
+    if (existsSync(logPath)) {
+      exists = true;
+      const size = statSync(logPath).size;
+      const offset = Math.max(0, size - TAIL_BYTES);
+      const len = size - offset;
+      const buf = Buffer.alloc(len);
+      const fd = openSync(logPath, "r");
+      try {
+        readSync(fd, buf, 0, len, offset);
+      } finally {
+        closeSync(fd);
+      }
+      const text = buf.toString("utf-8");
+      let lines = text.split("\n");
+      if (offset > 0 && lines.length > 0) {
+        lines = lines.slice(1); // drop possibly-partial first line
+      }
+      lines = lines.map((l) => l.trim()).filter((l) => l.length > 0);
+      recent = lines.slice(-5);
+    }
+  } catch {
+    recent = [];
+  }
+  return {
+    errors_log_path: exists ? logPath : null,
+    recent_errors: recent,
+    recent_error_count: recent.length,
+    status: recent.length === 0 ? "pass" : "warn",
+  };
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
   const sentrux = await checkSentrux();
+  const memory = await checkMemoryHealth();
 
   let passed = 0;
   let failed = 0;
@@ -342,6 +408,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     checks,
     disk,
     sentrux,
+    memory,
     summary: { passed, failed, warnings, ok: failed === 0 },
   };
 }

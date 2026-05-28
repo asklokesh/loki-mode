@@ -9,6 +9,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.17] - 2026-05-28
+
+PATCH release. Memory subsystem observability. First release in the
+v7.7.17 through v7.7.23 memory improvement arc (plan at
+`~/git/loki-plan/MEMORY-IMPROVEMENT-PLAN-v7.7.17.md`). Foundation for
+v7.7.18 capture wedge. Diagnosis at `~/git/loki-plan/MEMORY-DIAGNOSIS-
+2026-05-27.md` flagged "silent-fail everywhere" as the top issue
+masking any future memory regression. v7.7.17 surfaces those failures.
+
+### Fixed
+
+- `autonomy/run.sh::store_episode_trace` (line 8724),
+  `auto_capture_episode` (line 9087), `run_memory_consolidation`
+  (line 9136): replaced the silent-fail `except Exception: pass`
+  pattern with explicit structured logging to
+  `.loki/memory/.errors.log` via the new `memory.error_log` module.
+  Log itself never raises (outer try/except guards even against
+  module import failure of the logger).
+- `loki doctor --json`: new `memory` field exposes
+  `errors_log_path` + `recent_errors` (last 5) + `recent_error_count`
+  + `status` (pass/warn). Bash + Bun routes emit byte-identical field
+  values (council fix Opus 2: previously bash was relative path, Bun
+  was absolute; locked in by test 9 parity assertion).
+
+### Added
+
+- `memory/error_log.py` (~155 LOC): structured error log helper.
+  Tab-separated single-line records: `timestamp \\t function \\t
+  error_class \\t message \\t traceback_snippet`. Rotates at 10 MB
+  (current -> `.log.1`, shift `.log.1` -> `.log.2` -> `.log.3`, drop
+  oldest). Tail-only read (last 64 KB) so an oversize log cannot OOM
+  the doctor command (council fix Opus 2). Secret scrubber (council
+  fix Opus 2): credential keywords (api_key/secret/password/token/
+  private_key/credential/bearer) replaced with `[REDACTED]`; literal
+  high-entropy token shapes (sk-, ghp_/ghs_, xox*, AIza, AKIA)
+  redacted inline. Mirrors v7.7.10 USAGE.md regen scrubber.
+- `tests/test-memory-error-log.sh` (9/9 PASS):
+  - log_memory_error writes + read_recent_errors reads 2 records
+  - log_memory_error never raises on unwriteable path
+  - read_recent_errors returns [] when no log present
+  - rotation fires at 10 MB threshold
+  - bash doctor --json surfaces memory.recent_errors with seeded record
+  - bun doctor --json same (bash/bun parity)
+  - scrubber redacts sk- tokens + credential keywords before write
+  - tail-only read finds last records in 5 MB+ file (no OOM)
+  - bash + Bun emit identical errors_log_path string
+
+### Verified
+
+- Council: 2 Opus + 1 Sonnet unanimous APPROVE after 1 fix cycle.
+  Opus 1 APPROVE first-pass. Opus 2 CONCERN on (a) doctor OOM risk,
+  (b) path parity break, (c) missing secret scrubber -> all fixed
+  with reproducer tests -> re-review APPROVE. Sonnet APPROVE first-pass.
+- Local-CI: 23/23 PASS first attempt.
+- Test 5/6 exercise the SHIPPED bash + Bun doctor surfaces against a
+  seeded `.errors.log`.
+
+### Deferred (not in v7.7.17 scope)
+
+- action_log + files_read field population on EpisodeTrace: original
+  v7.7.17 plan included this, but empirical check showed
+  `.loki/metrics/efficiency/iteration-N.json` only contains aggregate
+  metrics (no tool_use traces) and `.loki/events.jsonl` has no
+  file_read or tool_use entry types. Field population requires the
+  agent itself to emit tool_use traces. Deferred to v7.7.18 where
+  the new MCP capture tool can receive action_log directly from the
+  agent.
+
+### NOT tested
+
+- 10+ MB rotation cycle in a real long-running session (synthetic
+  rotation test passes, but a real session producing 10 MB of errors
+  would itself be a separate failure).
+- Cross-process concurrency on `_rotate_if_needed` (rotation race
+  documented in code comment; falls back to truncate on collision).
+- Privacy scrub coverage beyond the v7.7.10 regex set (no JWT
+  detection, no GCP service-account key, no Azure storage key, no
+  Slack webhook URL specifically -- only the v7.7.10 patterns).
+
 ## [7.7.16] - 2026-05-27
 
 PATCH release. CI workflow fix: v7.7.15's `tests/test-audit-chain-cross-file.sh`

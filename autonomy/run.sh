@@ -8722,7 +8722,13 @@ try:
     )
     engine.store_episode(trace)
 except Exception as e:
-    pass  # Silently fail
+    # v7.7.17: replace silent-fail with structured log to .errors.log.
+    # log_memory_error itself never raises (it has its own try/except).
+    try:
+        from memory.error_log import log_memory_error
+        log_memory_error(f'{target_dir}/.loki/memory', 'store_episode_trace', e)
+    except Exception:
+        pass
 PYEOF
 }
 
@@ -9072,8 +9078,15 @@ try:
                 json.dump({'path': str(episode_file), 'importance': importance}, f)
         except OSError:
             pass
-except Exception:
-    pass  # Silently fail -- memory capture must never break the loop
+except Exception as e:
+    # v7.7.17: replace silent-fail with structured log to .errors.log.
+    # log_memory_error never raises; outer try/except guards even
+    # against import failure of the logger itself.
+    try:
+        from memory.error_log import log_memory_error
+        log_memory_error(f'{target_dir}/.loki/memory', 'auto_capture_episode', e)
+    except Exception:
+        pass
 PYEOF
 
     # v6.83.0 Phase 1: RARV-C REFLECT/VERIFY shadow-write. Only when both
@@ -9128,7 +9141,12 @@ try:
     if result.patterns_created > 0:
         print(f'Memory consolidation: {result.patterns_created} patterns created')
 except Exception as e:
-    pass  # Silently fail
+    # v7.7.17: replace silent-fail with structured log to .errors.log.
+    try:
+        from memory.error_log import log_memory_error
+        log_memory_error(f'{target_dir}/.loki/memory', 'run_memory_consolidation', e)
+    except Exception:
+        pass
 PYEOF
 }
 

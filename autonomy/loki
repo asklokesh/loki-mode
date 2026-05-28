@@ -7255,6 +7255,43 @@ sentrux = {
     'required': 'optional'
 }
 
+# v7.7.17: memory subsystem health surface. Reports the latest entries
+# from .loki/memory/.errors.log (rotated by memory/error_log.py) so
+# developers see regressions in the previously-silent-fail call sites
+# at run.sh:8724, 9087, 9136. Sibling of checks/disk/sentrux; not
+# counted in the summary tally to keep backwards-compatible numbers.
+# Inline file read (rather than importing memory.error_log) so this
+# block works regardless of the doctor's invocation cwd / sys.path.
+# v7.7.17 council fix (Opus 2): tail-only read (last 64 KB) so a
+# pathological oversize log cannot OOM the doctor command. Bash + Bun
+# emit the SAME relative path string for parity.
+memory_base = os.path.join(os.environ.get('LOKI_DIR', '.loki'), 'memory')
+_memory_log_path = os.path.join(memory_base, '.errors.log')
+_TAIL_BYTES = 64 * 1024
+memory_recent_errors = []
+if os.path.isfile(_memory_log_path):
+    try:
+        with open(_memory_log_path, 'rb') as _f:
+            _f.seek(0, 2)
+            _size = _f.tell()
+            _offset = max(0, _size - _TAIL_BYTES)
+            _f.seek(_offset)
+            _chunk = _f.read()
+        _text = _chunk.decode('utf-8', errors='replace')
+        _lines = _text.split('\n')
+        if _offset > 0 and _lines:
+            _lines = _lines[1:]  # drop possibly-partial first line
+        _lines = [ln.strip() for ln in _lines if ln.strip()]
+        memory_recent_errors = _lines[-5:]
+    except OSError:
+        memory_recent_errors = []
+memory = {
+    'errors_log_path': _memory_log_path if os.path.isfile(_memory_log_path) else None,
+    'recent_errors': memory_recent_errors,
+    'recent_error_count': len(memory_recent_errors),
+    'status': 'pass' if not memory_recent_errors else 'warn',
+}
+
 pass_count = sum(1 for c in checks if c['status'] == 'pass')
 fail_count = sum(1 for c in checks if c['status'] == 'fail')
 warn_count = sum(1 for c in checks if c['status'] == 'warn')
@@ -7271,6 +7308,7 @@ result = {
         'status': disk_status
     },
     'sentrux': sentrux,
+    'memory': memory,
     'summary': {
         'passed': pass_count,
         'failed': fail_count,
