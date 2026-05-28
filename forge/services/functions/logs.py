@@ -198,6 +198,9 @@ def _record_purge(forge_dir: str, name: str, mode: str, arg: int,
 
 
 def read_run_log(forge_dir: str, name: str, run_id: str) -> Optional[Dict[str, Any]]:
+    # N-175: reject path traversal in run_id (parity with list_runs).
+    if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
+        return None
     path = os.path.join(_logs_dir(forge_dir, name), f"{run_id}.json")
     if not os.path.isfile(path):
         return None

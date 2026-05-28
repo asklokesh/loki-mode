@@ -347,7 +347,8 @@ def export_secrets(forge_dir: str, *,
 
 def rotate_value(forge_dir: str, name: str,
                  new_value: str,
-                 *, rotated_by_user_id: Optional[str] = None
+                 *, rotated_by_user_id: Optional[str] = None,
+                 allow_noop: bool = False
                  ) -> Dict[str, Any]:
     """X-85: rotate a secret's value in place. Re-encrypts with a
     fresh nonce, bumps updated_at, preserves created_at. Returns
@@ -367,6 +368,11 @@ def rotate_value(forge_dir: str, name: str,
     try:
         current = _decrypt(data["entries"][name], _master_key(forge_dir))
         if current == new_value:
+            # N-176: allow_noop turns the hard error into a soft skip
+            # so batch rotators don't have to special-case it.
+            if allow_noop:
+                return {"name": name, "rotated": False, "skipped": True,
+                        "reason": "value_unchanged"}
             raise SecretError(
                 "rotate_value: new value equals current value (no-op)"
             )

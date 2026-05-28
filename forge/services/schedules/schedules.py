@@ -135,13 +135,17 @@ def create(forge_dir: str, name: str, cron: str,
 
 
 def list_schedules(forge_dir: str, *,
-                   tag: Optional[str] = None) -> List[Dict[str, Any]]:
+                   tag=None) -> List[Dict[str, Any]]:
     """N-163: when `tag` is given, return only schedules carrying it
-    (tags are lower-cased on create, so the filter lower-cases too)."""
+    (tags are lower-cased on create, so the filter lower-cases too).
+    N-173: `tag` may be a single string or a list of strings; a list
+    is an OR match (schedule kept if it carries ANY listed tag)."""
     items = _load(forge_dir)
     if tag is not None:
-        t = tag.lower()
-        items = [s for s in items if t in (s.get("tags") or [])]
+        wanted = [tag] if isinstance(tag, str) else list(tag)
+        wanted = {t.lower() for t in wanted}
+        items = [s for s in items
+                 if wanted & set(s.get("tags") or [])]
     return items
 
 

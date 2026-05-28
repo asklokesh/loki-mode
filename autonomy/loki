@@ -2367,6 +2367,8 @@ if filter_prefix or filter_exclude or filter_name:
     # start with ANY of the prefixes.
     prefixes = [p for p in (filter_prefix or "").split(",") if p]
     excludes = [p for p in (filter_exclude or "").split(",") if p]
+    # N-179: filter_name accepts a comma list (OR exact-match).
+    names = [n for n in (filter_name or "").split(",") if n]
     keep = []
     for ln in text.splitlines():
         s = ln.strip()
@@ -2375,7 +2377,7 @@ if filter_prefix or filter_exclude or filter_name:
             keep.append(ln)
             continue
         name = _name_of(s)
-        if filter_name and name != filter_name:
+        if names and name not in names:
             continue
         if prefixes and not any(name.startswith(p) for p in prefixes):
             continue
@@ -2469,10 +2471,17 @@ PY
                     --history-prune) history_prune_days="${2:-30}"; shift 2 ;;
                     --history-stats)
                         # N-157: aggregate stats (count, bytes, oldest, newest).
+                        # N-178: --human prints a one-line summary
+                        # instead of JSON.
                         local hist_dir="${TARGET_DIR:-.}/.loki/forge/doctor-history"
-                        PYTHONPATH="$skill_dir" python3 - <<PY "$hist_dir"
+                        local stats_human="false"
+                        if [[ "${2:-}" == "--human" ]]; then
+                            stats_human="true"; shift
+                        fi
+                        PYTHONPATH="$skill_dir" python3 - <<PY "$hist_dir" "$stats_human"
 import json, os, sys, time
 d = sys.argv[1]
+human = len(sys.argv) > 2 and sys.argv[2] == "true"
 out = {"count": 0, "total_bytes": 0, "oldest": None, "newest": None}
 if os.path.isdir(d):
     entries = []
@@ -2496,7 +2505,11 @@ if os.path.isdir(d):
                          "mtime": time.strftime(fmt, time.gmtime(oldest[2]))}
         out["newest"] = {"file": newest[0],
                          "mtime": time.strftime(fmt, time.gmtime(newest[2]))}
-print(json.dumps(out, indent=2))
+if human:
+    print(f"count={out['count']} total_bytes={out['total_bytes']} "
+          f"avg_bytes={out.get('avg_bytes', 0)}")
+else:
+    print(json.dumps(out, indent=2))
 PY
                         return 0
                         ;;

@@ -528,26 +528,33 @@ files with 600+ assertions, all green.
 
 ## Next-up wave 15 (discovered during N-161..N-170)
 
-- [ ] N-171 `/api/forge/openapi` `?pretty=false` etag matches the
+- [x] N-171 `/api/forge/openapi` `?pretty=false` etag matches the
             pretty one (content is identical, only formatting differs)
-- [ ] N-172 Health: `openapi_etag` included in the 60s cache so it
+- [x] N-172 Health: `openapi_etag` included in the 60s cache so it
             doesn't recompute the spec on every probe
-- [ ] N-173 Schedules: `list_schedules(tag=...)` accepts a list of
+- [x] N-173 Schedules: `list_schedules(tag=...)` accepts a list of
             tags (OR match) for multi-tenant dashboards
-- [ ] N-174 Email: `list_templates(name=...)` + `include_defaults`
+- [x] N-174 Email: `list_templates(name=...)` + `include_defaults`
             compose so a caller can ask "only my overrides for X"
-- [ ] N-175 Function logs: `read_run_log` rejects path-traversal in
+- [x] N-175 Function logs: `read_run_log` rejects path-traversal in
             run_id (parity with the N-165 list_runs guard)
-- [ ] N-176 Secrets: `rotate_value` returns `skipped=True` instead
+- [x] N-176 Secrets: `rotate_value` returns `skipped=True` instead
             of raising when `allow_noop=True` is passed
-- [ ] N-177 Healing: `diff_proposal` adds `change_count` integer
+- [x] N-177 Healing: `diff_proposal` adds `change_count` integer
             (added + removed + column_changes) for quick gauges
-- [ ] N-178 Doctor `--history-stats` adds `--json` vs human toggle
-            (currently always JSON; add a plain one-line summary)
-- [ ] N-179 Forge metrics `--filter name=` accepts a comma list of
+- [x] N-178 Doctor `--history-stats` adds `--human` one-line summary
+            toggle (default stays JSON)
+- [x] N-179 Forge metrics `--filter name=` accepts a comma list of
             exact names (OR match)
-- [ ] N-180 OpenAPI route: `HEAD /api/forge/openapi` returns the
+- [x] N-180 OpenAPI route: `HEAD /api/forge/openapi` returns the
             ETag header with no body for the cheapest drift check
+
+## Status snapshot 3
+
+**180 N-* items shipped across 15 waves.** This session resumed the
+loop after the SessionStart hook and shipped waves 14-15. Branch
+remains `claude/compare-litellm-loki-Y8Ke1`; PR #161 stays closed
+per the contract, pushes continue to the branch.
 
 ## Loop continuation
 

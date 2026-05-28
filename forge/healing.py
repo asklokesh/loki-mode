@@ -92,6 +92,9 @@ def diff_proposal(project_dir: str,
         # N-167: single boolean so callers can branch without
         # inspecting the three lists themselves.
         "has_changes": bool(added or removed or column_changes),
+        # N-177: integer for quick gauges (added + removed + tables
+        # with column drift).
+        "change_count": len(added) + len(removed) + len(column_changes),
         "prev_path": prev_path if os.path.isfile(prev_path) else None,
     }
 

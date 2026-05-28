@@ -181,6 +181,16 @@ def register_forge_router(app) -> None:
                       headers=headers)
         return _JR(content=spec, headers=headers)
 
+    @app.head("/api/forge/openapi")
+    async def forge_openapi_head() -> Any:
+        """N-180: HEAD returns just the ETag header (no body) for the
+        cheapest possible spec-drift check."""
+        from forge.sdk.openapi import content_etag
+        from fastapi.responses import Response as _R
+        etag = content_etag(_forge_dir())
+        return _R(status_code=200,
+                  headers={"ETag": etag, "Cache-Control": "no-cache"})
+
     @app.get("/api/forge/health")
     async def forge_health() -> Dict[str, Any]:
         """X-29 health check. Flips RED based on the same FRG* codes the
