@@ -285,6 +285,25 @@
       box-shadow: 0 0 0 3px var(--loki-accent-glow);
     }
 
+    /* v7.7.29 multi-project switcher */
+    .project-switcher {
+      margin-left: 14px;
+      padding: 5px 10px;
+      background: var(--loki-bg-primary);
+      border: 1px solid var(--loki-border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--loki-text-primary);
+      cursor: pointer;
+      max-width: 280px;
+    }
+    .project-switcher:focus {
+      outline: none;
+      border-color: var(--loki-accent);
+      box-shadow: 0 0 0 3px var(--loki-accent-glow);
+    }
+
     /* Main Content */
     .main-content {
       padding: 28px 32px;
@@ -532,6 +551,11 @@
         </button>
         <span class="logo-brand">Loki Mode</span>
         <span class="logo-subtitle">powered by Autonomi</span>
+        <!-- v7.7.29 multi-project switcher: lists projects running loki in
+             different folders and switches which one the dashboard shows. -->
+        <select class="project-switcher" id="project-switcher" title="Switch project" aria-label="Switch project">
+          <option value="">All projects (current dir)</option>
+        </select>
       </div>
 
       <nav class="nav-links">
@@ -13372,6 +13396,49 @@ document.addEventListener('DOMContentLoaded', function() {
   // Initialize the dashboard with auto-detect
   var initResult = LokiDashboard.init({ autoDetectContext: true });
   console.log('Loki Dashboard initialized:', initResult);
+
+  // v7.7.29 multi-project switcher: populate from /api/running-projects and
+  // switch the focused project via /api/focus. Fully best-effort; if the
+  // endpoint is unavailable the dropdown simply stays at "All projects".
+  (function initProjectSwitcher() {
+    var sel = document.getElementById('project-switcher');
+    if (!sel) return;
+    function refresh() {
+      fetch('/api/running-projects')
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(data){
+          if (!data || !Array.isArray(data.projects)) return;
+          var current = sel.value;
+          // Rebuild options: keep the "All projects" default first.
+          sel.innerHTML = '';
+          var optAll = document.createElement('option');
+          optAll.value = ''; optAll.textContent = 'All projects (current dir)';
+          sel.appendChild(optAll);
+          data.projects.forEach(function(p){
+            var o = document.createElement('option');
+            o.value = p.path || '';
+            var dot = p.running ? '* ' : '';   // running marker (ASCII)
+            o.textContent = dot + (p.name || p.path || 'project');
+            if (p.is_active) o.selected = true;
+            sel.appendChild(o);
+          });
+          if (!data.active_project_dir && current === '') sel.value = '';
+        })
+        .catch(function(){ /* offline / no endpoint: leave as-is */ });
+    }
+    sel.addEventListener('change', function(){
+      var dir = sel.value;
+      var req = dir
+        ? fetch('/api/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_dir: dir }) })
+        : fetch('/api/focus', { method: 'DELETE' });
+      req.then(function(){
+        // Reload so every panel re-fetches against the newly focused project.
+        window.location.reload();
+      }).catch(function(){ /* ignore */ });
+    });
+    refresh();
+    setInterval(refresh, 15000);
+  })();
 
   // Theme toggle functionality
   var themeToggle = document.getElementById('theme-toggle');

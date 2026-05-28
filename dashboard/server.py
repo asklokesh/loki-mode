@@ -2140,6 +2140,71 @@ async def clear_focus():
     return {"project_dir": None, "loki_dir": str(_get_loki_dir())}
 
 
+@app.get("/api/running-projects")
+async def list_running_projects():
+    """List registered projects enriched with live status for the dashboard
+    project switcher (v7.7.29 multi-project support).
+
+    NOTE: deliberately NOT under /api/projects/* because /api/projects/{id}
+    (int path param) would shadow a /api/projects/running literal and 422.
+
+    Returns every registered project (from ~/.loki/dashboard/projects.json,
+    populated by `loki start`), each annotated with:
+      - running: whether the recorded orchestrator pid is still alive
+      - is_active: whether it is the currently focused project
+    Live-vs-stale is derived from pid liveness, which is robust even when a
+    session is hard-killed (no exit hook fires). Never raises: registry
+    problems degrade to an empty list.
+    """
+    out = []
+    try:
+        projects = registry.list_projects(include_inactive=True)
+    except Exception:
+        projects = []
+    active = _active_project_dir
+    for p in projects:
+        path = p.get("path", "")
+        pid = p.get("pid")
+        running = False
+        if isinstance(pid, int) and pid > 0:
+            try:
+                os.kill(pid, 0)
+                running = True  # signal 0 delivered -> pid alive
+            except PermissionError:
+                running = True  # pid exists but owned by another user
+            except (ProcessLookupError, OSError):
+                running = False  # ESRCH -> dead
+        # A project is also "live" if its .loki/session.json says running.
+        if not running and path:
+            try:
+                sess = _Path(path) / ".loki" / "session.json"
+                if sess.is_file():
+                    import json as _json
+                    s = _json.loads(sess.read_text())
+                    running = s.get("status") == "running"
+            except Exception:
+                pass
+        # Compare via realpath: /api/focus resolves symlinks (e.g. macOS
+        # /tmp -> /private/tmp) while the registry stores abspath, so a plain
+        # abspath compare would never match a focused symlinked project.
+        is_active = False
+        if active and path:
+            try:
+                is_active = os.path.realpath(active) == os.path.realpath(path)
+            except OSError:
+                is_active = os.path.abspath(active) == os.path.abspath(path)
+        out.append({
+            "id": p.get("id"),
+            "name": p.get("name") or (os.path.basename(path) if path else "project"),
+            "path": path,
+            "port": p.get("port"),
+            "status": p.get("status"),
+            "running": running,
+            "is_active": is_active,
+        })
+    return {"projects": out, "active_project_dir": active}
+
+
 # =============================================================================
 # Enterprise Features (Optional - enabled via environment variables)
 # =============================================================================

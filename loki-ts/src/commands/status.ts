@@ -12,6 +12,7 @@
 // orchestrator phase / pending task count branches.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, basename } from "node:path";
+import { homedir } from "node:os";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
@@ -187,15 +188,34 @@ if os.path.isfile(session_file):
 else:
     result['elapsed_time'] = 0
 
-# Dashboard URL
-dashboard_pid_file = os.path.join(loki_dir, 'dashboard', 'dashboard.pid')
+# Dashboard URL. Check BOTH the project-local in-build dashboard and the
+# standalone dashboard (~/.loki/dashboard, where loki dashboard/serve now
+# write) and honor saved scheme/host/port side-files, mirroring the bash
+# route (autonomy/loki) so the two runtimes report identically.
+_dash_candidates = [
+    os.path.join(loki_dir, 'dashboard', 'dashboard.pid'),
+    os.path.expanduser(os.path.join('~', '.loki', 'dashboard', 'dashboard.pid')),
+]
+dashboard_pid_file = next((p for p in _dash_candidates if os.path.isfile(p)), _dash_candidates[0])
 dashboard_url = None
 if os.path.isfile(dashboard_pid_file):
     try:
         with open(dashboard_pid_file) as f:
             dpid = int(f.read().strip())
         os.kill(dpid, 0)
-        dashboard_url = 'http://127.0.0.1:' + dashboard_port + '/'
+        _dd = os.path.dirname(dashboard_pid_file)
+        def _side(name, default):
+            p = os.path.join(_dd, name)
+            try:
+                return open(p).read().strip() if os.path.isfile(p) else default
+            except OSError:
+                return default
+        _scheme = _side('scheme', 'http')
+        _host = _side('host', '127.0.0.1')
+        _port = _side('port', str(dashboard_port))
+        if _host == '0.0.0.0':
+            _host = '127.0.0.1'
+        dashboard_url = _scheme + '://' + _host + ':' + _port + '/'
     except (ProcessLookupError, PermissionError, ValueError, Exception):
         pass
 result['dashboard_url'] = dashboard_url
@@ -565,13 +585,32 @@ async function runStatusText(): Promise<number> {
     process.stdout.write(`${CYAN}Context:${NC} ${ctxPct}% (${ctxUsed} / ${ctxTotal} tokens)\n`);
   }
 
-  // Dashboard
-  const dashPidFile = resolve(dir, "dashboard", "dashboard.pid");
-  if (existsSync(dashPidFile)) {
+  // Dashboard. Check BOTH the project-local in-build dashboard and the
+  // standalone dashboard (~/.loki/dashboard, where loki dashboard/serve now
+  // write) and honor saved scheme/host/port side-files, mirroring the bash
+  // route so the two runtimes report identically.
+  const dashCandidates = [
+    resolve(dir, "dashboard", "dashboard.pid"),
+    resolve(homedir(), ".loki", "dashboard", "dashboard.pid"),
+  ];
+  const dashPidFile = dashCandidates.find((p) => existsSync(p)) ?? "";
+  if (dashPidFile && existsSync(dashPidFile)) {
     const pid = readPidFile(dashPidFile);
     if (pid !== null && pidAlive(pid)) {
-      const port = process.env["LOKI_DASHBOARD_PORT"] || "57374";
-      process.stdout.write(`${CYAN}Dashboard:${NC} http://127.0.0.1:${port}/\n`);
+      const dashDir = resolve(dashPidFile, "..");
+      const sideFile = (name: string, dflt: string): string => {
+        const p = resolve(dashDir, name);
+        try {
+          return existsSync(p) ? readFileSync(p, "utf-8").trim() || dflt : dflt;
+        } catch {
+          return dflt;
+        }
+      };
+      const scheme = sideFile("scheme", "http");
+      let host = sideFile("host", "127.0.0.1");
+      const port = sideFile("port", process.env["LOKI_DASHBOARD_PORT"] || "57374");
+      if (host === "0.0.0.0") host = "127.0.0.1";
+      process.stdout.write(`${CYAN}Dashboard:${NC} ${scheme}://${host}:${port}/\n`);
     }
   }
 

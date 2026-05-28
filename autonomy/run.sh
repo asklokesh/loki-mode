@@ -752,6 +752,47 @@ TARGET_DIR="${LOKI_TARGET_DIR:-$(pwd)}"
 PARALLEL_BLOG=${LOKI_PARALLEL_BLOG:-false}
 AUTO_MERGE=${LOKI_AUTO_MERGE:-true}
 
+# Multi-project registry (v7.7.29): register this running project in the
+# machine-global registry (~/.loki/dashboard/projects.json) so the dashboard
+# can list and switch between projects running in different folders. Records
+# the absolute path, pid, port, and status. Fully non-blocking and
+# failure-swallowed: registry problems must never affect a build. Marked
+# inactive again on exit via the trap below.
+loki_register_running_project() {
+    local _status="${1:-running}"
+    [ -n "${LOKI_SKIP_PROJECT_REGISTRY:-}" ] && return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    local _skill="${LOKI_SKILL_DIR:-${PROJECT_DIR:-$SCRIPT_DIR/..}}"
+    LOKI_REG_TARGET="$TARGET_DIR" LOKI_REG_SKILL="$_skill" \
+    LOKI_REG_PID="$$" LOKI_REG_PORT="${LOKI_DASHBOARD_PORT:-57374}" \
+    LOKI_REG_STATUS="$_status" \
+    python3 - <<'PYREG' >/dev/null 2>&1 || true
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    target = os.path.abspath(os.environ["LOKI_REG_TARGET"])
+    entry = registry.register_project(target)
+    # Enrich with runtime fields the dashboard switcher uses.
+    reg = registry._load_registry()
+    pid = entry.get("id") or registry._generate_project_id(target)
+    if pid in reg.get("projects", {}):
+        reg["projects"][pid]["pid"] = int(os.environ.get("LOKI_REG_PID", "0") or 0)
+        reg["projects"][pid]["port"] = int(os.environ.get("LOKI_REG_PORT", "57374") or 57374)
+        reg["projects"][pid]["status"] = os.environ.get("LOKI_REG_STATUS", "running")
+        registry._save_registry(reg)
+except Exception:
+    pass
+PYREG
+}
+# Register as running now. We deliberately do NOT install an EXIT trap to
+# flip it to idle: a top-level EXIT trap here would be clobbered by the
+# lock-release EXIT trap installed later in the main path (and could
+# interfere with it). Instead the dashboard determines live vs stale by
+# checking whether the recorded pid is still alive (registry stores pid),
+# which is robust even on hard kills where a trap would never fire.
+loki_register_running_project running
+
 # Complexity Tiers (Auto-Claude pattern)
 # auto = detect from PRD/codebase, simple = 3 phases, standard = 6 phases, complex = 8 phases
 COMPLEXITY_TIER=${LOKI_COMPLEXITY:-auto}

@@ -9,6 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.29] - 2026-05-28
+
+PATCH release. Dashboard <-> CLI <-> Docker integration fixes plus a
+multi-project dashboard switcher (run loki in several folders and see /
+switch between them in one dashboard). The RARV provider-exit-code finding
+from the same audit is deferred to v7.7.30 (highest blast radius, isolated
+review).
+
+### Fixed (dashboard integration)
+
+- **`loki dashboard stop|status|open` failed from a different directory
+  than `start`.** The standalone dashboard PID/control dir was relative
+  (`${LOKI_DIR}/dashboard`), so stopping from any other cwd reported "not
+  running" and orphaned the server. It now lives at a fixed
+  `~/.loki/dashboard` (the in-build dashboard run.sh starts stays
+  project-local). Verified: start in dir A, stop from dir B, port freed.
+- **Docker dashboard was unreachable from the host.** The server defaulted
+  to binding `127.0.0.1` inside the container, so `-p 57374:57374` forwarded
+  to nothing. The default bind host is now `0.0.0.0` in a container
+  (detected via /.dockerenv or LOKI_SANDBOX_MODE), `127.0.0.1` on the host.
+- **`loki serve` / `loki api` ignored `--host`/`--port`** and lacked a
+  port-in-use guard. `cmd_api` now parses those flags, refuses a busy port,
+  shares the standalone PID dir, computes the TLS scheme, persists
+  host/port/scheme side-files, and prints correct URLs.
+- **TLS dashboards printed a false "health did not respond" warning.** The
+  readiness probe hardcoded `http://.../api/status`, which fails under TLS
+  and 401s under `LOKI_ENTERPRISE_AUTH`. It now probes the unauthenticated
+  `/health` over the actual scheme with `-k` for self-signed certs.
+- **`loki start --api` swallowed dashboard startup failures.** It is now a
+  contained subshell that surfaces the outcome and cannot abort the build.
+- **`loki status` (human + --json) and `loki cleanup`** now check BOTH the
+  project-local and the `~/.loki/dashboard` PID locations and honor the
+  saved scheme/host/port, so they never miss or misreport a running
+  dashboard. The Bun route (`loki-ts/src/commands/status.ts`, both the JSON
+  and text renderers) mirrors the same dual-path + side-file logic, keeping
+  the bash and Bun runtimes at parity (verified: both report the identical
+  dashboard_url for a standalone dashboard).
+
+### Added (multi-project switcher)
+
+- **`loki start` auto-registers the running project** (path, pid, port,
+  status) in the machine-global registry (`~/.loki/dashboard/projects.json`)
+  so the dashboard can see projects running in different folders. Fully
+  non-blocking and failure-swallowed; opt out with
+  `LOKI_SKIP_PROJECT_REGISTRY=1`.
+- **`GET /api/running-projects`**: lists registered projects with a live
+  `running` flag derived from pid liveness (robust on hard kills) and an
+  `is_active` flag (realpath-compared so macOS `/tmp` -> `/private/tmp`
+  symlinks match). Deliberately not under `/api/projects/*` to avoid the
+  `{project_id}` int route shadowing it.
+- **Dashboard header project switcher**: a dropdown listing running projects;
+  selecting one POSTs `/api/focus` and reloads so every panel re-resolves
+  against that project's `.loki`. Each project keeps running independently
+  (per-process per-directory); switching only changes what the dashboard
+  shows.
+
+### Tests
+
+- `tests/test-dashboard-multiproject.sh` (NEW, 16/16 PASS): static checks
+  for every fix, bash/python syntax, bash/Bun status-parity for the dual
+  pid location, and a functional test of `/api/running-projects` live
+  status + `/api/focus` switching (with a genuinely-alive pid and the
+  realpath edge case).
+
 ## [7.7.28] - 2026-05-28
 
 PATCH release. Five verified functional bugs fixed, found by a parallel
