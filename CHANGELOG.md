@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.22] - 2026-05-28
+
+PATCH release. **`loki memory replay` -- the wow feature.** Wow feature
+1 from the memory excellence bar: no competitor (Cursor, Claude Code,
+Cline, Aider, Codex, Devin, Windsurf) offers session replay. Sixth
+release in the v7.7.17-v7.7.24 memory arc.
+
+### Added
+
+- **`memory/replay.py` (NEW ~210 LOC)**: `replay_episode(episode_id,
+  memory_base)` loads a past episode and renders a READ-ONLY report:
+  the recorded action_log as a timeline + the CURRENT state of every
+  touched file (missing / unchanged-since / changed-since /
+  exists-not-in-git, via `git log --since=<episode_ts>`). Plus
+  `render_markdown()` for human output.
+- **`loki memory replay <episode-id> [--json]`** CLI: renders the
+  replay as Markdown (default) or JSON (`--json`). Exits 1 when the
+  episode is not found (script-friendly).
+- `loki memory help` lists the new subcommand.
+- `tests/test-memory-replay.sh` (4/4 PASS): timeline + file-state +
+  markdown render; missing-episode graceful found=false; CLI
+  capture-then-replay round-trip; **read-only invariant** (hashes a
+  touched file before/after replay, asserts unchanged).
+
+### Design decision (deliberate scope)
+
+- Replay is **READ-ONLY**. It does NOT re-execute the recorded
+  tool_use sequence. LLM tool_uses are non-deterministic and re-running
+  Edit/Write against the current repo could clobber uncommitted work.
+  The `--apply` re-execution mode is deferred to a future release with
+  proper sandboxing + confirmation. Documented in the report's `mode`
+  field and the CLI.
+
+### Verified
+
+- Council: 2 Opus + 1 Sonnet (verdicts: see commit). Read-only
+  invariant test, git-argv-list (no shell injection; file path after
+  `--` pathspec separator), 10s git timeout, graceful missing-episode +
+  malformed-episode handling (top-level try/except).
+- Local-CI: 23/23 PASS.
+
+### NOT tested
+
+- Replay of an episode with a very large action_log (rendering is
+  unbounded; episodes are capped at 100 action_log entries by the
+  v7.7.18 ingester so this is bounded in practice).
+- `git log --since` behavior with a clock-skewed episode timestamp
+  (best-effort; returns "exists-no-timestamp" on parse failure).
+
 ## [7.7.21] - 2026-05-28
 
 PATCH release. Token economics UI (excellence bar 5). Fifth release in

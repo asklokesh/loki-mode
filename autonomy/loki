@@ -15054,6 +15054,7 @@ except Exception as e:
             echo ""
             echo "  loki memory ingest --from-claude-transcript <path>  # v7.7.18"
             echo "  loki memory ingest --from-stdin                     # v7.7.18"
+            echo "  loki memory replay <episode-id> [--json]            # v7.7.22"
             echo "  loki memory crossproject --for 'build api'          # v7.7.20"
             echo "  loki memory graph --export graph.json               # v7.7.20"
             echo "  loki memory graph rebuild                           # v7.7.20"
@@ -15136,6 +15137,41 @@ path = ingest_from_summary(
 print(json.dumps({'episode_path': path}))
 " "$_target_memory_dir"
             fi
+            ;;
+
+        replay)
+            # v7.7.22 wow feature: READ-ONLY deterministic session replay.
+            # Renders a past episode's action timeline + current state of
+            # touched files. Does NOT re-execute (LLM tool_uses are
+            # non-deterministic + re-running edits could clobber work;
+            # --apply deferred to a future release).
+            # Usage: loki memory replay <episode-id> [--json]
+            shift  # drop "replay"
+            local _replay_id=""
+            local _replay_json="false"
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --json) _replay_json="true"; shift ;;
+                    -h|--help) echo "Usage: loki memory replay <episode-id> [--json]"; return 0 ;;
+                    *) [ -z "$_replay_id" ] && _replay_id="$1"; shift ;;
+                esac
+            done
+            if [ -z "$_replay_id" ]; then
+                echo -e "${RED}Usage: loki memory replay <episode-id> [--json]${NC}"
+                exit 1
+            fi
+            local _replay_mem
+            _replay_mem="$(pwd)/.loki/memory"
+            PYTHONPATH="${SKILL_DIR:-$(pwd)}" _LOKI_REPLAY_JSON="$_replay_json" python3 -c "
+import sys, os, json
+from memory.replay import replay_episode, render_markdown
+report = replay_episode(sys.argv[1], sys.argv[2])
+if os.environ.get('_LOKI_REPLAY_JSON') == 'true':
+    print(json.dumps(report, indent=2, default=str))
+else:
+    print(render_markdown(report))
+sys.exit(0 if report.get('found') else 1)
+" "$_replay_id" "$_replay_mem"
             ;;
 
         crossproject)
