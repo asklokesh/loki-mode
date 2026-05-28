@@ -125,13 +125,34 @@ def _scrub_path(path: str) -> str:
     return path
 
 
-def _capture_disabled() -> bool:
-    """Honor `LOKI_MEMORY_CAPTURE_DISABLED=true` escape hatch."""
-    return os.environ.get("LOKI_MEMORY_CAPTURE_DISABLED", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+def _capture_disabled(memory_base: Optional[str] = None) -> bool:
+    """True when capture should be skipped.
+
+    Honors the `LOKI_MEMORY_CAPTURE_DISABLED=true` env escape hatch AND
+    (v7.7.23 privacy opt-out, excellence bar 6) a per-project
+    `.loki/config.json` `{"memory": {"disabled": true}}` flag. When
+    `memory_base` is provided (e.g. `<root>/.loki/memory`), the config
+    is resolved as its sibling `<root>/.loki/config.json`.
+    """
+    if os.environ.get("LOKI_MEMORY_CAPTURE_DISABLED", "").lower() in ("true", "1", "yes"):
+        return True
+    if memory_base:
+        # v7.7.23 council fix (Opus 2): FAIL-CLOSED. If a config.json
+        # EXISTS but cannot be parsed, the user's intent is ambiguous and
+        # the safe privacy default is to SUPPRESS capture (leaked data is
+        # irreversible; lost memory is recoverable). Only the no-config
+        # case fails open (capture proceeds = default behavior).
+        config_path = Path(memory_base).parent / "config.json"
+        if config_path.is_file():
+            try:
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            except Exception:
+                # Config present but unreadable/malformed -> fail closed.
+                return True
+            if isinstance(cfg, dict) and cfg.get("memory", {}).get("disabled") is True:
+                return True
+    return False
 
 
 def _log_to_errors(memory_base: str, function_name: str, exc: BaseException) -> None:
@@ -301,7 +322,7 @@ def ingest_from_claude_transcript(
         Path to the written episode JSON on success; None on failure
         (silent fail, error logged to `.errors.log`).
     """
-    if _capture_disabled():
+    if _capture_disabled(memory_base):
         return None
     try:
         path = Path(transcript_path)
@@ -409,7 +430,7 @@ def ingest_from_summary(
 
     Returns episode path on success, None on failure.
     """
-    if _capture_disabled():
+    if _capture_disabled(memory_base):
         return None
     try:
         from memory.engine import MemoryEngine, create_storage

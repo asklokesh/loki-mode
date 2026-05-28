@@ -299,6 +299,30 @@ load_memory_context() {
         return 0
     fi
 
+    # v7.7.23 privacy opt-out (excellence bar 6): honor a per-project
+    # .loki/config.json {"memory": {"disabled": true}} flag. Lets a user
+    # disable ALL memory capture/retrieval for a sensitive project without
+    # setting an env var on every invocation.
+    if [ -f "$LOKI_DIR/config.json" ]; then
+        # v7.7.23 council fix (Opus 2): FAIL-CLOSED. A config.json that
+        # exists but cannot be parsed prints 'true' (suppress memory) so
+        # a JSON typo on a sensitive project does not silently re-enable
+        # retrieval. Only the no-config case (outer -f guard false)
+        # proceeds with memory on.
+        local _mem_disabled
+        _mem_disabled=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$LOKI_DIR/config.json'))
+    print('true' if d.get('memory', {}).get('disabled') is True else 'false')
+except Exception:
+    print('true')  # malformed config -> fail closed (suppress memory)
+" 2>/dev/null || echo "true")
+        if [ "$_mem_disabled" = "true" ]; then
+            return 0
+        fi
+    fi
+
     # Check if python3 is available (required for memory system)
     if ! command -v python3 &> /dev/null; then
         echo -e "${YELLOW}Warning: python3 not found - memory context loading disabled${NC}" >&2

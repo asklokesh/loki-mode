@@ -1010,17 +1010,18 @@ async def loki_memory_capture_session_summary(
     try:
         from memory.ingest import ingest_from_summary, _capture_disabled
 
-        if _capture_disabled():
+        base_path = safe_path_join('.loki', 'memory')
+        # v7.7.23: pass base_path so the .loki/config.json memory.disabled
+        # opt-out is honored in addition to the env escape hatch.
+        if _capture_disabled(base_path):
             _emit_tool_event_async(
                 'loki_memory_capture_session_summary', 'complete',
-                result_status='skipped', error='disabled via env'
+                result_status='skipped', error='disabled via env or config'
             )
             return json.dumps({
-                "error": "memory capture disabled via LOKI_MEMORY_CAPTURE_DISABLED",
+                "error": "memory capture disabled (LOKI_MEMORY_CAPTURE_DISABLED or .loki/config.json memory.disabled)",
                 "disabled": True,
             })
-
-        base_path = safe_path_join('.loki', 'memory')
         path = ingest_from_summary(
             base_path,
             goal=goal,
