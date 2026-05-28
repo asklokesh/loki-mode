@@ -1,6 +1,6 @@
 # Loki Mode - Claude Code Skill
 
-The flagship product of [Autonomi](https://www.autonomi.dev/). Multi-agent autonomous startup system for Claude Code, OpenAI Codex CLI, Cline, and Aider. Takes any spec (PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief) to fully deployed product with minimal human intervention.
+The flagship product of [Autonomi](https://www.autonomi.dev/). Autonomous spec-to-product system: takes any spec (PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief) to a fully deployed product via the RARV-C closure loop, with minimal human intervention. Provider-agnostic: runs on Claude Code, OpenAI Codex CLI, Cline, and Aider.
 
 ## Quick Start
 

@@ -24,15 +24,15 @@
 
 ## Why Loki Mode?
 
-- **Truly autonomous** -- Describe what you want, walk away, come back to working code with tests
+- **Spec to product, autonomously** -- Describe what you want, walk away, come back to working code with tests. Loki runs the full RARV-C closure loop (Reason - Act - Reflect - Verify - Close) until the work is actually done, not just attempted.
 - **Production quality built in** -- 11 quality gates (`skills/quality-gates.md`), blind 3-reviewer code review (`run.sh:run_code_review()`), anti-sycophancy checks
+- **Cross-project memory** -- Episodic/semantic/procedural memory with vector search; knowledge learned on one project surfaces on the next (v5.15.0+, see `memory/engine.py`)
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
-- **4 active AI providers** -- Claude, Codex, Cline, Aider with automatic failover (`loki-ts/src/runner/providers.ts`). Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
 - **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
-- **Memory system** -- Episodic/semantic/procedural with vector search (v5.15.0, see `memory/engine.py`)
 - **MCP server** -- 15 tools including ChromaDB code search (`mcp/server.py`)
 - **Full-stack output** -- Source code, tests, Docker configs, CI/CD pipelines, audit logs
-- **Open source** -- Free for personal, internal, and academic use. No vendor lock-in.
+- **Provider-agnostic** -- runs on Claude, Codex, Cline, or Aider with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
+- **Open source** -- Free for personal, internal, and academic use.
 
 ---
 
@@ -302,7 +302,9 @@ Loki Mode is the only platform that is fully self-hosted, open source, and inclu
 
 ---
 
-## Multi-Provider Support
+## Provider-Agnostic Runtime
+
+Loki's autonomy and quality loop are the product; the underlying coding CLI is swappable. Loki runs on any of the providers below so you are never locked to one vendor.
 
 | Provider | Status | Autonomous Flag | Parallel Agents | Install |
 |----------|--------|:-:|:-:|---------|

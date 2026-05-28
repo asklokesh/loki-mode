@@ -1,6 +1,6 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, Cline, and Aider.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous spec-to-product system that runs the RARV-C closure loop until the work is actually done. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
 
 > Transform a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application with minimal human intervention.
 
@@ -12,7 +12,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
-- **Supports four active providers** - Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded). Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
+- **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
@@ -39,7 +39,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Zero Configuration** - Works out of the box with sensible defaults
 - **Spec to Production** - Provide a spec (PRD markdown, GitHub issue, YAML brief), Loki handles the rest
-- **Multi-Provider Support** - Use Claude, Cline, Codex, or Aider (Gemini deprecated v7.5.18)
+- **Provider-Agnostic** - runs on Claude, Cline, Codex, or Aider, no vendor lock-in (Gemini deprecated v7.5.18)
 - **LSP Grounding** - First-class agent tools for symbol verification via `mcp/lsp_proxy.py` (v7.7.0+; pyright, typescript-language-server, gopls, rust-analyzer, jdtls; lsp_get_diagnostics regression fully fixed v7.7.14)
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)

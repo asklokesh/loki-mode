@@ -32,7 +32,7 @@ setting any flag to `0`.
 
 ### Earlier highlights still in scope
 - Bash-to-Bun runtime migration in progress (see `UPGRADING.md`)
-- 4-provider support: Claude (full), Codex, Cline, Aider
+- Provider-agnostic runtime: Claude (full), Codex, Cline, Aider (no vendor lock-in)
 - Memory system (episodic / semantic / procedural)
 - ChromaDB semantic code search via MCP
 

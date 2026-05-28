@@ -1,6 +1,6 @@
 # Providers
 
-Multi-provider support for Claude Code, OpenAI Codex CLI, Cline, and Aider.
+Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI underneath is swappable. Supported providers: Claude Code, OpenAI Codex CLI, Cline, and Aider.
 
 ---
 
