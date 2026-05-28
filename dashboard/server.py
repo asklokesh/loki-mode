@@ -2751,14 +2751,61 @@ async def get_token_economics():
 
 @app.post("/api/memory/consolidate", dependencies=[Depends(auth.require_scope("control"))])
 async def consolidate_memory(hours: int = 24):
-    """Trigger memory consolidation (stub - returns current state)."""
-    return {"status": "ok", "message": f"Consolidation for last {hours}h", "consolidated": 0, "patternsCreated": 0, "patternsMerged": 0, "episodesProcessed": 0}
+    """Run the real episodic-to-semantic consolidation pipeline."""
+    memory_dir = _get_loki_dir() / "memory"
+    try:
+        import sys as _sys
+        project_root = str(_Path(__file__).resolve().parent.parent)
+        if project_root not in _sys.path:
+            _sys.path.insert(0, project_root)
+        from memory.storage import MemoryStorage
+        from memory.consolidation import ConsolidationPipeline
+        storage = MemoryStorage(str(memory_dir))
+        pipeline = ConsolidationPipeline(storage=storage, base_path=str(memory_dir))
+        result = pipeline.consolidate(since_hours=hours)
+        d = result.to_dict()
+        return {
+            "status": "ok",
+            "message": f"Consolidated episodes from the last {hours}h",
+            "consolidated": d.get("patterns_created", 0) + d.get("patterns_merged", 0),
+            "patternsCreated": d.get("patterns_created", 0),
+            "patternsMerged": d.get("patterns_merged", 0),
+            "antiPatternsCreated": d.get("anti_patterns_created", 0),
+            "episodesProcessed": d.get("episodes_processed", 0),
+            "durationSeconds": round(d.get("duration_seconds", 0.0), 3),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Consolidation unavailable: {e}")
 
 
 @app.post("/api/memory/retrieve", dependencies=[Depends(auth.require_scope("control"))])
 async def retrieve_memory(query: dict = None):
-    """Search memories by query."""
-    return {"results": [], "query": query}
+    """Task-aware retrieval against the real memory engine.
+
+    Body: {"goal": str, "phase"?: str, "task_type"?: str, "top_k"?: int}.
+    """
+    query = query or {}
+    goal = (query.get("goal") or query.get("q") or "").strip()
+    if not goal:
+        return {"results": [], "query": query, "message": "provide a 'goal' to retrieve against"}
+    top_k = int(query.get("top_k", 5))
+    top_k = max(1, min(top_k, 50))
+    memory_dir = _get_loki_dir() / "memory"
+    try:
+        import sys as _sys
+        project_root = str(_Path(__file__).resolve().parent.parent)
+        if project_root not in _sys.path:
+            _sys.path.insert(0, project_root)
+        from memory.storage import MemoryStorage
+        from memory.retrieval import MemoryRetrieval
+        retriever = MemoryRetrieval(MemoryStorage(str(memory_dir)))
+        context = {"goal": goal, "phase": query.get("phase", "development")}
+        if query.get("task_type"):
+            context["task_type"] = query["task_type"]
+        results = retriever.retrieve_task_aware(context, top_k=top_k, token_budget=query.get("token_budget"))
+        return {"results": results, "query": {"goal": goal, "top_k": top_k}, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Retrieval unavailable: {e}")
 
 
 @app.get("/api/memory/index")

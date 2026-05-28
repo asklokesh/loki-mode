@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.25] - 2026-05-28
+
+PATCH release. Distribution + dashboard fixes found by exercising the
+shipped artifacts exactly as a real user does (npm install, Docker run,
+a full-stack PRD build, clicking through every dashboard panel).
+
+### Fixed
+
+- **`tools/` was not shipping to npm or Docker.** The two benchmark
+  tools added in v7.7.23-v7.7.24 (`bench_memory_retrieval.py`,
+  `bench_cross_project_lift.py`) lived in a top-level `tools/` directory
+  that was absent from `package.json` "files" and from both Dockerfiles'
+  COPY lists, so npm and Docker users got the code fixes but could not
+  run the benches. Added `tools/` to `package.json` "files",
+  `Dockerfile`, and `Dockerfile.sandbox`. (The repo and the source-route
+  CLI were unaffected; only the packaged distributions.)
+- **`POST /api/memory/consolidate` was a stub** that always returned
+  zeros. It now runs the real `ConsolidationPipeline.consolidate`
+  (episodic-to-semantic) and returns true counts
+  (patternsCreated/Merged, episodesProcessed, durationSeconds).
+- **`POST /api/memory/retrieve` was a stub** that always returned
+  `{"results": []}`. It now runs the real
+  `MemoryRetrieval.retrieve_task_aware` against the project's memory
+  store, keyed on a `goal` (with optional `phase`, `task_type`,
+  `top_k`, `token_budget`). Empty goal returns a clean empty result.
+
+### Changed
+
+- npm `package.json` description now leads with autonomous
+  spec-to-product + RARV-C and frames providers as provider-agnostic,
+  matching the v7.7.24 docs positioning.
+
+### Verified (real-user E2E)
+
+- npm `loki-mode@7.7.24` installed from the registry: version, doctor
+  (11/11 checks), status, memory, provider list, and the v7.7.20-24
+  memory subcommands all return real data.
+- Docker `asklokesh/loki-mode:7.7.24` (both Bun and `LOKI_LEGACY_BASH=1`
+  routes): version/doctor/status correct; in-container dashboard serves
+  the real UI and live `/api/*` endpoints.
+- A full-stack PRD ("TaskFlow") built end-to-end via `loki start
+  ./PRD.md`: produced a FastAPI backend + vanilla-JS frontend + tests;
+  the 11 generated tests pass and all 5 PRD acceptance criteria
+  (create/list/patch/422-validation/served-frontend) pass on the live
+  API. Completion council confirmed "all PRD requirements implemented
+  and tests passing".
+- Dashboard: every rendered panel verified against a live endpoint
+  returning real data, including `/api/v2/runs/{id}/timeline` (real, in
+  `dashboard/api_v2.py`).
+
+### Tests
+
+- `tests/test-dashboard-memory-endpoints.sh` (NEW, 4/4 PASS): the two
+  endpoints run the real engine, empty-goal returns clean, and `tools/`
+  is present in both the npm tarball and both Dockerfiles.
+
 ## [7.7.24] - 2026-05-28
 
 PATCH release. Cross-project knowledge "lift" proof + the retrieval fix
