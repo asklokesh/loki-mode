@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.19] - 2026-05-28
+
+PATCH release. Hotfix for a v7.7.18 capture wedge regression discovered
+on real-user smoke from the npm package: the default Bun route did not
+propagate stdin to the bash fall-through, so
+`echo '{}' | loki memory ingest --from-stdin` silently failed unless
+`LOKI_LEGACY_BASH=1` was set. Without this fix the capture wedge
+primary CLI path was broken for 99% of users.
+
+NOTE: this release is the hotfix-only ship. The "wake dead code" arc
+originally planned for v7.7.19 (per ~/git/loki-plan/MEMORY-IMPROVEMENT-
+PLAN-v7.7.17.md) slides to v7.7.20.
+
+### Fixed
+
+- `loki-ts/src/commands/memory.ts::runMemory` default-case fall-through:
+  was using `run()` from `loki-ts/src/util/shell.ts` which spawns the
+  bash subprocess without inheriting stdin. The shipped npm package
+  always takes the Bun route by default, so piped JSON to
+  `loki memory ingest --from-stdin` was lost. Now uses `Bun.spawn`
+  directly with `stdin: "inherit"`, `stdout: "inherit"`, `stderr:
+  "inherit"` so the bash subprocess sees the full pipe.
+- Timeout cap (1h) preserved via direct `setTimeout` + `proc.kill("SIGKILL")`.
+
+### Verified
+
+- `tests/test-memory-capture-wedge.sh` 9/9 PASS including new Test 9
+  (Bun route stdin propagation regression). The test pipes JSON via
+  `BUN_FROM_SOURCE=1` so it exercises the actual default-route code
+  path that was broken in v7.7.18.
+- Real-user smoke: `bun install -g loki-mode@7.7.18` confirmed the
+  bug pre-fix (json.loads on empty input); fix verified locally; will
+  re-smoke post-v7.7.19 publish.
+
+### NOT tested
+
+- All OTHER bash fall-through commands in loki-ts/src/commands/memory.ts
+  default case use the same fixed path. Other commands (provider,
+  stats, etc.) that may have similar stdin issues NOT audited in this
+  release; will sweep in a follow-up if needed.
+
 ## [7.7.18] - 2026-05-28
 
 PATCH release. **Memory capture wedge -- the foundation unlock** for the

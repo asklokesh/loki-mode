@@ -257,6 +257,25 @@ else
     bad "hook script does not handle both formats"
 fi
 
+# Test 9 (v7.7.18a fix): Bun-route stdin propagation. The default-case
+# fall-through in loki-ts/src/commands/memory.ts:runMemory previously
+# used run() which does not pipe stdin to the bash subprocess, so
+# `echo '{}' | loki memory ingest --from-stdin` failed silently on the
+# default Bun route (worked only with LOKI_LEGACY_BASH=1). Now uses
+# Bun.spawn with stdin:"inherit".
+TEST=/tmp/loki-v7718-bun-stdin
+rm -rf "$TEST"; mkdir -p "$TEST"
+RESULT=$(cd "$TEST" && echo '{"goal":"bun stdin propagation","outcome":"success","files_modified":["/tmp/y.py"]}' \
+    | BUN_FROM_SOURCE=1 bash "$REPO_ROOT/bin/loki" memory ingest --from-stdin 2>/dev/null \
+    | $PY -c "import json, sys, os
+try:
+    d = json.loads(sys.stdin.read())
+    print('BUN_STDIN_OK' if d.get('episode_path') and os.path.isfile(d['episode_path']) else f'BUN_STDIN_FAIL: {d}')
+except Exception as e:
+    print(f'BUN_STDIN_PARSE_FAIL: {e}')")
+if [ "$RESULT" = "BUN_STDIN_OK" ]; then ok "Bun route propagates stdin to bash fall-through (v7.7.18a)"; else bad "bun stdin: $RESULT"; fi
+rm -rf "$TEST"
+
 # Cleanup
 bash -c 'for d in /tmp/loki-v7718-*; do rm -rf "$d" 2>/dev/null; done'
 

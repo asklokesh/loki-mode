@@ -90,17 +90,31 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     case "index":
       return runMemoryIndex(argv[1] === "rebuild");
     default: {
-      // Defer all other subcommands (show, consolidate, timeline, ...) to bash.
+      // Defer all other subcommands (show, consolidate, timeline,
+      // ingest, ...) to bash.
+      // v7.4.2 fix (BUG-9): cap legacy bash fall-through at 1h.
+      // v7.7.18a fix: `run()` does not propagate stdin, so piped input
+      // (e.g. `echo '{}' | loki memory ingest --from-stdin`) was lost
+      // when the Bun route fell through to bash. Use Bun.spawn directly
+      // with stdin: "inherit" so piped input survives the route hop.
       const bashCmd = resolve(REPO_ROOT, "autonomy", "loki");
-      // v7.4.2 fix (BUG-9): cap legacy bash fall-through at 1h. Without this
-      // a hung legacy bash command would hang the Bun CLI indefinitely.
-      const r = await run([bashCmd, "memory", ...argv], {
-        env: { LOKI_LEGACY_BASH: "1" },
-        timeoutMs: 3600000,
+      const TIMEOUT_MS = 3600000;
+      const proc = Bun.spawn({
+        cmd: [bashCmd, "memory", ...argv],
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env: { ...process.env, LOKI_LEGACY_BASH: "1" },
       });
-      process.stdout.write(r.stdout);
-      process.stderr.write(r.stderr);
-      return r.exitCode;
+      const killTimer = setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch { /* already exited */ }
+      }, TIMEOUT_MS);
+      try {
+        const exitCode = await proc.exited;
+        return exitCode;
+      } finally {
+        clearTimeout(killTimer);
+      }
     }
   }
 }
