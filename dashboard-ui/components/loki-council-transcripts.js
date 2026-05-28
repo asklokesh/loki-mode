@@ -26,6 +26,7 @@ export class LokiCouncilTranscripts extends LokiElement {
   constructor() {
     super();
     this._transcripts = [];
+    this._hookEvents = [];
     this._loading = false;
     this._error = null;
     this._api = null;
@@ -76,6 +77,23 @@ export class LokiCouncilTranscripts extends LokiElement {
     } catch (err) {
       this._error = (err && err.message) ? err.message : String(err);
       this._transcripts = [];
+    }
+    // Live tool activity: the server exposes Claude hook events through the
+    // same transcripts endpoint via the type_prefix filter. Surfacing them
+    // here lets users watch background tool calls without extra commands.
+    // A failure here must not blank out the transcripts above, so it is
+    // handled independently.
+    try {
+      const hooks = await this._api.get(
+        '/api/council/transcripts?limit=20&type_prefix=claude_hook_'
+      );
+      // The server returns hook events under the `hook_events` key when
+      // type_prefix is set (see get_council_transcripts in server.py).
+      this._hookEvents = Array.isArray(hooks && hooks.hook_events)
+        ? hooks.hook_events
+        : [];
+    } catch (err) {
+      this._hookEvents = [];
     } finally {
       this._loading = false;
       this.render();
@@ -457,7 +475,49 @@ export class LokiCouncilTranscripts extends LokiElement {
           'Polls every 30 seconds.' +
         '</div>' +
         body +
+        this._hookEventsHtml() +
       '</div>';
+  }
+
+  _hookEventsHtml() {
+    const events = Array.isArray(this._hookEvents) ? this._hookEvents : [];
+    let inner;
+    if (events.length === 0) {
+      inner =
+        '<div class="ct-empty">No live tool activity yet -- Claude hook ' +
+        'events stream here while a run is active.</div>';
+    } else {
+      const rows = events
+        .slice(0, 20)
+        .map((e) => {
+          const type = this._escapeHtml(e.type || e.event || 'event');
+          const ts = this._escapeHtml(this._formatTimestamp(e.timestamp || e.ts));
+          const detail = this._escapeHtml(
+            this._truncate(
+              e.tool || e.message || e.summary ||
+                (e.data ? JSON.stringify(e.data) : ''),
+              120
+            )
+          );
+          return (
+            '<div class="ct-voter-row">' +
+              '<span class="ct-iter-label">' + type + '</span> ' +
+              '<span class="ct-ts">' + ts + '</span>' +
+              (detail ? '<div class="ct-prd-preview">' + detail + '</div>' : '') +
+            '</div>'
+          );
+        })
+        .join('');
+      inner = '<div class="ct-voters">' + rows + '</div>';
+    }
+    return (
+      '<h3 class="ct-heading" style="margin-top:24px;">Live Tool Activity</h3>' +
+      '<div class="ct-explain">' +
+        'Claude hook events (PreToolUse / PostToolUse / Stop) streamed from ' +
+        '.loki/events.jsonl. Lets you watch background tool calls as they run.' +
+      '</div>' +
+      inner
+    );
   }
 }
 

@@ -41,7 +41,7 @@ pause() {
 # Demo introduction
 banner "LOKI MODE DEMO"
 
-echo "Loki Mode - Multi-Agent Autonomous Startup System"
+echo "Loki Mode - Autonomous Spec-to-Product System"
 echo ""
 echo "This demo will show:"
 echo "  - Autonomous project generation from PRD"

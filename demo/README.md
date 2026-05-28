@@ -1,6 +1,6 @@
 # Loki Mode Demo
 
-Video demonstration of Loki Mode - Multi-agent autonomous startup system.
+Video demonstration of Loki Mode - autonomous spec-to-product system.
 
 ## Quick Start
 

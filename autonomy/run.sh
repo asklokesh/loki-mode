@@ -4405,7 +4405,7 @@ generate_dashboard() {
 <body>
     <div class="header">
         <h1>LOKI MODE</h1>
-        <div class="subtitle">Autonomous Multi-Agent Startup System</div>
+        <div class="subtitle">Autonomous Spec-to-Product System</div>
         <div class="phase" id="phase">Loading...</div>
     </div>
     <div class="stats">
@@ -12379,7 +12379,7 @@ main() {
     echo "  ███████╗╚██████╔╝██║  ██╗██║    ██║ ╚═╝ ██║╚██████╔╝██████╔╝███████╗"
     echo "  ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝    ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝"
     echo -e "${NC}"
-    echo -e "  ${CYAN}Autonomous Multi-Agent Startup System${NC}"
+    echo -e "  ${CYAN}Autonomous Spec-to-Product System${NC}"
     echo -e "  ${CYAN}Version: $(cat "$PROJECT_DIR/VERSION" 2>/dev/null || echo "4.x.x")${NC}"
     echo ""
 

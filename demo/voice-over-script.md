@@ -6,7 +6,7 @@ Complete narration for Loki Mode demo video.
 
 ## Introduction (0:00 - 0:30)
 
-> Welcome to Loki Mode - a multi-agent autonomous startup system that works with Claude Code, OpenAI Codex, Cline, and Aider.
+> Welcome to Loki Mode - an autonomous spec-to-product system. It runs the RARV-C closure loop until the work is actually done. Provider-agnostic: it works with Claude Code, OpenAI Codex, Cline, and Aider.
 >
 > Loki Mode takes your product requirements document and transforms it into a fully functioning application - with minimal human intervention.
 >

@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.26] - 2026-05-28
+
+PATCH release. UX: "more running in the background, less input required."
+Plus the docs reframe completion.
+
+### Added
+
+- **Live Tool Activity panel in the dashboard.** The council-transcripts
+  component now also fetches Claude hook events
+  (`/api/council/transcripts?type_prefix=claude_hook_`, returned under
+  `hook_events`) and renders them in a "Live Tool Activity" section, so
+  users can watch background tool calls (PreToolUse / PostToolUse / Stop)
+  as a run proceeds without running any extra command. The server already
+  supported the `type_prefix` filter since v7.5.22; this wires the UI to
+  it (the component previously never passed the parameter, so the
+  capability was unreachable from the dashboard). The hook fetch is
+  independent of the transcript fetch, so a hook failure never blanks the
+  transcripts. `tests/test-dashboard-hook-events.sh` (NEW, 3/3 PASS).
+
+### Changed
+
+- **Positioning reframe completed (closes the v7.7.24 docs work).**
+  Removed the remaining "multi-agent autonomous startup system" phrasing
+  from user-facing surfaces: the Docker image `description` label, the
+  bash runner ASCII banner and dashboard HTML subtitle
+  (`autonomy/run.sh`), `docs/INSTALLATION.md` skill description, the demo
+  README / run script / voice-over, and the auto-claude comparison doc.
+  All now lead with "autonomous spec-to-product system (RARV-C closure
+  loop)" and frame providers as provider-agnostic. The multi-reviewer
+  council remains a listed feature, not the headline.
+
 ## [7.7.25] - 2026-05-28
 
 PATCH release. Distribution + dashboard fixes found by exercising the

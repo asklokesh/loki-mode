@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.7.25
+**Version:** v7.7.26
 
 ---
 
@@ -447,7 +447,7 @@ cat ~/.claude/skills/loki-mode/SKILL.md | head -10
 ```yaml
 ---
 name: loki-mode
-description: Multi-Agent Autonomous Startup System
+description: Autonomous Spec-to-Product System (RARV-C closure loop)
 ...
 ---
 ```

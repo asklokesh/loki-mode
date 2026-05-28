@@ -107,7 +107,7 @@ Loki Mode covers:
 
 **Auto-Claude:** Engineering only. No business/marketing agents.
 
-**Verdict: Loki Mode wins** - Complete startup automation vs coding only.
+**Verdict: Loki Mode wins** - Full spec-to-product lifecycle vs coding only.
 
 ### 4. Anti-Sycophancy Measures
 Loki Mode implements CONSENSAGENT (ACL 2025):
@@ -247,7 +247,7 @@ Loki Mode now incorporates proven patterns from Cursor's large-scale agent deplo
 
 **Loki Mode is better if you want:**
 - Research-backed architecture
-- Full startup automation (not just coding)
+- Full spec-to-product lifecycle (not just coding)
 - 41 specialized agents
 - Anti-sycophancy measures
 - MIT license
@@ -261,7 +261,7 @@ Auto-Claude has better UX and community. Loki Mode has better architecture and c
 Auto-Claude is a polished product. Loki Mode is a research-backed system.
 
 For pure coding tasks with GUI preference: **Auto-Claude wins**.
-For full autonomous startup building with quality guarantees: **Loki Mode wins**.
+For full autonomous spec-to-product delivery with quality guarantees: **Loki Mode wins**.
 
 ---
 
