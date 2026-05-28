@@ -324,6 +324,25 @@ def generate(forge_dir: str, *, title: str = "Forge API",
     }
 
 
+def content_etag(forge_dir: str, spec: Dict[str, Any] = None) -> str:
+    """N-162: stable content-hash ETag for the spec with volatile
+    x-generated-at* fields stripped. The HTTP route and /health
+    both call this so the etag they report never drifts apart.
+    Returns the weak-etag string `W/"<16 hex>"`."""
+    import hashlib
+    if spec is None:
+        spec = generate(forge_dir)
+    info_copy = dict(spec.get("info") or {})
+    info_copy.pop("x-generated-at", None)
+    info_copy.pop("x-generated-at-epoch-ms", None)
+    body = dict(spec)
+    body["info"] = info_copy
+    h = hashlib.sha256(
+        json.dumps(body, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    return f'W/"{h}"'
+
+
 def _table_schema(t: Dict[str, Any]) -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     required: List[str] = []

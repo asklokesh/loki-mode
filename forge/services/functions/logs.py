@@ -13,7 +13,8 @@ def _logs_dir(forge_dir: str, name: str) -> str:
 
 def list_runs(forge_dir: str, name: str, limit: int = 100,
               *, outcome: Optional[str] = None,
-              since_ts: Optional[int] = None) -> List[Dict[str, Any]]:
+              since_ts: Optional[int] = None,
+              run_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """List recent function runs.
 
     N-58: `outcome` filters to a subset:
@@ -23,10 +24,24 @@ def list_runs(forge_dir: str, name: str, limit: int = 100,
     The filter applies BEFORE the limit, so `limit=50, outcome='error'`
     returns up to 50 actual failures even when the channel is mostly
     successes.
+    N-165: when `run_id` is given, read that one file directly
+    (single-element list or empty) instead of scanning the dir.
     """
     d = _logs_dir(forge_dir, name)
     if not os.path.isdir(d):
         return []
+    if run_id is not None:
+        # Reject path-traversal in the run_id before joining.
+        if "/" in run_id or "\\" in run_id or ".." in run_id:
+            return []
+        p = os.path.join(d, f"{run_id}.json")
+        if not os.path.isfile(p):
+            return []
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return [json.load(f)]
+        except (OSError, json.JSONDecodeError):
+            return []
     cap = max(1, min(int(limit), 10000))
     entries = sorted(os.listdir(d), reverse=True)
     out: List[Dict[str, Any]] = []

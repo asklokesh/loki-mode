@@ -2268,6 +2268,7 @@ PY
             local json_flag="false"
             local filter_prefix=""
             local filter_exclude=""
+            local filter_name=""
             local no_help_flag="false"
             local watch_metrics=""
             local watch_metrics_max=""
@@ -2291,11 +2292,15 @@ PY
                         # metric lines whose name starts with the prefix.
                         # N-119: --filter exclude=forge_email_ drops the
                         # given prefix instead (negative match).
+                        # N-169: --filter name=forge_tables_total keeps
+                        # only the exact-named family.
                         local kv="${2:-}"
                         if [[ "$kv" == prefix=* ]]; then
                             filter_prefix="${kv#prefix=}"
                         elif [[ "$kv" == exclude=* ]]; then
                             filter_exclude="${kv#exclude=}"
+                        elif [[ "$kv" == name=* ]]; then
+                            filter_name="${kv#name=}"
                         fi
                         shift 2
                         ;;
@@ -2323,7 +2328,7 @@ print(render(sys.argv[1]), end='')
     done
     return 0
 fi
-PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude" "$no_help_flag"
+PYTHONPATH="$skill_dir" python3 - <<PY "${TARGET_DIR:-.}/.loki/forge" "$label_arg" "$json_flag" "$filter_prefix" "$filter_exclude" "$no_help_flag" "$filter_name"
 import json, re, sys
 from forge.metrics import render
 labels = {}
@@ -2348,6 +2353,8 @@ text = render(sys.argv[1], labels=labels)
 # N-110/N-119: prefix keeps matching names; exclude drops them.
 filter_prefix = sys.argv[4] if len(sys.argv) > 4 else ""
 filter_exclude = sys.argv[5] if len(sys.argv) > 5 else ""
+# N-169: name=<exact> keeps only the exact-named family.
+filter_name = sys.argv[7] if len(sys.argv) > 7 else ""
 def _name_of(s):
     if s.startswith("# HELP ") or s.startswith("# TYPE "):
         parts = s[7:].split(" ", 1)
@@ -2355,7 +2362,7 @@ def _name_of(s):
     if s and not s.startswith("#"):
         return s.split("{", 1)[0].split(" ", 1)[0]
     return ""
-if filter_prefix or filter_exclude:
+if filter_prefix or filter_exclude or filter_name:
     # N-138: filter_prefix accepts a comma list - keep names that
     # start with ANY of the prefixes.
     prefixes = [p for p in (filter_prefix or "").split(",") if p]
@@ -2368,6 +2375,8 @@ if filter_prefix or filter_exclude:
             keep.append(ln)
             continue
         name = _name_of(s)
+        if filter_name and name != filter_name:
+            continue
         if prefixes and not any(name.startswith(p) for p in prefixes):
             continue
         if excludes and any(name.startswith(p) for p in excludes):
@@ -2477,6 +2486,8 @@ if os.path.isdir(d):
                 continue
     out["count"] = len(entries)
     out["total_bytes"] = sum(e[1] for e in entries)
+    # N-168: avg_bytes so dashboards spot anomalously large reports.
+    out["avg_bytes"] = (out["total_bytes"] // len(entries)) if entries else 0
     if entries:
         oldest = min(entries, key=lambda x: x[2])
         newest = max(entries, key=lambda x: x[2])

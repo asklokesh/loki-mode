@@ -503,17 +503,51 @@ files with 600+ assertions, all green.
 - PR #161 was closed without merging by the user; pushes continue
   to the same branch per the wave loop contract.
 
-## Loop continuation
+## Next-up wave 14 (discovered during N-151..N-160)
 
-## Loop continuation
+- [x] N-161 `/api/forge/openapi` honors a `?pretty=false` query so
+            scrapers can fetch compact JSON
+- [x] N-162 Health: surface `openapi_etag` (same content-hash the
+            route uses) so a poller can detect spec drift via /health
+- [x] N-163 Schedules: `list_schedules(tag=...)` filter so callers
+            can fetch one tenant's schedules without client-side grep
+- [x] N-164 Email: `list_templates(name=...)` filter returns just
+            one template's default + locale variants
+- [x] N-165 Function logs: `list_runs(run_id=...)` exact lookup that
+            short-circuits the directory scan
+- [x] N-166 Secrets: `rotate_value` rejects rotating to the same
+            value (no-op rotations waste an audit line)
+- [x] N-167 Healing: `diff_proposal` adds `has_changes` boolean so
+            callers can branch without inspecting three lists
+- [x] N-168 Doctor `--history-stats` adds `avg_bytes` so dashboards
+            can spot anomalously large reports
+- [x] N-169 Forge metrics: `--filter` accepts `name=exact` for an
+            exact-match single metric pull
+- [x] N-170 OpenAPI: `/api/forge/openapi` sets `Cache-Control:
+            no-cache` so clients always revalidate via ETag
 
-## Loop continuation
+## Next-up wave 15 (discovered during N-161..N-170)
 
-## Loop continuation
-
-## Loop continuation
-
-## Loop continuation
+- [ ] N-171 `/api/forge/openapi` `?pretty=false` etag matches the
+            pretty one (content is identical, only formatting differs)
+- [ ] N-172 Health: `openapi_etag` included in the 60s cache so it
+            doesn't recompute the spec on every probe
+- [ ] N-173 Schedules: `list_schedules(tag=...)` accepts a list of
+            tags (OR match) for multi-tenant dashboards
+- [ ] N-174 Email: `list_templates(name=...)` + `include_defaults`
+            compose so a caller can ask "only my overrides for X"
+- [ ] N-175 Function logs: `read_run_log` rejects path-traversal in
+            run_id (parity with the N-165 list_runs guard)
+- [ ] N-176 Secrets: `rotate_value` returns `skipped=True` instead
+            of raising when `allow_noop=True` is passed
+- [ ] N-177 Healing: `diff_proposal` adds `change_count` integer
+            (added + removed + column_changes) for quick gauges
+- [ ] N-178 Doctor `--history-stats` adds `--json` vs human toggle
+            (currently always JSON; add a plain one-line summary)
+- [ ] N-179 Forge metrics `--filter name=` accepts a comma list of
+            exact names (OR match)
+- [ ] N-180 OpenAPI route: `HEAD /api/forge/openapi` returns the
+            ETag header with no body for the cheapest drift check
 
 ## Loop continuation
 

@@ -360,6 +360,20 @@ def rotate_value(forge_dir: str, name: str,
     data = _load(forge_dir)
     if name not in data["entries"]:
         raise SecretError(f"secret not found: {name}")
+    # N-166: reject no-op rotations so we don't waste an audit line
+    # re-encrypting the identical value. Decrypt is best-effort: if
+    # the current value can't be read, we proceed (better to rotate
+    # than to silently skip).
+    try:
+        current = _decrypt(data["entries"][name], _master_key(forge_dir))
+        if current == new_value:
+            raise SecretError(
+                "rotate_value: new value equals current value (no-op)"
+            )
+    except SecretError:
+        raise
+    except Exception:
+        pass
     res = set_secret(forge_dir, name, new_value)
     res["rotated"] = True
     try:

@@ -134,8 +134,15 @@ def create(forge_dir: str, name: str, cron: str,
     return rec
 
 
-def list_schedules(forge_dir: str) -> List[Dict[str, Any]]:
-    return _load(forge_dir)
+def list_schedules(forge_dir: str, *,
+                   tag: Optional[str] = None) -> List[Dict[str, Any]]:
+    """N-163: when `tag` is given, return only schedules carrying it
+    (tags are lower-cased on create, so the filter lower-cases too)."""
+    items = _load(forge_dir)
+    if tag is not None:
+        t = tag.lower()
+        items = [s for s in items if t in (s.get("tags") or [])]
+    return items
 
 
 def get(forge_dir: str, name: str) -> Optional[Dict[str, Any]]:

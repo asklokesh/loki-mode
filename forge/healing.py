@@ -81,12 +81,17 @@ def diff_proposal(project_dir: str,
             column_changes[tname] = {
                 "added": added, "removed": removed, "retyped": retyped,
             }
+    added = sorted(curr_tables - prev_tables)
+    removed = sorted(prev_tables - curr_tables)
     return {
-        "added_tables": sorted(curr_tables - prev_tables),
-        "removed_tables": sorted(prev_tables - curr_tables),
+        "added_tables": added,
+        "removed_tables": removed,
         # N-70: explicit unchanged set so dashboards see steady state.
         "unchanged_tables": sorted(curr_tables & prev_tables),
         "column_changes": column_changes,
+        # N-167: single boolean so callers can branch without
+        # inspecting the three lists themselves.
+        "has_changes": bool(added or removed or column_changes),
         "prev_path": prev_path if os.path.isfile(prev_path) else None,
     }
 

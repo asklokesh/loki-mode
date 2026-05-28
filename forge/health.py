@@ -110,14 +110,21 @@ def compute_health(forge_dir: str, *,
     # cheap under load.
     import time as _t
     spec_ts = None
+    spec_etag = None
     try:
         now = _t.time()
         if _OPENAPI_TS_CACHE["expires_at"] > now:
             spec_ts = _OPENAPI_TS_CACHE["value"]
+            spec_etag = _OPENAPI_TS_CACHE.get("etag")
         else:
-            from forge.sdk.openapi import generate as _gen
-            spec_ts = _gen(forge_dir)["info"].get("x-generated-at")
+            from forge.sdk.openapi import generate as _gen, content_etag
+            _spec = _gen(forge_dir)
+            spec_ts = _spec["info"].get("x-generated-at")
+            # N-162: content-hash etag so a /health poller can detect
+            # spec drift without fetching /api/forge/openapi.
+            spec_etag = content_etag(forge_dir, _spec)
             _OPENAPI_TS_CACHE["value"] = spec_ts
+            _OPENAPI_TS_CACHE["etag"] = spec_etag
             _OPENAPI_TS_CACHE["expires_at"] = now + 60
     except Exception:
         pass
@@ -128,6 +135,8 @@ def compute_health(forge_dir: str, *,
         "status": severity_max,
         "codes": codes,
         "openapi_generated_at": spec_ts,
+        # N-162: content-hash etag for spec-drift detection via /health.
+        "openapi_etag": spec_etag,
         # N-131: expose when the cached spec ts expires so operators
         # can debug staleness during incident response.
         "openapi_cached_until": int(_OPENAPI_TS_CACHE["expires_at"])

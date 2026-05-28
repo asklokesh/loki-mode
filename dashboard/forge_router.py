@@ -158,28 +158,28 @@ def register_forge_router(app) -> None:
     from fastapi import Header
 
     @app.get("/api/forge/openapi")
-    async def forge_openapi(if_none_match: Optional[str] = Header(default=None)) -> Any:
+    async def forge_openapi(pretty: bool = True,
+                            if_none_match: Optional[str] = Header(default=None)) -> Any:
         """N-160: serve the live OpenAPI spec with a content-hash
         Etag so HTTP caches short-circuit unchanged regenerations.
         Etag is the sha256 of the spec body with the volatile
         x-generated-at* fields stripped, so successive calls with
-        the same underlying state produce identical etags."""
-        import hashlib
-        from forge.sdk.openapi import generate as _gen
+        the same underlying state produce identical etags.
+        N-161: ?pretty=false returns compact JSON for scrapers.
+        N-170: Cache-Control: no-cache forces clients to revalidate
+        via the ETag rather than serving a stale local copy."""
+        from forge.sdk.openapi import generate as _gen, content_etag
         from fastapi.responses import JSONResponse as _JR, Response as _R
         spec = _gen(_forge_dir())
-        info_copy = dict(spec.get("info") or {})
-        info_copy.pop("x-generated-at", None)
-        info_copy.pop("x-generated-at-epoch-ms", None)
-        body_for_hash = dict(spec)
-        body_for_hash["info"] = info_copy
-        h = hashlib.sha256(
-            json.dumps(body_for_hash, sort_keys=True).encode()
-        ).hexdigest()[:16]
-        etag = f'W/"{h}"'
+        etag = content_etag(_forge_dir(), spec)
+        headers = {"ETag": etag, "Cache-Control": "no-cache"}
         if if_none_match == etag:
-            return _R(status_code=304)
-        return _JR(content=spec, headers={"ETag": etag})
+            return _R(status_code=304, headers=headers)
+        if not pretty:
+            body = json.dumps(spec, separators=(",", ":"))
+            return _R(content=body, media_type="application/json",
+                      headers=headers)
+        return _JR(content=spec, headers=headers)
 
     @app.get("/api/forge/health")
     async def forge_health() -> Dict[str, Any]:
