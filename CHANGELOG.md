@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.21] - 2026-05-28
+
+PATCH release. Token economics UI (excellence bar 5). Fifth release in
+the v7.7.17-v7.7.24 memory arc. Surfaces per-retrieval cost + cache hit
+rate + top-accessed patterns in the dashboard + a normalized API.
+
+### Fixed
+
+- `/api/memory/economics` endpoint shape defect: the pre-v7.7.21
+  fallback returned camelCase keys (`discoveryTokens`) that did NOT
+  match the snake_case file (`metrics.discovery_tokens`). Now reads the
+  file correctly, computes cache `hit_rate = cache_hits/(cache_hits+
+  cache_misses)`, surfaces top-10 most-accessed episodes/semantic
+  patterns (ranked by access_count then importance), returns normalized
+  snake_case + backward-compat camelCase aliases + `raw` passthrough.
+
+### Added
+
+- Dashboard "Token Economics" tile in the Memory panel: hit rate %,
+  total tokens, savings %, top-5 retrieved patterns. Auto-refreshes
+  every 30s.
+- `tests/test-memory-economics-endpoint.sh` (9/9 PASS).
+
+### Security / robustness (council fixes)
+
+- **Auth (Opus 2)**: `/api/memory/economics` now carries
+  `Depends(auth.require_scope("read"))` matching sibling memory
+  endpoints (was unauthenticated -- a regression-adjacent gap).
+- **Symlink traversal (Opus 2)**: top-patterns scan replaced recursive
+  glob with `os.walk(followlinks=False)` + realpath containment check
+  (every candidate must resolve under `.loki/memory/`). Prevents a
+  symlink under `episodic/` from exfiltrating outside JSON or
+  amplifying a DoS via a symlink to a huge tree. Mirrors the sibling
+  `get_skill` endpoint's containment. Test 9 plants a symlink to an
+  outside high-access "LEAKED" episode and asserts it does NOT surface.
+- **Scan bound (Opus 1)**: hard `MAX_SCAN=300` files-scanned cap per
+  subdir applied DURING the walk (not just on surfaced results), so a
+  large store + the 30s auto-refresh cannot make the request
+  unboundedly slow.
+- **XSS (Opus 1)**: dashboard tile builds the top-patterns list via DOM
+  `textContent` (createElement + removeChild) instead of `innerHTML`
+  single-char escape. Agent/PRD-derived summaries can no longer inject
+  markup.
+
+### Verified
+
+- Council: 2 Opus + 1 Sonnet unanimous APPROVE after 1 fix cycle.
+  Sonnet APPROVE first-pass. Opus 1 CONCERN (XSS + perf) -> fixed.
+  Opus 2 CONCERN (auth + symlink) -> fixed. Re-review APPROVE.
+- Local-CI: 23/23 PASS.
+
+### NOT tested
+
+- Live dashboard tile render in a browser (grep-verified in built
+  index.html; Playwright not executed).
+- setInterval teardown on SPA re-render (pre-existing pattern shared
+  with loadUsage; minor leak, non-blocking).
+- Real token_economics.json from a multi-iteration session (logic
+  tested against seeded fixtures).
+
 ## [7.7.20] - 2026-05-28
 
 PATCH release. Wakes previously-dead memory code + ships the SessionEnd

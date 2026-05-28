@@ -2638,16 +2638,115 @@ async def get_skill(skill_id: str):
     raise HTTPException(status_code=404, detail="Skill not found")
 
 
-@app.get("/api/memory/economics")
+@app.get("/api/memory/economics", dependencies=[Depends(auth.require_scope("read"))])
 async def get_token_economics():
-    """Get token usage economics."""
-    econ_file = _get_loki_dir() / "memory" / "token_economics.json"
+    """Get token usage economics (v7.7.21: normalized + hit_rate + top_patterns).
+
+    Excellence bar 5: per-retrieval cost + hit rate + top patterns visible.
+    Reads token_economics.json (written by memory.token_economics.save())
+    which has shape {session_id, metrics:{discovery_tokens, read_tokens,
+    cache_hits, cache_misses, ...}, ratio, savings_percent}. Computes a
+    cache hit_rate + surfaces the most-accessed episodes/patterns. The
+    pre-v7.7.21 endpoint returned camelCase keys that did not match the
+    snake_case file; the `raw` field preserves the original document for
+    backward compat while the top-level fields are normalized.
+    """
+    loki_dir = _get_loki_dir()
+    econ_file = loki_dir / "memory" / "token_economics.json"
+    raw = {}
     if econ_file.exists():
         try:
-            return json.loads(econ_file.read_text())
+            raw = json.loads(econ_file.read_text())
         except Exception:
-            pass
-    return {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
+            raw = {}
+
+    metrics = raw.get("metrics", {}) if isinstance(raw, dict) else {}
+    cache_hits = int(metrics.get("cache_hits", 0) or 0)
+    cache_misses = int(metrics.get("cache_misses", 0) or 0)
+    cache_total = cache_hits + cache_misses
+    hit_rate = round(cache_hits / cache_total, 4) if cache_total > 0 else 0.0
+    discovery_tokens = int(metrics.get("discovery_tokens", 0) or 0)
+    read_tokens = int(metrics.get("read_tokens", 0) or 0)
+
+    # Top-accessed memories: scan episodic + semantic, rank by access_count
+    # then importance.
+    # v7.7.21 council fix (Opus 1 + Opus 2):
+    #   - os.walk(followlinks=False) instead of recursive glob: does NOT
+    #     descend symlinked dirs (prevents traversal/exfil + DoS-amplify
+    #     via a symlink to a huge tree).
+    #   - realpath containment: every candidate file must resolve to a
+    #     path under mem_root (mirrors the sibling get_skill endpoint).
+    #   - hard cap on files SCANNED (not just surfaced): stop after
+    #     MAX_SCAN files per subdir so a large store cannot make this
+    #     request unboundedly slow even with the 30s auto-refresh.
+    top_patterns = []
+    try:
+        import os as _os
+        mem_root = (loki_dir / "memory").resolve()
+        MAX_SCAN = 300
+        candidates = []
+        for sub in ("episodic", "semantic"):
+            sub_root = mem_root / sub
+            if not sub_root.is_dir():
+                continue
+            scanned = 0
+            stop = False
+            for dirpath, dirnames, filenames in _os.walk(str(sub_root), followlinks=False):
+                if stop:
+                    break
+                for fn in filenames:
+                    if not fn.endswith(".json"):
+                        continue
+                    fp = _os.path.join(dirpath, fn)
+                    # Containment: resolved path must stay under mem_root.
+                    try:
+                        rp = _os.path.realpath(fp)
+                        if _os.path.commonpath([rp, str(mem_root)]) != str(mem_root):
+                            continue
+                    except (OSError, ValueError):
+                        continue
+                    try:
+                        with open(fp) as fh:
+                            d = json.load(fh)
+                        candidates.append({
+                            "id": d.get("id", ""),
+                            "kind": sub,
+                            "access_count": int(d.get("access_count", 0) or 0),
+                            "importance": float(d.get("importance", 0.0) or 0.0),
+                            "summary": str(
+                                d.get("summary")
+                                or d.get("pattern")
+                                or d.get("context", {}).get("goal", "")
+                            )[:160],
+                        })
+                    except Exception:
+                        continue
+                    scanned += 1
+                    if scanned >= MAX_SCAN:
+                        stop = True
+                        break
+        candidates.sort(key=lambda c: (c["access_count"], c["importance"]), reverse=True)
+        top_patterns = candidates[:10]
+    except Exception:
+        top_patterns = []
+
+    return {
+        "session_id": raw.get("session_id"),
+        "discovery_tokens": discovery_tokens,
+        "read_tokens": read_tokens,
+        "total_tokens": discovery_tokens + read_tokens,
+        "cache_hits": cache_hits,
+        "cache_misses": cache_misses,
+        "hit_rate": hit_rate,
+        "ratio": raw.get("ratio", 0.0),
+        "savings_percent": raw.get("savings_percent", 0.0),
+        "top_patterns": top_patterns,
+        # Backward-compat aliases (pre-v7.7.21 camelCase consumers)
+        "discoveryTokens": discovery_tokens,
+        "readTokens": read_tokens,
+        "savingsPercent": raw.get("savings_percent", 0.0),
+        "raw": raw,
+    }
 
 
 @app.post("/api/memory/consolidate", dependencies=[Depends(auth.require_scope("control"))])

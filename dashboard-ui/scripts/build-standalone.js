@@ -716,6 +716,55 @@ function generateStandaloneHTML(bundleCode) {
           <div>
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
+            <!-- v7.7.21 token economics tile: hit rate + tokens + top patterns -->
+            <div id="memory-economics-tile" style="margin-top: 12px; background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+              <div style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Token Economics</div>
+              <div id="memory-economics-metrics" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px;">
+                <div><span style="color: var(--loki-text-muted, #888);">Hit rate</span><br><strong id="econ-hit-rate">--</strong></div>
+                <div><span style="color: var(--loki-text-muted, #888);">Total tokens</span><br><strong id="econ-total-tokens">--</strong></div>
+                <div><span style="color: var(--loki-text-muted, #888);">Savings</span><br><strong id="econ-savings">--</strong></div>
+              </div>
+              <div id="memory-economics-top" style="margin-top: 10px; font-size: 12px; color: var(--loki-text-muted, #888);"></div>
+            </div>
+            <script>
+              (function(){
+                function loadEconomics(){
+                  fetch('/api/memory/economics').then(function(r){ return r.json(); }).then(function(j){
+                    var hr = document.getElementById('econ-hit-rate');
+                    var tt = document.getElementById('econ-total-tokens');
+                    var sv = document.getElementById('econ-savings');
+                    var top = document.getElementById('memory-economics-top');
+                    if (hr) hr.textContent = ((j.hit_rate || 0) * 100).toFixed(1) + '%';
+                    if (tt) tt.textContent = (j.total_tokens || 0).toLocaleString();
+                    if (sv) sv.textContent = (j.savings_percent || 0).toFixed(1) + '%';
+                    if (top) {
+                      var patterns = j.top_patterns || [];
+                      // v7.7.21 council fix (Opus 1): build DOM with
+                      // textContent (NOT innerHTML single-char escape) so
+                      // agent/PRD-derived summaries cannot inject markup.
+                      while (top.firstChild) top.removeChild(top.firstChild);
+                      if (patterns.length === 0) {
+                        top.textContent = 'No retrieval patterns yet. Run sessions to accumulate.';
+                      } else {
+                        var header = document.createElement('div');
+                        header.style.marginBottom = '4px';
+                        header.textContent = 'Top retrieved:';
+                        top.appendChild(header);
+                        patterns.slice(0, 5).forEach(function(p){
+                          var row = document.createElement('div');
+                          // textContent escapes everything; no markup injection.
+                          row.textContent = (p.access_count || 0) + 'x · ' +
+                            (p.summary || p.id || '');
+                          top.appendChild(row);
+                        });
+                      }
+                    }
+                  }).catch(function(){ /* endpoint not available; tile stays at -- */ });
+                }
+                loadEconomics();
+                setInterval(loadEconomics, 30000);
+              })();
+            </script>
           </div>
           <div>
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory Files</h3>
