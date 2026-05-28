@@ -1199,7 +1199,16 @@ council_evaluate_member() {
     for test_log in "$loki_dir"/logs/test-*.log "$loki_dir"/logs/*test*.log; do
         if [ -f "$test_log" ]; then
             local fail_count
-            fail_count=$(grep -ciE "(FAIL|ERROR|failed|error:)" "$test_log" 2>/dev/null || echo "0")
+            # Detect REAL test failures, not any line containing "error".
+            # The old blanket grep "(FAIL|ERROR|failed|error:)" counted
+            # benign lines ("0 errors", "0 failed", a test named
+            # test_error_handling, "no errors found"), which forced CONTINUE
+            # forever on a fully-passing suite that merely mentions "error".
+            # Match actual failure signals and exclude the zero-count forms.
+            fail_count=$(grep -ciE \
+                '([1-9][0-9]*[[:space:]]+(failed|errors?)|^FAILED|[[:space:]]FAILED[[:space:]]|tests? failed|assertionerror|traceback \(most recent)' \
+                "$test_log" 2>/dev/null | tr -dc '0-9')
+            fail_count=${fail_count:-0}
             test_failures=$((test_failures + fail_count))
         fi
     done

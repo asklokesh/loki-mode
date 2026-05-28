@@ -8710,7 +8710,11 @@ try:
     from memory.engine import MemoryEngine
     from memory.schemas import EpisodeTrace
     from datetime import datetime, timezone
-    engine = MemoryEngine(f'{target_dir}/.loki/memory')
+    # base_path= is required: MemoryEngine.__init__(self, storage=None, base_path=...)
+    # takes `storage` first, so a bare positional path was assigned to
+    # self.storage and engine.initialize() crashed on str.ensure_directory,
+    # silently dropping every store_episode_trace into the except handler.
+    engine = MemoryEngine(base_path=f'{target_dir}/.loki/memory')
     engine.initialize()
     trace = EpisodeTrace.create(
         task_id=task_id,
@@ -9071,7 +9075,15 @@ try:
         importance = float(getattr(trace, 'importance', 0.0) or 0.0)
     except (TypeError, ValueError):
         importance = 0.0
-    episode_file = Path(f'{target_dir}/.loki/memory/episodic') / f'{trace.id}.json'
+    # Reconstruct the ACTUAL on-disk path. storage.save_episode writes to
+    # episodic/<YYYY-MM-DD>/task-<id>.json (date from the trace timestamp),
+    # NOT episodic/<id>.json. The old flat path never existed, so the
+    # importance shadow-write guard in bash never fired.
+    _ts = getattr(trace, 'timestamp', '') or ''
+    _date_str = str(_ts)[:10] if _ts else __import__('datetime').datetime.now(
+        __import__('datetime').timezone.utc).strftime('%Y-%m-%d')
+    episode_file = (Path(f'{target_dir}/.loki/memory/episodic')
+                    / _date_str / f'task-{trace.id}.json')
     if path_out_file:
         try:
             with open(path_out_file, 'w', encoding='utf-8') as f:

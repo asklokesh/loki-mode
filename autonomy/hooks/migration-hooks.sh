@@ -362,7 +362,10 @@ import json, sys
 from datetime import datetime
 with open(sys.argv[1]) as f:
     data = json.load(f)
-data.get('modes', []).append({
+# setdefault (not get): get('modes', []) appended to a THROWAWAY list when
+# the key was missing, so the failure mode was silently lost on a fresh
+# failure-modes.json. setdefault binds the list into data before appending.
+data.setdefault('modes', []).append({
     'mode_id': 'heal-fail-' + datetime.now().strftime('%Y%m%dT%H%M%S'),
     'trigger': 'healing_modification',
     'file': sys.argv[2],

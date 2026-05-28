@@ -3,7 +3,7 @@ name: loki-mode
 description: Autonomous spec-to-product system. Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product via the RARV-C closure loop, with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.7.27
+# Loki Mode v7.7.28
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -381,4 +381,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v7.7.27 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.7.28 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

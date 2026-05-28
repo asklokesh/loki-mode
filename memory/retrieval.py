@@ -1558,6 +1558,35 @@ class MemoryRetrieval:
                 if self._belongs_to_namespace(anti_copy):
                     results.append(anti_copy)
 
+        # Consolidation writes anti-patterns as SemanticPattern objects with
+        # category="anti-pattern" into semantic/patterns.json (not the legacy
+        # anti-patterns.json above), with fields incorrect_approach /
+        # description / correct_approach. Without this bridge, consolidated
+        # anti-patterns were never retrievable. Map them onto the same
+        # what_fails / why / prevention scoring shape.
+        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
+        for pat in patterns_data.get("patterns", []):
+            if pat.get("category") != "anti-pattern":
+                continue
+            what_fails = (pat.get("incorrect_approach", "")
+                          or pat.get("pattern", "")).lower()
+            why = pat.get("description", "").lower()
+            prevention = pat.get("correct_approach", "").lower()
+
+            score = sum(2 for kw in keywords if kw in what_fails)
+            score += sum(1 for kw in keywords if kw in why)
+            score += sum(1 for kw in keywords if kw in prevention)
+
+            if score > 0:
+                anti_copy = dict(pat)
+                anti_copy["_score"] = score
+                anti_copy["_source"] = "anti_patterns"
+                anti_copy.setdefault("what_fails", pat.get("incorrect_approach", "") or pat.get("pattern", ""))
+                anti_copy.setdefault("why", pat.get("description", ""))
+                anti_copy.setdefault("prevention", pat.get("correct_approach", ""))
+                if self._belongs_to_namespace(anti_copy):
+                    results.append(anti_copy)
+
         return results
 
     def _build_episodic_index(self) -> None:
@@ -1654,3 +1683,23 @@ class MemoryRetrieval:
             # Add to index with ID
             item_id = anti.get("id", anti.get("source", f"anti-{hash(text) % 10000}"))
             index.add(item_id, embedding, anti)
+
+        # Parity with the keyword path: consolidation writes anti-patterns as
+        # category="anti-pattern" entries in semantic/patterns.json, not the
+        # legacy anti-patterns.json above. Bridge those into the vector index
+        # too so embedding-based retrieval sees consolidated anti-patterns.
+        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
+        for pat in patterns_data.get("patterns", []):
+            if pat.get("category") != "anti-pattern":
+                continue
+            what_fails = pat.get("incorrect_approach", "") or pat.get("pattern", "")
+            why = pat.get("description", "")
+            prevention = pat.get("correct_approach", "")
+            text = f"{what_fails} {why} {prevention}"
+            embedding = self.embedding_engine.embed(text)
+            item_id = pat.get("id", f"anti-{hash(text) % 10000}")
+            bridged = dict(pat)
+            bridged.setdefault("what_fails", what_fails)
+            bridged.setdefault("why", why)
+            bridged.setdefault("prevention", prevention)
+            index.add(item_id, embedding, bridged)

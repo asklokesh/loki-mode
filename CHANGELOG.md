@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.28] - 2026-05-28
+
+PATCH release. Five verified functional bugs fixed, found by a parallel
+multi-subsystem source audit (memory + completion-council + healing). Each
+fix has a regression test with a functional repro. (Dashboard/CLI/Docker
+and RARV-loop findings from the same audit are deferred to v7.7.29 because
+they have a wider blast radius and need their own careful review.)
+
+### Fixed
+
+- **Memory: every orchestrator episode write silently failed.**
+  `autonomy/run.sh` `store_episode_trace` called
+  `MemoryEngine(f'{dir}/.loki/memory')`, but `__init__(self, storage=None,
+  base_path=...)` takes `storage` first, so the path became `self.storage`
+  and `engine.initialize()` crashed on `str.ensure_directory`, dropping
+  every episode into the except handler. Now passes `base_path=`.
+- **Memory: the importance shadow-write never fired.**
+  `auto_capture_episode` reconstructed the episode path as
+  `episodic/<id>.json`, but storage writes
+  `episodic/<YYYY-MM-DD>/task-<id>.json`. The non-existent path failed the
+  `[ -f ]` guard every time. Now reconstructs the real date/task path.
+- **Memory: consolidated anti-patterns were never retrievable.**
+  `consolidation` saves anti-patterns as `SemanticPattern` objects with
+  `category="anti-pattern"` into `semantic/patterns.json`, but anti-pattern
+  retrieval only read the separate `semantic/anti-patterns.json` (different
+  schema). Retrieval now also bridges anti-patterns out of
+  `patterns.json`, mapping incorrect_approach/description/correct_approach
+  onto the what_fails/why/prevention scoring shape. The optional
+  embedding/vector anti-pattern index is bridged the same way for parity.
+- **Completion council never stopped on suites that mention "error".**
+  Test-failure detection used `grep -ciE "(FAIL|ERROR|failed|error:)"`,
+  which counted benign lines ("0 errors", a `test_error_handling` case,
+  "no errors found") as failures, forcing CONTINUE forever. Replaced with
+  a regex that matches real failure signals (`N failed/errors`, `FAILED`,
+  `AssertionError`, `Traceback`) and ignores the zero-count forms.
+- **Healing: failure modes were silently dropped on a fresh file.**
+  `migration-hooks.sh` appended via `data.get('modes', [])`, which mutates
+  a throwaway list when the key is missing, so the record was lost. Now
+  uses `data.setdefault('modes', [])`.
+
+### Tests
+
+- `tests/test-memory-audit-fixes.sh` (NEW, 4/4): B#1/B#2/B#3.
+- `tests/test-council-healing-audit-fixes.sh` (NEW, 4/4): the council
+  grep refinement and the healing setdefault, each with a functional repro.
+
 ## [7.7.27] - 2026-05-28
 
 PATCH release. A welcome opener (the "magic opener") shown on first run and
