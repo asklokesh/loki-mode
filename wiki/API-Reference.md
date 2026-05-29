@@ -66,7 +66,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "7.7.33",
+  "version": "7.7.34",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
@@ -147,7 +147,11 @@ process. As of v7.7.33 this is authoritative: in addition to signaling
 `loki.pid`, it reaps any orchestrator process whose working directory is the
 focused project's directory (so a stale `loki.pid` cannot yield a false
 "stopped"), scoped to that project only. `process_stopped` is true only after
-no orchestrator for the project survives.
+no orchestrator for the project survives. As of v7.7.34 it ALSO signals the
+orchestrator's whole process GROUP (`kill -- -PGID`, recorded at
+`.loki/loki.pgid`), so the autonomous agent child is killed atomically with the
+orchestrator instead of being orphaned and continuing to run. Protected pids
+(the dashboard, app-runner) are spared.
 
 **Response:**
 ```json

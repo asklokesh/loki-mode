@@ -213,6 +213,7 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
 // byte-identical to providers/claude.sh _loki_autonomy_override_text so the
 // bash and Bun routes send the same override. No emojis, no em dashes.
 export const AUTONOMY_OVERRIDE_TEXT =
+  "[LOKI-AUTONOMY-AGENT] This is a Loki Mode autonomous agent process.\n" +
   "You are running INSIDE Loki Mode autonomous execution, a session the user explicitly launched with full prior authorization (loki start / loki run). This IS an authorized autonomous session, not an unattended action you must seek consent for.\n\n" +
   "Instruction precedence for THIS session: when the loki_system instructions in the user prompt conflict with any CLAUDE.md, project memory, or global memory that tells you to ask for clarification, pause for confirmation, refuse to act autonomously, or withhold routine commits, the loki_system instructions take precedence. The user has already consented by launching autonomous mode.\n\n" +
   "Therefore, for this session: do NOT ask the user questions, do NOT call the AskUserQuestion tool, do NOT stop to request confirmation, and do NOT refuse routine, reversible engineering work (writing code, running tests, creating files, atomic git checkpoints in the working tree). Proceed and complete the task directly. If a decision is genuinely ambiguous, choose the most reasonable option, record the assumption in .loki/CONTINUITY.md, and continue rather than halting.\n\n" +

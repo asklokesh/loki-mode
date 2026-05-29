@@ -2329,6 +2329,11 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
     # by cwd to this project only.
     if loki_dir is not None:
         proj_dir = loki_dir.parent
+        # v7.7.34: group-kill first (atomic; reaps the orphan-prone agent child),
+        # then the cwd+sentinel reaper as backstop.
+        _pgid2 = _read_pgid(loki_dir)
+        if _pgid2 is not None:
+            await asyncio.to_thread(_killpg_project, _pgid2, _collect_protected_pids(loki_dir))
         found_any, all_gone = await asyncio.to_thread(
             _reap_orchestrators_until_clear, proj_dir, str(proj_dir))
         if found_any:
@@ -2626,28 +2631,34 @@ def _find_orchestrator_pids_for_dir(project_dir: _Path) -> list[int]:
     # passes to make the enumeration resilient. The cwd filter below still
     # guarantees scope correctness for whatever is enumerated.
     import time as _time
+    # Two candidate patterns, BOTH cwd-filtered below (cwd is the authoritative
+    # scope guard):
+    #   1. /loki-run-*.sh  -- the orchestrator temp script.
+    #   2. [LOKI-AUTONOMY-AGENT]  -- the sentinel Loki injects as the first line
+    #      of the agent's --append-system-prompt (v7.7.34). This matches the
+    #      claude/codex/aider AGENT process, which has no "loki-run" in its argv
+    #      and (critically) survives as an orphan (PPID 1) when the orchestrator
+    #      is killed -- the cause of "dashboard says stopped but it keeps
+    #      running". An interactive provider session never carries this sentinel,
+    #      so it is never matched.
+    _patterns = [r"/loki-run-[^/ ]*\.sh", r"\[LOKI-AUTONOMY-AGENT\]"]
     candidate_set: set[int] = set()
     enumerated = False
     for _attempt in range(3):
-        try:
-            # Match the runner temp script by its path segment. Anchor on the
-            # "/loki-run-" path prefix (mktemp writes it under $TMPDIR or /tmp)
-            # for scope, but do NOT constrain the random suffix charset: mktemp
-            # names can contain any of [A-Za-z0-9_] depending on platform, and
-            # an over-tight charset (e.g. excluding "_") silently misses live
-            # orchestrators -- the cwd check below is the real scope guard.
-            out = subprocess.run(
-                ["pgrep", "-f", r"/loki-run-[^/ ]*\.sh"],
-                capture_output=True, text=True, timeout=5,
-            )
-            enumerated = True
-            for line in out.stdout.split():
-                try:
-                    candidate_set.add(int(line))
-                except ValueError:
-                    pass
-        except (OSError, subprocess.SubprocessError):
-            pass
+        for _pat in _patterns:
+            try:
+                out = subprocess.run(
+                    ["pgrep", "-f", _pat],
+                    capture_output=True, text=True, timeout=5,
+                )
+                enumerated = True
+                for line in out.stdout.split():
+                    try:
+                        candidate_set.add(int(line))
+                    except ValueError:
+                        pass
+            except (OSError, subprocess.SubprocessError):
+                pass
         if _attempt < 2:
             _time.sleep(0.15)
     if not enumerated:
@@ -2688,6 +2699,142 @@ def _pid_cwd(pid: int) -> Optional[str]:
     except (OSError, subprocess.SubprocessError):
         pass
     return None
+
+
+def _read_pgid(loki_dir: _Path) -> Optional[int]:
+    """Read the orchestrator process-group id recorded at .loki/loki.pgid (or the
+    per-session variant). Returns a valid pgid (>1) or None. Never raises."""
+    for name in ("loki.pgid", "run.pgid"):
+        f = loki_dir / name
+        try:
+            if f.exists():
+                v = int(f.read_text().strip())
+                if v > 1:
+                    return v
+        except (ValueError, OSError):
+            pass
+    # per-session pgid files
+    try:
+        sess_dir = loki_dir / "sessions"
+        if sess_dir.is_dir():
+            for sd in sess_dir.iterdir():
+                pf = sd / "loki.pgid"
+                if pf.exists():
+                    v = int(pf.read_text().strip())
+                    if v > 1:
+                        return v
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _collect_protected_pids(loki_dir: _Path) -> set:
+    """Pids that must NOT be killed by a group stop: the dashboard, app-runner,
+    and anything registered under .loki/pids/ (filename is the pid). Plus this
+    server process. Best-effort; never raises."""
+    protected = {os.getpid()}
+    try:
+        protected.add(os.getppid())
+    except OSError:
+        pass
+    try:
+        pids_dir = loki_dir / "pids"
+        if pids_dir.is_dir():
+            for f in pids_dir.glob("*.json"):
+                try:
+                    protected.add(int(f.stem))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    # the standalone dashboard pid file
+    for cand in (loki_dir / "dashboard" / "dashboard.pid",
+                 _Path.home() / ".loki" / "dashboard" / "dashboard.pid"):
+        try:
+            if cand.exists():
+                protected.add(int(cand.read_text().strip()))
+        except (ValueError, OSError):
+            pass
+    return protected
+
+
+def _killpg_project(pgid: Optional[int], protected_pids: Optional[set] = None) -> bool:
+    """Atomically stop a project's whole process tree by signaling its process
+    GROUP: SIGTERM, wait up to 5s, then SIGKILL. This is the v7.7.34 fix for the
+    orphaned-agent bug -- killing only the orchestrator pid let the agent child
+    reparent to init and keep running; a group kill reaps the orchestrator, the
+    agent, and every monitor at once with no orphan window.
+
+    Guards (CRITICAL): refuse to signal an absent/0/1 pgid or this server's OWN
+    process group (never commit suicide). If any protected pid (e.g. the shared
+    dashboard registered in .loki/pids) shares the target pgid, fall back to
+    per-pid kills of the group members EXCLUDING the protected pids, so the
+    dashboard is never taken down. Best-effort; never raises. Returns True if a
+    group signal (or scoped fallback) was issued."""
+    import signal as _signal
+    import time as _time
+    if not isinstance(pgid, int) or pgid <= 1:
+        return False
+    try:
+        if pgid == os.getpgrp():
+            return False  # never kill our own group
+    except OSError:
+        pass
+    protected = protected_pids or set()
+
+    def _group_members(g: int) -> list:
+        try:
+            out = subprocess.run(["ps", "-axo", "pid=,pgid="],
+                                 capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        members = []
+        for line in out.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    pid_i, pgid_i = int(parts[0]), int(parts[1])
+                except ValueError:
+                    continue
+                if pgid_i == g:
+                    members.append(pid_i)
+        return members
+
+    members = _group_members(pgid)
+    conflict = any(p in protected for p in members)
+
+    if conflict:
+        # A protected pid (dashboard/app-runner) shares this group. Do NOT blast
+        # the whole group; signal only the non-protected members per-pid.
+        targets = [p for p in members if p not in protected and p != os.getpid()]
+        for sig in (_signal.SIGTERM,):
+            for p in targets:
+                try:
+                    os.kill(p, sig)
+                except OSError:
+                    pass
+        _time.sleep(2.0)
+        for p in targets:
+            try:
+                os.kill(p, _signal.SIGKILL)
+            except OSError:
+                pass
+        return True
+
+    # Clean case: signal the whole group.
+    try:
+        os.killpg(pgid, _signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        return True  # group already gone
+    for _ in range(10):
+        _time.sleep(0.5)
+        if not _group_members(pgid):
+            return True
+    try:
+        os.killpg(pgid, _signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    return True
 
 
 def _reap_orchestrators_until_clear(project_dir: _Path, expected_cwd: str,
@@ -4137,6 +4284,16 @@ async def stop_session(request: Request):
     # the real orchestrator keeps running. Reap any orchestrator process whose
     # CWD is THIS project's directory. Strictly scoped by cwd, so a stop on one
     # project never touches another folder's runner.
+    # v7.7.34: group-kill is the PRIMARY, atomic teardown. Signal the
+    # orchestrator's whole process group so the agent child (which reparents to
+    # init when only the orchestrator pid is killed) dies WITH it. Protected pids
+    # (dashboard/app-runner) are spared. The cwd+sentinel reaper below is the
+    # backstop for already-orphaned agents from pre-v7.7.34 sessions.
+    _loki_dir_for_pg = _get_loki_dir()
+    _pgid = _read_pgid(_loki_dir_for_pg)
+    _protected = _collect_protected_pids(_loki_dir_for_pg)
+    if _pgid is not None:
+        await asyncio.to_thread(_killpg_project, _pgid, _protected)
     project_dir = _get_loki_dir().parent
     _proj = str(project_dir)
     found_any, all_gone = await asyncio.to_thread(

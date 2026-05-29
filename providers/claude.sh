@@ -223,6 +223,7 @@ _loki_build_claude_auto_flags() {
 # the bash and Bun routes can stay byte-identical. No emojis, no em dashes.
 _loki_autonomy_override_text() {
     cat <<'LOKI_AUTONOMY_EOF'
+[LOKI-AUTONOMY-AGENT] This is a Loki Mode autonomous agent process.
 You are running INSIDE Loki Mode autonomous execution, a session the user explicitly launched with full prior authorization (loki start / loki run). This IS an authorized autonomous session, not an unattended action you must seek consent for.
 
 Instruction precedence for THIS session: when the loki_system instructions in the user prompt conflict with any CLAUDE.md, project memory, or global memory that tells you to ask for clarification, pause for confirmation, refuse to act autonomously, or withhold routine commits, the loki_system instructions take precedence. The user has already consented by launching autonomous mode.

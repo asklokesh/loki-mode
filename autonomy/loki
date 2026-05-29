@@ -145,6 +145,48 @@ LEARNING_EMIT_SH="$SKILL_DIR/learning/emit.sh"
 LOKI_DIR="${LOKI_DIR:-.loki}"
 export LOKI_DIR
 
+# v7.7.34: launch the autonomous runner as a SESSION/PROCESS-GROUP LEADER so the
+# whole tree (orchestrator + the claude/codex/aider agent pipeline + monitors)
+# shares one process group and can be killed atomically with `kill -- -PGID`.
+# Without this, stopping the orchestrator pid orphans the agent child (it
+# reparents to init and keeps editing files), which is the "dashboard says
+# stopped but it keeps running" bug. macOS has no `setsid` binary, so prefer the
+# real binary (Linux/Docker), then perl POSIX::setsid, then python3 os.setsid,
+# then degrade to a plain exec (the cwd+sentinel agent sweep is the backstop).
+# This execs (replaces the current process); callers use it exactly like `exec`.
+#
+# IMPORTANT: setsid detaches the new session from the controlling terminal, so a
+# foreground INTERACTIVE `loki start` would then ignore Ctrl+C (breaking the
+# documented pause/exit-on-Ctrl+C UX). In an interactive shell, job control
+# ALREADY places the runner in its own process group, so the agent child shares
+# it and group-kill on stop works WITHOUT setsid. We therefore only create a new
+# session when stdin is NOT a tty (scripts / CI / detached launches), where the
+# runner would otherwise inherit the caller's group and escape group-kill.
+# Interactive runs keep Ctrl+C. Opt out entirely with LOKI_NO_NEW_SESSION=1;
+# force it on (e.g. for testing) with LOKI_FORCE_NEW_SESSION=1.
+_loki_new_session_exec() {
+    if [ "${LOKI_NO_NEW_SESSION:-}" = "1" ]; then
+        exec "$@"
+    elif [ -t 0 ] && [ "${LOKI_FORCE_NEW_SESSION:-}" != "1" ]; then
+        # Interactive terminal: keep the controlling tty so Ctrl+C still works.
+        # We do NOT setsid here, so the runner may SHARE the interactive shell's
+        # process group. Therefore we do NOT export LOKI_OWN_SESSION, and the
+        # runner will NOT record loki.pgid -- group-kill is unsafe on a shared
+        # shell group (it could kill the user's shell). Stop falls back to the
+        # cwd + [LOKI-AUTONOMY-AGENT] sentinel sweep, which is safe and reaps the
+        # agent by identity rather than by group.
+        exec "$@"
+    elif command -v setsid >/dev/null 2>&1; then
+        LOKI_OWN_SESSION=1 exec setsid "$@"
+    elif command -v perl >/dev/null 2>&1; then
+        LOKI_OWN_SESSION=1 exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or exit 127;' "$@"
+    elif command -v python3 >/dev/null 2>&1; then
+        LOKI_OWN_SESSION=1 exec python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+    else
+        exec "$@"
+    fi
+}
+
 # Anonymous usage telemetry
 PROJECT_DIR="$SKILL_DIR"
 _TELEMETRY_SCRIPT="$SKILL_DIR/autonomy/telemetry.sh"
@@ -1624,7 +1666,7 @@ cmd_start() {
     # variable" under bash 3.2 (macOS default) + `set -u` when args is empty.
     # User report: `loki start` with no PRD on /Users/lokesh/git/anonima
     # crashed at this line. Safe expansion guards against empty arrays.
-    exec "$RUN_SH" ${args[@]+"${args[@]}"}
+    _loki_new_session_exec "$RUN_SH" ${args[@]+"${args[@]}"}
 }
 
 # Check if session is running
@@ -1873,6 +1915,62 @@ cmd_stop() {
 
         # Stop global session
         touch "$LOKI_DIR/STOP"
+
+        # v7.7.34: group-kill first. The autonomous agent (claude/codex/aider)
+        # shares the orchestrator's process group (the runner is launched as a
+        # session leader), so signaling the whole group reaps the orchestrator
+        # AND the agent child atomically. Killing only the orchestrator pid lets
+        # the agent reparent to init and keep editing files -- the reported bug.
+        # Guards: only a numeric pgid > 1 that is NOT this shell's own group.
+        local _stop_pgid_file
+        for _stop_pgid_file in "$LOKI_DIR/loki.pgid" "$LOKI_DIR/run.pgid"; do
+            [ -f "$_stop_pgid_file" ] || continue
+            local _spgid
+            _spgid=$(cat "$_stop_pgid_file" 2>/dev/null | tr -d ' ')
+            case "$_spgid" in ''|*[!0-9]*) continue ;; esac
+            [ "$_spgid" -gt 1 ] 2>/dev/null || continue
+            local _my_pgid
+            _my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+            [ "$_spgid" = "$_my_pgid" ] && continue   # never kill our own group
+            # Collect protected pids (dashboard, app-runner, registered pids) so
+            # a group-kill never takes down the dashboard if it happens to share
+            # the orchestrator group. Mirrors the dashboard Python route.
+            local _protected=" "
+            local _pf
+            if [ -d "$LOKI_DIR/pids" ]; then
+                for _pf in "$LOKI_DIR/pids"/*.json; do
+                    [ -f "$_pf" ] || continue
+                    _protected="${_protected}$(basename "$_pf" .json) "
+                done
+            fi
+            for _pf in "$LOKI_DIR/dashboard/dashboard.pid" "${HOME}/.loki/dashboard/dashboard.pid"; do
+                [ -f "$_pf" ] && _protected="${_protected}$(cat "$_pf" 2>/dev/null | tr -d ' ') "
+            done
+            # Does any protected pid share this group?
+            local _conflict=0 _gp
+            for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+                case "$_protected" in *" $_gp "*) _conflict=1; break ;; esac
+            done
+            if [ "$_conflict" = "1" ]; then
+                # Per-pid kill of group members EXCLUDING protected pids.
+                for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+                    case "$_protected" in *" $_gp "*) continue ;; esac
+                    [ "$_gp" = "$$" ] && continue
+                    kill -TERM "$_gp" 2>/dev/null || true
+                done
+                sleep 1
+                for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+                    case "$_protected" in *" $_gp "*) continue ;; esac
+                    [ "$_gp" = "$$" ] && continue
+                    kill -KILL "$_gp" 2>/dev/null || true
+                done
+            else
+                kill -TERM -- -"$_spgid" 2>/dev/null || true
+                sleep 1
+                kill -KILL -- -"$_spgid" 2>/dev/null || true
+            fi
+            rm -f "$_stop_pgid_file" 2>/dev/null || true
+        done
 
         local killed_pid=""
         for pid_file in "$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid"; do
@@ -8861,8 +8959,9 @@ QPRDEOF
         exit 1
     fi
 
-    # Run the orchestrator with quick settings
-    exec "$RUN_SH" "$quick_prd"
+    # Run the orchestrator with quick settings (session leader -- see
+    # _loki_new_session_exec; enables atomic group-kill on stop).
+    _loki_new_session_exec "$RUN_SH" "$quick_prd"
 }
 
 # Docker Compose monitoring with auto-fix (v6.67.0)

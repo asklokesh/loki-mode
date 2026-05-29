@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.34] - 2026-05-29
+
+PATCH release. Stop now actually stops the autonomous AGENT, not just the
+orchestrator. This is the real fix for the recurring "dashboard says STOPPED
+but the terminal keeps running and editing files" report.
+
+### Fixed
+
+- **The autonomous agent kept running after Stop.** `loki start` runs an
+  orchestrator (`/tmp/loki-run-*.sh`) that spawns the provider agent
+  (`claude`/`codex`/`aider`) as a child. Stop signaled only the orchestrator
+  pid; when the orchestrator died (especially on SIGKILL, which skips its
+  cleanup trap) the agent CHILD reparented to init (PPID 1) and kept iterating.
+  v7.7.33's cwd reaper only matched `loki-run-*.sh`, never the agent, so the
+  agent survived. Root-caused on a live session (agent PID alive, PPID=1,
+  cwd=project, still editing).
+- **Fix: process-group teardown.** A NON-interactive runner (script, CI, or
+  background `loki start`) is now launched as a session / process-group leader
+  (via `setsid`, or perl/python `setsid` on macOS which has no `setsid` binary),
+  so the orchestrator, the agent, and all monitors share ONE dedicated process
+  group whose pgid is recorded at `.loki/loki.pgid`. All three stop paths
+  (`loki stop`, `POST /api/control/stop`, `POST /api/running-projects/stop`)
+  signal the whole group (`kill -- -PGID` / `os.killpg`): SIGTERM, wait, then
+  SIGKILL, so the agent dies atomically with the orchestrator, no orphan window,
+  even if it ignores SIGTERM. Verified end-to-end: a SIGTERM-ignoring agent
+  child sharing the group is reaped by Stop.
+- **Interactive `loki start` keeps Ctrl+C.** Creating a new session detaches the
+  controlling terminal, which would break the terminal Ctrl+C pause/exit UX. So
+  an INTERACTIVE foreground `loki start` is NOT group-launched (it keeps its
+  tty); for that case stop relies on the agent sweep below rather than a group
+  kill (a group kill on a shared shell group could kill the user's shell). Use
+  `LOKI_FORCE_NEW_SESSION=1` to force group mode, `LOKI_NO_NEW_SESSION=1` to
+  disable it.
+- **Backstop for already-orphaned agents.** The dashboard reaper now also
+  matches the agent by a stable `[LOKI-AUTONOMY-AGENT]` sentinel (the first
+  line of the agent's appended system prompt) combined with the cwd scope, so
+  agents orphaned by a pre-v7.7.34 session are cleaned up too. An interactive
+  provider session never carries the sentinel, so it is never touched.
+
+### Safety / scope
+
+- Strict per-project isolation preserved: the pgid is per-project and the
+  sentinel sweep is cwd-scoped, so stopping one project never touches another
+  folder's run or the user's interactive sessions.
+- Suicide + collateral guards: a group kill refuses an empty/0/1/own-group
+  pgid, and if a protected pid (the dashboard or app-runner registered under
+  `.loki/pids`) shares the target group, it falls back to per-pid kills that
+  spare the protected pids rather than blasting the whole group.
+
 ## [7.7.33] - 2026-05-29
 
 PATCH release. Makes the dashboard Stop button actually stop the session.

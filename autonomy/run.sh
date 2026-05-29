@@ -12681,7 +12681,29 @@ main() {
         # CRITICAL: Unset LOKI_RUNNING_FROM_TEMP so the background process does its own self-copy
         # Otherwise it would run directly from the original file and the trap would delete it
         local original_script="$SCRIPT_DIR/run.sh"
-        LOKI_RUNNING_FROM_TEMP='' nohup "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 &
+        # v7.7.34: launch the backgrounded runner as its own session leader so
+        # its agent tree shares one process group, killable atomically on stop.
+        # Prefer setsid (Linux/Docker), then perl, then python3, then plain nohup.
+        local _sess_launcher=""
+        if [ "${LOKI_NO_NEW_SESSION:-}" != "1" ]; then
+            if command -v setsid >/dev/null 2>&1; then _sess_launcher="setsid"
+            elif command -v perl >/dev/null 2>&1; then _sess_launcher="perl-setsid"
+            elif command -v python3 >/dev/null 2>&1; then _sess_launcher="python-setsid"; fi
+        fi
+        # Background mode is never interactive, so a new session is always safe
+        # and desirable (detaches from the tty and gives a dedicated group for
+        # stop). Export LOKI_OWN_SESSION=1 so the backgrounded runner records its
+        # pgid.
+        case "$_sess_launcher" in
+            setsid)
+                LOKI_RUNNING_FROM_TEMP='' LOKI_OWN_SESSION=1 nohup setsid "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 & ;;
+            perl-setsid)
+                LOKI_RUNNING_FROM_TEMP='' LOKI_OWN_SESSION=1 nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or exit 127;' "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 & ;;
+            python-setsid)
+                LOKI_RUNNING_FROM_TEMP='' LOKI_OWN_SESSION=1 nohup python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 & ;;
+            *)
+                LOKI_RUNNING_FROM_TEMP='' nohup "$original_script" "${cmd_args[@]}" > "$log_file" 2>&1 & ;;
+        esac
         local bg_pid=$!
         echo "$bg_pid" > "$pid_file"
         register_pid "$bg_pid" "background-session" "log=$log_file"
@@ -12829,6 +12851,21 @@ main() {
 
     # Write PID file for ALL modes (foreground + background)
     echo "$$" > "$pid_file"
+    # v7.7.34: record the orchestrator's process-group id next to the pid so the
+    # stop paths can `kill -- -PGID` the whole tree (orchestrator + agent +
+    # monitors) atomically, closing the orphaned-agent hole.
+    # CRITICAL SAFETY: only record the pgid when this runner is its OWN session
+    # leader (LOKI_OWN_SESSION=1, set by the launcher when it setsid'd). If we
+    # did NOT create a new session (interactive foreground, where we keep the
+    # controlling tty for Ctrl+C), the runner may SHARE the user's shell process
+    # group, and group-killing it would kill the user's shell. In that case we
+    # leave loki.pgid absent and stop relies on the cwd+sentinel agent sweep.
+    if [ "${LOKI_OWN_SESSION:-}" = "1" ]; then
+        _loki_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+        if [ -n "$_loki_pgid" ]; then
+            echo "$_loki_pgid" > "${pid_file%.pid}.pgid" 2>/dev/null || true
+        fi
+    fi
     # Store session ID in state for dashboard/status visibility
     if [ -n "${LOKI_SESSION_ID:-}" ]; then
         echo "${LOKI_SESSION_ID}" > ".loki/sessions/${LOKI_SESSION_ID}/session_id"

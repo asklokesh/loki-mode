@@ -48,6 +48,8 @@ Complete reference for all Loki Mode environment variables.
 |----------|---------|-------------|
 | `LOKI_STAGED_AUTONOMY` | `false` | Require approval before execution |
 | `LOKI_AUTONOMY_OVERRIDE` | `on` | When `on`, Loki passes `--append-system-prompt` to the Claude provider authorizing autonomous operation so the agent does not refuse work due to a conflicting global `~/.claude/CLAUDE.md` (v7.7.31). The override is narrow: it does not relax safety rules, keeps commits local-only and staged by path, and leaves destructive/irreversible actions out of scope. Set to `off` to disable. |
+| `LOKI_NO_NEW_SESSION` | (unset) | Set to `1` to stop launching the runner in its own session/process group (v7.7.34). By default a non-interactive `loki start` (script/CI/background) runs in a new session so Stop can group-kill the whole tree; an interactive `loki start` keeps the controlling terminal (so Ctrl+C works) and is not group-launched. This var disables session creation entirely. |
+| `LOKI_FORCE_NEW_SESSION` | (unset) | Set to `1` to force a new session even for an interactive `loki start` (v7.7.34). Note: this detaches the controlling terminal, so Ctrl+C in the terminal will no longer reach the run; use `loki stop` or the dashboard Stop button instead. Mainly for testing the group-kill path. |
 | `LOKI_AUDIT_LOG` | `true` | Enable audit logging |
 | `LOKI_AUDIT_DISABLED` | `false` | Disable audit logging |
 | `LOKI_MAX_PARALLEL_AGENTS` | `10` | Max concurrent agents |
