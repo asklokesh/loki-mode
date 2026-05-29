@@ -216,6 +216,23 @@ _loki_build_claude_auto_flags() {
        && loki_claude_flag_supported "--append-system-prompt"; then
         _LOKI_CLAUDE_AUTO_FLAGS+=("--append-system-prompt" "$(_loki_autonomy_override_text)")
     fi
+
+    # --setting-sources (v7.8.0): pin the settings precedence so the invocation
+    # does not drift with Claude Code's implicit default. Behavior-neutral.
+    # Default-on; opt out with LOKI_SETTING_SOURCES=off.
+    if [ "${LOKI_SETTING_SOURCES:-on}" != "off" ] \
+       && loki_claude_flag_supported "--setting-sources"; then
+        _LOKI_CLAUDE_AUTO_FLAGS+=("--setting-sources" "user,project,local")
+    fi
+
+    # --include-partial-messages (v7.8.0): stream incremental assistant deltas
+    # for real-time dashboard/terminal output. The stream-json parser handles
+    # the stream_event type additively and de-dupes against the final message.
+    # Default-on; opt out with LOKI_PARTIAL_MESSAGES=off.
+    if [ "${LOKI_PARTIAL_MESSAGES:-on}" != "off" ] \
+       && loki_claude_flag_supported "--include-partial-messages"; then
+        _LOKI_CLAUDE_AUTO_FLAGS+=("--include-partial-messages")
+    fi
 }
 
 # The system-prompt text that authorizes autonomous operation and resolves

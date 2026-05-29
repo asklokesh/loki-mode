@@ -178,6 +178,10 @@ run_check "tests/test-dashboard-stop-authoritative.sh (cwd-scoped authoritative 
 # orphan-prone agent child atomically. Sentinel sweep is the backstop.
 run_check "tests/test-stop-process-group.sh (group-kill agent teardown)" "bash tests/test-stop-process-group.sh 2>&1 | tail -3"
 
+# v7.8.0: additive Claude Code flag adoptions (--setting-sources,
+# --include-partial-messages) gated + with stream-json parser de-dup.
+run_check "tests/test-claude-adoptions.sh (setting-sources + partial-messages)" "bash tests/test-claude-adoptions.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------

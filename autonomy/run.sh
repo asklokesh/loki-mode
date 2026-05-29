@@ -11222,6 +11222,26 @@ except Exception as exc:
            && loki_claude_flag_supported "--append-system-prompt"; then
             _loki_claude_argv+=("--append-system-prompt" "$(_loki_autonomy_override_text)")
         fi
+        # v7.8.0: explicit settings precedence. Pin the loaded settings sources
+        # so Loki's invocation does not drift if Claude Code changes its implicit
+        # default. Behavior-neutral (these are the standard sources). Gated +
+        # falls back to the implicit default when unsupported. Opt out with
+        # LOKI_SETTING_SOURCES=off.
+        if [ "${LOKI_SETTING_SOURCES:-on}" != "off" ] \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--setting-sources"; then
+            _loki_claude_argv+=("--setting-sources" "user,project,local")
+        fi
+        # v7.8.0: stream partial assistant deltas so the dashboard renders the
+        # agent's output in real time instead of only at message boundaries. The
+        # stream-json parser below handles the partial event type additively and
+        # ignores it if unrecognized. Gated + fallback. Opt out with
+        # LOKI_PARTIAL_MESSAGES=off.
+        if [ "${LOKI_PARTIAL_MESSAGES:-on}" != "off" ] \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--include-partial-messages"; then
+            _loki_claude_argv+=("--include-partial-messages")
+        fi
         case "${PROVIDER_NAME:-claude}" in
             claude)
                 # Claude: Full features with stream-json output and agent tracking
@@ -11365,6 +11385,12 @@ def process_stream():
     init_orchestrator()
     print(f"{MAGENTA}[Orchestrator Active]{NC} Main agent started", flush=True)
 
+    # v7.8.0: track whether the current assistant message text was already
+    # streamed live via --include-partial-messages stream_event deltas, so the
+    # final assistant block does not re-print it. Reset after each assistant
+    # message. Stays False when partial messages are off (no stream_event lines).
+    streamed_text_blocks = False
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -11373,6 +11399,29 @@ def process_stream():
             data = json.loads(line)
             msg_type = data.get("type", "")
 
+            # v7.8.0: --include-partial-messages emits incremental stream_event
+            # records (content_block_delta) BEFORE the final assistant message.
+            # Render the delta text live so the dashboard/terminal shows progress
+            # in real time, and remember that we streamed it so the final
+            # assistant block does not print the same text again (double-print).
+            # Purely additive: if partial messages are off, no stream_event lines
+            # arrive and this branch never fires.
+            if msg_type == "stream_event":
+                ev = data.get("event", {})
+                ev_type = ev.get("type")
+                if ev_type == "message_start":
+                    # New message beginning: reset the streamed-text tracker so
+                    # the deltas of this message are tracked independently.
+                    streamed_text_blocks = False
+                elif ev_type == "content_block_delta":
+                    delta = ev.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        dtext = delta.get("text", "")
+                        if dtext:
+                            print(dtext, end="", flush=True)
+                            streamed_text_blocks = True
+                continue
+
             if msg_type == "assistant":
                 # Extract and print assistant text
                 message = data.get("message", {})
@@ -11380,7 +11429,9 @@ def process_stream():
                 for item in content:
                     if item.get("type") == "text":
                         text = item.get("text", "")
-                        if text:
+                        # Skip if we already streamed this text via stream_event
+                        # deltas (avoids printing the full message a second time).
+                        if text and not streamed_text_blocks:
                             print(text, end="", flush=True)
                     elif item.get("type") == "tool_use":
                         tool = item.get("name", "unknown")

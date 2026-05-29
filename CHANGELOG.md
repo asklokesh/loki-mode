@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.8.0] - 2026-05-29
+
+MINOR release. Two additive Claude Code feature adoptions. Both are gated on
+the installed CLI supporting the flag and fall back to the exact current
+behavior, so nothing changes for users on an older Claude Code.
+
+A prior audit of Claude Code 2.1.157 vs Loki's usage confirmed NOTHING is
+broken or missing-critical: all flags Loki passes are active with unchanged
+semantics and the stream-json output schema (which Loki's parser consumes) is
+intact. These two adoptions are pure improvements.
+
+### Added
+
+- **`--setting-sources user,project,local`** on the Claude provider invocation
+  (when supported). Pins which settings sources Claude Code loads so Loki's
+  invocation does not drift if the implicit default changes upstream.
+  Behavior-neutral (these are the standard sources). Opt out with
+  `LOKI_SETTING_SOURCES=off`.
+- **`--include-partial-messages`** so the agent's output streams to the
+  dashboard and terminal in real time (incremental deltas) instead of appearing
+  only at message boundaries. The stream-json parser gained an additive
+  `stream_event` branch that renders `content_block_delta` text live and
+  de-dupes against the final assistant message (no double-print). When partial
+  messages are off or unsupported, no `stream_event` lines arrive and the parser
+  behaves exactly as before. Opt out with `LOKI_PARTIAL_MESSAGES=off`.
+
+### Deferred
+
+- Session continuity (`--session-id` / `--resume`) was investigated and
+  deliberately NOT adopted: the token savings it would offer are already
+  captured by Loki's existing prompt-cache strategy (a resumed call gets a
+  near-full cache hit on the static prefix anyway), while session resume would
+  add unbounded transcript growth and a cache-miss trap. Verified by repro; may
+  revisit with real-run A/B data.
+
 ## [7.7.34] - 2026-05-29
 
 PATCH release. Stop now actually stops the autonomous AGENT, not just the
