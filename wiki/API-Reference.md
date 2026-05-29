@@ -66,7 +66,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "7.7.31",
+  "version": "7.7.32",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
@@ -248,6 +248,11 @@ List tasks from session state files (dashboard-state.json and queue/ directory).
   }
 ]
 ```
+
+When present on the task, enrichment fields are also included (used by the
+dashboard task-detail modal): `acceptance_criteria`, `notes`, `logs`,
+`provider`, `startedAt`, `user_story`, `source`, `specification`,
+`full_content` (v7.7.32).
 
 ---
 

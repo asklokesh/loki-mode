@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.32] - 2026-05-29
+
+PATCH release. Fixes the dashboard task-detail modal showing only the title
+(no description, acceptance criteria, or logs).
+
+### Fixed
+
+- **The task-detail modal rendered only the title and a type tag.** When the
+  dashboard served tasks from `dashboard-state.json` (the source for a live
+  `loki start` session), `/api/tasks` read the task description from
+  `payload.description` and dropped every enrichment field. But `run.sh` writes
+  `description`, `acceptance_criteria`, `notes`, `logs`, `provider`, and
+  `startedAt` at the TOP LEVEL of the task object, so the description came back
+  empty and the modal had nothing to show. The richer queue-file path was also
+  skipped because the stripped entry claimed the task id first. `/api/tasks`
+  now reads enrichment from the top level (with a `payload.*` fallback for
+  legacy entries) and passes through `acceptance_criteria`, `notes`, `logs`,
+  `provider`, `startedAt`, and friends. The modal already renders these
+  sections; it was being starved of data. Verified against a live session: the
+  iteration task's modal now shows its description, 4 acceptance criteria, and
+  logs.
+
 ## [7.7.31] - 2026-05-29
 
 PATCH release. Makes the dashboard Stop button (and `loki stop`) take effect

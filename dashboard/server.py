@@ -1496,15 +1496,30 @@ async def list_tasks(
                 for i, task in enumerate(task_groups.get(group_key, [])):
                     task_id = task.get("id", f"{group_key}-{i}")
                     payload = task.get("payload", {})
-                    all_tasks.append({
+                    # v7.7.32: read enrichment fields from the TOP LEVEL of the
+                    # task object (where run.sh writes them), falling back to
+                    # payload only for legacy entries. Previously description was
+                    # read solely from payload.description, so iteration tasks
+                    # (which carry a top-level description + acceptance_criteria)
+                    # rendered an empty modal. Pass through the same enrichment
+                    # fields the queue-file path emits so the detail modal is
+                    # populated regardless of which source wins.
+                    task_entry = {
                         "id": task_id,
                         "title": task.get("title", payload.get("action", task.get("type", "Task"))),
-                        "description": payload.get("description", ""),
+                        "description": task.get("description", payload.get("description", "")),
                         "status": mapped_status,
-                        "priority": payload.get("priority", "medium"),
+                        "priority": task.get("priority", payload.get("priority", "medium")),
                         "type": task.get("type", "task"),
                         "position": i,
-                    })
+                    }
+                    for _f in ("acceptance_criteria", "notes", "logs", "user_story",
+                               "project", "source", "specification", "provider",
+                               "startedAt", "full_content"):
+                        _v = task.get(_f)
+                        if _v not in (None, "", [], {}):
+                            task_entry[_f] = _v
+                    all_tasks.append(task_entry)
         except (json.JSONDecodeError, KeyError):
             pass
 
