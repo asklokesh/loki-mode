@@ -237,6 +237,12 @@ export async function dispatchClaudeAgents(
     "The JSON must conform to the schema passed via --json-schema.",
   ].join("\n");
 
+  // NOTE (v7.7.31): council voters deliberately do NOT go through
+  // buildAutoFlags(), so they never receive the --append-system-prompt autonomy
+  // override. A reviewer/judge must keep its ability to say "not done" or raise
+  // a CONCERN; injecting "do NOT refuse, do NOT ask" would bias voters toward
+  // APPROVE and defeat the council's adversarial purpose. Do not route voters
+  // through the auto-flags builder.
   const argv = [
     "claude",
     "--dangerously-skip-permissions",

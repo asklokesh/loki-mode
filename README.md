@@ -38,6 +38,26 @@
 
 ## Get Started in 30 Seconds
 
+**Prerequisites**
+
+Loki drives a coding agent CLI and orchestrates real builds, so it needs a few tools on your PATH. `loki doctor` checks all of these and tells you what is missing.
+
+Required:
+
+- An agent provider CLI (at least one): [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended), or OpenAI Codex CLI (`codex`), Cline, or Aider.
+- Python 3.10+ (`python3`) for the dashboard, memory system, and orchestration helpers.
+- Git 2.x (`git`) for checkpoints and worktrees.
+- `curl` for installation and network calls.
+
+Recommended:
+
+- Bun 1.3.0+ (`bun`) for the fast runtime (the recommended install path below installs it).
+- Node.js 18+ and npm if you install via npm instead of Bun.
+- `jq` for nicer JSON handling in shell flows.
+- Docker if you want Loki's App Runner to run containerized projects, or to run Loki itself from the published image.
+
+You also need credentials for whichever provider you use (for Claude Code, an authenticated `claude` login or `ANTHROPIC_API_KEY`).
+
 **Recommended (Bun, fastest):**
 
 ```bash
@@ -66,7 +86,7 @@ loki quick "build a landing page with a signup form"
 |--------|---------|-------|
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest. v8 will be Bun-only. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker** | `docker pull asklokesh/loki-mode:7.5.11 && docker run --rm asklokesh/loki-mode:7.5.11 start prd.md` | Bun pre-installed in image |
+| **Docker** | `docker pull asklokesh/loki-mode:7.7.31 && docker run --rm asklokesh/loki-mode:7.7.31 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -85,12 +105,12 @@ See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 
 ## Runtime Architecture
 
-Loki Mode is in the middle of a phased migration from a Bash-based runtime to a TypeScript/Bun runtime. The work is happening on the `feat/bun-migration` branch and is being shipped incrementally.
+Loki Mode is in a phased migration from a Bash-based runtime to a TypeScript/Bun runtime. The migration has merged to `main` and ships incrementally with each release.
 
 **What ships today:**
 
-- A small set of read-only commands is routed to the Bun runtime when `bun` is on `PATH`. The router lives in `bin/loki` and currently routes: `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider` (covers `provider show` and `provider list`), `memory` (covers `memory list` and `memory index`).
-- Every other command continues to execute on the existing Bash CLI (`autonomy/loki`).
+- Commands routed to the Bun runtime when `bun` is on `PATH` (the router lives in `bin/loki`): `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider` (covers `provider show` and `provider list`), `memory` (covers `memory list` and `memory index`), `rollback`, `kpis`, and `internal`.
+- Every other command continues to execute on the existing Bash CLI (`autonomy/loki`), including the autonomous `loki start` / `loki run` loop which remains the Bash orchestrator (`autonomy/run.sh`).
 - If `bun` is not on `PATH`, the shim falls through to Bash silently. Existing users without Bun installed see no behavior change.
 
 **Rollback flag:**
@@ -126,7 +146,7 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode:7.5.11` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.7.31` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 
@@ -137,7 +157,7 @@ See the full [Installation Guide](docs/INSTALLATION.md).
 <details>
 <summary><strong>Supported spec formats</strong></summary>
 
-A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the v7.5.11 CLI accepts.
+A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the CLI accepts.
 
 | Format | Example | Notes |
 |--------|---------|-------|

@@ -47,6 +47,7 @@ Complete reference for all Loki Mode environment variables.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_STAGED_AUTONOMY` | `false` | Require approval before execution |
+| `LOKI_AUTONOMY_OVERRIDE` | `on` | When `on`, Loki passes `--append-system-prompt` to the Claude provider authorizing autonomous operation so the agent does not refuse work due to a conflicting global `~/.claude/CLAUDE.md` (v7.7.31). The override is narrow: it does not relax safety rules, keeps commits local-only and staged by path, and leaves destructive/irreversible actions out of scope. Set to `off` to disable. |
 | `LOKI_AUDIT_LOG` | `true` | Enable audit logging |
 | `LOKI_AUDIT_DISABLED` | `false` | Disable audit logging |
 | `LOKI_MAX_PARALLEL_AGENTS` | `10` | Max concurrent agents |

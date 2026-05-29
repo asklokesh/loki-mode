@@ -2166,7 +2166,8 @@ async def list_running_projects():
         path = p.get("path", "")
         pid = p.get("pid")
         running = False
-        if isinstance(pid, int) and pid > 0:
+        has_pid = isinstance(pid, int) and pid > 0
+        if has_pid:
             try:
                 os.kill(pid, 0)
                 running = True  # signal 0 delivered -> pid alive
@@ -2174,8 +2175,14 @@ async def list_running_projects():
                 running = True  # pid exists but owned by another user
             except (ProcessLookupError, OSError):
                 running = False  # ESRCH -> dead
-        # A project is also "live" if its .loki/session.json says running.
-        if not running and path:
+        # session.json is only a FALLBACK for legacy sessions with no recorded
+        # pid. v7.7.31: when a pid IS recorded but dead, that pid is
+        # authoritative -- the orchestrator is gone, so do NOT let a stale
+        # session.json (status still "running" after a hard kill / crash) flip
+        # this back to running. Otherwise the switcher shows a dead session as
+        # running and the Stop button targets a dead pid. Only consult
+        # session.json when no pid was ever recorded.
+        if not running and not has_pid and path:
             try:
                 sess = _Path(path) / ".loki" / "session.json"
                 if sess.is_file():

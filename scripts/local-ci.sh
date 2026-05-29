@@ -159,6 +159,11 @@ run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sent
 # cross-folder kill bug and asserts it is fixed (stop A leaves B alive).
 run_check "tests/test-stop-scoping.sh (stop scoping + per-project stop)" "bash tests/test-stop-scoping.sh 2>&1 | tail -3"
 
+# v7.7.31: STOP-aware countdown + dead-pid authoritative + autonomy override
+# (--append-system-prompt) parity. Verifies the dashboard Stop button responds
+# promptly and the autonomous agent does not refuse work due to global CLAUDE.md.
+run_check "tests/test-autonomy-and-stop.sh (stop responsiveness + agent autonomy)" "bash tests/test-autonomy-and-stop.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------

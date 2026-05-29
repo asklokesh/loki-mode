@@ -119,7 +119,7 @@ LOKI_PROVIDER=codex loki start ./prd.md
 6. Backward compatibility gate (healing mode - behavioral preservation, v6.67.0)
 
 ### Legacy System Healing (introduced v6.67.0)
-- **Current in v7.7.30**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
+- **Current in v7.7.31**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
 - **Inspired by**: Amazon AGI Lab's "How Agentic AI Helps Heal Systems We Can't Replace"
 - **CLI**: `loki heal <path> [--phase archaeology|stabilize|isolate|modernize|validate]` (`autonomy/loki:9916`)
 - **Principles**: Friction-as-semantics, failure-first learning, universal adapters, incremental healing, institutional knowledge preservation
@@ -300,7 +300,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.7.30 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.7.31 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

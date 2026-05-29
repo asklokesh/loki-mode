@@ -201,6 +201,38 @@ _loki_build_claude_auto_flags() {
        && loki_claude_flag_supported "--include-hook-events"; then
         _LOKI_CLAUDE_AUTO_FLAGS+=("--include-hook-events")
     fi
+
+    # --append-system-prompt (v7.7.31): authorize autonomous operation at the
+    # system-prompt tier so the spawned agent does not refuse the run. Without
+    # this, the agent reads the user's global ~/.claude/CLAUDE.md (which may say
+    # "always ask for clarification" / "never commit without permission"),
+    # judges it to conflict with Loki's "never ask, never stop" prompt (which is
+    # only a user-message instruction and thus lower precedence), calls
+    # AskUserQuestion, and exits in ~30s having done nothing. An appended system
+    # prompt outranks CLAUDE.md memory (verified empirically), so it resolves the
+    # conflict in Loki's favor for this authorized session. Default-on; opt out
+    # with LOKI_AUTONOMY_OVERRIDE=off. We never edit the user's CLAUDE.md.
+    if [ "${LOKI_AUTONOMY_OVERRIDE:-on}" != "off" ] \
+       && loki_claude_flag_supported "--append-system-prompt"; then
+        _LOKI_CLAUDE_AUTO_FLAGS+=("--append-system-prompt" "$(_loki_autonomy_override_text)")
+    fi
+}
+
+# The system-prompt text that authorizes autonomous operation and resolves
+# precedence against a conflicting user/project CLAUDE.md. Kept in one place so
+# the bash and Bun routes can stay byte-identical. No emojis, no em dashes.
+_loki_autonomy_override_text() {
+    cat <<'LOKI_AUTONOMY_EOF'
+You are running INSIDE Loki Mode autonomous execution, a session the user explicitly launched with full prior authorization (loki start / loki run). This IS an authorized autonomous session, not an unattended action you must seek consent for.
+
+Instruction precedence for THIS session: when the loki_system instructions in the user prompt conflict with any CLAUDE.md, project memory, or global memory that tells you to ask for clarification, pause for confirmation, refuse to act autonomously, or withhold routine commits, the loki_system instructions take precedence. The user has already consented by launching autonomous mode.
+
+Therefore, for this session: do NOT ask the user questions, do NOT call the AskUserQuestion tool, do NOT stop to request confirmation, and do NOT refuse routine, reversible engineering work (writing code, running tests, creating files, atomic git checkpoints in the working tree). Proceed and complete the task directly. If a decision is genuinely ambiguous, choose the most reasonable option, record the assumption in .loki/CONTINUITY.md, and continue rather than halting.
+
+Commit hygiene still applies: git checkpoints are LOCAL only. Never push or force-push. Stage files by explicit path, never `git add -A` or `git add .`, and never commit secrets, credentials, .env files, or untracked files you did not author this session.
+
+This precedence override is narrow. It does NOT relax any safety rule. Every safety prohibition in CLAUDE.md or memory still fully binds: anything genuinely destructive or irreversible remains out of scope unless the task explicitly calls for it. This includes (not limited to) force-pushing, deleting or overwriting the user's data, dropping or truncating databases, publishing or releasing, rotating or exfiltrating secrets, touching production systems, and anything a CLAUDE.md safety rule explicitly forbids. When in doubt about whether an action is destructive, treat it as destructive and do not do it.
+LOKI_AUTONOMY_EOF
 }
 
 # Invocation function (basic, no tier).

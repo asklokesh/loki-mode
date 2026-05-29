@@ -11204,13 +11204,31 @@ except Exception as exc:
         local exit_code=0
         # v7.5.12: Mark provider pipeline as active so SIGINT trap can kill it.
         LOKI_PROVIDER_ACTIVE=1
+        # v7.7.31: authorize autonomous operation at the system-prompt tier so
+        # the spawned agent does not read the user's global ~/.claude/CLAUDE.md,
+        # judge it to conflict with the loki_system prompt, call AskUserQuestion,
+        # and exit having done nothing. An appended system prompt outranks
+        # CLAUDE.md memory (verified empirically). Default-on; opt out with
+        # LOKI_AUTONOMY_OVERRIDE=off. Only added when the installed CLI supports
+        # the flag and the override helper is in scope (sourced via the provider).
+        # Build the claude flag list as an array. The base flags are always
+        # present so the array is never empty (empty "${arr[@]}" under `set -u`
+        # is an error on bash 3.2, the stock macOS shell). The autonomy override
+        # is appended conditionally.
+        local _loki_claude_argv=("--dangerously-skip-permissions" "--model" "$tier_param")
+        if [ "${LOKI_AUTONOMY_OVERRIDE:-on}" != "off" ] \
+           && type _loki_autonomy_override_text >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--append-system-prompt"; then
+            _loki_claude_argv+=("--append-system-prompt" "$(_loki_autonomy_override_text)")
+        fi
         case "${PROVIDER_NAME:-claude}" in
             claude)
                 # Claude: Full features with stream-json output and agent tracking
                 # Uses dynamic tier for model selection based on RARV phase
                 # Pass tier to Python via environment for dashboard display
                 { LOKI_CURRENT_MODEL="$tier_param" \
-                claude --dangerously-skip-permissions --model "$tier_param" -p "$prompt" \
+                claude "${_loki_claude_argv[@]}" -p "$prompt" \
             --output-format stream-json --verbose 2>&1 | \
             tee -a "$log_file" "$agent_log" "$iter_output" | \
             python3 -u -c '
@@ -11948,21 +11966,34 @@ if __name__ == "__main__":
 
         log_info "Press Ctrl+C to cancel"
 
-        # Countdown with progress
+        # Countdown with progress.
+        # v7.7.31: the countdown now sleeps in short 1s ticks and checks the
+        # STOP/PAUSE signal on every tick. Previously it slept in 10s (or 60s
+        # for long waits) chunks and never read the STOP file, so a dashboard
+        # Stop button or `loki stop` issued DURING the inter-iteration wait did
+        # nothing for up to 60s, and a SIGTERM was deferred by bash until the
+        # current sleep chunk finished. Short ticks make Stop take effect within
+        # ~1s and let the SIGTERM trap fire promptly.
         local remaining=$wait_time
-        local interval=10
-        # Use longer interval for long waits
-        if [ $wait_time -gt 1800 ]; then
-            interval=60
-        fi
-
+        local _loki_dir_wait="${TARGET_DIR:-.}/.loki"
+        local _last_shown=-1
         while [ $remaining -gt 0 ]; do
-            local human_remaining=$(format_duration $remaining)
-            printf "\r${YELLOW}Resuming in ${human_remaining}...${NC}          "
-            # BUG-RUN-007: Prevent timer from overshooting into negative
-            local sleep_time=$((remaining < interval ? remaining : interval))
-            sleep $sleep_time
-            remaining=$((remaining - sleep_time))
+            # Honor an immediate stop/pause requested during the wait (dashboard
+            # Stop button, `loki stop`, or a STOP file written by any control).
+            if [ -f "$_loki_dir_wait/STOP" ] || [ -f "$_loki_dir_wait/PAUSE" ]; then
+                echo ""
+                log_warn "Stop/pause signal detected during wait - returning to control loop"
+                break
+            fi
+            # Refresh the human-readable countdown at most once per 10s of change
+            # so we do not spam the terminal while still ticking every second.
+            if [ $((remaining % 10)) -eq 0 ] || [ "$_last_shown" -ne "$remaining" ]; then
+                local human_remaining=$(format_duration $remaining)
+                printf "\r${YELLOW}Resuming in ${human_remaining}...${NC}          "
+                _last_shown=$remaining
+            fi
+            sleep 1
+            remaining=$((remaining - 1))
         done
         echo ""
 

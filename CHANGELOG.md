@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.31] - 2026-05-29
+
+PATCH release. Makes the dashboard Stop button (and `loki stop`) take effect
+within ~1s instead of up to 60s, stops a dead session from showing as
+"running" in the switcher, and fixes the autonomous agent refusing to do work
+because it read the user's global CLAUDE.md.
+
+### Fixed
+
+- **Dashboard Stop button (and `loki stop`) did not stop execution
+  promptly.** The inter-iteration countdown slept in 10s chunks (60s for long
+  waits) and never checked the STOP file, and bash deferred the Stop endpoint's
+  SIGTERM until the current sleep chunk finished. So a Stop issued during the
+  wait did nothing for up to 60s, and the app the runner had started kept
+  logging the whole time. The countdown now ticks every 1s and checks the
+  STOP/PAUSE signal on every tick, so Stop and SIGTERM take effect within ~1s.
+  Reproduced and verified.
+- **A dead session showed as "running" in the multi-project switcher.**
+  `/api/running-projects` fell back to `session.json` status when a recorded
+  pid was dead, so a hard-killed or crashed session whose `session.json` still
+  said "running" stayed green and the Stop button targeted a dead pid. A
+  recorded-but-dead pid is now authoritative; the `session.json` fallback only
+  applies to legacy sessions that never recorded a pid.
+- **The autonomous agent refused to work and exited in ~30s.** When `loki
+  start` spawned the Claude provider, the agent read the user's global
+  `~/.claude/CLAUDE.md` (rules like "always ask for clarification", "never
+  commit without permission"), judged it to conflict with Loki's "never ask,
+  never stop" prompt (which was only a user-message instruction, lower
+  precedence), called AskUserQuestion, and exited having done nothing. Loki now
+  passes `--append-system-prompt` with an authorization + precedence override
+  so the loki_system instructions win for the authorized autonomous session.
+  An appended system prompt outranks CLAUDE.md memory (verified empirically:
+  with a conflicting CLAUDE.md, the agent refused without the flag and proceeded
+  with it). Default-on; opt out with `LOKI_AUTONOMY_OVERRIDE=off`. Loki never
+  edits the user's CLAUDE.md. Applied on both the bash and Bun routes (override
+  text kept byte-identical between `providers/claude.sh` and
+  `loki-ts/src/providers/claude_flags.ts`). The override is deliberately
+  narrow: it does not relax any safety rule, it keeps git checkpoints local
+  only (never push/force-push) and staged by explicit path (never `git add
+  -A`), and it leaves destructive or irreversible actions (deleting data,
+  dropping databases, publishing, rotating secrets, touching production) out of
+  scope. Note: with the override on, `loki start` will make local atomic git
+  checkpoints in the target repo as it works (this is Loki's existing RALPH
+  checkpoint behavior, now unblocked); it never pushes. Council voter agents do
+  NOT receive the override, so reviewers keep their ability to raise CONCERN or
+  REJECT.
+
+### Docs
+
+- README install section now lists prerequisites (provider CLI, Python 3.10+,
+  Git, curl; recommended Bun, Node/npm, jq, Docker) before the install
+  commands. Refreshed the Runtime Architecture section to reflect that the Bun
+  migration is on `main` (not a feature branch) and the current routed-command
+  set, and fixed stale Docker image tags in the install table.
+
 ## [7.7.30] - 2026-05-28
 
 PATCH release. Fixes `loki stop` killing every folder's session machine-wide,
