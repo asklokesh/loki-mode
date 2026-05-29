@@ -387,6 +387,50 @@ function generateStandaloneHTML(bundleCode) {
       border-color: var(--loki-accent);
       box-shadow: 0 0 0 3px var(--loki-accent-glow);
     }
+    /* v7.7.30 per-project stop list */
+    .project-stop-list {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-left: 10px;
+    }
+    .project-stop-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px 3px 10px;
+      background: var(--loki-bg-primary);
+      border: 1px solid var(--loki-border);
+      border-radius: 14px;
+      font-size: 11px;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--loki-text-primary);
+    }
+    .project-stop-row .project-stop-name {
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .project-stop-row button {
+      padding: 2px 8px;
+      background: transparent;
+      border: 1px solid var(--loki-border);
+      border-radius: 10px;
+      font-size: 11px;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--loki-text-secondary);
+      cursor: pointer;
+    }
+    .project-stop-row button:hover:not(:disabled) {
+      border-color: #d64545;
+      color: #d64545;
+    }
+    .project-stop-row button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
 
     /* Main Content */
     .main-content {
@@ -640,6 +684,11 @@ function generateStandaloneHTML(bundleCode) {
         <select class="project-switcher" id="project-switcher" title="Switch project" aria-label="Switch project">
           <option value="">All projects (current dir)</option>
         </select>
+        <!-- v7.7.30 per-project stop: a compact list of running projects, each
+             with a Stop button that gracefully halts that project's runner
+             without affecting any other folder. Built at runtime; empty when
+             no project is running. -->
+        <div class="project-stop-list" id="project-stop-list" aria-label="Running projects"></div>
       </div>
 
       <nav class="nav-links">
@@ -1197,6 +1246,41 @@ document.addEventListener('DOMContentLoaded', function() {
   (function initProjectSwitcher() {
     var sel = document.getElementById('project-switcher');
     if (!sel) return;
+    var stopList = document.getElementById('project-stop-list');
+    // v7.7.30: build a per-row Stop control for each running project using
+    // createElement + textContent only (never innerHTML for project-supplied
+    // strings), so a project name can never inject markup.
+    function buildStopList(projects) {
+      if (!stopList) return;
+      while (stopList.firstChild) stopList.removeChild(stopList.firstChild);
+      projects.forEach(function(p){
+        if (p.running !== true) return;
+        var row = document.createElement('div');
+        row.className = 'project-stop-row';
+        var name = document.createElement('span');
+        name.className = 'project-stop-name';
+        name.textContent = p.name || p.path || 'project';
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Stop';
+        if (p.id) btn.setAttribute('data-id', p.id);
+        btn.addEventListener('click', function(){
+          if (!p.id) return;
+          btn.disabled = true;
+          btn.textContent = 'Stopping...';
+          fetch('/api/running-projects/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: p.id })
+          })
+            .then(function(){ refresh(); })
+            .catch(function(){ btn.disabled = false; btn.textContent = 'Stop'; });
+        });
+        row.appendChild(name);
+        row.appendChild(btn);
+        stopList.appendChild(row);
+      });
+    }
     function refresh() {
       fetch('/api/running-projects')
         .then(function(r){ return r.ok ? r.json() : null; })
@@ -1217,6 +1301,7 @@ document.addEventListener('DOMContentLoaded', function() {
             sel.appendChild(o);
           });
           if (!data.active_project_dir && current === '') sel.value = '';
+          buildStopList(data.projects);
         })
         .catch(function(){ /* offline / no endpoint: leave as-is */ });
     }

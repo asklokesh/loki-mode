@@ -1781,21 +1781,32 @@ _stop_session_by_id() {
 # With session_id: stops only that specific session
 cmd_stop() {
     local target_session=""
+    local stop_all=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki stop${NC} - Stop running sessions (v6.4.0)"
+                echo -e "${BOLD}loki stop${NC} - Stop running sessions (v7.7.30)"
                 echo ""
-                echo "Usage: loki stop [session-id]"
+                echo "Usage: loki stop [session-id] [--all]"
                 echo ""
-                echo "  loki stop          Stop all running sessions"
-                echo "  loki stop 52       Stop only session #52"
-                echo "  loki stop 54       Stop only session #54"
+                echo "  loki stop          Stop ONLY the current folder's session."
+                echo "                     Other folders keep running. Marks this"
+                echo "                     project stopped in the dashboard registry."
+                echo "  loki stop 52       Stop only session #52 in this folder."
+                echo "  loki stop --all    Stop EVERY loki runner on this machine"
+                echo "                     (legacy machine-wide behavior)."
                 echo ""
-                echo "Use 'loki status' to see all running sessions."
+                echo "The shared dashboard stays up if other projects are still"
+                echo "running; it is stopped only when no project remains (or --all)."
+                echo ""
+                echo "Use 'loki status' to see this folder's sessions."
                 exit 0
+                ;;
+            --all)
+                stop_all=true
+                shift
                 ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
@@ -1876,11 +1887,6 @@ cmd_stop() {
             fi
         done
 
-        # Also kill any orphaned loki-run temp scripts (SIGTERM then SIGKILL)
-        pkill -f "loki-run-" 2>/dev/null || true
-        sleep 0.5
-        pkill -9 -f "loki-run-" 2>/dev/null || true
-
         # Mark session.json as stopped (skill-invoked sessions)
         # BUG-ST-008: Atomic session.json update via temp file + mv (matches run.sh)
         if [ -f "$LOKI_DIR/session.json" ]; then
@@ -1900,15 +1906,69 @@ except (json.JSONDecodeError, OSError): pass
 " 2>/dev/null || true
         fi
 
+        # v7.7.30: mark THIS project stopped in the shared dashboard registry
+        # so the multi-project switcher reflects it. Best-effort, never fatal.
+        # Honors LOKI_SKIP_PROJECT_REGISTRY (matches run.sh registration).
+        if [ -z "${LOKI_SKIP_PROJECT_REGISTRY:-}" ] && command -v python3 >/dev/null 2>&1; then
+            LOKI_REG_TARGET="$(pwd)" LOKI_REG_SKILL="${SKILL_DIR:-$PROJECT_DIR}" \
+            python3 - <<'PYSTOP' >/dev/null 2>&1 || true
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    registry.mark_project_stopped(os.path.abspath(os.environ["LOKI_REG_TARGET"]))
+except Exception:
+    pass
+PYSTOP
+        fi
+
         # Clean up control files
         rm -f "$LOKI_DIR/STOP" "$LOKI_DIR/PAUSE" "$LOKI_DIR/PAUSED.md" 2>/dev/null
 
-        # Kill dashboard if running. Check BOTH the project-local in-build
-        # dashboard (.loki/dashboard) and the standalone one
-        # (~/.loki/dashboard) so cleanup never leaves an orphan regardless of
-        # which path started it.
+        # Kill dashboard if running.
+        # v7.7.30: the project-local dashboard (.loki/dashboard) belongs solely
+        # to this folder and is ALWAYS killed. The shared standalone dashboard
+        # (~/.loki/dashboard) is killed ONLY when no OTHER registered project is
+        # still running, so we never tear down a dashboard other folders need.
+        # For --all, the shared dashboard is always killed (tear everything down).
+        local _kill_shared_dash=false
+        if [ "$stop_all" = true ]; then
+            _kill_shared_dash=true
+        elif command -v python3 >/dev/null 2>&1; then
+            # Query the registry (after mark_project_stopped excluded this
+            # project) for any OTHER project whose pid is still alive.
+            local _dash_decision
+            _dash_decision=$(LOKI_REG_SKILL="${SKILL_DIR:-$PROJECT_DIR}" \
+                python3 - <<'PYDASH' 2>/dev/null || true
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    alive = 0
+    for p in registry.list_projects(include_inactive=True):
+        pid = p.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            try:
+                os.kill(pid, 0)
+                alive += 1
+            except OSError:
+                pass
+    print("CLEAR" if alive == 0 else "KEEP")
+except Exception:
+    print("CLEAR")
+PYDASH
+            )
+            [ "$_dash_decision" = "CLEAR" ] && _kill_shared_dash=true
+        else
+            # python3 unavailable: fall back to legacy behavior (kill shared)
+            # to avoid leaking the shared dashboard on minimal systems.
+            _kill_shared_dash=true
+        fi
+
         local _dash_pidf
-        for _dash_pidf in "$LOKI_DIR/dashboard/dashboard.pid" "${HOME}/.loki/dashboard/dashboard.pid"; do
+        local _dash_targets=("$LOKI_DIR/dashboard/dashboard.pid")
+        [ "$_kill_shared_dash" = true ] && _dash_targets+=("${HOME}/.loki/dashboard/dashboard.pid")
+        for _dash_pidf in "${_dash_targets[@]}"; do
             if [ -f "$_dash_pidf" ]; then
                 local dash_pid
                 dash_pid=$(cat "$_dash_pidf" 2>/dev/null)
@@ -1966,6 +2026,16 @@ except (json.JSONDecodeError, OSError): pass
         else
             echo "Start a session with: loki start"
         fi
+    fi
+
+    # v7.7.30: --all preserves the legacy machine-wide kill. It runs even when
+    # the current folder has no live session (the "clean everything" use case),
+    # reaping every folder's orphaned loki-run-* temp script (SIGTERM, SIGKILL).
+    if [ "$stop_all" = true ]; then
+        pkill -f "loki-run-" 2>/dev/null || true
+        sleep 0.5
+        pkill -9 -f "loki-run-" 2>/dev/null || true
+        echo -e "${RED}--all: signalled all loki-run-* processes on this machine.${NC}"
     fi
 }
 

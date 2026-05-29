@@ -9,6 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.7.30] - 2026-05-28
+
+PATCH release. Fixes `loki stop` killing every folder's session machine-wide,
+adds per-project Stop controls to the multi-project dashboard switcher, and
+makes a deliberate Ctrl+C exit tear down its own dashboard and registry entry
+without touching other folders.
+
+Note: the v7.7.29 changelog flagged a "RARV provider-exit-code finding" for
+this release. That audit finding was investigated and EMPIRICALLY DISPROVEN
+under `set -o pipefail` (the provider's real exit propagates via pipefail in
+every failure case; no masking occurs). No RARV change ships. v7.7.30 instead
+addresses the verified multi-folder `loki stop` issue users reported.
+
+### Fixed
+
+- **`loki stop` stopped EVERY folder's session, not just the current one.**
+  With no session-id, `cmd_stop` ran an unconditional machine-global
+  `pkill -f "loki-run-"` that matched every folder's runner temp script
+  (the script name carries no folder identity). Running `loki stop` in one
+  repo silently killed unrelated Loki sessions in other repos. `loki stop`
+  is now FOLDER-SCOPED: it stops only the current folder's runner, monitors,
+  and app-runner (via the folder-scoped pid files that already exist), and
+  marks that project stopped in the dashboard registry. Reproduced and
+  verified: stopping folder A leaves folder B's session alive.
+
+### Added
+
+- **`loki stop --all`** preserves the legacy machine-wide behavior for users
+  who want to tear down every Loki runner at once. It works even from a
+  folder with no live session (the "clean everything" case).
+- **Per-project Stop button in the dashboard switcher.** Each running project
+  in the multi-project switcher gets a Stop control that calls a new
+  `POST /api/running-projects/stop` endpoint. The endpoint resolves the
+  target project through the registry, writes its STOP file, runs the same
+  graceful SIGTERM -> 5s -> SIGKILL dance as `/api/control/stop` against that
+  project's recorded pid, and marks it stopped. Stopping one project never
+  affects another. Rows are built with textContent only (no innerHTML).
+- **Shared-dashboard preservation.** A folder-scoped stop (or a Ctrl+C exit)
+  now keeps the shared standalone dashboard (`~/.loki/dashboard`) up while any
+  other registered project is still running, and only stops it when no
+  project remains. `loki stop --all` always stops it.
+
+### Changed
+
+- **Graceful Ctrl+C / deliberate-exit teardown.** A STOP-file exit or a
+  double-Ctrl+C now also tears down this project's dashboard contribution and
+  marks its registry entry stopped, using the shared-dashboard preservation
+  rule above. The perpetual single-Ctrl+C (kill current provider invocation,
+  keep looping) and supervised pause behaviors are unchanged. No teardown
+  path uses a blanket pkill, so a Ctrl+C in one folder never stops another.
+
+### Distribution
+
+All channels (npm, Docker, Homebrew) ship the same fix: the change lives in
+`autonomy/loki`, `autonomy/run.sh`, `dashboard/server.py`,
+`dashboard/registry.py`, and the rebuilt `dashboard/static/index.html`. The
+Bun route inherits folder-scoping for free because `loki stop` falls through
+to the bash CLI (a parity test asserts it is never intercepted).
+
 ## [7.7.29] - 2026-05-28
 
 PATCH release. Dashboard <-> CLI <-> Docker integration fixes plus a

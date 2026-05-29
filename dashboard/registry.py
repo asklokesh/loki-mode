@@ -189,6 +189,40 @@ def update_last_accessed(identifier: str) -> Optional[dict]:
     return None
 
 
+def mark_project_stopped(identifier: str) -> Optional[dict]:
+    """
+    Mark a project's runtime status as stopped and clear its live pid.
+
+    Used when a session ends (loki stop, dashboard per-project stop, or a
+    graceful Ctrl+C teardown) so the multi-project switcher reflects the
+    project as not-running immediately, without waiting for pid-liveness to
+    catch up. The entry is intentionally kept (not unregistered) so the
+    project stays selectable and re-registers cleanly on the next loki start.
+
+    Args:
+        identifier: Project ID, path, or alias
+
+    Returns:
+        The updated project entry, or None if no matching project was found.
+        Idempotent: marking an already-stopped project is a no-op that still
+        returns the entry.
+    """
+    registry = _load_registry()
+
+    for pid_key, project in registry["projects"].items():
+        if (
+            pid_key == identifier
+            or project["path"] == identifier
+            or project.get("alias") == identifier
+        ):
+            project["status"] = "stopped"
+            project["pid"] = None
+            project["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_registry(registry)
+            return project
+    return None
+
+
 def check_project_health(identifier: str) -> dict:
     """
     Check the health status of a project.

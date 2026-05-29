@@ -154,6 +154,11 @@ run_check "tests/test-cli-commands.sh (LOKI_LEGACY_BASH=1)" "LOKI_LEGACY_BASH=1 
 # Mirrors the test.yml shell-tests job; fast, no network, no real sentrux dep.
 run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sentrux-gate.sh 2>&1 | tail -3"
 
+# v7.7.30: folder-scoped `loki stop`, `loki stop --all`, per-project dashboard
+# stop endpoint, and the switcher Stop button. Headline T2 reproduces the
+# cross-folder kill bug and asserts it is fixed (stop A leaves B alive).
+run_check "tests/test-stop-scoping.sh (stop scoping + per-project stop)" "bash tests/test-stop-scoping.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------

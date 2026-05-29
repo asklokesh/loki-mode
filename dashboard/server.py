@@ -2205,6 +2205,122 @@ async def list_running_projects():
     return {"projects": out, "active_project_dir": active}
 
 
+class RunningProjectStopRequest(BaseModel):
+    """Schema for stopping a specific registered project from the switcher.
+
+    Exactly one of id or project_dir must be provided. id is preferred;
+    project_dir is accepted for symmetry with /api/focus. The provided value
+    is resolved through the dashboard registry, so an arbitrary filesystem
+    path is never used directly as a write target.
+    """
+    id: Optional[str] = None
+    project_dir: Optional[str] = None
+
+
+@app.post("/api/running-projects/stop", dependencies=[Depends(auth.require_scope("control"))])
+async def stop_running_project(request: Request, body: RunningProjectStopRequest):
+    """Stop a specific registered project (v7.7.30 per-project switcher stop).
+
+    Resolves the project via the dashboard registry (by id or path), writes a
+    STOP file into that project's .loki for a clean runner teardown, then runs
+    the graceful SIGTERM -> poll-5s -> SIGKILL dance against the recorded
+    orchestrator pid (not the dashboard's own _get_loki_dir). Marks the
+    project's session.json and registry entry stopped so the switcher reflects
+    it immediately.
+
+    Security: the STOP file is only ever written to the path already stored in
+    the registry for the resolved id, never to a caller-supplied path.
+    """
+    if not _control_limiter.check("control"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    identifier = (body.id or body.project_dir or "").strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="id or project_dir is required")
+
+    project = registry.get_project(identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    project_id = project.get("id")
+    audit.log_event(
+        action="stop",
+        resource_type="session",
+        details={"source": "api", "project_id": project_id},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    # Validate the registry-stored path is a real dir containing .loki before
+    # writing into it. Mirrors the /api/focus guard. If invalid we still mark
+    # the project stopped but skip the STOP-file write.
+    path = project.get("path", "")
+    loki_dir = None
+    if path:
+        p = _Path(path)
+        if p.is_dir() and (p / ".loki").is_dir():
+            loki_dir = p / ".loki"
+
+    pid = project.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        # Already not running: nothing to signal, just reconcile the registry.
+        registry.mark_project_stopped(project_id)
+        return {
+            "success": True,
+            "project_id": project_id,
+            "stopped": False,
+            "already_stopped": True,
+        }
+
+    # Write the STOP file so the runner's own cleanup STOP-branch fires for a
+    # clean teardown. Only into the registry-resolved .loki dir.
+    if loki_dir is not None:
+        try:
+            (loki_dir / "STOP").write_text(datetime.now(timezone.utc).isoformat())
+        except OSError:
+            pass
+
+    # Graceful dance against the recorded orchestrator pid.
+    stopped = False
+    try:
+        os.kill(pid, 15)  # SIGTERM
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            try:
+                os.kill(pid, 0)  # Check if still alive
+            except OSError:
+                stopped = True
+                break
+        if not stopped:
+            try:
+                os.kill(pid, 9)  # SIGKILL
+                stopped = True
+            except (OSError, ProcessLookupError):
+                stopped = True
+    except (ValueError, OSError, ProcessLookupError):
+        # pid already dead or unsignalable -- treat as stopped.
+        stopped = True
+
+    # Mark session.json stopped in that project's .loki.
+    if loki_dir is not None:
+        session_file = loki_dir / "session.json"
+        if session_file.exists():
+            try:
+                sd = json.loads(session_file.read_text())
+                sd["status"] = "stopped"
+                atomic_write_json(session_file, sd, use_lock=True)
+            except Exception:
+                pass
+
+    registry.mark_project_stopped(project_id)
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "stopped": stopped,
+        "already_stopped": False,
+    }
+
+
 # =============================================================================
 # Enterprise Features (Optional - enabled via environment variables)
 # =============================================================================

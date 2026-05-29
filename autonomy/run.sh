@@ -785,6 +785,76 @@ except Exception:
     pass
 PYREG
 }
+
+# v7.7.30: deliberate-exit teardown for the shared dashboard + registry.
+# Marks THIS project (abspath of TARGET_DIR) stopped in the machine-global
+# registry, then decides whether the shared standalone dashboard at
+# ~/.loki/dashboard/dashboard.pid should be killed. The shared dashboard is
+# killed ONLY when no other registered project still has a live pid (CLEAR);
+# if any other project is still running (KEEP) it is left up. NEVER uses a
+# blanket pkill and NEVER touches another folder's pids. Best-effort and
+# failure-swallowed: teardown bookkeeping must never block a clean exit.
+loki_mark_project_stopped_and_maybe_kill_shared_dashboard() {
+    local _skill="${LOKI_SKILL_DIR:-${PROJECT_DIR:-$SCRIPT_DIR/..}}"
+    local _shared_pidfile="${HOME}/.loki/dashboard/dashboard.pid"
+    local _decision="CLEAR"
+
+    if [ -z "${LOKI_SKIP_PROJECT_REGISTRY:-}" ] && command -v python3 >/dev/null 2>&1; then
+        # (a) Mark this project stopped in the shared registry.
+        LOKI_REG_TARGET="$TARGET_DIR" LOKI_REG_SKILL="$_skill" \
+        python3 - <<'PYSTOP' >/dev/null 2>&1 || true
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    registry.mark_project_stopped(os.path.abspath(os.environ["LOKI_REG_TARGET"]))
+except Exception:
+    pass
+PYSTOP
+        # (b) CLEAR/KEEP check: any OTHER project still alive keeps the
+        # shared dashboard up (this project is already marked stopped above).
+        _decision="$(LOKI_REG_SKILL="$_skill" python3 - <<'PYCHECK' 2>/dev/null || echo CLEAR
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    alive = 0
+    for p in registry.list_projects(include_inactive=True):
+        pid = p.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            try:
+                os.kill(pid, 0)
+                alive += 1
+            except OSError:
+                pass
+    print("CLEAR" if alive == 0 else "KEEP")
+except Exception:
+    print("CLEAR")
+PYCHECK
+)"
+    fi
+
+    # (c) Only tear down the SHARED dashboard when no other project remains
+    # (CLEAR), or when python3 was unavailable (legacy fallback: avoid leaking
+    # the shared dashboard on minimal systems).
+    if [ "$_decision" = "CLEAR" ]; then
+        if [ -f "$_shared_pidfile" ]; then
+            local _shared_pid
+            _shared_pid=$(cat "$_shared_pidfile" 2>/dev/null)
+            if [ -n "$_shared_pid" ]; then
+                kill "$_shared_pid" 2>/dev/null || true
+                sleep 0.5
+                kill -9 "$_shared_pid" 2>/dev/null || true
+            fi
+            rm -f "$_shared_pidfile" 2>/dev/null || true
+        fi
+        # (d) Defense-in-depth: reclaim the dashboard port only in the CLEAR
+        # case, so we never kill a shared dashboard another project owns.
+        if command -v lsof >/dev/null 2>&1; then
+            lsof -ti:"${DASHBOARD_PORT:-57374}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+        fi
+    fi
+}
 # Register as running now. We deliberately do NOT install an EXIT trap to
 # flip it to idle: a top-level EXIT trap here would be clobbered by the
 # lock-release EXIT trap installed later in the main path (and could
@@ -12274,6 +12344,13 @@ cleanup() {
             app_runner_cleanup
         fi
         stop_status_monitor
+        # v7.7.30: tear down this project's dashboard contribution on a
+        # deliberate STOP-file exit. stop_dashboard handles the project-local
+        # dashboard (.loki/dashboard/dashboard.pid); the helper marks this
+        # project stopped in the registry and kills the shared dashboard only
+        # when no other project is still running.
+        stop_dashboard
+        loki_mark_project_stopped_and_maybe_kill_shared_dashboard
         kill_all_registered
         rm -f "$loki_dir/loki.pid" 2>/dev/null
         # Clean up per-session PID file if running with session ID
@@ -12315,6 +12392,13 @@ except (json.JSONDecodeError, OSError): pass
             app_runner_cleanup
         fi
         stop_status_monitor
+        # v7.7.30: tear down this project's dashboard contribution on a
+        # deliberate double-Ctrl+C exit. stop_dashboard handles the
+        # project-local dashboard; the helper marks this project stopped in
+        # the registry and kills the shared dashboard only when no other
+        # project is still running.
+        stop_dashboard
+        loki_mark_project_stopped_and_maybe_kill_shared_dashboard
         kill_all_registered
         rm -f "$loki_dir/loki.pid" "$loki_dir/PAUSE" 2>/dev/null
         # UT2-13: Clear cli-provider marker on session end.

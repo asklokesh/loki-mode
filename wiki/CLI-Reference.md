@@ -198,11 +198,20 @@ loki init -t api-service
 
 ### `loki stop`
 
-Stop execution immediately.
+Stop a running session. As of v7.7.30 this is FOLDER-SCOPED by default: it
+stops only the session in the current directory and leaves Loki sessions in
+other folders running. The shared dashboard stays up while any other project
+is still running, and is stopped only when no project remains.
 
 ```bash
-loki stop
+loki stop          # stop ONLY the current folder's session
+loki stop 52       # stop only session #52 in this folder
+loki stop --all    # stop EVERY loki runner on this machine (legacy behavior)
 ```
+
+Use `loki stop --all` for the old machine-wide behavior (also reaps orphaned
+runners from crashed sessions). `loki cleanup` also reaps orphans when no
+session is running in the current folder.
 
 ---
 

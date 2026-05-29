@@ -138,7 +138,7 @@ loki start my-app.md --parallel
 | `loki status` | Check current session status |
 | `loki pause` | Pause after current phase |
 | `loki resume` | Resume paused session |
-| `loki stop` | Stop immediately |
+| `loki stop` | Stop the current folder's session (use `--all` for all folders) |
 | `loki logs` | View recent output |
 | `loki logs -f` | Follow logs in real-time |
 

@@ -66,7 +66,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 ```json
 {
   "status": "running",
-  "version": "7.7.29",
+  "version": "7.7.30",
   "uptime_seconds": 1234.5,
   "active_sessions": 1,
   "running_agents": 3,
@@ -1153,6 +1153,19 @@ The following endpoints exist in `dashboard/server.py` but were not previously d
 - `GET /api/focus` -- read current focus selection.
 - `POST /api/focus` -- set focus (control scope).
 - `DELETE /api/focus` -- clear focus (control scope).
+
+### Multi-project
+
+- `GET /api/running-projects` -- list registered projects with a live
+  `running` flag (pid-liveness) and `is_active` marker.
+- `POST /api/running-projects/stop` -- stop ONE registered project (control
+  scope, v7.7.30). Body: `{ "id": "<project_id>" }` or
+  `{ "project_dir": "<abs path>" }`. Resolves the project through the
+  registry, writes its STOP file, runs a graceful SIGTERM then SIGKILL against
+  that project's recorded orchestrator pid, and marks it stopped. Stopping one
+  project never affects another. Distinct from `POST /api/control/stop`, which
+  stops the currently-focused session. Response:
+  `{ "success", "project_id", "stopped", "already_stopped" }`.
 
 ### Memory (additional)
 
