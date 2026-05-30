@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.8.3] - 2026-05-30
+
+### Fixed
+- bin/loki: the backgrounded telemetry subshells (the v7.8.2 `cli_command`
+  emit and the first-run `installed` emit) now fully detach their file
+  descriptors (`</dev/null >/dev/null 2>&1 &`). Previously the backgrounded
+  child inherited and held the shim's stdout open, which changed pipe-teardown
+  timing and produced a macOS-only broken-pipe in callers that capture the
+  shim's output via a pipe (surfaced as a `loki completions zsh` failure in the
+  CI shim-route test harness on macOS; Linux teardown timing masked it). No
+  user-facing behavior change; telemetry still fires identically and the
+  existing opt-out still suppresses it. Verified with 20 consecutive
+  shim-route test runs on macOS (0 failures).
+
 ## [7.8.2] - 2026-05-29
 
 ### Added

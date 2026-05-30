@@ -83,7 +83,10 @@ if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ 
     if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
         # Source telemetry helpers + fire installed event in background
         # so the user does not pay latency on first invocation.
-        ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) &
+        # Detach all three FDs so the backgrounded subshell never holds this
+        # shim's stdout/stderr/stdin open (v7.8.3: same fix as the cli_command
+        # emit below -- prevents a macOS broken-pipe in piped callers).
+        ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
         disown 2>/dev/null || true
     fi
 fi
@@ -128,7 +131,12 @@ case "${1:-}" in
         # itself (LOKI_TELEMETRY_DISABLED / DO_NOT_TRACK). The command token is
         # the subcommand name only -- never args, flags, or paths.
         if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
-            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) &
+            # Detach all three FDs (</dev/null >/dev/null 2>&1) so the
+            # backgrounded subshell does not inherit and hold this shim's
+            # stdout/stderr/stdin open. Without this, the lingering FD changed
+            # pipe-teardown timing and produced a macOS-only broken-pipe in the
+            # shim-route CLI test harness (v7.8.2 -> fixed v7.8.3).
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
         exec bun "$BUN_CLI" "$@"
