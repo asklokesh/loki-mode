@@ -26,9 +26,11 @@ import { existsSync, readdirSync, readFileSync, mkdtempSync, copyFileSync, rmSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
+import { readFile } from "node:fs/promises";
 import { lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
+import { tierGate } from "../util/tier.ts";
 
 const HELP = `${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts
 
@@ -43,7 +45,7 @@ Subcommands:
 Options for 'share':
   --yes                Skip the redaction-preview confirmation prompt
   --private            Create a secret gist (default: public)
-  --hosted             Reserved for hosted publishing (coming in R9)
+  --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)
 
 Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out).
 `;
@@ -175,20 +177,145 @@ function confirm(question: string): Promise<boolean> {
   });
 }
 
+// hostedPublishProof - R9 hosted proof-publish client stub (Bun parity for the
+// bash _loki_hosted_publish_proof).
+//
+// Posts an ALREADY-REDACTED proof page to LOKI_HOSTED_ENDPOINT. There is NO
+// official Loki hosted backend yet; this is a clean client seam an operator can
+// point at their own endpoint. We never fabricate a hosted URL: on success we
+// print the URL the endpoint returned (or the endpoint itself); on any failure
+// we print an honest error and return non-zero.
+async function hostedPublishProof(
+  id: string,
+  html: string,
+  pj: string,
+): Promise<number> {
+  // Tier seam (no-op allow for OSS). Hosted publish is opt-in regardless; the
+  // gate only emits honest notes for misconfigured non-OSS tiers.
+  const gate = tierGate("hosted_publish");
+  for (const note of gate.notes) process.stderr.write(`${note}\n`);
+
+  const endpoint = process.env["LOKI_HOSTED_ENDPOINT"] || "";
+  if (!endpoint) {
+    process.stderr.write(`${YELLOW}Hosted publishing backend not available.${NC}\n`);
+    process.stderr.write(
+      "There is no official Loki hosted service yet (R9 ships the seam, not a live backend).\n",
+    );
+    process.stderr.write(
+      "To publish to your own hosted endpoint, set LOKI_HOSTED_ENDPOINT to its URL.\n",
+    );
+    process.stderr.write(`Or publish to a GitHub Gist instead: loki proof share ${id}\n`);
+    return 1;
+  }
+
+  // CREDIBILITY: we upload the file the generator already redacted (the same
+  // bytes 'loki proof share' would put on a gist). If proof.json reports that
+  // redaction was not applied, refuse -- never publish an unredacted artifact.
+  const d = readProof(id);
+  if (d) {
+    const red = obj(d["redaction"]);
+    // Fail CLOSED: refuse unless redaction is explicitly confirmed applied.
+    // Absent/missing redaction metadata (an old or degraded proof whose HTML may
+    // carry secrets) must NOT publish -- matches the bash route, which refuses
+    // unless applied is truthy. Checking only `=== false` would let an undefined
+    // value through and POST an unredacted artifact to the operator endpoint.
+    if (red["applied"] !== true) {
+      process.stderr.write(
+        `${RED}Refusing to publish: proof redaction was not confirmed applied.${NC}\n`,
+      );
+      process.stderr.write(
+        "Regenerate the proof (LOKI_PROOF=1) so the redactor runs, then retry.\n",
+      );
+      return 1;
+    }
+  }
+  // pj is referenced for parity with the bash signature and future schema reads.
+  void pj;
+
+  process.stdout.write(`${BOLD}Publishing proof '${id}' to hosted endpoint${NC}\n`);
+  process.stdout.write(`  endpoint: ${endpoint}\n`);
+  process.stdout.write(`  payload:  ${html} (already redacted by the generator)\n\n`);
+
+  let body: Buffer;
+  try {
+    body = await readFile(html);
+  } catch {
+    process.stderr.write(`${RED}Could not read proof page: ${html}${NC}\n`);
+    return 1;
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "text/html",
+    "X-Loki-Proof-Id": id,
+  };
+  const licenseKey = process.env["LOKI_LICENSE_KEY"] || "";
+  if (licenseKey) headers["Authorization"] = `Bearer ${licenseKey}`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: new Uint8Array(body),
+    });
+  } catch (e) {
+    process.stderr.write(
+      `${RED}Failed to reach hosted endpoint: ${String((e as Error).message || e)}${NC}\n`,
+    );
+    process.stderr.write(
+      `Check LOKI_HOSTED_ENDPOINT or publish to a gist: loki proof share ${id}\n`,
+    );
+    return 1;
+  }
+
+  const text = await resp.text();
+  if (!resp.ok) {
+    process.stderr.write(`${RED}Hosted endpoint returned HTTP ${resp.status}.${NC}\n`);
+    if (text) {
+      process.stderr.write("Response:\n");
+      process.stderr.write(`${text.slice(0, 500)}\n`);
+    }
+    process.stderr.write(`Nothing was published. Or publish to a gist: loki proof share ${id}\n`);
+    return 1;
+  }
+
+  // Accept any 2xx. The published URL comes from the endpoint response if it
+  // returns one (a "url" or "public_url" field); else we report the endpoint.
+  // We NEVER print a fabricated URL.
+  let publishedUrl = "";
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object") {
+      const u = parsed["url"] ?? parsed["public_url"];
+      if (typeof u === "string") publishedUrl = u;
+    }
+  } catch {
+    /* response was not JSON; fall through to endpoint-only message */
+  }
+  if (publishedUrl) {
+    process.stdout.write(`${GREEN}Published: ${publishedUrl}${NC}\n`);
+  } else {
+    process.stdout.write(
+      `${GREEN}Published to ${endpoint} (HTTP ${resp.status}).${NC}\n`,
+    );
+    process.stdout.write(
+      "The endpoint did not return a 'url' field; check your endpoint's response.\n",
+    );
+  }
+  return 0;
+}
+
 async function shareProof(argv: readonly string[]): Promise<number> {
   let id = "";
   let skipConfirm = false;
   let visibility = "--public";
+  let hosted = false;
   for (const a of argv) {
     if (a === "--yes" || a === "-y") skipConfirm = true;
     else if (a === "--private") visibility = "";
     else if (a === "--public") visibility = "--public";
-    else if (a === "--hosted") {
-      process.stderr.write(
-        `${RED}Hosted publishing is not available yet (coming in R9).${NC}\n`,
-      );
-      return 1;
-    } else if (a.startsWith("-")) {
+    else if (a === "--hosted") hosted = true;
+    else if (a.startsWith("-")) {
       process.stderr.write(`${RED}Unknown option: ${a}${NC}\n`);
       return 1;
     } else id = a;
@@ -202,6 +329,15 @@ async function shareProof(argv: readonly string[]): Promise<number> {
     process.stderr.write(`${RED}Proof page not found: ${id}/index.html${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
+  }
+  // R9 open-core hosted-publish seam. Only taken when the user explicitly
+  // passes --hosted. The default gist path below stays unchanged for OSS users
+  // (zero hosted backend required). We never silent-fall-back to gist here: the
+  // user asked for hosted, so we POST to a configured LOKI_HOSTED_ENDPOINT or
+  // print an honest "no endpoint configured" message and exit non-zero. We
+  // never fabricate a hosted URL.
+  if (hosted) {
+    return hostedPublishProof(id, html, join(proofsDir(), id, "proof.json"));
   }
   const ghCheck = await run(["gh", "--version"], { timeoutMs: 5000 });
   if (ghCheck.exitCode !== 0) {

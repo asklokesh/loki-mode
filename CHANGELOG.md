@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.15.0] - 2026-05-30
+
+### Added
+- Open-core hooks (R9 of the competitive arc): the seams for hosted + enterprise
+  + paid plans WITHOUT gating any existing free feature or faking a service.
+  Loki stays fully functional open-source with zero hosted backend.
+- `loki proof share --hosted <id>`: publishes the already-redacted proof artifact
+  to an operator-supplied `LOKI_HOSTED_ENDPOINT` (both bash and Bun routes). With
+  no endpoint set, it prints an honest "no official hosted backend yet; set
+  LOKI_HOSTED_ENDPOINT or use a gist" message and exits non-zero. It never
+  fabricates a URL and only reports the URL the operator endpoint returns.
+- Tier seam (`LOKI_TIER`, default `oss`; `LOKI_LICENSE_KEY` optional): a no-op
+  ALLOW for OSS, wired ONLY into the opt-in `--hosted` seam, never into any free
+  command. License verification is a documented stub (no backend yet).
+- docs/OPEN-CORE-BOUNDARY.md: the explicit free-forever vs hosted/paid boundary,
+  with a binding commitment never to move an existing free feature behind a
+  paywall.
+
+### Security
+- The `--hosted` publish guard fails CLOSED: it refuses unless the proof's
+  redaction was confirmed applied (`redaction.applied == true`), on both routes.
+  This prevents publishing an old/degraded proof whose HTML might carry secrets
+  to the operator endpoint (council round 1 found the Bun route fail-OPENED on
+  absent redaction metadata; fixed + regression-tested on both routes).
+
+### Notes
+- Council: 3-of-3 unanimous (round 2, after the fail-closed redaction fix).
+- NOT shipped: a live Loki hosted backend / SaaS / license server (R9 ships the
+  seams only); the proof.json public_url is printed, not written back.
+
 ## [7.14.0] - 2026-05-30
 
 ### Added

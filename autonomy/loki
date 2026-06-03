@@ -25275,6 +25275,173 @@ _loki_gist_upload() {
     echo -e "${GREEN}Shared: ${gist_url}${NC}"
 }
 
+# loki_tier_gate - R9 open-core tier/license seam.
+#
+# OSS-FIRST CONTRACT: this is a no-op ALLOW for OSS users. LOKI_TIER defaults
+# to "oss" and every existing free feature stays fully free. This function is
+# the single place where a future hosted/enterprise build would gate a
+# hosted-only capability. It is NEVER called from any existing free command
+# path; its only caller is the opt-in --hosted publish seam below. For OSS
+# (the default), it always returns 0 (allow).
+#
+# Args: $1 = capability name (informational; e.g. "hosted_publish").
+# Returns: 0 = allowed, 1 = gated (non-OSS tier without entitlement).
+# Env:  LOKI_TIER (default "oss"), LOKI_LICENSE_KEY (optional, non-OSS only).
+loki_tier_gate() {
+    local capability="${1:-}"
+    local tier="${LOKI_TIER:-oss}"
+
+    # OSS tier: everything is allowed, always. No license, no network, no gate.
+    if [ "$tier" = "oss" ]; then
+        return 0
+    fi
+
+    # Non-OSS tiers (hosted/enterprise) are a SEAM only. The hosted backend
+    # and license-verification service do not exist yet, so we cannot validate
+    # an entitlement. Be honest: do not pretend to grant a paid capability.
+    # A real hosted build replaces this branch with a verified license check.
+    if [ -z "${LOKI_LICENSE_KEY:-}" ]; then
+        echo -e "${YELLOW}LOKI_TIER='${tier}' requested but no LOKI_LICENSE_KEY set.${NC}" >&2
+        echo "Hosted/enterprise license verification is not available yet." >&2
+        echo "OSS users: leave LOKI_TIER unset (or 'oss') -- everything stays free." >&2
+        return 1
+    fi
+
+    # A license key is present but there is no verification backend yet. We do
+    # NOT fabricate a successful verification. The capability stays ungated for
+    # OSS-equivalent use; the seam is documented in docs/OPEN-CORE-BOUNDARY.md.
+    echo -e "${YELLOW}LOKI_LICENSE_KEY set but the verification backend is not available yet (R9 seam).${NC}" >&2
+    return 0
+}
+
+# _loki_hosted_publish_proof - R9 hosted proof-publish client stub.
+#
+# Posts an ALREADY-REDACTED proof page to a self-hosted/SaaS endpoint given by
+# LOKI_HOSTED_ENDPOINT. There is NO official Loki hosted backend yet; this is a
+# clean client seam an operator can point at their own endpoint. We never
+# fabricate a hosted URL: on success we print the URL the endpoint returned (or
+# the endpoint itself); on any failure we print an honest error and exit non-0.
+#
+# Args: $1 = proof id, $2 = redacted index.html path, $3 = proof.json path.
+# Returns: 0 on success, non-zero on missing endpoint / transport / non-2xx.
+_loki_hosted_publish_proof() {
+    local id="$1"
+    local html="$2"
+    local pj="$3"
+
+    # Tier seam (no-op allow for OSS). Hosted publish is opt-in regardless.
+    loki_tier_gate "hosted_publish" || true
+
+    local endpoint="${LOKI_HOSTED_ENDPOINT:-}"
+    if [ -z "$endpoint" ]; then
+        echo -e "${YELLOW}Hosted publishing backend not available.${NC}" >&2
+        echo "There is no official Loki hosted service yet (R9 ships the seam, not a live backend)." >&2
+        echo "To publish to your own hosted endpoint, set LOKI_HOSTED_ENDPOINT to its URL." >&2
+        echo "Or publish to a GitHub Gist instead: loki proof share ${id}" >&2
+        return 1
+    fi
+
+    if ! command -v curl &>/dev/null; then
+        echo -e "${RED}curl not found${NC}" >&2
+        echo "Hosted publishing requires curl. Install curl or use: loki proof share ${id}" >&2
+        return 1
+    fi
+
+    # CREDIBILITY: we upload the file the generator already redacted (the same
+    # bytes 'loki proof share' would put on a gist). We do not build a fresh
+    # body that could bypass redaction. If proof.json reports redaction was not
+    # applied, refuse -- never publish an unredacted artifact.
+    if [ -f "$pj" ]; then
+        local redaction_ok
+        redaction_ok=$(LOKI_PROOF_JSON="$pj" python3 - <<'PYEOF' 2>/dev/null || echo "unknown"
+import json, os
+try:
+    d = json.load(open(os.environ["LOKI_PROOF_JSON"]))
+except Exception:
+    print("unknown")
+else:
+    print("yes" if (d.get("redaction") or {}).get("applied") else "no")
+PYEOF
+)
+        if [ "$redaction_ok" = "no" ]; then
+            echo -e "${RED}Refusing to publish: proof redaction was not applied.${NC}" >&2
+            echo "Regenerate the proof (LOKI_PROOF=1) so the redactor runs, then retry." >&2
+            return 1
+        fi
+    fi
+
+    echo -e "${BOLD}Publishing proof '${id}' to hosted endpoint${NC}"
+    echo "  endpoint: ${endpoint}"
+    echo "  payload:  ${html} (already redacted by the generator)"
+    echo ""
+
+    # POST the redacted HTML. Auth header is sent only if a license key exists;
+    # OSS users with their own endpoint need no key.
+    local tmp_body tmp_code
+    tmp_body=$(mktemp "/tmp/loki-hosted-XXXXXX.out")
+    local -a curl_args=(-sS -o "$tmp_body" -w '%{http_code}' -X POST
+        -H "Content-Type: text/html"
+        -H "X-Loki-Proof-Id: ${id}"
+        --data-binary "@${html}")
+    if [ -n "${LOKI_LICENSE_KEY:-}" ]; then
+        curl_args+=(-H "Authorization: Bearer ${LOKI_LICENSE_KEY}")
+    fi
+    tmp_code=$(curl "${curl_args[@]}" "$endpoint" 2>/dev/null)
+    local curl_exit=$?
+
+    if [ "$curl_exit" -ne 0 ]; then
+        echo -e "${RED}Failed to reach hosted endpoint (curl exit ${curl_exit}).${NC}" >&2
+        echo "Check LOKI_HOSTED_ENDPOINT or publish to a gist: loki proof share ${id}" >&2
+        rm -f "$tmp_body"
+        return 1
+    fi
+
+    # Accept any 2xx. The published URL comes from the endpoint response if it
+    # returns one (we look for a "url" field), else we report the endpoint. We
+    # NEVER print a fabricated URL.
+    case "$tmp_code" in
+        2*)
+            local published_url
+            published_url=$(LOKI_HOSTED_BODY="$tmp_body" LOKI_HOSTED_EP="$endpoint" python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+body_path = os.environ["LOKI_HOSTED_BODY"]
+try:
+    txt = open(body_path).read().strip()
+except Exception:
+    txt = ""
+url = ""
+try:
+    d = json.loads(txt)
+    if isinstance(d, dict):
+        url = d.get("url") or d.get("public_url") or ""
+except Exception:
+    url = ""
+print(url)
+PYEOF
+)
+            rm -f "$tmp_body"
+            if [ -n "$published_url" ]; then
+                echo -e "${GREEN}Published: ${published_url}${NC}"
+            else
+                echo -e "${GREEN}Published to ${endpoint} (HTTP ${tmp_code}).${NC}"
+                echo "The endpoint did not return a 'url' field; check your endpoint's response."
+            fi
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Hosted endpoint returned HTTP ${tmp_code}.${NC}" >&2
+            if [ -s "$tmp_body" ]; then
+                echo "Response:" >&2
+                head -c 500 "$tmp_body" >&2
+                echo "" >&2
+            fi
+            echo "Nothing was published. Or publish to a gist: loki proof share ${id}" >&2
+            rm -f "$tmp_body"
+            return 1
+            ;;
+    esac
+}
+
 # loki bench - head-to-head benchmark harness (R2).
 # Subcommands: run <task> | vs <task> | list | verify <result.json>.
 # Thin pass-through to benchmarks/bench/run.sh (shared python core runner.py).
@@ -25342,7 +25509,7 @@ cmd_proof() {
             echo "Options for 'share':"
             echo "  --yes                Skip the redaction-preview confirmation prompt"
             echo "  --private            Create a secret gist (default: public)"
-            echo "  --hosted             Reserved for hosted publishing (coming in R9)"
+            echo "  --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)"
             echo ""
             echo "Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out)."
             [ "$sub" = "" ] && exit 1
@@ -25441,15 +25608,13 @@ PYEOF
             local id=""
             local skip_confirm=0
             local visibility="--public"
+            local hosted=0
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --yes|-y) skip_confirm=1; shift ;;
                     --private) visibility=""; shift ;;
                     --public) visibility="--public"; shift ;;
-                    --hosted)
-                        echo -e "${RED}Hosted publishing is not available yet (coming in R9).${NC}"
-                        exit 1
-                        ;;
+                    --hosted) hosted=1; shift ;;
                     -*) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
                     *) id="$1"; shift ;;
                 esac
@@ -25463,6 +25628,17 @@ PYEOF
                 echo -e "${RED}Proof page not found: ${id}/index.html${NC}"
                 echo "Use 'loki proof list' to see available proofs."
                 exit 1
+            fi
+            # R9 open-core hosted-publish seam. Only taken when the user
+            # explicitly passes --hosted. The default gist path below stays
+            # byte-for-byte unchanged for OSS users (zero hosted backend
+            # required). We never silent-fall-back to gist here: the user asked
+            # for hosted, so we POST to a configured LOKI_HOSTED_ENDPOINT or
+            # print an honest "no endpoint configured" message and exit non-zero.
+            # We never fabricate a hosted URL.
+            if [ "$hosted" -eq 1 ]; then
+                _loki_hosted_publish_proof "$id" "$html" "${proofs_dir}/${id}/proof.json"
+                exit $?
             fi
             if ! command -v gh &>/dev/null; then
                 echo -e "${RED}gh CLI not found${NC}"
