@@ -143,7 +143,15 @@ def _collect_council(loki_dir):
     if isinstance(verdicts, list) and verdicts:
         last = verdicts[-1]
         if isinstance(last, dict):
-            final_verdict = str(last.get("verdict") or last.get("decision") or "")
+            # completion-council.sh writes verdicts[] entries as
+            # {iteration, timestamp, approve, reject, result} where "result" is
+            # APPROVED / REJECTED. Older/alt shapes may use verdict/decision.
+            final_verdict = str(
+                last.get("result")
+                or last.get("verdict")
+                or last.get("decision")
+                or ""
+            )
         else:
             final_verdict = str(last)
     threshold = state.get("threshold")
@@ -170,6 +178,29 @@ def _collect_council(loki_dir):
             # fragment that escapes the redactor.
             "summary": str(rec.get("summary") or rec.get("rationale") or ""),
         })
+
+    # Fallback: completion-council.sh records the aggregate tally in state.json
+    # (approve_votes / reject_votes) and the per-iteration detail under
+    # council/votes/iteration-N/, which may not be present as flat *.json here.
+    # If we found no per-reviewer files but the council ran, synthesize a single
+    # tally row from the aggregate so the proof's council section is populated
+    # rather than blank (the council outcome is the central trust signal).
+    approve_votes = state.get("approve_votes")
+    reject_votes = state.get("reject_votes")
+    if not reviewers and (enabled or verdicts or approve_votes or reject_votes):
+        a = int(approve_votes or 0)
+        r = int(reject_votes or 0)
+        if a or r or final_verdict:
+            reviewers.append({
+                "role": "council (aggregate)",
+                "vote": final_verdict or ("APPROVED" if a > r else "REJECTED"),
+                "summary": "%d approve / %d reject across council voting" % (a, r),
+            })
+        # Derive a human threshold ratio when not explicitly recorded.
+        if threshold is None and (a or r):
+            total = a + r
+            if total:
+                threshold = "%d/%d" % (a, total)
 
     return {
         "enabled": enabled,

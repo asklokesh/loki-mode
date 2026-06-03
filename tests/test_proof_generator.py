@@ -329,6 +329,50 @@ class GracefulDegradationTests(unittest.TestCase):
         self.assertFalse(d["council"]["enabled"])
         self.assertEqual(d["council"]["reviewers"], [])
 
+    def test_real_completion_council_shape_populates_verdict(self):
+        # UAT regression: completion-council.sh writes state.json with aggregate
+        # approve_votes/reject_votes and verdicts[] entries whose verdict field
+        # is "result" (APPROVED/REJECTED), and it does NOT write flat
+        # council/votes/*.json files. The generator must surface the council
+        # outcome from THIS real shape, not leave it blank. (Previously the
+        # final_verdict came out empty and the proof page showed no council,
+        # blanking the central trust signal on every real run.)
+        loki_dir = os.path.join(self.tmp, "rc", ".loki")
+        out_dir = os.path.join(self.tmp, "outrc")
+        os.makedirs(os.path.join(loki_dir, "council"))
+        with open(os.path.join(loki_dir, "council", "state.json"), "w") as f:
+            json.dump({
+                "initialized": True, "enabled": True, "total_votes": 3,
+                "approve_votes": 3, "reject_votes": 0,
+                "verdicts": [{
+                    "iteration": 1, "timestamp": "2026-05-30T02:01:00Z",
+                    "approve": 3, "reject": 0, "result": "APPROVED",
+                }],
+            }, f)
+        d = _run_generator(loki_dir, out_dir)
+        c = d["council"]
+        self.assertTrue(c["enabled"])
+        self.assertEqual(c["final_verdict"], "APPROVED")
+        # A populated council section: at least one reviewer/aggregate row.
+        self.assertTrue(c["reviewers"], "council reviewers must not be empty")
+        self.assertEqual(c["threshold"], "3/3")
+
+    def test_real_council_reject_shape(self):
+        # Same real shape but a REJECTED outcome must surface honestly.
+        loki_dir = os.path.join(self.tmp, "rj", ".loki")
+        out_dir = os.path.join(self.tmp, "outrj")
+        os.makedirs(os.path.join(loki_dir, "council"))
+        with open(os.path.join(loki_dir, "council", "state.json"), "w") as f:
+            json.dump({
+                "initialized": True, "enabled": True, "total_votes": 3,
+                "approve_votes": 1, "reject_votes": 2,
+                "verdicts": [{"iteration": 1, "approve": 1, "reject": 2,
+                              "result": "REJECTED"}],
+            }, f)
+        d = _run_generator(loki_dir, out_dir)
+        self.assertEqual(d["council"]["final_verdict"], "REJECTED")
+        self.assertTrue(d["council"]["reviewers"])
+
 
 if __name__ == "__main__":
     unittest.main()

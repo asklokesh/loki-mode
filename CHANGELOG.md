@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.9.1] - 2026-05-30
+
+### Fixed
+- Proof-of-run council section was blank on real runs. The generator read the
+  per-verdict field as `verdict`/`decision` and expected flat
+  `council/votes/*.json` files, but completion-council.sh actually writes the
+  outcome as `result` (APPROVED/REJECTED) in `verdicts[]` plus aggregate
+  `approve_votes`/`reject_votes` in `council/state.json`, with per-iteration
+  detail under `council/votes/iteration-N/`. The proof's council verdict and
+  reviewer rows therefore came out empty, blanking the central trust signal on
+  every real proof page. The generator now reads `result`, derives the
+  approve/reject ratio and threshold from the aggregate, and synthesizes a
+  council-tally row when no flat per-reviewer files exist. Caught by R1
+  real-user UAT. Added regression tests for the real APPROVED and REJECTED
+  council shapes (tests/test_proof_generator.py).
+
 ## [7.9.0] - 2026-05-30
 
 ### Added
