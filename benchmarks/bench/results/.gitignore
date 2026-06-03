@@ -1,0 +1,4 @@
+# Benchmark result rows are runtime artifacts, not source. Ignore everything
+# here except this file. Published results live under benchmarks/results/<date>/.
+*
+!.gitignore

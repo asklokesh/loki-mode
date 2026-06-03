@@ -138,6 +138,17 @@ if [ -n "$PROOF_PY" ]; then
   run_check "tests/test_proof_generator.py (R1 generator schema/hash)" "$PROOF_PY -m pytest -q tests/test_proof_generator.py 2>&1 | tail -5"
   # Self-contained page: no external resource refs; all Tier1-4 fields render.
   run_check "tests/test_proof_html.py (R1 self-contained page)" "$PROOF_PY -m pytest -q tests/test_proof_html.py 2>&1 | tail -5"
+  # R2 benchmark harness gates (mocked adapters, no paid API calls).
+  # Task-spec hash determinism + held-out anti-contamination + offline loader.
+  run_check "tests/test_bench_taskspec.py (R2 task-spec + hash)" "$PROOF_PY -m pytest -q tests/test_bench_taskspec.py 2>&1 | tail -5"
+  # Runner + grader: success set ONLY by held-out acceptance, N-trial aggregate.
+  run_check "tests/test_bench_runner.py (R2 runner + grader)" "$PROOF_PY -m pytest -q tests/test_bench_runner.py 2>&1 | tail -5"
+  # Adapters never report success/quality; manual adapter requires provenance.
+  run_check "tests/test_bench_adapters.py (R2 adapters boundary)" "$PROOF_PY -m pytest -q tests/test_bench_adapters.py 2>&1 | tail -5"
+  # Report is data-driven: a Loki-loses fixture renders the competitor as winner.
+  run_check "tests/test_bench_report.py (R2 report non-rigged)" "$PROOF_PY -m pytest -q tests/test_bench_report.py 2>&1 | tail -5"
+  # bench CLI list/verify on the bash route.
+  run_check "tests/test_bench_cli.py (R2 bench CLI)" "$PROOF_PY -m pytest -q tests/test_bench_cli.py 2>&1 | tail -5"
 else
   skip_check "proof-of-run python gates" "no python3 on PATH"
 fi

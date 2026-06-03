@@ -35,6 +35,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import proof_redact  # noqa: E402
+from efficiency_cost import collect_efficiency as _collect_efficiency  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -85,52 +86,10 @@ def _to_float(v, default=0.0):
 # data collection
 # ---------------------------------------------------------------------------
 
-def _collect_efficiency(loki_dir):
-    """Sum cost + tokens across .loki/metrics/efficiency/iteration-*.json.
-
-    Returns cost dict and a best-effort model name (last non-empty seen).
-
-    Credibility: cost.usd is set to None when NO valid efficiency record was
-    read (cost was never collected for this run). A skeptic seeing "$0.00" on
-    HN assumes the artifact is fake; "cost not recorded" is the honest signal.
-    A genuine 0.0 (records existed but summed to zero) is preserved as 0.0.
-    """
-    cost = {
-        "usd": 0.0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_creation_tokens": 0,
-    }
-    model = ""
-    collected = False
-    eff_dir = os.path.join(loki_dir, "metrics", "efficiency")
-    try:
-        names = sorted(os.listdir(eff_dir))
-    except Exception:
-        names = []
-    for name in names:
-        if not (name.startswith("iteration-") and name.endswith(".json")):
-            continue
-        rec = _read_json(os.path.join(eff_dir, name), default=None)
-        if not isinstance(rec, dict):
-            continue
-        collected = True
-        cost["usd"] += _to_float(rec.get("cost_usd"))
-        cost["input_tokens"] += _to_int(rec.get("input_tokens"))
-        cost["output_tokens"] += _to_int(rec.get("output_tokens"))
-        cost["cache_read_tokens"] += _to_int(rec.get("cache_read_tokens"))
-        cost["cache_creation_tokens"] += _to_int(rec.get("cache_creation_tokens"))
-        if rec.get("model"):
-            model = str(rec.get("model"))
-    if collected:
-        # Round usd to a sane precision but keep it precise (anti-pattern:
-        # round suspiciously-clean numbers). 4 decimals preserves odd values.
-        cost["usd"] = round(cost["usd"], 4)
-    else:
-        # No efficiency files were read: cost was not collected for this run.
-        cost["usd"] = None
-    return cost, model
+# _collect_efficiency was extracted to autonomy/lib/efficiency_cost.py (R2) so
+# the benchmark adapters and this generator compute cost identically. It is
+# imported at the top of this file as _collect_efficiency; the behavior
+# (None usd when uncollected, 0.0 preserved, 4-decimal rounding) is unchanged.
 
 
 def _collect_council(loki_dir):

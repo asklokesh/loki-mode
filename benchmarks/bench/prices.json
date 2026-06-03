@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "as_of_date": "2026-05-30",
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "notes": [
+    "Public list prices, per million tokens (mtok), as of as_of_date.",
+    "Used ONLY to compute a uniform USD figure from raw token counts when a",
+    "tool reports tokens but no native cost_usd. We NEVER blend across pricing",
+    "models in a single headline number (see methodology cost caveats).",
+    "cache_read_per_mtok is the discounted rate for prompt-cache reads.",
+    "Verify each rate against the linked source before publishing any cost",
+    "figure; rates change. If a model is absent, cost is reported as null",
+    "('not recorded'), never fabricated as 0.00.",
+    "Subscription-priced tools (e.g. fixed monthly seats) are NOT priced here;",
+    "they belong in a separate subscription column per the methodology."
+  ],
+  "sources": {
+    "anthropic": "https://www.anthropic.com/pricing",
+    "openai": "https://openai.com/api/pricing",
+    "google": "https://ai.google.dev/pricing"
+  },
+  "models": {
+    "claude-opus-4": {
+      "input_per_mtok": 15.0,
+      "output_per_mtok": 75.0,
+      "cache_read_per_mtok": 1.5,
+      "source": "anthropic",
+      "verified": false,
+      "note": "List price as of as_of_date. Re-verify before publishing."
+    },
+    "claude-sonnet-4": {
+      "input_per_mtok": 3.0,
+      "output_per_mtok": 15.0,
+      "cache_read_per_mtok": 0.3,
+      "source": "anthropic",
+      "verified": false,
+      "note": "List price as of as_of_date. Re-verify before publishing."
+    },
+    "claude-haiku-4": {
+      "input_per_mtok": 1.0,
+      "output_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.1,
+      "source": "anthropic",
+      "verified": false,
+      "note": "List price as of as_of_date. Re-verify before publishing."
+    },
+    "gpt-5": {
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.0,
+      "cache_read_per_mtok": 0.125,
+      "source": "openai",
+      "verified": false,
+      "note": "List price as of as_of_date. Re-verify before publishing."
+    },
+    "gemini-2.5-pro": {
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.0,
+      "cache_read_per_mtok": 0.31,
+      "source": "google",
+      "verified": false,
+      "note": "List price as of as_of_date. Re-verify before publishing."
+    }
+  }
+}

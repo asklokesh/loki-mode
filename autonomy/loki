@@ -567,6 +567,7 @@ show_help() {
     echo "  report [opts]    Session report generator (--format text|markdown|html, --output)"
     echo "  share [opts]     Share session report as GitHub Gist (--private, --format)"
     echo "  proof [cmd]      Inspect/share proof-of-run artifacts (list|show|open|share)"
+    echo "  bench [cmd]      Head-to-head benchmark harness (run|vs|list|verify|report)"
     echo "  version          Show version"
     echo "  help             Show this help"
     echo ""
@@ -13078,6 +13079,9 @@ main() {
         proof)
             cmd_proof "$@"
             ;;
+        bench)
+            cmd_bench "$@"
+            ;;
         context|ctx)
             cmd_context "$@"
             ;;
@@ -24539,6 +24543,48 @@ _loki_gist_upload() {
     # after this returns). The shared "Shared:" line stays unchanged.
     LOKI_LAST_GIST_URL="$gist_url"
     echo -e "${GREEN}Shared: ${gist_url}${NC}"
+}
+
+# loki bench - head-to-head benchmark harness (R2).
+# Subcommands: run <task> | vs <task> | list | verify <result.json>.
+# Thin pass-through to benchmarks/bench/run.sh (shared python core runner.py).
+# CREDIBILITY: Loki NEVER grades its own success. Success is decided by a
+# held-out acceptance command run by the grader OUTSIDE the agent (exit code).
+# No council / RARV-C / LLM-judge participates in scoring. See
+# benchmarks/SCHEMA-adapter.md and benchmarks/SCHEMA-result.md.
+cmd_bench() {
+    local bench_sh="$SKILL_DIR/benchmarks/bench/run.sh"
+    if [ ! -f "$bench_sh" ]; then
+        log_error "benchmark harness not found: $bench_sh"
+        return 1
+    fi
+    local sub="${1:-}"
+    case "$sub" in
+        ""|--help|-h|help)
+            echo -e "${BOLD}loki bench${NC} - head-to-head benchmark harness (R2)"
+            echo ""
+            echo "Usage: loki bench <subcommand> [args] [options]"
+            echo ""
+            echo "Subcommands:"
+            echo "  run <task>      Run Loki only on a task-spec"
+            echo "  vs <task>       Run all configured tools on a task-spec (head-to-head)"
+            echo "  list            List available task-specs"
+            echo "  verify <file>   Recompute task_hash + check tool versions for a result.json"
+            echo "  report <files>  Build results.json + RESULTS.md from per-tool result-rows"
+            echo ""
+            echo "Options:"
+            echo "  --trials N      Number of trials per tool (default 3)"
+            echo "  --model NAME    Override the model"
+            echo "  --emit-proof    Emit an R1 proof-of-run for the Loki trial(s)"
+            echo "  --out-dir DIR   (report) output dir for results.json + RESULTS.md"
+            echo ""
+            echo "Loki NEVER grades its own success: a held-out acceptance command run"
+            echo "by the grader OUTSIDE the agent decides success by exit code."
+            [ "$sub" = "" ] && return 1
+            return 0
+            ;;
+    esac
+    bash "$bench_sh" "$@"
 }
 
 # loki proof - inspect and share proof-of-run artifacts (.loki/proofs/<id>/).

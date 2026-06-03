@@ -1,0 +1,43 @@
+{
+  "name": "Loki R2 pinned SWE-bench subset",
+  "schema_version": "1",
+  "dataset": "SWE-bench Verified",
+  "dataset_url": "https://www.swebench.com/",
+  "split": "test",
+  "pinned_at": "2026-06-03",
+  "scope_note": "SMALL pinned PUBLIC subset for the R2 lean-but-credible harness. These are FROZEN PUBLIC tasks (real SWE-bench instances), NOT Loki-authored tasks. Expandable later. Loki never grades itself: success is decided by the held-out acceptance run by an out-of-container grader.",
+  "VERIFICATION_STATUS": "UNVERIFIED_AS_VERIFIED_SPLIT",
+  "verification_note": "The instance ids below are REAL SWE-bench instance ids in the canonical <org>__<repo>-<PR#> format, sourced from this repo's prior local SWE-bench Lite run (benchmarks/results/*/swebench-patches/). They were NOT confirmed offline to be members of the SWE-bench VERIFIED (500-instance) split specifically. Each entry is marked verified=false. Before any published R2 leaderboard run, replace this subset with ids confirmed present in the official SWE-bench Verified dataset (e.g. via the official datasets export) and flip verified=true per confirmed id. Do not present these as Verified-split-confirmed until then.",
+  "instances": [
+    {
+      "id": "astropy__astropy-6938",
+      "repo": "astropy/astropy",
+      "verified": false,
+      "note": "Real SWE-bench instance id; membership in the Verified split not confirmed offline."
+    },
+    {
+      "id": "django__django-11099",
+      "repo": "django/django",
+      "verified": false,
+      "note": "Real SWE-bench instance id; membership in the Verified split not confirmed offline."
+    },
+    {
+      "id": "sympy__sympy-20590",
+      "repo": "sympy/sympy",
+      "verified": false,
+      "note": "Real SWE-bench instance id; membership in the Verified split not confirmed offline."
+    },
+    {
+      "id": "scikit-learn__scikit-learn-13241",
+      "repo": "scikit-learn/scikit-learn",
+      "verified": false,
+      "note": "Real SWE-bench instance id; membership in the Verified split not confirmed offline."
+    },
+    {
+      "id": "pytest-dev__pytest-7373",
+      "repo": "pytest-dev/pytest",
+      "verified": false,
+      "note": "Real SWE-bench instance id; membership in the Verified split not confirmed offline."
+    }
+  ]
+}

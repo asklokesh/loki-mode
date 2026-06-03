@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "id": "demo-pass",
+  "source": "loki-self-test",
+  "source_ref": "benchmarks/bench/tasks/demo-pass.json",
+  "title": "Trivial always-pass demo task (CLI smoke fixture, not a real benchmark)",
+  "fixture": "../fixtures/demo-pass",
+  "prompt": "This is a demo task used only by the benchmark CLI smoke tests. No real work is expected.",
+  "acceptance": {
+    "cmd": "true",
+    "timeout_s": 30
+  },
+  "default_model": "claude-sonnet-4-5",
+  "agent_timeout_s": 60
+}

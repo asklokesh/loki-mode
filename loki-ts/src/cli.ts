@@ -185,6 +185,9 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     default:
       // Unknown to Bun -- shim falls through to bash. If invoked directly
       // via `bun src/cli.ts <unknown>`, print help and exit 2.
+      // NOTE (R2): `loki bench` is intentionally NOT a Bun command. It falls
+      // through here to the bash route (cmd_bench -> benchmarks/bench/run.sh).
+      // Bun parity is free via this fall-through; do not add a Bun bench command.
       process.stderr.write(`Unknown command: ${cmd}\n`);
       process.stderr.write(HELP);
       return 2;

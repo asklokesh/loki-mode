@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.10.0] - 2026-05-30
+
+### Added
+- Head-to-head benchmark harness (R2 of the competitive arc): `loki bench`
+  (run | vs | list | verify | report). A reproducible harness that runs a task
+  on Loki and competitors and produces a results table, built so a third party
+  can reproduce or refute the numbers. Core design principle (from research on
+  why vendor benchmarks get dismissed): the harness is the product, not the
+  number, and Loki NEVER grades itself.
+- Held-out grading: success is decided ONLY by a grader that runs the task's
+  held-out acceptance test (exit code) AFTER the agent finishes, outside the
+  agent. Adapters are structurally forbidden from reporting success/quality
+  (validated + rejected). No council/RARV-C/LLM-judge participates in scoring.
+  The held-out test is applied as an overlay so an agent that overwrites the
+  in-workdir test still fails.
+- Frozen public tasks: a SWE-bench Verified subset loader (offline, no network
+  in tests) materializes pinned public instances into the task-spec format with
+  the acceptance test held out of the agent prompt (anti-contamination). Pinned
+  instance IDs are honestly labeled unverified-as-Verified-split pending offline
+  confirmation; they must be confirmed before any published run.
+- Competitor adapters: real Aider and Claude Code adapters (CLI, headless) plus
+  an honest manual adapter for tools with no automatable local CLI (Devin,
+  Cursor) that records externally-supplied numbers with mandatory provenance,
+  stamped unverified and EXCLUDED from the winner. Competitor numbers are never
+  fabricated.
+- Data-driven report (`benchmarks/bench/report.py`): winner is whoever has the
+  highest grader success-rate (a Loki-loses input renders the competitor as
+  winner, regression-tested); null cost renders "not recorded" not "$0.00"; a
+  mandatory methodology + disclaimers section (reproduce-it-yourself, provenance,
+  read-only grader, variance, two-column cost, contamination disclosure,
+  published failures). Sample outputs carry a prominent mock-data banner.
+- Shared cost module `autonomy/lib/efficiency_cost.py` extracted from the R1
+  proof generator so benchmark cost and proof cost are computed identically.
+
+### Notes
+- bash + Bun parity: `loki bench` runs through the bash route on both runtimes
+  (the Bun shim falls through); no separate Bun command.
+- Scope of this release: R2 ships the reproducible HARNESS plus a small pinned
+  PUBLIC subset. It does NOT ship a full paid cross-tool leaderboard: CI is
+  fully mocked (zero paid API calls) and the full paid head-to-head across tools
+  is deferred until a budget is authorized.
+- NOT tested in this release: real paid runs of any competitor adapter (CI mocks
+  all adapters); SWE-bench Verified split membership of the pinned IDs (labeled
+  unverified); real end-to-end SWE-bench evaluation wiring (grader stub until a
+  real acceptance command is supplied).
+
 ## [7.9.1] - 2026-05-30
 
 ### Fixed
