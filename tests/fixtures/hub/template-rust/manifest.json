@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "kind": "template",
+  "name": "rust-cli",
+  "label": "Rust CLI Tool",
+  "description": "A fast command-line tool written in Rust with clap and tests.",
+  "body": "# PRD: Rust CLI Tool\n\n## Overview\nBuild a fast, ergonomic CLI in Rust.\n\n## Requirements\n- Argument parsing with clap\n- Subcommands with help text\n- Unit + integration tests\n- Release build profile\n\n## Success Criteria\n- cargo test passes\n- cargo build --release produces a single binary\n"
+}

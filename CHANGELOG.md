@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.17.0] - 2026-05-30
+
+### Added
+- Shareable team assets (R8 of the competitive arc): `loki assets export <bundle>`
+  / `import <bundle>` / `inspect` - bundle a team's reusable assets (learnings,
+  project memory, custom agents, PRD templates, council config, optionally the
+  wiki) into a portable .tgz and restore them in another project or clone, so
+  individual setup compounds into shared org value. Every bundled asset is run
+  through the R1 redaction chokepoint before writing, so secrets, keys, tokens,
+  and absolute home/repo paths are stripped (it is safe to share; note free-text
+  PII like author names is not stripped). `--into-install` opts agents/templates
+  into the global install location.
+- Agent + template marketplace (R10): `loki agent install <source>` /
+  `loki template install <source>` install community agents and PRD templates
+  from a git repo, local path, or URL, validated and usable via `loki agent
+  list/run` and `loki init --template`. Source-based today (a hosted central hub
+  is future work, stated honestly).
+
+### Security
+- R8 import is path-contained: a malicious bundle whose member resolves (via an
+  absolute or `..` sub-path, or a symlink) outside the restore root is SKIPPED,
+  validated by realpath BEFORE any filesystem write (council round 1 found an
+  arbitrary-file-write/RCE escape here; fixed + regression-tested).
+- R10 install is data-only: manifests are validated structurally and NEVER
+  eval/exec/imported; executable-looking fields (postinstall/scripts/hooks) are
+  stripped and reported, path traversal and built-in shadowing are rejected, and
+  git/url sources are fetched without shell injection.
+
+### Notes
+- Council: both 3-of-3 unanimous (R8 round 2 after the path-containment fix; R10
+  round 1). No duplication (R8 reuses proof_redact + export machinery; R10 reuses
+  the agents/templates registry). bash + Bun parity via the bash route.
+
 ## [7.16.1] - 2026-05-30
 
 ### Fixed

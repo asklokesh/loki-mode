@@ -613,6 +613,7 @@ show_help() {
     echo "  loki quick \"add dark mode\"  # Single-task mode (3 iters max)"
     echo "  loki demo                     # 60-second interactive demo"
     echo "  loki init -t saas-starter     # Scaffold from template"
+    echo "  loki template install <src>   # Install a community PRD template"
     echo ""
     echo "  # Session ops + observability"
     echo "  loki status [--json]          # Current status"
@@ -621,6 +622,7 @@ show_help() {
     echo "  loki doctor [--json]          # System prereq + skill symlinks"
     echo "  loki logs                     # Tail recent log output"
     echo "  loki export json|markdown|csv|timeline   # Export session"
+    echo "  loki assets export team.tgz   # Export shareable team assets (redacted)"
     echo "  loki cleanup                  # Kill orphaned processes"
     echo ""
     echo "  # Providers + model routing"
@@ -6298,6 +6300,187 @@ cmd_export() {
     esac
 }
 
+# R8: Shareable team assets. Bundles a team's invested, reusable assets
+# (cross-project + project memory/learnings, the agent registry, PRD
+# templates, council config, optionally the R5 wiki) into a portable,
+# REDACTED tarball, and re-imports them into another project or fresh clone.
+#
+# Scope vs cmd_export: cmd_export emits a per-run SESSION SNAPSHOT
+# (json/md/csv/timeline) and is NOT portable or redacted. cmd_assets emits a
+# portable, redacted TEAM-ASSET tarball -- different scope, different artifact.
+# Redaction REUSES the single proof_redact chokepoint via the
+# autonomy/lib/assets_bundle.py helper. No second redactor or parallel exporter.
+cmd_assets() {
+    local subcommand="${1:-help}"
+    shift 2>/dev/null || true
+
+    local helper="$_LOKI_SCRIPT_DIR/lib/assets_bundle.py"
+    if [ ! -f "$helper" ]; then
+        echo -e "${RED}Error: assets helper not found at $helper${NC}" >&2
+        return 1
+    fi
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}Error: python3 is required for 'loki assets'${NC}" >&2
+        return 1
+    fi
+
+    # Project dir holds .loki/ (memory, council, wiki). Default to cwd.
+    local project_dir
+    project_dir="$(pwd)"
+
+    # repo_root holds agents/types.json + templates/. The export and import
+    # roots are DELIBERATELY ASYMMETRIC (not a bug):
+    #   - EXPORT reads from the loki install ($SKILL_DIR), where a team's
+    #     edited registry / templates actually live and are read at runtime
+    #     (autonomy/loki:9781, 8840 read templates from $SKILL_DIR; cmd_agent
+    #     reads agents/types.json from the install first).
+    #   - IMPORT writes to the current working directory (the root of the
+    #     target clone the user is setting up), NEVER back into the install.
+    #     Writing into $SKILL_DIR would clobber the live install's shipped
+    #     registry / templates with redacted copies.
+    # Honest limitation: agents/templates restore relative to cwd, so run
+    # `loki assets import` from the root of the target clone. A global-install
+    # user must copy the restored agents/ + templates/ into their install for
+    # loki to read them at runtime (memory/learnings/council/wiki are unaffected
+    # -- those restore to $HOME/.loki and <project>/.loki and take effect
+    # immediately).
+    local export_repo_root="${SKILL_DIR:-$(cd "$_LOKI_SCRIPT_DIR/.." && pwd)}"
+    local import_repo_root="$project_dir"
+
+    case "$subcommand" in
+        --help|-h|help|"")
+            echo -e "${BOLD}loki assets${NC} - Export/import shareable team assets (R8)"
+            echo ""
+            echo "Bundles a team's reusable assets into a portable, redacted"
+            echo "tarball so setup compounds into shared, importable value."
+            echo ""
+            echo "Usage:"
+            echo "  loki assets export <bundle.tgz> [--wiki] [--categories a,b,c]"
+            echo "  loki assets import <bundle.tgz> [--no-merge] [--into-install]"
+            echo "  loki assets inspect <bundle.tgz>"
+            echo ""
+            echo "Assets bundled (default):"
+            echo "  learnings   ~/.loki/learnings/*.jsonl (cross-project)"
+            echo "  memory      <project>/.loki/memory/** (episodic/semantic/skills)"
+            echo "  agents      agents/types.json (agent registry)"
+            echo "  templates   templates/*.md (PRD templates)"
+            echo "  council     <project>/.loki/council/*.json (council config/state)"
+            echo "  wiki        <project>/.loki/wiki/** (opt-in via --wiki)"
+            echo ""
+            echo "All bundled content is redacted via the proof_redact chokepoint:"
+            echo "secrets, keys, tokens, and absolute home/repo paths are stripped"
+            echo "before the bundle is written. Originals on disk are never changed."
+            echo ""
+            echo "Restore locations on import:"
+            echo "  learnings -> \$HOME/.loki/learnings   (effective immediately)"
+            echo "  memory    -> <cwd>/.loki/memory       (effective immediately)"
+            echo "  council   -> <cwd>/.loki/council      (effective immediately)"
+            echo "  wiki      -> <cwd>/.loki/wiki         (effective immediately)"
+            echo "  agents    -> <cwd>/agents/types.json"
+            echo "  templates -> <cwd>/templates/*.md"
+            echo "Run import from the ROOT of the target clone. Note: agents and"
+            echo "templates are read by loki from its install dir at runtime. On a"
+            echo "global install, pass --into-install so agents/templates restore"
+            echo "into the install dir and are read at runtime (default is cwd,"
+            echo "which suits a repo-clone where loki runs from the clone root)."
+            echo ""
+            echo "Examples:"
+            echo "  loki assets export team-assets.tgz"
+            echo "  loki assets export team-assets.tgz --wiki"
+            echo "  loki assets import team-assets.tgz       # merge learnings, overwrite rest"
+            echo "  loki assets import team-assets.tgz --no-merge"
+            echo "  loki assets inspect team-assets.tgz      # show manifest only"
+            return 0
+            ;;
+        export)
+            local out_path="${1:-}"
+            if [ -z "$out_path" ]; then
+                echo -e "${RED}Usage: loki assets export <bundle.tgz> [--wiki] [--categories a,b,c]${NC}" >&2
+                return 1
+            fi
+            shift 2>/dev/null || true
+            if ! _export_check_overwrite "$out_path"; then
+                return 1
+            fi
+            echo "Bundling team assets (redacting secrets and paths)..."
+            if LOKI_ASSETS_HOME="$HOME" LOKI_ASSETS_REPO="$export_repo_root" \
+               LOKI_ASSETS_PROJECT="$project_dir" \
+               python3 "$helper" export "$out_path" "$@"; then
+                echo -e "${GREEN}Bundle written: $out_path${NC}"
+            else
+                echo -e "${RED}Export failed${NC}" >&2
+                return 1
+            fi
+            ;;
+        import)
+            local bundle_path="${1:-}"
+            if [ -z "$bundle_path" ]; then
+                echo -e "${RED}Usage: loki assets import <bundle.tgz> [--no-merge] [--into-install]${NC}" >&2
+                return 1
+            fi
+            shift 2>/dev/null || true
+            if [ ! -f "$bundle_path" ]; then
+                echo -e "${RED}Error: bundle not found: $bundle_path${NC}" >&2
+                return 1
+            fi
+            # --into-install: restore agents/templates into the loki install
+            # ($SKILL_DIR) so a global-install user has them read at runtime,
+            # instead of into cwd. Strip the flag before passing the rest to
+            # the helper (the helper does not understand it). The install dir
+            # is the same source export reads from, so this is the symmetric
+            # round-trip for a global install. Off by default (cwd is safe).
+            local _import_args=()
+            local arg
+            for arg in "$@"; do
+                if [ "$arg" = "--into-install" ]; then
+                    import_repo_root="$export_repo_root"
+                else
+                    _import_args+=("$arg")
+                fi
+            done
+            if [ "$import_repo_root" = "$export_repo_root" ]; then
+                echo "Importing team assets (agents/templates -> install dir: $import_repo_root)..."
+            else
+                echo "Importing team assets into this project/clone (cwd)..."
+            fi
+            # Bash 3.2 (macOS) errors on "${arr[@]}" when the array is empty
+            # and set -u is active; guard with the count.
+            if [ "${#_import_args[@]}" -gt 0 ]; then
+                LOKI_ASSETS_HOME="$HOME" LOKI_ASSETS_REPO="$import_repo_root" \
+                LOKI_ASSETS_PROJECT="$project_dir" \
+                python3 "$helper" import "$bundle_path" "${_import_args[@]}"
+            else
+                LOKI_ASSETS_HOME="$HOME" LOKI_ASSETS_REPO="$import_repo_root" \
+                LOKI_ASSETS_PROJECT="$project_dir" \
+                python3 "$helper" import "$bundle_path"
+            fi
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}Import complete${NC}"
+            else
+                echo -e "${RED}Import failed${NC}" >&2
+                return 1
+            fi
+            ;;
+        inspect)
+            local bundle_path="${1:-}"
+            if [ -z "$bundle_path" ]; then
+                echo -e "${RED}Usage: loki assets inspect <bundle.tgz>${NC}" >&2
+                return 1
+            fi
+            if [ ! -f "$bundle_path" ]; then
+                echo -e "${RED}Error: bundle not found: $bundle_path${NC}" >&2
+                return 1
+            fi
+            python3 "$helper" inspect "$bundle_path"
+            ;;
+        *)
+            echo -e "${RED}Unknown subcommand: $subcommand${NC}" >&2
+            echo "Run 'loki assets --help' for usage."
+            return 1
+            ;;
+    esac
+}
+
 # Guard: check if output file exists and warn before overwriting
 _export_check_overwrite() {
     local output="$1"
@@ -9633,6 +9816,22 @@ cmd_init() {
         echo -e "Selected: ${CYAN}$template_name${NC} ($(_get_template_label "$template_name"))"
     fi
 
+    # R10: a hub-installed template (.loki/templates/<name>.md) is also valid.
+    # Resolve it via agents/hub_install.py (validates the name as a safe id).
+    local _installed_tpl=""
+    local _hub_py_init="$SKILL_DIR/agents/hub_install.py"
+    [ -f "$_hub_py_init" ] || _hub_py_init="agents/hub_install.py"
+    if [[ -f "$_hub_py_init" ]]; then
+        _installed_tpl=$(TPL_NAME="$template_name" HUB_PY="$_hub_py_init" python3 -c "
+import os
+import importlib.util as ilu
+sp = ilu.spec_from_file_location('loki_hub_install', os.environ.get('HUB_PY'))
+m = ilu.module_from_spec(sp); sp.loader.exec_module(m)
+p = m.installed_template_path(os.environ['TPL_NAME'])
+print(p or '')
+" 2>/dev/null)
+    fi
+
     # Validate template_name against known list before filesystem lookup
     local _tpl_valid=false
     for _tpl_check in "${TEMPLATE_NAMES[@]}"; do
@@ -9641,6 +9840,9 @@ cmd_init() {
             break
         fi
     done
+    if [[ -n "$_installed_tpl" ]]; then
+        _tpl_valid=true
+    fi
     if ! $_tpl_valid; then
         echo -e "${RED}Unknown template: $template_name${NC}"
         echo ""
@@ -9649,18 +9851,23 @@ cmd_init() {
             echo "  $tname"
         done
         echo ""
-        echo "Run 'loki init --list' for details."
+        echo "Run 'loki init --list' for built-in details, 'loki template list' for installed."
         exit 1
     fi
 
     # Resolve template file
     local template_file=""
-    for dir in "$SKILL_DIR/templates" "$SKILL_DIR/examples"; do
-        if [[ -f "$dir/${template_name}.md" ]]; then
-            template_file="$dir/${template_name}.md"
-            break
-        fi
-    done
+    if [[ -n "$_installed_tpl" && -f "$_installed_tpl" ]]; then
+        template_file="$_installed_tpl"
+    fi
+    if [[ -z "$template_file" ]]; then
+        for dir in "$SKILL_DIR/templates" "$SKILL_DIR/examples"; do
+            if [[ -f "$dir/${template_name}.md" ]]; then
+                template_file="$dir/${template_name}.md"
+                break
+            fi
+        done
+    fi
 
     if [[ -z "$template_file" ]]; then
         echo -e "${RED}Unknown template: $template_name${NC}"
@@ -13094,6 +13301,9 @@ main() {
         export)
             cmd_export "$@"
             ;;
+        assets)
+            cmd_assets "$@"
+            ;;
         config)
             cmd_config "$@"
             ;;
@@ -13172,6 +13382,9 @@ main() {
             ;;
         agent)
             cmd_agent "$@"
+            ;;
+        template)
+            cmd_template "$@"
             ;;
         state)
             cmd_state "$@"
@@ -19562,6 +19775,104 @@ cmd_completions() {
     esac
 }
 
+cmd_template() {
+    local subcommand="${1:-list}"
+    shift 2>/dev/null || true
+
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local hub_py="${script_dir}/../agents/hub_install.py"
+    [ -f "$hub_py" ] || hub_py="agents/hub_install.py"
+
+    case "$subcommand" in
+        install)
+            local source="${1:-}"
+            if [ -z "$source" ]; then
+                echo -e "${RED}Usage: loki template install <source>${NC}"
+                echo "  source: local path, git repo URL, or raw manifest URL"
+                return 1
+            fi
+            if [ ! -f "$hub_py" ]; then
+                echo -e "${RED}Error: agents/hub_install.py not found${NC}"
+                return 1
+            fi
+            local result
+            if result=$(python3 "$hub_py" install-template "$source" 2>&1); then
+                TPL_RESULT="$result" python3 - << 'PYEOF'
+import json, os
+r = json.loads(os.environ["TPL_RESULT"])
+print(f"Installed template: {r['name']}  ({r.get('label','')})")
+desc = r.get("description") or ""
+if desc:
+    print(f"  {desc}")
+print(f"  body:   {r.get('path','')}")
+print(f"  source: {r.get('source','')}")
+ig = r.get("_ignored_executable_fields") or []
+if ig:
+    print(f"  NOTE: ignored executable-looking fields (never run): {', '.join(ig)}")
+print(f"Use with: loki init --template {r['name']}")
+PYEOF
+            else
+                echo -e "${RED}Install failed:${NC} $result"
+                return 1
+            fi
+            ;;
+
+        list|installed)
+            echo -e "${BOLD}Hub-installed Templates${NC}"
+            echo ""
+            if [ ! -f "$hub_py" ]; then
+                echo "  (none)"
+            else
+                local _tpls_json
+                _tpls_json="$(python3 "$hub_py" list-templates 2>/dev/null)"
+                HUB_ITEMS="$_tpls_json" python3 - << 'PYEOF'
+import json, os
+try:
+    items = json.loads(os.environ.get("HUB_ITEMS", "") or "[]")
+except Exception:
+    items = []
+if not items:
+    print("  (none)")
+else:
+    for t in items:
+        print(f"  {t.get('name',''):24s} {t.get('label','')}")
+    print(f"\n  Total: {len(items)} installed template(s)")
+PYEOF
+            fi
+            ;;
+
+        --help|-h|help)
+            echo -e "${BOLD}loki template${NC} - PRD template marketplace (R10)"
+            echo ""
+            echo "Usage: loki template <command> [args]"
+            echo ""
+            echo "Commands:"
+            echo "  install <source>   Install a community template (local/git/url manifest)"
+            echo "  list               List templates installed from a hub source"
+            echo "  help               Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  loki template install ./my-template/manifest.json"
+            echo "  loki template install https://github.com/owner/loki-template-rust.git"
+            echo "  loki template list"
+            echo ""
+            echo "Installed templates are usable via 'loki init --template <name>'."
+            echo "Built-in templates ship in templates/ (see 'loki init --list')."
+            echo ""
+            echo "Note: install is install-from-source (git/local/url). A hosted"
+            echo "central hub registry is future work. Manifests are validated as"
+            echo "DATA only; no code from a manifest is ever executed."
+            echo ""
+            ;;
+        *)
+            echo -e "${RED}Unknown template command: $subcommand${NC}"
+            echo "Run 'loki template help' for usage."
+            return 1
+            ;;
+    esac
+}
+
 # Agent type dispatch (v6.7.0)
 cmd_agent() {
     local subcommand="${1:-list}"
@@ -19591,6 +19902,20 @@ import json, sys, os
 
 with open(os.environ["TYPES_FILE"]) as f:
     agents = json.load(f)
+
+# R10: union built-in agents with hub-installed agents (.loki/agents/installed.json).
+try:
+    import importlib.util as _ilu
+    _hub_path = os.path.join(os.path.dirname(os.path.abspath(os.environ["TYPES_FILE"])), "hub_install.py")
+    _spec = _ilu.spec_from_file_location("loki_hub_install", _hub_path)
+    _hub = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_hub)
+    _seen = {a.get("type") for a in agents}
+    for _inst in _hub.installed_agent_list():
+        if _inst.get("type") not in _seen:
+            agents.append(_inst)
+except Exception:
+    pass
 
 filter_swarm = os.environ.get("FILTER_SWARM", "")
 if filter_swarm and filter_swarm.startswith("--swarm"):
@@ -19634,6 +19959,20 @@ import json, sys, os
 with open(os.environ["TYPES_FILE"]) as f:
     agents = json.load(f)
 
+# R10: include hub-installed agents in the lookup.
+try:
+    import importlib.util as _ilu
+    _hub_path = os.path.join(os.path.dirname(os.path.abspath(os.environ["TYPES_FILE"])), "hub_install.py")
+    _spec = _ilu.spec_from_file_location("loki_hub_install", _hub_path)
+    _hub = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_hub)
+    _seen = {a.get("type") for a in agents}
+    for _inst in _hub.installed_agent_list():
+        if _inst.get("type") not in _seen:
+            agents.append(_inst)
+except Exception:
+    pass
+
 target = os.environ["AGENT_TYPE"]
 found = None
 for a in agents:
@@ -19671,6 +20010,17 @@ PYEOF
 import json, os
 with open(os.environ['TYPES_FILE']) as f:
     agents = json.load(f)
+try:
+    import importlib.util as _ilu
+    _hp = os.path.join(os.path.dirname(os.path.abspath(os.environ['TYPES_FILE'])), 'hub_install.py')
+    _sp = _ilu.spec_from_file_location('loki_hub_install', _hp)
+    _hub = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_hub)
+    _seen = {a.get('type') for a in agents}
+    for _i in _hub.installed_agent_list():
+        if _i.get('type') not in _seen:
+            agents.append(_i)
+except Exception:
+    pass
 for a in agents:
     if a['type'] == os.environ['AGENT_TYPE']:
         print(a['persona'])
@@ -19742,6 +20092,17 @@ USER TASK: ${prompt}"
 import json, os
 with open(os.environ['TYPES_FILE']) as f:
     agents = json.load(f)
+try:
+    import importlib.util as _ilu
+    _hp = os.path.join(os.path.dirname(os.path.abspath(os.environ['TYPES_FILE'])), 'hub_install.py')
+    _sp = _ilu.spec_from_file_location('loki_hub_install', _hp)
+    _hub = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_hub)
+    _seen = {a.get('type') for a in agents}
+    for _i in _hub.installed_agent_list():
+        if _i.get('type') not in _seen:
+            agents.append(_i)
+except Exception:
+    pass
 for a in agents:
     if a['type'] == os.environ['AGENT_TYPE']:
         print(a['persona'])
@@ -19785,6 +20146,17 @@ for a in agents:
 import json, os
 with open(os.environ['TYPES_FILE']) as f:
     agents = json.load(f)
+try:
+    import importlib.util as _ilu
+    _hp = os.path.join(os.path.dirname(os.path.abspath(os.environ['TYPES_FILE'])), 'hub_install.py')
+    _sp = _ilu.spec_from_file_location('loki_hub_install', _hp)
+    _hub = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_hub)
+    _seen = {a.get('type') for a in agents}
+    for _i in _hub.installed_agent_list():
+        if _i.get('type') not in _seen:
+            agents.append(_i)
+except Exception:
+    pass
 for a in agents:
     if a['type'] == os.environ['AGENT_TYPE']:
         print(a['persona'])
@@ -19822,17 +20194,81 @@ $diff"
             esac
             ;;
 
+        install)
+            # R10: install a community agent from a source (local path /
+            # git repo / raw URL containing a manifest). DATA-ONLY install --
+            # never executes code from the manifest. See agents/hub_install.py.
+            local source="${1:-}"
+            if [ -z "$source" ]; then
+                echo -e "${RED}Usage: loki agent install <source>${NC}"
+                echo "  source: local path, git repo URL, or raw manifest URL"
+                return 1
+            fi
+            local hub_py="${script_dir}/../agents/hub_install.py"
+            [ -f "$hub_py" ] || hub_py="agents/hub_install.py"
+            if [ ! -f "$hub_py" ]; then
+                echo -e "${RED}Error: agents/hub_install.py not found${NC}"
+                return 1
+            fi
+            local result
+            if result=$(python3 "$hub_py" install-agent "$source" 2>&1); then
+                AGENT_RESULT="$result" python3 - << 'PYEOF'
+import json, os
+r = json.loads(os.environ["AGENT_RESULT"])
+print(f"Installed agent: {r['type']}  ({r.get('name','')})")
+print(f"  swarm:   {r.get('swarm','')}")
+print(f"  source:  {r.get('source','')}")
+ig = r.get("_ignored_executable_fields") or []
+if ig:
+    print(f"  NOTE: ignored executable-looking fields (never run): {', '.join(ig)}")
+print("Stored in .loki/agents/installed.json -- visible to 'loki agent list/info/run'.")
+PYEOF
+            else
+                echo -e "${RED}Install failed:${NC} $result"
+                return 1
+            fi
+            ;;
+
+        installed)
+            # R10: list agents installed from a hub source.
+            local hub_py="${script_dir}/../agents/hub_install.py"
+            [ -f "$hub_py" ] || hub_py="agents/hub_install.py"
+            echo -e "${BOLD}Hub-installed Agents${NC}"
+            echo ""
+            if [ ! -f "$hub_py" ]; then
+                echo "  (none)"
+            else
+                local _agents_json
+                _agents_json="$(python3 "$hub_py" list-agents 2>/dev/null)"
+                HUB_ITEMS="$_agents_json" python3 - << 'PYEOF'
+import json, os
+try:
+    items = json.loads(os.environ.get("HUB_ITEMS", "") or "[]")
+except Exception:
+    items = []
+if not items:
+    print("  (none)")
+else:
+    for a in items:
+        print(f"  {a.get('type',''):24s} {a.get('name','')}  [{a.get('swarm','')}]")
+    print(f"\n  Total: {len(items)} installed agent(s)")
+PYEOF
+            fi
+            ;;
+
         --help|-h|help)
             echo -e "${BOLD}loki agent${NC} - Agent type dispatch (v6.7.0)"
             echo ""
             echo "Usage: loki agent <command> [args]"
             echo ""
             echo "Commands:"
-            echo "  list [--swarm NAME]        List all agent types (optionally filter by swarm)"
+            echo "  list [--swarm NAME]        List all agent types (built-in + installed)"
             echo "  info <type>                Show agent type details"
             echo "  run <type> \"<prompt>\"       Single-shot: run prompt with agent persona"
             echo "  start <type> <prd|prompt>  Full autonomous loop with agent persona"
             echo "  review [type]              Code review with agent persona (default: ops-security)"
+            echo "  install <source>           Install a community agent (local/git/url manifest)"
+            echo "  installed                  List agents installed from a hub source"
             echo "  help                       Show this help"
             echo ""
             echo "Examples:"
@@ -19842,6 +20278,12 @@ $diff"
             echo "  loki agent run eng-frontend \"Create a responsive navbar\""
             echo "  loki agent start eng-backend ./api-prd.md"
             echo "  loki agent review ops-security"
+            echo "  loki agent install ./my-agent/manifest.json"
+            echo "  loki agent install https://github.com/owner/loki-agent-rust.git"
+            echo ""
+            echo "Note: 'install' is install-from-source (git/local/url). A hosted"
+            echo "central hub registry is future work. Manifests are validated as"
+            echo "DATA only; no code from a manifest is ever executed."
             echo ""
             ;;
         *)
