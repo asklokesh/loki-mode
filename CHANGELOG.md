@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.17.1] - 2026-06-03
+
+### Fixed
+- Proof-of-run (R1) now records the raw one-line brief from
+  `loki start "<brief>"`. Previously the inline brief was dropped and the proof
+  page showed "No brief recorded" with source "codebase-analysis", even though
+  the user gave a clear one-liner. The brief is written to `.loki/state/brief.txt`
+  at brief-mode dispatch and surfaced verbatim in the proof (source "brief"),
+  which is a stronger, more honest shareable artifact than the synthesized PRD.
+  The marker is cleared at the start of every run so a later PRD or
+  codebase-analysis run can never inherit a stale brief label. The brief still
+  flows through the R1 redaction chokepoint before any published artifact, so a
+  secret typed into a brief is redacted in the shared proof and gist.
+- `loki proof share` gist URL no longer includes gh progress chatter: the
+  uploader captured `gh gist create` stdout and stderr together, folding the
+  multi-line progress text into the gist URL, the "Shared:" line, the
+  ready-to-post hook, and `LOKI_LAST_GIST_URL`. stdout (the permalink) and
+  stderr (progress) are now captured separately and the clean URL is extracted.
+- `loki wiki generate [path]` accepts the documented positional path argument.
+  The help text and design doc advertised it but argparse only defined `--root`,
+  so a positional path errored with "unrecognized arguments". The positional now
+  takes precedence over `--root`; `--root` and bare-cwd invocations are
+  unchanged.
+- Benchmark Claude Code adapter default model changed from the stale
+  `claude-sonnet-4` alias (HTTP 404 on current CLI) to the rolling `sonnet`
+  alias. The adapter already parametrizes the model; this only fixes the default.
+
+### Internal
+- local-ci hardening so the v7.16.1-class bug (a built dashboard SPA whose inline
+  JavaScript threw a SyntaxError while still serving HTTP 200 and passing every
+  presence check) cannot ship again: a new node-gated gate parses every inline
+  `<script>` block in `dashboard/static/index.html` (compile-only, never
+  executed; ES-module blocks are skipped to avoid false positives) and fails the
+  build on any syntax error. `tests/run-shellcheck.sh` now prunes
+  `.claude/worktrees/` so transient agent worktrees do not pollute the lint set.
+- This release is the close-out of a post-arc verification sweep: every shipped
+  arc feature (proof-of-run, benchmark harness, cost dashboard, zero-config first
+  run, auto-wiki + cited Q&A, 1-click rollback, open-core hooks, trust
+  trajectory, team assets, marketplace) was re-tested the way a user uses it
+  (fresh installs across npm/Docker/Homebrew, three-browser dashboard matrix,
+  interactive Playwright click-through, a real free-backend end-to-end run, real
+  gist/git-install/adapter checks, large-repo wiki). The four fixes above are the
+  only product defects found; everything else verified clean.
+
 ## [7.17.0] - 2026-05-30
 
 ### Added

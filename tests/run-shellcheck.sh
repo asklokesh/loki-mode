@@ -52,6 +52,7 @@ TEST_EXCLUDES="SC2034"
 FILES=$(find . -name "*.sh" \
     -not -path "*/node_modules/*" \
     -not -path "*/.git/*" \
+    -not -path "*/.claude/worktrees/*" \
     -not -path "*/.loki/*" \
     -not -path "*/venv/*")
 

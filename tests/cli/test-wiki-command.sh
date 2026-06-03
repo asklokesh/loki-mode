@@ -83,6 +83,15 @@ else
     log_fail "all citations point at real files" "bad=$bad_count total=$total_count"
 fi
 
+# --- positional path (documented as `loki wiki generate [path]`) ------------
+pos_out=$( cd /tmp && LOKI_WIKI_LLM_STUB="Server starts here [1]." \
+    bash "$LOKI" wiki generate "$PROJECT" --force 2>&1 )
+if echo "$pos_out" | grep -qi "wiki written\|sections"; then
+    log_pass "generate accepts a positional project path"
+else
+    log_fail "generate accepts a positional project path" "$pos_out"
+fi
+
 # --- incremental skip -------------------------------------------------------
 skip_out=$( cd "$PROJECT" && bash "$LOKI" wiki generate 2>&1 )
 if echo "$skip_out" | grep -qi "up to date"; then

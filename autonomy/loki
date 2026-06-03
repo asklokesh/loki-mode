@@ -1220,6 +1220,13 @@ cmd_start() {
         esac
     done
 
+    # Clear any stale raw-brief marker from a PRIOR run before we decide the
+    # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
+    # a brief run leaves .loki/state/brief.txt behind and a later non-brief run
+    # (PRD or codebase-analysis) would have its proof mislabel source="brief"
+    # with the old one-liner, since proof-generator reads brief.txt first.
+    rm -f "$LOKI_DIR/state/brief.txt" 2>/dev/null || true
+
     # v6.84.0: Unified dispatch based on explicit flags or auto-detection
     # Precedence: --brief > --issue > --prd > positional auto-detect >
     #             LOKI_PRD_FILE env
@@ -1291,6 +1298,15 @@ cmd_start() {
         local brief_prd="$LOKI_DIR/brief-prd-$$.md"
         synthesize_brief_prd "$brief_prd" "$brief_text"
         prd_file="$brief_prd"
+
+        # Persist the raw one-liner so the proof-of-run can show the actual brief
+        # the user typed ("Built and verified from: <brief>") instead of falling
+        # back to "codebase-analysis / No brief recorded". The synthesized PRD is
+        # kept distinct (brief-prd-$$.md); the raw brief is the stronger, more
+        # honest shareable artifact. proof-generator.py::_collect_spec reads this
+        # as a fallback when no PRD_PATH / generated-prd.md is present.
+        mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
+        printf '%s' "$brief_text" > "$LOKI_DIR/state/brief.txt" 2>/dev/null || true
 
         # Apply the shared lightweight profile and flag the TTFV first-run path.
         # The signal value ("brief") drives the end-of-run wording in run.sh so
@@ -25755,18 +25771,37 @@ _loki_gist_upload() {
     local desc="$2"
     local visibility="$3"
 
-    local gist_url
-    gist_url=$(gh gist create "$file" --desc "$desc" $visibility 2>&1)
-    local gist_exit=$?
+    # gh prints progress ("- Creating gist...", "Created public gist...") on
+    # STDERR and the final gist URL on STDOUT. Capture them separately so the
+    # URL we expose and print is clean: folding stderr into stdout pollutes the
+    # "Shared:" line and the ready-to-post hook with multi-line gh chatter.
+    local gist_out gist_err gist_exit
+    local errfile
+    # Fall back to /dev/null if mktemp fails (disk full / unwritable /tmp) so the
+    # redirect target is always a real path -- never an empty string (2>"" is a
+    # bash error). We lose the captured stderr text in that rare case, not the
+    # clean URL parse.
+    errfile=$(mktemp "/tmp/loki-gist-err-XXXXXX" 2>/dev/null) || errfile=/dev/null
+    gist_out=$(gh gist create "$file" --desc "$desc" $visibility 2>"$errfile")
+    gist_exit=$?
+    gist_err=$(cat "$errfile" 2>/dev/null)
+    [ "$errfile" != "/dev/null" ] && rm -f "$errfile"
 
     # Cleanup temp file
     rm -f "$file"
 
     if [ $gist_exit -ne 0 ]; then
         echo -e "${RED}Failed to create gist${NC}"
-        echo "$gist_url"
+        [ -n "$gist_err" ] && echo "$gist_err"
+        [ -n "$gist_out" ] && echo "$gist_out"
         exit 1
     fi
+
+    # The URL is the gist permalink on stdout. Extract just the URL line in
+    # case any non-URL text slips into stdout on some gh versions.
+    local gist_url
+    gist_url=$(printf '%s\n' "$gist_out" | grep -Eo 'https://gist\.github\.com/[^[:space:]]+' | head -1)
+    [ -z "$gist_url" ] && gist_url="$gist_out"
 
     # Expose the URL to callers (e.g. cmd_proof prints a ready-to-post hook
     # after this returns). The shared "Shared:" line stays unchanged.

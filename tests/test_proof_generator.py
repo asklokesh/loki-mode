@@ -374,5 +374,69 @@ class GracefulDegradationTests(unittest.TestCase):
         self.assertTrue(d["council"]["reviewers"])
 
 
+class BriefSpecTests(unittest.TestCase):
+    """The raw one-liner from `loki start "<brief>"` must surface in the proof
+    spec (source="brief" + verbatim text), and must NOT be picked up stale on a
+    later non-brief run. Regression guard for the GAP-7 F1 fix."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-brief-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_raw_brief_surfaces_in_spec(self):
+        # Brief run wrote .loki/state/brief.txt and no generated-prd.md.
+        loki_dir = os.path.join(self.tmp, "b", ".loki")
+        out_dir = os.path.join(self.tmp, "outb")
+        os.makedirs(os.path.join(loki_dir, "state"))
+        with open(os.path.join(loki_dir, "state", "brief.txt"), "w") as f:
+            f.write("add a multiply(a,b) function with a pytest test")
+        d = _run_generator(loki_dir, out_dir)
+        self.assertEqual(d["spec"]["source"], "brief")
+        self.assertIn("multiply", d["spec"]["brief"])
+
+    def test_generated_prd_wins_when_no_brief(self):
+        # A non-brief run (codebase-analysis) has generated-prd.md and NO
+        # brief.txt (the bash start path clears it). Spec must reflect the PRD,
+        # never mislabel as "brief".
+        loki_dir = os.path.join(self.tmp, "g", ".loki")
+        out_dir = os.path.join(self.tmp, "outg")
+        os.makedirs(os.path.join(loki_dir, "state"))
+        with open(os.path.join(loki_dir, "generated-prd.md"), "w") as f:
+            f.write("# Generated PRD\nReverse-engineered from code.")
+        d = _run_generator(loki_dir, out_dir)
+        self.assertNotEqual(d["spec"]["source"], "brief")
+        self.assertTrue(d["spec"]["source"].endswith("generated-prd.md"))
+
+    def test_prd_path_env_wins_over_brief(self):
+        # An explicit PRD file always wins, even if a stale brief.txt exists.
+        loki_dir = os.path.join(self.tmp, "p", ".loki")
+        out_dir = os.path.join(self.tmp, "outp")
+        os.makedirs(os.path.join(loki_dir, "state"))
+        with open(os.path.join(loki_dir, "state", "brief.txt"), "w") as f:
+            f.write("stale brief from a prior run")
+        prd = os.path.join(self.tmp, "p", "real-prd.md")
+        with open(prd, "w") as f:
+            f.write("# Real PRD")
+        d = _run_generator(loki_dir, out_dir, env_extra={"PRD_PATH": prd})
+        # source is recorded as the PRD path (possibly cwd-relativized); the key
+        # invariant is it is the PRD, not the stale brief.
+        self.assertTrue(d["spec"]["source"].endswith("real-prd.md"))
+        self.assertNotEqual(d["spec"]["source"], "brief")
+        self.assertNotIn("stale brief", d["spec"]["brief"])
+        self.assertIn("Real PRD", d["spec"]["brief"])
+
+    def test_codebase_analysis_when_no_brief_no_prd(self):
+        # Neither brief.txt, generated-prd.md, nor PRD_PATH -> the honest
+        # codebase-analysis fallback with an empty brief.
+        loki_dir = os.path.join(self.tmp, "c", ".loki")
+        out_dir = os.path.join(self.tmp, "outc")
+        os.makedirs(os.path.join(loki_dir, "state"))
+        d = _run_generator(loki_dir, out_dir)
+        self.assertEqual(d["spec"]["source"], "codebase-analysis")
+        self.assertEqual(d["spec"]["brief"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

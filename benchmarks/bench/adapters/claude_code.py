@@ -90,7 +90,7 @@ def _parse_json_result(stdout):
     return cost, t_in, t_out, model
 
 
-def run(workdir, spec, *, model="claude-sonnet-4", timeout=900, runner=None):
+def run(workdir, spec, *, model="sonnet", timeout=900, runner=None):
     """Run Claude Code on `spec` inside `workdir`; return adapter-output dict.
 
     `spec` is read as the prompt body (a path inside workdir or absolute).

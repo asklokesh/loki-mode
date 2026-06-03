@@ -213,12 +213,16 @@ def _render_md(section):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Generate a cited project wiki.")
+    ap.add_argument("path", nargs="?", default=None,
+                    help="project root (positional; same as --root)")
     ap.add_argument("--root", default=".", help="project root")
     ap.add_argument("--force", action="store_true", help="regenerate even if unchanged")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
-    root = Path(args.root).resolve()
+    # A positional path (documented as `loki wiki generate [path]`) takes
+    # precedence over --root when both are given; otherwise fall back to --root.
+    root = Path(args.path if args.path is not None else args.root).resolve()
     if not root.is_dir():
         print("error: not a directory: %s" % root, file=sys.stderr)
         return 2

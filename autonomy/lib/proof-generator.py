@@ -307,7 +307,16 @@ def _collect_spec(loki_dir, target_dir):
         brief = _read_text(prd_path)
     else:
         gen = os.path.join(loki_dir, "generated-prd.md")
-        if os.path.isfile(gen):
+        # Raw one-liner from `loki start "<brief>"` (zero-config first run). The
+        # brief path writes the typed brief here; showing it verbatim is a
+        # stronger, more honest proof artifact than the synthesized PRD or a
+        # "No brief recorded" fallback. Checked before generated-prd.md because a
+        # brief run never produces generated-prd.md (it writes brief-prd-$$.md).
+        raw_brief = os.path.join(loki_dir, "state", "brief.txt")
+        if os.path.isfile(raw_brief):
+            source = "brief"
+            brief = _read_text(raw_brief)
+        elif os.path.isfile(gen):
             source = gen
             brief = _read_text(gen)
         else:

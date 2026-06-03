@@ -353,6 +353,22 @@ run_check "web-app dist baked with /lab/ base" 'test -f web-app/dist/index.html 
 run_check "no hardcoded /api/ or /ws literals in web-app/src/" '! grep -rnE "['"'"'\"]/(api|ws|proxy)/" web-app/src/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v "\.test\." | grep -q .'
 
 # ---------------------------------------------------------------------------
+# 10c. Dashboard SPA inline JavaScript must PARSE (no SyntaxError)
+# ---------------------------------------------------------------------------
+# A prior build regression (build-standalone.js corrupting backslash escapes)
+# shipped a dashboard/static/index.html whose inline <script> blocks threw a
+# SyntaxError in the browser. The file still served HTTP 200 and contained the
+# expected markers, so every existing presence/compose check passed while the
+# SPA was dead. This gate extracts each INLINE <script> block (skips src=,
+# importmap/json data islands) and parses it via Node's vm. FAIL on any
+# SyntaxError. Proven to FAIL on the old broken build and PASS on the fixed one.
+if command -v node >/dev/null 2>&1; then
+  run_check "dashboard SPA inline scripts parse (node)" "node scripts/check-inline-scripts.js dashboard/static/index.html"
+else
+  skip_check "dashboard SPA inline scripts parse" "node not installed"
+fi
+
+# ---------------------------------------------------------------------------
 # 11. SBOM workflow equivalent (mirrors sbom.yml)
 # ---------------------------------------------------------------------------
 if [ "$FAST" = "1" ]; then
