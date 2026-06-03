@@ -763,6 +763,10 @@ function generateStandaloneHTML(bundleCode) {
           <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
           Cost
         </button>
+        <button class="nav-link" data-section="trust" id="nav-trust">
+          <svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7" fill="none" stroke="currentColor" stroke-width="2"/><polyline points="15 7 21 7 21 13" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          Trust
+        </button>
         <button class="nav-link" data-section="checkpoint" id="nav-checkpoint">
           <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           Checkpoints
@@ -1188,6 +1192,17 @@ function generateStandaloneHTML(bundleCode) {
         <loki-cost-dashboard id="cost-dashboard"></loki-cost-dashboard>
       </div>
 
+      <!-- Trust Trajectory (R4): embeds the standalone /trust panel so the SPA
+           and the build-free page share one renderer + one /api/trust/trajectory
+           source. Mirrors the cost panel wiring. -->
+      <div class="section-page" id="page-trust">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Trust Trajectory</h2>
+        </div>
+        <iframe id="trust-frame" title="Trust trajectory" src="about:blank"
+          style="width:100%;height:calc(100vh - 160px);border:0;border-radius:8px;background:#0f1115;"></iframe>
+      </div>
+
       <!-- Checkpoints -->
       <div class="section-page" id="page-checkpoint">
         <div class="section-page-header">
@@ -1539,6 +1554,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (pageEl) {
       pageEl.classList.add('active');
     }
+    // R4: lazy-load the trust panel iframe on first open (avoids a fetch on
+    // every page that the user never visits).
+    if (sectionId === 'trust') {
+      var tframe = document.getElementById('trust-frame');
+      if (tframe && (!tframe.src || tframe.src === 'about:blank' ||
+          tframe.getAttribute('src') === 'about:blank')) {
+        tframe.src = '/trust';
+      }
+    }
     // Update nav active state
     navLinks.forEach(function(link) { link.classList.remove('active'); });
     var navEl = document.querySelector('.nav-link[data-section="' + sectionId + '"]');
@@ -1565,7 +1589,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('keydown', function(e) {
     if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
       e.preventDefault();
-      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
+      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
       var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
       if (idx < sections.length) switchSection(sections[idx]);
     }
@@ -1606,7 +1630,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Skip if modifier keys are held (let browser defaults work)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
+    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
 
     switch (e.key) {
       // Section navigation: 1-9, 0

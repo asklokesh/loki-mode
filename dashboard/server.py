@@ -460,6 +460,7 @@ async def _push_loki_state_loop() -> None:
     last_mtime: float = 0.0
     _last_skill_hash: str = ""  # Track skill-session state changes
     _last_budget_status: str = ""  # Track budget-status transitions (R3)
+    _last_trust_signature: str = ""  # Track trust-trajectory changes (R4)
     while True:
         try:
             if not manager.active_connections:
@@ -487,6 +488,30 @@ async def _push_loki_state_loop() -> None:
                     })
                 # Track every status so a return to ok/none re-arms the warn push.
                 _last_budget_status = _bstatus
+            except (OSError, ValueError, KeyError):
+                pass
+
+            # R4 visible trust trajectory: proactively push a trust_update when
+            # the trajectory's improving/regressing tally changes (e.g. a new
+            # run just landed a council pass), so an open dashboard reflects the
+            # earned-autonomy trend without a manual refresh. Mirrors the R3
+            # budget_status transition push; reuses manager.broadcast (no second
+            # channel). Signature gates the push so we only broadcast on change.
+            try:
+                _tmod = _load_trust_module()
+                if _tmod is not None:
+                    _traj = _tmod.compute_trajectory(str(loki_dir))
+                    _sig = "%d:%d:%d" % (
+                        _traj.get("runs_count", 0),
+                        _traj.get("improving_count", 0),
+                        _traj.get("regressing_count", 0),
+                    )
+                    if _sig != _last_trust_signature:
+                        await manager.broadcast({
+                            "type": "trust_update",
+                            "data": _traj,
+                        })
+                    _last_trust_signature = _sig
             except (OSError, ValueError, KeyError):
                 pass
 
@@ -4781,6 +4806,81 @@ async def get_cost_timeline():
 
 
 # =============================================================================
+# Trust trajectory API (R4): is the agent earning autonomy on THIS repo?
+# =============================================================================
+
+_TRUST_MODULE = None  # cached import of autonomy/lib/trust_trajectory.py
+
+
+def _load_trust_module():
+    """Import the shared trust-trajectory derivation (single source of truth).
+
+    The derivation lives in autonomy/lib/trust_trajectory.py so the dashboard
+    endpoint, the bash `cmd_trust`, and the test suite all agree. Loaded via
+    importlib because autonomy/lib is not an importable package. Cached after
+    first load. Returns None if the module cannot be found (degraded mode).
+    """
+    global _TRUST_MODULE
+    if _TRUST_MODULE is not None:
+        return _TRUST_MODULE
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mod_path = os.path.join(repo_root, "autonomy", "lib", "trust_trajectory.py")
+    if not os.path.isfile(mod_path):
+        return None
+    try:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("trust_trajectory", mod_path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _TRUST_MODULE = mod
+        return mod
+    except Exception:
+        return None
+
+
+@app.get("/api/trust/trajectory")
+async def get_trust_trajectory():
+    """Per-project trust trajectory derived from proof-of-run history.
+
+    Mirrors /api/cost/timeline: reads the persistent per-run records under
+    .loki/proofs/<run_id>/proof.json (the same source R3 cost history uses) and
+    derives whether the agent is earning autonomy on THIS repo over time:
+    council pass-rate, gate pass-rate, iterations-to-completion, and (when
+    recorded) human interventions, each with an up/down/flat direction and an
+    `improving` flag that already accounts for per-axis polarity.
+
+    Honest-data rule: with fewer than 2 recorded runs the response is
+    insufficient=True and NO direction is fabricated. Every number derives from
+    real proof.json values; a missing axis is reported available=False, never a
+    misleading zero. No PII leaves the derivation (only run_id, timestamps, and
+    derived numeric axes).
+    """
+    loki_dir = _get_loki_dir()
+    mod = _load_trust_module()
+    if mod is None:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "error": "trust_trajectory module not found",
+            "runs_count": 0,
+            "insufficient": True,
+            "axes": {},
+            "series": [],
+            "notes": ["trust derivation module unavailable in this install"],
+        }
+    traj = mod.compute_trajectory(str(loki_dir))
+    # Best-effort cache write so other surfaces share one source of truth.
+    try:
+        mod.write_trajectory_cache(str(loki_dir), traj)
+    except Exception:
+        pass
+    traj["available"] = True
+    return traj
+
+
+# =============================================================================
 # Pricing API
 # =============================================================================
 
@@ -6761,6 +6861,18 @@ async def serve_cost_panel():
         cost_path = os.path.join(STATIC_DIR, "cost.html")
         if os.path.isfile(cost_path):
             return FileResponse(cost_path, media_type="text/html")
+    return Response(status_code=404)
+
+
+# R4: standalone trust-trajectory page that fetches /api/trust/trajectory.
+# Mirrors the cost.html / /cost pattern: works without the SPA build.
+@app.get("/trust", include_in_schema=False)
+async def serve_trust_panel():
+    """Serve the standalone trust-trajectory HTML panel."""
+    if STATIC_DIR:
+        trust_path = os.path.join(STATIC_DIR, "trust.html")
+        if os.path.isfile(trust_path):
+            return FileResponse(trust_path, media_type="text/html")
     return Response(status_code=404)
 
 

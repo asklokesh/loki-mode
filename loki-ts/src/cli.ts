@@ -105,6 +105,17 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runKpis(rest);
     }
 
+    case "trust": {
+      // R4: visible trust trajectory. Read-only derivation from proof-of-run
+      // history (.loki/proofs/) showing whether the agent is earning autonomy
+      // on THIS repo over time (council pass-rate up, interventions down...).
+      // Complements `kpis` (single-run snapshot); does not duplicate it. The
+      // bin/loki shim allowlist includes "trust" so this is the live Bun route;
+      // bash cmd_trust is the no-bun / LOKI_LEGACY_BASH fallback.
+      const { runTrust } = await import("./commands/trust.ts");
+      return runTrust(rest);
+    }
+
     case "rollback": {
       // v7.5.2: wire the checkpoint rollback API (was dead code per H4).
       const { runRollback } = await import("./commands/rollback.ts");

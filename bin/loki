@@ -116,10 +116,11 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|proof|wiki)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|wiki)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).
+        # R4: trust added (visible trust trajectory; Bun route, bash fallback).
         #
         # v7.8.2: emit the cli_command product-analytics event for Bun-routed
         # commands. The bash CLI fires this from autonomy/loki main(), but the

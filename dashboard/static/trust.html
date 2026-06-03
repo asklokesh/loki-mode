@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<!--
+  Loki Mode - Trust trajectory panel (R4, zero-build standalone).
+
+  Self-contained: all CSS + JS inlined, no external resources. Fetches
+  /api/trust/trajectory and renders, per project over runs/time, whether the
+  agent is EARNING autonomy on THIS repo: council pass-rate, gate pass-rate,
+  iterations-to-completion, and (when recorded) human interventions, each with
+  an up/down/flat direction and an inline-SVG sparkline.
+
+  The story no competitor tells. Honest-data rule: with fewer than 2 runs this
+  shows "not enough history yet", never a fabricated trend.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loki Mode - Trust Trajectory</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1d2129; --border: #2a2f3a;
+    --text: #e7e9ee; --muted: #9aa1ad; --faint: #6b7280; --accent: #6f7bf7;
+    --green: #34d399; --red: #f87171; --amber: #fbbf24;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+    --sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.5; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 20px 80px; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.3px; margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 30px 0 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .head a { font-size: 13px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; }
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; }
+  .card { flex: 1 1 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .val { font-family: var(--mono); font-size: 26px; font-weight: 650; margin-top: 6px; }
+  .card .note { color: var(--faint); font-size: 12px; margin-top: 4px; }
+  .axes { display: flex; flex-direction: column; gap: 12px; }
+  .axis { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; display: flex; align-items: center; gap: 16px; }
+  .axis .meta { flex: 1 1 auto; min-width: 0; }
+  .axis .name { font-size: 14px; font-weight: 600; }
+  .axis .desc { color: var(--faint); font-size: 12px; margin-top: 2px; }
+  .axis .spark { flex: 0 0 200px; }
+  .axis .verdict { flex: 0 0 150px; text-align: right; }
+  .axis .dir { font-family: var(--mono); font-size: 14px; font-weight: 650; }
+  .axis .tag { font-size: 12px; margin-top: 2px; }
+  .dir.up { color: var(--green); }
+  .dir.down { color: var(--green); }
+  .dir.bad { color: var(--red); }
+  .dir.flat { color: var(--muted); }
+  .tag.good { color: var(--green); }
+  .tag.bad { color: var(--red); }
+  .tag.flat { color: var(--muted); }
+  .tag.na { color: var(--faint); }
+  svg { display: block; width: 100%; height: 40px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .b-approve { color: var(--green); border-color: rgba(52,211,153,0.4); }
+  .b-reject { color: var(--red); border-color: rgba(248,113,113,0.4); }
+  .empty { color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; }
+  .empty code { font-family: var(--mono); color: var(--text); background: var(--panel-2); padding: 2px 6px; border-radius: 5px; }
+  .headline { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; font-size: 15px; }
+  .headline.good { border-color: rgba(52,211,153,0.4); }
+  .headline.bad { border-color: rgba(248,113,113,0.4); }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Trust Trajectory</h1>
+    <a href="/">Back to dashboard</a>
+  </div>
+  <p class="sub">Is the agent earning autonomy on THIS repo? Council pass-rate, gate pass-rate, iterations-to-completion, and human interventions over your run history. Real council and RARV-C data, never a fabricated trend.</p>
+  <div id="content"><p class="sub">Loading...</p></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) {
+    s = (s === null || s === undefined) ? "" : String(s);
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function pct(n) {
+    if (n === null || n === undefined) return "n/a";
+    n = Number(n);
+    if (!isFinite(n)) return "n/a";
+    return (n * 100).toFixed(0) + "%";
+  }
+  function num(n) {
+    if (n === null || n === undefined) return "n/a";
+    n = Number(n);
+    if (!isFinite(n)) return "n/a";
+    return String(Math.round(n * 100) / 100);
+  }
+  function badgeClass(v) {
+    v = String(v || "").toUpperCase();
+    if (v.indexOf("APPROVE") === 0 || v.indexOf("COMPLETE") === 0 || v === "PASS" || v === "PASSED") return "b-approve";
+    if (v.indexOf("REJECT") === 0 || v.indexOf("BLOCK") === 0 || v === "FAIL") return "b-reject";
+    return "";
+  }
+  // Arrow glyphs only (no emoji): ^ up, v down, - flat.
+  function arrow(direction) {
+    if (direction === "up") return "^";
+    if (direction === "down") return "v";
+    return "-";
+  }
+  // Build an inline-SVG sparkline from a numeric series (nulls skipped).
+  function sparkline(values, higherIsBetter) {
+    var pts = [];
+    var idx = [];
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (v === null || v === undefined || !isFinite(Number(v))) continue;
+      pts.push(Number(v)); idx.push(i);
+    }
+    if (pts.length === 0) return '<span class="muted" style="font-size:12px;">no data</span>';
+    var W = 200, H = 40, pad = 4;
+    var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
+    var range = (max - min) || 1;
+    var coords = [];
+    for (var j = 0; j < pts.length; j++) {
+      var x = pts.length === 1 ? W / 2 : pad + (j / (pts.length - 1)) * (W - 2 * pad);
+      var y = H - pad - ((pts[j] - min) / range) * (H - 2 * pad);
+      coords.push(x.toFixed(1) + "," + y.toFixed(1));
+    }
+    // Color the line by whether the last value is better than the first.
+    var stroke = "#9aa1ad";
+    if (pts.length >= 2) {
+      var rising = pts[pts.length - 1] > pts[0];
+      var falling = pts[pts.length - 1] < pts[0];
+      if ((rising && higherIsBetter) || (falling && !higherIsBetter)) stroke = "#34d399";
+      else if ((rising && !higherIsBetter) || (falling && higherIsBetter)) stroke = "#f87171";
+    }
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      '<polyline fill="none" stroke="' + stroke + '" stroke-width="2" points="' + coords.join(" ") + '"/>' +
+      '</svg>';
+  }
+
+  var AXIS_DESC = {
+    council_pass_rate: "Share of runs the 3-reviewer council approved",
+    gate_pass_rate: "Share of quality gates passed per run",
+    iterations: "RARV iterations needed to complete a run",
+    interventions: "Human interventions needed per run"
+  };
+
+  function renderAxis(key, ax, series) {
+    var label = ax.label || key;
+    var desc = AXIS_DESC[key] || "";
+    var values = series.map(function (s) { return s[key]; });
+    var spark = sparkline(values, !!ax.higher_is_better);
+    var verdict;
+    if (!ax.available) {
+      verdict = '<div class="dir flat">-</div><div class="tag na">no data</div>';
+    } else if (ax.insufficient) {
+      verdict = '<div class="dir flat">-</div><div class="tag na">need 2+ runs</div>';
+    } else {
+      var dir = ax.direction || "flat";
+      var dirClass = dir === "flat" ? "flat" : (ax.improving ? (dir === "up" ? "up" : "down") : "bad");
+      var tagClass = ax.improving === true ? "good" : (ax.improving === false ? "bad" : "flat");
+      var tagText = ax.improving === true ? "improving" : (ax.improving === false ? "regressing" : "stable");
+      var latestStr = ax.higher_is_better ? pct(ax.latest) : num(ax.latest);
+      verdict = '<div class="dir ' + dirClass + '">' + arrow(dir) + ' ' + esc(dir) + '</div>' +
+        '<div class="tag ' + tagClass + '">' + tagText + ' (now ' + esc(latestStr) + ')</div>';
+    }
+    return '<div class="axis">' +
+      '<div class="meta"><div class="name">' + esc(label) + '</div>' +
+        '<div class="desc">' + esc(desc) + (ax.higher_is_better ? " (higher is better)" : " (lower is better)") + '</div></div>' +
+      '<div class="spark">' + spark + '</div>' +
+      '<div class="verdict">' + verdict + '</div>' +
+    '</div>';
+  }
+
+  function renderRuns(series) {
+    var html = '<h2>Run history</h2>';
+    if (!series || series.length === 0) {
+      html += '<div class="empty">No completed runs yet. Trust trajectory comes' +
+        ' from proof-of-run artifacts (<code>.loki/proofs/</code>), written at' +
+        ' the end of each run.</div>';
+      return html;
+    }
+    var rows = "";
+    for (var i = 0; i < series.length; i++) {
+      var s = series[i];
+      var cp = s.council_pass_rate;
+      var verdict = (cp === 1) ? '<span class="badge b-approve">PASS</span>'
+        : (cp === 0 ? '<span class="badge b-reject">FAIL</span>' : '<span class="muted">-</span>');
+      rows += '<tr><td class="mono">' + esc(s.run_id) + '</td>' +
+        '<td class="muted">' + esc(s.generated_at || "") + '</td>' +
+        '<td>' + verdict + '</td>' +
+        '<td class="num">' + (s.gate_pass_rate === null || s.gate_pass_rate === undefined ? "-" : pct(s.gate_pass_rate)) + '</td>' +
+        '<td class="num">' + (s.iterations === null || s.iterations === undefined ? "-" : esc(s.iterations)) + '</td>' +
+        '<td class="num">' + (s.interventions === null || s.interventions === undefined ? "-" : esc(s.interventions)) + '</td></tr>';
+    }
+    html += '<table><thead><tr>' +
+      '<th>Run</th><th>When</th><th>Council</th><th class="num">Gates</th>' +
+      '<th class="num">Iters</th><th class="num">Interv.</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+    return html;
+  }
+
+  function render(d) {
+    var c = document.getElementById("content");
+    if (d && d.available === false) {
+      c.innerHTML = '<div class="empty">Trust trajectory is unavailable in this' +
+        ' install. ' + esc((d.notes && d.notes[0]) || "") + '</div>';
+      return;
+    }
+    var series = d.series || [];
+    if (d.insufficient) {
+      var msg = '<div class="headline"><strong>Not enough history yet.</strong><br>' +
+        'Trust trajectory needs 2 or more recorded runs to show a direction. ' +
+        esc(d.runs_count || 0) + ' run(s) recorded so far. Run <code>loki start</code> again' +
+        ' and the trend appears here, derived from real council and gate results.</div>';
+      c.innerHTML = msg + renderRuns(series);
+      return;
+    }
+    var axes = d.axes || {};
+    var imp = d.improving_count || 0, reg = d.regressing_count || 0;
+    var hClass = (imp && !reg) ? "good" : (reg && !imp ? "bad" : "");
+    var headline;
+    if (imp && !reg) headline = "Trending more trustworthy: " + imp + " axis improving, none regressing on this repo.";
+    else if (reg && !imp) headline = "Trust regressing: " + reg + " axis regressing. Review recent runs.";
+    else if (imp || reg) headline = "Mixed: " + imp + " improving, " + reg + " regressing.";
+    else headline = "Stable: no significant change across axes yet.";
+
+    var cards = '<div class="cards">' +
+      '<div class="card"><div class="label">Runs analyzed</div>' +
+        '<div class="val">' + esc(d.runs_count || 0) + '</div>' +
+        '<div class="note">from .loki/proofs/</div></div>' +
+      '<div class="card"><div class="label">Improving axes</div>' +
+        '<div class="val" style="color:var(--green);">' + esc(imp) + '</div>' +
+        '<div class="note">good direction</div></div>' +
+      '<div class="card"><div class="label">Regressing axes</div>' +
+        '<div class="val" style="color:' + (reg ? 'var(--red)' : 'var(--muted)') + ';">' + esc(reg) + '</div>' +
+        '<div class="note">needs attention</div></div>' +
+      '</div>';
+
+    var axesHtml = '<h2>Earned-autonomy signals</h2><div class="axes">';
+    var order = ["council_pass_rate", "gate_pass_rate", "iterations", "interventions"];
+    for (var k = 0; k < order.length; k++) {
+      if (axes[order[k]]) axesHtml += renderAxis(order[k], axes[order[k]], series);
+    }
+    axesHtml += '</div>';
+
+    c.innerHTML = cards +
+      '<div class="headline ' + hClass + '" style="margin-top:14px;">' + esc(headline) + '</div>' +
+      axesHtml +
+      renderRuns(series);
+  }
+  function renderError(msg) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty">Could not load trust data. ' + esc(msg || "") + "</div>";
+  }
+  fetch("/api/trust/trajectory", { headers: { "Accept": "application/json" } })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (d) { render(d || {}); })
+    .catch(function (e) { renderError(e && e.message); });
+})();
+</script>
+</body>
+</html>

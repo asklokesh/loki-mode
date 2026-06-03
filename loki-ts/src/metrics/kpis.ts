@@ -270,5 +270,9 @@ export function formatKpisHuman(snap: KpiSnapshot): string {
     lines.push(`Notes`);
     for (const n of snap.notes) lines.push(`  - ${n}`);
   }
+  // R4 pointer: kpis is a single-run snapshot; `loki trust` shows the
+  // across-runs trajectory (is the agent earning autonomy on this repo?).
+  lines.push(``);
+  lines.push(`See also: loki trust  (trust trajectory across runs)`);
   return lines.join("\n");
 }

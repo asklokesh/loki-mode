@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.16.0] - 2026-05-30
+
+### Added
+- Visible trust trajectory (R4 of the competitive arc): a per-project view of
+  whether the agent is earning autonomy over time, derived from real run history
+  (council pass-rate, quality-gate pass-rate, iterations-to-completion, and a
+  human-interventions axis). The story no competitor tells: you see Loki getting
+  more (or less) trustworthy on YOUR repo.
+- `loki trust` (`--json`): the across-runs trajectory with a per-axis direction
+  (improving / regressing / stable, polarity-aware so "fewer iterations" reads
+  as improving) and a one-line verdict. Distinct from `loki kpis` (single-run
+  snapshot), which gains a see-also pointer.
+- `/api/trust/trajectory` endpoint + a `/trust` dashboard panel with sparklines,
+  plus a `trust_update` WebSocket push (mirrors the R3 cost pattern) so the panel
+  updates live.
+
+### Notes
+- Honest data: derived only from `.loki/proofs/<run_id>/proof.json`; with fewer
+  than two runs it says "not enough history yet" rather than inventing a trend,
+  it shows a DECLINING trajectory when the data declines (not a feel-good
+  always-up chart), and the human-interventions axis is explicitly marked
+  unavailable until a per-run intervention counter exists (no fabricated number).
+- Council: 3-of-3 unanimous (round 1). bash and Bun share one derivation (the
+  bash command and dashboard call the same Python module; the Bun command mirrors
+  it byte-for-byte). No duplication of kpis.
+- NOT yet wired: the human-interventions axis (lights up automatically once a
+  per-run intervention count lands in proof.json).
+
 ## [7.15.0] - 2026-05-30
 
 ### Added

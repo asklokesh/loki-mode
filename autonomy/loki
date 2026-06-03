@@ -544,6 +544,7 @@ show_help() {
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
     echo "  metrics [opts]   Session productivity report (--json, --last N, --save, --share)"
     echo "  cost [opts]      Transparent cost view: per-run/project spend + budget (--json, --last N)"
+    echo "  trust [--json]   Visible trust trajectory: council/gate pass-rate + interventions over runs [R4]"
     echo "  dogfood          Show self-development statistics"
     echo "  secrets [cmd]    API key status and validation (status|validate)"
     echo "  reset [target]   Reset session state (all|retries|failed)"
@@ -13181,6 +13182,9 @@ main() {
         cost)
             cmd_cost "$@"
             ;;
+        trust)
+            cmd_trust "$@"
+            ;;
         syslog)
             cmd_syslog "$@"
             ;;
@@ -18150,6 +18154,59 @@ cmd_syslog() {
             exit 1
             ;;
     esac
+}
+
+# Visible trust trajectory (R4): is the agent earning autonomy on THIS repo?
+# Shows council pass-rate, gate pass-rate, iterations-to-completion, and human
+# interventions trending up/down/flat across the per-run proof-of-run history
+# in .loki/proofs/. Bash fallback for the Bun route (loki-ts/src/commands/
+# trust.ts); both derive from the same proof.json files. Shells out to the
+# shared derivation module (autonomy/lib/trust_trajectory.py) so the CLI, the
+# dashboard endpoint, and the tests all agree. Honest: with <2 runs it prints
+# "not enough history yet", never a fabricated trend.
+cmd_trust() {
+    local pass_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki trust${NC} - Visible trust trajectory (R4)"
+                echo ""
+                echo "Usage: loki trust [options]"
+                echo ""
+                echo "Shows whether the agent is earning autonomy on THIS repo over"
+                echo "time: council pass-rate, gate pass-rate, iterations-to-completion,"
+                echo "and human interventions, each trending up/down/flat. Derived"
+                echo "read-only from proof-of-run history in .loki/proofs/."
+                echo ""
+                echo "Options:"
+                echo "  --json               Machine-readable JSON output"
+                echo "  --help, -h           Show this help"
+                echo ""
+                echo "With fewer than 2 recorded runs this prints 'not enough history"
+                echo "yet' rather than a fabricated trend. Complements 'loki kpis'"
+                echo "(single-run snapshot)."
+                exit 0
+                ;;
+            --json) pass_args+=("--json"); shift ;;
+            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki trust --help' for usage."; exit 1 ;;
+        esac
+    done
+
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}python3 is required for the trust trajectory view${NC}"
+        exit 1
+    fi
+
+    local trust_mod="$_LOKI_SCRIPT_DIR/lib/trust_trajectory.py"
+    if [ ! -f "$trust_mod" ]; then
+        echo -e "${RED}trust_trajectory.py not found at $trust_mod${NC}"
+        exit 1
+    fi
+
+    local loki_dir="${LOKI_DIR:-.loki}"
+    # Safe empty-array expansion (bash 3.2 + set -u): ${arr[@]+"${arr[@]}"}
+    # expands to nothing when pass_args is empty instead of an unbound error.
+    python3 "$trust_mod" --loki-dir "$loki_dir" ${pass_args[@]+"${pass_args[@]}"}
 }
 
 # Transparent cost view (R3): per-run + per-project spend, model routing, and
