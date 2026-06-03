@@ -854,10 +854,7 @@
                 }
                 function renderViewer(file){
                   if (!file){ viewEl.textContent = 'Select a file to view its contents.'; return; }
-                  var header = file.name + '  (' + fmtSize(file.size) + (file.truncated ? ', truncated' : '') + ')
-' + file.path + '
-
-';
+                  var header = file.name + '  (' + fmtSize(file.size) + (file.truncated ? ', truncated' : '') + ')\n' + file.path + '\n\n';
                   var body = file.content || '';
                   if (file.kind === 'json'){
                     try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(e){ /* leave raw */ }
@@ -908,8 +905,7 @@
                 // and paragraphs. Script tags are stripped from non-code text.
                 function renderUsageMarkdown(md) {
                   if (!md) return '';
-                  var lines = md.split('
-');
+                  var lines = md.split('\n');
                   var html = '';
                   var i = 0;
                   var inList = null; // 'ul' or 'ol'
@@ -940,15 +936,15 @@
                         var esc = escapeHtml(ch);
                         // strip any residual <script tags that survived escaping (defensive)
                         esc = esc.replace(/&lt;script/gi, '&lt;sc​ript');
-                        esc = esc.replace(/**([^*]+)**/g, '<strong>$1</strong>');
+                        esc = esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
                         esc = esc.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-                        esc = esc.replace(/*([^*]+)*/g, '<em>$1</em>');
+                        esc = esc.replace(/\*([^*]+)\*/g, '<em>$1</em>');
                         esc = esc.replace(/_([^_]+)_/g, '<em>$1</em>');
                         // v7.7.11 XSS guard (Opus 1 council): only allow http/https/mailto/anchor/relative href.
                         // javascript: / data: / vbscript: are stripped to a plain code span so the URL stays visible
                         // but is not clickable. USAGE.md absorbs agent output + PRD text; treat as untrusted.
-                        esc = esc.replace(/[([^]]+)](([^)]+))/g, function(_m, label, url){
-                          var safe = /^(https?://|mailto:|#|/(?!/))/.test(url);
+                        esc = esc.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_m, label, url){
+                          var safe = /^(https?:\/\/|mailto:|#|\/(?!\/))/.test(url);
                           if (safe) return '<a href="' + url + '" rel="noopener noreferrer">' + label + '</a>';
                           return '<code>' + label + ' (' + url + ')</code>';
                         });
@@ -972,15 +968,14 @@
                         codeLines.push(lines[i]);
                         i++;
                       }
-                      var codeContent = escapeHtml(codeLines.join('
-'));
+                      var codeContent = escapeHtml(codeLines.join('\n'));
                       html += '<pre><code' + (lang ? ' class="language-' + escapeHtml(lang) + '"' : '') + '>' + codeContent + '</code></pre>';
                       i++;
                       continue;
                     }
 
                     // Headings
-                    var hMatch = line.match(/^(#{1,6})s+(.*)/);
+                    var hMatch = line.match(/^(#{1,6})\s+(.*)/);
                     if (hMatch) {
                       closeList();
                       var level = hMatch[1].length;
@@ -990,7 +985,7 @@
                     }
 
                     // Horizontal rule
-                    if (/^(-{3,}|*{3,}|_{3,})$/.test(line.trim())) {
+                    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
                       closeList();
                       html += '<hr>';
                       i++;
@@ -1000,13 +995,13 @@
                     // Blockquote
                     if (/^>/.test(line)) {
                       closeList();
-                      html += '<blockquote>' + inlineFormat(line.replace(/^>s?/, '')) + '</blockquote>';
+                      html += '<blockquote>' + inlineFormat(line.replace(/^>\s?/, '')) + '</blockquote>';
                       i++;
                       continue;
                     }
 
                     // Unordered list
-                    var ulMatch = line.match(/^(s*[-*+])s+(.*)/);
+                    var ulMatch = line.match(/^(\s*[-*+])\s+(.*)/);
                     if (ulMatch) {
                       if (inList !== 'ul') { closeList(); html += '<ul>'; inList = 'ul'; }
                       html += '<li>' + inlineFormat(ulMatch[2]) + '</li>';
@@ -1015,7 +1010,7 @@
                     }
 
                     // Ordered list
-                    var olMatch = line.match(/^s*d+.s+(.*)/);
+                    var olMatch = line.match(/^\s*\d+\.\s+(.*)/);
                     if (olMatch) {
                       if (inList !== 'ol') { closeList(); html += '<ol>'; inList = 'ol'; }
                       html += '<li>' + inlineFormat(olMatch[1]) + '</li>';

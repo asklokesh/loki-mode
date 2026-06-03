@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.16.1] - 2026-05-30
+
+### Fixed
+- Dashboard SPA root threw "Uncaught SyntaxError: Invalid or unexpected token"
+  and failed to render its inline scripts. The standalone build
+  (dashboard-ui/scripts/build-standalone.js) emits the SPA from a backtick
+  template literal, which silently consumed single-backslash escapes in the
+  hand-written inline JS: `\n` became a real newline (breaking string literals
+  across lines) and regex escapes (`\*`, `\[`, `\s`, `\d`, `\/`) were stripped
+  (corrupting the markdown renderer's patterns, e.g. `/\*\*..\*\*/` emitted as
+  `/**..**/`). Escaped these to `\\n` / `\\*` etc. so they survive into the
+  output. This was a PRE-EXISTING bug (present before v7.8.3), found by a
+  real-user Playwright sweep of the dashboard. All inline scripts now parse with
+  zero errors; the dashboard root and the cost / trust / proofs panels render
+  clean (0 console/page errors), verified in a headless browser.
+
 ## [7.16.0] - 2026-05-30
 
 ### Added
