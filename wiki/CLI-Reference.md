@@ -92,7 +92,7 @@ loki start [SPEC_FILE] [OPTIONS]
 | `--yes, -y` | Skip confirmation prompt |
 | `--budget AMOUNT` | Cost budget limit in USD |
 | `--skip-memory` | Skip memory context loading at startup |
-| `--regen-prd` | Force a fresh generated PRD on a no-spec run, overriding staleness-aware reuse. Aliases: `--regenerate-prd`, `--regen`, or `LOKI_PRD_REGEN=1` (v7.10.1) |
+| `--regen-prd` | Force a fresh generated PRD on a no-spec run, overriding staleness-aware reuse. Aliases: `--regenerate-prd`, `--regen`, or `LOKI_PRD_REGEN=1` (v7.11.0) |
 
 **Examples:**
 

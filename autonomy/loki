@@ -543,6 +543,7 @@ show_help() {
     echo "  optimize         Optimize prompts based on session history"
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
     echo "  metrics [opts]   Session productivity report (--json, --last N, --save, --share)"
+    echo "  cost [opts]      Transparent cost view: per-run/project spend + budget (--json, --last N)"
     echo "  dogfood          Show self-development statistics"
     echo "  secrets [cmd]    API key status and validation (status|validate)"
     echo "  reset [target]   Reset session state (all|retries|failed)"
@@ -13034,6 +13035,9 @@ main() {
         metrics)
             cmd_metrics "$@"
             ;;
+        cost)
+            cmd_cost "$@"
+            ;;
         syslog)
             cmd_syslog "$@"
             ;;
@@ -17831,6 +17835,299 @@ cmd_syslog() {
             exit 1
             ;;
     esac
+}
+
+# Transparent cost view (R3): per-run + per-project spend, model routing, and
+# budget status with the 80% warn line. Reuses efficiency_cost.collect_efficiency
+# for the current-run aggregate (single source of truth) and reads .loki/proofs/
+# for persistent per-run history. Honest: prints "not recorded" when cost was
+# never collected, never a fabricated $0.00.
+cmd_cost() {
+    local show_json=false
+    local last_n=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki cost${NC} - Transparent cost and budget view"
+                echo ""
+                echo "Usage: loki cost [options]"
+                echo ""
+                echo "Shows the current run's spend (from .loki/metrics/efficiency/),"
+                echo "per-run history (from .loki/proofs/), model routing by spend, and"
+                echo "budget status. Budgets warn at 80% and hard-stop at 100%."
+                echo ""
+                echo "Options:"
+                echo "  --json               Machine-readable JSON output"
+                echo "  --last N             Show only the last N runs in history (default: all)"
+                echo "  --help, -h           Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  loki cost                      # Cost summary + budget status"
+                echo "  loki cost --json               # Machine-readable output"
+                echo "  loki cost --last 10            # Last 10 runs of history"
+                echo ""
+                echo "Budget cap: set LOKI_BUDGET_LIMIT (USD). Warns at 80%, stops at 100%."
+                exit 0
+                ;;
+            --json) show_json=true; shift ;;
+            --last) last_n="${2:-0}"; shift 2 ;;
+            --last=*) last_n="${1#*=}"; shift ;;
+            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki cost --help' for usage."; exit 1 ;;
+        esac
+    done
+
+    local loki_dir="${LOKI_DIR:-.loki}"
+
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}python3 is required for the cost view${NC}"
+        exit 1
+    fi
+
+    LOKI_DIR="$loki_dir" \
+    LOKI_SKILL_DIR="$SKILL_DIR" \
+    COST_JSON="$show_json" \
+    COST_LAST_N="$last_n" \
+    COST_BUDGET_LIMIT="${LOKI_BUDGET_LIMIT:-}" \
+    python3 << 'COST_SCRIPT'
+import json
+import os
+import sys
+
+loki_dir = os.environ.get("LOKI_DIR", ".loki")
+skill_dir = os.environ.get("LOKI_SKILL_DIR", "")
+show_json = os.environ.get("COST_JSON", "false") == "true"
+try:
+    last_n = int(os.environ.get("COST_LAST_N", "0") or "0")
+except ValueError:
+    last_n = 0
+budget_limit_env = os.environ.get("COST_BUDGET_LIMIT", "").strip()
+
+# ANSI (suppressed under --json / non-tty)
+use_color = (not show_json) and sys.stdout.isatty()
+BOLD = "\033[1m" if use_color else ""
+DIM = "\033[2m" if use_color else ""
+CYAN = "\033[36m" if use_color else ""
+GREEN = "\033[32m" if use_color else ""
+YELLOW = "\033[33m" if use_color else ""
+RED = "\033[31m" if use_color else ""
+NC = "\033[0m" if use_color else ""
+
+# Reuse the shared cost lib (single source of truth). Never duplicate the
+# cost-summing logic; collect_efficiency returns usd=None when nothing was
+# recorded, which we surface honestly.
+collect_efficiency = None
+if skill_dir:
+    lib_dir = os.path.join(skill_dir, "autonomy", "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    try:
+        from efficiency_cost import collect_efficiency as _ce
+        collect_efficiency = _ce
+    except Exception:
+        collect_efficiency = None
+
+def _fmt_usd(v):
+    if v is None:
+        return "not recorded"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "not recorded"
+    s = ("%.4f" % n).rstrip("0").rstrip(".")
+    if "." not in s:
+        s += ".00"
+    elif len(s.split(".")[1]) == 1:
+        s += "0"
+    return "$" + s
+
+# --- current run aggregate (reuse collect_efficiency, single source) -----
+# We do NOT re-implement the cost sum here: efficiency_cost.collect_efficiency
+# is the single source of truth (shared with the proof generator and the R2
+# benchmark adapters). On a broken install where the lib is missing, we degrade
+# honestly rather than ship a divergent 5th copy of the cost math.
+current_cost = None
+current_model = ""
+lib_available = collect_efficiency is not None
+if lib_available:
+    try:
+        cost_dict, current_model = collect_efficiency(loki_dir)
+        current_cost = cost_dict.get("usd")
+    except Exception:
+        current_cost = None
+
+# --- per-run history from .loki/proofs/ ----------------------------------
+runs = []
+project_total = 0.0
+proofs_dir = os.path.join(loki_dir, "proofs")
+if os.path.isdir(proofs_dir):
+    for name in sorted(os.listdir(proofs_dir)):
+        run_dir = os.path.join(proofs_dir, name)
+        proof_json = os.path.join(run_dir, "proof.json")
+        if not os.path.isfile(proof_json):
+            continue
+        try:
+            d = json.load(open(proof_json))
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        run_cost = (d.get("cost") or {}).get("usd")
+        run_cost_num = None
+        if run_cost is not None:
+            try:
+                run_cost_num = float(run_cost)
+                project_total += run_cost_num
+            except (TypeError, ValueError):
+                run_cost_num = None
+        runs.append({
+            "run_id": d.get("run_id", name),
+            "generated_at": d.get("generated_at"),
+            "model": (d.get("provider") or {}).get("model"),
+            "cost_usd": run_cost_num,
+            "files_changed": (d.get("files_changed") or {}).get("count"),
+            "final_verdict": (d.get("council") or {}).get("final_verdict"),
+        })
+runs.sort(key=lambda x: (x.get("generated_at") or ""), reverse=True)
+if last_n > 0:
+    runs = runs[:last_n]
+
+# --- budget status (read-time; warn at 80%, exceeded at 100%) ------------
+budget_limit = None
+budget_file = os.path.join(loki_dir, "metrics", "budget.json")
+if os.path.isfile(budget_file):
+    try:
+        bd = json.load(open(budget_file))
+        budget_limit = bd.get("limit") or bd.get("budget_limit")
+    except Exception:
+        budget_limit = None
+if budget_limit is None and budget_limit_env:
+    try:
+        budget_limit = float(budget_limit_env)
+    except ValueError:
+        budget_limit = None
+if budget_limit is not None:
+    try:
+        budget_limit = float(budget_limit)
+    except (TypeError, ValueError):
+        budget_limit = None
+
+budget_used = current_cost if isinstance(current_cost, (int, float)) else 0.0
+status = "none"
+percent_used = None
+remaining = None
+if budget_limit is not None and budget_limit > 0:
+    percent_used = round(budget_used / budget_limit * 100, 2)
+    remaining = max(0.0, budget_limit - budget_used)
+    if budget_used >= budget_limit:
+        status = "exceeded"
+    elif budget_used >= 0.80 * budget_limit:
+        status = "warn"
+    else:
+        status = "ok"
+
+# --- model routing by spend (from run history) ---------------------------
+by_model = {}
+for r in runs:
+    c = r.get("cost_usd")
+    if c is None:
+        continue
+    m = r.get("model") or "unknown"
+    by_model[m] = by_model.get(m, 0.0) + c
+
+if show_json:
+    out = {
+        "current_run": {
+            "cost_usd": current_cost,
+            "model": current_model or None,
+            "cost_recorded": current_cost is not None,
+            "cost_lib_available": lib_available,
+        },
+        "runs": runs,
+        "runs_count": len(runs),
+        "project_total_usd": round(project_total, 6) if runs else 0.0,
+        "by_model": {k: round(v, 6) for k, v in by_model.items()},
+        "budget": {
+            "limit": budget_limit,
+            "used": round(budget_used, 6),
+            "remaining": round(remaining, 6) if remaining is not None else None,
+            "percent_used": percent_used,
+            "status": status,
+            "warn_threshold_percent": 80,
+            "exceeded": status == "exceeded",
+        },
+    }
+    print(json.dumps(out, indent=2))
+    sys.exit(0)
+
+# --- human-readable ------------------------------------------------------
+ds = chr(36)
+print()
+print(BOLD + "Loki Cost" + NC)
+print(DIM + "=" * 50 + NC)
+
+print()
+print(CYAN + "Current run" + NC)
+if not lib_available:
+    print(DIM + "  Cost library unavailable (efficiency_cost.py not found)." + NC)
+    print(DIM + "  Current-run spend cannot be computed on this install." + NC)
+elif current_cost is None:
+    print("  Cost not recorded for this run.")
+else:
+    mtxt = (" (" + current_model + ")") if current_model else ""
+    print("  Spend: " + BOLD + _fmt_usd(current_cost) + NC + mtxt)
+
+print()
+print(CYAN + "Project history" + NC)
+print("  Runs recorded: " + str(len(runs)))
+print("  Total spend:   " + BOLD + (_fmt_usd(project_total) if runs else "$0.00") + NC)
+
+if by_model:
+    print()
+    print(CYAN + "Model routing (by spend)" + NC)
+    total_m = sum(by_model.values()) or 1.0
+    for m in sorted(by_model, key=lambda k: by_model[k], reverse=True):
+        v = by_model[m]
+        pct = v / total_m * 100
+        bar_len = int(pct / 5)
+        bar = "#" * bar_len + "." * (20 - bar_len)
+        print("  {:<16} {}{:>9} ({:4.1f}%) [{}]".format(m[:16], "", _fmt_usd(v), pct, bar))
+
+print()
+print(CYAN + "Budget" + NC)
+if budget_limit is None:
+    print("  No cap set. Set LOKI_BUDGET_LIMIT (USD) to cap spend.")
+    print(DIM + "  When set, Loki warns at 80% and hard-stops at 100%." + NC)
+else:
+    col = GREEN
+    if status == "warn":
+        col = YELLOW
+    elif status == "exceeded":
+        col = RED
+    print("  Cap:       " + _fmt_usd(budget_limit))
+    print("  Used:      " + _fmt_usd(budget_used) + " (" + col + str(percent_used) + "%" + NC + ")")
+    print("  Remaining: " + _fmt_usd(remaining))
+    print("  Status:    " + col + BOLD + status.upper() + NC)
+    if status == "warn":
+        print(YELLOW + "  Warning: at or above 80% of cap. Run continues; hard-stop at 100%." + NC)
+    elif status == "exceeded":
+        print(RED + "  Cap reached. The run is paused to prevent a surprise bill." + NC)
+
+if runs:
+    print()
+    print(CYAN + "Recent runs" + NC)
+    print(DIM + "  {:<28} {:<10} {:>9}  {}".format("Run", "Model", "Cost", "Verdict") + NC)
+    for r in runs[:max(last_n, 10) if last_n else 10]:
+        rid = str(r.get("run_id") or "")[:28]
+        mdl = str(r.get("model") or "")[:10]
+        cst = _fmt_usd(r.get("cost_usd"))
+        vrd = str(r.get("final_verdict") or "")
+        print("  {:<28} {:<10} {:>9}  {}".format(rid, mdl, cst, vrd))
+
+print()
+print(DIM + "Dashboard cost panel: /cost   |   JSON: loki cost --json" + NC)
+print()
+COST_SCRIPT
 }
 
 # Fetch and display Prometheus metrics from dashboard

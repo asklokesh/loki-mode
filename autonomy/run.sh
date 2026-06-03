@@ -8416,6 +8416,28 @@ BUDGETUPD_EOF
 BUDGETUPD_EOF
     fi
 
+    # Anti-surprise-cost warn (R3): when spend crosses 80% of the cap but is
+    # still under 100%, log a warning and emit an event. Does NOT pause: the
+    # warn is the transparency the user wants BEFORE the hard cap stops them.
+    # Read-time classification only; budget.json schema is unchanged.
+    local warn
+    warn=$(python3 -c "
+import sys
+try:
+    cost = float(sys.argv[1]); limit = float(sys.argv[2])
+    print(1 if (limit > 0 and 0.80 * limit <= cost < limit) else 0)
+except (ValueError, IndexError):
+    print(0)
+" "$current_cost" "$BUDGET_LIMIT" 2>/dev/null || echo "0")
+    if [[ "$warn" == "1" ]]; then
+        log_warn "BUDGET WARNING: \$${current_cost} is at or above 80% of cap \$${BUDGET_LIMIT}. Run continues; hard-stop at 100%."
+        emit_event_json "budget_warning" \
+            "limit=${BUDGET_LIMIT}" \
+            "current=${current_cost}" \
+            "threshold_percent=80" \
+            "iteration=${ITERATION_COUNT:-0}"
+    fi
+
     return 1
 }
 

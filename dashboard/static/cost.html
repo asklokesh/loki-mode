@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<!--
+  Loki Mode - Cost + observability panel (R3, zero-build standalone).
+
+  Self-contained: all CSS + JS inlined, no external resources. Fetches
+  /api/cost/timeline and renders project total, a budget gauge that warns at
+  80% (before the hard cap at 100%), per-run cost history, model-routing
+  breakdown, and an inline-SVG cumulative-cost line for the current run.
+
+  Anti-surprise-cost wedge: cost is shown transparently. Uncollected cost is
+  shown as "not recorded", never a fabricated $0.00.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loki Mode - Cost and Observability</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1d2129; --border: #2a2f3a;
+    --text: #e7e9ee; --muted: #9aa1ad; --faint: #6b7280; --accent: #6f7bf7;
+    --green: #34d399; --red: #f87171; --amber: #fbbf24;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+    --sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.5; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 20px 80px; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.3px; margin: 0; }
+  h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 30px 0 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .head a { font-size: 13px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; }
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; }
+  .card { flex: 1 1 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .val { font-family: var(--mono); font-size: 26px; font-weight: 650; margin-top: 6px; }
+  .card .note { color: var(--faint); font-size: 12px; margin-top: 4px; }
+  .gauge { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-top: 14px; }
+  .gauge .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .gauge .pct { font-family: var(--mono); font-weight: 650; font-size: 18px; }
+  .bar { position: relative; height: 14px; background: var(--panel-2); border-radius: 8px; margin: 12px 0 6px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 8px; transition: width .3s; }
+  .bar .warnline { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--amber); left: 80%; }
+  .fill.ok { background: var(--green); }
+  .fill.warn { background: var(--amber); }
+  .fill.exceeded { background: var(--red); }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status.ok { color: var(--green); }
+  .status.warn { color: var(--amber); }
+  .status.exceeded { color: var(--red); }
+  .status.none { color: var(--muted); }
+  .cap-note { color: var(--faint); font-size: 12px; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .b-approve { color: var(--green); border-color: rgba(52,211,153,0.4); }
+  .b-reject { color: var(--red); border-color: rgba(248,113,113,0.4); }
+  .b-concern { color: var(--amber); border-color: rgba(251,191,36,0.4); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .empty { color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; }
+  .empty code { font-family: var(--mono); color: var(--text); background: var(--panel-2); padding: 2px 6px; border-radius: 5px; }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--muted); }
+  svg { display: block; width: 100%; height: 140px; }
+  .modelrow { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .modelrow .name { width: 130px; font-size: 13px; }
+  .modelrow .mbar { flex: 1; height: 10px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
+  .modelrow .mbar .mfill { height: 100%; background: var(--accent); border-radius: 6px; }
+  .modelrow .mval { width: 90px; text-align: right; font-family: var(--mono); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Cost and Observability</h1>
+    <a href="/">Back to dashboard</a>
+  </div>
+  <p class="sub">Transparent cost: per-run and per-project spend, model routing, token burn, and budget caps that warn before they stop. No surprise bills.</p>
+  <div id="content"><p class="sub">Loading...</p></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) {
+    s = (s === null || s === undefined) ? "" : String(s);
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function fmtUsd(n) {
+    if (n === null || n === undefined) return "not recorded";
+    n = Number(n);
+    if (!isFinite(n)) return "not recorded";
+    var s = n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    if (s.indexOf(".") === -1) s += ".00";
+    else if (s.split(".")[1].length === 1) s += "0";
+    return "$" + s;
+  }
+  function badgeClass(v) {
+    v = String(v || "").toUpperCase();
+    if (v.indexOf("APPROVE") === 0 || v === "PASS" || v === "PASSED") return "b-approve";
+    if (v.indexOf("REJECT") === 0 || v.indexOf("BLOCK") === 0 || v === "FAIL") return "b-reject";
+    if (v.indexOf("CONCERN") === 0) return "b-concern";
+    return "";
+  }
+  function statusText(st) {
+    if (st === "exceeded") return "Budget cap reached. The run is paused to prevent a surprise bill.";
+    if (st === "warn") return "Approaching budget cap (80% or more used). Warning only, the run continues.";
+    if (st === "ok") return "Within budget.";
+    return "No budget cap set. Set LOKI_BUDGET_LIMIT to cap spend.";
+  }
+
+  function renderBudget(b) {
+    if (!b) return "";
+    var html = '<h2>Budget</h2>';
+    if (b.limit === null || b.limit === undefined) {
+      html += '<div class="panel"><div class="status none">' + statusText("none") + '</div>' +
+        '<div class="cap-note">When a cap is set, Loki warns at 80% and hard-stops at 100%.</div></div>';
+      return html;
+    }
+    var pct = (b.percent_used === null || b.percent_used === undefined) ? 0 : Number(b.percent_used);
+    var fillPct = Math.max(0, Math.min(100, pct));
+    var st = esc(b.status || "ok");
+    html += '<div class="gauge">' +
+      '<div class="top"><span class="muted">' + fmtUsd(b.used) + ' of ' + fmtUsd(b.limit) + ' used</span>' +
+      '<span class="pct">' + pct.toFixed(1) + '%</span></div>' +
+      '<div class="bar"><div class="fill ' + st + '" style="width:' + fillPct + '%"></div>' +
+      '<div class="warnline" title="80% warn threshold"></div></div>' +
+      '<div class="status ' + st + '">' + statusText(b.status) + '</div>' +
+      '<div class="cap-note">Remaining: ' + fmtUsd(b.remaining) +
+      '. Warns at ' + esc(b.warn_threshold_percent) + '%, hard-stops at 100%.</div>' +
+      '</div>';
+    return html;
+  }
+
+  function renderModelBreakdown(runs) {
+    // Aggregate per-run cost by model for routing visibility.
+    var byModel = {};
+    var total = 0;
+    for (var i = 0; i < runs.length; i++) {
+      var m = runs[i].model || "unknown";
+      var c = runs[i].cost_usd;
+      if (c === null || c === undefined) continue;
+      c = Number(c);
+      if (!isFinite(c)) continue;
+      byModel[m] = (byModel[m] || 0) + c;
+      total += c;
+    }
+    var keys = Object.keys(byModel);
+    if (keys.length === 0) return "";
+    keys.sort(function (a, b) { return byModel[b] - byModel[a]; });
+    var html = '<h2>Model routing (by spend)</h2><div class="panel">';
+    for (var k = 0; k < keys.length; k++) {
+      var name = keys[k];
+      var val = byModel[name];
+      var w = total > 0 ? (val / total * 100) : 0;
+      html += '<div class="modelrow"><span class="name mono">' + esc(name) + '</span>' +
+        '<span class="mbar"><span class="mfill" style="width:' + w.toFixed(1) + '%"></span></span>' +
+        '<span class="mval">' + fmtUsd(val) + '</span></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderCurrentRun(cr) {
+    var html = '<h2>Current run (cost over iterations)</h2>';
+    if (!cr || !cr.cost_recorded || !cr.iterations || cr.iterations.length === 0) {
+      html += '<div class="empty">No iteration cost recorded for the current run yet.' +
+        ' Cost appears once a run produces efficiency records.</div>';
+      return html;
+    }
+    var its = cr.iterations;
+    // Inline SVG cumulative line.
+    var W = 900, H = 140, pad = 8;
+    var maxCum = 0;
+    for (var i = 0; i < its.length; i++) {
+      var cv = Number(its[i].cumulative_usd) || 0;
+      if (cv > maxCum) maxCum = cv;
+    }
+    if (maxCum <= 0) maxCum = 1;
+    var pts = [];
+    for (var j = 0; j < its.length; j++) {
+      var x = its.length === 1 ? W / 2 : pad + (j / (its.length - 1)) * (W - 2 * pad);
+      var y = H - pad - ((Number(its[j].cumulative_usd) || 0) / maxCum) * (H - 2 * pad);
+      pts.push(x.toFixed(1) + "," + y.toFixed(1));
+    }
+    var poly = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      '<polyline fill="none" stroke="#6f7bf7" stroke-width="2" points="' + pts.join(" ") + '"/>' +
+      '</svg>';
+    html += '<div class="panel"><div class="muted" style="font-size:13px;margin-bottom:6px;">' +
+      'Cumulative spend this run: <span class="mono">' + fmtUsd(cr.total_usd) + '</span></div>' +
+      poly + '</div>';
+    // Per-iteration table.
+    var rows = "";
+    for (var r = 0; r < its.length; r++) {
+      var it = its[r];
+      rows += '<tr><td class="num mono">' + esc(it.iteration) + '</td>' +
+        '<td class="mono">' + esc(it.model) + '</td>' +
+        '<td>' + esc(it.phase) + '</td>' +
+        '<td class="num">' + esc(it.input_tokens) + '</td>' +
+        '<td class="num">' + esc(it.output_tokens) + '</td>' +
+        '<td class="num mono">' + fmtUsd(it.cost_usd) + '</td>' +
+        '<td class="num mono">' + fmtUsd(it.cumulative_usd) + '</td></tr>';
+    }
+    html += '<table style="margin-top:14px;"><thead><tr>' +
+      '<th class="num">Iter</th><th>Model</th><th>Phase</th>' +
+      '<th class="num">Input tok</th><th class="num">Output tok</th>' +
+      '<th class="num">Cost</th><th class="num">Cumulative</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+    return html;
+  }
+
+  function renderRuns(runs) {
+    var html = '<h2>Run history (per-run cost)</h2>';
+    if (!runs || runs.length === 0) {
+      html += '<div class="empty">No completed runs yet. Per-run cost history' +
+        ' comes from proof-of-run artifacts (<code>.loki/proofs/</code>).</div>';
+      return html;
+    }
+    var rows = "";
+    for (var i = 0; i < runs.length; i++) {
+      var p = runs[i];
+      var verdict = p.final_verdict ?
+        '<span class="badge ' + badgeClass(p.final_verdict) + '">' + esc(p.final_verdict) + '</span>' : '';
+      rows += '<tr><td class="mono">' + esc(p.run_id) + '</td>' +
+        '<td class="muted">' + esc(p.generated_at || "") + '</td>' +
+        '<td class="mono">' + esc(p.model || "") + '</td>' +
+        '<td class="num">' + (p.files_changed === null || p.files_changed === undefined ? "" : esc(p.files_changed)) + '</td>' +
+        '<td>' + verdict + '</td>' +
+        '<td class="num mono">' + fmtUsd(p.cost_usd) + '</td></tr>';
+    }
+    html += '<table><thead><tr>' +
+      '<th>Run</th><th>When</th><th>Model</th><th class="num">Files</th>' +
+      '<th>Verdict</th><th class="num">Cost</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+    return html;
+  }
+
+  function render(d) {
+    var c = document.getElementById("content");
+    var b = d.budget || {};
+    var cards = '<div class="cards">' +
+      '<div class="card"><div class="label">Project total</div>' +
+        '<div class="val">' + fmtUsd(d.project_total_usd) + '</div>' +
+        '<div class="note">' + esc(d.runs_count) + ' run(s) recorded</div></div>' +
+      '<div class="card"><div class="label">Current run</div>' +
+        '<div class="val">' + fmtUsd(d.current_run ? d.current_run.total_usd : null) + '</div>' +
+        '<div class="note">' + (d.current_run && d.current_run.iterations ? d.current_run.iterations.length : 0) + ' iteration(s)</div></div>' +
+      '<div class="card"><div class="label">Budget status</div>' +
+        '<div class="val ' + esc(b.status || "none") + '" style="font-size:20px;text-transform:capitalize;">' + esc(b.status || "none") + '</div>' +
+        '<div class="note">' + (b.limit ? fmtUsd(b.used) + ' / ' + fmtUsd(b.limit) : "no cap set") + '</div></div>' +
+      '</div>';
+    c.innerHTML = cards +
+      renderBudget(d.budget) +
+      renderCurrentRun(d.current_run) +
+      renderModelBreakdown(d.runs || []) +
+      renderRuns(d.runs);
+  }
+  function renderError(msg) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty">Could not load cost data. ' + esc(msg || "") + "</div>";
+  }
+  fetch("/api/cost/timeline", { headers: { "Accept": "application/json" } })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (d) { render(d || {}); })
+    .catch(function (e) { renderError(e && e.message); });
+})();
+</script>
+</body>
+</html>

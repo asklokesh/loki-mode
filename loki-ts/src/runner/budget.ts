@@ -93,9 +93,16 @@ export interface EfficiencyRecord {
 
 export interface CheckBudgetResult {
   exceeded: boolean;
+  // R3 anti-surprise warn: true when spend is in [80%, 100%) of the cap. The
+  // orchestrator logs this without pausing; the hard stop is `exceeded`.
+  warn: boolean;
   current_cost: number;
   limit: number | null;
 }
+
+// Budget warn threshold: warn at 80% of the cap, before the hard stop at 100%.
+// Mirrors run.sh check_budget_limit() and dashboard _BUDGET_WARN_FRACTION.
+const BUDGET_WARN_FRACTION = 0.8;
 
 export interface CheckBudgetOptions {
   budgetLimit?: number | string | null;
@@ -263,7 +270,7 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
   const root = lokiDir();
   const limit = parseBudgetLimit(opts.budgetLimit ?? process.env["BUDGET_LIMIT"] ?? null);
   if (limit === null) {
-    return { exceeded: false, current_cost: 0, limit: null };
+    return { exceeded: false, warn: false, current_cost: 0, limit: null };
   }
 
   const efficiencyDir = opts.efficiencyDir ?? join(root, "metrics", "efficiency");
@@ -302,7 +309,7 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
       },
       budgetFile,
     );
-    return { exceeded: true, current_cost: current, limit };
+    return { exceeded: true, warn: false, current_cost: current, limit };
   }
 
   // Update budget.json with current usage when non-zero (run.sh:7930).
@@ -317,7 +324,10 @@ export function checkBudgetLimit(opts: CheckBudgetOptions = {}): CheckBudgetResu
       budgetFile,
     );
   }
-  return { exceeded: false, current_cost: current, limit };
+  // R3 anti-surprise warn: spend is in [80%, 100%) of the cap. Non-pausing;
+  // the orchestrator logs it so the user sees it before the hard stop.
+  const warn = current >= BUDGET_WARN_FRACTION * limit;
+  return { exceeded: false, warn, current_cost: current, limit };
 }
 
 // ---------------------------------------------------------------------------

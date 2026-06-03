@@ -493,6 +493,40 @@ function generateStandaloneHTML(bundleCode) {
       display: block;
     }
 
+    .budget-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 8px 16px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      z-index: 1000;
+      color: #201515;
+    }
+
+    .budget-banner.show {
+      display: block;
+    }
+
+    .budget-banner.warn {
+      background: var(--loki-warning);
+    }
+
+    .budget-banner.exceeded {
+      background: var(--loki-red);
+      color: #fff;
+    }
+
+    .budget-banner a {
+      color: inherit;
+      text-decoration: underline;
+      margin-left: 10px;
+      font-weight: 600;
+    }
+
     /* Loading state */
     .loading {
       display: flex;
@@ -663,6 +697,15 @@ function generateStandaloneHTML(bundleCode) {
   <!-- Offline Banner -->
   <div class="offline-banner" id="offline-banner">
     Offline - showing cached data
+  </div>
+
+  <!-- Budget Banner (R3 anti-surprise-cost): persistent, visible on every
+       page without opening the Cost panel. Amber at >=80% (warn), red at
+       >=100% (exceeded). Driven by the existing WebSocket budget_status push
+       and a polling fallback against /api/cost/timeline. -->
+  <div class="budget-banner" id="budget-banner" role="status" aria-live="polite">
+    <span id="budget-banner-text"></span>
+    <a href="/cost" id="budget-banner-link">View cost</a>
   </div>
 
   <!-- Dashboard Layout -->
@@ -1402,6 +1445,57 @@ document.addEventListener('DOMContentLoaded', function() {
   if (!navigator.onLine) {
     document.getElementById('offline-banner').classList.add('show');
   }
+
+  // R3 budget banner: a persistent, page-wide indicator so a user running an
+  // overnight job sees the 80% budget warning WITHOUT opening the Cost panel.
+  // It reuses the existing WebSocket push (budget_status -> api:budget_status
+  // on the shared API client) and falls back to polling /api/cost/timeline.
+  (function initBudgetBanner() {
+    var banner = document.getElementById('budget-banner');
+    var textEl = document.getElementById('budget-banner-text');
+    if (!banner || !textEl) return;
+
+    function renderBudget(b) {
+      if (!b || (b.status !== 'warn' && b.status !== 'exceeded')) {
+        banner.classList.remove('show', 'warn', 'exceeded');
+        return;
+      }
+      // Honest copy: "Budget at 82% - hard stop at 100%."
+      var pct = (b.percent_used === null || b.percent_used === undefined)
+        ? null : Number(b.percent_used);
+      var pctTxt = (pct === null || !isFinite(pct)) ? '' : Math.round(pct) + '%';
+      var msg;
+      if (b.status === 'exceeded') {
+        msg = 'Budget cap reached' + (pctTxt ? ' (' + pctTxt + ')' : '') +
+              '. The run is paused to prevent a surprise bill.';
+      } else {
+        msg = 'Budget at ' + (pctTxt || 'over 80%') + ' - hard stop at 100%.';
+      }
+      textEl.textContent = msg;
+      banner.classList.remove('warn', 'exceeded');
+      banner.classList.add('show', b.status);
+    }
+
+    // Polling fallback (the WS push is best-effort; polling guarantees the
+    // banner is correct even on a freshly opened page or after a reconnect).
+    function poll() {
+      fetch('/api/cost/timeline', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { if (d && d.budget) renderBudget(d.budget); })
+        .catch(function () { /* offline / no endpoint: leave banner as-is */ });
+    }
+    poll();
+    setInterval(poll, 15000);
+
+    // Reuse the existing shared WebSocket client for the proactive push.
+    try {
+      var api = LokiDashboard.getApiClient({ baseUrl: window.location.origin });
+      api.addEventListener('api:budget_status', function (e) {
+        renderBudget(e && e.detail);
+      });
+      api.connect().catch(function () { /* polling fallback still covers it */ });
+    } catch (err) { /* polling fallback still covers it */ }
+  })();
 
   // Mobile menu toggle
   var mobileMenuBtn = document.getElementById('mobile-menu-btn');

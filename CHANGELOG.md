@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.11.0] - 2026-05-30
+
+### Added
+- Cost + observability dashboard (R3 of the competitive arc): transparent,
+  anti-surprise cost visibility, counter-positioned against the market's #1
+  churn driver (surprise AI bills). All built by ENHANCING the existing cost
+  surfaces in place, not duplicating them.
+- `loki cost` CLI (`--json`, `--last N`): current-run spend, per-model routing,
+  per-run history, and budget status, reading the shared
+  `autonomy/lib/efficiency_cost.py` (single source of truth; "not recorded"
+  rather than a fabricated $0.00 when no cost data exists).
+- New `/api/cost/timeline` endpoint: intra-run per-iteration cumulative spend +
+  per-run history with project totals + read-time budget status, additive to the
+  existing `/api/cost`.
+- A self-contained `/cost` dashboard panel: budget gauge with an 80% warn line,
+  model-routing-by-spend, per-run table, inline cumulative chart.
+- Pre-cap budget WARNING at 80% (previously only a hard stop at 100%), added to
+  the existing `check_budget_limit` (bash) and `checkBudgetLimit` (Bun) without
+  changing the hard-cap behavior, so an autonomous run flags a budget approach
+  before it stops.
+- Proactive budget alerting: the budget status now broadcasts over the existing
+  dashboard WebSocket loop and shows a persistent banner (amber at 80%, red at
+  100%) on every dashboard page, with a poll fallback for late-joining clients,
+  so a user not watching the terminal still sees the warning before the cap.
+
+### Notes
+- Council: 3-of-3 unanimous (round 2, after adding the proactive in-dashboard
+  budget banner; round 1 flagged the warning was passive-pull-only).
+- No duplication: every cost surface reuses the existing efficiency accounting;
+  thresholds (80% / 100%) are consistent across the bash runner, Bun runner,
+  dashboard, and CLI.
+- NOT tested in this release: the budget banner rendered in every browser engine
+  (verified self-contained + reproducible build + endpoint/broadcast tests).
+
 ## [7.10.1] - 2026-05-30
 
 ### Fixed

@@ -459,6 +459,7 @@ async def _push_loki_state_loop() -> None:
     """
     last_mtime: float = 0.0
     _last_skill_hash: str = ""  # Track skill-session state changes
+    _last_budget_status: str = ""  # Track budget-status transitions (R3)
     while True:
         try:
             if not manager.active_connections:
@@ -468,6 +469,26 @@ async def _push_loki_state_loop() -> None:
             loki_dir = _get_loki_dir()
             state_file = loki_dir / "dashboard-state.json"
             _session_file = loki_dir / "session.json"
+
+            # R3 anti-surprise-cost: proactively push a budget_status message
+            # when spend crosses a threshold (ok -> warn -> exceeded), so a user
+            # who is not watching the terminal sees the 80% warning in any open
+            # dashboard page BEFORE the hard stop at 100%. Reuses the existing
+            # WebSocket broadcast path (manager.broadcast); no second channel.
+            # Sent on transition (independent of the dashboard-state.json mtime
+            # gate) because budget can cross 80% while that file is unchanged.
+            try:
+                _budget = _compute_budget_snapshot(loki_dir)
+                _bstatus = _budget.get("status", "none")
+                if _bstatus in ("warn", "exceeded") and _bstatus != _last_budget_status:
+                    await manager.broadcast({
+                        "type": "budget_status",
+                        "data": _budget,
+                    })
+                # Track every status so a return to ok/none re-arms the warn push.
+                _last_budget_status = _bstatus
+            except (OSError, ValueError, KeyError):
+                pass
 
             _broadcast_sent = False
 
@@ -4551,6 +4572,214 @@ async def get_budget():
     }
 
 
+# Budget warn threshold: surface a "warn" status before the hard cap so users
+# are not surprised by a bill. Matches the runtime warn in run.sh
+# check_budget_limit() and budget.ts (warn at 80%, hard-stop at 100%).
+_BUDGET_WARN_FRACTION = 0.80
+
+
+def _budget_status(used: float, limit: Optional[float]) -> str:
+    """Classify budget usage. Read-time only; no state mutation.
+
+    Returns one of: "none" (no limit set), "ok" (<80%), "warn" (>=80% and
+    <100%), "exceeded" (>=100%). The warn band is the anti-surprise wedge:
+    the user sees it BEFORE the hard cap pauses the run.
+    """
+    if limit is None or limit <= 0:
+        return "none"
+    if used >= limit:
+        return "exceeded"
+    if used >= _BUDGET_WARN_FRACTION * limit:
+        return "warn"
+    return "ok"
+
+
+def _compute_budget_snapshot(loki_dir: _Path) -> dict:
+    """Read-time budget snapshot shared by /api/cost/timeline and the WS push.
+
+    Single source of truth so the proactive WebSocket broadcast and the pull
+    endpoint never disagree. "used" is the current run's spend (sum of the live
+    .loki/metrics/efficiency/iteration-*.json records, mirroring
+    check_budget_limit in run.sh). The cap comes from budget.json, falling back
+    to the LOKI_BUDGET_LIMIT env var. No state is mutated.
+    """
+    efficiency_dir = loki_dir / "metrics" / "efficiency"
+    budget_file = loki_dir / "metrics" / "budget.json"
+
+    current_total = 0.0
+    if efficiency_dir.exists():
+        for eff_file in sorted(efficiency_dir.glob("iteration-*.json")):
+            data = _safe_json_read(eff_file, default=None)
+            if not isinstance(data, dict):
+                continue
+            inp = data.get("input_tokens", 0) or 0
+            out = data.get("output_tokens", 0) or 0
+            model = str(data.get("model", "sonnet")).lower()
+            cost = data.get("cost_usd")
+            if cost is None:
+                cost = _calculate_model_cost(model, inp, out)
+            else:
+                try:
+                    cost = float(cost)
+                except (TypeError, ValueError):
+                    cost = 0.0
+            current_total += cost
+
+    budget_limit = None
+    if budget_file.exists():
+        bdata = _safe_json_read(budget_file, default=None)
+        if isinstance(bdata, dict):
+            budget_limit = bdata.get("limit") or bdata.get("budget_limit")
+    if budget_limit is None:
+        env_limit = os.environ.get("LOKI_BUDGET_LIMIT", "")
+        if env_limit:
+            try:
+                budget_limit = float(env_limit)
+            except ValueError:
+                budget_limit = None
+    if budget_limit is not None:
+        try:
+            budget_limit = float(budget_limit)
+        except (TypeError, ValueError):
+            budget_limit = None
+
+    used = round(current_total, 6)
+    if budget_limit is not None and budget_limit > 0:
+        remaining = max(0.0, budget_limit - used)
+        percent_used = round((used / budget_limit) * 100, 2)
+    else:
+        remaining = None
+        percent_used = None
+    status = _budget_status(used, budget_limit)
+
+    return {
+        "limit": budget_limit,
+        "used": used,
+        "remaining": round(remaining, 6) if remaining is not None else None,
+        "percent_used": percent_used,
+        "status": status,
+        "warn_threshold_percent": int(_BUDGET_WARN_FRACTION * 100),
+        "exceeded": status == "exceeded",
+    }
+
+
+@app.get("/api/cost/timeline")
+async def get_cost_timeline():
+    """Cost over time: intra-run per-iteration series + per-run history.
+
+    Two honest series, distinct sources (see docs/R3-COST-OBSERVABILITY-DESIGN.md):
+      - current_run: from .loki/metrics/efficiency/iteration-*.json. This dir is
+        wiped at the start of every run (run.sh), so it only ever holds the
+        CURRENT run's iterations. Used for the intra-run cumulative line.
+      - runs: from .loki/proofs/<run_id>/proof.json (persistent, one per run).
+        This is the real per-run/per-project "cost over time" history.
+
+    Budget status is computed at read time (no budget.json schema change) and
+    classifies into ok/warn/exceeded so the UI can warn at 80% before the cap.
+    Cost is never fabricated: when nothing was recorded, cost_recorded is False
+    and totals are honestly null rather than a misleading $0.00.
+    """
+    loki_dir = _get_loki_dir()
+    efficiency_dir = loki_dir / "metrics" / "efficiency"
+
+    # --- current run: per-iteration series from efficiency/ -----------------
+    iterations: list = []
+    current_total = 0.0
+    cost_recorded = False
+    if efficiency_dir.exists():
+        records = []
+        for eff_file in sorted(efficiency_dir.glob("iteration-*.json")):
+            data = _safe_json_read(eff_file, default=None)
+            if not isinstance(data, dict):
+                continue
+            records.append(data)
+        # Sort by numeric iteration when present, else by filename order.
+        def _iter_key(d):
+            try:
+                return int(d.get("iteration", 0))
+            except (TypeError, ValueError):
+                return 0
+        records.sort(key=_iter_key)
+        cumulative = 0.0
+        for data in records:
+            cost_recorded = True
+            inp = data.get("input_tokens", 0) or 0
+            out = data.get("output_tokens", 0) or 0
+            model = str(data.get("model", "sonnet")).lower()
+            cost = data.get("cost_usd")
+            if cost is None:
+                cost = _calculate_model_cost(model, inp, out)
+            else:
+                try:
+                    cost = float(cost)
+                except (TypeError, ValueError):
+                    cost = 0.0
+            cumulative += cost
+            iterations.append({
+                "iteration": data.get("iteration"),
+                "timestamp": data.get("timestamp"),
+                "model": model,
+                "phase": data.get("phase", "unknown"),
+                "provider": data.get("provider"),
+                "input_tokens": inp,
+                "output_tokens": out,
+                "cost_usd": round(cost, 6),
+                "cumulative_usd": round(cumulative, 6),
+            })
+        current_total = cumulative
+
+    # --- per-run history: from .loki/proofs/*/proof.json --------------------
+    runs: list = []
+    project_total = 0.0
+    proofs_dir = _proofs_dir()
+    try:
+        entries = sorted(proofs_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        entries = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        data = _safe_json_read(entry / "proof.json", default=None)
+        if not isinstance(data, dict):
+            continue
+        run_cost = (data.get("cost") or {}).get("usd")
+        run_cost_num = None
+        if run_cost is not None:
+            try:
+                run_cost_num = float(run_cost)
+                project_total += run_cost_num
+            except (TypeError, ValueError):
+                run_cost_num = None
+        runs.append({
+            "run_id": data.get("run_id", entry.name),
+            "generated_at": data.get("generated_at"),
+            "model": (data.get("provider") or {}).get("model"),
+            "cost_usd": round(run_cost_num, 6) if run_cost_num is not None else None,
+            "files_changed": (data.get("files_changed") or {}).get("count"),
+            "final_verdict": (data.get("council") or {}).get("final_verdict"),
+        })
+    runs.sort(key=lambda x: (x.get("generated_at") or ""), reverse=True)
+
+    # --- budget block (read-time status; no mutation) -----------------------
+    # Shared snapshot so the pull endpoint and the proactive WS push agree.
+    # Budget "used" is the current run's spend (mirrors check_budget_limit,
+    # which sums the live efficiency dir against the cap). The per-project
+    # history total is reported separately as project_total_usd.
+    budget = _compute_budget_snapshot(loki_dir)
+
+    return {
+        "current_run": {
+            "iterations": iterations,
+            "total_usd": round(current_total, 6) if cost_recorded else None,
+            "cost_recorded": cost_recorded,
+        },
+        "runs": runs,
+        "runs_count": len(runs),
+        "project_total_usd": round(project_total, 6) if runs else 0.0,
+        "budget": budget,
+    }
+
+
 # =============================================================================
 # Pricing API
 # =============================================================================
@@ -6425,6 +6654,19 @@ async def serve_favicon():
         favicon_path = os.path.join(STATIC_DIR, "favicon.svg")
         if os.path.isfile(favicon_path):
             return FileResponse(favicon_path, media_type="image/svg+xml")
+    return Response(status_code=404)
+
+
+# Serve the self-contained cost + observability panel (R3). Zero-build
+# standalone page that fetches /api/cost/timeline. Mirrors the proofs.html
+# pattern: works without the SPA build.
+@app.get("/cost", include_in_schema=False)
+async def serve_cost_panel():
+    """Serve the standalone cost + observability HTML panel."""
+    if STATIC_DIR:
+        cost_path = os.path.join(STATIC_DIR, "cost.html")
+        if os.path.isfile(cost_path):
+            return FileResponse(cost_path, media_type="text/html")
     return Response(status_code=404)
 
 

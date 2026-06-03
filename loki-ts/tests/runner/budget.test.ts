@@ -375,3 +375,61 @@ describe("budget.checkBudgetLimit circuit breaker", () => {
     expect(existsSync(opts.budgetFile)).toBe(false);
   });
 });
+
+// R3 anti-surprise-cost warn-at-80%: warn flag must fire in [80%, 100%) of the
+// cap WITHOUT pausing, and must not fire below 80% or at/above 100% (where the
+// exceeded path owns the pause). Mirrors run.sh check_budget_limit() warn band.
+describe("budget.checkBudgetLimit warn-at-80% (R3)", () => {
+  function setup(limit: number, records: Array<Record<string, unknown>>) {
+    const efficiencyDir = join(scratch, "metrics", "efficiency");
+    const budgetFile = join(scratch, "metrics", "budget.json");
+    const pauseFile = join(scratch, "PAUSE");
+    const signalsDir = join(scratch, "signals");
+    mkdirSync(efficiencyDir, { recursive: true });
+    records.forEach((r, i) => writeFileSync(join(efficiencyDir, `iter-${i}.json`), JSON.stringify(r)));
+    return {
+      budgetLimit: limit,
+      efficiencyDir,
+      budgetFile,
+      pauseFile,
+      signalsDir,
+      now: () => new Date("2026-04-25T12:00:00Z"),
+    };
+  }
+
+  it("warn=false below 80%", () => {
+    const opts = setup(100, [{ cost_usd: 79.99 }]);
+    const r = checkBudgetLimit(opts);
+    expect(r.warn).toBe(false);
+    expect(r.exceeded).toBe(false);
+  });
+
+  it("warn=true at exactly 80%", () => {
+    const opts = setup(100, [{ cost_usd: 80 }]);
+    const r = checkBudgetLimit(opts);
+    expect(r.warn).toBe(true);
+    expect(r.exceeded).toBe(false);
+  });
+
+  it("warn=true in the warn band, and does NOT write a PAUSE file", () => {
+    const opts = setup(100, [{ cost_usd: 90 }]);
+    const r = checkBudgetLimit(opts);
+    expect(r.warn).toBe(true);
+    expect(r.exceeded).toBe(false);
+    expect(existsSync(opts.pauseFile)).toBe(false);
+  });
+
+  it("warn=false at/above 100% (exceeded path owns the stop)", () => {
+    const opts = setup(100, [{ cost_usd: 100 }]);
+    const r = checkBudgetLimit(opts);
+    expect(r.exceeded).toBe(true);
+    expect(r.warn).toBe(false);
+    expect(existsSync(opts.pauseFile)).toBe(true);
+  });
+
+  it("warn=false when no limit is set", () => {
+    const r = checkBudgetLimit({ efficiencyDir: scratch });
+    expect(r.warn).toBe(false);
+    expect(r.limit).toBeNull();
+  });
+});
