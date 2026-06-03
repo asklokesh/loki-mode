@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.12.0] - 2026-05-30
+
+### Added
+- Zero-config killer first run (R7 of the competitive arc): `loki start "<one
+  line brief>"` now works and produces a fast, visible artifact, lowering
+  time-to-first-value so a new user gets a good first experience instead of a
+  blank or heavy one. Built additively, reusing the existing start/quick/proof
+  flow (no parallel second start path).
+
+### Fixed
+- `loki start "build a todo app"` previously errored "PRD file not found": a
+  whitespace one-line brief was misrouted as a PRD file path. `detect_arg_type`
+  now returns a brief type for whitespace args that match no file/issue/path
+  pattern; single-token args, `.md`/`.yaml` PRDs, issue refs, and empty input
+  all behave exactly as before (back-compat preserved).
+
+### Notes
+- The brief path applies a genuinely lighter profile (capped iterations, council
+  off, simple tier, heavy phases off) for a fast first pass, then emits an R1
+  proof-of-run as the visible artifact and prints honest "what next / go deeper"
+  guidance (full-depth `loki start` or `loki start ./prd.md`). The end-of-run
+  message is branched so the council-off brief path does not claim council
+  verdicts. The brief PRD is kept distinct from `.loki/generated-prd.md` so it
+  does not pollute the v7.8.1 generated-PRD-reuse signature.
+- Council: 3-of-3 unanimous (first round). No duplication; existing PRD/issue/
+  no-arg flows unchanged.
+
 ## [7.11.0] - 2026-05-30
 
 ### Added

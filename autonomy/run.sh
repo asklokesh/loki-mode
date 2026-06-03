@@ -4121,6 +4121,69 @@ generate_proof_of_run() {
     return 0
 }
 
+# print_ttfv_next_steps: R7 zero-config first-run "what next / go deeper"
+# message. The wording MUST match what actually ran, so it branches on the mode:
+#   - brief: a one-line brief ran on the lightweight profile (council off,
+#            simple tier, capped iterations). Proof contains diffs, cost, time
+#            (council verdicts are absent because the council was disabled).
+#   - repo:  a no-arg in-repo run analyzed the codebase and ran at full depth
+#            (council on). Proof contains diffs, cost, time, and council
+#            verdicts.
+# This function only prints; the caller owns the TTY gate. Never fails the run.
+# Usage: print_ttfv_next_steps <mode> <result>
+print_ttfv_next_steps() {
+    local mode="${1:-}"
+    local result="${2:-0}"
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local proofs_dir="$loki_dir/proofs"
+
+    echo ""
+    echo "============================================================"
+    if [ "$result" = "0" ]; then
+        echo "  First pass complete. Here is what you have:"
+    else
+        echo "  First pass ended early. Here is what was produced:"
+    fi
+    echo "============================================================"
+    echo ""
+    echo "  What I did:"
+    if [ "$mode" = "brief" ]; then
+        echo "    - Worked from your one-line brief on a fast, lightweight first"
+        echo "      pass (council off, simple tier, capped iterations)."
+        echo "    - Generated a proof-of-run (diffs, cost, time)."
+    else
+        echo "    - Analyzed your codebase and generated a PRD, then ran a full"
+        echo "      first pass (council on, full RARV-C depth)."
+        echo "    - Generated a proof-of-run (diffs, cost, time, council verdicts)."
+    fi
+    echo ""
+    echo "  See the visible artifact (proof-of-run):"
+    if [ -d "$proofs_dir" ]; then
+        local latest
+        latest=$(ls -1t "$proofs_dir" 2>/dev/null | head -1)
+        if [ -n "$latest" ]; then
+            echo "    loki proof open $latest"
+            echo "    (or open $proofs_dir/$latest/index.html)"
+        else
+            echo "    loki proof list"
+        fi
+    else
+        echo "    loki proof list"
+    fi
+    echo ""
+    if [ "$mode" = "brief" ]; then
+        echo "  Go deeper (full RARV-C depth, council-gated):"
+        echo "    loki start                 # continue / harden this project"
+        echo "    loki start ./prd.md        # build from a full PRD"
+    else
+        echo "  Next steps:"
+        echo "    loki start ./prd.md        # build from a full PRD"
+        echo "    loki start \"<one line>\"    # fast first pass from a brief"
+    fi
+    echo ""
+    return 0
+}
+
 track_iteration_complete() {
     local iteration="$1"
     local exit_code="${2:-0}"
@@ -13333,6 +13396,15 @@ main() {
     # LOKI_PROOF=0. Fire-and-forget on both success and failure runs.
     if [ "${LOKI_PROOF:-1}" != "0" ]; then
         generate_proof_of_run "$result" || true
+    fi
+
+    # R7 (zero-config first run): "what next / go deeper" framing. Only when the
+    # CLI flagged this as a TTFV first run and stdout is a TTY, so it stays
+    # silent in CI / pipes and never fires for normal PRD runs. The wording
+    # branches on the mode (brief = lightweight first pass; repo = full-depth
+    # codebase analysis) so the message always matches what actually ran.
+    if [ -n "${LOKI_TTFV:-}" ] && [ -t 1 ]; then
+        print_ttfv_next_steps "${LOKI_TTFV}" "$result" || true
     fi
 
     # Create PR from agent branch if branch protection was enabled

@@ -739,6 +739,17 @@ detect_arg_type() {
         return 0
     fi
 
+    # R7 (zero-config first run): a one-line brief. An arg that contains
+    # whitespace and matched none of the file/issue/path patterns above is a
+    # natural-language brief (e.g. "build a todo app"), NOT a PRD path. This is
+    # additive: a single-token arg with no whitespace still falls through to
+    # "unknown" (PRD-path back-compat) below. The `--brief` flag is the
+    # deterministic escape hatch for the rare single-word brief.
+    if [[ "$arg" == *[[:space:]]* ]]; then
+        echo "brief"
+        return 0
+    fi
+
     # Fallback: unknown. Caller treats as PRD for backward compat.
     echo "unknown"
 }
@@ -752,6 +763,7 @@ cmd_start() {
     local args=()
     local prd_file=""
     local provider=""
+    local brief_text=""           # R7: explicit one-line brief (--brief "...")
     local bmad_project_path=""
     local openspec_change_path=""
     local mirofish_url=""
@@ -784,6 +796,8 @@ cmd_start() {
                 echo "  PRD mode    - path ending in .md/.json/.txt/.yaml -> build from PRD"
                 echo "  ISSUE mode  - GitHub/GitLab/Jira/Azure DevOps URL, owner/repo#N,"
                 echo "                PROJ-123, #123, or bare number -> generate PRD from issue"
+                echo "  BRIEF mode  - a quoted one-line description (with spaces) -> fast"
+                echo "                zero-config first run; visible artifact + proof quickly"
                 echo "  no input    - analyze current directory, auto-generate PRD"
                 echo ""
                 echo "Arguments:"
@@ -793,6 +807,7 @@ cmd_start() {
                 echo "Explicit mode flags (override auto-detection):"
                 echo "  --prd FILE            Force PRD mode with FILE"
                 echo "  --issue URL|NUM       Force issue mode with URL or number"
+                echo "  --brief \"TEXT\"        Force zero-config brief mode (fast first run)"
                 echo ""
                 echo "Options:"
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider"
@@ -816,6 +831,7 @@ cmd_start() {
                 echo "  --mirofish-bg         Run MiroFish pipeline in background"
                 echo "  --no-mirofish         Disable MiroFish even if env var is set"
                 echo "  --no-plan             Skip auto-shown PRD analysis at startup"
+                echo "  --brief \"TEXT\"        Zero-config fast first run from a one-line brief"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
                 echo ""
                 echo "Issue-mode options (only used when input is an ISSUE-REF):"
@@ -836,6 +852,8 @@ cmd_start() {
                 echo ""
                 echo "Examples:"
                 echo "  loki start                              # Interactive, analyze current dir"
+                echo "  loki start \"build a todo app\"           # BRIEF mode (zero-config fast run)"
+                echo "  loki start --brief \"snake\"              # BRIEF mode (single-word escape hatch)"
                 echo "  loki start ./prd.md                     # PRD mode"
                 echo "  loki start https://github.com/o/r/issues/42  # ISSUE mode (GitHub)"
                 echo "  loki start 123                          # ISSUE mode (current repo GitHub issue)"
@@ -1065,6 +1083,22 @@ cmd_start() {
                 no_plan=true
                 shift
                 ;;
+            --brief)
+                # R7: explicit one-line brief (escape hatch for single-word
+                # briefs that detect_arg_type would otherwise treat as a PRD
+                # path). Forces the zero-config first-run brief sub-path.
+                if [[ -n "${2:-}" ]] && [[ "${2:-}" != --* ]]; then
+                    brief_text="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--brief requires a one-line description (e.g., --brief \"build a todo app\")${NC}"
+                    exit 1
+                fi
+                ;;
+            --brief=*)
+                brief_text="${1#*=}"
+                shift
+                ;;
             --budget)
                 if [[ -n "${2:-}" ]]; then
                     if ! echo "$2" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
@@ -1184,12 +1218,21 @@ cmd_start() {
     done
 
     # v6.84.0: Unified dispatch based on explicit flags or auto-detection
-    # Precedence: --issue > --prd > positional auto-detect > LOKI_PRD_FILE env
+    # Precedence: --brief > --issue > --prd > positional auto-detect >
+    #             LOKI_PRD_FILE env
     local detected_type=""
-    if [ -n "$explicit_mode" ]; then
+    if [ -n "$brief_text" ]; then
+        # R7: explicit --brief always forces the zero-config brief sub-path.
+        detected_type="brief"
+    elif [ -n "$explicit_mode" ]; then
         detected_type="$explicit_mode"
     elif [ -n "$positional_arg" ]; then
         detected_type=$(detect_arg_type "$positional_arg")
+        # R7: a positional one-line brief (whitespace, not a file/issue) maps to
+        # the brief sub-path; capture the text from the positional arg.
+        if [ "$detected_type" = "brief" ]; then
+            brief_text="$positional_arg"
+        fi
     elif [ -n "${LOKI_PRD_FILE:-}" ]; then
         detected_type="prd"
         prd_file="$LOKI_PRD_FILE"
@@ -1227,6 +1270,51 @@ cmd_start() {
         export LOKI_UNIFIED_START=1
         cmd_run "${run_args[@]}"
         return $?
+    fi
+
+    # R7 (zero-config first run): BRIEF mode. The user gave a one-line brief
+    # (`loki start "build a todo app"` or `loki start --brief "..."`). Synthesize
+    # a forward-looking PRD, switch to the lightweight TTFV profile (honest fast:
+    # capped iterations, council off, simple tier, heavy phases off), and mark
+    # LOKI_TTFV=1 so run.sh prints the "what next / go deeper" framing at the
+    # end. Then fall through to the normal flow, which appends prd_file to args
+    # and execs run.sh. This is additive -- nothing here changes the PRD/issue
+    # paths above.
+    if [ "$detected_type" = "brief" ]; then
+        local version
+        version=$(get_version)
+        local _ttfv_max_iter="${LOKI_MAX_ITERATIONS:-3}"
+        mkdir -p "$LOKI_DIR" 2>/dev/null || true
+        local brief_prd="$LOKI_DIR/brief-prd-$$.md"
+        synthesize_brief_prd "$brief_prd" "$brief_text"
+        prd_file="$brief_prd"
+
+        # Apply the shared lightweight profile and flag the TTFV first-run path.
+        # The signal value ("brief") drives the end-of-run wording in run.sh so
+        # the message matches what actually ran (lightweight, council off).
+        set_ttfv_lightweight_profile "$_ttfv_max_iter"
+        export LOKI_TTFV=brief
+        # Skip the heavy auto-plan analysis -- the brief path is the fast path,
+        # and we already printed the upfront framing below.
+        no_plan=true
+
+        echo -e "${BOLD}Loki Mode v$version - Zero-config first run${NC}"
+        echo ""
+        echo -e "${CYAN}Brief:${NC} $brief_text"
+        echo -e "${DIM}Fast first pass: $_ttfv_max_iter iterations max, council off, simple tier.${NC}"
+        echo -e "${DIM}You will get a runnable artifact and a proof-of-run quickly.${NC}"
+        echo -e "${DIM}Go deeper later with: loki start (full RARV-C depth).${NC}"
+        echo -e "${GREEN}Brief PRD written${NC} to $brief_prd"
+        echo ""
+    fi
+
+    # R7: existing-repo no-arg path also gets the TTFV "what next" framing at the
+    # end of the run. Execution here is UNCHANGED (full-depth no-PRD codebase
+    # analysis + generated-PRD-reuse); we only add accurate end-of-run framing.
+    # The signal value ("repo") drives the full-depth wording in run.sh so the
+    # message does not falsely claim a lightweight pass.
+    if [ "$detected_type" = "empty" ] && [ -z "${LOKI_TTFV:-}" ]; then
+        export LOKI_TTFV=repo
     fi
 
     # PRD mode: positional arg is the PRD file (if not already set via --prd)
@@ -8847,6 +8935,65 @@ cmd_demo() {
     return $start_exit
 }
 
+# R7 (zero-config first run): set the lightweight TTFV execution profile.
+# Shared by `cmd_quick` and the `loki start "<brief>"` brief sub-path so the
+# fast first pass means the same thing in both: capped iterations, completion
+# council off, simple complexity tier, heavy phases off. This is HONEST fast --
+# it genuinely shortens the path to first visible value; it does not fake
+# progress. Depth is opt-in via a plain `loki start` re-run.
+# Usage: set_ttfv_lightweight_profile [max_iter]
+set_ttfv_lightweight_profile() {
+    local max_iter="${1:-${LOKI_MAX_ITERATIONS:-3}}"
+    export LOKI_MAX_ITERATIONS="$max_iter"
+    export LOKI_COMPLEXITY=simple
+    export LOKI_COUNCIL_ENABLED=false
+    export LOKI_PHASE_CODE_REVIEW=false
+    export LOKI_PHASE_PERFORMANCE=false
+    export LOKI_PHASE_ACCESSIBILITY=false
+    export LOKI_PHASE_REGRESSION=false
+    export LOKI_PHASE_UAT=false
+    export LOKI_PHASE_WEB_RESEARCH=false
+}
+
+# R7: synthesize a forward-looking PRD from a one-line brief. Writes to a
+# unique path (caller-provided) and echoes nothing -- the file is the output.
+# Kept DISTINCT from .loki/generated-prd.md (codebase-analysis artifact) so it
+# never pollutes the v7.8.1 generated-PRD-reuse signature logic. The brief text
+# is the project intent; the rest is a minimal scaffold the agent fills in.
+# Usage: synthesize_brief_prd <output_file> <brief_text>
+synthesize_brief_prd() {
+    local out_file="$1"
+    local brief_text="$2"
+    local out_dir
+    out_dir="$(dirname "$out_file")"
+    mkdir -p "$out_dir" 2>/dev/null || true
+    cat > "$out_file" << BRIEFEOF
+# Project Brief
+
+## Overview
+$brief_text
+
+## Requirements
+- Build the smallest working version of the above that a user can see and run.
+- Prefer a runnable artifact (a page, a CLI, an API endpoint) over scaffolding.
+- Follow conventional structure for the chosen stack; keep dependencies minimal.
+- Write a short README describing how to run it.
+
+## Success Criteria
+- A user can run the result and observe the core behavior described above.
+- No errors on a clean start; the happy path works end to end.
+
+## Constraints
+- This is a fast first pass (zero-config first run). Keep scope tight.
+- Do not over-engineer; depth and hardening come on a later full run.
+- No emojis, no em dashes in code, comments, or docs.
+
+---
+
+**Mode:** Brief (zero-config first run, lightweight first pass)
+BRIEFEOF
+}
+
 # Quick mode - lightweight single-task execution
 cmd_quick() {
     # v7.6.3 B-11 fix: --help previously fell through to provider invocation
@@ -8934,16 +9081,9 @@ QPRDEOF
     echo -e "${GREEN}Quick PRD generated${NC} at $quick_prd"
     echo ""
 
-    # Set lightweight execution environment
-    export LOKI_MAX_ITERATIONS="$max_iter"
-    export LOKI_COMPLEXITY=simple
-    export LOKI_COUNCIL_ENABLED=false
-    export LOKI_PHASE_CODE_REVIEW=false
-    export LOKI_PHASE_PERFORMANCE=false
-    export LOKI_PHASE_ACCESSIBILITY=false
-    export LOKI_PHASE_REGRESSION=false
-    export LOKI_PHASE_UAT=false
-    export LOKI_PHASE_WEB_RESEARCH=false
+    # Set lightweight execution environment (shared TTFV profile -- see
+    # set_ttfv_lightweight_profile; same profile the R7 brief sub-path uses).
+    set_ttfv_lightweight_profile "$max_iter"
 
     # Record start for efficiency tracking
     record_session_start
