@@ -28,6 +28,8 @@ Phase 2 ported (Bun-native, fast):
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
                          (subcmds: list | show <id> | to <id> | latest)
+  proof <subcmd>         Inspect/share proof-of-run artifacts
+                         (subcmds: list | show <id> | open <id> | share <id>)
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
@@ -105,6 +107,19 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // v7.5.2: wire the checkpoint rollback API (was dead code per H4).
       const { runRollback } = await import("./commands/rollback.ts");
       return runRollback(rest);
+    }
+
+    case "proof": {
+      // R1 (SLICE B): inspect/share proof-of-run artifacts. The Bun port
+      // implements list/show/open natively (share shells out to
+      // `gh gist create` after a redaction-preview confirmation). The bin/loki
+      // shim allowlist (line ~119) DOES include "proof", so when bun is
+      // installed a real `loki proof` invocation routes here -- this is the
+      // live route. The bash cmd_proof (autonomy/loki) is the fallback for
+      // no-bun systems and the LOKI_LEGACY_BASH=1 escape hatch, kept at parity
+      // (see loki-ts/tests/commands/proof.test.ts).
+      const { runProof } = await import("./commands/proof.ts");
+      return runProof(rest);
     }
 
     case "internal": {

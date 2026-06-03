@@ -118,6 +118,36 @@ else
   skip_check "pytest" "no python3 on PATH"
 fi
 
+# v7.9.0 (R1 proof-of-run): explicit per-file gates so a regression in the
+# proof generator, the redaction chokepoint, the self-contained HTML, or the
+# dashboard routes surfaces by name (not buried in the blanket pytest tail).
+# Resolve a python that prefers 3.12 (dashboard route test imports fastapi,
+# which is not installed for 3.14). The redaction/generator/html tests are pure
+# stdlib and run under either interpreter.
+if command -v python3.12 >/dev/null 2>&1; then
+  PROOF_PY=python3.12
+elif command -v python3 >/dev/null 2>&1; then
+  PROOF_PY=python3
+else
+  PROOF_PY=""
+fi
+if [ -n "$PROOF_PY" ]; then
+  # THE GATE: redaction corpus + end-to-end no-leak + refuse-if-bypassed.
+  run_check "tests/test_proof_redaction.py (R1 redaction gate)" "$PROOF_PY -m pytest -q tests/test_proof_redaction.py 2>&1 | tail -5"
+  # Schema + integrity hash + include-diffs + graceful degradation.
+  run_check "tests/test_proof_generator.py (R1 generator schema/hash)" "$PROOF_PY -m pytest -q tests/test_proof_generator.py 2>&1 | tail -5"
+  # Self-contained page: no external resource refs; all Tier1-4 fields render.
+  run_check "tests/test_proof_html.py (R1 self-contained page)" "$PROOF_PY -m pytest -q tests/test_proof_html.py 2>&1 | tail -5"
+else
+  skip_check "proof-of-run python gates" "no python3 on PATH"
+fi
+# Dashboard proof routes need fastapi (python3.12 only).
+if command -v python3.12 >/dev/null 2>&1; then
+  run_check "tests/dashboard/test_proofs_routes.py (R1 proof routes + traversal)" "python3.12 -m pytest -q tests/dashboard/test_proofs_routes.py 2>&1 | tail -5"
+else
+  skip_check "proof routes dashboard gate" "python3.12 not on PATH (fastapi)"
+fi
+
 # ---------------------------------------------------------------------------
 # 4. JSON validation (mirrors release.yml prepublishOnly)
 # ---------------------------------------------------------------------------
@@ -184,6 +214,11 @@ run_check "tests/test-claude-adoptions.sh (setting-sources + partial-messages)" 
 
 # v7.8.1: staleness-aware generated-PRD reuse (codebase signature + decision).
 run_check "tests/test-prd-reuse.sh (codebase signature + PRD reuse decision)" "bash tests/test-prd-reuse.sh 2>&1 | tail -3"
+
+# v7.9.0 (R1 proof-of-run): `loki proof list|show|open|share` bash route against
+# a fixture proofs dir. Faked gh/open on PATH -> no network, no browser launch.
+# Asserts share does NOT publish without confirm and DOES with --yes.
+run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash tests/cli/test-proof-command.sh 2>&1 | tail -3"
 
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)

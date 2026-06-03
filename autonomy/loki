@@ -566,6 +566,7 @@ show_help() {
     echo "  code [cmd]       Codebase intelligence (overview|symbols|deps|hotspots|diff)"
     echo "  report [opts]    Session report generator (--format text|markdown|html, --output)"
     echo "  share [opts]     Share session report as GitHub Gist (--private, --format)"
+    echo "  proof [cmd]      Inspect/share proof-of-run artifacts (list|show|open|share)"
     echo "  version          Show version"
     echo "  help             Show this help"
     echo ""
@@ -13074,6 +13075,9 @@ main() {
         share)
             cmd_share "$@"
             ;;
+        proof)
+            cmd_proof "$@"
+            ;;
         context|ctx)
             cmd_context "$@"
             ;;
@@ -24504,12 +24508,26 @@ cmd_share() {
     # Upload as gist
     echo "Uploading session report..."
     local gist_desc="Loki Mode session report ($(date +%Y-%m-%dT%H:%M:%S))"
+    _loki_gist_upload "$tmpfile" "$gist_desc" "$visibility"
+}
+
+# Internal helper: upload a single file as a GitHub Gist.
+# Args: $1=file path, $2=description, $3=visibility ("--public", "--private",
+# or "" for gh's default). NOTE: $3 is intentionally left unquoted at the
+# gh call site so an empty value collapses (the --private case sets it to "").
+# Removes the input file after the attempt. Prints "Shared: <url>" on success;
+# on failure prints the gh error and exits 1.
+_loki_gist_upload() {
+    local file="$1"
+    local desc="$2"
+    local visibility="$3"
+
     local gist_url
-    gist_url=$(gh gist create "$tmpfile" --desc "$gist_desc" $visibility 2>&1)
+    gist_url=$(gh gist create "$file" --desc "$desc" $visibility 2>&1)
     local gist_exit=$?
 
     # Cleanup temp file
-    rm -f "$tmpfile"
+    rm -f "$file"
 
     if [ $gist_exit -ne 0 ]; then
         echo -e "${RED}Failed to create gist${NC}"
@@ -24517,7 +24535,300 @@ cmd_share() {
         exit 1
     fi
 
+    # Expose the URL to callers (e.g. cmd_proof prints a ready-to-post hook
+    # after this returns). The shared "Shared:" line stays unchanged.
+    LOKI_LAST_GIST_URL="$gist_url"
     echo -e "${GREEN}Shared: ${gist_url}${NC}"
+}
+
+# loki proof - inspect and share proof-of-run artifacts (.loki/proofs/<id>/).
+# Subcommands: list | show <id> | open <id> | share <id>.
+# The proof.json schema is frozen (R1 spec). Reads are tolerant of missing
+# keys (early/degraded proofs) and default to "-".
+cmd_proof() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    local proofs_dir="${loki_dir}/proofs"
+    local sub="${1:-}"
+    [ $# -gt 0 ] && shift
+
+    case "$sub" in
+        ""|--help|-h|help)
+            echo -e "${BOLD}loki proof${NC} - inspect and share proof-of-run artifacts"
+            echo ""
+            echo "Usage: loki proof <subcommand> [args]"
+            echo ""
+            echo "Subcommands:"
+            echo "  list                 List proof-of-run artifacts in .loki/proofs/"
+            echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
+            echo "  open <id>            Open .loki/proofs/<id>/index.html in a browser"
+            echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
+            echo ""
+            echo "Options for 'share':"
+            echo "  --yes                Skip the redaction-preview confirmation prompt"
+            echo "  --private            Create a secret gist (default: public)"
+            echo "  --hosted             Reserved for hosted publishing (coming in R9)"
+            echo ""
+            echo "Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out)."
+            [ "$sub" = "" ] && exit 1
+            exit 0
+            ;;
+        list)
+            if [ ! -d "$proofs_dir" ]; then
+                echo -e "${YELLOW}No proofs found.${NC} Run 'loki start' to generate one."
+                exit 0
+            fi
+            local found=0
+            local pj
+            for pj in "$proofs_dir"/*/proof.json; do
+                [ -f "$pj" ] || continue
+                # Print the header lazily, only once a valid proof is found, so
+                # an empty (or proof-less) proofs dir prints just the
+                # "No proofs found" line -- matching the Bun route (proof.ts
+                # listProofs, which returns before the header when rows is empty).
+                if [ "$found" -eq 0 ]; then
+                    printf "%-26s  %-20s  %-10s  %-9s  %s\n" "RUN_ID" "GENERATED_AT" "VERDICT" "COST_USD" "FILES"
+                fi
+                found=1
+                LOKI_PROOF_JSON="$pj" python3 - <<'PYEOF'
+import json, os
+p = os.environ["LOKI_PROOF_JSON"]
+try:
+    with open(p) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+# Coerce missing AND explicitly-null fields to "-" so a null final_verdict /
+# cost.usd / count renders as "-" rather than Python's str(None) == "None".
+# This matches the Bun route (proof.ts str(): null/undefined -> "-").
+def s(v):
+    return "-" if v is None else str(v)
+run_id = d.get("run_id")
+gen = d.get("generated_at")
+verdict = (d.get("council") or {}).get("final_verdict")
+cost = (d.get("cost") or {}).get("usd")
+files = (d.get("files_changed") or {}).get("count")
+print("{:<26}  {:<20}  {:<10}  {:<9}  {}".format(
+    s(run_id), s(gen), s(verdict), s(cost), s(files)))
+PYEOF
+            done
+            if [ "$found" -eq 0 ]; then
+                echo -e "${YELLOW}No proofs found.${NC} Run 'loki start' to generate one."
+            fi
+            exit 0
+            ;;
+        show)
+            local id="${1:-}"
+            if [ -z "$id" ]; then
+                echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
+                exit 2
+            fi
+            local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ]; then
+                echo -e "${RED}Proof not found: ${id}${NC}"
+                echo "Use 'loki proof list' to see available proofs."
+                exit 1
+            fi
+            if command -v jq &>/dev/null; then
+                jq . "$pj"
+            else
+                LOKI_PROOF_JSON="$pj" python3 -c "import json,os; print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))"
+            fi
+            exit 0
+            ;;
+        open)
+            local id="${1:-}"
+            if [ -z "$id" ]; then
+                echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
+                exit 2
+            fi
+            local html="${proofs_dir}/${id}/index.html"
+            if [ ! -f "$html" ]; then
+                echo -e "${RED}Proof page not found: ${id}/index.html${NC}"
+                echo "Use 'loki proof list' to see available proofs."
+                exit 1
+            fi
+            echo -e "${GREEN}Opening proof: $html${NC}"
+            if command -v open &>/dev/null; then
+                open "$html"
+            elif command -v xdg-open &>/dev/null; then
+                xdg-open "$html"
+            elif command -v start &>/dev/null; then
+                start "$html"
+            else
+                echo ""
+                echo "Could not detect browser opener."
+                echo "Please open in browser: $html"
+            fi
+            exit 0
+            ;;
+        share)
+            local id=""
+            local skip_confirm=0
+            local visibility="--public"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --yes|-y) skip_confirm=1; shift ;;
+                    --private) visibility=""; shift ;;
+                    --public) visibility="--public"; shift ;;
+                    --hosted)
+                        echo -e "${RED}Hosted publishing is not available yet (coming in R9).${NC}"
+                        exit 1
+                        ;;
+                    -*) echo -e "${RED}Unknown option: $1${NC}"; exit 1 ;;
+                    *) id="$1"; shift ;;
+                esac
+            done
+            if [ -z "$id" ]; then
+                echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
+                exit 2
+            fi
+            local html="${proofs_dir}/${id}/index.html"
+            if [ ! -f "$html" ]; then
+                echo -e "${RED}Proof page not found: ${id}/index.html${NC}"
+                echo "Use 'loki proof list' to see available proofs."
+                exit 1
+            fi
+            if ! command -v gh &>/dev/null; then
+                echo -e "${RED}gh CLI not found${NC}"
+                echo "Install the GitHub CLI to publish a proof:"
+                echo "  brew install gh        # macOS"
+                echo "  sudo apt install gh    # Ubuntu/Debian"
+                echo "  https://cli.github.com # Other platforms"
+                exit 1
+            fi
+            if ! gh auth status &>/dev/null 2>&1; then
+                echo -e "${RED}GitHub CLI not authenticated${NC}"
+                echo "Run 'gh auth login' to authenticate, then try again."
+                exit 1
+            fi
+
+            # Redaction preview. The generator already redacts the proof
+            # before writing index.html, so this is a transparency summary,
+            # not a second redaction pass.
+            local pj="${proofs_dir}/${id}/proof.json"
+            local vis_label="public"
+            [ -z "$visibility" ] && vis_label="secret"
+            echo -e "${BOLD}Publishing proof '${id}' as a ${vis_label} GitHub Gist${NC}"
+            echo ""
+            echo "What will be shared:"
+            echo "  - ${html}"
+            if [ -f "$pj" ]; then
+                LOKI_PROOF_JSON="$pj" python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+try:
+    d = json.load(open(os.environ["LOKI_PROOF_JSON"]))
+except Exception:
+    d = {}
+cost = (d.get("cost") or {}).get("usd", "-")
+# usd is null when cost was not collected for this run. Show an honest
+# "not recorded" instead of the literal "None" (a credibility wart in the
+# preview the sharer reads right before publishing).
+if cost is None:
+    cost = "not recorded"
+files = (d.get("files_changed") or {}).get("count", "-")
+verdict = (d.get("council") or {}).get("final_verdict", "-")
+red = d.get("redaction") or {}
+print("  - cost.usd:        {}".format(cost))
+print("  - files_changed:   {}".format(files))
+print("  - council verdict: {}".format(verdict))
+print("  - redaction:       applied={} rules_version={} redactions_count={}".format(
+    red.get("applied", False), red.get("rules_version", "-"), red.get("redactions_count", "-")))
+PYEOF
+            fi
+            echo ""
+            echo -e "${YELLOW}Secrets, API keys, tokens, env values, and absolute paths have already been stripped by the generator.${NC}"
+            echo ""
+
+            if [ "$skip_confirm" -ne 1 ]; then
+                printf "Publish this proof to a %s gist? [y/N] " "$vis_label"
+                local reply=""
+                read -r reply
+                case "$reply" in
+                    y|Y|yes|YES|Yes) ;;
+                    *) echo "Aborted. Nothing was published."; exit 0 ;;
+                esac
+            fi
+
+            # Copy to a temp file so _loki_gist_upload can remove it after.
+            local tmpfile
+            tmpfile=$(mktemp "/tmp/loki-proof-XXXXXX.html")
+            cp "$html" "$tmpfile"
+            echo "Uploading proof page..."
+            local gist_desc="Loki Mode proof-of-run ${id}"
+            _loki_gist_upload "$tmpfile" "$gist_desc" "$visibility"
+
+            # Print a ready-to-post one-line hook (real cost + url) so the user
+            # can paste it straight to X/HN. When cost was not collected, omit
+            # the cost (never fabricate a number, never print "$0.00").
+            if [ -n "${LOKI_LAST_GIST_URL:-}" ] && [ -f "$pj" ]; then
+                local hook
+                hook=$(LOKI_PROOF_JSON="$pj" LOKI_GIST_URL="$LOKI_LAST_GIST_URL" python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+try:
+    d = json.load(open(os.environ["LOKI_PROOF_JSON"]))
+except Exception:
+    d = {}
+cost = (d.get("cost") or {})
+usd = cost.get("usd")
+
+
+def fmt_usd(v):
+    if v is None:
+        return None
+    try:
+        n = float(v)
+    except Exception:
+        return None
+    s = ("%.4f" % n).rstrip("0").rstrip(".")
+    if "." not in s:
+        s += ".00"
+    elif len(s.split(".")[1]) == 1:
+        s += "0"
+    return "$" + s
+
+
+def council_ratio(d):
+    c = d.get("council") or {}
+    if not c.get("enabled"):
+        return None
+    revs = c.get("reviewers") or []
+    if not isinstance(revs, list) or not revs:
+        return None
+    ok = sum(1 for r in revs if isinstance(r, dict)
+             and str(r.get("vote") or "").upper() in ("APPROVE", "APPROVED"))
+    return ok, len(revs)
+
+
+u = fmt_usd(usd)
+lead = ("Built autonomously for " + u) if u is not None \
+    else "Built autonomously by Loki Mode"
+parts = [lead]
+fc = (d.get("files_changed") or {}).get("count", 0)
+try:
+    fc = int(fc)
+except Exception:
+    fc = 0
+parts.append("%d file%s changed" % (fc, "" if fc == 1 else "s"))
+cr = council_ratio(d)
+if cr:
+    parts.append("%d-of-%d reviewers approved" % (cr[0], cr[1]))
+print(" - ".join(parts) + " " + os.environ.get("LOKI_GIST_URL", ""))
+PYEOF
+)
+                if [ -n "$hook" ]; then
+                    echo ""
+                    echo "Ready to post:"
+                    echo "  ${hook}"
+                fi
+            fi
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown subcommand: ${sub}${NC}"
+            echo "Run 'loki proof --help' for usage."
+            exit 1
+            ;;
+    esac
 }
 
 main "$@"

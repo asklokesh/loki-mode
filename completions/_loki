@@ -88,6 +88,14 @@ function _loki {
                         '--format[Report format]:format:(text markdown html)' \
                         '--help[Show help]'
                     ;;
+                proof)
+                    _arguments \
+                        '--yes[Skip redaction-preview confirmation]' \
+                        '--private[Create a secret gist when sharing]' \
+                        '--hosted[Hosted publishing (coming in R9)]' \
+                        '--help[Show help]' \
+                        '1:subcommand:(list show open share)'
+                    ;;
                 completions)
                     _arguments '1:shell:(bash zsh)'
                     ;;
@@ -140,6 +148,7 @@ function _loki_commands {
         'onboard:Analyze repo and generate CLAUDE.md'
         'metrics:Session productivity report'
         'share:Share session report as GitHub Gist'
+        'proof:Inspect/share proof-of-run artifacts'
         'context:Context window management'
         'code:Codebase intelligence'
         'version:Show version'

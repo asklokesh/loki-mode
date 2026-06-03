@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<!--
+  Loki Mode - Shareable Proof-of-Run template (Slice C).
+
+  SELF-CONTAINED: zero external network calls. All CSS is inlined below, there
+  are NO <script src>, NO CDN links, NO web fonts, NO @import, NO external
+  images. The page renders entirely from data embedded at generation time.
+
+  GENERATOR CONTRACT (read by autonomy/lib/proof-generator.py, Slice A):
+    1. The generator takes the REDACTED proof dict (after proof_redact.py has
+       run) and serializes it to JSON.
+    2. Before substitution it MUST escape the "<" character so a value that
+       happens to contain "</script>" or "<!--" cannot break out of the
+       embedded <script type="application/json"> block. Recommended:
+           payload = json.dumps(proof_dict, ensure_ascii=False).replace("<", "\\u003c")
+    3. The generator replaces the proof token (two underscores, the word
+       PROOF, JSON, two underscores) with that escaped JSON string. To keep
+       the substitution unambiguous the literal token appears EXACTLY ONCE in
+       this file: inside the <script id="proof-data"> block below. Do NOT write
+       the literal token anywhere else (this comment deliberately spells it out
+       instead of repeating it, and the renderer detects an un-substituted
+       blob structurally rather than by string-matching the token).
+    4. No other token substitution is required. All rendering happens client
+       side from the parsed blob. This keeps Bun and bash routes at exact
+       parity (one string replace, one template).
+
+  The renderer below is defensive: every nullable / optional schema field is
+  guarded (deployed_url, public_url, diffs, council.enabled false, empty
+  reviewers[], findings_link null). It never prints "undefined" and never
+  throws on a null.
+
+  proof.json schema fields rendered (FROZEN v1.0): schema_version, run_id,
+  generated_at, loki_version, started_at, wall_clock_sec, spec{source,brief},
+  provider{name,model}, iterations{count,succeeded,failed},
+  files_changed{count,insertions,deletions,files[]}, diffs[]|null,
+  council{enabled,final_verdict,threshold,reviewers[],findings_link},
+  quality_gates{passed,total,gates[]},
+  cost{usd,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens},
+  deployment{deployed_url,public_url}, redaction{...}, verification{hash,...}.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loki Mode - Proof of Run</title>
+<!-- Static text-only social meta. No og:image (would break self-containment). -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Built and verified autonomously by Loki Mode">
+<!-- og:description and twitter:description are filled at generation time with
+     the real measured cost + files-changed + council ratio (cost-free variant
+     when cost was not collected). The generator replaces the og token below in
+     BOTH metas with one str.replace; the token is attribute-escaped. -->
+<meta property="og:description" content="__PROOF_OG_DESCRIPTION__">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:description" content="__PROOF_OG_DESCRIPTION__">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d2129;
+    --border: #2a2f3a;
+    --text: #e7e9ee;
+    --muted: #9aa1ad;
+    --faint: #6b7280;
+    --accent: #6f7bf7;
+    --accent-soft: #2a2f57;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 20px 80px; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 28px; font-size: 13px; color: var(--muted);
+  }
+  .brand { font-weight: 600; color: var(--text); letter-spacing: 0.2px; }
+  .brand .dot { color: var(--accent); }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    margin-bottom: 22px;
+  }
+  .hero h1 {
+    font-size: 26px; line-height: 1.25; margin: 0 0 14px;
+    font-weight: 650; letter-spacing: -0.2px;
+  }
+  .hero .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .hero-actions { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-block; padding: 9px 15px; border-radius: 9px;
+    font-size: 14px; font-weight: 550; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #0b0d12; }
+  .btn.primary:hover { text-decoration: none; filter: brightness(1.06); }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+
+  /* Sections */
+  .section { margin-top: 26px; }
+  .section > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px;
+    color: var(--faint); margin: 0 0 12px; font-weight: 600;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px;
+  }
+
+  /* Cost - the hero metric */
+  .cost-card { padding: 26px; }
+  .cost-top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .cost-usd { font-size: 44px; font-weight: 680; letter-spacing: -1px; font-family: var(--mono); }
+  .cost-label { color: var(--muted); font-size: 14px; }
+  .token-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px; margin-top: 20px; background: var(--border);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  }
+  .token-cell { background: var(--panel-2); padding: 13px 15px; }
+  .token-cell .k { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .token-cell .v { font-size: 18px; font-family: var(--mono); margin-top: 4px; }
+
+  /* Stat row */
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 16px; }
+  .stat .k { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .stat .v { font-size: 22px; font-family: var(--mono); margin-top: 5px; }
+  .stat .v small { font-size: 13px; color: var(--muted); }
+  .add { color: var(--green); }
+  .del { color: var(--red); }
+
+  /* Diffstat file list */
+  .files { margin-top: 14px; }
+  .file-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 0;
+    border-top: 1px solid var(--border); font-family: var(--mono); font-size: 13px;
+  }
+  .file-row:first-child { border-top: none; }
+  .file-row .path { flex: 1; color: var(--text); word-break: break-all; }
+  .file-row .status {
+    font-size: 11px; text-transform: uppercase; color: var(--faint);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
+  }
+  .file-row .nums { white-space: nowrap; }
+
+  /* Diff (inline patches) */
+  .diff-file { border-top: 1px solid var(--border); }
+  .diff-file:first-child { border-top: none; }
+  .diff-file > summary {
+    cursor: pointer; padding: 11px 4px; font-family: var(--mono); font-size: 13px;
+    color: var(--text); list-style: none; user-select: none;
+  }
+  .diff-file > summary::-webkit-details-marker { display: none; }
+  .diff-file > summary::before { content: "+ "; color: var(--faint); }
+  .diff-file[open] > summary::before { content: "- "; }
+  .diff-file pre {
+    margin: 0 0 12px; padding: 12px 14px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 8px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--muted);
+    white-space: pre;
+  }
+  .diff-line-add { color: var(--green); }
+  .diff-line-del { color: var(--red); }
+  .diff-line-hd { color: var(--accent); }
+
+  /* Council */
+  .verdict-badge {
+    display: inline-block; font-size: 13px; font-weight: 600; padding: 4px 11px;
+    border-radius: 7px; border: 1px solid var(--border);
+  }
+  .verdict-approve { color: var(--green); border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.08); }
+  .verdict-reject { color: var(--red); border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.08); }
+  .verdict-concern { color: var(--amber); border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.08); }
+  .verdict-meta { color: var(--muted); font-size: 13px; margin-left: 10px; }
+  .reviewer {
+    border-top: 1px solid var(--border); padding: 14px 0;
+  }
+  .reviewer:first-child { border-top: none; padding-top: 4px; }
+  .reviewer .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .reviewer .role { font-weight: 600; font-size: 14px; }
+  .reviewer .vote { font-size: 12px; font-weight: 600; }
+  .vote.approve { color: var(--green); }
+  .vote.reject { color: var(--red); }
+  .vote.concern { color: var(--amber); }
+  .reviewer .summary { color: var(--muted); font-size: 14px; margin-top: 6px; white-space: pre-wrap; }
+
+  /* Gates */
+  .gates { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .gate {
+    font-size: 12px; font-family: var(--mono); padding: 4px 9px; border-radius: 7px;
+    border: 1px solid var(--border); display: flex; gap: 7px; align-items: center;
+  }
+  .gate .mk { font-weight: 700; }
+  .gate.pass .mk { color: var(--green); }
+  .gate.fail .mk { color: var(--red); }
+  .gate.skip .mk { color: var(--faint); }
+
+  /* Limitations / flagged */
+  .note { color: var(--muted); font-size: 14px; }
+  .note-list { margin: 0; padding-left: 18px; }
+  .note-list li { margin: 5px 0; color: var(--muted); font-size: 14px; }
+
+  /* Provenance key-value */
+  .kv { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; font-size: 14px; }
+  .kv .k { color: var(--faint); }
+  .kv .v { font-family: var(--mono); word-break: break-all; }
+  .brief {
+    margin-top: 10px; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 14px; font-size: 14px; color: var(--text);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .hash-note { color: var(--faint); font-size: 12px; margin-top: 8px; }
+
+  /* Copy command */
+  .cmd {
+    display: flex; align-items: stretch; gap: 0; margin-top: 10px;
+    border: 1px solid var(--border); border-radius: 9px; overflow: hidden;
+    background: var(--panel-2);
+  }
+  .cmd code {
+    flex: 1; padding: 11px 14px; font-family: var(--mono); font-size: 13px;
+    color: var(--text); overflow-x: auto; white-space: nowrap;
+  }
+  .cmd .copy {
+    border: none; border-left: 1px solid var(--border); background: var(--panel);
+    color: var(--text); padding: 0 16px; cursor: pointer; font-size: 13px; font-weight: 550;
+  }
+  .cmd .copy:hover { background: var(--accent-soft); }
+
+  .footer { margin-top: 50px; text-align: center; color: var(--faint); font-size: 13px; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span class="brand">Loki Mode<span class="dot">.</span> proof of run</span>
+    <span id="runIdTop"></span>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <h1 id="heroLine"></h1>
+    <p class="sub" id="heroSub"></p>
+    <div class="hero-actions" id="heroActions"></div>
+  </section>
+
+  <!-- Tier 1: deployed URL + diff -->
+  <section class="section" id="secTier1">
+    <h2>Verify it yourself</h2>
+    <div class="card" id="tier1Card"></div>
+  </section>
+
+  <!-- Tier 2: cost (hero metric) -->
+  <section class="section">
+    <h2>The bill</h2>
+    <div class="card cost-card" id="costCard"></div>
+  </section>
+
+  <!-- Tier 2: wall clock + diffstat -->
+  <section class="section">
+    <h2>What changed</h2>
+    <div class="stat-row" id="statRow"></div>
+    <div class="card files" id="filesCard" style="margin-top:14px;"></div>
+  </section>
+
+  <!-- Tier 1: the diff (inline patches, only when --include-diffs) -->
+  <section class="section hide" id="secDiff">
+    <h2>The diff</h2>
+    <div class="card" id="diffCard"></div>
+  </section>
+
+  <!-- Tier 3: council -->
+  <section class="section" id="secCouncil">
+    <h2>Review verdict</h2>
+    <div class="card" id="councilCard"></div>
+  </section>
+
+  <!-- Tier 3: quality gates -->
+  <section class="section" id="secGates">
+    <h2>Quality gates</h2>
+    <div class="card" id="gatesCard"></div>
+  </section>
+
+  <!-- Tier 3: flagged / limitations -->
+  <section class="section">
+    <h2>What the run flagged</h2>
+    <div class="card" id="flaggedCard"></div>
+  </section>
+
+  <!-- Tier 4: spec / before -->
+  <section class="section" id="secSpec">
+    <h2>The spec (the before)</h2>
+    <div class="card" id="specCard"></div>
+  </section>
+
+  <!-- Tier 4: provenance -->
+  <section class="section">
+    <h2>Provenance</h2>
+    <div class="card" id="provCard"></div>
+  </section>
+
+  <!-- CTA -->
+  <section class="section">
+    <h2>Run this yourself</h2>
+    <div class="card" id="ctaCard"></div>
+  </section>
+
+  <div class="footer">
+    <a id="madeWith" href="https://github.com/asklokesh/loki-mode" rel="noopener">Made with Loki Mode</a>
+  </div>
+</div>
+
+<script type="application/json" id="proof-data">__PROOF_JSON__</script>
+<script>
+(function () {
+  "use strict";
+
+  function parseProof() {
+    var el = document.getElementById("proof-data");
+    if (!el) return null;
+    var raw = (el.textContent || "").trim();
+    // Detect an un-substituted template structurally (the blob is not JSON)
+    // rather than string-matching the placeholder token, so the token stays
+    // unique in this file and the generator's global replace cannot clobber
+    // this guard.
+    if (!raw || raw.charAt(0) !== "{") return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  // Safe accessors. Never throw, never print "undefined".
+  function g(obj, path, dflt) {
+    var cur = obj;
+    var parts = path.split(".");
+    for (var i = 0; i < parts.length; i++) {
+      if (cur === null || cur === undefined) return dflt;
+      cur = cur[parts[i]];
+    }
+    return (cur === null || cur === undefined) ? dflt : cur;
+  }
+  function num(v, dflt) {
+    var n = Number(v);
+    return isFinite(n) ? n : (dflt === undefined ? 0 : dflt);
+  }
+  function esc(s) {
+    s = (s === null || s === undefined) ? "" : String(s);
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function fmtInt(n) {
+    n = num(n);
+    return n.toLocaleString("en-US");
+  }
+  function fmtUsd(n) {
+    n = num(n);
+    // Precise odd values, not rounded. Up to 4 decimals, trim to >=2.
+    var s = n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    if (s.indexOf(".") === -1) s += ".00";
+    else if (s.split(".")[1].length === 1) s += "0";
+    return "$" + s;
+  }
+  function fmtDuration(sec) {
+    sec = Math.max(0, Math.round(num(sec)));
+    if (sec < 60) return sec + "s";
+    var m = Math.floor(sec / 60), s = sec % 60;
+    if (m < 60) return m + "m " + s + "s";
+    var h = Math.floor(m / 60); m = m % 60;
+    return h + "h " + m + "m";
+  }
+  // Treat localhost / 127.* / empty as NOT a publicly clickable live link, but
+  // still display localhost as data.
+  function isLocalUrl(u) {
+    if (!u) return true;
+    return /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u);
+  }
+
+  function render(p) {
+    renderHero(p);
+    renderTier1(p);
+    renderCost(p);
+    renderStatsAndFiles(p);
+    renderDiff(p);
+    renderCouncil(p);
+    renderGates(p);
+    renderFlagged(p);
+    renderSpec(p);
+    renderProvenance(p);
+    renderCta(p);
+    var rid = g(p, "run_id", "");
+    if (rid) document.getElementById("runIdTop").textContent = "run " + rid;
+  }
+
+  function councilSummary(p) {
+    // Returns {count, total, ok} of reviewers who voted approve, or null if no
+    // usable council data.
+    if (!g(p, "council.enabled", false)) return null;
+    var reviewers = g(p, "council.reviewers", []);
+    if (!Array.isArray(reviewers) || reviewers.length === 0) return null;
+    var ok = 0;
+    for (var i = 0; i < reviewers.length; i++) {
+      var v = String(g(reviewers[i], "vote", "")).toUpperCase();
+      if (v === "APPROVE" || v === "APPROVED") ok++;
+    }
+    return { count: ok, total: reviewers.length };
+  }
+
+  function renderHero(p) {
+    // cost.usd is null when cost was not collected for this run. g() coerces
+    // null to its default, so read with a null default and branch BEFORE
+    // fmtUsd: a skeptic seeing a zero-dollar total assumes the artifact is fake.
+    var usdRaw = g(p, "cost.usd", null);
+    var fc = num(g(p, "files_changed.count", 0));
+    var parts = ["Built and verified autonomously"];
+    if (usdRaw !== null) parts.push(fmtUsd(usdRaw));
+    else parts.push("cost not recorded");
+    parts.push(fc + " file" + (fc === 1 ? "" : "s") + " changed");
+    var cs = councilSummary(p);
+    if (cs) parts.push(cs.count + "-of-" + cs.total + " reviewers approved");
+    document.getElementById("heroLine").textContent = parts.join(" - ");
+
+    var sub = [];
+    var dur = g(p, "wall_clock_sec", null);
+    if (dur !== null) sub.push("in " + fmtDuration(dur));
+    var prov = g(p, "provider.name", "");
+    var model = g(p, "provider.model", "");
+    if (prov || model) sub.push("via " + esc(prov) + (model ? " / " + esc(model) : ""));
+    document.getElementById("heroSub").innerHTML = sub.join(" · ");
+
+    var actions = document.getElementById("heroActions");
+    var html = "";
+    var deployed = g(p, "deployment.deployed_url", null);
+    if (deployed) {
+      var label = isLocalUrl(deployed) ? "Open the app (local)" : "Open the deployed app";
+      html += '<a class="btn primary" href="' + esc(deployed) + '" rel="noopener">' + label + '</a>';
+    }
+    // Tier-1 "View the diff" action: only when inline patches are embedded.
+    if (hasDiffs(p)) {
+      html += '<a class="btn" href="#secDiff">View the diff</a>';
+    }
+    actions.innerHTML = html || '<span class="note">No live URL recorded for this run.</span>';
+  }
+
+  function renderTier1(p) {
+    var card = document.getElementById("tier1Card");
+    var rows = [];
+    var deployed = g(p, "deployment.deployed_url", null);
+    var pub = g(p, "deployment.public_url", null);
+    if (deployed) {
+      var note = isLocalUrl(deployed) ? ' <span class="note">(local only)</span>' : "";
+      rows.push('<div class="kv"><span class="k">Deployed URL</span><span class="v"><a href="' +
+                esc(deployed) + '" rel="noopener">' + esc(deployed) + "</a>" + note + "</span></div>");
+    } else {
+      rows.push('<div class="kv"><span class="k">Deployed URL</span><span class="v note">none recorded</span></div>');
+    }
+    if (pub) {
+      rows.push('<div class="kv"><span class="k">Public URL</span><span class="v"><a href="' +
+                esc(pub) + '" rel="noopener">' + esc(pub) + "</a></span></div>");
+    }
+    var findings = g(p, "council.findings_link", null);
+    if (findings) {
+      rows.push('<div class="kv" style="margin-top:8px;"><span class="k">Review findings</span><span class="v"><a href="' +
+                esc(findings) + '" rel="noopener">' + esc(findings) + "</a></span></div>");
+    }
+    card.innerHTML = rows.join("");
+  }
+
+  function renderCost(p) {
+    var card = document.getElementById("costCard");
+    var usdRaw = g(p, "cost.usd", null);
+    var cells = [
+      ["Input tokens", fmtInt(g(p, "cost.input_tokens", 0))],
+      ["Output tokens", fmtInt(g(p, "cost.output_tokens", 0))],
+      ["Cache read", fmtInt(g(p, "cost.cache_read_tokens", 0))],
+      ["Cache write", fmtInt(g(p, "cost.cache_creation_tokens", 0))]
+    ];
+    var grid = "";
+    for (var i = 0; i < cells.length; i++) {
+      grid += '<div class="token-cell"><div class="k">' + cells[i][0] +
+              '</div><div class="v">' + cells[i][1] + "</div></div>";
+    }
+    // When cost was not collected, show a muted "not recorded" line instead of
+    // a zero-dollar total (which reads as fake/broken to a skeptic).
+    var top;
+    if (usdRaw !== null) {
+      top = '<div class="cost-top"><span class="cost-usd">' + fmtUsd(usdRaw) +
+            '</span><span class="cost-label">total cost for this run, itemized below</span></div>';
+    } else {
+      top = '<div class="cost-top"><span class="cost-label">Cost was not recorded for this run. ' +
+            'Token usage is itemized below.</span></div>';
+    }
+    card.innerHTML = top + '<div class="token-grid">' + grid + "</div>";
+  }
+
+  function renderStatsAndFiles(p) {
+    var row = document.getElementById("statRow");
+    var ins = num(g(p, "files_changed.insertions", 0));
+    var del = num(g(p, "files_changed.deletions", 0));
+    var fc = num(g(p, "files_changed.count", 0));
+    var iters = num(g(p, "iterations.count", 0));
+    var isucc = num(g(p, "iterations.succeeded", 0));
+    var ifail = num(g(p, "iterations.failed", 0));
+    row.innerHTML =
+      '<div class="stat"><div class="k">Wall clock</div><div class="v">' + fmtDuration(g(p, "wall_clock_sec", 0)) + "</div></div>" +
+      '<div class="stat"><div class="k">Files changed</div><div class="v">' + fc + "</div></div>" +
+      '<div class="stat"><div class="k">Lines</div><div class="v"><span class="add">+' + fmtInt(ins) + '</span> <span class="del">-' + fmtInt(del) + "</span></div></div>" +
+      '<div class="stat"><div class="k">Iterations</div><div class="v">' + iters +
+      ' <small>' + isucc + " ok" + (ifail ? " / " + ifail + " failed" : "") + "</small></div></div>";
+
+    var filesCard = document.getElementById("filesCard");
+    var files = g(p, "files_changed.files", []);
+    if (!Array.isArray(files) || files.length === 0) {
+      filesCard.classList.add("hide");
+      return;
+    }
+    var rows = "";
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      rows += '<div class="file-row">' +
+        '<span class="status">' + esc(g(f, "status", "M")) + "</span>" +
+        '<span class="path">' + esc(g(f, "path", "")) + "</span>" +
+        '<span class="nums"><span class="add">+' + fmtInt(g(f, "insertions", 0)) +
+        '</span> <span class="del">-' + fmtInt(g(f, "deletions", 0)) + "</span></span></div>";
+    }
+    filesCard.innerHTML = rows;
+  }
+
+  function hasDiffs(p) {
+    var d = g(p, "diffs", null);
+    return Array.isArray(d) && d.length > 0;
+  }
+
+  // Render one redacted patch with light line coloring. All patch text is run
+  // through esc() so the <script>-breakout chars that the JSON layer already
+  // neutralized (via the generator's < escape) cannot inject markup here
+  // either.
+  function renderPatch(patch) {
+    var lines = String(patch || "").split("\n");
+    var out = "";
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      var cls = "";
+      if (ln.charAt(0) === "+" && ln.indexOf("+++") !== 0) cls = "diff-line-add";
+      else if (ln.charAt(0) === "-" && ln.indexOf("---") !== 0) cls = "diff-line-del";
+      else if (ln.indexOf("@@") === 0 || ln.indexOf("diff ") === 0 ||
+               ln.indexOf("+++") === 0 || ln.indexOf("---") === 0) cls = "diff-line-hd";
+      out += (cls ? '<span class="' + cls + '">' + esc(ln) + "</span>" : esc(ln)) + "\n";
+    }
+    return out;
+  }
+
+  function renderDiff(p) {
+    var sec = document.getElementById("secDiff");
+    var card = document.getElementById("diffCard");
+    if (!hasDiffs(p)) return; // section stays hidden (default class "hide")
+    var diffs = g(p, "diffs", []);
+    var blocks = "";
+    for (var i = 0; i < diffs.length; i++) {
+      var path = esc(g(diffs[i], "path", "(unknown file)"));
+      var patch = g(diffs[i], "patch", "");
+      var openAttr = (i === 0) ? " open" : "";
+      blocks += '<details class="diff-file"' + openAttr + '><summary>' + path +
+                "</summary><pre>" + renderPatch(patch) + "</pre></details>";
+    }
+    card.innerHTML = blocks;
+    sec.classList.remove("hide");
+  }
+
+  function voteClass(v) {
+    v = String(v || "").toUpperCase();
+    if (v.indexOf("APPROVE") === 0) return "approve";
+    if (v.indexOf("REJECT") === 0) return "reject";
+    if (v.indexOf("CONCERN") === 0) return "concern";
+    return "";
+  }
+  function verdictClass(v) {
+    v = String(v || "").toUpperCase();
+    if (v.indexOf("APPROVE") === 0 || v === "PASS" || v === "PASSED") return "verdict-approve";
+    if (v.indexOf("REJECT") === 0 || v.indexOf("BLOCK") === 0 || v === "FAIL") return "verdict-reject";
+    if (v.indexOf("CONCERN") === 0) return "verdict-concern";
+    return "";
+  }
+
+  function renderCouncil(p) {
+    var sec = document.getElementById("secCouncil");
+    var card = document.getElementById("councilCard");
+    if (!g(p, "council.enabled", false)) {
+      card.innerHTML = '<p class="note">Council review was not enabled for this run.</p>';
+      return;
+    }
+    var verdict = g(p, "council.final_verdict", "");
+    var threshold = g(p, "council.threshold", null);
+    var reviewers = g(p, "council.reviewers", []);
+    var head = "";
+    if (verdict) {
+      head += '<span class="verdict-badge ' + verdictClass(verdict) + '">' + esc(verdict) + "</span>";
+    }
+    var cs = councilSummary(p);
+    if (cs) head += '<span class="verdict-meta">' + cs.count + " of " + cs.total + " approved" +
+                    (threshold !== null ? " (threshold " + esc(threshold) + ")" : "") + "</span>";
+    var body = "";
+    if (Array.isArray(reviewers) && reviewers.length > 0) {
+      for (var i = 0; i < reviewers.length; i++) {
+        var r = reviewers[i];
+        var v = g(r, "vote", "");
+        var summary = g(r, "summary", "");
+        body += '<div class="reviewer"><div class="head">' +
+          '<span class="role">' + esc(g(r, "role", "reviewer")) + "</span>" +
+          '<span class="vote ' + voteClass(v) + '">' + esc(v || "no vote") + "</span></div>" +
+          (summary ? '<div class="summary">' + esc(summary) + "</div>" : "") +
+          "</div>";
+      }
+    } else {
+      body = '<p class="note">Per-reviewer summaries were not recorded for this run.</p>';
+    }
+    var findings = g(p, "council.findings_link", null);
+    var link = findings ? '<div class="kv" style="margin-top:14px;"><span class="k">Findings</span><span class="v"><a href="' +
+               esc(findings) + '" rel="noopener">' + esc(findings) + "</a></span></div>" : "";
+    card.innerHTML = (head ? '<div style="margin-bottom:14px;">' + head + "</div>" : "") + body + link;
+  }
+
+  function renderGates(p) {
+    var sec = document.getElementById("secGates");
+    var card = document.getElementById("gatesCard");
+    var gates = g(p, "quality_gates.gates", []);
+    var passed = num(g(p, "quality_gates.passed", 0));
+    var total = num(g(p, "quality_gates.total", 0));
+    if ((!Array.isArray(gates) || gates.length === 0) && total === 0) {
+      sec.classList.add("hide");
+      return;
+    }
+    var head = '<p class="note" style="margin:0 0 12px;">' + passed + " of " + total + " gates passed.</p>";
+    var chips = "";
+    if (Array.isArray(gates)) {
+      for (var i = 0; i < gates.length; i++) {
+        var st = String(g(gates[i], "status", "")).toLowerCase();
+        var cls = (st === "pass" || st === "passed") ? "pass" : (st === "skip" || st === "skipped") ? "skip" : "fail";
+        var mark = cls === "pass" ? "OK" : cls === "skip" ? "-" : "X";
+        chips += '<span class="gate ' + cls + '"><span class="mk">' + mark + "</span>" +
+                 esc(g(gates[i], "name", "gate")) + "</span>";
+      }
+    }
+    card.innerHTML = head + (chips ? '<div class="gates">' + chips + "</div>" : "");
+  }
+
+  function renderFlagged(p) {
+    var card = document.getElementById("flaggedCard");
+    var items = [];
+    // Honest limitations, derived from the run's own data. Never hide.
+    var ifail = num(g(p, "iterations.failed", 0));
+    if (ifail > 0) items.push(ifail + " iteration" + (ifail === 1 ? "" : "s") + " failed before completion.");
+    var qp = num(g(p, "quality_gates.passed", 0)), qt = num(g(p, "quality_gates.total", 0));
+    if (qt > 0 && qp < qt) items.push((qt - qp) + " quality gate" + ((qt - qp) === 1 ? "" : "s") + " did not pass.");
+    var reviewers = g(p, "council.reviewers", []);
+    if (Array.isArray(reviewers)) {
+      for (var i = 0; i < reviewers.length; i++) {
+        var vc = voteClass(g(reviewers[i], "vote", ""));
+        if (vc === "reject" || vc === "concern") {
+          items.push("Reviewer " + esc(g(reviewers[i], "role", "")) + " raised a " + vc + ".");
+        }
+      }
+    }
+    var deployed = g(p, "deployment.deployed_url", null);
+    if (!deployed) items.push("No deployed URL was recorded; this run produced code only.");
+    else if (isLocalUrl(deployed)) items.push("Deployment is local only (localhost); no public live URL exists for this run.");
+    var diffs = g(p, "diffs", null);
+    if (diffs === null) items.push("Full diffs are not embedded in this artifact (run without --include-diffs).");
+
+    if (items.length === 0) {
+      card.innerHTML = '<p class="note">Nothing was flagged. All gates passed, all reviewers approved, no failed iterations.</p>';
+      return;
+    }
+    var lis = "";
+    for (var j = 0; j < items.length; j++) lis += "<li>" + items[j] + "</li>";
+    card.innerHTML = '<ul class="note-list">' + lis + "</ul>";
+  }
+
+  function renderSpec(p) {
+    var card = document.getElementById("specCard");
+    var src = g(p, "spec.source", "");
+    var brief = g(p, "spec.brief", "");
+    var head = src ? '<div class="kv"><span class="k">Source</span><span class="v">' + esc(src) + "</span></div>" : "";
+    var body = brief ? '<div class="brief">' + esc(brief) + "</div>" :
+               '<p class="note">No brief recorded.</p>';
+    card.innerHTML = head + body;
+  }
+
+  function renderProvenance(p) {
+    var card = document.getElementById("provCard");
+    var rows = [
+      ["Loki version", g(p, "loki_version", "")],
+      ["Provider", g(p, "provider.name", "")],
+      ["Model", g(p, "provider.model", "")],
+      ["Started at", g(p, "started_at", "")],
+      ["Generated at", g(p, "generated_at", "")],
+      ["Run id", g(p, "run_id", "")],
+      ["Schema version", g(p, "schema_version", "")]
+    ];
+    var kv = "";
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i][1] === "" || rows[i][1] === null) continue;
+      kv += '<div class="k">' + esc(rows[i][0]) + '</div><div class="v">' + esc(rows[i][1]) + "</div>";
+    }
+    var hash = g(p, "verification.hash", "");
+    var algo = g(p, "verification.algo", "sha256");
+    if (hash) {
+      kv += '<div class="k">Integrity hash</div><div class="v">' + esc(algo) + ":" + esc(hash) + "</div>";
+    }
+    card.innerHTML = '<div class="kv">' + kv + "</div>" +
+      (hash ? '<p class="hash-note">The integrity hash is a ' + esc(algo) +
+              " digest of this proof. It proves the artifact has not been altered after it was emitted. It does not, by itself, prove who or what produced the work.</p>" : "");
+  }
+
+  function renderCta(p) {
+    var card = document.getElementById("ctaCard");
+    var src = g(p, "spec.source", "");
+    var cmd = "loki start";
+    if (src && /^[\w.\-]+\/[\w.\-]+#\d+$/.test(src)) cmd = "loki start " + src;
+    var install = "bun install -g loki-mode";
+    var html =
+      '<p class="note" style="margin-top:0;">Install Loki Mode and take your own spec to a verified build.</p>' +
+      cmdBlock("install", install) +
+      cmdBlock("run", cmd);
+    var secondary = "";
+    var deployed = g(p, "deployment.deployed_url", null);
+    if (deployed) {
+      var label = isLocalUrl(deployed) ? "Open the app (local)" : "Open the deployed app";
+      secondary += '<a class="btn" href="' + esc(deployed) + '" rel="noopener">' + label + "</a>";
+    }
+    if (hasDiffs(p)) {
+      secondary += '<a class="btn" href="#secDiff">View the diff</a>';
+    }
+    if (secondary) {
+      html += '<div class="hero-actions" style="margin-top:14px;">' + secondary + "</div>";
+    }
+    card.innerHTML = html;
+  }
+
+  function cmdBlock(id, text) {
+    return '<div class="cmd"><code id="cmd-' + id + '">' + esc(text) +
+           '</code><button class="copy" data-copy="' + esc(text) + '">Copy</button></div>';
+  }
+
+  function wireCopy() {
+    document.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute || t.getAttribute("data-copy") === null) return;
+      var text = t.getAttribute("data-copy");
+      var done = function () { var o = t.textContent; t.textContent = "Copied"; setTimeout(function () { t.textContent = o; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      } else {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = text; document.body.appendChild(ta); ta.select();
+          document.execCommand("copy"); document.body.removeChild(ta); done();
+        } catch (err) {}
+      }
+    });
+  }
+
+  function renderError() {
+    var wrap = document.querySelector(".wrap");
+    if (wrap) {
+      wrap.innerHTML = '<div class="hero"><h1>Proof data not available</h1>' +
+        '<p class="sub">This proof artifact did not contain renderable data. ' +
+        'It may not have been generated yet.</p></div>';
+    }
+  }
+
+  var proof = parseProof();
+  wireCopy();
+  if (!proof || typeof proof !== "object") {
+    renderError();
+    return;
+  }
+  try {
+    render(proof);
+  } catch (e) {
+    renderError();
+  }
+})();
+</script>
+</body>
+</html>

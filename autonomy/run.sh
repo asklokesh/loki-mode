@@ -4091,6 +4091,36 @@ print(json.dumps(rec))
 " > "$tmp" 2>/dev/null && mv -f "$tmp" "$loki_dir/state/prd-signature.json" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }
 
+# generate_proof_of_run: thin fire-and-forget wrapper around the standalone
+# proof-of-run generator (autonomy/lib/proof-generator.py). Runs on both
+# success and failure session ends. The generator owns the schema, redaction
+# chokepoint, and HTML rendering; this wrapper only resolves the path and
+# invokes python3. Never fails the session (|| true at the call site).
+# NOTE: no inline python here on purpose -- keep this wrapper apostrophe-free
+# to avoid the bash single-quote trap.
+generate_proof_of_run() {
+    # $1 (session result) is accepted for call-site symmetry but the generator
+    # derives success/failure from queue state, so it is intentionally unused.
+    local _result="${1:-0}"
+    : "$_result"
+    local gen="$SCRIPT_DIR/lib/proof-generator.py"
+    [ -f "$gen" ] || return 0
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    [ -d "$loki_dir" ] || return 0
+    local ver provider
+    ver="$(get_version 2>/dev/null || echo unknown)"
+    provider="${PROVIDER_NAME:-claude}"
+    ITERATION_COUNT="${ITERATION_COUNT:-0}" \
+    PROVIDER_NAME="$provider" \
+    PRD_PATH="${prd_path:-}" \
+    python3 "$gen" \
+        --loki-dir "$loki_dir" \
+        --loki-version "$ver" \
+        --provider "$provider" \
+        --quiet >/dev/null 2>&1 || true
+    return 0
+}
+
 track_iteration_complete() {
     local iteration="$1"
     local exit_code="${2:-0}"
@@ -13276,6 +13306,12 @@ main() {
 
     # Write structured handoff for future sessions (v5.49.0)
     write_structured_handoff "session_end_result_${result}" 2>/dev/null || true
+
+    # Generate shareable proof-of-run artifact (R1). Default-on, opt out with
+    # LOKI_PROOF=0. Fire-and-forget on both success and failure runs.
+    if [ "${LOKI_PROOF:-1}" != "0" ]; then
+        generate_proof_of_run "$result" || true
+    fi
 
     # Create PR from agent branch if branch protection was enabled
     create_session_pr

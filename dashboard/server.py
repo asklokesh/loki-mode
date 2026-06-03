@@ -7176,6 +7176,96 @@ async def get_escalation(filename: str):
 
 
 # ---------------------------------------------------------------------------
+# Proof-of-run artifacts (R1, Slice C).
+#
+# Directory-layout contract with the generator (autonomy/lib/proof-generator.py,
+# Slice A): each run's proof lives at
+#     <active project>/.loki/proofs/<run_id>/proof.json
+#     <active project>/.loki/proofs/<run_id>/index.html
+# This assumption is asserted explicitly so it is checkable: if Slice A emits a
+# flat layout instead, the /api/proofs routes below return empty / 404 rather
+# than reading the wrong files. Run-id segments are sanitized and every resolved
+# path is realpath-contained under .loki/proofs (mirrors the escalations route
+# guard at the get_escalation handler above).
+# ---------------------------------------------------------------------------
+def _proofs_dir() -> _Path:
+    return _get_loki_dir() / "proofs"
+
+
+def _safe_proof_run_dir(run_id: str) -> _Path:
+    """Resolve and validate a proof run directory, traversal-safe.
+
+    Rejects path separators, NUL, leading dot, and parent references in the
+    run_id, then realpath-contains the result under .loki/proofs. Raises
+    HTTPException(400) on any rejection.
+    """
+    if (not run_id or "/" in run_id or "\\" in run_id or "\x00" in run_id
+            or run_id.startswith(".") or ".." in run_id):
+        raise HTTPException(status_code=400, detail="invalid run id")
+    base = os.path.realpath(str(_proofs_dir()))
+    target = os.path.realpath(os.path.join(base, run_id))
+    if not target.startswith(base + os.sep):
+        raise HTTPException(status_code=400, detail="invalid run id")
+    return _Path(target)
+
+
+@app.get("/api/proofs")
+async def list_proofs():
+    """List proof-of-run artifacts for the active project's .loki/proofs/."""
+    proofs_dir = _proofs_dir()
+    items: list[dict] = []
+    try:
+        entries = sorted(proofs_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        return {"proofs": []}
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        proof_json = entry / "proof.json"
+        if not proof_json.is_file():
+            continue
+        data = _safe_json_read(proof_json, default=None)
+        if not isinstance(data, dict):
+            continue
+        items.append({
+            "run_id": data.get("run_id", entry.name),
+            "generated_at": data.get("generated_at"),
+            "loki_version": data.get("loki_version"),
+            "cost_usd": (data.get("cost") or {}).get("usd"),
+            "files_changed": (data.get("files_changed") or {}).get("count"),
+            "final_verdict": (data.get("council") or {}).get("final_verdict"),
+            "has_html": (entry / "index.html").is_file(),
+        })
+    # Newest first when generated_at is present.
+    items.sort(key=lambda x: (x.get("generated_at") or ""), reverse=True)
+    return {"proofs": items}
+
+
+@app.get("/api/proofs/{run_id}")
+async def get_proof(run_id: str):
+    """Return the redacted proof.json for one run."""
+    run_dir = _safe_proof_run_dir(run_id)
+    proof_json = run_dir / "proof.json"
+    if not proof_json.is_file():
+        raise HTTPException(status_code=404, detail=f"proof not found: {run_id}")
+    data = _safe_json_read(proof_json, default=None)
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="proof.json unreadable")
+    return JSONResponse(content=data)
+
+
+@app.get("/api/proofs/{run_id}/html")
+async def get_proof_html(run_id: str):
+    """Serve the self-contained shareable proof page for one run."""
+    run_dir = _safe_proof_run_dir(run_id)
+    index_html = run_dir / "index.html"
+    if not index_html.is_file():
+        raise HTTPException(status_code=404,
+                            detail=f"proof page not found: {run_id}")
+    return FileResponse(str(index_html), media_type="text/html")
+
+
+# ---------------------------------------------------------------------------
 # SPA catch-all: serve index.html for any path not matched by API routes
 # or static asset mounts.  This lets the dashboard UI handle client-side routing.
 # Must be registered LAST so it never shadows an API endpoint.

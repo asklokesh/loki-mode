@@ -27,6 +27,7 @@ import {
   type TerminateReason,
 } from "./types.ts";
 import { run as shellRun } from "../util/shell.ts";
+import { maybeGenerateProof } from "./proof.ts";
 
 // ---------------------------------------------------------------------------
 // Graceful dynamic imports.
@@ -216,7 +217,22 @@ const fileSignals: SignalSource = {
 // ---------------------------------------------------------------------------
 
 export async function runAutonomous(opts: RunnerOpts): Promise<number> {
+  // Build the context once so both the core loop and the post-completion
+  // proof-of-run hook see the same iteration count / lokiDir / provider.
   const ctx = makeContext(opts);
+  try {
+    return await runAutonomousCore(opts, ctx);
+  } finally {
+    // R1: shareable proof-of-run. Single call site -> emits on EVERY terminal
+    // return (success and failure). Fire-and-forget; never throws.
+    await maybeGenerateProof(ctx).catch(() => {});
+  }
+}
+
+async function runAutonomousCore(
+  opts: RunnerOpts,
+  ctx: RunnerContext,
+): Promise<number> {
   const log = ctx.log;
   const clock = opts.clock ?? realClock;
   const signals = opts.signals ?? fileSignals;
