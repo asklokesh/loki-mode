@@ -99,9 +99,13 @@ run_check "bash -n autonomy/completion-council.sh" "bash -n autonomy/completion-
 # 2. shellcheck on workflow + script bash blocks (best-effort)
 # ---------------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
-  # Only error-level findings fail CI. Warnings + infos surface in
-  # editor lint but don't block the push gate.
-  run_check "shellcheck scripts/ (errors)" 'shellcheck -x -S error scripts/*.sh'
+  # CI PARITY: the GitHub "Tests" workflow runs tests/run-all-tests.sh, which
+  # runs tests/run-shellcheck.sh -- and that linter fails on WARNINGS too, not
+  # just errors. Running only `-S error` here let a warning-level SC2166 in this
+  # very file pass local-ci and then go red in CI (the exact "local passes / CI
+  # is the discovery channel" gap CLAUDE.md forbids). So we run the SAME linter
+  # CI runs, as the authoritative gate, plus keep the fast error-level subset.
+  run_check "shellcheck (CI parity: tests/run-shellcheck.sh)" 'bash tests/run-shellcheck.sh'
   run_check "shellcheck loki-ts fixtures (errors)" 'find loki-ts/tests/fixtures/build_prompt -name env.sh -print0 | xargs -0 shellcheck -S error'
 else
   skip_check "shellcheck" "shellcheck not installed (brew install shellcheck)"
@@ -382,7 +386,7 @@ _DASH_PY=""
 command -v python3.12 >/dev/null 2>&1 && _DASH_PY=python3.12
 if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
    && [ -d dashboard-ui/node_modules/playwright ] \
-   && [ -d "$HOME/Library/Caches/ms-playwright" -o -d "$HOME/.cache/ms-playwright" ]; then
+   && { [ -d "$HOME/Library/Caches/ms-playwright" ] || [ -d "$HOME/.cache/ms-playwright" ]; }; then
   run_check "dashboard fresh-repo integrated UX harness" 'bash scripts/run-dashboard-fresh-repo-harness.sh'
 else
   skip_check "dashboard fresh-repo integrated UX harness" "needs python3.12 + dashboard-ui playwright + chromium"
