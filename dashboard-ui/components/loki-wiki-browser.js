@@ -75,6 +75,16 @@ export class LokiWikiBrowser extends LokiElement {
     } finally {
       this._loading = false;
       this.render();
+      // If the user clicked a section tab during the meta load race (on a
+      // generated repo, the gate in _selectTab skipped the fetch because _meta
+      // was not yet resolved), load that section now so it does not stay stuck
+      // on "Loading...". Only for an active, uncached section tab.
+      const t = this._activeTab;
+      if (this._meta && this._meta.generated &&
+          (t === 'architecture' || t === 'modules' || t === 'data-flow') &&
+          !this._sectionCache[t]) {
+        this._loadSection(t).then(() => this.render());
+      }
     }
   }
 
@@ -95,10 +105,23 @@ export class LokiWikiBrowser extends LokiElement {
   async _selectTab(id) {
     this._activeTab = id;
     if (id === 'architecture' || id === 'modules' || id === 'data-flow') {
-      this.render(); // show spinner
-      await this._loadSection(id);
+      // Only fetch a section when a wiki actually exists. On a fresh repo the
+      // manifest reports generated:false and /api/wiki/{section} would 404,
+      // flooding the console with 404s + AbortErrors. Render a friendly
+      // not-generated message instead of hitting the network -- but do NOT
+      // write it to _sectionCache: the cache is permanent (loadSection returns
+      // cached entries and never refetches), so caching here would poison the
+      // tab if it was clicked before _meta resolved on a repo that DOES have a
+      // wiki. _renderSection reads _meta.generated live to decide.
+      if (this._meta && this._meta.generated) {
+        this.render(); // show spinner
+        await this._loadSection(id);
+      } else {
+        this.render();
+      }
+    } else {
+      this.render();
     }
-    this.render();
   }
 
   async _ask() {
@@ -109,7 +132,12 @@ export class LokiWikiBrowser extends LokiElement {
     this._answer = null;
     this.render();
     try {
-      this._answer = await this._api._post('/api/wiki/ask', { question: q });
+      // The ask endpoint shells out to claude (and may rebuild the index on a
+      // cold repo), so it can take minutes. Use a 200s client timeout, longer
+      // than the server's 180s cap, so the server -- not the client -- decides
+      // when to give up. The default 10s would abort with "Request timeout".
+      this._answer = await this._api._post('/api/wiki/ask', { question: q },
+        { timeout: 200000 });
     } catch (e) {
       this._askError = (e && e.message) ? e.message : 'Ask failed';
     } finally {
@@ -155,6 +183,14 @@ export class LokiWikiBrowser extends LokiElement {
   }
 
   _renderSection(id) {
+    // Live check: if no wiki is generated, show the not-generated message
+    // (never cached, so it self-corrects once a wiki exists / _meta resolves).
+    if (!this._meta || !this._meta.generated) {
+      return `<div class="empty">
+        <p>No wiki generated yet.</p>
+        <p>Run <code>loki wiki generate</code> to build a cited codebase wiki.</p>
+      </div>`;
+    }
     const data = this._sectionCache[id];
     if (!data) return `<div class="empty">Loading...</div>`;
     if (data.error) return `<div class="error">${this._esc(data.error)}</div>`;

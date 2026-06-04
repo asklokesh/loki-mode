@@ -52,3 +52,6 @@ vscode-extension/.loki/
 # Test artifacts
 **/test-results/
 .aider*
+
+# Stray test artifacts (accidentally committed in v6.50.0; ignore going forward)
+.loki-test-tmp/

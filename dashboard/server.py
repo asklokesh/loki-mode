@@ -7772,7 +7772,14 @@ async def get_wiki_section(section: str):
         raise HTTPException(status_code=400, detail=f"unknown section: {section}")
     wiki_json = _wiki_dir() / "wiki.json"
     if not wiki_json.is_file():
-        raise HTTPException(status_code=404, detail="wiki not generated")
+        # Soft empty state for dashboard consumers on a fresh repo. A hard 404
+        # here floods the browser console (the panel and the SPA both poll this)
+        # even though "no wiki yet" is an expected, benign state. Mirrors the
+        # generated:false contract of GET /api/wiki.
+        return JSONResponse(content={
+            "generated": False, "id": section, "title": "",
+            "body": "", "citations": [],
+        })
     data = _safe_json_read(wiki_json, default=None)
     if not isinstance(data, dict):
         raise HTTPException(status_code=500, detail="wiki.json unreadable")

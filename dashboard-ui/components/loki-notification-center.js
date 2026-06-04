@@ -112,7 +112,13 @@ export class LokiNotificationCenter extends LokiElement {
 
   async _acknowledgeNotification(id) {
     const apiUrl = this.getAttribute('api-url') || window.location.origin;
-    await fetch(apiUrl + '/api/notifications/' + encodeURIComponent(id) + '/acknowledge', { method: 'POST' });
+    try {
+      await fetch(apiUrl + '/api/notifications/' + encodeURIComponent(id) + '/acknowledge', { method: 'POST' });
+    } catch {
+      // Network/abort failure on acknowledge is non-fatal; the reload below
+      // (also guarded) reflects the true server state. Swallow so it does not
+      // surface as an unhandled promise rejection in the console.
+    }
     this._loadNotifications();
   }
 

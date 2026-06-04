@@ -470,7 +470,14 @@ export class LokiApiClient extends EventTarget {
   async _request(endpoint, options = {}) {
     const url = `${this.config.baseUrl}${endpoint}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeout);
+    // Per-call timeout override (options.timeout) for long-running, LLM-backed
+    // endpoints like /api/wiki/ask, which shells out to claude and can take
+    // minutes. The default (this.config.timeout, 10s) is right for normal JSON
+    // reads but would abort those mid-flight with a misleading "Request timeout".
+    const timeoutMs = (options && typeof options.timeout === 'number')
+      ? options.timeout
+      : this.config.timeout;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -538,10 +545,11 @@ export class LokiApiClient extends EventTarget {
   /**
    * POST request
    */
-  async _post(endpoint, body) {
+  async _post(endpoint, body, options = {}) {
     return this._request(endpoint, {
       method: 'POST',
       body: JSON.stringify(body),
+      ...options,
     });
   }
 
@@ -758,14 +766,18 @@ export class LokiApiClient extends EventTarget {
    * Retrieve relevant memories
    */
   async retrieveMemories(query, taskType = null, topK = 5) {
-    return this._post('/api/memory/retrieve', { query, taskType, topK });
+    // Semantic vector search over the memory store can exceed 10s on large
+    // stores. 30s client budget.
+    return this._post('/api/memory/retrieve', { query, taskType, topK }, { timeout: 30000 });
   }
 
   /**
    * Trigger memory consolidation
    */
   async consolidateMemory(sinceHours = 24) {
-    return this._post('/api/memory/consolidate', { sinceHours });
+    // Episodic->semantic consolidation scans many episodes + vector search;
+    // routinely exceeds the default 10s. 120s client budget.
+    return this._post('/api/memory/consolidate', { sinceHours }, { timeout: 120000 });
   }
 
   /**
@@ -822,7 +834,9 @@ export class LokiApiClient extends EventTarget {
    * Sync registry with discovered projects
    */
   async syncRegistry() {
-    return this._post('/api/registry/sync', {});
+    // Server caps this at 30s (asyncio.wait_for); give the client headroom
+    // above that so the server's own timeout decides, not the default 10s.
+    return this._post('/api/registry/sync', {}, { timeout: 45000 });
   }
 
   /**
@@ -895,7 +909,9 @@ export class LokiApiClient extends EventTarget {
    * @param {object} params - Aggregation parameters
    */
   async triggerAggregation(params = {}) {
-    return this._post('/api/learning/aggregate', params);
+    // Parses a potentially large events.jsonl and aggregates learning signals;
+    // an O(n) scan that can exceed 10s. 60s client budget.
+    return this._post('/api/learning/aggregate', params, { timeout: 60000 });
   }
 
   /**

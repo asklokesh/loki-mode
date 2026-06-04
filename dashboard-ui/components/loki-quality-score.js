@@ -107,7 +107,10 @@ export class LokiQualityScore extends LokiElement {
     this._scanning = true;
     this.render();
     try {
-      await this._api._post('/api/quality-scan', {});
+      // Full-codebase quality audit (AST parse, complexity, lint); scales with
+      // repo size and routinely exceeds the default 10s. 300s client budget so
+      // large repos do not abort with a misleading "Request timeout".
+      await this._api._post('/api/quality-scan', {}, { timeout: 300000 });
       await this._loadData();
     } catch (err) {
       this._error = err.message;

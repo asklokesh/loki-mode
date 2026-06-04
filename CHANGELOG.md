@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.18.0] - 2026-06-03
+
+### Fixed
+- Dashboard standalone pages (Trust Trajectory, Cost, Proofs) now match the
+  dashboard's cream/serif design language instead of a clashing dark theme.
+  They were hardcoded dark and looked like a different product when embedded in
+  the SPA. The trust panel (shown in an iframe) also follows the SPA's manual
+  Dark toggle now: the SPA passes the active theme to the iframe and re-points
+  it on toggle, so light/dark stays consistent across the whole dashboard.
+- Wiki "Ask" no longer fails with "Request timeout". The dashboard's API client
+  had a fixed 10s timeout, but the cited Q&A shells out to the model and can
+  take minutes. The ask call now allows 200s (longer than the server's own
+  cap), so the server decides when to give up, not the client.
+- Five more long-running dashboard actions got matching client timeouts so they
+  no longer abort early: quality scan (300s), memory consolidate (120s),
+  learning aggregate (60s), memory retrieve (30s), and registry sync (45s).
+- Fresh-repo console noise eliminated. On a brand-new project with no `.loki`
+  data, opening the Wiki panel flooded the browser console with 404s and
+  AbortErrors. Wiki section views now show a clean "no wiki generated yet"
+  message instead of fetching missing data, the server returns a soft empty
+  state instead of a 404, and a notification action no longer leaks an
+  unhandled rejection. A section tab clicked while the wiki list is still
+  loading now resolves correctly once the list arrives (no stuck spinner).
+
+### Internal
+- New fresh-repo integrated UI harness (`tests/e2e/dashboard-fresh-repo.mjs` +
+  `scripts/run-dashboard-fresh-repo-harness.sh`, wired into `local-ci`). It
+  boots the dashboard against a fresh repo (no `.loki`) and drives a real
+  browser to assert no cold-load console 404s/AbortErrors and that the trust
+  iframe matches the SPA theme in both light and after the Dark toggle. This
+  closes the verification gap that let the above bugs ship: prior checks ran
+  against seeded data in isolation and never exercised the real first-run path.
+- Removed stray test artifacts accidentally committed in v6.50.0
+  (`.loki-test-tmp/`) and added it to `.gitignore`.
+
 ## [7.17.1] - 2026-06-03
 
 ### Fixed

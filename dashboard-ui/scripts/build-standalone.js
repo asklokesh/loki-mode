@@ -424,8 +424,8 @@ function generateStandaloneHTML(bundleCode) {
       cursor: pointer;
     }
     .project-stop-row button:hover:not(:disabled) {
-      border-color: #d64545;
-      color: #d64545;
+      border-color: var(--loki-error);
+      color: var(--loki-error);
     }
     .project-stop-row button:disabled {
       opacity: 0.6;
@@ -675,18 +675,18 @@ function generateStandaloneHTML(bundleCode) {
     }
 
     /* USAGE.md markdown render styles */
-    .usage-md { max-height: 480px; overflow: auto; padding: 12px; background: var(--loki-bg-secondary, #111); border-radius: 4px; color: var(--loki-text-primary, #eee); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; }
-    .usage-md h1 { font-size: 1.35rem; font-weight: 600; margin: 0.75em 0 0.4em; border-bottom: 1px solid var(--loki-border, #333); padding-bottom: 4px; }
+    .usage-md { max-height: 480px; overflow: auto; padding: 12px; background: var(--loki-bg-secondary, #F2F0EB); border-radius: 4px; color: var(--loki-text-primary, #1A1614); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; }
+    .usage-md h1 { font-size: 1.35rem; font-weight: 600; margin: 0.75em 0 0.4em; border-bottom: 1px solid var(--loki-border, rgba(0,0,0,0.08)); padding-bottom: 4px; }
     .usage-md h2 { font-size: 1.15rem; font-weight: 600; margin: 0.75em 0 0.4em; }
     .usage-md h3 { font-size: 1rem; font-weight: 600; margin: 0.65em 0 0.3em; }
     .usage-md p { margin: 0.4em 0; }
     .usage-md ul, .usage-md ol { margin: 0.4em 0 0.4em 1.5em; padding: 0; }
     .usage-md li { margin: 0.15em 0; }
-    .usage-md pre { background: var(--loki-bg-tertiary, #0a0a0a); border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0.5em 0; }
+    .usage-md pre { background: var(--loki-bg-tertiary, #E8E5DE); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 0.5em 0; }
     .usage-md pre code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; background: none; padding: 0; white-space: pre; }
-    .usage-md code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; background: var(--loki-bg-tertiary, #0a0a0a); padding: 1px 4px; border-radius: 3px; }
+    .usage-md code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; background: var(--loki-bg-tertiary, #E8E5DE); padding: 1px 4px; border-radius: 3px; }
     .usage-md blockquote { border-left: 3px solid var(--loki-accent, #553de9); margin: 0.5em 0; padding: 4px 12px; color: var(--loki-text-secondary, #888); }
-    .usage-md hr { border: none; border-top: 1px solid var(--loki-border, #333); margin: 0.75em 0; }
+    .usage-md hr { border: none; border-top: 1px solid var(--loki-border, rgba(0,0,0,0.08)); margin: 0.75em 0; }
     .usage-md strong { font-weight: 600; }
     .usage-md em { font-style: italic; }
     .usage-md a { color: var(--loki-accent, #553de9); text-decoration: none; }
@@ -841,7 +841,7 @@ function generateStandaloneHTML(bundleCode) {
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
             <!-- v7.7.21 token economics tile: hit rate + tokens + top patterns -->
-            <div id="memory-economics-tile" style="margin-top: 12px; background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+            <div id="memory-economics-tile" style="margin-top: 12px; background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
               <div style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Token Economics</div>
               <div id="memory-economics-metrics" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px;">
                 <div><span style="color: var(--loki-text-muted, #888);">Hit rate</span><br><strong id="econ-hit-rate">--</strong></div>
@@ -892,11 +892,11 @@ function generateStandaloneHTML(bundleCode) {
           </div>
           <div>
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory Files</h3>
-            <div id="memory-files-panel" style="background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+            <div id="memory-files-panel" style="background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
               <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;" id="memory-files-tabs"></div>
               <div style="display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; min-height: 280px;">
-                <div id="memory-files-list" style="border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 8px; max-height: 480px; overflow-y: auto; font-size: 12px;">Loading...</div>
-                <div id="memory-files-viewer" style="border: 1px solid var(--loki-border, #333); border-radius: 4px; padding: 12px; max-height: 480px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--loki-text-primary, #eee);">Select a file to view its contents.</div>
+                <div id="memory-files-list" style="border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 4px; padding: 8px; max-height: 480px; overflow-y: auto; font-size: 12px;">Loading...</div>
+                <div id="memory-files-viewer" style="border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 4px; padding: 12px; max-height: 480px; overflow: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; color: var(--loki-text-primary, #1A1614);">Select a file to view its contents.</div>
               </div>
             </div>
             <script>
@@ -920,7 +920,7 @@ function generateStandaloneHTML(bundleCode) {
                 function renderTabs(){
                   tabsEl.innerHTML = TYPES.map(function(t){
                     var active = t.id === state.type;
-                    return '<button data-type="' + t.id + '" style="padding: 5px 10px; font-size: 11px; border-radius: 4px; border: 1px solid ' + (active ? 'var(--loki-accent, #553de9)' : 'var(--loki-border, #333)') + '; background: ' + (active ? 'var(--loki-accent, #553de9)' : 'transparent') + '; color: ' + (active ? '#fff' : 'var(--loki-text-primary, #ccc)') + '; cursor: pointer;">' + esc(t.label) + '</button>';
+                    return '<button data-type="' + t.id + '" style="padding: 5px 10px; font-size: 11px; border-radius: 4px; border: 1px solid ' + (active ? 'var(--loki-accent, #553de9)' : 'var(--loki-border, rgba(0,0,0,0.08))') + '; background: ' + (active ? 'var(--loki-accent, #553de9)' : 'transparent') + '; color: ' + (active ? '#fff' : 'var(--loki-text-primary, #1A1614)') + '; cursor: pointer;">' + esc(t.label) + '</button>';
                   }).join('');
                   Array.prototype.forEach.call(tabsEl.querySelectorAll('button'), function(b){
                     b.addEventListener('click', function(){ loadType(b.getAttribute('data-type')); });
@@ -977,7 +977,7 @@ function generateStandaloneHTML(bundleCode) {
           <!-- v7.7.1 F-1 follow-up: How to Run (USAGE.md) -->
           <div>
             <h3 style="font-family: 'DM Serif Display', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">How to Run (USAGE.md)</h3>
-            <div id="usage-doc-panel" style="background: var(--loki-bg-card, #1a1a1a); border: 1px solid var(--loki-border, #333); border-radius: 5px; padding: 12px;">
+            <div id="usage-doc-panel" style="background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
               <div id="usage-doc-meta" style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Loading...</div>
               <div id="usage-doc-content" class="usage-md"></div>
             </div>
@@ -1200,7 +1200,7 @@ function generateStandaloneHTML(bundleCode) {
           <h2 class="section-page-title">Trust Trajectory</h2>
         </div>
         <iframe id="trust-frame" title="Trust trajectory" src="about:blank"
-          style="width:100%;height:calc(100vh - 160px);border:0;border-radius:8px;background:#0f1115;"></iframe>
+          style="width:100%;height:calc(100vh - 160px);border:0;border-radius:8px;background:var(--loki-bg-primary);"></iframe>
       </div>
 
       <!-- Checkpoints -->
@@ -1396,6 +1396,25 @@ document.addEventListener('DOMContentLoaded', function() {
   var sunIcon = document.getElementById('theme-icon-sun');
   var moonIcon = document.getElementById('theme-icon-moon');
 
+  // Resolve the active theme to a plain 'dark'|'light' for the iframe pages
+  // (trust/cost/proofs), which live in separate documents and cannot read the
+  // SPA's data-loki-theme attribute. v7.18.0.
+  function lokiResolvedTheme() {
+    var theme = LokiDashboard.UnifiedThemeManager.getTheme();
+    return (theme.includes('dark') || theme === 'high-contrast') ? 'dark' : 'light';
+  }
+
+  // Keep the trust iframe's theme in sync with the SPA toggle. If the frame is
+  // already loaded, re-point its src with the new ?theme= so its palette flips
+  // with the SPA instead of clashing.
+  function syncTrustFrameTheme() {
+    var tframe = document.getElementById('trust-frame');
+    if (!tframe) return;
+    var cur = tframe.getAttribute('src') || '';
+    if (!cur || cur === 'about:blank') return; // not opened yet; opens with theme
+    tframe.src = '/trust?theme=' + lokiResolvedTheme();
+  }
+
   function updateThemeUI() {
     var theme = LokiDashboard.UnifiedThemeManager.getTheme();
     var isDark = theme.includes('dark') || theme === 'high-contrast';
@@ -1406,14 +1425,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
   themeToggle.addEventListener('click', function() {
     LokiDashboard.UnifiedThemeManager.toggle();
-    updateThemeUI();
+    // updateThemeUI + syncTrustFrameTheme run via the loki-theme-change
+    // listener below (toggle() dispatches it), so we do NOT call them here too
+    // -- a direct call would re-point the trust iframe src twice per toggle.
   });
 
   window.addEventListener('loki-theme-change', function() {
     updateThemeUI();
+    syncTrustFrameTheme();
   });
 
   updateThemeUI();
+
+  // Carry the SPA theme to the full-page standalone views (cost/proofs) opened
+  // via direct links, so a user who toggled Dark gets a matching page instead
+  // of an OS-default one. Updated on click so it always reflects the current
+  // toggle state. v7.18.0.
+  function lokiThemeHref(base) {
+    return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'theme=' + lokiResolvedTheme();
+  }
+  var costLink = document.getElementById('budget-banner-link');
+  if (costLink) {
+    costLink.addEventListener('click', function () {
+      costLink.setAttribute('href', lokiThemeHref('/cost'));
+    });
+  }
 
   // API URL configuration - auto-detect from current server
   var apiUrlInput = document.getElementById('api-url');
@@ -1555,12 +1591,15 @@ document.addEventListener('DOMContentLoaded', function() {
       pageEl.classList.add('active');
     }
     // R4: lazy-load the trust panel iframe on first open (avoids a fetch on
-    // every page that the user never visits).
+    // every page that the user never visits). The iframe is a separate
+    // document and cannot see the SPA's manual data-loki-theme toggle, so we
+    // pass the resolved theme as a query param (?theme=dark|light); the
+    // standalone page reads it and matches. v7.18.0.
     if (sectionId === 'trust') {
       var tframe = document.getElementById('trust-frame');
       if (tframe && (!tframe.src || tframe.src === 'about:blank' ||
           tframe.getAttribute('src') === 'about:blank')) {
-        tframe.src = '/trust';
+        tframe.src = '/trust?theme=' + lokiResolvedTheme();
       }
     }
     // Update nav active state
@@ -1682,11 +1721,12 @@ document.addEventListener('DOMContentLoaded', function() {
         apiUrlInput.select();
         break;
 
-      // Theme toggle
+      // Theme toggle. updateThemeUI + syncTrustFrameTheme run via the
+      // loki-theme-change listener (toggle() dispatches it); do not call them
+      // here too, or the trust iframe re-points twice per toggle.
       case 't':
         e.preventDefault();
         LokiDashboard.UnifiedThemeManager.toggle();
-        updateThemeUI();
         break;
 
       // Session controls

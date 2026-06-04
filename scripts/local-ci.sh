@@ -369,6 +369,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 10d. Dashboard fresh-repo integrated UX harness (v7.18.0)
+# ---------------------------------------------------------------------------
+# The v7.17.x verification ran the dashboard SEEDED + in isolation and shipped a
+# cold-repo 404 flood, an early-abort timeout, and iframe theme clashes. This
+# harness boots the server against a FRESH repo (no .loki) and drives the real
+# browser: asserts no cold-load console 404s/AbortErrors and that the trust
+# iframe matches the SPA theme in light AND after the Dark toggle. Requires
+# python3.12 (fastapi) + the dashboard-ui playwright + chromium; skips cleanly
+# when absent so the gate never blocks an environment that lacks them.
+_DASH_PY=""
+command -v python3.12 >/dev/null 2>&1 && _DASH_PY=python3.12
+if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
+   && [ -d dashboard-ui/node_modules/playwright ] \
+   && [ -d "$HOME/Library/Caches/ms-playwright" -o -d "$HOME/.cache/ms-playwright" ]; then
+  run_check "dashboard fresh-repo integrated UX harness" 'bash scripts/run-dashboard-fresh-repo-harness.sh'
+else
+  skip_check "dashboard fresh-repo integrated UX harness" "needs python3.12 + dashboard-ui playwright + chromium"
+fi
+
+# ---------------------------------------------------------------------------
 # 11. SBOM workflow equivalent (mirrors sbom.yml)
 # ---------------------------------------------------------------------------
 if [ "$FAST" = "1" ]; then
