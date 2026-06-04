@@ -64,6 +64,34 @@ v=$(_resolve development "http://localhost:11434/v1" "qwen2.5-coder:32b")
 [ "$v" = "qwen2.5-coder:32b" ] && ok "ollama: override applies for local endpoint" \
     || bad "ollama got [$v]"
 
+# ---------- bash `loki doctor` ANTHROPIC_BASE_URL block (route parity) ----------
+# v7.18.1: the bash doctor route gained the ANTHROPIC_BASE_URL detection block
+# so it emits byte-identical output to the Bun route. These tests lock the
+# block in place so the bun-parity matrix stays green when ANTHROPIC_BASE_URL
+# is set in the environment.
+_doctor_bash() {
+    env ANTHROPIC_BASE_URL="${1:-}" LOKI_MODEL_OVERRIDE="${2:-}" LOKI_LEGACY_BASH=1 \
+        bash "$REPO_ROOT/bin/loki" doctor 2>&1
+}
+
+out=$(_doctor_bash "https://api.anthropic.com" "")
+printf '%s' "$out" | grep -q "ANTHROPIC_BASE_URL: https://api.anthropic.com" \
+    && ok "doctor(bash): prints ANTHROPIC_BASE_URL endpoint" \
+    || bad "doctor(bash): missing ANTHROPIC_BASE_URL endpoint line"
+printf '%s' "$out" | grep -q "LOKI_MODEL_OVERRIDE not set" \
+    && ok "doctor(bash): warns when LOKI_MODEL_OVERRIDE unset" \
+    || bad "doctor(bash): missing LOKI_MODEL_OVERRIDE warn"
+
+out=$(_doctor_bash "https://openrouter.ai/api/v1" "anthropic/claude-opus-4.5")
+printf '%s' "$out" | grep -q "LOKI_MODEL_OVERRIDE: anthropic/claude-opus-4.5" \
+    && ok "doctor(bash): prints LOKI_MODEL_OVERRIDE when set" \
+    || bad "doctor(bash): missing LOKI_MODEL_OVERRIDE value line"
+
+out=$(_doctor_bash "" "")
+printf '%s' "$out" | grep -q "ANTHROPIC_BASE_URL" \
+    && bad "doctor(bash): printed ANTHROPIC_BASE_URL block when env unset" \
+    || ok "doctor(bash): no ANTHROPIC_BASE_URL block when env unset"
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

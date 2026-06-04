@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.18.1] - 2026-06-04
+
+### Fixed
+- `loki doctor` now emits byte-identical output on the bash route and the Bun
+  route when `ANTHROPIC_BASE_URL` is set. Phase I (v7.5.25) added the
+  alt-provider routing detection block (OpenRouter, Ollama, LiteLLM,
+  self-hosted) to the Bun doctor only; the bash route lagged and printed two
+  fewer lines (`PASS ANTHROPIC_BASE_URL: <endpoint>` and the
+  `WARN LOKI_MODEL_OVERRIDE not set` advisory). The bash doctor
+  (`autonomy/loki` `cmd_doctor`) now carries the same detection block, so the
+  bun-parity matrix in `scripts/local-ci.sh` stays green when
+  `ANTHROPIC_BASE_URL` is present in the environment. The divergence only
+  surfaced locally (CI has no `ANTHROPIC_BASE_URL`), but it was a real
+  cross-route parity bug. Added doctor-output regression tests to
+  `tests/test-anthropic-base-url.sh`.
+
 ## [7.18.0] - 2026-06-03
 
 ### Fixed

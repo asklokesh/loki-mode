@@ -7627,6 +7627,22 @@ cmd_doctor() {
     elif command -v codex &>/dev/null; then
         echo -e "  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)"
     fi
+    # Phase I (v7.5.25): detect ANTHROPIC_BASE_URL alt-provider routing
+    # (OpenRouter, Ollama, LiteLLM, self-hosted). Claude Code reads this env
+    # var natively; Loki passes it through unchanged. Warn when the user sets
+    # an alt endpoint without LOKI_MODEL_OVERRIDE -- the default opus/sonnet/
+    # haiku aliases may not resolve on the alt-provider.
+    if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
+        echo -e "  ${GREEN}PASS${NC}  ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}"
+        pass_count=$((pass_count + 1))
+        if [ -z "${LOKI_MODEL_OVERRIDE:-}" ]; then
+            echo -e "  ${YELLOW}WARN${NC}  LOKI_MODEL_OVERRIDE not set -- opus/sonnet/haiku aliases may not resolve on alt-provider"
+            warn_count=$((warn_count + 1))
+        else
+            echo -e "  ${GREEN}PASS${NC}  LOKI_MODEL_OVERRIDE: ${LOKI_MODEL_OVERRIDE}"
+            pass_count=$((pass_count + 1))
+        fi
+    fi
     echo ""
 
     echo -e "${CYAN}Skills:${NC}"
