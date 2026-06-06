@@ -61,6 +61,13 @@ if [ -f "$_LOKI_SCRIPT_DIR/tui.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/tui.sh"
 fi
 
+# Crash-reporting helpers (provides loki_collection_enabled, used by
+# cmd_telemetry status and cmd_crash). Self-guarded against double-source.
+if [ -f "$_LOKI_SCRIPT_DIR/crash.sh" ]; then
+    # shellcheck source=crash.sh
+    source "$_LOKI_SCRIPT_DIR/crash.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -13472,6 +13479,9 @@ main() {
         report)
             cmd_report "$@"
             ;;
+        crash)
+            cmd_crash "$@"
+            ;;
         share)
             cmd_share "$@"
             ;;
@@ -17943,6 +17953,201 @@ for line in sys.stdin:
 }
 
 # Telemetry management (v6.7.0)
+cmd_crash() {
+    # Phase 0: local-only crash report inspection. NO network egress.
+    #
+    # PARITY: the user-facing strings here MUST match the TS canonical command
+    # at loki-ts/src/commands/crash.ts byte-for-byte (ignoring color codes).
+    # The whole subcommand body is implemented in one Python helper so the
+    # behavior (filename-id resolution, "-" for missing fields, JSON shape,
+    # URL encoding, exit codes) cannot drift from the TS route.
+    #
+    # Subcommands:
+    #   loki crash               list .loki/crash/*.json reports
+    #   loki crash show <id>     pretty-print one scrubbed report
+    #   loki crash submit [<id>] print the scrubbed payload + a prefilled
+    #                            GitHub issue URL for MANUAL submission
+    _LOKI_CRASH_DIR=".loki/crash" _LOKI_CRASH_SUB="${1-}" _LOKI_CRASH_ARG="${2-}" \
+    python3 -c '
+import json, os, sys, urllib.parse
+
+# Colors: honor NO_COLOR (https://no-color.org) exactly like the TS route
+# (loki-ts/src/util/colors.ts). Codes match autonomy/loki:25-32 byte-for-byte.
+_no_color = len(os.environ.get("NO_COLOR", "")) > 0
+def _c(code):
+    return "" if _no_color else code
+RED = _c("\x1b[0;31m")
+GREEN = _c("\x1b[0;32m")
+YELLOW = _c("\x1b[1;33m")
+CYAN = _c("\x1b[0;36m")
+BOLD = _c("\x1b[1m")
+NC = _c("\x1b[0m")
+
+ISSUE_BASE = "https://github.com/asklokesh/loki-mode/issues/new"
+CRASH_DIR = os.environ["_LOKI_CRASH_DIR"]
+SUB = os.environ.get("_LOKI_CRASH_SUB", "")
+ARG = os.environ.get("_LOKI_CRASH_ARG", "")
+
+HELP = (
+    BOLD + "loki crash" + NC + " - inspect and manually submit local crash reports\n"
+    "\n"
+    "Usage: loki crash [subcommand] [args]\n"
+    "\n"
+    "Subcommands:\n"
+    "  (none)               List crash reports in .loki/crash/\n"
+    "  show <id>            Pretty-print one scrubbed crash report\n"
+    "  submit [<id>]        Print the scrubbed payload and a prefilled GitHub\n"
+    "                       issue URL for manual submission\n"
+    "\n"
+    "Crash reports are anonymous, scrubbed, and stored locally only. Nothing is\n"
+    "sent automatically in this version. See docs/PRIVACY.md.\n"
+)
+
+def s(v):
+    return "-" if v is None else str(v)
+
+def pad(text, w):
+    return text if len(text) >= w else text + " " * (w - len(text))
+
+def report_ids():
+    if not os.path.isdir(CRASH_DIR):
+        return []
+    try:
+        names = [e for e in os.listdir(CRASH_DIR)
+                 if e.endswith(".json") and os.path.isfile(os.path.join(CRASH_DIR, e))]
+    except OSError:
+        return []
+    return sorted(n[:-len(".json")] for n in names)
+
+def _safe_id(rid):
+    # Reject path traversal: ids are bare filenames (no separators, no "..",
+    # no leading separator). This guards the direct filename lookup; the
+    # fingerprint-resolution loop only ever passes real listdir ids, which
+    # always pass. Mirrors the identical rule in loki-ts crash.ts.
+    if rid is None or rid == "":
+        return False
+    if "/" in rid or "\\" in rid or ".." in rid:
+        return False
+    if rid[0] in ("/", "\\"):
+        return False
+    return True
+
+def read_report(rid):
+    if not _safe_id(rid):
+        return None
+    p = os.path.join(CRASH_DIR, rid + ".json")
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def resolve_report(arg):
+    direct = read_report(arg)
+    if direct is not None:
+        return (arg, direct)
+    for rid in report_ids():
+        r = read_report(rid)
+        if r is not None and str(r.get("fingerprint", "")) == arg:
+            return (rid, r)
+    return None
+
+def dumps(obj):
+    return json.dumps(obj, indent=2, ensure_ascii=False)
+
+def list_crashes():
+    ids = report_ids()
+    if not ids:
+        sys.stdout.write(YELLOW + "No crash reports found." + NC +
+                         " Nothing has been captured in .loki/crash/.\n")
+        return 0
+    sys.stdout.write(pad("ID", 40) + "  " + pad("CAPTURED_AT", 22) + "  ERROR_CLASS\n")
+    for rid in ids:
+        d = read_report(rid) or {}
+        fp = s(d.get("fingerprint"))
+        captured_at = s(d.get("captured_at"))
+        error_class = s(d.get("error_class"))
+        visible_id = fp if fp != "-" else rid
+        sys.stdout.write(pad(visible_id, 40) + "  " + pad(captured_at, 22) + "  " + error_class + "\n")
+    sys.stdout.write(
+        "\n" + str(len(ids)) + " report(s). Run \x27loki crash show <id>\x27 to inspect, "
+        "\x27loki crash submit\x27 to get a prefilled GitHub issue URL.\n")
+    return 0
+
+def show_crash(rid):
+    if not rid:
+        sys.stderr.write(RED + "Missing crash id." + NC + " Use \x27loki crash\x27 to list reports.\n")
+        return 2
+    resolved = resolve_report(rid)
+    if resolved is None:
+        sys.stderr.write(RED + "Crash report not found: " + rid + NC + "\n")
+        sys.stderr.write("Use \x27loki crash\x27 to see available reports.\n")
+        return 1
+    sys.stdout.write(dumps(resolved[1]) + "\n")
+    return 0
+
+def issue_url(report):
+    error_class = s(report.get("error_class"))
+    fp = s(report.get("fingerprint"))
+    short_fp = fp[:12] if fp != "-" else "unknown"
+    title = "crash: " + error_class + " (" + short_fp + ")"
+    payload = dumps(report)
+    body = "\n".join([
+        "Anonymous crash report captured by Loki Mode (scrubbed, whitelist-only).",
+        "",
+        "Scrubbed payload:",
+        "```json",
+        payload,
+        "```",
+        "",
+        "Nothing was sent automatically. This issue is submitted manually by me.",
+    ])
+    q = urllib.parse.urlencode({"title": title, "body": body})
+    return ISSUE_BASE + "?" + q
+
+def submit_crash(rid):
+    if rid:
+        target = resolve_report(rid)
+        if target is None:
+            sys.stderr.write(RED + "Crash report not found: " + rid + NC + "\n")
+            sys.stderr.write("Use \x27loki crash\x27 to see available reports.\n")
+            return 1
+    else:
+        ids = report_ids()
+        if not ids:
+            sys.stdout.write(YELLOW + "No crash reports found." + NC + " Nothing to submit.\n")
+            return 0
+        last_id = ids[-1]
+        target = (last_id, read_report(last_id) or {})
+    sys.stdout.write(BOLD + "Scrubbed payload (this is the ENTIRE report):" + NC + "\n")
+    sys.stdout.write(dumps(target[1]) + "\n\n")
+    sys.stdout.write(YELLOW + "Nothing is sent automatically in this version." + NC +
+                     " Loki Mode never transmits crash data on its own.\n")
+    sys.stdout.write("To submit manually, open this prefilled GitHub issue and review it first:\n\n")
+    sys.stdout.write("  " + CYAN + issue_url(target[1]) + NC + "\n\n")
+    sys.stdout.write(GREEN + "The payload above is exactly what the URL contains." + NC + "\n")
+    sys.stdout.write("See docs/PRIVACY.md for what is and is not collected.\n")
+    return 0
+
+if SUB == "":
+    sys.exit(list_crashes())
+elif SUB in ("--help", "-h", "help"):
+    sys.stdout.write(HELP)
+    sys.exit(0)
+elif SUB == "show":
+    sys.exit(show_crash(ARG))
+elif SUB == "submit":
+    sys.exit(submit_crash(ARG))
+else:
+    sys.stderr.write(RED + "Unknown crash subcommand: " + SUB + NC + "\n")
+    sys.stdout.write(HELP)
+    sys.exit(2)
+'
+    return $?
+}
+
 cmd_telemetry() {
     local subcommand="${1:-status}"
     shift 2>/dev/null || true
@@ -18007,6 +18212,25 @@ try {
                     echo -e "  Saved:     $saved_endpoint"
                 fi
             fi
+
+            # Unified collection state (PostHog usage telemetry + crash reporting).
+            # loki_collection_enabled is the single source of truth (crash.sh).
+            echo ""
+            if type loki_collection_enabled &>/dev/null; then
+                if loki_collection_enabled; then
+                    echo -e "  Collection: ${GREEN}enabled${NC} (anonymous diagnostics; turn off with: loki telemetry off)"
+                else
+                    echo -e "  Collection: ${YELLOW}disabled${NC} (re-enable with: loki telemetry on)"
+                fi
+            fi
+
+            # Count of pending local crash reports (.loki/crash/*.json).
+            local crash_dir=".loki/crash"
+            local pending=0
+            if [ -d "$crash_dir" ]; then
+                pending=$(find "$crash_dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+            fi
+            echo -e "  Crash reports pending: ${pending:-0} (see: loki crash)"
             echo ""
             ;;
 
@@ -18074,26 +18298,28 @@ TELEM_DISABLE_PY
             echo "  Unset LOKI_OTEL_ENDPOINT in your shell for immediate effect."
             ;;
 
-        stop)
-            # Persistent opt-out across all sessions
+        stop|off)
+            # Persistent opt-out across all sessions. This is the unified
+            # opt-out: it gates BOTH PostHog usage telemetry AND crash reporting.
             local global_config="${HOME}/.loki/config"
             mkdir -p "${HOME}/.loki"
 
             # Remove existing TELEMETRY_DISABLED line if present, then add
+            # (idempotent).
             if [ -f "$global_config" ]; then
                 grep -v "^TELEMETRY_DISABLED=" "$global_config" > "${global_config}.tmp" 2>/dev/null || true
                 mv "${global_config}.tmp" "$global_config"
             fi
             echo "TELEMETRY_DISABLED=true" >> "$global_config"
 
-            echo -e "${BOLD}Telemetry permanently disabled${NC}"
+            echo -e "${BOLD}Telemetry and crash reporting disabled${NC}"
             echo ""
             echo "  Opt-out saved to: $global_config"
             echo "  This persists across all sessions and new runs."
-            echo "  Run 'loki telemetry start' to re-enable."
+            echo "  Run 'loki telemetry on' to re-enable."
             ;;
 
-        start)
+        start|on)
             # Remove persistent opt-out
             local global_config="${HOME}/.loki/config"
             if [ -f "$global_config" ]; then
@@ -18101,9 +18327,10 @@ TELEM_DISABLE_PY
                 mv "${global_config}.tmp" "$global_config"
             fi
 
-            echo -e "${BOLD}Telemetry opt-out removed${NC}"
+            echo -e "${BOLD}Telemetry and crash reporting re-enabled${NC}"
             echo ""
-            echo "  Telemetry can now be enabled with 'loki telemetry enable [endpoint]'."
+            echo "  Anonymous diagnostics collection is on again."
+            echo "  OTEL tracing can be configured with 'loki telemetry enable [endpoint]'."
             ;;
 
         --help|-h|help)
@@ -18112,11 +18339,13 @@ TELEM_DISABLE_PY
             echo "Usage: loki telemetry <command>"
             echo ""
             echo "Commands:"
-            echo "  status              Show current telemetry config"
+            echo "  status              Show OTEL config + collection state + pending crash reports"
             echo "  enable [endpoint]   Enable OTEL (default: http://localhost:4318)"
             echo "  disable             Disable OTEL for current project"
-            echo "  stop                Permanently opt out of telemetry across all sessions"
-            echo "  start               Remove persistent opt-out, re-enable telemetry"
+            echo "  off                 Opt out of all anonymous diagnostics (telemetry + crash)"
+            echo "  on                  Re-enable anonymous diagnostics"
+            echo "  stop                Alias for 'off' (permanent opt-out across all sessions)"
+            echo "  start               Alias for 'on' (remove persistent opt-out)"
             echo ""
             ;;
         *)

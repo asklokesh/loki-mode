@@ -7,8 +7,19 @@ LOKI_POSTHOG_HOST="${LOKI_TELEMETRY_ENDPOINT:-https://us.i.posthog.com}"
 LOKI_POSTHOG_KEY="phc_ya0vGBru41AJWtGNfZZ8H9W4yjoZy4KON0nnayS7s87"
 
 _loki_telemetry_enabled() {
+    # Unified opt-out: these checks must mirror loki_collection_enabled in
+    # autonomy/crash.sh so one switch gates BOTH PostHog usage telemetry and
+    # crash reporting.
+    # LOKI_TELEMETRY=off (case-insensitive)
+    local _telem_lower
+    _telem_lower="$(printf '%s' "${LOKI_TELEMETRY:-}" | tr '[:upper:]' '[:lower:]')"
+    [ "$_telem_lower" = "off" ] && return 1
     [ "${LOKI_TELEMETRY_DISABLED:-}" = "true" ] && return 1
     [ "${DO_NOT_TRACK:-}" = "1" ] && return 1
+    # Persistent opt-out in ~/.loki/config
+    if [ -f "${HOME}/.loki/config" ] && grep -q "^TELEMETRY_DISABLED=true" "${HOME}/.loki/config" 2>/dev/null; then
+        return 1
+    fi
     command -v curl >/dev/null 2>&1 || return 1
     return 0
 }

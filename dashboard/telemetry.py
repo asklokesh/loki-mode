@@ -19,10 +19,25 @@ _POSTHOG_KEY = "phc_ya0vGBru41AJWtGNfZZ8H9W4yjoZy4KON0nnayS7s87"
 
 
 def _is_enabled():
+    # Unified opt-out: these checks must mirror loki_collection_enabled in
+    # autonomy/crash.sh so one switch gates BOTH PostHog usage telemetry and
+    # crash reporting.
+    if os.environ.get("LOKI_TELEMETRY", "").lower() == "off":
+        return False
     if os.environ.get("LOKI_TELEMETRY_DISABLED") == "true":
         return False
     if os.environ.get("DO_NOT_TRACK") == "1":
         return False
+    # Persistent opt-out in ~/.loki/config (matches the bash grep prefix
+    # semantics: any line beginning with TELEMETRY_DISABLED=true).
+    try:
+        config_path = Path.home() / ".loki" / "config"
+        if config_path.is_file():
+            for line in config_path.read_text().splitlines():
+                if line.startswith("TELEMETRY_DISABLED=true"):
+                    return False
+    except Exception:
+        pass
     return True
 
 

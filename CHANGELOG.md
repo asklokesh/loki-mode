@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.18.2] - 2026-06-06
+
+### Added
+- Crash reporting Phase 0 (local-only, zero network egress). On an uncaught
+  exception, unhandled rejection, nonzero iteration exit, provider-spawn
+  exhaustion, rate-limit failover exhaustion, or repeated quality-gate failure,
+  Loki Mode writes a scrubbed diagnostic to
+  `.loki/crash/<fingerprint>-<ts>.json`. Nothing is sent anywhere in this phase.
+- `autonomy/lib/crash_redact.py`: the single scrubbing chokepoint. Whitelist-only
+  emit (deny-by-default): only os, arch, loki_version, node_version, bun_version,
+  error_class, stack_signature (symbol names only, no paths or line numbers),
+  rarv_phase, exit_code, friction_kind, project_id_hash, fingerprint,
+  rules_version, redactions_count, captured_at. Free-text fields (prompts,
+  diffs, file paths, source) are dropped, not redacted. Layers the existing
+  `proof_redact` rules plus crash-specific deny rules (emails, IPs, repo names),
+  and sanitizes error_class / rarv_phase / exit_code so no secret can ride in a
+  whitelisted field. Fail-closed: if python3 is unavailable, no file is written.
+- `loki crash`: list, `loki crash show <id>`, `loki crash submit <id>` to
+  inspect and manually file local reports. `submit` prints a prefilled GitHub
+  issue URL and the exact scrubbed payload; it sends nothing automatically.
+  Ported to both routes (bash `cmd_crash`, Bun `loki-ts/src/commands/crash.ts`)
+  with byte-identical output. Path-traversal guarded (ids with `/`, `\`, `..`,
+  or leading separators are rejected).
+- First-run disclosure: a one-time notice on first `loki start` describing what
+  is collected and how to opt out. Stored as a sentinel in `~/.loki/config`,
+  never re-shown.
+- `docs/PRIVACY.md`: honest disclosure of what is and is not collected.
+
+### Changed
+- Unified telemetry opt-out. `LOKI_TELEMETRY=off`, `loki telemetry off`,
+  `DO_NOT_TRACK=1`, and `LOKI_TELEMETRY_DISABLED=true` now ALL disable both the
+  new crash capture AND the existing PostHog usage telemetry
+  (`session_start` / `session_end` / install events). Previously the PostHog
+  client honored only `LOKI_TELEMETRY_DISABLED` / `DO_NOT_TRACK` and had no
+  first-run disclosure. One switch now gates every collection path on both
+  routes and in `bin/postinstall.js` and `dashboard/telemetry.py`.
+
+### NOT tested in this release (honest disclosure)
+- Network egress: none exists in Phase 0. The backend ingest, server-side
+  second scrub, dedup, and private-issue creation are future phases (1-2).
+- The autonomous reproduce / fix / PR loop is a future phase (3).
+- Cross-machine real-world fingerprint collision rates beyond the synthetic
+  two-machine fixtures.
+- The edge case where the opt-out is set via env var before the very first
+  `loki start`: the one-time disclosure still prints once in that case.
+
 ## [7.18.1] - 2026-06-04
 
 ### Fixed

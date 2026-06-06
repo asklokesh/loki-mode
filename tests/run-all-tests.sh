@@ -97,6 +97,16 @@ if command -v python3 >/dev/null 2>&1 && python3 -c "import pytest" >/dev/null 2
         "$SCRIPT_DIR/memory/run_episode_load_resilience_tests.sh"
 fi
 
+# Crash Reporting Phase 0 (local-only, zero egress) -- bash CLI/helper tests.
+run_test "Crash Reporting CLI Tests" "$SCRIPT_DIR/test-crash-cli.sh"
+# Crash scrubber golden vectors + adversarial/negative tests (Python). Wrapped
+# in a tiny sh runner so the bash runner (one executable per entry) can include
+# them alongside the bash tests, matching the Dev2/Dev7 pytest pattern above.
+if command -v python3 >/dev/null 2>&1; then
+    run_test "Crash Scrubber Redaction Tests (Python)" \
+        "$SCRIPT_DIR/crash/run_crash_redact_tests.sh"
+fi
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

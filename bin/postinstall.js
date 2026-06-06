@@ -180,8 +180,22 @@ console.log('New here? Run `loki welcome` for a 30-second tour.');
 console.log('');
 
 // Anonymous install telemetry (fire-and-forget, silent)
+// Unified opt-out: these checks mirror loki_collection_enabled in
+// autonomy/crash.sh so one switch gates BOTH PostHog usage telemetry and
+// crash reporting.
+function _lokiCollectionDisabled() {
+  if ((process.env.LOKI_TELEMETRY || '').toLowerCase() === 'off') return true;
+  if (process.env.LOKI_TELEMETRY_DISABLED === 'true') return true;
+  if (process.env.DO_NOT_TRACK === '1') return true;
+  try {
+    const cfg = path.join(homeDir, '.loki', 'config');
+    const lines = fs.readFileSync(cfg, 'utf8').split('\n');
+    if (lines.some((l) => l.startsWith('TELEMETRY_DISABLED=true'))) return true;
+  } catch {}
+  return false;
+}
 try {
-  if (process.env.LOKI_TELEMETRY_DISABLED !== 'true' && process.env.DO_NOT_TRACK !== '1') {
+  if (!_lokiCollectionDisabled()) {
     const https = require('https');
     const crypto = require('crypto');
     const idFile = path.join(homeDir, '.loki-telemetry-id');

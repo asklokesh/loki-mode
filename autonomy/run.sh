@@ -651,6 +651,15 @@ if [ -f "$TELEMETRY_SCRIPT" ]; then
     source "$TELEMETRY_SCRIPT"
 fi
 
+# Crash-reporting helpers (Phase 0: local-only, zero egress).
+# Provides loki_collection_enabled (unified opt-out), loki_crash_capture,
+# loki_crash_friction, loki_show_disclosure_once.
+CRASH_SCRIPT="$SCRIPT_DIR/crash.sh"
+if [ -f "$CRASH_SCRIPT" ]; then
+    # shellcheck source=crash.sh
+    source "$CRASH_SCRIPT"
+fi
+
 
 
 # 2026 Research Enhancements (minimal additions)
@@ -1743,6 +1752,11 @@ invoke_with_timeout() {
     done
 
     log_error "Provider spawn failed after $((max_retries+1)) attempts (timeout=${timeout}s)"
+    # Crash friction (retry_loop): provider spawn exhausted all retries -- a
+    # clear threshold (not a single retry). Best-effort, never blocks.
+    if type loki_crash_friction &>/dev/null; then
+        loki_crash_friction "retry_loop" "provider spawn failed after $((max_retries+1)) attempts" >/dev/null 2>&1 || true
+    fi
     return 124
 }
 
@@ -6107,7 +6121,11 @@ track_gate_failure() {
     local gate_file="${TARGET_DIR:-.}/.loki/quality/gate-failure-count.json"
     mkdir -p "$(dirname "$gate_file")"
 
-    _GATE_FILE="$gate_file" _GATE_NAME="$gate_name" python3 -c "
+    # IMPORTANT: this function's stdout IS its return value (callers do
+    # count=$(track_gate_failure ...)). Capture the count first, then do any
+    # side-effects with their stdout suppressed, then echo ONLY the count.
+    local count
+    count=$(_GATE_FILE="$gate_file" _GATE_NAME="$gate_name" python3 -c "
 import json, os
 gate_file = os.environ['_GATE_FILE']
 gate_name = os.environ['_GATE_NAME']
@@ -6120,7 +6138,16 @@ counts[gate_name] = counts.get(gate_name, 0) + 1
 with open(gate_file, 'w') as f:
     json.dump(counts, f, indent=2)
 print(counts[gate_name])
-" 2>/dev/null || echo "1"
+" 2>/dev/null || echo "1")
+
+    # Crash friction (gate_failure): fire exactly once at the threshold (3
+    # consecutive failures) so a sustained failure does not re-fire every
+    # iteration. Best-effort, stdout suppressed so the count stays clean.
+    if [ "${count:-0}" -eq 3 ] 2>/dev/null && type loki_crash_friction &>/dev/null; then
+        loki_crash_friction "gate_failure" "gate=${gate_name} consecutive=${count}" >/dev/null 2>&1 || true
+    fi
+
+    echo "$count"
 }
 
 clear_gate_failure() {
@@ -8196,6 +8223,11 @@ attempt_provider_failover() {
     done
 
     log_warn "Failover: all providers in chain exhausted, falling back to retry"
+    # Crash friction (rate_limit_loop): a clear threshold -- every provider in
+    # the failover chain is rate-limited/unhealthy. Best-effort, never blocks.
+    if type loki_crash_friction &>/dev/null; then
+        loki_crash_friction "rate_limit_loop" "failover chain exhausted: ${FAILOVER_CHAIN}" >/dev/null 2>&1 || true
+    fi
     return 1
 }
 
@@ -11989,6 +12021,23 @@ if __name__ == "__main__":
                 "status=$([[ $exit_code -eq 0 ]] && echo ok || echo error)"
         fi
 
+        # Crash capture (Phase 0: local-only, best-effort, never blocks).
+        # Conservative: only on a genuine non-zero failure exit. Signal-induced
+        # exits (130 SIGINT / 143 SIGTERM / 137 SIGKILL) are user/operator
+        # interrupts, not crashes, so we skip them. Known conservatism tradeoff:
+        # this fires once per iteration on any nonzero exit, so a long, repeatedly
+        # failing run can accumulate multiple local reports under .loki/crash/.
+        if [ "$exit_code" -ne 0 ] 2>/dev/null && \
+           [ "$exit_code" -ne 130 ] && [ "$exit_code" -ne 143 ] && [ "$exit_code" -ne 137 ] && \
+           type loki_crash_capture &>/dev/null; then
+            loki_crash_capture \
+                "IterationError" \
+                "provider exited non-zero on iteration ${ITERATION_COUNT:-?}" \
+                "$([ -f "$iter_output" ] && tail -c 16384 "$iter_output" 2>/dev/null || true)" \
+                "${rarv_phase:-iteration}" \
+                "$exit_code"
+        fi
+
         # PRD Checklist verification on interval (v5.44.0)
         if type checklist_should_verify &>/dev/null && checklist_should_verify; then
             checklist_verify
@@ -12913,6 +12962,11 @@ except (json.JSONDecodeError, OSError): pass
 main() {
     trap cleanup INT TERM
     SESSION_START_EPOCH=$(date +%s)
+
+    # First-run disclosure (shown once, before any work; best-effort).
+    if type loki_show_disclosure_once &>/dev/null; then
+        loki_show_disclosure_once
+    fi
 
     echo ""
     echo -e "${BOLD}${BLUE}"

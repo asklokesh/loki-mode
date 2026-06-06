@@ -12,6 +12,7 @@
 import { runVersion } from "./commands/version.ts";
 import { runProvider } from "./commands/provider.ts";
 import { runMemory } from "./commands/memory.ts";
+import { installCrashHandlers } from "./runner/crash.ts";
 
 const HELP = `Loki Mode (TypeScript port, Phase 2 of bash->Bun migration)
 
@@ -135,6 +136,18 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runProof(rest);
     }
 
+    case "crash": {
+      // Crash Reporting Phase 0 (local-only, ZERO network egress): inspect and
+      // manually submit scrubbed crash reports written to .loki/crash/ by the
+      // capture hook (src/runner/crash.ts -> autonomy/lib/crash_capture.py).
+      // For a real `loki crash` invocation to route here in production, "crash"
+      // must be added to the bin/loki shim allowlist (cross-slice dependency,
+      // not part of this slice). Until then, exercise via `bun src/cli.ts crash`
+      // or LOKI route once the shim is updated.
+      const { runCrash } = await import("./commands/crash.ts");
+      return runCrash(rest);
+    }
+
     case "wiki": {
       // R5: auto-generated, cited per-project codebase wiki + Q&A (Loki's
       // DeepWiki). Bun implements `show` natively (reads .loki/wiki/*.md);
@@ -218,11 +231,22 @@ async function dispatch(argv: readonly string[]): Promise<number> {
   }
 }
 
+// Crash Reporting Phase 0: register uncaughtException / unhandledRejection
+// handlers before dispatch so a fatal error captures a scrubbed local report
+// (then preserves normal crash semantics: log + exit 1). Local-only, no egress.
+installCrashHandlers();
+
 // SIGINT handler -- propagate Ctrl-C to a clean exit so child processes
 // spawned via Bun.spawn (e.g. doctor's network probes) don't outlive us.
 // Standard convention: 128 + signal number.
 process.on("SIGINT", () => process.exit(130));
 process.on("SIGTERM", () => process.exit(143));
 
+// Conservative capture (plan section 9): a plain nonzero exit from a command
+// that returned a status cleanly (doctor failing a check, an unknown subcommand,
+// a usage error) is NOT a crash and must not write a crash report. Genuine
+// crashes are caught by the uncaughtException / unhandledRejection handlers
+// installed above, which capture + exit 1 themselves. So the terminal exit is
+// left unwrapped on purpose.
 const code = await dispatch(Bun.argv.slice(2));
 process.exit(code);
