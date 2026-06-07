@@ -105,6 +105,15 @@ interface FileLockOptions {
   staleMs?: number;
 }
 
+// Upper bound on the exponential-backoff poll interval. A waiter starts at
+// pollMs and doubles up to this cap. Was 200ms, which is genuinely coarse
+// for hot in-process contention (e.g. parallel trackGateFailure callers):
+// under heavy contention a backed-off waiter could idle ~200ms after a
+// holder released, throttling real throughput. 50ms keeps the wakeup
+// granularity tight while still bounding busy-poll cost for the
+// low-frequency cross-process case this lock is designed for.
+const BACKOFF_CAP_MS = 50;
+
 function lockFilePath(target: string): string {
   return `${target}.lock`;
 }
@@ -242,7 +251,7 @@ export async function withFileLock<T>(
       );
     }
     if (reapStaleLock(lockFile, staleMs)) continue;
-    const wait = Math.min(pollMs * 2 ** Math.min(attempt, 4), 200);
+    const wait = Math.min(pollMs * 2 ** Math.min(attempt, 4), BACKOFF_CAP_MS);
     attempt += 1;
     await new Promise((r) => setTimeout(r, wait));
   }
@@ -288,7 +297,7 @@ export function withFileLockSync<T>(
       );
     }
     if (reapStaleLock(lockFile, staleMs)) continue;
-    const wait = Math.min(pollMs * 2 ** Math.min(attempt, 4), 200);
+    const wait = Math.min(pollMs * 2 ** Math.min(attempt, 4), BACKOFF_CAP_MS);
     attempt += 1;
     Atomics.wait(sab, 0, 0, wait);
   }

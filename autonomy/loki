@@ -18001,7 +18001,7 @@ HELP = (
     "Usage: loki crash [subcommand] [args]\n"
     "\n"
     "Subcommands:\n"
-    "  (none)               List crash reports in .loki/crash/\n"
+    "  (none) | list        List crash reports in .loki/crash/\n"
     "  show <id>            Pretty-print one scrubbed crash report\n"
     "  submit [<id>]        Print the scrubbed payload and a prefilled GitHub\n"
     "                       issue URL for manual submission\n"
@@ -18138,7 +18138,7 @@ def submit_crash(rid):
     sys.stdout.write("See docs/PRIVACY.md for what is and is not collected.\n")
     return 0
 
-if SUB == "":
+if SUB == "" or SUB == "list":
     sys.exit(list_crashes())
 elif SUB in ("--help", "-h", "help"):
     sys.stdout.write(HELP)

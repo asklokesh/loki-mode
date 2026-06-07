@@ -17,22 +17,38 @@ function newDir(): string {
 }
 
 describe("withFileLock", () => {
-  test("serializes concurrent async increments without loss", async () => {
-    const dir = newDir();
-    const target = join(dir, "counter.json");
-    writeFileSync(target, JSON.stringify({ n: 0 }));
-    const inc = () =>
-      withFileLock(target, async () => {
-        const cur = JSON.parse(readFileSync(target, "utf-8")) as { n: number };
-        await new Promise((r) => setTimeout(r, 5));
-        cur.n += 1;
-        writeFileSync(target, JSON.stringify(cur));
-      });
-    await Promise.all(Array.from({ length: 25 }, () => inc()));
-    const final = JSON.parse(readFileSync(target, "utf-8")) as { n: number };
-    expect(final.n).toBe(25);
-    expect(existsSync(`${target}.lock`)).toBe(false);
-  });
+  test(
+    "serializes concurrent async increments without loss",
+    async () => {
+      const dir = newDir();
+      const target = join(dir, "counter.json");
+      writeFileSync(target, JSON.stringify({ n: 0 }));
+      // Small pollMs so contended waiters re-check quickly: 25 tasks still
+      // fully serialize (no-lost-update guarantee unchanged), they just
+      // resolve contention with finer granularity than the default backoff.
+      const inc = () =>
+        withFileLock(
+          target,
+          async () => {
+            const cur = JSON.parse(
+              readFileSync(target, "utf-8"),
+            ) as { n: number };
+            await new Promise((r) => setTimeout(r, 5));
+            cur.n += 1;
+            writeFileSync(target, JSON.stringify(cur));
+          },
+          { pollMs: 2 },
+        );
+      await Promise.all(Array.from({ length: 25 }, () => inc()));
+      const final = JSON.parse(readFileSync(target, "utf-8")) as { n: number };
+      expect(final.n).toBe(25);
+      expect(existsSync(`${target}.lock`)).toBe(false);
+    },
+    // Generous per-test timeout: a slow/contended CI cell (this flaked only
+    // on macos-latest bun=1.3.13) must never trip the 5s default while still
+    // serializing 25 acquisitions under contention.
+    30_000,
+  );
 
   test("removes lock sentinel even when fn throws", async () => {
     const dir = newDir();

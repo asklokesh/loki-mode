@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.19.4] - 2026-06-07
+
+### Fixed
+- `loki crash list` now lists crash reports, matching the bare `loki crash`
+  command. Previously only the bare form listed and `loki crash list` errored
+  with "Unknown crash subcommand", which a user mirroring `loki proof list` or
+  `loki memory list` would hit. Fixed on both routes (bash and Bun) with the
+  help text updated to show `(none) | list`. Found during real-user CLI QA of
+  the v7.19.x arc.
+- CI reliability: the `withFileLock` concurrency unit test no longer times out
+  on slow CI runners. The advisory file-lock backoff cap was tightened from
+  200ms to 50ms (a real throughput improvement under contention for the
+  parallel gate-failure call sites), the test polls faster, and it carries an
+  explicit generous per-test timeout. The static-analysis parallelism test now
+  gates its strict speedup assertion on CPU count, so it does not false-fail on
+  a single-core CI cell while still verifying parallelism on multi-core
+  machines. No product behavior change beyond the faster lock backoff.
+
 ## [7.19.3] - 2026-06-07
 
 ### Added

@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -516,14 +516,33 @@ describe("runStaticAnalysis (real Phase 5 implementation)", () => {
       expect(r.passed).toBe(true);
       expect(r.detail ?? "").toContain(`${FILE_COUNT} files clean`);
 
+      // The strict speedup bound (parallel beats ~4x single) is only a valid
+      // expectation when there are multiple cores to parallelize across. On a
+      // single-core / CPU-starved CI cell, 16 spawns run effectively serially
+      // and the strict bound false-fails even though the code is correct. Gate
+      // the strict assertion on core count; on low-core runners keep only the
+      // always-true guard (parallel must still beat the sequential worst case)
+      // plus a generous absolute ceiling so a genuinely-broken serialization
+      // still trips it.
+      const cores = cpus().length;
       const sequentialEstimate = FILE_COUNT * singleMs;
-      const upperBound = Math.max(4 * singleMs, 1500);
-      expect(parallelMs).toBeLessThan(upperBound);
+      if (cores >= 4) {
+        const upperBound = Math.max(4 * singleMs, 1500);
+        expect(parallelMs).toBeLessThan(upperBound);
+      } else {
+        // Low-core: only assert we are not pathologically slow. A generous
+        // floor (8x single-file time, min 8s) catches a real no-parallelism
+        // regression without false-failing on a starved runner.
+        const looseBound = Math.max(8 * singleMs, 8000);
+        expect(parallelMs).toBeLessThan(looseBound);
+      }
+      // Always valid regardless of core count: parallel must beat the naive
+      // sequential worst-case estimate.
       expect(parallelMs).toBeLessThan(sequentialEstimate);
     } finally {
       rmSync(tmpSingle, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe("runTestCoverage (real Phase 5 implementation)", () => {

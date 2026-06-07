@@ -30,7 +30,7 @@ const HELP = `${BOLD}loki crash${NC} - inspect and manually submit local crash r
 Usage: loki crash [subcommand] [args]
 
 Subcommands:
-  (none)               List crash reports in .loki/crash/
+  (none) | list        List crash reports in .loki/crash/
   show <id>            Pretty-print one scrubbed crash report
   submit [<id>]        Print the scrubbed payload and a prefilled GitHub
                        issue URL for manual submission
@@ -229,6 +229,7 @@ export async function runCrash(argv: readonly string[]): Promise<number> {
   const sub = argv[0];
   switch (sub) {
     case undefined:
+    case "list":
       return listCrashes();
     case "--help":
     case "-h":

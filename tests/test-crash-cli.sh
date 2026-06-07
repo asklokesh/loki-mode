@@ -161,6 +161,17 @@ printf '%s' "$out" | grep -q "No crash reports found" \
     || bad "loki crash (empty): missing no-reports message [$out]"
 [ "$rc" -eq 0 ] && ok "loki crash (empty): exit 0" || bad "loki crash (empty): exit $rc"
 
+# loki crash LIST is an explicit alias for the bare list (v7.19.4): a user
+# mirroring 'proof list' / 'memory list' must not hit "Unknown crash subcommand".
+out="$(_loki_bash crash list 2>&1)"; rc=$?
+printf '%s' "$out" | grep -q "No crash reports found" \
+    && ok "loki crash list (empty): lists like bare crash" \
+    || bad "loki crash list (empty): not treated as list [$out]"
+[ "$rc" -eq 0 ] && ok "loki crash list (empty): exit 0" || bad "loki crash list (empty): exit $rc"
+printf '%s' "$out" | grep -qi "Unknown crash subcommand" \
+    && bad "loki crash list: still rejected as unknown subcommand" \
+    || ok "loki crash list: not rejected as unknown"
+
 # Seed a crash dir so 'show <bad-id>' takes the dir-exists-but-no-match branch
 # (which is the branch that returns nonzero).
 mkdir -p "$EMPTY_DIR/.loki/crash"
