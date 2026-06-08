@@ -2,9 +2,9 @@
 
 # Loki Mode
 
-### Build the future, faster.
+### The spec-driven autonomous builder with verified completion.
 
-**Describe what you want. Get production-ready code.**
+**Hand it a spec. It does not accept "done" on an empty diff or failing tests.**
 
 [![npm version](https://img.shields.io/npm/v/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=553DE9)](https://www.npmjs.com/package/loki-mode)
 [![npm downloads](https://img.shields.io/npm/dt/loki-mode?style=for-the-badge&logo=npm&logoColor=white&color=1FC5A8&label=downloads)](https://www.npmjs.com/package/loki-mode)
@@ -24,12 +24,12 @@
 
 ## Why Loki Mode?
 
-- **Spec to product, autonomously** -- Describe what you want, walk away, come back to working code with tests. Loki runs the full RARV-C closure loop (Reason - Act - Reflect - Verify - Close) until the work is actually done, not just attempted.
+- **Spec-driven, autonomous, with a built-in trust layer** -- Hand Loki a spec, walk away, come back to working code with tests. The full RARV-C closure loop (Reason - Act - Reflect - Verify - Close) runs until the work is actually done, not just attempted. The verified-completion evidence gate (`skills/quality-gates.md`) refuses any "done" claim on an empty git diff against the run-start commit, and blocks completion when tests run red, so "complete" means proven, not promised.
 - **Production quality built in** -- 11 quality gates (`skills/quality-gates.md`), blind 3-reviewer code review (`run.sh:run_code_review()`), anti-sycophancy checks
 - **Cross-project memory** -- Episodic/semantic/procedural memory with vector search; knowledge learned on one project surfaces on the next (v5.15.0+, see `memory/engine.py`)
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
 - **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
-- **MCP server** -- 15 tools including ChromaDB code search (`mcp/server.py`)
+- **MCP server** -- 34 tools (including ChromaDB code search) plus 3 resources and 2 prompts (`mcp/server.py`, with managed-memory and magic tools registered from `mcp/managed_tools.py` and `mcp/magic_tools.py`)
 - **Full-stack output** -- Source code, tests, Docker configs, CI/CD pipelines, audit logs
 - **Provider-agnostic** -- runs on Claude, Codex, Cline, or Aider with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
 - **Open source** -- Free for personal, internal, and academic use.
@@ -409,8 +409,8 @@ Self-reported results from the included test harness. Verification scripts inclu
 
 | Benchmark | Result | Notes |
 |-----------|--------|-------|
-| HumanEval | 162/164 (98.78%) | Max 3 retries, RARV self-verification |
-| SWE-bench | 299/300 patches | Patch generation -- evaluator not yet run |
+| HumanEval | 162/164 (98.78%) | Self-reported; harness + results JSON in `benchmarks/results/humaneval-loki-results.json`. Max 3 retries, RARV self-verification. |
+| SWE-bench | Not yet measured | Harness exists and generates patches, but the official SWE-bench evaluator has not been run, so there is no pass-rate to report. Run it yourself: `./benchmarks/run-benchmarks.sh swebench --execute` |
 
 See [benchmarks/](benchmarks/) for methodology.
 

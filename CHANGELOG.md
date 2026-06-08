@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.20.0] - 2026-06-08
+
+### Changed
+- Positioning refresh across README, SKILL.md, wiki, and the installation guide.
+  Loki is now described as a spec-driven autonomous builder with a built-in
+  trust layer (verified completion), surfacing the RARV-C loop, 11 quality
+  gates, completion council, and the verified-completion evidence gate that were
+  previously buried as internal mechanics. The wording matches the gate's actual
+  behavior: an empty git diff against the run-start commit always blocks "done",
+  and a red test run blocks completion when a test runner ran. No product
+  behavior change.
+- MCP server advertising corrected. The README and wiki previously claimed "15
+  tools"; the server actually exposes 34 tools (26 in `mcp/server.py`, 7 magic
+  tools, 1 managed-memory tool), plus 3 resources and 2 prompts. Numbers
+  verified by counting registrations, not estimated.
+
+### Fixed
+- Benchmark table honesty. The SWE-bench row claimed "299/300 patches", which
+  read as a near-perfect resolution rate, but only patches were generated and
+  the official SWE-bench evaluator was never run (no pass-rate result exists).
+  It now reads "Not yet measured" with the exact reproduction command. The
+  HumanEval row keeps 162/164 (98.78%) and now cites its results file
+  (`benchmarks/results/humaneval-loki-results.json`) for provenance.
+
+### Notes
+- AGENTS.md support (reading AGENTS.md with a CLAUDE.md fallback) was scoped for
+  this release but deferred to a dedicated code release. Implementing it surfaced
+  a separate, pre-existing dual-route parity drift in the no-PRD codebase-analysis
+  prompt that must be reconciled first, rather than suppressed. Tracking it
+  separately keeps this release a clean, parity-neutral positioning change.
+
 ## [7.19.4] - 2026-06-07
 
 ### Fixed

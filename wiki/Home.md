@@ -1,8 +1,8 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous spec-to-product system that runs the RARV-C closure loop until the work is actually done. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous, spec-driven build system with a built-in trust layer. It does not call work done until it is verified: the RARV-C closure loop, 11 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
 
-> Transform a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application with minimal human intervention.
+> Spec-driven: turn a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application, with verification built in so "done" means verified, not just attempted.
 
 ---
 
@@ -10,9 +10,12 @@
 
 Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
+- **Built-in trust layer (verified completion)** - Does not call work done until it is verified: the RARV-C closure loop, 11 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted
+- **Spec-driven development** - Any spec (PRD, GitHub issue, OpenAPI/YAML doc, or one-line brief) drives the build end to end
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
 - **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
+- **MCP server** - 34 tools plus 3 resources and 2 prompts for integration with MCP-aware clients
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
@@ -99,7 +102,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.19.4** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **7.20.0** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 
