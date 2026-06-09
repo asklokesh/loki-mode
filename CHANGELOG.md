@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.21.0] - 2026-06-08
+
+### Added
+- AGENTS.md support. Loki now points the agent at `AGENTS.md` in the repository
+  root for build, test, and style conventions, falling back to `CLAUDE.md` when
+  AGENTS.md is absent (nearest-file-wins, never merged). AGENTS.md is the
+  emerging cross-tool agent-config standard (read by Claude Code, Codex, Cursor,
+  Aider, and others), so repos that adopt it now drive Loki without a
+  Loki-specific config. The instruction line is byte-identical across the bash
+  and Bun routes; the layered project-graph walker (`autonomy/lib/project-graph.sh`)
+  prefers AGENTS.md over CLAUDE.md at each directory layer. Three new tests cover
+  the walker precedence, prompt emission, and cross-route byte-parity.
+
+### Fixed
+- Dual-route parity: the Bun route's no-PRD `CODEBASE_ANALYSIS_MODE` instruction
+  was still the pre-v7.8.1 short prompt while the bash route had the v7.8.1
+  three-pass version. The byte-exact fixture corpus masked this because both the
+  Bun constant and the gold fixtures held the same stale string. The Bun
+  `ANALYSIS_INSTRUCTION` is now byte-identical to the bash route, and the no-PRD
+  fixtures were regenerated from the canonical bash output. No fixtures are
+  suppressed (`KNOWN_FAILING_FIXTURES` stays empty); parity is genuinely green.
+
 ## [7.20.0] - 2026-06-08
 
 ### Changed

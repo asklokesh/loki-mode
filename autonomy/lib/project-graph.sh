@@ -557,6 +557,32 @@ _lpg_find_git_root() {
 # Layer order: parent -> members -> subdir(root-to-leaf, deepest last)
 # -> scope. All paths are deduped via a tracked set of absolute paths.
 # Honors __LPG_TOTAL_CAP across all layers (stops at layer boundary).
+# _lpg_memory_file <dir>
+#
+# Resolve the per-directory memory/conventions file for the layered doc walker.
+# Prefers AGENTS.md (the agents.md standard: plain Markdown, nearest-file-wins,
+# read natively by Claude Code/Codex/etc.) and falls back to CLAUDE.md only when
+# AGENTS.md is absent in that directory. The two are never merged. The reader
+# (_lpg_read_layer / _append_layer) is filename-agnostic, so this is the single
+# point that decides which file each layer site reads.
+_lpg_memory_file() {
+    local dir="$1"
+    if [ -f "$dir/AGENTS.md" ]; then
+        printf '%s/AGENTS.md' "$dir"
+    else
+        printf '%s/CLAUDE.md' "$dir"
+    fi
+}
+
+# load_app_graph_context -- emit the layered conventions/doc context (parent,
+# member, subdir, and scope layers) as <!-- LOKI_LAYER --> blocks.
+#
+# NOTE (route asymmetry, conscious + pre-existing): the TS route has NO port of
+# this function. loki-ts/src/project_graph.ts is a membership graph, not a
+# doc-layer text emitter, so this layered AGENTS.md/CLAUDE.md walker is BASH-ONLY
+# by design (the layered-CLAUDE.md doc walker was never ported to TS). The
+# AGENTS.md precedence added here therefore lives only in bash; do not add a TS
+# walker to "fix" the asymmetry.
 load_app_graph_context() {
     local root="${LOKI_PROJECT_GRAPH_ROOT:-}"
 
@@ -634,7 +660,7 @@ load_app_graph_context() {
 
     # Parent layer first.
     if [ -n "$root" ]; then
-        _append_layer parent "$root/CLAUDE.md" || { printf '%s' "$out"; return 0; }
+        _append_layer parent "$(_lpg_memory_file "$root")" || { printf '%s' "$out"; return 0; }
     fi
 
     # Member layers (skip the scope member -- we add it as scope below).
@@ -644,7 +670,7 @@ load_app_graph_context() {
         if [ "$m" = "$target_dir" ]; then
             continue
         fi
-        _append_layer member "$m/CLAUDE.md" || { printf '%s' "$out"; return 0; }
+        _append_layer member "$(_lpg_memory_file "$m")" || { printf '%s' "$out"; return 0; }
     done
 
     # Subdir layers: ancestors of target_dir up to (and including) git_root,
@@ -674,12 +700,12 @@ load_app_graph_context() {
         # subdir_chain is leaf-to-root order; reverse so we emit root-to-leaf.
         local i count=${#subdir_chain[@]}
         for (( i = count - 1; i >= 0; i-- )); do
-            _append_layer subdir "${subdir_chain[$i]}/CLAUDE.md" || { printf '%s' "$out"; return 0; }
+            _append_layer subdir "$(_lpg_memory_file "${subdir_chain[$i]}")" || { printf '%s' "$out"; return 0; }
         done
     fi
 
     # Scope layer (target dir).
-    _append_layer scope "$target_dir/CLAUDE.md" || { printf '%s' "$out"; return 0; }
+    _append_layer scope "$(_lpg_memory_file "$target_dir")" || { printf '%s' "$out"; return 0; }
 
     printf '%s' "$out"
 }

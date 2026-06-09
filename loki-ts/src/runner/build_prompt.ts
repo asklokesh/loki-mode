@@ -203,8 +203,8 @@ function sdlcInstruction(phases: string): string {
 }
 
 const ANALYSIS_INSTRUCTION =
-  // run.sh:8959
-  `CODEBASE_ANALYSIS_MODE: No PRD. FIRST: Analyze codebase - scan structure, read package.json/requirements.txt, examine README. THEN: Generate PRD at .loki/generated-prd.md. FINALLY: Execute SDLC phases.`;
+  // run.sh:10043 - kept byte-identical to the bash route (v7.8.1 three-pass analysis)
+  `CODEBASE_ANALYSIS_MODE: No PRD provided. Reverse-engineer a precise PRD from the existing code in three passes, cheaply and without blind full scans. PASS 1 (orient): list the top two directory levels; read ONLY high-signal manifests that exist (package.json, requirements.txt, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, composer.json) to identify language, framework, and scripts; read README and any docs index. PASS 2 (locate): from the manifests and conventional layout, identify the entrypoints, the public API or CLI surface, the test directory and runner, and the config or env contract; read those first; skip generated, vendored, and lockfile content; prefer LSP workspace symbols when the lsp-proxy server is available. PASS 3 (write): write .loki/generated-prd.md with these sections: Overview, Detected Stack, Entrypoints and Components, Existing Behavior and Requirements (reverse-engineered, observable), Test and Build Setup, Gaps and TODOs, Out of Scope. Keep it under 200 lines, plain Markdown, no emojis, no em dashes. Do not invent features not evidenced by the code. THEN execute SDLC phases against that PRD.`;
 
 const MEMORY_INSTRUCTION =
   // run.sh:8962
@@ -220,6 +220,16 @@ const USAGE_DOC_INSTRUCTION =
 // run.sh build_prompt() $lsp_grounding_instruction.
 const LSP_GROUNDING_INSTRUCTION =
   `LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship.`;
+
+// AGENTS.md instruction (agents.md standard: plain Markdown at repo root,
+// nearest-file-wins, read natively by Claude Code/Codex/etc.). Loki prefers
+// AGENTS.md and falls back to CLAUDE.md only when AGENTS.md is absent; the two
+// are never merged. Parity with bash: run.sh build_prompt() $agents_md_instruction.
+// Kept byte-identical to the bash route (same precedent as AUTONOMY_OVERRIDE_TEXT
+// in providers/claude_flags.ts). Emitted immediately after LSP_GROUNDING in
+// every block that carries the LSP instruction.
+const AGENTS_MD_INSTRUCTION =
+  `Project conventions: read AGENTS.md in the repository root for build, test, and style conventions. If AGENTS.md is absent, read CLAUDE.md instead. The nearest such file to the code you are editing takes precedence.`;
 
 // ---------------------------------------------------------------------------
 // load_ledger_context (run.sh:8126) -- newest LEDGER-*.md, head -100 lines.
@@ -1065,6 +1075,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(MEMORY_INSTRUCTION);
   lines.push(USAGE_DOC_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
+  lines.push(AGENTS_MD_INSTRUCTION);
   if (prd === null || prd.length === 0) {
     lines.push(ANALYSIS_INSTRUCTION);
   }
@@ -1124,6 +1135,7 @@ function buildStaticFirstDegraded(opts: BuildPromptOpts, sections: ResolvedSecti
   }
   lines.push(USAGE_DOC_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
+  lines.push(AGENTS_MD_INSTRUCTION);
   lines.push("</loki_system>");
   lines.push("[CACHE_BREAKPOINT]");
   lines.push(`<dynamic_context iteration="${iteration}" retry="${retry}">`);
@@ -1169,14 +1181,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(
@@ -1222,6 +1234,7 @@ export const _internals = {
   ANALYSIS_INSTRUCTION,
   MEMORY_INSTRUCTION,
   USAGE_DOC_INSTRUCTION,
+  AGENTS_MD_INSTRUCTION,
   loadLedgerContext,
   loadHandoffContext,
   loadStartupLearnings,

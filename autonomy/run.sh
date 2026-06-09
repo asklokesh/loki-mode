@@ -10068,6 +10068,14 @@ build_prompt() {
     # is the single most leveraged grounding primitive per OpenCode research.
     local lsp_grounding_instruction="LSP_GROUNDING: When the loki-mode-lsp-proxy MCP server is available, prefer LSP tools for symbol verification BEFORE writing code that references those symbols. Workflow: (1) Need to call \`foo.bar()\` you have not already read? -> mcp__loki-mode-lsp-proxy__lsp_check_exists with symbol='bar' (sub-200ms when cached). If exists:false, do NOT write the call -- use mcp__loki-mode-lsp-proxy__lsp_workspace_symbols with the concept name to find the real symbol, or use Read to see the actual API. (2) Just edited a file? -> mcp__loki-mode-lsp-proxy__lsp_get_diagnostics on that file to see new errors before the next iteration. (3) Need to jump to a definition by name (no file:line known)? -> mcp__loki-mode-lsp-proxy__lsp_find_definition_by_name. Skip these tools silently when the server is not available -- check the tool list, do not retry on errors. Goal: eliminate hallucinated API calls before they ship."
 
+    # AGENTS.md instruction (agents.md standard: plain Markdown at repo root,
+    # nearest-file-wins, read natively by Claude Code/Codex/etc.). Loki prefers
+    # AGENTS.md and falls back to CLAUDE.md only when AGENTS.md is absent; the
+    # two are never merged. This string MUST stay byte-identical to
+    # AGENTS_MD_INSTRUCTION in loki-ts/src/runner/build_prompt.ts (parity-locked,
+    # same precedent as AUTONOMY_OVERRIDE_TEXT in providers/claude_flags.ts).
+    local agents_md_instruction="Project conventions: read AGENTS.md in the repository root for build, test, and style conventions. If AGENTS.md is absent, read CLAUDE.md instead. The nearest such file to the code you are editing takes precedence."
+
     # Load existing context if resuming
     local context_injection=""
     if [ $retry -gt 0 ]; then
@@ -10397,15 +10405,15 @@ except Exception:
         else
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             else
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             fi
         fi
@@ -10448,6 +10456,7 @@ except Exception:
         fi
         printf '%s\n' "$usage_doc_instruction"
         printf '%s\n' "$lsp_grounding_instruction"
+        printf '%s\n' "$agents_md_instruction"
         printf '</loki_system>\n'
         printf '[CACHE_BREAKPOINT]\n'
 
@@ -10480,6 +10489,7 @@ except Exception:
     printf '%s\n' "$memory_instruction"
     printf '%s\n' "$usage_doc_instruction"
     printf '%s\n' "$lsp_grounding_instruction"
+    printf '%s\n' "$agents_md_instruction"
     # For codebase-analysis mode (no PRD), analysis_instruction is part of the
     # static prefix so it remains cache-stable.
     if [ -z "$prd" ]; then

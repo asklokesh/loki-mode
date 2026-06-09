@@ -130,6 +130,14 @@ run_test "Completion-route Evidence Gate (default path)" "$SCRIPT_DIR/test-compl
 # must NOT escalate. Regression guard for the v7.19.2 escalation ladder.
 run_test "Uncertainty Escalation (2-of-3 proxies)" "$SCRIPT_DIR/test-uncertainty-escalation.sh"
 
+# AGENTS.md support (agents.md standard: AGENTS.md preferred, CLAUDE.md
+# fallback, nearest-file-wins, never merged). The layered doc walker resolves
+# per-dir conventions via _lpg_memory_file; the build_prompt instruction line is
+# parity-locked byte-identical across the bash and Bun routes.
+run_test "AGENTS.md Doc Walker (precedence + fallback)" "$SCRIPT_DIR/test-agents-md-walker.sh"
+run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-agents-md-build-prompt.sh"
+run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
