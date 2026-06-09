@@ -132,6 +132,14 @@ export class LokiAppPreview extends LokiElement {
         url: status?.url,
         crash: status?.crash_count,
         errLen: errors?.lines?.length || 0,
+        // Include the healthcheck signal so the panel re-renders (and the
+        // iframe reloads) when the app transitions from container-up to
+        // actually-serving. Without this, an iframe that loaded during the
+        // boot window (connection refused) stayed blank forever because
+        // status was already "running" and nothing else in the hash changed.
+        // Observed on a real compose stack: docker compose up -d returns
+        // seconds before the web service answers HTTP.
+        healthOk: status?.last_health?.ok === true,
       });
       // A prior poll may have set a transient read error. Clear it on any
       // successful read, even when the data itself is unchanged, so a recovered
