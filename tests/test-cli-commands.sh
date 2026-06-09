@@ -160,6 +160,24 @@ test_cmd "loki completions zsh exits 0 and shows compdef" \
     0 "compdef" completions zsh
 
 # -------------------------------------------
+# Test: loki preview --help
+# -------------------------------------------
+test_cmd "loki preview --help exits 0 and shows Usage" \
+    0 "Usage: loki preview" preview --help
+
+# -------------------------------------------
+# Test: loki preview with no running app (honest message, exit 0)
+# -------------------------------------------
+test_cmd "loki preview --no-open exits 0 with no app running" \
+    0 "No app running" preview --no-open
+
+# -------------------------------------------
+# Test: loki open alias --help routes to preview
+# -------------------------------------------
+test_cmd "loki open --help exits 0 and shows preview usage" \
+    0 "Usage: loki preview" open --help
+
+# -------------------------------------------
 # Test: unknown command exits non-zero
 # -------------------------------------------
 test_cmd "loki unknown-command exits 1" \

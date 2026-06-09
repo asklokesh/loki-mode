@@ -74,6 +74,7 @@ export { LokiLearningDashboard } from './components/loki-learning-dashboard.js';
 export { LokiCouncilDashboard } from './components/loki-council-dashboard.js';
 export { LokiChecklistViewer } from './components/loki-checklist-viewer.js';
 export { LokiAppStatus } from './components/loki-app-status.js';
+export { LokiAppPreview } from './components/loki-app-preview.js';
 export { LokiCostDashboard } from './components/loki-cost-dashboard.js';
 export { LokiCheckpointViewer } from './components/loki-checkpoint-viewer.js';
 export { LokiContextTracker } from './components/loki-context-tracker.js';
@@ -144,6 +145,7 @@ const componentModules = [
   './components/loki-council-dashboard.js',
   './components/loki-checklist-viewer.js',
   './components/loki-app-status.js',
+  './components/loki-app-preview.js',
   './components/loki-cost-dashboard.js',
   './components/loki-checkpoint-viewer.js',
   './components/loki-context-tracker.js',

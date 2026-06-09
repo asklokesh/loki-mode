@@ -6628,18 +6628,95 @@ async def get_app_runner_status():
         return {"status": "error"}
 
 
+def _get_log_redactor():
+    """Lazily load autonomy/lib/proof_redact.redact_value.
+
+    Lives under autonomy/lib (not on the dashboard import path), so import it
+    by path with a graceful fallback. Returns a callable str -> str. On any
+    import failure returns a redactor that withholds the line rather than
+    leaking raw runtime output (which can contain secrets in stack traces).
+    """
+    cached = getattr(_get_log_redactor, "_cached", None)
+    if cached is not None:
+        return cached
+    try:
+        import importlib.util
+
+        lib_path = _Path(__file__).resolve().parent.parent / "autonomy" / "lib" / "proof_redact.py"
+        spec = importlib.util.spec_from_file_location("loki_proof_redact", str(lib_path))
+        if spec is None or spec.loader is None:
+            raise ImportError("proof_redact spec unavailable")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        try:
+            mod.set_context(home=os.path.expanduser("~"), repo_root=str(_project_root()))
+        except Exception:
+            pass
+        redactor = mod.redact_value
+    except Exception:
+        # Fail closed: withhold rather than leak raw log content.
+        def redactor(_s):
+            return "[log withheld: redactor unavailable]"
+    _get_log_redactor._cached = redactor
+    return redactor
+
+
 @app.get("/api/app-runner/logs")
 async def get_app_runner_logs(lines: int = Query(default=100, ge=1, le=1000)):
-    """Get last N lines of app runner logs."""
+    """Get last N lines of app runner logs (redacted)."""
     loki_dir = _get_loki_dir()
     log_file = loki_dir / "app-runner" / "app.log"
     if not log_file.exists():
         return {"lines": []}
     try:
+        redact = _get_log_redactor()
         all_lines = _safe_read_text(log_file).splitlines()
-        return {"lines": all_lines[-lines:]}
+        return {"lines": [redact(ln) for ln in all_lines[-lines:]], "redacted": True}
     except OSError:
         return {"lines": []}
+
+
+@app.get("/api/app-runner/errors")
+async def get_app_runner_errors(lines: int = Query(default=50, ge=1, le=500)):
+    """Get the last N lines of app runner output, redacted, plus crash state.
+
+    Powers the dashboard error banner. Reads .loki/app-runner/app.log (the same
+    log the app writes) and the crash/status fields from state.json so the UI
+    can decide whether to surface the banner without a second round-trip.
+    The error banner is fed exclusively by this server-side endpoint: the
+    running app is cross-origin to the dashboard, so the browser cannot read
+    runtime errors out of the preview iframe.
+    """
+    loki_dir = _get_loki_dir()
+    app_dir = loki_dir / "app-runner"
+    log_file = app_dir / "app.log"
+    state_file = app_dir / "state.json"
+
+    status = "not_initialized"
+    crash_count = 0
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text())
+            status = state.get("status", "unknown")
+            crash_count = int(state.get("crash_count", 0) or 0)
+        except (json.JSONDecodeError, OSError, ValueError, TypeError):
+            status = "error"
+
+    out_lines = []
+    if log_file.exists():
+        try:
+            redact = _get_log_redactor()
+            all_lines = _safe_read_text(log_file).splitlines()
+            out_lines = [redact(ln) for ln in all_lines[-lines:]]
+        except OSError:
+            out_lines = []
+
+    return {
+        "lines": out_lines,
+        "redacted": True,
+        "status": status,
+        "crash_count": crash_count,
+    }
 
 
 @app.post("/api/control/app-restart", dependencies=[Depends(auth.require_scope("control"))])

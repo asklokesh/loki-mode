@@ -1178,6 +1178,15 @@ export class LokiApiClient extends EventTarget {
   }
 
   /**
+   * Get redacted app runner error lines plus crash state (powers the
+   * Live App preview error banner).
+   * @param {number} lines - Number of lines to fetch (default: 50)
+   */
+  async getAppRunnerErrors(lines = 50) {
+    return this._get(`/api/app-runner/errors?lines=${lines}`);
+  }
+
+  /**
    * Signal app runner to restart
    */
   async restartApp() {

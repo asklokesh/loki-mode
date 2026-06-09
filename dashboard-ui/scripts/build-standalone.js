@@ -1160,6 +1160,7 @@ function generateStandaloneHTML(bundleCode) {
         <div class="section-page-header">
           <h2 class="section-page-title">App Runner</h2>
         </div>
+        <loki-app-preview id="app-preview"></loki-app-preview>
         <loki-app-status id="app-status"></loki-app-status>
       </div>
 

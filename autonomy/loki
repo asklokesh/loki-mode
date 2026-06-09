@@ -536,6 +536,7 @@ show_help() {
     echo "  logs             Show recent log output"
     echo "  dashboard [cmd]  Dashboard server (start|stop|status|url|open)"
     echo "  web [cmd]        Web app UI (start|stop|status) -- serves web-app/dist/"
+    echo "  preview          Open the running app Loki built (alias: open)"
     echo "  provider [cmd]   Manage AI provider (show|set|list|info)"
     echo "  serve            Start dashboard/API server (alias for api start)"
     echo "  api [cmd]        Dashboard/API server (start|stop|status)"
@@ -4749,6 +4750,92 @@ cmd_web_status() {
     fi
 
     echo "Purple Lab is not running."
+}
+
+# Open the running app preview (the app Loki built and started locally).
+# Surfaces the existing app-runner state; does not start or change the app.
+cmd_preview() {
+    local open_browser=true
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- open the running app preview${NC}"
+            echo ""
+            echo "Usage: loki preview [--no-open]"
+            echo "       loki open      (alias)"
+            echo ""
+            echo "Prints the URL of the app Loki built and started locally, then"
+            echo "opens it in your browser. The app runner starts the app after the"
+            echo "first successful build iteration. This serves a real local build"
+            echo "from localhost on your machine; it is not hosted."
+            echo ""
+            echo "Options:"
+            echo "  --no-open    Print the URL and status only; do not open a browser"
+            echo "  --help, -h   Show this help and exit"
+            return 0
+            ;;
+        --no-open)
+            open_browser=false
+            ;;
+    esac
+
+    local state_file="${LOKI_DIR}/app-runner/state.json"
+    if [ ! -f "$state_file" ]; then
+        echo "No app running. The app runner starts after the first successful build iteration."
+        echo "Run 'loki status' to check the current run."
+        return 0
+    fi
+
+    # Parse url/status/port. Prefer python3 (used throughout); fall back to grep.
+    local url status port
+    if command -v python3 &> /dev/null; then
+        url=$(python3 -c "import json,sys
+try:
+    d=json.load(open('$state_file'))
+    print(d.get('url',''))
+except Exception:
+    print('')" 2>/dev/null)
+        status=$(python3 -c "import json,sys
+try:
+    d=json.load(open('$state_file'))
+    print(d.get('status',''))
+except Exception:
+    print('')" 2>/dev/null)
+        port=$(python3 -c "import json,sys
+try:
+    d=json.load(open('$state_file'))
+    print(d.get('port',''))
+except Exception:
+    print('')" 2>/dev/null)
+    else
+        url=$(grep -oE '"url"[[:space:]]*:[[:space:]]*"[^"]*"' "$state_file" 2>/dev/null | head -1 | sed 's/.*"url"[[:space:]]*:[[:space:]]*"//;s/"$//')
+        status=$(grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$state_file" 2>/dev/null | head -1 | sed 's/.*"status"[[:space:]]*:[[:space:]]*"//;s/"$//')
+        port=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$state_file" 2>/dev/null | head -1 | grep -oE '[0-9]+$')
+    fi
+
+    if [ "$status" != "running" ]; then
+        echo "App is not running (status: ${status:-unknown})."
+        echo "The app runner starts the app after a successful build iteration."
+        return 0
+    fi
+
+    if [ -z "$url" ]; then
+        url="http://localhost:${port:-3000}"
+    fi
+
+    echo -e "${GREEN}Live app:${NC} $url  [running, port ${port:-?}]"
+    echo "Served from localhost on this machine."
+
+    if [ "$open_browser" = true ]; then
+        if command -v open &> /dev/null; then
+            open "$url"
+        elif command -v xdg-open &> /dev/null; then
+            xdg-open "$url"
+        elif command -v start &> /dev/null; then
+            start "$url"
+        else
+            echo "Please open in browser: $url"
+        fi
+    fi
 }
 
 # Import GitHub issues
@@ -13295,6 +13382,9 @@ main() {
             ;;
         web)
             cmd_web "$@"
+            ;;
+        preview|open)
+            cmd_preview "$@"
             ;;
         logs)
             cmd_logs "$@"
