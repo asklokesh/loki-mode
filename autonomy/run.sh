@@ -1226,6 +1226,94 @@ emit_event_json() {
     log_debug "Event: $event_type - $json_data"
 }
 
+# Trust-layer metrics event writer (benchmark program section 3). Appends one
+# durable record per trust event to .loki/metrics/trust-events.jsonl via the
+# Python writer (single source of truth for the JSONL schema). This is ADDITIVE
+# and purely a side effect: it writes nothing to stdout, ignores all errors, and
+# never alters control flow or any caller's return value. The single-state
+# control files (evidence-block.json, gate-failure-count.json) are untouched;
+# this log exists because those files are erased on the successful-run path,
+# losing exactly the self-correction events the trust metrics publish.
+# Resolve a stable, UNIQUE-PER-RUN id for the trust event log. The cross-run
+# denominators (block rate, gate distribution) require ids that are distinct per
+# run. A persisted per-run file is the source of truth, NOT LOKI_SESSION_ID:
+#  - On `loki start ./prd.md`, LOKI_SESSION_ID is unset entirely.
+#  - On `loki run <issue>`, LOKI_SESSION_ID is the issue NUMBER, which is stable
+#    across re-runs by design (so `loki stop <n>` works); using it would merge
+#    every re-run of the same issue into one bucket and skew the rates.
+# So a fresh run always MINTS a new unique id into .loki/state/trust-run-id, and
+# every later event in that run reads it back. LOKI_SESSION_ID is only a
+# last-resort fallback when no minted file exists (e.g. an event fired before
+# any run_start, which the aggregator then treats as un-instrumented anyway).
+# Events never join to proof.json (Metrics 1-3 are events-only, Metric 4 is
+# proofs-only), so intra-log uniqueness is the only requirement.
+# Usage: _loki_trust_run_id [--new]
+_loki_trust_run_id() {
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
+    local id_file="$loki_dir/state/trust-run-id"
+    if [ "${1:-}" = "--new" ]; then
+        # Fresh run: mint a new unique id (epoch + pid + short random) and
+        # persist it as the source of truth for this run's events.
+        local new_id
+        new_id="run-$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM:-0}"
+        mkdir -p "$loki_dir/state" 2>/dev/null || true
+        printf '%s' "$new_id" > "$id_file" 2>/dev/null || true
+        printf '%s' "$new_id"
+        return 0
+    fi
+    # Read path: the minted per-run file wins over LOKI_SESSION_ID so a resume
+    # in a separate process (no exported LOKI_TRUST_RUN_ID) still resolves to
+    # the same run, and a stable issue-number session id never collapses re-runs.
+    if [ -s "$id_file" ]; then
+        cat "$id_file" 2>/dev/null || true
+        return 0
+    fi
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        printf '%s' "$LOKI_SESSION_ID"
+        return 0
+    fi
+    # No persisted id and no session id: empty -> writer records "unknown".
+    printf '%s' ""
+}
+
+# Usage: record_trust_event_bash <event_type> [key=value ...]
+# Pass LOKI_TRUST_RUN_ID in the environment to override the resolved id (the
+# run_start site sets it to the freshly minted id so the first event matches).
+record_trust_event_bash() {
+    local event_type="$1"
+    shift || true
+    local tm_mod="$SCRIPT_DIR/lib/trust_metrics.py"
+    [ -f "$tm_mod" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
+    local run_id="${LOKI_TRUST_RUN_ID:-$(_loki_trust_run_id)}"
+    # Pass kv pairs as argv so Python parses (no shell JSON building). All
+    # values stay strings except where the reader coerces (iteration -> int).
+    _TM_LOKI_DIR="$loki_dir" \
+    _TM_MOD_PATH="$tm_mod" \
+    _TM_EVENT_TYPE="$event_type" \
+    _TM_RUN_ID="$run_id" \
+    _TM_ITERATION="${ITERATION_COUNT:-0}" \
+    python3 - "$@" <<'TRUST_EVENT_PY' >/dev/null 2>&1 || true
+import os, sys, importlib.util
+spec = importlib.util.spec_from_file_location("trust_metrics", os.environ["_TM_MOD_PATH"])
+tm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tm)
+fields = {}
+for arg in sys.argv[1:]:
+    if "=" in arg:
+        k, v = arg.split("=", 1)
+        fields[k] = v
+tm.record_trust_event(
+    os.environ["_TM_LOKI_DIR"],
+    os.environ["_TM_EVENT_TYPE"],
+    run_id=os.environ.get("_TM_RUN_ID", "") or None,
+    iteration=os.environ.get("_TM_ITERATION", "0"),
+    **fields,
+)
+TRUST_EVENT_PY
+}
+
 # v7.0.2: Bash helper to emit a managed-agents event to the dashboard's
 # managed event log (.loki/managed/events.ndjson). Mirrors the Python
 # emit_managed_event helper so bash callers can land events in the same
@@ -2916,7 +3004,7 @@ spawn_worktree_session() {
                     >> "$log_file" 2>&1 || _wt_exit=$?
                 ;;
             codex)
-                codex exec --full-auto \
+                codex exec --full-auto --skip-git-repo-check \
                     "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1 || _wt_exit=$?
                 ;;
@@ -3117,7 +3205,7 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 resolution=$(claude --dangerously-skip-permissions -p "$conflict_prompt" --output-format text 2>/dev/null)
                 ;;
             codex)
-                resolution=$(codex exec --full-auto "$conflict_prompt" 2>/dev/null)
+                resolution=$(codex exec --full-auto --skip-git-repo-check "$conflict_prompt" 2>/dev/null)
                 ;;
             cline)
                 resolution=$(invoke_cline_capture "$conflict_prompt" 2>/dev/null)
@@ -6551,6 +6639,13 @@ print(counts[gate_name])
         loki_crash_friction "gate_failure" "gate=${gate_name} consecutive=${count}" >/dev/null 2>&1 || true
     fi
 
+    # Trust-metrics: append a durable per-failure record so the gate-failure
+    # distribution survives clear_gate_failure (which resets the running
+    # counter). CRITICAL: this function's stdout IS its return value, so the
+    # write is fully stdout-suppressed and best-effort; it cannot change the
+    # echoed count or any gate behavior.
+    record_trust_event_bash "gate_failure" "gate=${gate_name}" "consecutive=${count}" >/dev/null 2>&1 || true
+
     echo "$count"
 }
 
@@ -7500,7 +7595,7 @@ BUILD_PROMPT
                         --output-format text > "$review_output" 2>/dev/null
                     ;;
                 codex)
-                    codex exec --full-auto "$prompt_text" \
+                    codex exec --full-auto --skip-git-repo-check "$prompt_text" \
                         > "$review_output" 2>/dev/null
                     ;;
                 cline)
@@ -7715,7 +7810,7 @@ ADVERSARIAL_EOF
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                codex exec --full-auto "$adversarial_prompt" \
+                codex exec --full-auto --skip-git-repo-check "$adversarial_prompt" \
                     > "$result_file" 2>/dev/null || true
             fi
             ;;
@@ -11900,6 +11995,19 @@ run_autonomous() {
     _LOKI_RUN_START_SHA="$(cat "$_start_sha_file" 2>/dev/null || echo "")"
     export _LOKI_RUN_START_SHA
 
+    # Trust-metrics instrumentation marker: record one run_start event per
+    # fresh run so the trust-metrics denominator counts ONLY instrumented runs.
+    # This is what lets the aggregator distinguish "0 blocks measured" from
+    # "this run predates instrumentation" (the central honesty rule). Additive,
+    # best-effort, stdout-silent; never affects control flow. Mint a fresh
+    # per-run id here and export it so every later event in this run shares it
+    # (LOKI_SESSION_ID is absent on the `loki start` path).
+    if [ "${ITERATION_COUNT:-0}" -eq 0 ]; then
+        LOKI_TRUST_RUN_ID="$(_loki_trust_run_id --new)"
+        export LOKI_TRUST_RUN_ID
+        record_trust_event_bash "run_start" "start_sha=${_LOKI_RUN_START_SHA:-}" 2>/dev/null || true
+    fi
+
     # Notify dashboard of active project directory (for AI Chat cross-directory usage)
     if command -v curl &>/dev/null; then
         local project_cwd
@@ -12586,7 +12694,7 @@ if __name__ == "__main__":
                 # Uses dynamic tier from RARV phase (tier_param already set above)
                 { LOKI_CODEX_REASONING_EFFORT="$tier_param" \
                 CODEX_MODEL_REASONING_EFFORT="$tier_param" \
-                codex exec --full-auto \
+                codex exec --full-auto --skip-git-repo-check \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;

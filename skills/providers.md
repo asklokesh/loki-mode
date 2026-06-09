@@ -6,7 +6,7 @@ Loki Mode supports four AI providers for autonomous execution.
 
 > **CLI Flags Verified:** The autonomous mode flags have been verified against actual CLI help output:
 > - Claude: `--dangerously-skip-permissions` (verified)
-> - Codex: `--full-auto` (recommended, v0.98.0) or `exec --dangerously-bypass-approvals-and-sandbox` (legacy)
+> - Codex: `exec --full-auto --skip-git-repo-check` (the harness invocation; --skip-git-repo-check required on fresh non-git dirs) or `exec --dangerously-bypass-approvals-and-sandbox` (legacy)
 
 | Feature | Claude Code | OpenAI Codex | Cline CLI | Aider |
 |---------|-------------|--------------|-----------|-------|
@@ -56,7 +56,7 @@ Task(model="haiku", ...)   # Fast tier (parallelize)
 
 ---
 
-## OpenAI Codex CLI (Degraded Mode)
+## OpenAI Codex CLI (Experimental, Degraded Mode)
 
 **Best for:** Teams standardized on OpenAI. Accepts feature tradeoffs.
 
@@ -70,7 +70,7 @@ Task(model="haiku", ...)   # Fast tier (parallelize)
 **Invocation:**
 ```bash
 # Recommended (v0.98.0+)
-codex --full-auto "$prompt"
+codex exec --full-auto --skip-git-repo-check "$prompt"
 
 # Legacy (still supported)
 codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"

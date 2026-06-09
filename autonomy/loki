@@ -554,12 +554,14 @@ show_help() {
     echo "  projects         Multi-project registry management"
     echo "  audit [cmd]      Agent audit log and quality scanning (log|scan)"
     echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
+    echo "  verify [base]    Deterministic PR verification (Autonomi Verify MVP; CI-gate exit codes)"
     echo "  review [opts]    Standalone code review with quality gates (diff, staged, PR, files)"
     echo "  optimize         Optimize prompts based on session history"
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
     echo "  metrics [opts]   Session productivity report (--json, --last N, --save, --share)"
     echo "  cost [opts]      Transparent cost view: per-run/project spend + budget (--json, --last N)"
     echo "  trust [--json]   Visible trust trajectory: council/gate pass-rate + interventions over runs [R4]"
+    echo "  trust-metrics    Trust-layer metrics: evidence-block rate, gate distribution, council split, cost/verified (--json)"
     echo "  dogfood          Show self-development statistics"
     echo "  secrets [cmd]    API key status and validation (status|validate)"
     echo "  reset [target]   Reset session state (all|retries|failed)"
@@ -11355,6 +11357,29 @@ with open(manifest_path, 'w') as f:
 # Modernize legacy codebases incrementally without breaking existing behavior.
 #===============================================================================
 
+# ---------------------------------------------------------------------------
+# loki verify - Autonomi Verify (Verification-as-a-Service MVP)
+#
+# Thin dispatcher that sources autonomy/verify.sh and delegates to its
+# verify_main(). The verification core is deliberately standalone (it does NOT
+# enter the autonomous iteration loop): it computes a PR-style merge-base diff
+# and runs deterministic gates against the current tree, emitting a verdict and
+# a consolidated evidence document. Deterministic-only in this MVP (no LLM
+# review). Exit code is propagated to the caller so the command is CI-gate
+# usable.
+# ---------------------------------------------------------------------------
+cmd_verify() {
+    local verify_mod="$_LOKI_SCRIPT_DIR/verify.sh"
+    if [ ! -f "$verify_mod" ]; then
+        echo -e "${RED}Error: verify module not found at $verify_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$verify_mod"
+    verify_main "$@"
+    return $?
+}
+
 cmd_heal_help() {
     echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
     echo ""
@@ -13502,6 +13527,9 @@ main() {
         heal)
             cmd_heal "$@"
             ;;
+        verify)
+            cmd_verify "$@"
+            ;;
         migrate)
             cmd_migrate "$@"
             ;;
@@ -13528,6 +13556,9 @@ main() {
             ;;
         trust)
             cmd_trust "$@"
+            ;;
+        trust-metrics)
+            cmd_trust_metrics "$@"
             ;;
         syslog)
             cmd_syslog "$@"
@@ -18773,6 +18804,68 @@ cmd_trust() {
     # Safe empty-array expansion (bash 3.2 + set -u): ${arr[@]+"${arr[@]}"}
     # expands to nothing when pass_args is empty instead of an unbound error.
     python3 "$trust_mod" --loki-dir "$loki_dir" ${pass_args[@]+"${pass_args[@]}"}
+}
+
+# Trust-layer metrics (benchmark program section 3): the four AVAILABLE-TODAY
+# metrics nobody else can publish, computed for THIS project from the durable
+# trust-events.jsonl log plus the .loki/proofs/ corpus. Honest by construction:
+# each metric reports its own n= and says "not instrumented" rather than a
+# fabricated zero. Single project only.
+cmd_trust_metrics() {
+    local pass_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki trust-metrics${NC} - Trust-layer metrics (single project)"
+                echo ""
+                echo "Usage: loki trust-metrics [options]"
+                echo ""
+                echo "Computes the four trust-layer metrics from this project's"
+                echo ".loki artifacts and emits .loki/metrics/trust-metrics.json"
+                echo "plus a human-readable table:"
+                echo "  1. Evidence-gate block rate (runs that caught an unproven"
+                echo "     'done' claim before honoring completion)"
+                echo "  2. Gate failure distribution per run (median, p90, per-gate)"
+                echo "  3. Council rejection / split-verdict rate"
+                echo "  4. Cost-per-VERIFIED-task (local verified denominator)"
+                echo ""
+                echo "Sources: .loki/metrics/trust-events.jsonl (durable event log)"
+                echo "and .loki/proofs/<id>/proof.json. A metric with no source"
+                echo "artifact is reported 'not instrumented', never a fake 0."
+                echo ""
+                echo "Options:"
+                echo "  --json               Machine-readable JSON output"
+                echo "  --no-cache           Do not write trust-metrics.json"
+                echo "  --help, -h           Show this help"
+                echo ""
+                echo "Scope: SINGLE PROJECT only. An --all-projects registry"
+                echo "aggregator is out of scope; run this inside each project."
+                exit 0
+                ;;
+            --json) pass_args+=("--json"); shift ;;
+            --no-cache) pass_args+=("--no-cache"); shift ;;
+            --all-projects)
+                echo -e "${RED}--all-projects is out of scope (single project only).${NC}"
+                echo "Run 'loki trust-metrics' inside each project directory."
+                exit 2
+                ;;
+            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki trust-metrics --help' for usage."; exit 1 ;;
+        esac
+    done
+
+    if ! command -v python3 &>/dev/null; then
+        echo -e "${RED}python3 is required for trust metrics${NC}"
+        exit 1
+    fi
+
+    local tm_mod="$_LOKI_SCRIPT_DIR/lib/trust_metrics.py"
+    if [ ! -f "$tm_mod" ]; then
+        echo -e "${RED}trust_metrics.py not found at $tm_mod${NC}"
+        exit 1
+    fi
+
+    local loki_dir="${LOKI_DIR:-.loki}"
+    python3 "$tm_mod" --loki-dir "$loki_dir" ${pass_args[@]+"${pass_args[@]}"}
 }
 
 # Transparent cost view (R3): per-run + per-project spend, model routing, and

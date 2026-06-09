@@ -10,12 +10,14 @@ Loki Mode supports four active AI providers with different capability levels, pl
 
 | Provider | Status | Task Tool | Parallel | MCP | Context |
 |----------|--------|-----------|----------|-----|---------|
-| **Claude** | Active (Tier 1, Full) | Yes | Yes (10+) | Yes | 200K |
-| **Cline** | Active (Tier 2, Degraded) | No | No | No | varies |
-| **Codex** | Active (Tier 3, Degraded) | No | No | No | 128K |
-| **Aider** | Active (Tier 3, Degraded) | No | No | No | varies |
+| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes (10+) | Yes | 200K |
+| **Cline** | Experimental (Tier 2) - community-tested | No | No | No | varies |
+| **Codex** | Experimental (Tier 3) - community-tested | No | No | No | 128K |
+| **Aider** | Experimental (Tier 3) - community-tested | No | No | No | varies |
 | **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- |
 | **Anthropic Antigravity CLI** | Coming soon | -- | -- | -- | -- |
+
+**Status note (2026-06-09):** Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it is the only provider we E2E-verify ourselves with real spec-to-code builds. Codex, Cline, and Aider have working wiring but no end-to-end verified build on our side, so they are labeled experimental (community-tested). Codex on a fresh non-git directory previously failed with "Not inside a trusted directory"; the harness now passes `--skip-git-repo-check`.
 
 **Note on Gemini:** Upstream Gemini CLI was deprecated by Google. Loki removed the runtime in v7.5.18. `LOKI_PROVIDER=gemini` exits with a clear migration message pointing to Claude/Codex/Cline/Aider.
 
@@ -115,8 +117,12 @@ codex auth
 ### Invocation
 
 ```bash
-# Recommended (v0.98.0+)
-codex --full-auto
+# What Loki's harness runs (works on v0.98+ through v0.132+; the
+# --skip-git-repo-check is required on fresh non-git directories)
+codex exec --full-auto --skip-git-repo-check
+
+# Note: --full-auto is deprecated in codex v0.125+; the explicit equivalent is
+codex exec --ask-for-approval never --sandbox workspace-write --skip-git-repo-check
 
 # Legacy
 codex exec --dangerously-bypass-approvals-and-sandbox
@@ -168,8 +174,8 @@ npm install -g @anthropic-ai/cline
 ### Invocation
 
 ```bash
-# Autonomous mode
-cline --auto-approve
+# Autonomous mode (what the runtime actually passes)
+cline -y
 ```
 
 ### Limitations
