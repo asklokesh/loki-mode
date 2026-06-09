@@ -12171,6 +12171,56 @@ except Exception as exc:
            && loki_claude_flag_supported "--include-partial-messages"; then
             _loki_claude_argv+=("--include-partial-messages")
         fi
+        # ---- Bash<->Bun invocation-flag convergence ledger (v7.25.0) ----------
+        # The fixture corpus covers build_prompt/stats output, NOT this claude
+        # argv, so drift here is invisible to parity tests. Keep this ledger
+        # current. Live route today is BASH (bin/loki routes `start` -> bash;
+        # the Bun runner/providers.ts is a stub not yet reached for `start`).
+        # Bash argv (canonical, live): --dangerously-skip-permissions --model M
+        #   [--append-system-prompt] [--setting-sources] [--include-partial-messages]
+        #   [--effort] [--max-budget-usd] [--fallback-model] -p PROMPT
+        #   --output-format stream-json --verbose
+        # Bun buildAutoFlags also emits: --exclude-dynamic-system-prompt-sections
+        #   (cost-only), --mcp-config (bash gets MCP via --setting-sources +
+        #   .mcp.json discovery; a how-difference, likely behavior-equivalent),
+        #   --include-hook-events (bash handles hook events in its embedded
+        #   stream parser; likely moot). These three are Bun-only and MUST be
+        #   reconciled to a deliberately chosen canonical set BEFORE `start`
+        #   flips to the Bun runner. They have zero live impact today.
+        # v7.25.0: long-run resilience + cost flags, appended individually here
+        # (NOT via _loki_build_claude_auto_flags, which would double the three
+        # flags above). Each is gated on CLI support + an opt-out env var, same
+        # pattern as above. These improve unattended/long-run execution:
+        #   --effort           adaptive reasoning depth per RARV tier
+        #   --max-budget-usd   per-call hard backstop (complements the
+        #                      cumulative check_budget_limit PAUSE gate)
+        #   --fallback-model   resilience to model overload/unavailability
+        # The trust/verification gates stay deterministic; these only tune how
+        # the provider is invoked, never whether work is judged complete.
+        if [ "${LOKI_AUTO_EFFORT:-on}" != "off" ] \
+           && type loki_effort_for_tier >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--effort"; then
+            local _loki_effort
+            _loki_effort="$(loki_effort_for_tier "$CURRENT_TIER" "${DETECTED_COMPLEXITY:-${LOKI_COMPLEXITY:-standard}}")"
+            [ -n "$_loki_effort" ] && _loki_claude_argv+=("--effort" "$_loki_effort")
+        fi
+        if [ "${LOKI_AUTO_BUDGET:-on}" != "off" ] \
+           && type loki_remaining_budget >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--max-budget-usd"; then
+            local _loki_rem_budget
+            _loki_rem_budget="$(loki_remaining_budget)"
+            [ -n "$_loki_rem_budget" ] && _loki_claude_argv+=("--max-budget-usd" "$_loki_rem_budget")
+        fi
+        if [ "${LOKI_AUTO_FALLBACK:-on}" != "off" ] \
+           && type loki_fallback_for_primary >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--fallback-model"; then
+            local _loki_fallback
+            _loki_fallback="$(loki_fallback_for_primary "$tier_param")"
+            [ -n "$_loki_fallback" ] && _loki_claude_argv+=("--fallback-model" "$_loki_fallback")
+        fi
         case "${PROVIDER_NAME:-claude}" in
             claude)
                 # Claude: Full features with stream-json output and agent tracking
