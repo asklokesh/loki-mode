@@ -752,6 +752,18 @@ with open(state_file, 'w') as f:
         "threshold=$effective_threshold" \
         "result=$([ $approve_count -ge $effective_threshold ] && echo 'APPROVED' || echo 'REJECTED')" 2>/dev/null || true
 
+    # Trust-metrics: durable per-vote record for the council rejection / split
+    # rate. The council state.json verdicts[] array is per-run only; this log is
+    # the cross-run corpus. Additive, best-effort, stdout-silent.
+    if type record_trust_event_bash &>/dev/null; then
+        record_trust_event_bash "council_vote" \
+            "approve=$approve_count" \
+            "reject=$reject_count" \
+            "threshold=$effective_threshold" \
+            "result=$([ $approve_count -ge $effective_threshold ] && echo 'APPROVED' || echo 'REJECTED')" \
+            >/dev/null 2>&1 || true
+    fi
+
     # Write transcript for this council round (Path A: council_vote path)
     local _ct_outcome
     _ct_outcome=$([ $approve_count -ge $effective_threshold ] && echo "APPROVED" || echo "REJECTED")
@@ -1366,6 +1378,19 @@ print(json.dumps(items[:5]))
 }
 EVIDENCE_EOF
     mv "$ev_tmp" "$ev_file"
+
+    # Trust-metrics: durable per-block record. evidence-block.json is a single
+    # state file that is DELETED the moment the gate next passes, so it cannot
+    # be the cross-run corpus for the block rate. Append an event here, where a
+    # block is definitely happening. Additive, best-effort, stdout-silent.
+    if type record_trust_event_bash &>/dev/null; then
+        record_trust_event_bash "evidence_block" \
+            "reason=$reason" \
+            "diff_ok=$diff_ok" \
+            "tests_ok=$tests_ok" \
+            >/dev/null 2>&1 || true
+    fi
+
     return 1
 }
 
