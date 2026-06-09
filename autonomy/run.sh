@@ -12181,9 +12181,10 @@ except Exception as exc:
         # The fixture corpus covers build_prompt/stats output, NOT this claude
         # argv, so drift here is invisible to parity tests. Keep this ledger
         # current. Live route today is BASH (bin/loki routes `start` -> bash).
-        # loki-ts/src/runner/providers.ts is fully implemented but is NOT reached
-        # for `start` (start is not ported to the Bun router; the shim falls
-        # through to bash), so its flag set has zero live impact today.
+        # The claude provider in loki-ts/src/runner/providers.ts is implemented
+        # but is NOT reached for `start` (start is not ported to the Bun router;
+        # the shim falls through to bash), so its flag set has zero live impact
+        # today.
         # Bash argv (canonical, live): --dangerously-skip-permissions --model M
         #   [--append-system-prompt] [--setting-sources] [--include-partial-messages]
         #   [--effort] [--max-budget-usd] [--fallback-model] -p PROMPT
