@@ -2423,6 +2423,20 @@ build_completion_summary() {
         *)              outcome_label="$outcome";          notify_title="Run finished" ;;
     esac
 
+    # Live app URL (best-effort): if the app runner has a running app, surface
+    # where the user can try it. Reads .loki/app-runner/state.json written by
+    # app-runner.sh. Empty when no app is running.
+    local live_app_url=""
+    local _app_state_file="$loki_dir/app-runner/state.json"
+    if [ -f "$_app_state_file" ]; then
+        live_app_url="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('url','') if d.get('status')=='running' else '')
+except Exception:
+    print('')" "$_app_state_file" 2>/dev/null)"
+    fi
+
     # Branch + diff stats vs the run-start SHA (best-effort; non-git or empty
     # baseline yields empty values, which we render as "unknown"/"0").
     local start_sha="${_LOKI_RUN_START_SHA:-}"
@@ -2483,6 +2497,15 @@ build_completion_summary() {
             echo "Pull request: not opened (set LOKI_DELEGATE_PR=1 to open one)"
         fi
         echo ""
+        if [ -n "$live_app_url" ]; then
+            # Compute the dashboard scheme the same way start_dashboard does
+            # (url_scheme is local to that function, not visible here).
+            local _dash_scheme="http"
+            [ -n "${LOKI_TLS_CERT:-}" ] && [ -n "${LOKI_TLS_KEY:-}" ] && _dash_scheme="https"
+            echo "Your app is live at: $live_app_url  (served locally on this machine)"
+            echo "  Dashboard: ${_dash_scheme}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
+            echo ""
+        fi
         echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
         echo "Review the work:"
@@ -8216,9 +8239,22 @@ start_dashboard() {
         log_info "Dashboard started (PID: $DASHBOARD_PID)"
         log_info "Dashboard: ${CYAN}${url_scheme}://127.0.0.1:$DASHBOARD_PORT/${NC}"
 
-        # Open in browser (macOS)
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            open "${url_scheme}://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true
+        # Auto-open the dashboard in the browser, but ONLY for an interactive
+        # foreground session. Gated on: a TTY on stdout ([ -t 1 ]), not
+        # background/detached mode, and not explicitly opted out via
+        # LOKI_NO_AUTO_OPEN=1. This keeps CI, --detach, SSH-no-TTY, and piped
+        # runs from spawning a browser. Cross-platform: open / xdg-open / start.
+        if [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ] && [ "${LOKI_NO_AUTO_OPEN:-0}" != "1" ]; then
+            local _dash_url="${url_scheme}://127.0.0.1:$DASHBOARD_PORT/"
+            if command -v open >/dev/null 2>&1; then
+                open "$_dash_url" 2>/dev/null || true
+            elif command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$_dash_url" 2>/dev/null || true
+            elif command -v cmd.exe >/dev/null 2>&1; then
+                # Windows (Git Bash/WSL): `start` is a cmd builtin, not on PATH,
+                # so invoke it via cmd.exe. The empty "" is start's title arg.
+                cmd.exe /c start "" "$_dash_url" 2>/dev/null || true
+            fi
         fi
         return 0
     else
@@ -12140,6 +12176,59 @@ except Exception as exc:
            && type loki_claude_flag_supported >/dev/null 2>&1 \
            && loki_claude_flag_supported "--include-partial-messages"; then
             _loki_claude_argv+=("--include-partial-messages")
+        fi
+        # ---- Bash<->Bun invocation-flag convergence ledger (v7.25.0) ----------
+        # The fixture corpus covers build_prompt/stats output, NOT this claude
+        # argv, so drift here is invisible to parity tests. Keep this ledger
+        # current. Live route today is BASH (bin/loki routes `start` -> bash).
+        # The claude provider in loki-ts/src/runner/providers.ts is implemented
+        # but is NOT reached for `start` (start is not ported to the Bun router;
+        # the shim falls through to bash), so its flag set has zero live impact
+        # today.
+        # Bash argv (canonical, live): --dangerously-skip-permissions --model M
+        #   [--append-system-prompt] [--setting-sources] [--include-partial-messages]
+        #   [--effort] [--max-budget-usd] [--fallback-model] -p PROMPT
+        #   --output-format stream-json --verbose
+        # Bun buildAutoFlags also emits: --exclude-dynamic-system-prompt-sections
+        #   (cost-only), --mcp-config (bash gets MCP via --setting-sources +
+        #   .mcp.json discovery; a how-difference, likely behavior-equivalent),
+        #   --include-hook-events (bash handles hook events in its embedded
+        #   stream parser; likely moot). These three are Bun-only and MUST be
+        #   reconciled to a deliberately chosen canonical set BEFORE `start`
+        #   flips to the Bun runner. They have zero live impact today.
+        # v7.25.0: long-run resilience + cost flags, appended individually here
+        # (NOT via _loki_build_claude_auto_flags, which would double the three
+        # flags above). Each is gated on CLI support + an opt-out env var, same
+        # pattern as above. These improve unattended/long-run execution:
+        #   --effort           adaptive reasoning depth per RARV tier
+        #   --max-budget-usd   per-call hard backstop (complements the
+        #                      cumulative check_budget_limit PAUSE gate)
+        #   --fallback-model   resilience to model overload/unavailability
+        # The trust/verification gates stay deterministic; these only tune how
+        # the provider is invoked, never whether work is judged complete.
+        if [ "${LOKI_AUTO_EFFORT:-on}" != "off" ] \
+           && type loki_effort_for_tier >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--effort"; then
+            local _loki_effort
+            _loki_effort="$(loki_effort_for_tier "$CURRENT_TIER" "${DETECTED_COMPLEXITY:-${LOKI_COMPLEXITY:-standard}}")"
+            [ -n "$_loki_effort" ] && _loki_claude_argv+=("--effort" "$_loki_effort")
+        fi
+        if [ "${LOKI_AUTO_BUDGET:-on}" != "off" ] \
+           && type loki_remaining_budget >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--max-budget-usd"; then
+            local _loki_rem_budget
+            _loki_rem_budget="$(loki_remaining_budget)"
+            [ -n "$_loki_rem_budget" ] && _loki_claude_argv+=("--max-budget-usd" "$_loki_rem_budget")
+        fi
+        if [ "${LOKI_AUTO_FALLBACK:-on}" != "off" ] \
+           && type loki_fallback_for_primary >/dev/null 2>&1 \
+           && type loki_claude_flag_supported >/dev/null 2>&1 \
+           && loki_claude_flag_supported "--fallback-model"; then
+            local _loki_fallback
+            _loki_fallback="$(loki_fallback_for_primary "$tier_param")"
+            [ -n "$_loki_fallback" ] && _loki_claude_argv+=("--fallback-model" "$_loki_fallback")
         fi
         case "${PROVIDER_NAME:-claude}" in
             claude)
