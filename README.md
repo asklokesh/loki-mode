@@ -47,7 +47,7 @@ Loki drives a coding agent CLI and orchestrates real builds, so it needs a few t
 
 Required:
 
-- An agent provider CLI (at least one): [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended), or OpenAI Codex CLI (`codex`), Cline, or Aider.
+- An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Codex, Cline, and Aider are supported as experimental providers (wiring in place; not yet E2E-verified by us).
 - Python 3.10+ (`python3`) for the dashboard, memory system, and orchestration helpers.
 - Git 2.x (`git`) for checkpoints and worktrees.
 - `curl` for installation and network calls.
@@ -331,14 +331,14 @@ Loki's autonomy and quality loop are the product; the underlying coding CLI is s
 
 | Provider | Status | Autonomous Flag | Parallel Agents | Install |
 |----------|--------|:-:|:-:|---------|
-| **Claude Code** | Active (Tier 1) | `--dangerously-skip-permissions` | Yes (10+) | `npm i -g @anthropic-ai/claude-code` |
-| **Codex CLI** | Active (Tier 3) | `--full-auto` | Sequential | `npm i -g @openai/codex` |
-| **Cline CLI** | Active (Tier 2) | `--auto-approve` | Sequential | `npm i -g @anthropic-ai/cline` |
-| **Aider** | Active (Tier 3) | `--yes-always` | Sequential | `pip install aider-chat` |
+| **Claude Code** | Active (Tier 1, E2E-verified) | `--dangerously-skip-permissions` | Yes (10+) | `npm i -g @anthropic-ai/claude-code` |
+| **Codex CLI** | Experimental (Tier 3) | `--full-auto --skip-git-repo-check` | Sequential | `npm i -g @openai/codex` |
+| **Cline CLI** | Experimental (Tier 2) | `-y` | Sequential | `npm i -g @anthropic-ai/cline` |
+| **Aider** | Experimental (Tier 3) | `--yes-always` | Sequential | `pip install aider-chat` |
 | **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | Upstream deprecated; runtime removed. `LOKI_PROVIDER=gemini` exits with migration message. |
 | **Anthropic Antigravity CLI** | Coming soon | -- | -- | Integration planned. |
 
-Claude gets full features (subagents, parallelization, MCP, Task tool). Other active providers run sequentially. Auto-failover switches providers when rate-limited. See [Provider Guide](skills/providers.md).
+Status legend: "E2E-verified" means we run real spec-to-code builds on it ourselves. Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it gets full features (subagents, parallelization, MCP, Task tool). "Experimental" means the wiring is in place but we have not produced an end-to-end verified build ourselves; treat as community-tested. Experimental providers run sequentially. Auto-failover switches providers when rate-limited. See [Provider Guide](skills/providers.md).
 
 ---
 

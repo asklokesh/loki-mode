@@ -2916,7 +2916,7 @@ spawn_worktree_session() {
                     >> "$log_file" 2>&1 || _wt_exit=$?
                 ;;
             codex)
-                codex exec --full-auto \
+                codex exec --full-auto --skip-git-repo-check \
                     "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                     >> "$log_file" 2>&1 || _wt_exit=$?
                 ;;
@@ -3117,7 +3117,7 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 resolution=$(claude --dangerously-skip-permissions -p "$conflict_prompt" --output-format text 2>/dev/null)
                 ;;
             codex)
-                resolution=$(codex exec --full-auto "$conflict_prompt" 2>/dev/null)
+                resolution=$(codex exec --full-auto --skip-git-repo-check "$conflict_prompt" 2>/dev/null)
                 ;;
             cline)
                 resolution=$(invoke_cline_capture "$conflict_prompt" 2>/dev/null)
@@ -7500,7 +7500,7 @@ BUILD_PROMPT
                         --output-format text > "$review_output" 2>/dev/null
                     ;;
                 codex)
-                    codex exec --full-auto "$prompt_text" \
+                    codex exec --full-auto --skip-git-repo-check "$prompt_text" \
                         > "$review_output" 2>/dev/null
                     ;;
                 cline)
@@ -7715,7 +7715,7 @@ ADVERSARIAL_EOF
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                codex exec --full-auto "$adversarial_prompt" \
+                codex exec --full-auto --skip-git-repo-check "$adversarial_prompt" \
                     > "$result_file" 2>/dev/null || true
             fi
             ;;
@@ -12586,7 +12586,7 @@ if __name__ == "__main__":
                 # Uses dynamic tier from RARV phase (tier_param already set above)
                 { LOKI_CODEX_REASONING_EFFORT="$tier_param" \
                 CODEX_MODEL_REASONING_EFFORT="$tier_param" \
-                codex exec --full-auto \
+                codex exec --full-auto --skip-git-repo-check \
                     "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;

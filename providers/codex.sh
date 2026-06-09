@@ -32,7 +32,7 @@ PROVIDER_CLI="codex"
 # VERIFIED: exec --full-auto confirmed in codex exec --help (v0.98.0)
 # --full-auto: sets --ask-for-approval on-request + --sandbox workspace-write (v0.98.0)
 # Alternative: "exec --dangerously-bypass-approvals-and-sandbox" (legacy, no sandbox)
-PROVIDER_AUTONOMOUS_FLAG="exec --full-auto"
+PROVIDER_AUTONOMOUS_FLAG="exec --full-auto --skip-git-repo-check"
 PROVIDER_PROMPT_FLAG=""
 PROVIDER_PROMPT_POSITIONAL=true
 
@@ -119,7 +119,7 @@ provider_version() {
 provider_invoke() {
     local prompt="$1"
     shift
-    codex exec --full-auto "$prompt" "$@"
+    codex exec --full-auto --skip-git-repo-check "$prompt" "$@"
 }
 
 # Model tier to effort level parameter (Codex uses effort, not separate models)
@@ -210,6 +210,7 @@ provider_invoke_with_tier() {
     codex exec \
         --ask-for-approval never \
         --sandbox danger-full-access \
+        --skip-git-repo-check \
         "${extra_flags[@]}" \
         "$prompt" "$@"
 }
