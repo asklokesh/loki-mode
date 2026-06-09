@@ -2423,6 +2423,20 @@ build_completion_summary() {
         *)              outcome_label="$outcome";          notify_title="Run finished" ;;
     esac
 
+    # Live app URL (best-effort): if the app runner has a running app, surface
+    # where the user can try it. Reads .loki/app-runner/state.json written by
+    # app-runner.sh. Empty when no app is running.
+    local live_app_url=""
+    local _app_state_file="$loki_dir/app-runner/state.json"
+    if [ -f "$_app_state_file" ]; then
+        live_app_url="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('url','') if d.get('status')=='running' else '')
+except Exception:
+    print('')" "$_app_state_file" 2>/dev/null)"
+    fi
+
     # Branch + diff stats vs the run-start SHA (best-effort; non-git or empty
     # baseline yields empty values, which we render as "unknown"/"0").
     local start_sha="${_LOKI_RUN_START_SHA:-}"
@@ -2483,6 +2497,11 @@ build_completion_summary() {
             echo "Pull request: not opened (set LOKI_DELEGATE_PR=1 to open one)"
         fi
         echo ""
+        if [ -n "$live_app_url" ]; then
+            echo "Your app is live at: $live_app_url  (served locally on this machine)"
+            echo "  Dashboard: ${url_scheme:-http}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
+            echo ""
+        fi
         echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
         echo "Review the work:"
@@ -8216,9 +8235,20 @@ start_dashboard() {
         log_info "Dashboard started (PID: $DASHBOARD_PID)"
         log_info "Dashboard: ${CYAN}${url_scheme}://127.0.0.1:$DASHBOARD_PORT/${NC}"
 
-        # Open in browser (macOS)
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            open "${url_scheme}://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true
+        # Auto-open the dashboard in the browser, but ONLY for an interactive
+        # foreground session. Gated on: a TTY on stdout ([ -t 1 ]), not
+        # background/detached mode, and not explicitly opted out via
+        # LOKI_NO_AUTO_OPEN=1. This keeps CI, --detach, SSH-no-TTY, and piped
+        # runs from spawning a browser. Cross-platform: open / xdg-open / start.
+        if [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ] && [ "${LOKI_NO_AUTO_OPEN:-0}" != "1" ]; then
+            local _dash_url="${url_scheme}://127.0.0.1:$DASHBOARD_PORT/"
+            if command -v open >/dev/null 2>&1; then
+                open "$_dash_url" 2>/dev/null || true
+            elif command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$_dash_url" 2>/dev/null || true
+            elif command -v start >/dev/null 2>&1; then
+                start "$_dash_url" 2>/dev/null || true
+            fi
         fi
         return 0
     else
