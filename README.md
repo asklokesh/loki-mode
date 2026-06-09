@@ -87,7 +87,7 @@ loki quick "build a landing page with a signup form"
 
 | Method | Command | Notes |
 |--------|---------|-------|
-| **Bun (recommended)** | `bun install -g loki-mode` | Fastest. v8 will be Bun-only. |
+| **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
 | **Docker** | `docker pull asklokesh/loki-mode:7.7.31 && docker run --rm asklokesh/loki-mode:7.7.31 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
@@ -108,7 +108,7 @@ See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 
 ## Runtime Architecture
 
-Loki Mode is in a phased migration from a Bash-based runtime to a TypeScript/Bun runtime. The migration has merged to `main` and ships incrementally with each release.
+Loki Mode runs a dual runtime by deliberate design: the battle-tested Bash engine is the stable core (the autonomous loop, quality gates, and completion council stay on it; it receives bug fixes and hardening), and new product surfaces are built TypeScript/Bun-first as modules that wrap the engine rather than reimplement it. An earlier plan to make v8 Bun-only has been superseded by this stable-engine approach: rewriting the verified trust layer would risk the exact guarantees this product exists to provide, for no capability gain. Bash support is not going away.
 
 **What ships today:**
 
