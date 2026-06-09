@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.27.0] - 2026-06-09
+
+### Added
+- `loki verify [base-ref]`: standalone deterministic verification of any branch or PR diff.
+  Runs build, tests, and static analysis scoped to changed files; diff-scoped secret scan;
+  dependency audit. Exit codes: 0 VERIFIED / 1 CONCERNS / 2 BLOCKED for CI gating.
+  Machine-readable evidence written to `.loki/verify/evidence.json` and `report.md`.
+  Inconclusive evidence is never reported VERIFIED. Empty diffs yield CONCERNS. Bare
+  root-level test files are detected so discoverable tests are never silently skipped.
+  No LLM review in this MVP (stated in help text). Tests: 11/11.
+- `loki trust-metrics`: aggregates evidence-gate block rate, per-gate failure distribution
+  (median and p90), council rejection/split rate, and cost-per-verified-task from a new
+  durable append-only `.loki/metrics/trust-events.jsonl`. Honesty rule: un-instrumented
+  projects report `available: false`, never fabricated zeros. Tests: 12/12;
+  evidence-gate regression suite: 33/33.
+- Provider honesty labels. Claude Code is labeled Tier 1 E2E-verified primary. Codex,
+  Cline, and Aider are labeled Experimental. Codex harness fixed: `--skip-git-repo-check`
+  added at all invocation sites (previously hard-failed on fresh non-git directories).
+  Documented CLI flags corrected (`cline -y`).
+- Live App Preview iframe reloads when the app's healthcheck flips to serving. Previously
+  an iframe loaded during the app boot window stayed blank for the entire session.
+
+### Changed
+- Presentation deck rebranded to Autonomi (Autonomi's Loki Mode; roles/domains framing;
+  provider tiering; Autonomi Cloud coming-soon notice); GIF regenerated.
+- Runtime section updated: the v8-Bun-only promise openly superseded by the
+  stable-engine decision (bash engine frozen as stable core; new surfaces are
+  TypeScript-first wrappers).
+
 ## [7.26.0] - 2026-06-09
 
 ### Added
