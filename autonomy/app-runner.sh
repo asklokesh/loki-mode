@@ -43,6 +43,10 @@ _APP_RUNNER_PID=""
 _APP_RUNNER_URL=""
 _APP_RUNNER_IS_DOCKER=false
 _APP_RUNNER_DOCKER_CONTAINER=""
+# v7.26.0 (Phase 4): the identified primary web service of a compose project,
+# used for service-aware health checks and the preview URL. Empty for
+# non-compose runs or when identification falls back to legacy port parsing.
+_APP_RUNNER_WEB_SERVICE=""
 _APP_RUNNER_HAS_SETSID=false
 _APP_RUNNER_CRASH_COUNT=0
 _APP_RUNNER_RESTART_COUNT=0
@@ -146,6 +150,77 @@ _rotate_app_log() {
     fi
 }
 
+# Identify the primary web service of a docker compose project and its
+# published host port. Uses `docker compose config --format json` (fully
+# resolved: env-interpolated, overrides merged) parsed with python3, so we do
+# NOT hand-parse YAML. Precedence MATCHES the contract in COMPOSE_INSTRUCTION
+# (run.sh build_prompt): (1) label loki.primary=true, (2) service named
+# web/app, (3) service publishing a common web port, (4) first service with any
+# published port. Echoes "service_name|published_port" on success, nothing on
+# failure (caller falls back to legacy behavior). Never hard-fails.
+# v7.26.0 (Phase 4): fixes the multi-service URL/health gaps (GAP #1-4).
+_identify_compose_web_service() {
+    local base="${1:-${TARGET_DIR:-.}}"
+    local compose_dir
+    compose_dir=$(_app_runner_compose_dir "$base")
+    command -v docker >/dev/null 2>&1 || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    local cfg
+    cfg=$(cd "$compose_dir" && docker compose config --format json 2>/dev/null) || return 0
+    [ -n "$cfg" ] || return 0
+    printf '%s' "$cfg" | python3 -c '
+import json, sys
+COMMON = ["3000", "8000", "8080", "5000", "4200", "5173", "80"]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+services = d.get("services", {})
+if not isinstance(services, dict) or not services:
+    sys.exit(0)
+
+def published_ports(svc):
+    out = []
+    for p in (svc.get("ports") or []):
+        if isinstance(p, dict):
+            pub = p.get("published")
+        else:
+            pub = None
+        if pub is not None and str(pub).strip():
+            out.append(str(pub).strip())
+    return out
+
+# (1) label loki.primary=true
+for name, svc in services.items():
+    labels = svc.get("labels") or {}
+    if isinstance(labels, list):
+        labels = dict(x.split("=", 1) for x in labels if "=" in x)
+    if str(labels.get("loki.primary", "")).lower() == "true":
+        pp = published_ports(svc)
+        if pp:
+            print(name + "|" + pp[0]); sys.exit(0)
+# (2) service named web/app
+for cand in ("web", "app"):
+    svc = services.get(cand)
+    if svc:
+        pp = published_ports(svc)
+        if pp:
+            print(cand + "|" + pp[0]); sys.exit(0)
+# (3) service publishing a common web port
+for name, svc in services.items():
+    pp = published_ports(svc)
+    for cp in COMMON:
+        if cp in pp:
+            print(name + "|" + cp); sys.exit(0)
+# (4) first service with any published port
+for name, svc in services.items():
+    pp = published_ports(svc)
+    if pp:
+        print(name + "|" + pp[0]); sys.exit(0)
+sys.exit(0)
+' 2>/dev/null || return 0
+}
+
 # Detect port from project files
 _detect_port() {
     local method="$1"
@@ -158,18 +233,34 @@ _detect_port() {
 
     case "$method" in
         *docker\ compose*)
-            # Parse port from compose file
-            local compose_file
-            if [ -f "${TARGET_DIR:-.}/docker-compose.yml" ]; then
-                compose_file="${TARGET_DIR:-.}/docker-compose.yml"
-            else
-                compose_file="${TARGET_DIR:-.}/compose.yml"
+            # v7.26.0: identify the PRIMARY WEB service and ITS published port
+            # via docker compose config (resolved JSON), so the preview URL and
+            # health check target the web service, not whichever port (e.g. a
+            # db/cache) appears first in the file. Falls back to the legacy
+            # first-port grep when docker/python is unavailable or no web
+            # service is found.
+            local web_info web_port
+            web_info=$(_identify_compose_web_service "${TARGET_DIR:-.}")
+            if [ -n "$web_info" ]; then
+                _APP_RUNNER_WEB_SERVICE="${web_info%%|*}"
+                web_port="${web_info##*|}"
             fi
-            local port
-            # Handle both simple (HOST:CONTAINER) and IP-bound (IP:HOST:CONTAINER) port formats
-            # Also handle port ranges like "8080-8090:8080-8090" by taking the first port
-            port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}' | awk -F- '{print $1}')
-            _APP_RUNNER_PORT="${port:-8080}"
+            if [ -n "${web_port:-}" ] && [[ "$web_port" =~ ^[0-9]+$ ]]; then
+                _APP_RUNNER_PORT="$web_port"
+            else
+                # Legacy fallback: first published port from the compose file.
+                local compose_file
+                if [ -f "${TARGET_DIR:-.}/docker-compose.yml" ]; then
+                    compose_file="${TARGET_DIR:-.}/docker-compose.yml"
+                else
+                    compose_file="${TARGET_DIR:-.}/compose.yml"
+                fi
+                local port
+                # Handle both simple (HOST:CONTAINER) and IP-bound (IP:HOST:CONTAINER) port formats
+                # Also handle port ranges like "8080-8090:8080-8090" by taking the first port
+                port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}' | awk -F- '{print $1}')
+                _APP_RUNNER_PORT="${port:-8080}"
+            fi
             ;;
         *docker\ build*)
             local port
@@ -694,14 +785,64 @@ app_runner_health_check() {
         # retries are handled in app_runner_start.
         local running_containers
         running_containers=$(LOKI_COMPOSE_HEALTH_TIMEOUT=1 _app_runner_compose_running_count "${TARGET_DIR:-.}")
-        if [ "${running_containers:-0}" -gt 0 ]; then
+        if [ "${running_containers:-0}" -le 0 ]; then
+            # Nothing running at all.
+            _write_health "false"
+            _write_app_state "crashed"
+            return 1
+        fi
+        # v7.26.0 (Phase 4) GAP #4 fix: "some container is up" is NOT health for
+        # a multi-service stack. If we identified a primary web service, health
+        # keys on THAT service, not on whether any container (e.g. a db/cache) is
+        # up. Two signals, in order: (1) the web service's docker HEALTHCHECK
+        # result when one is declared (COMPOSE_INSTRUCTION mandates an HTTP
+        # healthcheck on the web service) -- "healthy" means actually serving,
+        # "unhealthy"/"starting" do not; (2) when no healthcheck is declared,
+        # fall back to the container lifecycle State (running), matching the
+        # codebase convention. Reads both fields from one `docker compose ps`.
+        if [ -n "${_APP_RUNNER_WEB_SERVICE:-}" ]; then
+            local _web_line _web_state _web_health
+            _web_line=$(cd "$(_app_runner_compose_dir "${TARGET_DIR:-.}")" \
+                && docker compose ps --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null \
+                | tr -d '\r' | awk -F'|' -v s="$_APP_RUNNER_WEB_SERVICE" '$1==s {print; exit}')
+            _web_state=$(printf '%s' "$_web_line" | awk -F'|' '{print $2}')
+            _web_health=$(printf '%s' "$_web_line" | awk -F'|' '{print $3}')
+            if [ "$_web_state" != "running" ]; then
+                # Container not running -> definitively down.
+                _write_health "false"
+                _write_app_state "crashed"
+                return 1
+            fi
+            if [ -n "$_web_health" ]; then
+                # A healthcheck is declared: it is authoritative.
+                if [ "$_web_health" = "healthy" ]; then
+                    _write_health "true"
+                    _write_app_state "running"
+                    return 0
+                fi
+                if [ "$_web_health" = "unhealthy" ]; then
+                    # Container up but failing its own healthcheck (not serving).
+                    _write_health "false"
+                    _write_app_state "crashed"
+                    return 1
+                fi
+                # "starting" (within start_period): up, not yet healthy. Report
+                # running so the watchdog gives it time instead of restarting,
+                # but do not yet claim a passing health.
+                _write_health "false"
+                _write_app_state "running"
+                return 0
+            fi
+            # No healthcheck declared: container running is the signal.
             _write_health "true"
             _write_app_state "running"
             return 0
-        else
-            _write_health "false"
-            return 1
         fi
+        # No web service identified (legacy/degraded): fall back to the
+        # original "any container running" signal.
+        _write_health "true"
+        _write_app_state "running"
+        return 0
     fi
 
     # Check PID is alive (non-docker-compose methods)
@@ -768,6 +909,36 @@ app_runner_should_restart() {
 
 app_runner_watchdog() {
     _app_runner_dir
+
+    # v7.26.0 (Phase 4): docker compose runs detached (`up -d` exits immediately),
+    # so the captured PID is a short-lived subshell and `kill -0` is the wrong
+    # liveness signal for a compose stack. For compose, delegate to
+    # app_runner_health_check, whose compose branch keys on the primary web
+    # SERVICE container running (GAP #4) and writes health.json + state.json.
+    # This is what makes the service-aware health logic actually fire in the
+    # live monitoring loop (not just in isolation). On an unhealthy web service
+    # it restarts the stack under the same crash-count circuit breaker.
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
+        if app_runner_health_check; then
+            return 0
+        fi
+        _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
+        log_warn "App Runner: compose web service unhealthy (crash #$_APP_RUNNER_CRASH_COUNT)"
+        if [ "$_APP_RUNNER_CRASH_COUNT" -ge 5 ]; then
+            log_error "App Runner: crash limit reached (5), marking as crashed"
+            tail -20 "$_APP_RUNNER_DIR/app.log" 2>/dev/null | while IFS= read -r line; do
+                log_error "  $line"
+            done
+            _write_app_state "crashed"
+            return 1
+        fi
+        local _c_backoff=$(( 1 << _APP_RUNNER_CRASH_COUNT ))
+        [ "$_c_backoff" -gt 30 ] && _c_backoff=30
+        log_info "App Runner: restarting compose stack in ${_c_backoff}s..."
+        sleep "$_c_backoff"
+        app_runner_start || log_warn "App Runner: compose auto-restart failed"
+        return 0
+    fi
 
     if [ -z "$_APP_RUNNER_PID" ] && [ -f "$_APP_RUNNER_DIR/app.pid" ]; then
         _APP_RUNNER_PID=$(cat "$_APP_RUNNER_DIR/app.pid" 2>/dev/null)
