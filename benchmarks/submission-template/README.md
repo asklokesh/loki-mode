@@ -2,15 +2,22 @@
 
 ## Overview
 
-**Loki Mode** is a multi-agent system that works with Claude Code, OpenAI Codex, and Google Gemini. It orchestrates specialized AI agents to solve software engineering tasks. This submission demonstrates its performance on SWE-bench Lite.
+**Loki Mode** is a multi-agent system that works with Claude Code, OpenAI Codex, and Google Gemini. It orchestrates specialized AI agents to solve software engineering tasks. This template records a PATCH GENERATION run on SWE-bench Lite.
 
-## Results
+## Results (patch generation only, NOT a resolve rate)
+
+IMPORTANT: these numbers count whether a candidate diff was PRODUCED, not
+whether it fixes the issue. The official SWE-bench evaluator (apply patch,
+run the repo test suite) was never run on these patches, so Loki Mode has no
+SWE-bench resolve rate, and the figures below must not be compared against
+other systems' resolution scores.
 
 | Metric | Value |
 |--------|-------|
-| **Patch Generation Rate** | **99.67%** (299/300) |
-| Problems Solved | 299 |
+| Patch generation rate | 99.67% (299/300 diffs produced) |
+| Patches generated | 299 |
 | Total Problems | 300 |
+| Verified as fixing the issue | 0 measured (evaluator not run) |
 | Fixed by RARV Retry | 0 |
 | Average Attempts | 1.0 |
 | Total Time | ~3.5 hours |
@@ -48,12 +55,16 @@ Maximum 3 retry attempts per problem.
 
 ## Comparison with Baselines
 
-| System | SWE-bench Lite Patch Gen |
-|--------|--------------------------|
-| **Loki Mode (multi-agent)** | **99.67%** (299/300) |
-| Direct Claude (single agent) | 99.67% (299/300) |
+Patch GENERATION rates only (diffs produced; correctness never evaluated):
 
-After timeout optimization, the multi-agent RARV pipeline matches single-agent performance.
+| System | SWE-bench Lite patch generation |
+|--------|--------------------------|
+| Loki Mode (multi-agent) | 99.67% (299/300 diffs produced) |
+| Direct Claude (single agent) | 99.67% (299/300 diffs produced) |
+
+After timeout optimization, the multi-agent RARV pipeline matches single-agent
+generation throughput. Neither row says anything about whether the patches are
+correct; only the official evaluator can establish that, and it was not run.
 
 ## Methodology
 

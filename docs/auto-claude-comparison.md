@@ -142,13 +142,16 @@ Loki Mode has 14 quality gates:
 
 ### 6. Published Benchmarks
 Loki Mode:
-- HumanEval: 98.78% Pass@1 (162/164)
-- SWE-bench: 99.67% patch generation (299/300)
-- Documented methodology with reproducible results
+- HumanEval: 98.78% Pass@1 (162/164, reproducible harness)
+- SWE-bench: not measured. A patch-generation harness exists (299/300 diffs
+  produced), but the official evaluator was never run, so there is no resolve
+  rate. Patch generation is not a success metric and is not comparable to
+  other tools' resolution scores.
 
 **Auto-Claude:** No published benchmarks.
 
-**Verdict: Loki Mode wins** - Verified performance claims.
+**Verdict: Loki Mode wins on HumanEval transparency** - one real, reproducible
+number versus none. No SWE-bench performance claim is made.
 
 ### 7. Licensing
 - Loki Mode: MIT (free, no restrictions)
