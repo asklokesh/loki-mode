@@ -6,11 +6,11 @@ Complete definitions and capabilities for all 41 specialized agent types.
 
 ## Overview
 
-Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 domain agents + 4 orchestration agents). The orchestrator spawns only the agents needed for your project -- typically 5-10 for simple projects, more for complex ones.
+Loki Mode has 41 specialized agent roles across 8 domains (37 domain agents + 4 orchestration agents) - prompt-defined specifications the orchestrator adopts per phase, not separate processes. Parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams; on other providers everything runs sequentially. The orchestrator activates only the roles needed for your project -- typically 5-10 for simple projects, more for complex ones.
 
 ---
 
-## Engineering Swarm (8 types)
+## Engineering Domain (8 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -25,7 +25,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Operations Swarm (8 types)
+## Operations Domain (8 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -40,7 +40,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Business Swarm (8 types)
+## Business Domain (8 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -55,7 +55,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Data Swarm (3 types)
+## Data Domain (3 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -65,7 +65,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Product Swarm (3 types)
+## Product Domain (3 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -75,7 +75,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Growth Swarm (4 types)
+## Growth Domain (4 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -86,7 +86,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Review Swarm (3 types)
+## Review Domain (3 types)
 
 | Agent | Capabilities |
 |-------|-------------|
@@ -96,7 +96,7 @@ Loki Mode has 41 predefined agent types organized into 8 specialized swarms (37 
 
 ---
 
-## Orchestration Swarm (4 types)
+## Orchestration Domain (4 types)
 
 > **Source:** [Cursor Scaling Learnings](./cursor-learnings.md) - patterns proven at large agent scale
 

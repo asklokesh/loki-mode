@@ -122,7 +122,7 @@ BOOTSTRAP -> DISCOVERY -> ARCHITECTURE -> INFRASTRUCTURE
      -> DEVELOPMENT -> QA -> DEPLOYMENT -> GROWTH (continuous)
 ```
 
-**41 Specialized Agent Types across 8 swarms:**
+**41 Specialized Agent Roles across 8 domains** (prompt-defined specifications the orchestrator adopts per phase; parallel review council and optional worktree streams on Claude Code, sequential on other providers):
 - Engineering (8 types)
 - Operations (8 types)
 - Business (8 types)

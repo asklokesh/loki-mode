@@ -2,13 +2,13 @@
 
 ## Title
 
-Show HN: Loki Mode - PRD in, tested code out (41 agents, 9 quality gates, RARV self-verification)
+Show HN: Loki Mode - PRD in, tested code out (41 agent roles, 9 quality gates, RARV self-verification)
 
 ## Body
 
 I built Loki Mode because I got tired of the copy-paste loop between AI coding assistants and my terminal. I wanted to hand over a PRD and get back a working, tested codebase -- not perfect, but a solid starting point.
 
-**What it does:** You give it a Product Requirements Document. It breaks the work into tasks, dispatches them across 41 specialized agent types organized into 8 swarms (engineering, operations, business, data, product, growth, review, orchestration), and runs every iteration through a self-verification loop called RARV: Reason, Act, Reflect, Verify. The idea is that the system catches its own mistakes before you have to.
+**What it does:** You give it a Product Requirements Document. It breaks the work into tasks across 41 specialized agent roles organized into 8 domains (engineering, operations, business, data, product, growth, review, orchestration) -- prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers -- and runs every iteration through a self-verification loop called RARV: Reason, Act, Reflect, Verify. The idea is that the system catches its own mistakes before you have to.
 
 **Quality gates:** 9 automated gates including 3-reviewer blind review (agents review each other's work without seeing prior reviews), anti-sycophancy checks (a devil's advocate pass on unanimous approvals), and mock/mutation detection. These are not foolproof, but they catch a surprising number of issues that single-pass generation misses.
 

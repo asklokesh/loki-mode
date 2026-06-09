@@ -1,6 +1,6 @@
 # Agent Dispatch & Structured Prompting
 
-> **Full agent type definitions:** See `references/agent-types.md` for complete 41 agent role specifications across 8 swarms (Engineering, Operations, Business, Data, Product, Growth, Review, Orchestration).
+> **Full agent type definitions:** See `references/agent-types.md` for complete 41 agent role specifications across 8 domains (Engineering, Operations, Business, Data, Product, Growth, Review, Orchestration). These are prompt-defined specifications the orchestrator adopts per phase; parallelism on Claude Code comes from the blind review council, the adversarial reviewer, and optional git-worktree streams, sequential on other providers.
 
 ---
 
@@ -249,8 +249,8 @@ Priority order for context:
 
 See `references/agent-types.md` for complete specifications. Summary:
 
-| Swarm | Agent Types | Count |
-|-------|-------------|-------|
+| Domain | Agent Types | Count |
+|--------|-------------|-------|
 | Engineering | frontend, backend, database, mobile, api, qa, perf, infra | 8 |
 | Operations | devops, sre, security, monitor, incident, release, cost, compliance | 8 |
 | Business | marketing, sales, finance, legal, support, hr, investor, partnerships | 8 |

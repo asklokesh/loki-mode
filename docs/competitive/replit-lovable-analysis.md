@@ -312,7 +312,7 @@ Replit Agent has evolved rapidly through four major versions:
 |-----------|:-----------:|:-----------:|:---------:|
 | Natural language to app | Yes | Yes | Yes (via PRD) |
 | Autonomous execution | 200 min sessions | Per-prompt | Unlimited (budget-gated) |
-| Multi-agent orchestration | Parallel agents (Agent 4) | No | Yes (41 agent types, 8 swarms) |
+| Multi-agent orchestration | Parallel agents (Agent 4) | No | Yes (41 agent types, 8 domains) |
 | Self-testing loop | Yes | No | Yes (RARV cycle) |
 | Code review | No | No | Yes (3-reviewer blind review) |
 | Anti-sycophancy | No | No | Yes (devil's advocate) |

@@ -1,6 +1,6 @@
 # Agent Type Definitions
 
-Complete specifications for all 41 specialized agent types in the Loki Mode multi-agent system (37 domain agents + 4 orchestration agents).
+Complete specifications for all 41 specialized agent roles in Loki Mode (37 domain agents + 4 orchestration agents). These are prompt-defined role specifications the orchestrator adopts per phase, not separate processes.
 
 **Note:** These are agent TYPE definitions, not a fixed count. Loki Mode dynamically spawns agents based on project needs - a simple todo app might use 5-10 agents, while a complex startup spawns more as needed.
 
@@ -45,7 +45,7 @@ Update after every task completion.
 
 ---
 
-## Engineering Swarm (8 Agents)
+## Engineering Domain (8 Agents)
 
 ### eng-frontend
 **Capabilities:**
@@ -241,7 +241,7 @@ Update after every task completion.
 
 ---
 
-## Operations Swarm (8 Agents)
+## Operations Domain (8 Agents)
 
 ### ops-devops
 **Capabilities:**
@@ -437,7 +437,7 @@ Update after every task completion.
 
 ---
 
-## Business Swarm (8 Agents)
+## Business Domain (8 Agents)
 
 ### biz-marketing
 **Capabilities:**
@@ -634,7 +634,7 @@ Update after every task completion.
 
 ---
 
-## Data Swarm (3 Agents)
+## Data Domain (3 Agents)
 
 ### data-ml
 **Capabilities:**
@@ -710,7 +710,7 @@ Update after every task completion.
 
 ---
 
-## Product Swarm (3 Agents)
+## Product Domain (3 Agents)
 
 ### prod-pm
 **Capabilities:**
@@ -787,7 +787,7 @@ Update after every task completion.
 
 ---
 
-## Review Swarm (3 Agents)
+## Review Domain (3 Agents)
 
 ### review-code
 **Capabilities:**
@@ -875,7 +875,7 @@ Update after every task completion.
 
 ---
 
-## Growth Swarm (4 Agents)
+## Growth Domain (4 Agents)
 
 ### growth-hacker
 **Capabilities:**

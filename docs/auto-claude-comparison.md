@@ -85,7 +85,7 @@ Loki Mode is built on peer-reviewed research:
 **Verdict: Loki Mode wins** - Academically grounded.
 
 ### 2. Specialized Agent Types
-Loki Mode has 41 predefined agent types across 6 swarms:
+Loki Mode has 41 specialized agent roles across 8 domains - prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers:
 - Engineering (8): frontend, backend, database, mobile, API, QA, perf, infra
 - Operations (8): DevOps, SRE, security, monitoring, incident, release, cost, compliance
 - Business (8): marketing, sales, finance, legal, support, HR, investor, partnerships
@@ -251,7 +251,7 @@ Loki Mode now incorporates proven patterns from Cursor's large-scale agent deplo
 **Loki Mode is better if you want:**
 - Research-backed architecture
 - Full spec-to-product lifecycle (not just coding)
-- 41 specialized agents
+- 41 specialized agent roles
 - Anti-sycophancy measures
 - MIT license
 - No subscription requirement

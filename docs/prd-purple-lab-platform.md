@@ -198,7 +198,7 @@ Each gate: name, status (pass/fail/pending), details expandable
 ### Agent Activity
 
 Real-time grid showing which of the 41 agent types are active:
-- Agent name, type, swarm, model tier (Opus/Sonnet/Haiku)
+- Agent name, type, domain, model tier (Opus/Sonnet/Haiku)
 - Current task
 - Status (working/idle/completed)
 - Duration

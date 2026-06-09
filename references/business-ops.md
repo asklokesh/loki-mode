@@ -1,6 +1,6 @@
 # Business Operations Reference
 
-Workflows and procedures for business swarm agents.
+Workflows and procedures for business domain agents.
 
 ## Marketing Operations
 

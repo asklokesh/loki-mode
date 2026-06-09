@@ -70,9 +70,9 @@ Or via the environment variable `LOKI_COMPLEXITY=simple|standard|complex`.
 
 ## Agents
 
-Loki Mode defines **41 specialized agent types** organized into **8 swarms**:
+Loki Mode defines **41 specialized agent types** organized into **8 domains**:
 
-| Swarm | Agent Count | Examples |
+| Domain | Agent Count | Examples |
 |-------|-------------|----------|
 | Engineering | 8 | frontend, backend, database, mobile, api, qa, perf, infra |
 | Operations | 8 | devops, sre, security, monitor, incident, release, cost, compliance |
@@ -179,4 +179,4 @@ Every Loki Mode project uses these files in the `.loki/` directory:
 
 ## Summary
 
-Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses 41 agent types organized into 8 swarms, enforces quality through 9 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.
+Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses 41 agent types organized into 8 domains, enforces quality through 9 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.

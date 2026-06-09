@@ -457,7 +457,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Open source | Yes (Apache-2.0) | Yes |
 | Speed | 240+ tokens/sec | Depends on provider |
 | Providers | OpenAI only | 5 providers |
-| Multi-agent | Experimental (isolated) | 41 agent types, 8 swarms |
+| Multi-agent | Experimental (isolated) | 41 agent types, 8 domains |
 | Quality | Single-pass review | 10-gate system |
 | **Loki Mode advantage:** | Autonomous pipeline, multi-provider, mature multi-agent |
 

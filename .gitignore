@@ -52,5 +52,4 @@ vscode-extension/.loki/
 # Stray test artifacts (accidentally committed in v6.50.0; ignore going forward)
 .loki-test-tmp/
 .gstack/
-docs/COMPETITIVE-ANALYSIS-INSTANT-PREVIEW-2026-06.md
-docs/STRATEGY-2X-2026-06.md
+internal/
