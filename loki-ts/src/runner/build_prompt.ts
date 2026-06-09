@@ -216,6 +216,14 @@ const MEMORY_INSTRUCTION =
 const USAGE_DOC_INSTRUCTION =
   `USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it.`;
 
+// Compose-first instruction (v7.26.0): unconditional string with conditional
+// phrasing (the agent decides whether the app warrants compose, not a static
+// grep). Parity with bash: run.sh build_prompt() $compose_instruction. MUST
+// stay byte-identical to that string (same precedent as AGENTS_MD_INSTRUCTION).
+// Emitted immediately after USAGE_DOC in every block that carries it.
+const COMPOSE_INSTRUCTION =
+  `RUN_CONTRACT: Decide whether this app needs more than one running service. If it needs a database (PostgreSQL/MySQL/MongoDB) and/or a cache (Redis) and/or separate backend and frontend services, generate a 12-factor docker-compose.yml at the project root so the whole stack runs with one command. Requirements when you generate it: (1) name the primary web/app service so it is obvious (service key 'web' or 'app', or add the label 'loki.primary=true' on it) and publish its HTTP port (host:container, e.g. '3000:3000'); (2) give every service a healthcheck (the web service must have an HTTP healthcheck so 'up' means actually serving, not just started); (3) wire dependencies with depends_on and config via environment variables; (4) write a .env.example listing every required variable with safe placeholder values; (5) keep secrets out of the compose file and out of git. If the app is a single service with no datastore, do NOT add compose; a plain run command is correct. If a working docker-compose.yml already exists and matches the app, leave it; otherwise create or update it. Verify the stack comes up (docker compose up) before claiming completion.`;
+
 // v7.7.8: LSP grounding instruction. Parity with bash:
 // run.sh build_prompt() $lsp_grounding_instruction.
 const LSP_GROUNDING_INSTRUCTION =
@@ -1074,6 +1082,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(autonomyText);
   lines.push(MEMORY_INSTRUCTION);
   lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
   if (prd === null || prd.length === 0) {
@@ -1134,6 +1143,7 @@ function buildStaticFirstDegraded(opts: BuildPromptOpts, sections: ResolvedSecti
     );
   }
   lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
   lines.push("</loki_system>");
@@ -1181,14 +1191,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(
@@ -1234,6 +1244,7 @@ export const _internals = {
   ANALYSIS_INSTRUCTION,
   MEMORY_INSTRUCTION,
   USAGE_DOC_INSTRUCTION,
+  COMPOSE_INSTRUCTION,
   AGENTS_MD_INSTRUCTION,
   loadLedgerContext,
   loadHandoffContext,

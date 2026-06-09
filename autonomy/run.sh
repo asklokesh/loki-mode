@@ -10465,6 +10465,14 @@ build_prompt() {
     # same precedent as AUTONOMY_OVERRIDE_TEXT in providers/claude_flags.ts).
     local agents_md_instruction="Project conventions: read AGENTS.md in the repository root for build, test, and style conventions. If AGENTS.md is absent, read CLAUDE.md instead. The nearest such file to the code you are editing takes precedence."
 
+    # Compose-first instruction (v7.26.0): unconditional string with conditional
+    # phrasing (YOU decide whether the app warrants compose, not a static grep).
+    # When an app needs more than one running service (web + database and/or
+    # cache), a docker-compose.yml is the run contract Loki's app runner uses to
+    # bring the whole stack up locally. This string MUST stay byte-identical to
+    # COMPOSE_INSTRUCTION in loki-ts/src/runner/build_prompt.ts (parity-locked).
+    local compose_instruction="RUN_CONTRACT: Decide whether this app needs more than one running service. If it needs a database (PostgreSQL/MySQL/MongoDB) and/or a cache (Redis) and/or separate backend and frontend services, generate a 12-factor docker-compose.yml at the project root so the whole stack runs with one command. Requirements when you generate it: (1) name the primary web/app service so it is obvious (service key 'web' or 'app', or add the label 'loki.primary=true' on it) and publish its HTTP port (host:container, e.g. '3000:3000'); (2) give every service a healthcheck (the web service must have an HTTP healthcheck so 'up' means actually serving, not just started); (3) wire dependencies with depends_on and config via environment variables; (4) write a .env.example listing every required variable with safe placeholder values; (5) keep secrets out of the compose file and out of git. If the app is a single service with no datastore, do NOT add compose; a plain run command is correct. If a working docker-compose.yml already exists and matches the app, leave it; otherwise create or update it. Verify the stack comes up (docker compose up) before claiming completion."
+
     # Load existing context if resuming
     local context_injection=""
     if [ $retry -gt 0 ]; then
@@ -10794,15 +10802,15 @@ except Exception:
         else
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             else
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             fi
         fi
@@ -10844,6 +10852,7 @@ except Exception:
             printf 'You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.\n'
         fi
         printf '%s\n' "$usage_doc_instruction"
+        printf '%s\n' "$compose_instruction"
         printf '%s\n' "$lsp_grounding_instruction"
         printf '%s\n' "$agents_md_instruction"
         printf '</loki_system>\n'
@@ -10877,6 +10886,7 @@ except Exception:
     printf '%s\n' "$autonomous_suffix"
     printf '%s\n' "$memory_instruction"
     printf '%s\n' "$usage_doc_instruction"
+    printf '%s\n' "$compose_instruction"
     printf '%s\n' "$lsp_grounding_instruction"
     printf '%s\n' "$agents_md_instruction"
     # For codebase-analysis mode (no PRD), analysis_instruction is part of the
