@@ -2498,8 +2498,12 @@ except Exception:
         fi
         echo ""
         if [ -n "$live_app_url" ]; then
+            # Compute the dashboard scheme the same way start_dashboard does
+            # (url_scheme is local to that function, not visible here).
+            local _dash_scheme="http"
+            [ -n "${LOKI_TLS_CERT:-}" ] && [ -n "${LOKI_TLS_KEY:-}" ] && _dash_scheme="https"
             echo "Your app is live at: $live_app_url  (served locally on this machine)"
-            echo "  Dashboard: ${url_scheme:-http}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
+            echo "  Dashboard: ${_dash_scheme}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
             echo ""
         fi
         echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
@@ -8246,8 +8250,10 @@ start_dashboard() {
                 open "$_dash_url" 2>/dev/null || true
             elif command -v xdg-open >/dev/null 2>&1; then
                 xdg-open "$_dash_url" 2>/dev/null || true
-            elif command -v start >/dev/null 2>&1; then
-                start "$_dash_url" 2>/dev/null || true
+            elif command -v cmd.exe >/dev/null 2>&1; then
+                # Windows (Git Bash/WSL): `start` is a cmd builtin, not on PATH,
+                # so invoke it via cmd.exe. The empty "" is start's title arg.
+                cmd.exe /c start "" "$_dash_url" 2>/dev/null || true
             fi
         fi
         return 0
@@ -12174,8 +12180,10 @@ except Exception as exc:
         # ---- Bash<->Bun invocation-flag convergence ledger (v7.25.0) ----------
         # The fixture corpus covers build_prompt/stats output, NOT this claude
         # argv, so drift here is invisible to parity tests. Keep this ledger
-        # current. Live route today is BASH (bin/loki routes `start` -> bash;
-        # the Bun runner/providers.ts is a stub not yet reached for `start`).
+        # current. Live route today is BASH (bin/loki routes `start` -> bash).
+        # loki-ts/src/runner/providers.ts is fully implemented but is NOT reached
+        # for `start` (start is not ported to the Bun router; the shim falls
+        # through to bash), so its flag set has zero live impact today.
         # Bash argv (canonical, live): --dangerously-skip-permissions --model M
         #   [--append-system-prompt] [--setting-sources] [--include-partial-messages]
         #   [--effort] [--max-budget-usd] [--fallback-model] -p PROMPT
