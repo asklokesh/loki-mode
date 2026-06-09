@@ -554,6 +554,7 @@ show_help() {
     echo "  projects         Multi-project registry management"
     echo "  audit [cmd]      Agent audit log and quality scanning (log|scan)"
     echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
+    echo "  verify [base]    Deterministic PR verification (Autonomi Verify MVP; CI-gate exit codes)"
     echo "  review [opts]    Standalone code review with quality gates (diff, staged, PR, files)"
     echo "  optimize         Optimize prompts based on session history"
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
@@ -11355,6 +11356,29 @@ with open(manifest_path, 'w') as f:
 # Modernize legacy codebases incrementally without breaking existing behavior.
 #===============================================================================
 
+# ---------------------------------------------------------------------------
+# loki verify - Autonomi Verify (Verification-as-a-Service MVP)
+#
+# Thin dispatcher that sources autonomy/verify.sh and delegates to its
+# verify_main(). The verification core is deliberately standalone (it does NOT
+# enter the autonomous iteration loop): it computes a PR-style merge-base diff
+# and runs deterministic gates against the current tree, emitting a verdict and
+# a consolidated evidence document. Deterministic-only in this MVP (no LLM
+# review). Exit code is propagated to the caller so the command is CI-gate
+# usable.
+# ---------------------------------------------------------------------------
+cmd_verify() {
+    local verify_mod="$_LOKI_SCRIPT_DIR/verify.sh"
+    if [ ! -f "$verify_mod" ]; then
+        echo -e "${RED}Error: verify module not found at $verify_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$verify_mod"
+    verify_main "$@"
+    return $?
+}
+
 cmd_heal_help() {
     echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
     echo ""
@@ -13501,6 +13525,9 @@ main() {
             ;;
         heal)
             cmd_heal "$@"
+            ;;
+        verify)
+            cmd_verify "$@"
             ;;
         migrate)
             cmd_migrate "$@"
