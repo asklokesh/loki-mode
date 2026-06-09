@@ -138,6 +138,18 @@ run_test "AGENTS.md Doc Walker (precedence + fallback)" "$SCRIPT_DIR/test-agents
 run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-agents-md-build-prompt.sh"
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
 
+# Delegate-then-notify (Release 2): build_completion_summary writes the durable
+# .loki/COMPLETION.txt + .loki/state/completion.json for every terminal state
+# and suppresses the desktop ping when LOKI_NOTIFICATIONS=0 while still writing
+# the files (state, not a notification).
+run_test "Completion Summary (delegate-then-notify files)" "$SCRIPT_DIR/test-completion-summary.sh"
+
+# Delegate-then-notify (Release 2): notify on ALL terminal states
+# (complete / max_iterations / stopped / failed) with branch + diff in the body;
+# on_run_complete is default-OFF and defers to the existing GITHUB_PR path; the
+# --bg daemon machinery + new UX message lines are preserved.
+run_test "Delegate Notify (all terminal states)" "$SCRIPT_DIR/test-delegate-notify.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

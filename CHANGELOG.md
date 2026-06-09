@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.22.0] - 2026-06-09
+
+### Added
+- Delegate then notify on done. When a background run (`loki start --bg`)
+  finishes, Loki now writes a durable completion summary and fires a local
+  desktop notification, so you can delegate a run, walk away, and be told when
+  it is ready. This closes the "async agent" gap for Loki's local-only model
+  without any hosted backend or CI.
+  - Every terminal state notifies and records a summary: success, max-iterations,
+    stopped, failed, and genuinely-blocking pauses (the perpetual-mode auto-clear
+    pause is correctly NOT treated as terminal, so a mid-run pause never writes a
+    false "done" record).
+  - The summary is written to `.loki/COMPLETION.txt` (human-readable) and
+    `.loki/state/completion.json` (machine-readable): outcome, branch, files
+    changed, the exact `git diff` review command, and task counts. The files are
+    always written even when notifications are disabled (they are state, not a
+    ping), which is the reliable signal for a detached run with no terminal.
+  - Notifications are local OS calls only (macOS osascript, Linux notify-send),
+    gated by the existing `LOKI_NOTIFICATIONS` (default on). Zero network egress.
+  - Opt-in `LOKI_DELEGATE_BRANCH=1` isolates a run's work on a dedicated
+    `loki/delegate-<timestamp>` branch. Opt-in `LOKI_DELEGATE_PR=1` opens a local
+    pull request on completion (a `gh` call from your own machine, never CI, no
+    auto-merge), only when you are in a GitHub repo with `gh` authenticated.
+    Both default off; the network calls are bounded with a 30s timeout.
+
 ## [7.21.0] - 2026-06-08
 
 ### Added
