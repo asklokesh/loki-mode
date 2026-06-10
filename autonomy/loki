@@ -692,6 +692,7 @@ show_landing() {
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
     echo ""
+    echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
     echo "Tip: preview cost and scope first: loki plan ./prd.md"
 }
 
