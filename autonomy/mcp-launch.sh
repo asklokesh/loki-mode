@@ -178,6 +178,10 @@ mcp_launch_main() {
     # 3. If the venv already has the SDK, use it directly. The server is launched
     #    with PYTHONPATH=$root (NOT by cd-ing) so the user's cwd is preserved for
     #    .loki resolution; see _ml_sdk_importable for why.
+    #    Known narrow residual: if the user's cwd itself contains a Python
+    #    package literally named mcp/ with a server submodule, python -m puts
+    #    the cwd ahead of PYTHONPATH and that package wins. Essentially never
+    #    true for real projects; documented rather than fought.
     if [ -x "$venv_py" ] && _ml_sdk_importable "$venv_py" "$root"; then
         exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" -m mcp.server "$@"
     fi
