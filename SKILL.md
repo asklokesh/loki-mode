@@ -335,6 +335,15 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
+## Trust-layer additions (v7.28.0)
+
+Two completion-trust features extend the verification gates. Full details in `skills/quality-gates.md`.
+
+- **Held-out spec evals:** ~25% of checklist items (deterministic `sha256(id)` order, `N >= 4`) are reserved into `.loki/checklist/held-out.json` and excluded from the build prompt feed; the completion council blocks if a held-out item fails. Opt out with `LOKI_HELDOUT_GATE=0`. Honest limit: this guards the prompt feed, not a sandbox; the reservation file is on disk and an agent with filesystem access can read it.
+- **Inconclusive-baseline disclosure:** when the evidence gate cannot establish a diff baseline (`no_git_repo` / `no_run_start_sha`) it writes `.loki/state/evidence-inconclusive.json` and `COMPLETION.txt` carries an honest "not independently verified" line. It never blocks non-git projects; red tests still block.
+
+---
+
 ## Concurrency and Security Hardening (v7.5.7 - v7.5.13)
 
 Three back-to-back patches closed cross-process and security gaps. No user-facing behavior change on the default flow; verify via the cited paths.

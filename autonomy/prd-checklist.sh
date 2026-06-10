@@ -109,10 +109,13 @@ checklist_should_verify() {
 # Held-out Spec Eval Selection (v7.28.0)
 #===============================================================================
 # Anti-reward-hacking: deterministically reserve ~25% of checklist items as
-# "held-out". Held-out item IDs are EXCLUDED from everything the build loop sees
-# (checklist_summary, council_checklist_gate) so the build agent cannot tune to
-# them. The completion council evaluates them only at the ship gate
-# (council_heldout_gate in completion-council.sh).
+# "held-out". Held-out item IDs are excluded from the prompt feed the build loop
+# sees (checklist_summary and council_checklist_gate), so a cooperative build
+# agent is not steered toward those specific acceptance checks. The completion
+# council evaluates them at the ship gate (council_heldout_gate in
+# completion-council.sh). Scope of the guarantee: this protects the prompt feed,
+# not a sandbox. .loki/checklist/held-out.json is plain on-disk JSON, so a
+# non-cooperative agent with filesystem tools can read the reservation directly.
 #
 # Selection is idempotent and reproducible: count = clamp(round(0.25*N), 1, 5)
 # for N>=4 items; ordering by sha256 of each item's "id" (stable, not random).

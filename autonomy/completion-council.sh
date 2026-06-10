@@ -1206,9 +1206,13 @@ GATE_EOF
 # Council Held-out Spec Eval Gate (v7.28.0) - anti-reward-hacking
 #===============================================================================
 # Held-out checklist items are reserved at PRD-checklist generation time and are
-# NEVER shown to the build loop (excluded from checklist_summary and the build
-# prompt, and from council_checklist_gate). The completion council evaluates
-# them only here, at the ship gate, using the SAME verification machinery the
+# excluded from the prompt feed the build loop sees (checklist_summary, the build
+# prompt, and council_checklist_gate). The completion council evaluates them only
+# here, at the ship gate. Scope of the guarantee: this protects the prompt feed,
+# not a sandbox. .loki/checklist/held-out.json is plain on-disk JSON, so a
+# non-cooperative agent with filesystem tools can read the reservation directly;
+# the protection is against feeding held-out items to the loop, not isolation.
+# The gate uses the SAME verification machinery the
 # checklist already uses: council_reverify_checklist re-runs checklist-verify.py
 # over the FULL checklist (including held-out items), so this gate just reads
 # the held-out items' freshly-computed statuses from verification-results.json.

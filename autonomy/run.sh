@@ -13141,6 +13141,19 @@ if __name__ == "__main__":
                 log_warn "Completion claim rejected: evidence gate found no proof of completion (empty diff vs run-start SHA, or red tests)."
                 log_warn "  Details under .loki/council/evidence-block.json ; opt out with LOKI_EVIDENCE_GATE=0"
                 # Fall through; keep iterating until there is real evidence.
+            # v7.28.0: the held-out spec-eval gate must also guard the DEFAULT
+            # completion-promise route, not only the interval-gated council path
+            # (council_evaluate). Otherwise an agent can self-assert "done" and
+            # exit as completion_promise_fulfilled while a held-out acceptance
+            # check is failing, bypassing the anti-reward-hacking gate entirely.
+            # Mirrors the evidence-gate block above. Opt-out: the gate's own
+            # LOKI_HELDOUT_GATE=0 (council_heldout_gate returns 0 immediately
+            # when disabled or when no held-out items are reserved, so this
+            # branch never fires). Gate output is printed by council_heldout_gate.
+            elif check_completion_promise "$iter_output" && type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
+                log_warn "Completion claim rejected: held-out spec-eval gate found failing held-out acceptance check(s)."
+                log_warn "  Details under .loki/council/heldout-block.json ; opt out with LOKI_HELDOUT_GATE=0"
+                # Fall through; keep iterating until the held-out checks pass.
             elif check_completion_promise "$iter_output"; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then
@@ -13519,6 +13532,8 @@ check_human_intervention() {
             log_info "Council force-review: blocked by checklist hard gate"
         elif type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
             log_info "Council force-review: blocked by evidence hard gate"
+        elif type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
+            log_info "Council force-review: blocked by held-out spec-eval hard gate"
         elif type council_vote &>/dev/null && council_vote; then
             log_header "COMPLETION COUNCIL: FORCE REVIEW - PROJECT COMPLETE"
             # BUG #17 fix: Write COMPLETED marker, generate council report, and

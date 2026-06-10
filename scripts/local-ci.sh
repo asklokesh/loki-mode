@@ -235,6 +235,14 @@ run_check "tests/test-prd-reuse.sh (codebase signature + PRD reuse decision)" "b
 # Asserts share does NOT publish without confirm and DOES with --yes.
 run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash tests/cli/test-proof-command.sh 2>&1 | tail -3"
 
+# v7.28.0: held-out spec evals. Deterministic ~25% checklist reservation,
+# exclusion from the build prompt feed, and the completion council held-out gate.
+run_check "tests/test-heldout-evals.sh (held-out selection + council gate)" "bash tests/test-heldout-evals.sh 2>&1 | tail -3"
+
+# v7.28.0: living spec. `loki spec` lock/status/sync, drift-report.json, and the
+# SPEC_DRIFT finding surfaced by `loki verify`.
+run_check "tests/test-spec.sh (living spec lock/status/sync + drift finding)" "bash tests/test-spec.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------
