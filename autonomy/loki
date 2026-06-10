@@ -618,7 +618,7 @@ show_help() {
     echo ""
     echo "Build:"
     echo "  start [SPEC]     Start a build (PRD file, GitHub issue, or no arg)"
-    echo "  plan <SPEC>      Dry-run analysis: complexity, cost, execution plan"
+    echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  grill [SPEC]     Devil's-advocate spec interrogation before you build"
     echo "  spec [cmd]       Living spec: lock|status|sync (drift detection)"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"

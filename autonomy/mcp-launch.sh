@@ -73,7 +73,7 @@ _ml_repo_root() {
 # every knob accepts the same spellings rather than each hard-coding "1".
 _ml_truthy() {
     case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-        1|true|yes|on|y) return 0 ;;
+        1|true|yes|on) return 0 ;;
         *) return 1 ;;
     esac
 }
