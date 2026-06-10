@@ -178,6 +178,53 @@ LOKI_DIR="$_PREVIEW_TMP" test_cmd "loki preview --no-open exits 0 with no app ru
 rm -rf "$_PREVIEW_TMP"
 
 # -------------------------------------------
+# Test: loki spec --help
+# -------------------------------------------
+test_cmd "loki spec --help exits 0 and shows the living-spec usage" \
+    0 "the living spec" spec --help
+
+# -------------------------------------------
+# Test: loki spec status with no spec present -> usage error exit 2.
+# Run in an ISOLATED empty dir so no stray prd.md/.loki is picked up.
+# -------------------------------------------
+_SPEC_TMP=$(mktemp -d 2>/dev/null || echo "/tmp/loki-spec-test-$$")
+mkdir -p "$_SPEC_TMP"
+( cd "$_SPEC_TMP" && "$LOKI" spec status >/dev/null 2>&1; [ "$?" -eq 2 ] ) \
+    && { echo -e "${GREEN}[PASS]${NC} loki spec status with no spec exits 2 (usage)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki spec status with no spec -- expected exit 2"; ((FAIL++)); }
+((TOTAL++))
+rm -rf "$_SPEC_TMP"
+
+# -------------------------------------------
+# Test: loki grill --help
+# -------------------------------------------
+test_cmd "loki grill --help exits 0 and shows the interrogation usage" \
+    0 "interrogate a spec" grill --help
+
+# -------------------------------------------
+# Test: loki grill with no spec present -> usage error exit 2.
+# -------------------------------------------
+_GRILL_TMP=$(mktemp -d 2>/dev/null || echo "/tmp/loki-grill-test-$$")
+mkdir -p "$_GRILL_TMP"
+( cd "$_GRILL_TMP" && "$LOKI" grill >/dev/null 2>&1; [ "$?" -eq 2 ] ) \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill with no spec exits 2 (usage)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill with no spec -- expected exit 2"; ((FAIL++)); }
+((TOTAL++))
+
+# -------------------------------------------
+# Test: loki grill with an unavailable provider -> clean error exit 3.
+# Uses a bogus LOKI_PROVIDER so the failure is deterministic regardless of
+# whether the claude CLI is installed on the runner. Honest no-provider path:
+# never a silent success, never fabricated questions.
+# -------------------------------------------
+printf '# Spec\n## Feature\nDo a thing.\n' > "$_GRILL_TMP/prd.md"
+( cd "$_GRILL_TMP" && LOKI_PROVIDER=bogus "$LOKI" grill prd.md >/dev/null 2>&1; [ "$?" -eq 3 ] ) \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill with an unavailable provider exits 3 (clean error)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill unavailable provider -- expected exit 3"; ((FAIL++)); }
+((TOTAL++))
+rm -rf "$_GRILL_TMP"
+
+# -------------------------------------------
 # Test: loki open alias --help routes to preview
 # -------------------------------------------
 test_cmd "loki open --help exits 0 and shows preview usage" \
