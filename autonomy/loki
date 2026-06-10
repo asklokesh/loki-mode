@@ -13308,6 +13308,13 @@ def _provider_model_development():
     return (os.environ.get('LOKI_CLAUDE_MODEL_DEVELOPMENT')
             or os.environ.get('LOKI_MODEL_DEVELOPMENT')
             or ('sonnet' if _allow_haiku else 'opus'))
+def _provider_model_planning():
+    # claude.sh:65 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > opus.
+    # CLAUDE_DEFAULT_PLANNING is always opus (LOKI_ALLOW_HAIKU only lowers the
+    # development and fast defaults, not planning).
+    return (os.environ.get('LOKI_CLAUDE_MODEL_PLANNING')
+            or os.environ.get('LOKI_MODEL_PLANNING')
+            or 'opus')
 _max_tier = (os.environ.get('LOKI_MAX_TIER', '') or '').strip().lower()
 def _loki_clamp_alias(alias):
     if not _max_tier:
@@ -13321,14 +13328,89 @@ def _loki_clamp_alias(alias):
     if _max_tier == 'opus':
         return 'opus' if alias == 'fable' else alias
     return alias
-if _max_tier:
-    _clamped = _loki_clamp_alias(session_model_env)
-    if _clamped != session_model_env:
-        session_model_env = _clamped
-        _session_model_source = 'LOKI_MAX_TIER (clamped)'
-    if _fable_architect and _loki_clamp_alias('fable') != 'fable':
-        # The architect iteration would clamp down too; do not disclose fable.
-        _fable_architect = False
+
+# Session-pin tier route (the runner's NO-OVERRIDE path). When there is no
+# mid-flight override file, the runner does NOT feed the session alias straight
+# to --model. It maps the alias to an abstract TIER (run.sh:12331 -- opus->
+# planning, sonnet->development, haiku->fast, fable->fable) and resolves that
+# tier through resolve_model_for_tier (claude.sh:353), which reads
+# PROVIDER_MODEL_PLANNING/DEVELOPMENT/FAST and then applies
+# loki_apply_max_tier_clamp(model, REAL_tier). This DIFFERS from the override-
+# path clamp _loki_clamp_alias above: a 'sonnet' SESSION pin dispatches OPUS
+# (development tier -> PROVIDER_MODEL_DEVELOPMENT=opus on stock config), whereas
+# a 'sonnet' OVERRIDE file dispatches sonnet (alias fed straight to --model).
+# Quoting the alias name on the default session path was the task-568 gap (it
+# understated cost ~1.7x: Sonnet quote vs Opus dispatch). The estimator must
+# quote the model the runner actually dispatches.
+#
+# SYNC: byte-faithful with run.sh's session-pin case + claude.sh
+# resolve_model_for_tier + loki_apply_max_tier_clamp. The same resolver lives in
+# the dashboard (dashboard/server.py _resolve_session_pin). Locked by the
+# session-pin parity matrix and the no-cap stock cross-route cases in
+# tests/test-model-override.sh.
+def _resolve_session_pin(alias):
+    # alias -> abstract tier (run.sh:12331). Unknown -> development (the runner's
+    # '*' arm passes CURRENT_TIER through to resolve_model_for_tier, whose '*'
+    # default is PROVIDER_MODEL_DEVELOPMENT, i.e. the development tier).
+    _pin_tier = {
+        'opus': 'planning',
+        'sonnet': 'development',
+        'haiku': 'fast',
+        'fable': 'fable',
+    }.get(alias, 'development')
+    # tier -> model (claude.sh resolve_model_for_tier explicit arms).
+    if _pin_tier == 'planning':
+        _m = _provider_model_planning()
+    elif _pin_tier == 'fast':
+        _m = _provider_model_fast()
+    elif _pin_tier == 'fable':
+        _m = 'fable'
+    else:  # development (and the '*' fallthrough)
+        _m = _provider_model_development()
+    # Apply the shared LOKI_MAX_TIER clamp with the REAL tier and resolved model
+    # (loki_apply_max_tier_clamp(model, tier)), NOT the alias==alias override
+    # convention. This is the one place where the two paths legitimately diverge
+    # (e.g. opus pin + sonnet cap + ALLOW_HAIKU: tier route -> sonnet, because the
+    # planning tier downgrades to PROVIDER_MODEL_DEVELOPMENT=sonnet).
+    if not _max_tier:
+        return _m
+    if _max_tier == 'haiku':
+        return _provider_model_fast()
+    if _max_tier == 'sonnet':
+        if _pin_tier in ('planning', 'fable') or _m == 'fable':
+            return _provider_model_development()
+        return _m
+    if _max_tier == 'opus':
+        return 'opus' if _m == 'fable' else _m
+    return _m
+# Resolve the model the runner will ACTUALLY dispatch for the pinned session,
+# choosing the correct route:
+#   - OVERRIDE file present: the runner feeds the alias straight to --model via
+#     loki_apply_max_tier_clamp(alias, alias). Use _loki_clamp_alias (the
+#     override-path clamp). A 'sonnet' override dispatches sonnet.
+#   - No override (session pin): the runner maps alias -> tier ->
+#     resolve_model_for_tier -> clamp(model, real_tier). Use _resolve_session_pin.
+#     A 'sonnet' session pin dispatches OPUS (development tier).
+# This is the task-568 fix: price the actually-dispatched model on BOTH routes.
+_is_override = (_session_model_source == '.loki/state/model-override')
+if _is_override:
+    _dispatched_model = _loki_clamp_alias(session_model_env)
+else:
+    _dispatched_model = _resolve_session_pin(session_model_env)
+
+# Keep session_model_env (the alias) for token-volume tier mapping and provenance,
+# but record when the cost ceiling actually changed the dispatched model so the
+# provenance line is honest about the clamp.
+if _max_tier and _dispatched_model != session_model_env:
+    _session_model_source = 'LOKI_MAX_TIER (clamped)'
+# Clear the architect-fable disclosure when the ceiling would clamp the architect
+# iteration too. This is INDEPENDENT of whether the session model itself changed:
+# e.g. an opus pin under a sonnet cap leaves the session model opus (no change),
+# but the iter-0 fable architect tier still clamps down to development. Nesting
+# this under the session-changed branch would over-quote a Fable iteration the
+# runner actually dispatches as opus (estimator-vs-runner divergence).
+if _max_tier and _fable_architect and _loki_clamp_alias('fable') != 'fable':
+    _fable_architect = False
 
 # v7.29.0: Honor LOKI_COMPLEXITY -- the SAME env var the runner honors at
 # run.sh:920 -- so a forced-tier run (e.g. 'loki demo' / 'loki start --simple'
@@ -13344,8 +13426,11 @@ forced_complexity = {'standard': 'moderate'}.get(_forced_complexity_raw, _forced
 if forced_complexity not in ('simple', 'moderate', 'complex', 'enterprise'):
     forced_complexity = ''
 
-# Map session model name to tier key used in tokens_per_tier below.
-# Unknown models fall through to 'development' (Sonnet) as a safe default.
+# Map session model name to tier key used in tokens_per_tier below. This keys the
+# token VOLUME per iteration off the work tier the session pin selects (e.g. a
+# sonnet pin = the development tier = 80k/15k tokens). It does NOT decide the
+# priced model: that is _dispatched_model, the model the runner actually invokes.
+# Unknown models fall through to 'development' as a safe default.
 _session_tier_map = {
     'fable': 'advisor',
     'opus': 'planning',
@@ -13353,6 +13438,13 @@ _session_tier_map = {
     'haiku': 'fast',
 }
 session_tier = _session_tier_map.get(session_model_env, 'development')
+
+# Pricing-table key (Fable/Opus/Sonnet/Haiku) for the model the runner dispatches.
+# The loop below uses tokens_per_tier[tier] for token VOLUME but prices by this
+# model, so the quote reflects the actually-dispatched model on every route.
+_PRICED_MODEL_KEY = {'fable': 'Fable', 'opus': 'Opus', 'sonnet': 'Sonnet', 'haiku': 'Haiku'}
+def _priced_model_for(alias):
+    return _PRICED_MODEL_KEY.get((alias or '').strip().lower(), 'Opus')
 
 # Colors (disabled for JSON mode)
 if show_json:
@@ -13586,7 +13678,19 @@ for i in range(estimated_iterations):
             tier = 'advisor'
 
     info = tokens_per_tier[tier]
-    model = info['model']
+    # Token VOLUME comes from the work tier (info), but the priced MODEL is the
+    # model the runner actually dispatches. In legacy rotation the per-tier model
+    # IS the dispatched model. In session-pinned mode (the default) the runner
+    # resolves the pin through provider config (_dispatched_model): a sonnet pin
+    # dispatches opus, so we price Opus, not the tier's static 'Sonnet' label.
+    # The fable-architect iteration 0 genuinely dispatches fable (already cap-
+    # cleared above when it would clamp), so it keeps the advisor tier's Fable.
+    if legacy_tier_switching:
+        model = info['model']
+    elif _fable_architect and i == 0:
+        model = info['model']  # advisor tier -> Fable
+    else:
+        model = _priced_model_for(_dispatched_model)
     inp = info['input']
     out = info['output']
 
@@ -13781,8 +13885,14 @@ else:
     print('  Model distribution: ' + (' | '.join(pinned_parts) if pinned_parts else '(none)'))
     # Provenance: name the lever that actually selected the pinned model, never a
     # false attribution. _session_model_source is the real source (env, override
-    # file, or maxTier clamp) tracked at selection time.
-    print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    # file, or maxTier clamp) tracked at selection time. When the session pin is a
+    # tier alias that resolves to a DIFFERENT dispatched model (the default: a
+    # 'sonnet' pin -> development tier -> opus), show the resolution so the
+    # distribution above (Opus x4) is legible against the pin name (sonnet).
+    if (not _is_override) and _dispatched_model != session_model_env:
+        print(f'  {DIM}(pinned via {_session_model_source}={session_model_env} -> {session_tier} tier -> {_dispatched_model}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    else:
+        print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
     if _fable_architect:
         print(f'  {DIM}(+ 1 architecture iteration on Fable via LOKI_FABLE_ARCHITECT=1){NC}')
     if fable_n > 0:
