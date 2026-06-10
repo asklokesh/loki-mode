@@ -227,6 +227,48 @@ records, so the $78 cumulative cap remains correct across the resume.
 
 ---
 
+## 12. Incident note 2026-06-10 (local-ci stop-suite ran during the re-run batch; forensics: no batch impact)
+
+Recorded 2026-06-10 ~06:31 EDT, while re-run instance 10 was in flight.
+
+What happened: `scripts/local-ci.sh` (v7.28.2 pre-push gate) was run on this
+machine while the smoke-batch re-run was live. Its stop-test suites kill
+processes matching the loki-run pattern, and the operator reported it may have
+killed batch instance 10 (ansible 34db57a4) mid-flight.
+
+Forensic verification (performed immediately, before touching any state):
+- Instance 9 (ansible 1a4644ff) completed CLEANLY before the window: its
+  `.loki/signals/` contains `COMPLETION_REQUESTED`, and its final autonomy-log
+  result records are `is_error=false` ending with "Completion signal written"
+  (cost $5.1847). Its `exit=-9` is Loki's own post-completion process-group
+  self-kill, the same pattern as instances 2, 5, 6, and 7, all of which
+  predate the local-ci run. Record 9 was written at 06:27:46.
+- Instance 10's ONLY loki invocation (the batch driver calls the adapter's
+  `subprocess.run` exactly once per instance) started at 06:27:49 and was
+  inspected ALIVE and healthy at 06:29-06:31: the driver's direct child
+  intact, no `.loki/crash/` records, zero completed result records, $0 partial
+  cost, active claude stream. Had the invocation been killed, the driver would
+  have written a 10th record and exited; it had 9 records and was still
+  waiting on the live child.
+- The loki-run processes the stop suite killed were its OWN spawned test
+  instances. An unrelated orphaned council `claude` process from 2026-06-09
+  16:46 (cwd `~/loki-demo-recording/notes-app`, not part of this benchmark)
+  survived the sweep and was left untouched.
+
+Conclusion: no batch trial was consumed, killed, or restarted by the local-ci
+run. Instance 10's in-flight run remains its FIRST and only trial; its record
+is accepted only after post-completion integrity verification of its autonomy
+logs (real non-error iterations, no kill signature).
+
+Decision rule (binding, for future incidents): an externally killed run with
+no real completed iterations is an infrastructure failure and does NOT consume
+the instance's single trial (same rule as the Section 11 session-limit
+outage). A run that completed real iterations before an external kill keeps
+whatever patch those iterations produced. local-ci must not be run while a
+benchmark batch is live.
+
+---
+
 Pre-registration note: this methodology, the pinned subset, the shim, and the
 gold-smoke evidence constitute the pre-registration bundle. Per Hard Rule 3 they
 are committed BEFORE any paid run; the smoke-batch results land in a separate
