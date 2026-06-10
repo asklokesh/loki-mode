@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.28.2] - 2026-06-10
+
+### Changed (first-run UX, from the 2026-06 user-shoes friction audit)
+- Bare `loki` now prints an 11-line newcomer landing (what Loki Mode is, the
+  three commands that matter, a provider-prerequisite pointer to `loki doctor`
+  placed before any paid action, and a cost-preview tip) instead of the
+  168-line full command table. `loki help` and `loki --help` are unchanged.
+- `loki doctor` timing label corrected from "(instant)" to "(a few seconds)"
+  (measured 3.2-4.4s across routes).
+- `loki dashboard start` and `loki web` each print one line distinguishing the
+  two browser UIs (run monitor on 57374 vs project web UI on 57375).
+- The bundled demo PRD (templates/simple-todo-app.md) now classifies SIMPLE
+  (score 0, ~4 iterations, ~$1.86 estimate) instead of COMPLEX (~$9.30),
+  matching what `loki demo` actually runs.
+- README "Get Started in 30 Seconds" leads with the 3-line happy path;
+  prerequisites collapse below it with an honest provider-CLI note.
+- 16 missing-required-argument usage errors standardized to exit 2 (was a mix
+  of 1): provider set, issue parse, issue view, run, issue, config set,
+  config get, quick, plan, notify, heal, migrate, and the enterprise token
+  subcommands. Help-flag exits are unchanged. Caller analysis confirmed no
+  internal consumer branches on the old code; exit 2 is the POSIX
+  usage-error convention.
+- Fixed a dead anchor: docs/alternative-installations.md pointed at a
+  nonexistent README #installation heading.
+
+### Tests
+- tests/test-cli-commands.sh: 23/23 on both routes. tests/test-plan-command.sh:
+  16/16. scripts/local-ci.sh: full run green.
+
 ## [7.28.1] - 2026-06-10
 
 ### Fixed

@@ -685,14 +685,14 @@ show_landing() {
     version=$(get_version)
     echo -e "${BOLD}Loki Mode v$version${NC} - the spec-driven builder that verifies its own work."
     echo ""
+    echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
+    echo ""
     echo "Get started:"
     echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
     echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
     echo -e "  ${CYAN}loki dashboard start${NC}  Start the live run monitor (then: loki dashboard open)"
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
-    echo ""
-    echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
     echo "Tip: preview cost and scope before building: loki plan <your-prd.md>"
 }
 
