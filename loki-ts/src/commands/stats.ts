@@ -476,6 +476,14 @@ export function computeStats(argv: readonly string[]): StatsResult {
 }
 
 export async function runStats(argv: readonly string[]): Promise<number> {
+  // CLI consolidation (Phase A): `stats` is a deprecated alias of
+  // `report session`. `stats` is Bun-native, so the deprecation pointer must
+  // fire here to stay identical with the bash route (autonomy/loki `stats)`
+  // arm). `report` is bash-only, so `report session` never reaches Bun --
+  // emitting on the bare `stats` token cannot double-fire. Suppressed under
+  // --json/-q/--quiet by the shared helper.
+  const { emitDeprecatedAlias } = await import("../util/deprecated_alias.ts");
+  emitDeprecatedAlias("stats", "report session", argv);
   const r = computeStats(argv);
   console.log(r.stdout);
   return r.exitCode;
