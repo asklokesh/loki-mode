@@ -319,6 +319,12 @@ loki_apply_max_tier_clamp() {
     local model="$1"
     local tier="${2:-}"
     local max_tier="${LOKI_MAX_TIER:-}"
+    # Normalize EXACTLY like the python ports (dashboard _clamp_to_max_tier,
+    # estimator _max_tier): trim + lowercase. Without this, a user-typed cap
+    # like "Sonnet" (settings.json maxTier exports verbatim) was silently
+    # ignored here while quote and dashboard claimed the ceiling enforced:
+    # the run would exceed the quote. Council R1 finding, v7.31.0.
+    max_tier="$(printf '%s' "$max_tier" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     [ -z "$max_tier" ] && { printf '%s' "$model"; return; }
     case "$max_tier" in
         haiku)

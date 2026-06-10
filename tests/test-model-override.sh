@@ -376,7 +376,12 @@ export LOKI_REPO_ROOT="$REPO_ROOT"
 
 parity_fail=0
 parity_cells=0
-for cap in "" haiku sonnet opus; do
+# Council R1 round-2 (v7.31.0): include non-canonical cap spellings. A
+# settings.json maxTier exports the user-typed string verbatim, so "Sonnet"
+# and padded values must clamp identically on the bash and python legs
+# (both normalize trim+lowercase). Before the fix, the bash leg silently
+# ignored miscased caps while the python legs enforced them.
+for cap in "" haiku sonnet opus Sonnet HAIKU " opus "; do
   for ah in "" LOKI_ALLOW_HAIKU=true; do
     for ovr in "" LOKI_CLAUDE_MODEL_FAST=opus LOKI_MODEL_DEVELOPMENT=haiku LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet; do
       for alias in haiku sonnet opus fable; do
