@@ -13223,17 +13223,39 @@ _fable_architect = (
 )
 
 # Apply the SAME LOKI_MAX_TIER ceiling the runner applies, so the quoted model
-# (and the architect disclosure) never exceed the operator cost cap. Mirrors
-# providers/claude.sh loki_apply_max_tier_clamp. PROVIDER_MODEL_DEVELOPMENT is
-# opus by default on the claude provider.
+# (and the architect disclosure) never exceed the operator cost cap.
+#
+# SYNC: This resolves the clamp result through the SAME provider config the runner
+# uses, a byte-faithful port of providers/claude.sh loki_apply_max_tier_clamp plus
+# the PROVIDER_MODEL_FAST / PROVIDER_MODEL_DEVELOPMENT resolution chains
+# (claude.sh:55-67, :318). The same port also lives in the dashboard
+# (dashboard/server.py _provider_model_fast / _provider_model_development /
+# _clamp_to_max_tier). All three readers MUST agree; the agreement is locked by
+# the parity test in tests/test-model-override.sh (resolver parity matrix) and the
+# cross-route tests in test-plan-command.sh. If you change resolution here, change
+# it in claude.sh AND dashboard/server.py, and re-run those tests. The 'or' chains
+# mirror bash ':-' empty-string-fallthrough; allow_haiku uses an exact 'true'
+# match to mirror bash [ \"\$x\" = \"true\" ]. PROVIDER_MODEL_DEVELOPMENT is opus
+# by default; PROVIDER_MODEL_FAST is sonnet by default (haiku when ALLOW_HAIKU).
+_allow_haiku = (os.environ.get('LOKI_ALLOW_HAIKU', 'false') or 'false') == 'true'
+def _provider_model_fast():
+    return (os.environ.get('LOKI_CLAUDE_MODEL_FAST')
+            or os.environ.get('LOKI_MODEL_FAST')
+            or ('haiku' if _allow_haiku else 'sonnet'))
+def _provider_model_development():
+    return (os.environ.get('LOKI_CLAUDE_MODEL_DEVELOPMENT')
+            or os.environ.get('LOKI_MODEL_DEVELOPMENT')
+            or ('sonnet' if _allow_haiku else 'opus'))
 _max_tier = (os.environ.get('LOKI_MAX_TIER', '') or '').strip().lower()
 def _loki_clamp_alias(alias):
     if not _max_tier:
         return alias
     if _max_tier == 'haiku':
-        return 'haiku'
+        return _provider_model_fast()
     if _max_tier == 'sonnet':
-        return 'opus' if alias in ('opus', 'fable') else alias
+        # alias passed as both model and tier (override-path convention): the
+        # runner's sonnet arm reduces to 'downgrade iff alias==fable'.
+        return _provider_model_development() if alias == 'fable' else alias
     if _max_tier == 'opus':
         return 'opus' if alias == 'fable' else alias
     return alias

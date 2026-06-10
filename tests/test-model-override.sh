@@ -341,6 +341,161 @@ case "$ov_total" in
 esac
 
 # ---------------------------------------------------------------------------
+# 7. Resolver parity matrix: the dashboard/estimator python clamp must resolve
+#    BYTE-IDENTICALLY to providers/claude.sh loki_apply_max_tier_clamp across the
+#    full input matrix, including LOKI_ALLOW_HAIKU and the env overrides. This is
+#    the contract that makes the three-way duplication safe (the v7.31 BLOCKER
+#    was three clamp impls disagreeing because the python copies hardcoded
+#    "haiku"/"opus" instead of resolving through provider config).
+#
+#    Bash leg sources claude.sh and calls loki_apply_max_tier_clamp ALIAS ALIAS
+#    (the override-path convention). Python leg drives the dashboard's
+#    _clamp_to_max_tier (server.py); the estimator embeds the same port and is
+#    additionally exercised end-to-end in section 8.
+# ---------------------------------------------------------------------------
+bash_clamp() {
+    # $1=alias ; remaining "VAR=val" exports
+    local alias="$1"; shift
+    bash -c '
+      for kv in "$@"; do export "$kv"; done
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      loki_apply_max_tier_clamp "'"$alias"'" "'"$alias"'"
+    ' _ "$@"
+}
+py_clamp() {
+    # $1=alias ; remaining "VAR=val" exports
+    local alias="$1"; shift
+    env "$@" python3 -c '
+import sys, os
+sys.path.insert(0, os.environ["LOKI_REPO_ROOT"])
+from dashboard import server as s
+sys.stdout.write(s._clamp_to_max_tier(sys.argv[1]))
+' "$alias"
+}
+export LOKI_REPO_ROOT="$REPO_ROOT"
+
+parity_fail=0
+parity_cells=0
+for cap in "" haiku sonnet opus; do
+  for ah in "" LOKI_ALLOW_HAIKU=true; do
+    for ovr in "" LOKI_CLAUDE_MODEL_FAST=opus LOKI_MODEL_DEVELOPMENT=haiku LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet; do
+      for alias in haiku sonnet opus fable; do
+        exports=()
+        [ -n "$cap" ] && exports+=("LOKI_MAX_TIER=$cap")
+        [ -n "$ah" ]  && exports+=("$ah")
+        [ -n "$ovr" ] && exports+=("$ovr")
+        b="$(bash_clamp "$alias" "${exports[@]}")"
+        p="$(py_clamp "$alias" "${exports[@]}")"
+        parity_cells=$((parity_cells+1))
+        if [ "$b" != "$p" ]; then
+          parity_fail=$((parity_fail+1))
+          echo "  PARITY MISMATCH: alias=$alias cap='$cap' ah='$ah' ovr='$ovr' bash='$b' py='$p'"
+        fi
+      done
+    done
+  done
+done
+[ "$parity_fail" -eq 0 ] \
+  && ok "resolver parity matrix: dashboard python clamp == claude.sh across $parity_cells cells" \
+  || bad "resolver parity matrix had $parity_fail mismatches (of $parity_cells cells)"
+
+# Precedence proof: LOKI_CLAUDE_MODEL_DEVELOPMENT wins over LOKI_MODEL_DEVELOPMENT
+# in BOTH legs (mirrors claude.sh resolution order).
+b_prec="$(bash_clamp fable LOKI_MAX_TIER=sonnet LOKI_CLAUDE_MODEL_DEVELOPMENT=opus LOKI_MODEL_DEVELOPMENT=haiku)"
+p_prec="$(py_clamp fable LOKI_MAX_TIER=sonnet LOKI_CLAUDE_MODEL_DEVELOPMENT=opus LOKI_MODEL_DEVELOPMENT=haiku)"
+[ "$b_prec" = "opus" ] && [ "$p_prec" = "opus" ] \
+  && ok "env precedence: LOKI_CLAUDE_MODEL_DEVELOPMENT wins (bash=$b_prec py=$p_prec)" \
+  || bad "env precedence wrong: bash='$b_prec' py='$p_prec' (expected opus/opus)"
+
+# Trap guard: an opus alias under sonnet cap + ALLOW_HAIKU must NOT clamp to
+# sonnet (the runner keeps opus; the old `in ('opus','fable')` arm would break).
+b_trap="$(bash_clamp opus LOKI_MAX_TIER=sonnet LOKI_ALLOW_HAIKU=true)"
+p_trap="$(py_clamp opus LOKI_MAX_TIER=sonnet LOKI_ALLOW_HAIKU=true)"
+[ "$b_trap" = "opus" ] && [ "$p_trap" = "opus" ] \
+  && ok "opus alias under sonnet+ALLOW_HAIKU stays opus (no new downgrade; bash=$b_trap py=$p_trap)" \
+  || bad "opus wrongly downgraded under sonnet+ALLOW_HAIKU: bash='$b_trap' py='$p_trap'"
+
+# ---------------------------------------------------------------------------
+# 8. Cross-route agreement for the EXACT v7.31 reviewer repros: the estimator's
+#    quoted session model == the dashboard's effective == the runner-resolved
+#    model (claude.sh override-path clamp). Closes the stock-install gap where
+#    LOKI_MAX_TIER=haiku quoted Haiku but the run dispatched sonnet.
+#
+#    The estimator's quoted model is read from cost.iterations_by_model (the model
+#    carrying the nonzero iteration count is the session model it quotes).
+# ---------------------------------------------------------------------------
+XR_DIR="$WORK/xroute"
+mkdir -p "$XR_DIR/.loki/state"
+printf '# PRD\nBuild a small todo API with one endpoint.\n' > "$XR_DIR/prd.md"
+
+# Estimator quoted alias (lowercased) for a given env + optional override file.
+est_quoted() {
+    # $@ : "VAR=val" exports
+    (cd "$XR_DIR" && env "$@" "$LOKI" plan ./prd.md --json 2>/dev/null) \
+      | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+ibm=d['cost']['iterations_by_model']
+q=[k for k,v in ibm.items() if v]
+sys.stdout.write((q[0].lower() if len(q)==1 else 'MULTI:'+','.join(q)))
+" 2>/dev/null
+}
+# Dashboard effective alias for a session model + env.
+dash_effective() {
+    # $1=alias-as-default-or-override ; remaining "VAR=val" exports
+    local alias="$1"; shift
+    env "$@" python3 -c '
+import sys, os
+sys.path.insert(0, os.environ["LOKI_REPO_ROOT"])
+from dashboard import server as s
+sys.stdout.write(s._clamp_to_max_tier(sys.argv[1]))
+' "$alias"
+}
+
+# --- Repro A: LOKI_MAX_TIER=haiku, stock (ALLOW_HAIKU default false) ---
+# No override file: estimator session default is sonnet; under haiku cap it
+# resolves to PROVIDER_MODEL_FAST=sonnet. Runner-resolved (clamp of the default
+# session alias sonnet) and dashboard effective (clamp of default 'sonnet') agree.
+rm -f "$XR_DIR/.loki/state/model-override"
+eA="$(est_quoted LOKI_MAX_TIER=haiku)"
+rA="$(bash_clamp sonnet LOKI_MAX_TIER=haiku)"
+dA="$(dash_effective sonnet LOKI_MAX_TIER=haiku)"
+[ "$eA" = "$rA" ] && [ "$dA" = "$rA" ] && [ "$rA" = "sonnet" ] \
+  && ok "cross-route haiku-cap stock: estimator=$eA dashboard=$dA runner=$rA (all sonnet, was Haiku-quote bug)" \
+  || bad "cross-route haiku-cap stock mismatch: est='$eA' dash='$dA' runner='$rA'"
+
+# --- Repro B: LOKI_MAX_TIER=haiku + LOKI_ALLOW_HAIKU=true ---
+# Now PROVIDER_MODEL_FAST=haiku, so all three quote/dispatch haiku.
+eB="$(est_quoted LOKI_MAX_TIER=haiku LOKI_ALLOW_HAIKU=true)"
+rB="$(bash_clamp sonnet LOKI_MAX_TIER=haiku LOKI_ALLOW_HAIKU=true)"
+dB="$(dash_effective sonnet LOKI_MAX_TIER=haiku LOKI_ALLOW_HAIKU=true)"
+[ "$eB" = "$rB" ] && [ "$dB" = "$rB" ] && [ "$rB" = "haiku" ] \
+  && ok "cross-route haiku-cap + ALLOW_HAIKU: estimator=$eB dashboard=$dB runner=$rB (all haiku)" \
+  || bad "cross-route haiku-cap+ALLOW_HAIKU mismatch: est='$eB' dash='$dB' runner='$rB'"
+
+# --- Repro C: LOKI_ALLOW_HAIKU=true + LOKI_MAX_TIER=sonnet + fable override ---
+# The second reviewer instance. fable override under sonnet cap with ALLOW_HAIKU
+# resolves to PROVIDER_MODEL_DEVELOPMENT=sonnet on ALL three routes.
+printf 'fable\n' > "$XR_DIR/.loki/state/model-override"
+eC="$(est_quoted LOKI_ALLOW_HAIKU=true LOKI_MAX_TIER=sonnet)"
+rC="$(bash_clamp fable LOKI_ALLOW_HAIKU=true LOKI_MAX_TIER=sonnet)"
+dC="$(dash_effective fable LOKI_ALLOW_HAIKU=true LOKI_MAX_TIER=sonnet)"
+[ "$eC" = "$rC" ] && [ "$dC" = "$rC" ] && [ "$rC" = "sonnet" ] \
+  && ok "cross-route ALLOW_HAIKU+sonnet-cap+fable: estimator=$eC dashboard=$dC runner=$rC (all sonnet)" \
+  || bad "cross-route ALLOW_HAIKU+sonnet-cap+fable mismatch: est='$eC' dash='$dC' runner='$rC'"
+rm -f "$XR_DIR/.loki/state/model-override"
+
+# --- Control: fable override under sonnet cap WITHOUT ALLOW_HAIKU -> opus on all ---
+printf 'fable\n' > "$XR_DIR/.loki/state/model-override"
+eD="$(est_quoted LOKI_MAX_TIER=sonnet)"
+rD="$(bash_clamp fable LOKI_MAX_TIER=sonnet)"
+dD="$(dash_effective fable LOKI_MAX_TIER=sonnet)"
+[ "$eD" = "$rD" ] && [ "$dD" = "$rD" ] && [ "$rD" = "opus" ] \
+  && ok "cross-route sonnet-cap+fable (no ALLOW_HAIKU): estimator=$eD dashboard=$dD runner=$rD (all opus)" \
+  || bad "cross-route sonnet-cap+fable (default) mismatch: est='$eD' dash='$dD' runner='$rD'"
+rm -f "$XR_DIR/.loki/state/model-override"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

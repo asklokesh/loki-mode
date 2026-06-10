@@ -2233,22 +2233,65 @@ def _normalize_session_model(raw: str | None) -> str:
     return val if val in _SESSION_MODEL_ALLOWLIST else ""
 
 
+# Provider-config model resolution mirror.
+#
+# SYNC: This is a byte-faithful python port of the claude provider's tier->model
+# resolution in providers/claude.sh (CLAUDE_DEFAULT_FAST / CLAUDE_DEFAULT_DEVELOPMENT
+# and the PROVIDER_MODEL_FAST / PROVIDER_MODEL_DEVELOPMENT resolution chains,
+# claude.sh:55-67) plus loki_apply_max_tier_clamp (claude.sh:318). The same port
+# also lives in the `loki plan` estimator (autonomy/loki, _provider_model_fast /
+# _provider_model_development / _loki_clamp_alias). All three readers MUST agree;
+# the agreement is locked by the parity test in tests/test-model-override.sh
+# ("resolver parity matrix") and the cross-route tests in test-plan-command.sh.
+# If you change resolution here, change it in claude.sh AND autonomy/loki, and
+# re-run those tests. The `or` chains mirror bash `:-` empty-string-fallthrough;
+# allow_haiku uses an exact "true" match to mirror bash `[ "$x" = "true" ]`.
+def _allow_haiku() -> bool:
+    return (os.environ.get("LOKI_ALLOW_HAIKU", "false") or "false") == "true"
+
+
+def _provider_model_fast() -> str:
+    # claude.sh:67 -> LOKI_CLAUDE_MODEL_FAST > LOKI_MODEL_FAST > haiku-aware default.
+    return (
+        os.environ.get("LOKI_CLAUDE_MODEL_FAST")
+        or os.environ.get("LOKI_MODEL_FAST")
+        or ("haiku" if _allow_haiku() else "sonnet")
+    )
+
+
+def _provider_model_development() -> str:
+    # claude.sh:66 -> LOKI_CLAUDE_MODEL_DEVELOPMENT > LOKI_MODEL_DEVELOPMENT > default.
+    return (
+        os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT")
+        or os.environ.get("LOKI_MODEL_DEVELOPMENT")
+        or ("sonnet" if _allow_haiku() else "opus")
+    )
+
+
 def _clamp_to_max_tier(alias: str) -> str:
     """Apply the operator LOKI_MAX_TIER ceiling to a model alias.
 
-    Mirrors providers/claude.sh loki_apply_max_tier_clamp so the dashboard's
-    reported `effective` model agrees with the model the run will dispatch when a
-    cost ceiling is set. PROVIDER_MODEL_DEVELOPMENT is opus by default on the
-    claude provider, so sonnet-cap resolves opus/fable down to opus. Cross-
-    process LOKI_MAX_TIER divergence is covered by the KNOWN LIMITATION below.
+    Mirrors providers/claude.sh loki_apply_max_tier_clamp EXACTLY (resolving the
+    clamp result through the SAME provider config the runner uses): a haiku cap
+    pins everything to PROVIDER_MODEL_FAST (sonnet by default, haiku when
+    LOKI_ALLOW_HAIKU=true), and a sonnet cap resolves fable down to
+    PROVIDER_MODEL_DEVELOPMENT (opus by default, sonnet when LOKI_ALLOW_HAIKU=true).
+    The LOKI_CLAUDE_MODEL_FAST/DEVELOPMENT and LOKI_MODEL_FAST/DEVELOPMENT env
+    overrides are honored too. So the dashboard's reported `effective` model agrees
+    byte-for-byte with the model the run will dispatch when a cost ceiling is set.
+
+    This is invoked with alias as both model and tier (the override-path
+    convention), matching the run.sh mid-flight override clamp.
     """
     max_tier = (os.environ.get("LOKI_MAX_TIER") or "").strip().lower()
     if not max_tier:
         return alias
     if max_tier == "haiku":
-        return "haiku"
+        return _provider_model_fast()
     if max_tier == "sonnet":
-        return "opus" if alias in ("opus", "fable") else alias
+        # The runner's sonnet arm downgrades iff tier/model is planning or fable;
+        # called with alias as both, that reduces to "downgrade iff alias==fable".
+        return _provider_model_development() if alias == "fable" else alias
     if max_tier == "opus":
         return "opus" if alias == "fable" else alias
     return alias
@@ -2265,13 +2308,33 @@ async def get_session_model():
     after the LOKI_MAX_TIER cost ceiling is applied (so the dashboard never
     reports a model the run would clamp down).
 
-    KNOWN LIMITATION: when there is no override, `default`/`effective` (and the
-    LOKI_MAX_TIER clamp) are read from the DASHBOARD process's environment, which
-    is usually a different process than the live run, so they may not reflect the
-    run's real pinned tier or ceiling (e.g. a run pinned to opus still reads
-    "sonnet" here). The override case -- the feature this endpoint exists for --
-    reads the run's own state file; its alias is always accurate, and the clamp
-    is exact whenever the dashboard shares the run's LOKI_MAX_TIER.
+    The clamp resolves through the SAME provider config the runner uses
+    (LOKI_ALLOW_HAIKU plus the LOKI_CLAUDE_MODEL_FAST/DEVELOPMENT and
+    LOKI_MODEL_FAST/DEVELOPMENT overrides): _clamp_to_max_tier mirrors
+    providers/claude.sh loki_apply_max_tier_clamp byte-for-byte (locked by the
+    resolver parity matrix in tests/test-model-override.sh). So for the OVERRIDE
+    case -- the feature this endpoint exists for -- the reported `effective` model
+    equals the model the runner's mid-flight override path dispatches, given the
+    same environment.
+
+    KNOWN LIMITATION (cross-process env divergence): the resolution reads
+    LOKI_MAX_TIER, LOKI_ALLOW_HAIKU, LOKI_SESSION_MODEL and the model-override env
+    vars from the DASHBOARD process's environment, which is usually a different
+    process than the live run. So if the run was launched with a different
+    environment than the dashboard, the no-override `default`/`effective` may not
+    reflect the run's real pinned tier or ceiling (e.g. a run pinned to opus still
+    reads "sonnet" here). The override case reads the run's own state file, so its
+    alias is always accurate and the clamp is exact whenever the dashboard shares
+    the run's environment.
+
+    SCOPE NOTE (no-override default path): when there is no override, `effective`
+    applies the override-path clamp to the session default. The runner's
+    no-override route instead maps a session pin through a tier
+    (resolve_model_for_tier: opus->planning, sonnet->development), which can differ
+    from the override-path clamp in one cell (e.g. an opus pin under sonnet cap +
+    LOKI_ALLOW_HAIKU: the tier route yields sonnet, the override-path clamp yields
+    opus). That session-pin modeling gap is pre-existing and out of scope here;
+    the override case this endpoint serves is exact.
     """
     override = None
     try:

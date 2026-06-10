@@ -49,7 +49,16 @@ class SessionModelEndpointTests(unittest.TestCase):
         # auth scope). Restored in tearDown.
         self._saved_env = {
             k: os.environ.get(k)
-            for k in ("LOKI_MAX_TIER", "LOKI_SESSION_MODEL", "LOKI_ENTERPRISE_AUTH")
+            for k in (
+                "LOKI_MAX_TIER",
+                "LOKI_SESSION_MODEL",
+                "LOKI_ENTERPRISE_AUTH",
+                "LOKI_ALLOW_HAIKU",
+                "LOKI_CLAUDE_MODEL_FAST",
+                "LOKI_MODEL_FAST",
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT",
+                "LOKI_MODEL_DEVELOPMENT",
+            )
         }
         for k in self._saved_env:
             os.environ.pop(k, None)
@@ -167,6 +176,61 @@ class SessionModelEndpointTests(unittest.TestCase):
         self.assertTrue(body["clamped"])
         # The override file still records the requested alias; the run clamps it.
         self.assertEqual(self._override.read_text().strip(), "fable")
+
+    def test_get_clamps_haiku_cap_to_provider_fast_default_sonnet(self):
+        # v7.31 BLOCKER fix: a haiku cap resolves through PROVIDER_MODEL_FAST, which
+        # is sonnet by default (NOT a hardcoded "haiku"), matching what the runner
+        # dispatches. The old hardcoded clamp returned "haiku" here, disagreeing
+        # with the run (the stock-install over-quote bug).
+        self._override.write_text("opus\n")
+        os.environ["LOKI_MAX_TIER"] = "haiku"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "sonnet")
+
+    def test_get_clamps_haiku_cap_to_haiku_when_allow_haiku(self):
+        # With LOKI_ALLOW_HAIKU=true, PROVIDER_MODEL_FAST is haiku, so the haiku
+        # cap resolves to haiku (the runner dispatches haiku too).
+        self._override.write_text("opus\n")
+        os.environ["LOKI_MAX_TIER"] = "haiku"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "haiku")
+
+    def test_get_sonnet_cap_fable_with_allow_haiku_resolves_sonnet(self):
+        # Second reviewer instance: fable override under sonnet cap with
+        # LOKI_ALLOW_HAIKU=true resolves through PROVIDER_MODEL_DEVELOPMENT=sonnet
+        # (NOT the hardcoded "opus"), agreeing with the runner.
+        self._override.write_text("fable\n")
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["override"], "fable")
+        self.assertEqual(body["effective"], "sonnet")
+
+    def test_get_opus_under_sonnet_cap_allow_haiku_stays_opus(self):
+        # Trap guard: an opus alias under sonnet cap + ALLOW_HAIKU must NOT
+        # downgrade to sonnet (the runner keeps opus; only fable downgrades).
+        self._override.write_text("opus\n")
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
+
+    def test_get_honors_env_model_overrides_in_clamp(self):
+        # LOKI_CLAUDE_MODEL_DEVELOPMENT wins over the haiku-aware default when
+        # clamping fable under a sonnet cap (provider resolution order).
+        self._override.write_text("fable\n")
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        os.environ["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = "opus"
+        os.environ["LOKI_MODEL_DEVELOPMENT"] = "haiku"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
 
     def test_get_rejects_interior_whitespace_override(self):
         # Normalization parity with run.sh: "fab le" (interior whitespace) is NOT

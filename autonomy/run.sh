@@ -1829,6 +1829,11 @@ get_provider_tier_param() {
                     ;;
                 development) echo "${PROVIDER_MODEL_DEVELOPMENT:-opus}" ;;
                 fast) echo "${PROVIDER_MODEL_FAST:-sonnet}" ;;
+                # Honor the fable lever here too: without this arm an
+                # unsourced-claude.sh environment (this static fallback) would
+                # silently downgrade a fable-pinned tier to sonnet via the `*`
+                # default. Matches resolve_model_for_tier's explicit fable) arm.
+                fable) echo "fable" ;;
                 *) echo "sonnet" ;;
             esac
             ;;
@@ -12348,6 +12353,11 @@ except Exception as exc:
         # iteration actually fires (a -eq 0 guard here would be a silent no-op,
         # the exact bug this fix removes). The estimator models this same first
         # iteration as its 0-indexed range() i==0, so quote and run agree.
+        #
+        # PRECEDENCE: a mid-flight model override (.loki/state/model-override,
+        # applied later in this iteration body) WINS over this architect pin.
+        # Deliberate: a live user action in the dashboard outranks an env
+        # opt-in set at launch. The override is still clamped by LOKI_MAX_TIER.
         if [ "${ITERATION_COUNT:-0}" -eq 1 ] \
            && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
            && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] \
