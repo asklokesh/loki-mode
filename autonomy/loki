@@ -132,8 +132,12 @@ find_skill_dir() {
     return 1
 }
 
-# Use || true to prevent set -e from exiting before error message
-SKILL_DIR=$(find_skill_dir) || true
+# Use || true to prevent set -e from exiting before error message.
+# Honor a pre-set SKILL_DIR (test harnesses point it at a fixture); fall back to
+# auto-detection when unset. No production code exports SKILL_DIR into a child
+# loki invocation (children receive LOKI_SKILL_DIR instead), so this only changes
+# behavior when a caller deliberately exports SKILL_DIR.
+SKILL_DIR="${SKILL_DIR:-$(find_skill_dir)}" || true
 if [ -z "$SKILL_DIR" ]; then
     # Check if installation exists but is incomplete (missing run.sh)
     _check_dir1="$HOME/.claude/skills/loki-mode"
@@ -321,6 +325,70 @@ emit_event() {
     if [ -f "$EMIT_SH" ]; then
         # Run in background to be non-blocking
         ("$EMIT_SH" "$@" >/dev/null 2>&1 &)
+    fi
+}
+
+# --- CLI consolidation (Phase A): deprecated-alias back-compat contract -------
+# An old command token continues to dispatch and forward 1:1 to its canonical
+# command. It prints exactly ONE pointer line to STDERR and never touches
+# machine-readable stdout. The deprecation line is suppressed whenever an
+# explicit machine-output flag (--json, -q, --quiet) is present in the args, so
+# callers that capture combined 2>&1 (and JSON consumers) see a clean stream.
+# It is ALSO suppressed for the positional machine-output formats of forwarded
+# commands (json|csv|timeline as the first arg, e.g. `loki export json`), since
+# those formats emit a pure machine-readable stream that a combined 2>&1 capture
+# would otherwise dirty with the note line. The human-readable `markdown` format
+# is intentionally NOT suppressed.
+# Non-TTY stdout is intentionally NOT a suppression trigger (some callers pipe
+# stdout but read stderr).
+#
+# Usage:
+#   _deprecated_alias <old> <new> "$@"   # emit pointer + telemetry (suppressed
+#                                        # under --json/-q/--quiet); then the
+#                                        # caller forwards to the canonical cmd.
+# Reference implementation: the run->start deprecation (cmd_run / v6.84.0).
+_deprecated_alias_should_suppress() {
+    # Returns 0 (suppress) when a machine-output flag is present anywhere in
+    # "$@", OR when the FIRST arg is a positional machine-output format
+    # (json|csv|timeline) used by forwarded commands like `loki export json`.
+    # The positional check is first-arg-only so we never suppress on an
+    # incidental later token; markdown (human-readable) is deliberately excluded.
+    case "${1:-}" in
+        json|csv|timeline) return 0 ;;
+    esac
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --json|-q|--quiet) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+_deprecated_alias() {
+    local old="$1"; shift
+    local new="$1"; shift
+    # "$@" is now the user-supplied argv for the alias invocation.
+    if _deprecated_alias_should_suppress "$@"; then
+        return 0
+    fi
+    echo "note: 'loki ${old}' is now 'loki ${new}'. The old form still works." >&2
+    # Reuse the existing cli_command_deprecated telemetry event (from=/to=).
+    # IMPORTANT: a forwarding alias must add no side effect the canonical command
+    # lacks. events/emit.sh creates "$LOKI_DIR/events/pending" as a side effect,
+    # which would make a no-session directory suddenly contain .loki and flip the
+    # exit code of downstream guards (e.g. cmd_share's "No .loki/ directory"
+    # check). It also removes a bash-vs-bun race for read-only reporters
+    # (cmd_stats sees .loki appear vs Bun seeing it absent). So we only emit
+    # telemetry when .loki already exists; the stderr pointer line is always
+    # printed (modulo the machine-output suppression above). The matching Bun
+    # helper (loki-ts/src/util/deprecated_alias.ts) emits no telemetry, so the
+    # two routes are side-effect consistent.
+    if [ -d "${LOKI_DIR:-.loki}" ]; then
+        emit_event cli_command_deprecated cli alias \
+            "from=${old}" \
+            "to=${new}" \
+            "argv=${*:-}"
     fi
 }
 
@@ -523,6 +591,12 @@ PYEOF
 # Show help
 show_help() {
     local version=$(get_version)
+    # Strip color when stdout is not a TTY (piped/redirected) so captured help
+    # output is clean, matching the bare-loki welcome path. Local overrides only.
+    local BOLD="$BOLD" NC="$NC"
+    if [ ! -t 1 ]; then
+        BOLD=''; NC=''
+    fi
     echo -e "${BOLD}Loki Mode v$version${NC}"
     echo ""
     echo "Usage: loki <command> [options]"
@@ -534,82 +608,62 @@ show_help() {
     echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub issue, or no arg)"
     echo "  Docs: https://github.com/asklokesh/loki-mode  |  Report a problem: loki crash"
     echo ""
+    # CLI consolidation (Phase A): the front page presents ~17 canonical
+    # workflow-oriented entries grouped by section. Deprecated alias names
+    # (stats, metrics, cost, trust-metrics, serve, open, otel, cp, wt, rc, ...)
+    # do NOT appear here; they live in the collapsed footer below and in
+    # `loki help aliases`. The full long-tail surface is still dispatchable and
+    # documented per-command via `loki <command> --help`.
     echo "Commands:"
-    echo "  start [PRD|ISSUE] Start Loki Mode (PRD file, issue ref, or no arg)"
-    echo "  run <issue>      (deprecated) Alias for 'loki start <issue-ref>'"
-    echo "  quick \"task\"     Quick single-task mode (lightweight, 3 iterations max)"
-    echo "  monitor [path]   Monitor Docker Compose services with auto-fix (v6.67.0)"
-    echo "  demo             Build a sample todo app end to end (real run)"
+    echo ""
+    echo "Build:"
+    echo "  start [SPEC]     Start a build (PRD file, GitHub issue, or no arg)"
+    echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
+    echo "  grill [SPEC]     Devil's-advocate spec interrogation before you build"
+    echo "  spec [cmd]       Living spec: lock|status|sync (drift detection)"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
-    echo "  init [name]      Project scaffolding with 21 PRD templates"
-    echo "  issue <url|num>  (deprecated) Use 'loki start <issue-ref>' instead"
-    echo "  watch [prd]      Auto-rerun on PRD file changes (v6.33.0)"
-    echo "  export <format>  Export session data: json|markdown|csv|timeline (v6.0.0)"
+    echo ""
+    echo "Session:"
+    echo "  status [--json]  Show current status (--json for machine-readable)"
     echo "  stop             Stop execution immediately"
-    echo "  cleanup          Kill orphaned processes from crashed sessions"
     echo "  pause            Pause after current session"
     echo "  resume           Resume paused execution"
-    echo "  status [--json]  Show current status (--json for machine-readable)"
-    echo "  stats [flags]    Session statistics (--json, --efficiency)"
-    echo "  kpis [--json]    Accuracy + efficiency KPIs (v7.5.28+) [Phase K]"
-    echo "  logs             Show recent log output"
-    echo "  dashboard [cmd]  Dashboard server (start|stop|status|url|open)"
-    echo "  web [cmd]        Web app UI (start|stop|status) -- serves web-app/dist/"
-    echo "  preview          Open the running app Loki built (alias: open)"
-    echo "  provider [cmd]   Manage AI provider (show|set|list|info)"
-    echo "  serve            Start dashboard/API server (alias for api start)"
-    echo "  api [cmd]        Dashboard/API server (start|stop|status)"
-    echo "  sandbox [cmd]    Docker sandbox (start|stop|status|logs|shell|build)"
-    echo "  notify [cmd]     Send notifications (test|slack|discord|webhook|status)"
-    echo "  telemetry [cmd]  OpenTelemetry management (status|enable|disable|stop|start)"
-    echo "  import           Import GitHub issues as tasks"
-    echo "  github [cmd]     GitHub integration (sync|export|pr|status)"
-    echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
-    echo "  completions [bash|zsh]  Output shell completion scripts"
+    echo "  cleanup          Kill orphaned processes from crashed sessions"
+    echo ""
+    echo "Verify / trust:"
+    echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
+    echo "  review [opts]    Standalone code review with quality gates"
+    echo "  trust [cmd]      Visible trust trajectory; 'trust detail' for metrics"
+    echo ""
+    echo "Observe:"
+    echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"
+    echo "  mcp              Launch the MCP server (Model Context Protocol, stdio)"
+    echo ""
+    echo "Report:"
+    echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
+    echo ""
+    echo "Knowledge:"
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
-    echo "  compound [cmd]   Knowledge compounding (list|show|search|run|stats)"
-    echo "  council [cmd]    Completion council (status|verdicts|convergence|force-review|report)"
-    echo "  checkpoint|cp    Save/restore session checkpoints"
-    echo "  projects         Multi-project registry management"
-    echo "  audit [cmd]      Agent audit log and quality scanning (log|scan)"
+    echo ""
+    echo "Modernize:"
     echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
-    echo "  verify [base]    Deterministic PR verification (Autonomi Verify MVP; CI-gate exit codes)"
-    echo "  spec [cmd]       Living spec: keep the spec true (lock|status|sync; drift detection, CI-gate exit codes)"
-    echo "  grill [spec]     Interrogate a spec with the hardest questions before you build it (Devil's Advocate)"
-    echo "  review [opts]    Standalone code review with quality gates (diff, staged, PR, files)"
-    echo "  optimize         Optimize prompts based on session history"
-    echo "  enterprise       Enterprise feature management (tokens, OIDC)"
-    echo "  metrics [opts]   Session productivity report (--json, --last N, --save, --share)"
-    echo "  cost [opts]      Transparent cost view: per-run/project spend + budget (--json, --last N)"
-    echo "  trust [--json]   Visible trust trajectory: council/gate pass-rate + interventions over runs [R4]"
-    echo "  trust-metrics    Trust-layer metrics: evidence-block rate, gate distribution, council split, cost/verified (--json)"
-    echo "  dogfood          Show self-development statistics"
-    echo "  secrets [cmd]    API key status and validation (status|validate)"
-    echo "  reset [target]   Reset session state (all|retries|failed)"
+    echo ""
+    echo "Config:"
+    echo "  config [cmd]     Manage configuration + provider (show|set|get|provider)"
     echo "  doctor [--json]  Check system prerequisites and skill symlinks"
-    echo "  setup-skill      Create skill symlinks for all providers"
-    echo "  self-update      Upgrade loki via current manager (use --to bun|npm|brew to switch)"
-    echo "  watchdog [cmd]   Process health monitoring (status|help)"
-    echo "  worktree [cmd]   Parallel worktree management (list|merge|clean|status)"
-    echo "  agent [cmd]      Agent type dispatch (list|info|run|start|review)"
-    echo "  remote [PRD]     Start remote session (connect from phone/browser, Claude Pro/Max)"
-  echo "  trigger          Event-driven autonomous execution (schedules, webhooks)"
-    echo "  failover [cmd]   Cross-provider auto-failover (status|--enable|--test|--chain)"
-    echo "  onboard [path]   Analyze a repo and generate CLAUDE.md (structure, conventions, commands)"
-    echo '  explain [path]   Analyze any codebase and explain its architecture in plain English'
-    echo "  docs [cmd]       Generate, update, check project documentation"
-    echo "  magic [cmd]      Spec-driven component generation (MagicModules + MoMoA)"
-    echo "  plan <PRD>       Dry-run PRD analysis: complexity, cost, and execution plan"
-    echo "  ci [opts]        CI/CD quality gate integration (--pr, --report, --github-comment)"
-    echo "  test [opts]      AI-powered test generation (--file, --dir, --changed, --dry-run)"
-    echo "  context [cmd]    Context window management (show|files|tools|add|clear)"
-    echo "  code [cmd]       Codebase intelligence (overview|symbols|deps|hotspots|diff|search)"
-    echo "  report [opts]    Session report generator (--format text|markdown|html, --output)"
-    echo "  share [opts]     Share session report as GitHub Gist (--private, --format)"
-    echo "  proof [cmd]      Inspect/share proof-of-run artifacts (list|show|open|share)"
-    echo "  bench [cmd]      Head-to-head benchmark harness (run|vs|list|verify|report)"
+    echo ""
     echo "  version          Show version"
-    echo "  help             Show this help"
+    echo "  help             Show this help ('loki help aliases' for old names)"
+    echo ""
+    echo "More commands (init, watch, demo, web, api, logs, github,"
+    echo "import, council, proof, audit, agent, template, magic, onboard, explain,"
+    echo "code, context, docs, wiki, ci, test, bench, secrets, telemetry, crash,"
+    echo "worktree, failover, monitor, remote, kpis, ...) are dispatchable and"
+    echo "documented via 'loki <command> --help'."
+    echo ""
+    echo "Aliases (deprecated): older command names still work; they print a"
+    echo "one-line pointer to stderr and never alter --json output. See the full"
+    echo "list with 'loki help aliases'."
     echo ""
     echo "Options for 'start':"
     echo "  --provider NAME  AI provider: claude (default), codex, cline, aider"
@@ -655,11 +709,11 @@ show_help() {
     echo ""
     echo "  # Session ops + observability"
     echo "  loki status [--json]          # Current status"
-    echo "  loki stats --efficiency       # Token + cost stats"
+    echo "  loki report session --efficiency   # Token + cost stats"
     echo "  loki kpis [--json]            # Accuracy + efficiency KPI snapshot"
     echo "  loki doctor [--json]          # System prereq + skill symlinks"
     echo "  loki logs                     # Tail recent log output"
-    echo "  loki export json|markdown|csv|timeline   # Export session"
+    echo "  loki report export json|markdown|csv|timeline   # Export session"
     echo "  loki assets export team.tgz   # Export shareable team assets (redacted)"
     echo "  loki cleanup                  # Kill orphaned processes"
     echo ""
@@ -692,6 +746,47 @@ show_help() {
     echo "  Opt-outs: LOKI_HOOK_EVENTS=off, LOKI_DYNAMIC_PROMPT_SECTIONS=keep,"
     echo "  LOKI_MEMORY_BASE_PATH (shared memory dir for app graph)"
     echo "  See: $RUN_SH (header comments) for full list."
+}
+
+# CLI consolidation (Phase A): `loki help aliases` subview. Lists every
+# deprecated alias and its canonical command for users with scripts. The old
+# forms continue to work (they print a one-line stderr pointer and never alter
+# --json output); they are supported through at least two MAJOR versions and
+# considered for removal no earlier than vN+2.0.0.
+show_help_aliases() {
+    # Strip color when stdout is not a TTY (piped/redirected), matching the
+    # bare-loki welcome path and show_help. Local overrides only.
+    local BOLD="$BOLD" NC="$NC"
+    if [ ! -t 1 ]; then
+        BOLD=''; NC=''
+    fi
+    echo -e "${BOLD}Loki Mode -- deprecated command aliases${NC}"
+    echo ""
+    echo "These older command names still work. Each forwards 1:1 to its"
+    echo "canonical command, prints exactly one pointer line to stderr, and"
+    echo "never alters --json output (the pointer is suppressed under --json,"
+    echo "-q, and --quiet). They are supported through at least two MAJOR"
+    echo "versions; removal no earlier than vN+2.0.0."
+    echo ""
+    echo "  Old command        Canonical command"
+    echo "  -----------        -----------------"
+    echo "  run <issue>        start <issue>"
+    echo "  serve              api start"
+    echo "  open               preview"
+    echo "  otel               telemetry"
+    echo "  cp                 checkpoint"
+    echo "  wt                 worktree"
+    echo "  rc                 remote"
+    echo "  stats              report session"
+    echo "  metrics            report metrics"
+    echo "  cost               report cost"
+    echo "  export             report export"
+    echo "  share              report share"
+    echo "  dogfood            report dogfood"
+    echo "  trust-metrics      trust detail"
+    echo ""
+    echo "More groupings (ui, analyze, modernize, new, admin) land in Phase B."
+    echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
 }
 
 # Tight newcomer landing for the bare `loki` invocation (no args).
@@ -5349,17 +5444,28 @@ cmd_run() {
                 break
             fi
         done
-        if [ "$_show_warn" = "true" ]; then
-            echo -e "${YELLOW}Notice: 'loki run' is deprecated. Use 'loki start <issue-ref>' instead.${NC}" >&2
-            echo -e "${DIM}  All features (--worktree, --pr, --ship, --dry-run) work on 'loki start'.${NC}" >&2
-            echo "" >&2
+        # CLI consolidation (Phase A): align the run->start notice with the
+        # standardized one-line alias contract (stderr-only, suppressed under
+        # --json/-q/--quiet, contains "is now 'loki start'"). The word
+        # "deprecated" is kept so existing run/start unification tests still
+        # match. Telemetry reuses the cli_command_deprecated event.
+        if [ "$_show_warn" = "true" ] && ! _deprecated_alias_should_suppress "$@"; then
+            echo "note: 'loki run' is now 'loki start <issue-ref>' (run is deprecated). The old form still works." >&2
             # Emit telemetry event so we can measure adoption of the unified command.
             # Signature: emit_event <type> <source> <action> [key=value ...]
-            emit_event cli_command_deprecated cli run_to_start \
-                "old_command=run" \
-                "new_command=start" \
-                "version=6.84.0" \
-                "argv=${*:-}"
+            # No-side-effect alias contract (matches _deprecated_alias at :371):
+            # events/emit.sh creates "$LOKI_DIR/events/pending" as a side effect,
+            # which would make a clean directory suddenly contain .loki and flip
+            # downstream guards (cmd_share's "No .loki/" check, bash-vs-bun read
+            # divergence). Only emit when .loki already exists; the stderr pointer
+            # is always printed (modulo machine-output suppression above).
+            if [ -d "${LOKI_DIR:-.loki}" ]; then
+                emit_event cli_command_deprecated cli run_to_start \
+                    "from=run" \
+                    "to=start" \
+                    "version=6.84.0" \
+                    "argv=${*:-}"
+            fi
         fi
     fi
 
@@ -10476,15 +10582,27 @@ cmd_dogfood() {
         return 0
     fi
 
-    local stats_script="$SKILL_DIR/scripts/dogfood-stats.sh"
-    if [ ! -f "$stats_script" ]; then
-        echo -e "${RED}Error: dogfood-stats.sh not found${NC}"
-        exit 1
-    fi
-
     local json_flag=""
     if [[ "${1:-}" == "--json" ]]; then
         json_flag="--json"
+    fi
+
+    # Honest degradation: scripts/dogfood-stats.sh is a development-only helper
+    # that is NOT shipped in the npm tarball (package.json `files` omits
+    # scripts/). On a packaged install it is absent, so report that plainly
+    # rather than a bare "not found" that reads like a bug. Message goes to
+    # STDERR so a --json caller's stdout stays clean; --json gets a structured
+    # degraded payload on stdout so consumers do not choke on prose.
+    local stats_script="$SKILL_DIR/scripts/dogfood-stats.sh"
+    if [ ! -f "$stats_script" ]; then
+        if [ -n "$json_flag" ]; then
+            printf '{"available": false, "reason": "dogfood-stats.sh is a dev-only helper not shipped in the published package"}\n'
+        else
+            echo "loki report dogfood: self-development stats are unavailable in this install." >&2
+            echo "The dogfood-stats.sh helper is a development-only script and is not" >&2
+            echo "shipped in the published package. Run it from a loki-mode source checkout." >&2
+        fi
+        return 0
     fi
 
     bash "$stats_script" $json_flag
@@ -13061,6 +13179,95 @@ show_verbose = sys.argv[3] == 'true'
 session_model_env = (os.environ.get('LOKI_SESSION_MODEL', 'sonnet') or 'sonnet').strip().lower()
 legacy_tier_switching = (os.environ.get('LOKI_LEGACY_TIER_SWITCHING', 'false') or 'false').strip().lower() == 'true'
 
+# Model-honesty contract: the estimator must quote the model the runner will
+# actually invoke, and name the lever that selected it. The runner honors only
+# two session-level levers (LOKI_MODEL was estimator-only and is removed):
+#   1. A pending mid-flight override file (.loki/state/model-override) -- the
+#      most specific, just-requested intent; it wins.
+#   2. LOKI_SESSION_MODEL (the session pin the runner reads at run.sh:12309).
+# Canonical normalization is shared with run.sh + the dashboard: trim +
+# lowercase + EXACT allowlist match. A value with interior whitespace (fab le)
+# is rejected everywhere, so the three readers agree.
+def _loki_norm_alias(raw):
+    raw = (raw or '').strip().lower()
+    return raw if raw in ('haiku', 'sonnet', 'opus', 'fable') else ''
+
+# session_model_env starts from LOKI_SESSION_MODEL; track the lever that set it
+# so the provenance line names the real source (never a false attribution).
+_session_model_source = 'LOKI_SESSION_MODEL'
+session_model_env = _loki_norm_alias(os.environ.get('LOKI_SESSION_MODEL', '')) or 'sonnet'
+
+_fable_override = ''
+try:
+    _ov_path = os.path.join('.loki', 'state', 'model-override')
+    if os.path.isfile(_ov_path):
+        with open(_ov_path) as _ovf:
+            _fable_override = _loki_norm_alias(_ovf.read())
+except Exception:
+    _fable_override = ''
+if _fable_override:
+    session_model_env = _fable_override
+    _session_model_source = '.loki/state/model-override'
+
+# Architect opt-in (LOKI_FABLE_ARCHITECT=1): the runner routes ONLY the first
+# (architecture) iteration to fable. Disclose that here so the quote is not
+# blind to the lever (it would otherwise under-quote by one fable iteration).
+# Suppressed when an explicit planning-model override or a fable session/override
+# already applies. The maxTier clamp below still caps the disclosed cost.
+_fable_architect = (
+    (os.environ.get('LOKI_FABLE_ARCHITECT', '0') or '0').strip() == '1'
+    and not os.environ.get('LOKI_CLAUDE_MODEL_PLANNING')
+    and not os.environ.get('LOKI_MODEL_PLANNING')
+    and session_model_env != 'fable'
+    and not (os.environ.get('LOKI_LEGACY_TIER_SWITCHING', 'false') or 'false').strip().lower() == 'true'
+)
+
+# Apply the SAME LOKI_MAX_TIER ceiling the runner applies, so the quoted model
+# (and the architect disclosure) never exceed the operator cost cap.
+#
+# SYNC: This resolves the clamp result through the SAME provider config the runner
+# uses, a byte-faithful port of providers/claude.sh loki_apply_max_tier_clamp plus
+# the PROVIDER_MODEL_FAST / PROVIDER_MODEL_DEVELOPMENT resolution chains
+# (claude.sh:55-67, :318). The same port also lives in the dashboard
+# (dashboard/server.py _provider_model_fast / _provider_model_development /
+# _clamp_to_max_tier). All three readers MUST agree; the agreement is locked by
+# the parity test in tests/test-model-override.sh (resolver parity matrix) and the
+# cross-route tests in test-plan-command.sh. If you change resolution here, change
+# it in claude.sh AND dashboard/server.py, and re-run those tests. The 'or' chains
+# mirror bash ':-' empty-string-fallthrough; allow_haiku uses an exact 'true'
+# match to mirror bash [ \"\$x\" = \"true\" ]. PROVIDER_MODEL_DEVELOPMENT is opus
+# by default; PROVIDER_MODEL_FAST is sonnet by default (haiku when ALLOW_HAIKU).
+_allow_haiku = (os.environ.get('LOKI_ALLOW_HAIKU', 'false') or 'false') == 'true'
+def _provider_model_fast():
+    return (os.environ.get('LOKI_CLAUDE_MODEL_FAST')
+            or os.environ.get('LOKI_MODEL_FAST')
+            or ('haiku' if _allow_haiku else 'sonnet'))
+def _provider_model_development():
+    return (os.environ.get('LOKI_CLAUDE_MODEL_DEVELOPMENT')
+            or os.environ.get('LOKI_MODEL_DEVELOPMENT')
+            or ('sonnet' if _allow_haiku else 'opus'))
+_max_tier = (os.environ.get('LOKI_MAX_TIER', '') or '').strip().lower()
+def _loki_clamp_alias(alias):
+    if not _max_tier:
+        return alias
+    if _max_tier == 'haiku':
+        return _provider_model_fast()
+    if _max_tier == 'sonnet':
+        # alias passed as both model and tier (override-path convention): the
+        # runner's sonnet arm reduces to 'downgrade iff alias==fable'.
+        return _provider_model_development() if alias == 'fable' else alias
+    if _max_tier == 'opus':
+        return 'opus' if alias == 'fable' else alias
+    return alias
+if _max_tier:
+    _clamped = _loki_clamp_alias(session_model_env)
+    if _clamped != session_model_env:
+        session_model_env = _clamped
+        _session_model_source = 'LOKI_MAX_TIER (clamped)'
+    if _fable_architect and _loki_clamp_alias('fable') != 'fable':
+        # The architect iteration would clamp down too; do not disclose fable.
+        _fable_architect = False
+
 # v7.29.0: Honor LOKI_COMPLEXITY -- the SAME env var the runner honors at
 # run.sh:920 -- so a forced-tier run (e.g. 'loki demo' / 'loki start --simple'
 # which export LOKI_COMPLEXITY=simple) quotes the tier it will actually run,
@@ -13078,6 +13285,7 @@ if forced_complexity not in ('simple', 'moderate', 'complex', 'enterprise'):
 # Map session model name to tier key used in tokens_per_tier below.
 # Unknown models fall through to 'development' (Sonnet) as a safe default.
 _session_tier_map = {
+    'fable': 'advisor',
     'opus': 'planning',
     'sonnet': 'development',
     'haiku': 'fast',
@@ -13256,16 +13464,25 @@ estimated_iterations = (min_iter + max_iter) // 2
 # RARV cycle: 4 iterations per cycle (plan, develop, develop, test)
 # Tokens estimated per iteration step
 tokens_per_tier = {
+    'advisor': {'input': 50000, 'output': 8000, 'model': 'Fable'},
     'planning': {'input': 50000, 'output': 8000, 'model': 'Opus'},
     'development': {'input': 80000, 'output': 15000, 'model': 'Sonnet'},
     'fast': {'input': 30000, 'output': 5000, 'model': 'Haiku'},
 }
 
-# Pricing per 1M tokens
+# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at exactly 2x
+# Opus per token (published \$10/\$50 in/out vs Opus \$5/\$25). The Opus row was
+# corrected from a stale \$15/\$75 to the real Opus 4.8 \$5/\$25, and the Haiku
+# row from a stale \$0.25/\$1.25 (Haiku 3.5) to the published Claude Haiku 4.5
+# price of \$1/\$5 (anthropic.com/news/claude-haiku-4-5), so all four rows now
+# match the three canonical model-keyed tables (run.sh pricing.json, run.sh
+# check_budget_limit, dashboard _DEFAULT_PRICING) and a fable-forced quote
+# honestly shows MORE than Opus, not less.
 pricing = {
-    'Opus':   {'input': 15.00, 'output': 75.00},
+    'Fable':  {'input': 10.00, 'output': 50.00},
+    'Opus':   {'input': 5.00, 'output': 25.00},
     'Sonnet': {'input': 3.00, 'output': 15.00},
-    'Haiku':  {'input': 0.25, 'output': 1.25},
+    'Haiku':  {'input': 1.00, 'output': 5.00},
 }
 
 # Build per-iteration plan
@@ -13273,8 +13490,8 @@ iteration_plan = []
 total_input_tokens = 0
 total_output_tokens = 0
 total_cost = 0.0
-tier_totals = {'Opus': 0.0, 'Sonnet': 0.0, 'Haiku': 0.0}
-tier_iterations = {'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
+tier_totals = {'Fable': 0.0, 'Opus': 0.0, 'Sonnet': 0.0, 'Haiku': 0.0}
+tier_iterations = {'Fable': 0, 'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
 
 for i in range(estimated_iterations):
     rarv_step = i % 4
@@ -13300,6 +13517,11 @@ for i in range(estimated_iterations):
         # MUST use the same tier for all iterations to avoid quoting a
         # cost higher than the user will actually pay.
         tier = session_tier
+        # Architect opt-in: the runner routes ONLY the first iteration to fable
+        # (the architecture pass). Mirror that here so the quote is not blind to
+        # the lever: iteration 0 -> advisor (fable), the rest -> session tier.
+        if _fable_architect and i == 0:
+            tier = 'advisor'
 
     info = tokens_per_tier[tier]
     model = info['model']
@@ -13476,6 +13698,7 @@ for reason in complexity_reasons:
 print(f'\n{CYAN}Estimated Iterations{NC}')
 print(f'  Count: {BOLD}{estimated_iterations}{NC} (range: {min_iter}-{max_iter})')
 print(f'  RARV cycles: {cycle_count} (4 iterations per cycle)')
+fable_n = tier_iterations.get('Fable', 0)
 opus_n = tier_iterations.get('Opus', 0)
 sonnet_n = tier_iterations.get('Sonnet', 0)
 haiku_n = tier_iterations.get('Haiku', 0)
@@ -13485,6 +13708,8 @@ if legacy_tier_switching:
 else:
     # Session-pinned: exactly one tier has all iterations.
     pinned_parts = []
+    if fable_n > 0:
+        pinned_parts.append(f'Fable x{fable_n}')
     if opus_n > 0:
         pinned_parts.append(f'Opus x{opus_n}')
     if sonnet_n > 0:
@@ -13492,7 +13717,14 @@ else:
     if haiku_n > 0:
         pinned_parts.append(f'Haiku x{haiku_n}')
     print('  Model distribution: ' + (' | '.join(pinned_parts) if pinned_parts else '(none)'))
-    print(f'  {DIM}(pinned via LOKI_SESSION_MODEL={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    # Provenance: name the lever that actually selected the pinned model, never a
+    # false attribution. _session_model_source is the real source (env, override
+    # file, or maxTier clamp) tracked at selection time.
+    print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    if _fable_architect:
+        print(f'  {DIM}(+ 1 architecture iteration on Fable via LOKI_FABLE_ARCHITECT=1){NC}')
+    if fable_n > 0:
+        print(f'  {YELLOW}Fable 5 is the top-tier advisory model priced at 2x Opus ({chr(36)}10/{chr(36)}50 per MTok).{NC}')
 
 # Tokens
 total_tok = total_input_tokens + total_output_tokens
@@ -13505,7 +13737,7 @@ print(f'  Total:  {total_tok:>12,} tokens')
 ds = chr(36)  # dollar sign
 print(f'\n{CYAN}Cost Estimate{NC}')
 print(f'  {BOLD}Total: {ds}{total_cost:.2f}{NC}')
-for model in ['Opus', 'Sonnet', 'Haiku']:
+for model in ['Fable', 'Opus', 'Sonnet', 'Haiku']:
     # v6.81.1: suppress zero-cost tiers (e.g. session-pinned runs). Keeps
     # the breakdown focused on models actually used. Legacy mode still
     # shows all three because each tier has non-zero iterations.
@@ -13590,7 +13822,7 @@ cmd_plan() {
                 echo ""
                 echo "Environment Variables:"
                 echo "  LOKI_SESSION_MODEL            Pin cost estimate to a single tier"
-                echo "                                (opus|sonnet|haiku, default: sonnet)"
+                echo "                                (opus|sonnet|haiku|fable, default: sonnet)"
                 echo "  LOKI_LEGACY_TIER_SWITCHING    Set to 'true' to restore the legacy"
                 echo "                                Opus/Sonnet/Haiku per-iteration rotation"
                 echo ""
@@ -13724,7 +13956,12 @@ main() {
             cmd_status "$@"
             ;;
         stats)
-            cmd_stats "$@"
+            # CLI consolidation (Phase A): 'stats' is a deprecated alias of
+            # 'report session'. On the Bun route this arm is never reached
+            # (stats is Bun-native); the matching deprecation lives in
+            # loki-ts/src/commands/stats.ts so both routes behave identically.
+            _deprecated_alias stats "report session" "$@"
+            cmd_report session "$@"
             ;;
         dashboard)
             cmd_dashboard "$@"
@@ -13732,13 +13969,24 @@ main() {
         web)
             cmd_web "$@"
             ;;
-        preview|open)
+        preview)
+            cmd_preview "$@"
+            ;;
+        open)
+            # CLI consolidation (Phase A): 'open' is a deprecated alias of 'preview'.
+            _deprecated_alias open preview "$@"
             cmd_preview "$@"
             ;;
         logs)
             cmd_logs "$@"
             ;;
         serve)
+            # CLI consolidation (Phase A): 'serve' is a deprecated alias of
+            # 'api start'. Emit the pointer BEFORE the --help short-circuit so it
+            # fires on every form (including 'serve --help'), consistent with the
+            # other short aliases and testable without binding a TCP port.
+            # Suppressed under --json/-q/--quiet by the helper.
+            _deprecated_alias serve "api start" "$@"
             # v7.6.2 B-12 fix: 'serve --help' previously routed to 'cmd_api start --help'
             # which started the dashboard as a side effect instead of printing help.
             case "${1:-}" in
@@ -13784,7 +14032,9 @@ main() {
             cmd_watch "$@"
             ;;
         export)
-            cmd_export "$@"
+            # CLI consolidation (Phase A): 'export' -> 'report export'.
+            _deprecated_alias export "report export" "$@"
+            cmd_report export "$@"
             ;;
         assets)
             cmd_assets "$@"
@@ -13805,6 +14055,8 @@ main() {
             cmd_compound "$@"
             ;;
         checkpoint|cp)
+            # CLI consolidation (Phase A): 'cp' is a deprecated alias of 'checkpoint'.
+            [ "$command" = "cp" ] && _deprecated_alias cp checkpoint "$@"
             cmd_checkpoint "$@"
             ;;
         rollback)
@@ -13814,7 +14066,9 @@ main() {
             cmd_council "$@"
             ;;
         dogfood)
-            cmd_dogfood "$@"
+            # CLI consolidation (Phase A): 'dogfood' -> 'report dogfood'.
+            _deprecated_alias dogfood "report dogfood" "$@"
+            cmd_report dogfood "$@"
             ;;
         projects)
             cmd_projects "$@"
@@ -13875,6 +14129,8 @@ main() {
             cmd_cluster "$@"
             ;;
         worktree|wt)
+            # CLI consolidation (Phase A): 'wt' is a deprecated alias of 'worktree'.
+            [ "$command" = "wt" ] && _deprecated_alias wt worktree "$@"
             cmd_worktree "$@"
             ;;
         agent)
@@ -13887,24 +14143,34 @@ main() {
             cmd_state "$@"
             ;;
         metrics)
-            cmd_metrics "$@"
+            # CLI consolidation (Phase A): 'metrics' -> 'report metrics'.
+            _deprecated_alias metrics "report metrics" "$@"
+            cmd_report metrics "$@"
             ;;
         cost)
-            cmd_cost "$@"
+            # CLI consolidation (Phase A): 'cost' -> 'report cost'.
+            _deprecated_alias cost "report cost" "$@"
+            cmd_report cost "$@"
             ;;
         trust)
             cmd_trust "$@"
             ;;
         trust-metrics)
-            cmd_trust_metrics "$@"
+            # CLI consolidation (Phase A): 'trust-metrics' -> 'trust detail'.
+            _deprecated_alias trust-metrics "trust detail" "$@"
+            cmd_trust detail "$@"
             ;;
         syslog)
             cmd_syslog "$@"
             ;;
         telemetry|otel)
+            # CLI consolidation (Phase A): 'otel' is a deprecated alias of 'telemetry'.
+            [ "$command" = "otel" ] && _deprecated_alias otel telemetry "$@"
             cmd_telemetry "$@"
             ;;
         remote|rc)
+            # CLI consolidation (Phase A): 'rc' is a deprecated alias of 'remote'.
+            [ "$command" = "rc" ] && _deprecated_alias rc remote "$@"
             cmd_remote "$@"
             ;;
         trigger)
@@ -13944,7 +14210,9 @@ main() {
             cmd_crash "$@"
             ;;
         share)
-            cmd_share "$@"
+            # CLI consolidation (Phase A): 'share' -> 'report share'.
+            _deprecated_alias share "report share" "$@"
+            cmd_report share "$@"
             ;;
         proof)
             cmd_proof "$@"
@@ -13964,8 +14232,30 @@ main() {
 	completions)
             cmd_completions "$@"
             ;;
+        kpis)
+            # kpis is a Bun-only command (Phase K, v7.5.28+): it ships in the
+            # Bun runtime (loki-ts) and bin/loki routes it there. On the bash
+            # route (LOKI_LEGACY_BASH=1, or a machine without Bun installed)
+            # there is no bash implementation. Rather than the generic
+            # "Unknown command" -- which contradicts `loki help` listing kpis --
+            # state the requirement honestly. Respect --json with a structured
+            # payload so a machine consumer is not handed prose.
+            if [ "${1:-}" = "--json" ]; then
+                printf '{"available": false, "reason": "loki kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
+            else
+                echo "loki kpis requires the Bun runtime and is not available on the bash route." >&2
+                echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki kpis'." >&2
+            fi
+            exit 1
+            ;;
         help|--help|-h)
-            show_help
+            # CLI consolidation (Phase A): `loki help aliases` prints the full
+            # deprecated-alias table; bare help prints the grouped front page.
+            if [ "${1:-}" = "aliases" ]; then
+                show_help_aliases
+            else
+                show_help
+            fi
             ;;
         *)
             echo -e "${RED}Unknown command: $command${NC}"
@@ -19100,6 +19390,31 @@ cmd_syslog() {
 # dashboard endpoint, and the tests all agree. Honest: with <2 runs it prints
 # "not enough history yet", never a fabricated trend.
 cmd_trust() {
+    # CLI consolidation (Phase A): `trust detail` is the grouped form of the
+    # trust-metrics breakdown. It forwards 1:1 to cmd_trust_metrics (no handler
+    # logic moves). The bare `loki trust` remains the trajectory view. The
+    # deprecation pointer for the old `trust-metrics` name is emitted at the
+    # alias dispatch arm (main()), never here, so `trust detail` stays clean.
+    #
+    # Flag-anywhere: `detail` is accepted in any position (`trust detail`,
+    # `trust --json detail`, `trust detail --json`) so the bash route matches the
+    # bin/loki routing (which forwards on `detail` anywhere) and both routes
+    # behave byte-identically for the same input. The `detail` token is stripped
+    # and the remaining args (e.g. --json) forward to cmd_trust_metrics.
+    local _trust_detail=0
+    local _trust_rest=()
+    local _ta
+    for _ta in "$@"; do
+        if [ "$_ta" = "detail" ]; then
+            _trust_detail=1
+        else
+            _trust_rest+=("$_ta")
+        fi
+    done
+    if [ "$_trust_detail" -eq 1 ]; then
+        cmd_trust_metrics ${_trust_rest[@]+"${_trust_rest[@]}"}
+        return $?
+    fi
     local pass_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -19123,7 +19438,9 @@ cmd_trust() {
                 exit 0
                 ;;
             --json) pass_args+=("--json"); shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki trust --help' for usage."; exit 1 ;;
+            # Errors go to STDERR (not stdout) so a --json consumer's stdout
+            # stays clean, matching the Bun route (trust.ts writes to stderr).
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki trust --help' for usage." >&2; exit 1 ;;
         esac
     done
 
@@ -25917,7 +26234,35 @@ _test_gen_bats() {
 }
 
 # Session report generator (v6.27.0)
+# CLI consolidation (Phase A): `report` noun dispatcher.
+# Groups the read-only reporting cluster under one noun:
+#   report session  -> cmd_stats       (session statistics)
+#   report metrics  -> cmd_metrics     (productivity report)
+#   report cost     -> cmd_cost        (cost + budget view)
+#   report export   -> cmd_export      (session data export)
+#   report share    -> cmd_share       (share report as Gist)
+#   report dogfood  -> cmd_dogfood     (self-development stats)
+# Any other first token (including a flag like --format, or no token) falls
+# through to the legacy session-report generator (cmd_report_legacy) so that the
+# pre-existing `loki report [--format ...]` surface is byte-for-byte unchanged.
+# No handler logic moves in Phase A: each subcommand calls the existing bare
+# cmd_* function so the canonical `report <sub>` output is identical to the
+# legacy top-level command. The deprecation pointer for the old top-level names
+# is emitted at the alias dispatch arm (main()), never here, so `report <sub>`
+# stays clean.
 cmd_report() {
+    case "${1:-}" in
+        session)  shift; cmd_stats "$@";   return $? ;;
+        metrics)  shift; cmd_metrics "$@"; return $? ;;
+        cost)     shift; cmd_cost "$@";    return $? ;;
+        export)   shift; cmd_export "$@";  return $? ;;
+        share)    shift; cmd_share "$@";   return $? ;;
+        dogfood)  shift; cmd_dogfood "$@"; return $? ;;
+    esac
+    cmd_report_legacy "$@"
+}
+
+cmd_report_legacy() {
     local session_id=""
     local format="text"
     local output_file=""
@@ -25930,9 +26275,21 @@ cmd_report() {
             --help|-h)
                 echo -e "${BOLD}loki report${NC} - Session report generator (v6.27.0)"
                 echo ""
-                echo "Usage: loki report [options]"
+                echo "Usage: loki report [subcommand] [options]"
                 echo ""
                 echo "Generates a readable session report from .loki/ data."
+                echo ""
+                echo "Subcommands (grouped reporting surface, v7.31):"
+                echo "  session     Session statistics (was: loki stats)"
+                echo "  metrics     Efficiency/reward metrics (was: loki metrics)"
+                echo "  cost        Token cost breakdown (was: loki cost)"
+                echo "  export      Export session data (was: loki export) [json|markdown|csv|timeline]"
+                echo "  share       Share session assets (was: loki share)"
+                echo "  dogfood     Self-development stats (was: loki dogfood)"
+                echo "  (Run 'loki report <subcommand> --help' for each. The old"
+                echo "   top-level names still work; see 'loki help aliases'.)"
+                echo ""
+                echo "With no subcommand, generates the legacy session report below."
                 echo ""
                 echo "Options:"
                 echo "  --session <id>       Report for specific session (default: latest)"

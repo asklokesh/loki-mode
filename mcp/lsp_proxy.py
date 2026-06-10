@@ -26,10 +26,14 @@ Supported languages (suffix -> binary):
     .go               -> gopls
     .rs               -> rust-analyzer
 
-Tools:
+Tools (7):
     lsp_find_references(file, line, character, include_declaration=False)
     lsp_go_to_definition(file, line, character)
     lsp_symbol_at_position(file, line, character)
+    lsp_check_exists(symbol, kind=None, ...)
+    lsp_get_diagnostics(file)
+    lsp_workspace_symbols(query, limit=20, ...)
+    lsp_find_definition_by_name(symbol, ...)
 
 Usage:
     python3 -m mcp.lsp_proxy                # stdio mode (default)
@@ -39,14 +43,12 @@ Usage:
 from __future__ import annotations
 
 import atexit
-import importlib.util
 import json
 import logging
 import os
 import queue
 import shutil
 import signal
-import site
 import subprocess
 import sys
 import threading
@@ -660,13 +662,21 @@ def _dispatch_lsp(file: str, line: int, character: int,
 # ============================================================
 # FASTMCP LOADING
 # ============================================================
-# Same trick as mcp/server.py: the local `mcp/` package shadows the pip
-# `mcp` SDK, so we have to load FastMCP from site-packages via
-# importlib.util. Unlike server.py we do NOT sys.exit() when the SDK
-# isn't installed -- we install a no-op shim so the module imports
-# cleanly under test (and so production-without-MCP-SDK fails on
-# `.run()` rather than at import time, matching the silent-skip
-# philosophy).
+# Task 566: the local `mcp/` package shadows the pip `mcp` SDK, which under
+# MCP SDK 1.x (FastMCP shipped as a package DIRECTORY) makes a naive
+# importlib.util load of mcp/server/fastmcp/__init__.py fail with
+# `ModuleNotFoundError: No module named 'mcp.types'`. The previous loader
+# here did exactly that and then SILENTLY degraded to a no-op shim, so the
+# LSP tools never loaded for real consumers even with the SDK installed.
+#
+# The fix: reuse the SAME namespace-collision-resolving loader that
+# mcp/server.py uses (now shared in mcp/_sdk_loader.py). Unlike server.py we
+# do NOT sys.exit() when the SDK is genuinely absent -- we degrade to a no-op
+# shim so the module imports cleanly under test, and production-without-SDK
+# fails on `.run()` rather than at import time (silent-skip philosophy). But
+# the degrade is now LOUD: one warning line naming the cause, never silent.
+from mcp._sdk_loader import _load_real_fastmcp  # noqa: E402
+
 
 class _NoopFastMCP:
     """Fallback used when the pip `mcp` SDK is not installed. Tool
@@ -688,51 +698,21 @@ class _NoopFastMCP:
 
 
 def _load_fastmcp():
-    """Walk site-packages for the pip `mcp` SDK's FastMCP class.
-    Returns the FastMCP class on success, or `_NoopFastMCP` on failure
-    (so import never raises)."""
-    search_paths: List[str] = []
-    try:
-        search_paths.extend(site.getsitepackages())
-    except AttributeError:
-        pass
-    try:
-        search_paths.append(site.getusersitepackages())
-    except AttributeError:
-        pass
-    for site_dir in search_paths:
-        # First shape: fastmcp.py module file.
-        candidate_file = os.path.join(site_dir, 'mcp', 'server', 'fastmcp.py')
-        if os.path.isfile(candidate_file):
-            spec = importlib.util.spec_from_file_location(
-                'mcp_pip_sdk_lsp.server.fastmcp', candidate_file,
-                submodule_search_locations=[],
-            )
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                try:
-                    spec.loader.exec_module(mod)
-                    return mod.FastMCP
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("FastMCP file-import failed: %s", exc)
-        # Second shape: fastmcp/__init__.py package directory.
-        candidate_pkg = os.path.join(site_dir, 'mcp', 'server', 'fastmcp', '__init__.py')
-        if os.path.isfile(candidate_pkg):
-            spec = importlib.util.spec_from_file_location(
-                'mcp_pip_sdk_lsp.server.fastmcp', candidate_pkg,
-                submodule_search_locations=[
-                    os.path.join(site_dir, 'mcp', 'server', 'fastmcp'),
-                ],
-            )
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                try:
-                    spec.loader.exec_module(mod)
-                    if hasattr(mod, 'FastMCP'):
-                        return mod.FastMCP
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("FastMCP pkg-import failed: %s", exc)
-    logger.warning("MCP SDK not found; LSP proxy MCP server will not be runnable.")
+    """Load the genuine pip MCP SDK's FastMCP via the shared loader, which
+    resolves the local-vs-SDK `mcp` namespace collision under both SDK
+    layouts. Returns the real FastMCP class on success, or `_NoopFastMCP`
+    on a genuinely-absent SDK (so import never raises). The degrade path is
+    LOUD: it logs one warning naming the cause rather than failing silently
+    the way the old importlib.util shim did."""
+    cls = _load_real_fastmcp()
+    if cls is not None:
+        return cls
+    logger.warning(
+        "MCP SDK (pip package 'mcp') not found or not importable; LSP proxy "
+        "MCP server will not be runnable. Tools are registered against a "
+        "no-op shim and mcp.run() will raise. Install with: "
+        "pip install -r mcp/requirements.txt (or: pip install mcp)."
+    )
     return _NoopFastMCP
 
 
@@ -748,12 +728,32 @@ except Exception:
     _version = 'unknown'
 
 
-mcp = FastMCP(
-    'loki-mode-lsp-proxy',
-    version=_version,
-    description='Loki Mode LSP proxy: find references, go to definition, '
-                'symbol-at-position via on-PATH language servers.',
-)
+def _build_lsp_fastmcp():
+    """Instantiate FastMCP forwarding only the optional kwargs the installed
+    SDK actually accepts. Mirrors mcp/server.py's _build_fastmcp: MCP SDK 1.x
+    FastMCP.__init__ has no `version=`/`description=` parameters (it uses
+    `instructions=`), so passing them unconditionally raises TypeError and
+    the proxy never starts. We introspect the signature and forward only
+    supported kwargs, keeping forward/backward compatibility. The no-op shim
+    accepts any kwargs, so this is safe on the degrade path too."""
+    import inspect
+    _kwargs = {}
+    try:
+        _params = inspect.signature(FastMCP.__init__).parameters
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        _params = {}
+    _desc = ('Loki Mode LSP proxy: find references, go to definition, '
+             'symbol-at-position via on-PATH language servers.')
+    if "instructions" in _params:
+        _kwargs["instructions"] = _desc
+    elif "description" in _params:
+        _kwargs["description"] = _desc
+    if "version" in _params:
+        _kwargs["version"] = _version
+    return FastMCP('loki-mode-lsp-proxy', **_kwargs)
+
+
+mcp = _build_lsp_fastmcp()
 
 
 # ============================================================

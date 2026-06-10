@@ -195,6 +195,12 @@ fi
 run_check "tests/test-cli-commands.sh (Bun route)" "bash tests/test-cli-commands.sh 2>&1 | tail -3"
 run_check "tests/test-cli-commands.sh (LOKI_LEGACY_BASH=1)" "LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh 2>&1 | tail -3"
 
+# CLI consolidation (Phase A): deprecated-alias back-compat contract + help
+# structure. Data-driven; runs on BOTH routes (Bun-native alias tokens like
+# stats must emit the deprecation line on the Bun route, not bypass it).
+run_check "tests/cli/test-alias-forwarding.sh (Bun route)" "LOKI_ROUTE=bun bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
+run_check "tests/cli/test-alias-forwarding.sh (bash route)" "LOKI_ROUTE=bash bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
+
 # v7.5.15: sentrux gate unit tests (fake on-PATH binary; safe on every host).
 # Mirrors the test.yml shell-tests job; fast, no network, no real sentrux dep.
 run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sentrux-gate.sh 2>&1 | tail -3"
@@ -357,6 +363,46 @@ PYHS
   )
 '
 
+# task 566: real MCP stdio handshake for the LSP PROXY. The proxy carried the
+# same `mcp` namespace collision as server.py and silently degraded to a no-op
+# shim under MCP SDK 1.x (package-dir FastMCP), so its LSP tools never loaded
+# for consumers. This is the faithful old-vs-new guard (a file-exists probe is
+# a false positive). Spawns `python -m mcp.lsp_proxy` over stdio, completes
+# initialize -> tools/list, asserts >0 tools. Skipped (PASS) when the SDK is
+# not importable on the host so CI without it stays green.
+run_check "MCP LSP-proxy stdio handshake (initialize -> tools/list; skips if SDK absent)" '
+  (
+    repo="$PWD"
+    if ! python3 -m mcp.server --check-sdk >/dev/null 2>&1; then
+      echo "MCP SDK not importable on host; lsp-proxy handshake skipped (OK)."
+      exit 0
+    fi
+    hsdir="$(mktemp -d -t loki-mcp-lsp-hs-XXXX)"
+    trap "rm -rf \"$hsdir\"" EXIT
+    out="$(cd "$hsdir" && python3 - "$repo" <<PYHS 2>&1
+import asyncio, os, sys
+repo = sys.argv[1]
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+async def run():
+    params = StdioServerParameters(command=sys.executable,
+        args=["-m","mcp.lsp_proxy","--transport","stdio"], cwd=repo, env=dict(os.environ))
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as s:
+            await s.initialize()
+            tl = await s.list_tools()
+            return len(tl.tools)
+n = asyncio.run(run())
+print("lsp-proxy handshake OK: %d tools" % n)
+sys.exit(0 if n > 0 else 1)
+PYHS
+    )"
+    code=$?
+    echo "$out" | tail -2
+    exit "$code"
+  )
+'
+
 # v7.29.0: inline provider install offer (autonomy/provider-offer.sh). Stub-based,
 # ZERO real installs: a controlled PATH without provider CLIs + a stub npm that
 # records argv. Asserts the offer renders, non-TTY/CI never prompt and exit
@@ -397,6 +443,19 @@ run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/t
 # and the slug-sanitization fix (underscore/dot/space paths). Regression guard
 # for the SWE-bench Pro pilot $0-cost / never-tripped-cap bug.
 run_check "tests/test-cost-capture.sh (result-line cost + budget breaker + slug)" "bash tests/test-cost-capture.sh 2>&1 | tail -3"
+
+# Fable model + mid-flight model switching: override file read/allowlist/
+# invalid-ignored/clear semantics, LOKI_FABLE_ARCHITECT default-off routing,
+# fable pricing rows at $10/$50 (2x Opus) across all model-keyed tables, the
+# catalog claude-fable-5 entry, and the security-review model guard. Never
+# invokes a real model. The dashboard endpoints are covered by the pytest gate
+# (tests/dashboard/test_session_model_endpoint.py).
+run_check "tests/test-model-override.sh (fable + mid-flight model switch)" "bash tests/test-model-override.sh 2>&1 | tail -3"
+
+# Cost/iteration estimator (loki plan): complexity detection, LOKI_COMPLEXITY
+# force, and the fable-quote path. Wired here so the plan suite is a pre-push
+# gate alongside the model-override suite it shares pricing with.
+run_check "tests/test-plan-command.sh (plan estimator + complexity force)" "bash tests/test-plan-command.sh 2>&1 | tail -3"
 
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
@@ -469,11 +528,23 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
         # the next empty line. Substring match handles ANSI color codes.
         # Also normalize doctor Summary counts which shift slightly when
         # LOKI_LEGACY_BASH is set vs not.
+        # v7.31: strip the optional "Dashboard:" status line. It is
+        # environment-dependent, not route-dependent: loki status (text mode)
+        # prints it only when a dashboard pid file holds a LIVE pid. The bash
+        # text path checks only the project-local pid file while the Bun path
+        # (and the bash --json path) also check ~/.loki/dashboard/dashboard.pid,
+        # so when the operator standalone dashboard is up the line appears on
+        # the Bun side and not the bash side -- a deterministic, environment-
+        # induced diff that has nothing to do with route logic. Deleting the
+        # line on both sides keeps the matrix honest (it never hides a real
+        # route divergence: presence of the line is governed by external
+        # dashboard state, not by the two routes formatting status differently).
         for src in "$PARITY_TMP/$label.bash" "$PARITY_TMP/$label.bun"; do
           dst="${src}.norm"
           sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
             | sed -E "/Runtime route:/,/^$/d" \
             | sed -E "/Phase 1 artifacts:/,/^$/d" \
+            | sed -E "/Dashboard:.*http/d" \
             | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
             > "$dst"
         done

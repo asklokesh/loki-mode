@@ -28,6 +28,14 @@ from pathlib import Path
 
 
 # Default pricing (USD per million tokens) - provider-specific overrides below
+# NOTE (fable): this table is keyed by PROVIDER (claude/codex/gemini), not by
+# model, so it cannot price Fable distinctly from Opus/Sonnet under "claude".
+# It is intentionally NOT refactored for the fable change: this table is an
+# ESTIMATE-ONLY fallback for context-window projections. The authoritative
+# per-run spend is captured from Claude's real total_cost_usd (v7.28.0 result-cost
+# capture) and the model-keyed tables in run.sh / dashboard/server.py, which DO
+# carry a fable row at $10/$50. So real Fable spend is priced correctly regardless
+# of this provider-keyed fallback.
 PRICING_BY_PROVIDER = {
     "claude": {
         "input": 3.0,

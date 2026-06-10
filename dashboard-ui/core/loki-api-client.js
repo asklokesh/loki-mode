@@ -1080,6 +1080,23 @@ export class LokiApiClient extends EventTarget {
     return this._post('/api/control/stop', {});
   }
 
+  /**
+   * Get the live run's model override + effective model.
+   * @returns {Promise<{override: string|null, default: string, effective: string, allowed: string[]}>}
+   */
+  async getSessionModel() {
+    return this._get('/api/session/model');
+  }
+
+  /**
+   * Set (or clear) the model the live run uses, applied from the NEXT iteration.
+   * Pass null or '' to clear the override and revert to the tier mapping.
+   * @param {string|null} model - one of haiku|sonnet|opus|fable, or null to clear
+   */
+  async setSessionModel(model) {
+    return this._post('/api/session/model', { model: model || null });
+  }
+
   // ============================================
   // Logs API
   // ============================================

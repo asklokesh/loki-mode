@@ -29,6 +29,10 @@ type PricingEntry = { input: number; output: number };
 type PricingMap = Record<string, PricingEntry>;
 
 const _FALLBACK_PRICING: PricingMap = {
+  // Fable 5: top-tier advisory model at 2x Opus. Kept in sync with the bash
+  // route (run.sh pricing tables) and providers/model_catalog.json so a fable
+  // run never silently prices at the sonnet fallback (a 3.3x undercount).
+  fable: { input: 10.0, output: 50.0 },
   opus: { input: 5.0, output: 25.0 },
   sonnet: { input: 3.0, output: 15.0 },
   haiku: { input: 1.0, output: 5.0 },

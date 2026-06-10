@@ -6,12 +6,12 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.30.0"
+LABEL version="7.31.0"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="7.30.0"
+LABEL org.opencontainers.image.version="7.31.0"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
@@ -122,10 +122,14 @@ COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
-# Install dashboard Python dependencies
+# Install dashboard, web-app, and MCP server Python dependencies.
+# mcp/requirements.txt is installed here so the MCP SDK is present in the image:
+# Glama's clean-room introspection builds this image and launches the server, and
+# a baked-in SDK lets `loki mcp` serve tools without a first-run bootstrap.
 RUN pip3 install --no-cache-dir --break-system-packages \
     -r dashboard/requirements.txt \
-    -r web-app/requirements.txt
+    -r web-app/requirements.txt \
+    -r mcp/requirements.txt
 
 # Make scripts executable
 RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki

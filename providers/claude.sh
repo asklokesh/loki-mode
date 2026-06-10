@@ -287,6 +287,65 @@ provider_get_tier_param() {
     fi
 }
 
+# Canonical model-override / session-model normalization (single source of
+# truth shared by run.sh, the dashboard, and the estimator). Trim leading and
+# trailing whitespace, lowercase, and accept ONLY an exact allowlisted alias.
+# Interior whitespace (e.g. "fab le") is therefore rejected rather than silently
+# collapsed into "fable". bash 3.2 safe (no ${var,,}); uses tr for lowercasing.
+# Echoes the canonical alias on success, or the empty string when the input is
+# not an exact allowlisted alias.
+loki_normalize_model_alias() {
+    local raw="$1"
+    # Trim leading/trailing whitespace (interior whitespace preserved so a
+    # value like "fab le" stays "fab le" and fails the exact-match below).
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+    case "$raw" in
+        haiku|sonnet|opus|fable) printf '%s' "$raw" ;;
+        *) printf '%s' "" ;;
+    esac
+}
+
+# Shared cost-ceiling clamp (single source of truth for LOKI_MAX_TIER). Given a
+# resolved model name and a tier hint, return the model clamped down to the
+# operator's LOKI_MAX_TIER ceiling. Used by resolve_model_for_tier AND by the
+# mid-flight model-override path in run.sh so a dashboard/CLI override cannot
+# silently bypass the ceiling. Clamps are byte-identical by construction:
+# sonnet-cap resolves planning/fable down to PROVIDER_MODEL_DEVELOPMENT (opus by
+# default), opus-cap resolves fable down to opus, haiku-cap pins everything to
+# PROVIDER_MODEL_FAST. No ceiling set -> model unchanged.
+loki_apply_max_tier_clamp() {
+    local model="$1"
+    local tier="${2:-}"
+    local max_tier="${LOKI_MAX_TIER:-}"
+    # Normalize EXACTLY like the python ports (dashboard _clamp_to_max_tier,
+    # estimator _max_tier): trim + lowercase. Without this, a user-typed cap
+    # like "Sonnet" (settings.json maxTier exports verbatim) was silently
+    # ignored here while quote and dashboard claimed the ceiling enforced:
+    # the run would exceed the quote. Council R1 finding, v7.31.0.
+    max_tier="$(printf '%s' "$max_tier" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -z "$max_tier" ] && { printf '%s' "$model"; return; }
+    case "$max_tier" in
+        haiku)
+            model="$PROVIDER_MODEL_FAST"
+            ;;
+        sonnet)
+            # Cap planning/fable down to development.
+            if [ "$tier" = "planning" ] || [ "$tier" = "fable" ] || [ "$model" = "fable" ]; then
+                model="$PROVIDER_MODEL_DEVELOPMENT"
+            fi
+            ;;
+        opus)
+            # Opus is the ceiling: cap fable back to opus.
+            if [ "$model" = "fable" ]; then
+                model="opus"
+            fi
+            ;;
+    esac
+    printf '%s' "$model"
+}
+
 # Dynamic model resolution (v6.0.0)
 # Resolves a capability tier to a concrete model name at runtime.
 # Respects LOKI_MAX_TIER to cap cost (e.g., maxTier=sonnet prevents opus usage).
@@ -301,35 +360,33 @@ resolve_model_for_tier() {
         cheap)   tier="fast" ;;
     esac
 
-    local max_tier="${LOKI_MAX_TIER:-}"
     local model=""
 
     # Resolve tier to model
+    #   fable) explicit top-tier advisory model (Fable 5, 2x Opus). Reached when
+    #          the session is pinned to fable (LOKI_SESSION_MODEL=fable), the
+    #          mid-flight override file selects fable, or the architect opt-in
+    #          (LOKI_FABLE_ARCHITECT=1) pins the first iteration's tier to fable
+    #          in run.sh. So the resolver honors the documented lever instead of
+    #          falling through the `*` arm to opus (the model-honesty fix).
     case "$tier" in
         planning)    model="$PROVIDER_MODEL_PLANNING" ;;
         development) model="$PROVIDER_MODEL_DEVELOPMENT" ;;
         fast)        model="$PROVIDER_MODEL_FAST" ;;
+        fable)       model="fable" ;;
         *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
     esac
 
-    # Apply maxTier ceiling if set
-    if [ -n "$max_tier" ]; then
-        case "$max_tier" in
-            haiku)
-                # Cap everything to haiku/fast
-                model="$PROVIDER_MODEL_FAST"
-                ;;
-            sonnet)
-                # Cap planning to development
-                if [ "$tier" = "planning" ]; then
-                    model="$PROVIDER_MODEL_DEVELOPMENT"
-                fi
-                ;;
-            opus)
-                # No cap needed, opus is max
-                ;;
-        esac
-    fi
+    # Architect opt-in (LOKI_FABLE_ARCHITECT) is NOT applied here. It is applied
+    # in run.sh, scoped to the FIRST iteration only (the architecture pass), so
+    # a session pinned to opus does not silently route every iteration to fable.
+    # run.sh sets CURRENT_TIER=fable for that one iteration, which lands on the
+    # `fable)` arm above. Keeping the decision in run.sh is the only place that
+    # has ITERATION_COUNT, so the scoping is honest.
+
+    # Apply the shared LOKI_MAX_TIER ceiling (same clamp the run.sh override path
+    # uses, so the cost ceiling is enforced byte-identically on both paths).
+    model="$(loki_apply_max_tier_clamp "$model" "$tier")"
 
     # Phase I (v7.5.25): when ANTHROPIC_BASE_URL is set, the user is routing
     # Claude Code to an alt-provider (OpenRouter, Ollama, LiteLLM, self-hosted).

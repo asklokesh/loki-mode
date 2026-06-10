@@ -41,6 +41,14 @@ export class LokiSessionControl extends LokiElement {
       activeAgents: 0,
       pendingTasks: 0,
     };
+    // Mid-flight model switching state.
+    this._model = {
+      override: null,     // currently-active override alias, or null
+      default: 'sonnet',  // tier-mapping fallback
+      effective: 'sonnet',// what the next iteration will use
+      notice: '',         // inline disclosure shown after a change
+    };
+    this._modelBusy = false;
     this._api = null;
     this._state = getState();
     this._statusUpdateHandler = null;
@@ -52,6 +60,7 @@ export class LokiSessionControl extends LokiElement {
     super.connectedCallback();
     this._setupApi();
     this._loadStatus();
+    this._loadModel();
     this._startPolling();
   }
 
@@ -245,6 +254,78 @@ export class LokiSessionControl extends LokiElement {
     }
   }
 
+  async _loadModel() {
+    if (!this._api || typeof this._api.getSessionModel !== 'function') return;
+    try {
+      const m = await this._api.getSessionModel();
+      if (m && !m.error) {
+        this._model = {
+          ...this._model,
+          override: m.override ?? null,
+          default: m.default || 'sonnet',
+          effective: m.effective || m.default || 'sonnet',
+        };
+        this.render();
+      }
+    } catch (err) {
+      // Older server without the endpoint, or offline: leave defaults.
+    }
+  }
+
+  async _onModelChange(value) {
+    if (this._modelBusy) return;
+    this._modelBusy = true;
+    // Empty option means "clear override" (revert to tier mapping).
+    const next = value === '' ? null : value;
+    try {
+      const result = await this._api.setSessionModel(next);
+      if (result && result.error) throw new Error(result.error);
+      this._model.override = next;
+      this._model.notice = next
+        ? `Switching to ${next}. Applies from the next iteration, for the current run only.`
+        : 'Override cleared. Reverts to the tier mapping from the next iteration.';
+      // Refresh effective model from the server (authoritative).
+      this._modelBusy = false;
+      await this._loadModel();
+    } catch (err) {
+      console.error('Failed to set session model:', err);
+      this._model.notice = 'Could not change the model. Try again.';
+      this._modelBusy = false;
+      this.render();
+    }
+  }
+
+  _renderModelControl() {
+    // The selected value: the active override if set, else empty (= default/
+    // tier mapping). The empty option clears the override.
+    const selected = this._model.override || '';
+    const opts = [
+      { value: '', label: `Default (tier: ${this._escapeHtml(this._model.default)})` },
+      { value: 'haiku', label: 'Haiku (fastest, cheapest)' },
+      { value: 'sonnet', label: 'Sonnet (balanced)' },
+      { value: 'opus', label: 'Opus (top coding)' },
+      { value: 'fable', label: 'Fable 5 (2x Opus cost: $10/$50 per MTok)' },
+    ];
+    const optionsHtml = opts.map((o) => {
+      const sel = o.value === selected ? ' selected' : '';
+      return `<option value="${this._escapeHtml(o.value)}"${sel}>${this._escapeHtml(o.label)}</option>`;
+    }).join('');
+    const isFable = this._model.effective === 'fable';
+    return `
+      <div class="model-control">
+        <div class="model-row">
+          <label for="model-select">Model</label>
+          <select class="model-select" id="model-select" aria-label="Run model"${this._modelBusy ? ' disabled' : ''}>
+            ${optionsHtml}
+          </select>
+        </div>
+        ${isFable ? `<div class="model-cost-note">Fable 5 costs 2x Opus per token ($10/$50 per MTok).</div>` : ''}
+        <div class="model-disclosure">Model changes apply from the next iteration, for the current run only.</div>
+        ${this._model.notice ? `<div class="model-notice">${this._escapeHtml(this._model.notice)}</div>` : ''}
+      </div>
+    `;
+  }
+
   render() {
     const isCompact = this.hasAttribute('compact');
     const statusClass = this._getStatusClass();
@@ -434,6 +515,58 @@ export class LokiSessionControl extends LokiElement {
           font-size: 10px;
           color: var(--loki-text-muted);
         }
+
+        .model-control {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .model-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .model-row label {
+          font-size: 11px;
+          color: var(--loki-text-secondary);
+          white-space: nowrap;
+        }
+
+        .model-select {
+          flex: 1;
+          padding: 5px 8px;
+          border-radius: 4px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-card);
+          color: var(--loki-text-primary);
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .model-select:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .model-cost-note {
+          font-size: 10px;
+          color: var(--loki-yellow);
+        }
+
+        .model-disclosure {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .model-notice {
+          font-size: 10px;
+          color: var(--loki-accent);
+        }
       </style>
     `;
 
@@ -515,6 +648,8 @@ export class LokiSessionControl extends LokiElement {
           </button>
         </div>
 
+        ${this._renderModelControl()}
+
         <div class="connection-status">
           <span class="connection-dot ${this._status.connected ? 'connected' : ''}"></span>
           <span>${this._status.connected ? 'Connected' : 'Disconnected'}</span>
@@ -559,6 +694,11 @@ export class LokiSessionControl extends LokiElement {
     }
     if (startBtn) {
       startBtn.addEventListener('click', () => this._triggerStart());
+    }
+
+    const modelSelect = this.shadowRoot.getElementById('model-select');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', (e) => this._onModelChange(e.target.value));
     }
   }
 }

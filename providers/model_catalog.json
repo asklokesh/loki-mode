@@ -8,11 +8,20 @@
       "latest_development": "claude-opus-4-7",
       "latest_fast": "claude-sonnet-4-6",
       "cli_aliases": {
+        "fable": "claude-fable-5",
         "opus": "claude-opus-4-7",
         "sonnet": "claude-sonnet-4-6",
         "haiku": "claude-haiku-4-5"
       },
       "models": [
+        {
+          "id": "claude-fable-5",
+          "alias": "fable",
+          "tier": "advisor",
+          "context_window": 1000000,
+          "max_output": 128000,
+          "notes": "Top-tier advisory model. Pricing 2x Opus ($10/$50 per MTok). Doc-supported for architecture/root-cause; opt-in only (cost). Refuses cyber content, so NOT used for security review."
+        },
         {
           "id": "claude-opus-4-7",
           "alias": "opus",

@@ -133,10 +133,15 @@ make_python_sdk_missing
     fi
 }
 
-# --- Test 5: server.py _mcp_sdk_present both-layouts detection unit ----------
-# Extract the standalone detection helper from mcp/server.py and run it against
-# two mktemp fixture dirs (legacy file layout + 1.x package-dir layout) and a
-# bare dir. Uses the real python3 (these helpers have no SDK dependency).
+# --- Test 5: _mcp_sdk_present both-layouts detection unit --------------------
+# Extract the standalone detection helper and run it against two mktemp fixture
+# dirs (legacy file layout + 1.x package-dir layout) and a bare dir. Uses the
+# real python3 (these helpers have no SDK dependency).
+#
+# Task 566: the helper was extracted from mcp/server.py into the shared
+# mcp/_sdk_loader.py (now used by BOTH server.py and lsp_proxy.py). The source
+# path below points at the shared module; the `(?=\ndef )` lookahead still
+# matches because _mcp_sdk_present is immediately followed by _load_real_fastmcp.
 if [ -n "$REAL_PY" ]; then
     FILE_DIR="$TMP/fixture-file"
     PKG_DIR="$TMP/fixture-pkg"
@@ -148,11 +153,11 @@ if [ -n "$REAL_PY" ]; then
     out=$("$REAL_PY" - "$REPO_ROOT" "$FILE_DIR" "$PKG_DIR" "$BARE_DIR" <<'PY' 2>&1
 import os, sys, re, logging
 repo, file_dir, pkg_dir, bare_dir = sys.argv[1:5]
-src = open(os.path.join(repo, "mcp", "server.py"), encoding="utf-8").read()
+src = open(os.path.join(repo, "mcp", "_sdk_loader.py"), encoding="utf-8").read()
 m = re.search(r"\ndef _mcp_sdk_present\(.*?\n(?=\ndef )", src, re.S)
-assert m, "could not extract _mcp_sdk_present from server.py"
+assert m, "could not extract _mcp_sdk_present from mcp/_sdk_loader.py"
 ns = {"os": os}
-exec(compile(m.group(0), "server.py", "exec"), ns)
+exec(compile(m.group(0), "_sdk_loader.py", "exec"), ns)
 present = ns["_mcp_sdk_present"]
 file_ok = present([file_dir])
 pkg_ok = present([pkg_dir])
@@ -163,7 +168,7 @@ PY
 )
     code=$?
     if [ "$code" -eq 0 ]; then
-        log_pass "server.py _mcp_sdk_present detects both layouts ($out)"
+        log_pass "_sdk_loader.py _mcp_sdk_present detects both layouts ($out)"
     else
         log_fail "both-layouts detection unit" "$out"
     fi
@@ -332,6 +337,256 @@ EOF
         log_pass "PYTHONPATH propagation: exec carries install root on PYTHONPATH"
     else
         log_fail "PYTHONPATH propagation" "PYTHONPATH seen at exec: $( [ -f "$PPATH_OUT" ] && cat "$PPATH_OUT" || echo '<not recorded>')"
+    fi
+}
+
+# --- Test 9: non-TTY + LOKI_MCP_AUTO_BOOTSTRAP=1 -> bootstrap taken, ALL
+#     progress on STDERR, STDOUT empty until the (stubbed) server exec. This is
+#     the load-bearing stdout/stderr separation proof: stdout is the JSON-RPC
+#     channel to the MCP client and MUST stay clean. We capture stdout and stderr
+#     to SEPARATE files (merged 2>&1 cannot prove cleanliness). The stub venv/pip
+#     deliberately emit a stdout sentinel that the launcher must route to stderr;
+#     the stubbed server exec emits its OWN allowed sentinel. Assertions:
+#       - the pip/venv noise sentinel is in STDERR and ABSENT from STDOUT;
+#       - STDOUT contains ONLY the server sentinel.
+make_python_autobootstrap_stub() {
+    # Base python3: --check-sdk reports missing until "installed" marker exists;
+    # `-m venv <path>` creates the venv tree, emits a stdout noise sentinel, and
+    # writes a venv python (reports OK once installed) + a venv pip (marks
+    # installed, emits a stdout noise sentinel). The base python is NEVER the one
+    # that execs the server here (the venv python is), so we do not need a server
+    # branch on the base stub.
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+mode=""
+venv_target=""
+prev=""
+for a in "\$@"; do
+    case "\$a" in
+        --check-sdk) mode="check" ;;
+        venv) mode="venv" ;;
+    esac
+    if [ "\$prev" = "venv" ]; then venv_target="\$a"; fi
+    prev="\$a"
+done
+if [ "\$mode" = "check" ]; then
+    [ -f "$STUB_STATE/installed" ] && exit 0 || exit 1
+fi
+if [ "\$mode" = "venv" ] && [ -n "\$venv_target" ]; then
+    # venv noise on STDOUT -- the launcher must route this to stderr.
+    echo "VENV_STDOUT_NOISE"
+    mkdir -p "\$venv_target/bin"
+    cat > "\$venv_target/bin/python" <<INNER
+#!/usr/bin/env bash
+for a in "\\\$@"; do
+    case "\\\$a" in --check-sdk) [ -f "$STUB_STATE/installed" ] && exit 0 || exit 1 ;; esac
+done
+# This is the exec'd \\\`-m mcp.server\\\` launch: emit the ALLOWED server sentinel
+# on STDOUT (this is the only thing permitted on stdout) and exit.
+echo "SERVER_STDOUT_OK"
+exit 0
+INNER
+    chmod +x "\$venv_target/bin/python"
+    cat > "\$venv_target/bin/pip" <<INNER
+#!/usr/bin/env bash
+# pip noise on STDOUT -- the launcher must route this to stderr.
+echo "PIP_STDOUT_NOISE"
+touch "$STUB_STATE/installed"
+exit 0
+INNER
+    chmod +x "\$venv_target/bin/pip"
+    exit 0
+fi
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+}
+
+{
+    STUB_STATE="$TMP/auto-state"
+    rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
+    make_python_autobootstrap_stub
+    USER_CWD3="$TMP/user-project3"
+    mkdir -p "$USER_CWD3"
+    A_OUT="$TMP/auto-stdout.txt"
+    A_ERR="$TMP/auto-stderr.txt"
+    rm -f "$A_OUT" "$A_ERR"
+    (
+        cd "$USER_CWD3" || exit 99
+        # Real non-TTY launch (piped stdin/stdout/stderr like an MCP client),
+        # flag set. stdout and stderr captured to SEPARATE files.
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" \
+            LOKI_MCP_AUTO_BOOTSTRAP=1 LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null >"$A_OUT" 2>"$A_ERR"
+    )
+    so="$(cat "$A_OUT" 2>/dev/null)"
+    se="$(cat "$A_ERR" 2>/dev/null)"
+    if printf '%s' "$so" | grep -q "SERVER_STDOUT_OK" \
+        && ! printf '%s' "$so" | grep -q "PIP_STDOUT_NOISE" \
+        && ! printf '%s' "$so" | grep -q "VENV_STDOUT_NOISE" \
+        && printf '%s' "$se" | grep -q "PIP_STDOUT_NOISE" \
+        && printf '%s' "$se" | grep -q "VENV_STDOUT_NOISE"; then
+        log_pass "auto-bootstrap non-TTY+flag: stdout clean (server sentinel only), all progress on stderr"
+    else
+        log_fail "auto-bootstrap stdout/stderr separation" \
+            "stdout=[$(printf '%s' "$so" | tr '\n' '|')] stderr-has-noise=$(printf '%s' "$se" | grep -q PIP_STDOUT_NOISE && echo yes || echo no)"
+    fi
+}
+
+# --- Test 10: non-TTY WITHOUT the flag -> still exit 2 (regression guard) -----
+{
+    make_python_sdk_missing
+    out=$(PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
+    if [ "$code" -eq 2 ] \
+        && printf '%s' "$out" | grep -q "mcp/requirements.txt" \
+        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        log_pass "non-TTY WITHOUT flag still exits 2 (no silent install)"
+    else
+        log_fail "non-TTY no-flag regression" "exit=$code"
+    fi
+}
+
+# --- Test 11: flag + LOKI_NO_INSTALL_OFFER=1 -> refuses, logs precedence line --
+# Explicit no beats explicit yes: must exit 2 AND emit the precedence log line.
+{
+    make_python_sdk_missing
+    out=$(PATH="$STUB_BIN:$PATH" LOKI_NO_INSTALL_OFFER=1 LOKI_MCP_AUTO_BOOTSTRAP=1 \
+            LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
+    if [ "$code" -eq 2 ] \
+        && printf '%s' "$out" | grep -q "overrides LOKI_MCP_AUTO_BOOTSTRAP" \
+        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        log_pass "LOKI_NO_INSTALL_OFFER=1 overrides flag: exit 2 + precedence log, no install"
+    else
+        log_fail "precedence: NO_INSTALL_OFFER over AUTO_BOOTSTRAP" \
+            "exit=$code precedence-logged=$(printf '%s' "$out" | grep -q 'overrides LOKI_MCP_AUTO_BOOTSTRAP' && echo yes || echo no)"
+    fi
+}
+
+# --- Test 12: TTY + flag -> no consent prompt (consent already given) ---------
+# Override _ml_non_interactive to pretend a TTY, set the flag, drive the
+# bootstrap via the venv stub. Assert the "Proceed? [Y/n]" prompt is ABSENT and
+# the bootstrap proceeds (server sentinel reached).
+{
+    STUB_STATE="$TMP/tty-flag-state"
+    rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
+    make_python_autobootstrap_stub
+    USER_CWD4="$TMP/user-project4"
+    mkdir -p "$USER_CWD4"
+    out=$(
+        cd "$USER_CWD4" || exit 99
+        # shellcheck source=/dev/null
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" source "$LAUNCHER"
+        _ml_non_interactive() { return 1; }   # pretend interactive TTY
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=1 \
+            mcp_launch_main </dev/null 2>&1
+    )
+    if ! printf '%s' "$out" | grep -qi "Proceed?" \
+        && printf '%s' "$out" | grep -q "SERVER_STDOUT_OK"; then
+        log_pass "TTY + flag: consent prompt skipped, bootstrap proceeds"
+    else
+        log_fail "TTY + flag prompt skip" \
+            "prompt-present=$(printf '%s' "$out" | grep -qi 'Proceed?' && echo yes || echo no)"
+    fi
+}
+
+# --- Test 13: --yes is consumed, never forwarded into the server argv --------
+# (v7.31 finding 1). Stub python3 reports SDK present (check-sdk exit 0) and, on
+# the exec `-m mcp.server ...`, records the argv it received. The launcher must
+# strip --yes (a launcher-owned flag) while forwarding server flags like
+# --transport. Forwarding --yes would make the real server argparse exit 2.
+{
+    ARGV_OUT="$TMP/yes-argv.txt"
+    rm -f "$ARGV_OUT"
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    case "\$a" in --check-sdk) exit 0 ;; esac
+done
+# exec'd server launch: record full argv (minus the leading -m mcp.server).
+printf '%s' "\$*" > "$ARGV_OUT"
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+    USER_CWD5="$TMP/user-project5"
+    mkdir -p "$USER_CWD5"
+    (
+        cd "$USER_CWD5" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp --yes --transport stdio </dev/null >/dev/null 2>&1
+    )
+    argv="$(cat "$ARGV_OUT" 2>/dev/null)"
+    if [ -f "$ARGV_OUT" ] \
+        && ! printf '%s' "$argv" | grep -q -- "--yes" \
+        && printf '%s' "$argv" | grep -q -- "--transport stdio"; then
+        log_pass "--yes consumed (not in server argv), --transport forwarded"
+    else
+        log_fail "--yes filtering" "server argv: [$argv]"
+    fi
+}
+
+# --- Test 14: -- separator forwards trailing args verbatim to the server -----
+# (v7.31 finding 1). Anything after a bare -- reaches the server unchanged, even
+# a token that looks like a launcher flag.
+{
+    ARGV_OUT2="$TMP/sep-argv.txt"
+    rm -f "$ARGV_OUT2"
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    case "\$a" in --check-sdk) exit 0 ;; esac
+done
+printf '%s' "\$*" > "$ARGV_OUT2"
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+    USER_CWD6="$TMP/user-project6"
+    mkdir -p "$USER_CWD6"
+    (
+        cd "$USER_CWD6" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp --port 9 -- --weird </dev/null >/dev/null 2>&1
+    )
+    argv2="$(cat "$ARGV_OUT2" 2>/dev/null)"
+    if [ -f "$ARGV_OUT2" ] \
+        && printf '%s' "$argv2" | grep -q -- "--port 9" \
+        && printf '%s' "$argv2" | grep -q -- "--weird"; then
+        log_pass "-- separator forwards trailing args verbatim to server"
+    else
+        log_fail "-- separator passthrough" "server argv: [$argv2]"
+    fi
+}
+
+# --- Test 15: LOKI_MCP_AUTO_BOOTSTRAP truthy spellings honored (finding 2) ----
+# =true and =yes must be treated as written consent (bootstrap taken), NOT as
+# no-consent. =0 must still be no-consent (exit 2). Stub: SDK missing.
+{
+    make_python_sdk_missing
+    USER_CWD7="$TMP/user-project7"; mkdir -p "$USER_CWD7"
+    # =true -> must NOT print the "non-interactive shell" refusal; must reach the
+    # bootstrap (it will fail at the stub venv, but the key is consent accepted).
+    out_true=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=true LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    )
+    out_yes=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=yes LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    )
+    out_zero=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=0 LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    ); zcode=$?
+    if printf '%s' "$out_true" | grep -q "bootstrapping the project venv" \
+        && printf '%s' "$out_yes" | grep -q "bootstrapping the project venv" \
+        && ! printf '%s' "$out_zero" | grep -q "bootstrapping the project venv" \
+        && [ "$zcode" -eq 2 ]; then
+        log_pass "LOKI_MCP_AUTO_BOOTSTRAP accepts true/yes; =0 still refuses (exit 2)"
+    else
+        log_fail "AUTO_BOOTSTRAP truthy parse" \
+            "true=$(printf '%s' "$out_true" | grep -q bootstrapping && echo ok || echo NO) yes=$(printf '%s' "$out_yes" | grep -q bootstrapping && echo ok || echo NO) zero_code=$zcode"
     fi
 }
 

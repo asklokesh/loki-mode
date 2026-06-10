@@ -18,6 +18,50 @@ Set `LOKI_LEGACY_TIER_SWITCHING=true` to restore the previous per-iteration `get
 
 ---
 
+## Fable 5 (top-tier advisory model)
+
+Claude Fable 5 (alias `fable`, full id `claude-fable-5`) is Anthropic's most capable widely released model. It is NOT a default workhorse: it is priced at exactly **2x Opus** ($10 / $50 per MTok in/out vs Opus $5 / $25), uses always-on adaptive thinking, and is reserved for the few decision points where its extra investigation and self-verification pay off.
+
+**When Fable is documented to help (route here, opt-in, cost shown):**
+- Architecture decisions, root-cause investigations, outage debugging.
+- Long-horizon tasks you would otherwise decompose.
+
+**When NOT to route to Fable:**
+- Security review. Fable's safety classifiers refuse cybersecurity content, and in non-interactive (`-p`) mode a flagged request ends the turn with a refusal instead of a transparent Opus re-run, which would break the unanimous-council gate. Security review stays on Opus, always. (Defensive-cyber capability lives in Mythos 5 via Project Glasswing, not Fable.)
+- Default planning/development/fast work. The 2x cost is only worth it for the cases above.
+
+### Mid-flight model switching
+
+You can change the model a **live run** uses, from the dashboard or by writing a state file. The switch applies at the **next iteration boundary** (each iteration spawns a fresh `claude -p`, which fixes the model per invocation, so it never changes mid-invocation). The override applies to the **current run only**: the runner clears a leftover override at the start of a fresh run, so a switch never silently carries into future runs. The override is also clamped by `LOKI_MAX_TIER`: if the operator set a cost ceiling, an override above it (e.g. `fable` under `LOKI_MAX_TIER=sonnet`) is clamped down with one honest log line, and the dashboard reports the clamped effective model. (The clamp is enforced on the bash runner, which is the live `start` route; the experimental Bun runner does not yet port it.)
+
+- Dashboard: the Model selector in the session-control panel. The Fable option shows its 2x-Opus cost; an inline notice discloses the iteration-boundary timing. It calls `POST /api/session/model`.
+- File / CLI: write an allowlisted alias (`haiku`, `sonnet`, `opus`, `fable`) to `.loki/state/model-override`. Empty or absent file reverts to the tier mapping. Invalid content is ignored (the runtime warns once). The value is allowlist-validated because it is fed straight into `claude --model`.
+
+```bash
+# Switch a live run to Fable for the next iteration
+echo fable > .loki/state/model-override
+# Revert to the tier mapping
+rm -f .loki/state/model-override
+```
+
+### Architecture-tier opt-in: `LOKI_FABLE_ARCHITECT`
+
+`LOKI_FABLE_ARCHITECT=1` routes ONLY the **first iteration** (the architecture / REASON pass) to Fable; every later iteration uses the session tier (the default pin, e.g. Sonnet/Opus). Default OFF because of the 2x cost. An explicit `LOKI_CLAUDE_MODEL_PLANNING` / `LOKI_MODEL_PLANNING` still wins, and the `LOKI_MAX_TIER` ceiling still clamps Fable down. This first-iteration scope is deliberate: under the default session pinning there is no recurring "planning tier", so scoping to the architecture iteration is the only honest way to give the architecture pass Fable without converting the whole session. `loki plan` discloses the extra Fable architecture iteration in its quote.
+
+```bash
+LOKI_FABLE_ARCHITECT=1 loki start ./prd.md
+```
+
+### Financial / physical-stakes work (manual override, by design)
+
+For diffs that move money or mutate infrastructure (payments, billing, spend authorization, Terraform/k8s/infra changes), routing to Fable is **founder-directed and not doc-evidenced**, so Loki does NOT auto-route based on file-path heuristics in this release. Use the mid-flight switch (set the model to `fable` for those iterations, then clear it) as the deliberate, consent-based mechanism. This keeps the high-cost model an explicit human choice, not an implicit one.
+
+### Cost estimate honesty
+
+`loki plan` quotes a Fable run honestly and only for levers the runner actually honors. Set `LOKI_SESSION_MODEL=fable`, or have a pending `.loki/state/model-override` of `fable`, and the estimate uses Fable's $10/$50 pricing with a 2x-Opus note. The quote, the dashboard `effective` model, and the actual `claude --model` argument always agree: the same lever that changes the quote changes the run. `LOKI_MAX_TIER` is applied to the quote too, so the estimate never quotes a model above the operator's cost ceiling. (`LOKI_MODEL` is not a session lever and does not affect the run; use `LOKI_SESSION_MODEL`.)
+
+---
+
 ## Multi-Provider Support (v5.0.0)
 
 Loki Mode supports five AI providers. Claude has full features; all others run in **degraded mode** (sequential execution only, no Task tool, no parallel agents).
