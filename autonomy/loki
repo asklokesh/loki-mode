@@ -510,7 +510,7 @@ show_help() {
     echo "Usage: loki <command> [options]"
     echo ""
     echo "New here? Try one of these first:"
-    echo "  loki doctor               Check your setup is ready (instant)"
+    echo "  loki doctor               Check your setup is ready (a few seconds)"
     echo "  loki quick \"add a health endpoint\"   One small task, start to finish"
     echo "  loki demo                 Build a sample todo app end to end (real run)"
     echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub issue, or no arg)"
@@ -673,6 +673,26 @@ show_help() {
     echo "  Opt-outs: LOKI_HOOK_EVENTS=off, LOKI_DYNAMIC_PROMPT_SECTIONS=keep,"
     echo "  LOKI_MEMORY_BASE_PATH (shared memory dir for app graph)"
     echo "  See: $RUN_SH (header comments) for full list."
+}
+
+# Tight newcomer landing for the bare `loki` invocation (no args).
+# v7.28.x UX: the full 70-command table lives in `loki help`; a no-args run
+# now shows only a calm ~12-line orientation so the "what do I do first"
+# block is never buried under the command wall. `loki help`/`--help` are
+# unchanged (still call show_help).
+show_landing() {
+    local version
+    version=$(get_version)
+    echo -e "${BOLD}Loki Mode v$version${NC} - the spec-driven builder that verifies its own work."
+    echo ""
+    echo "Get started:"
+    echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
+    echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
+    echo -e "  ${CYAN}loki dashboard${NC}        Open the live run monitor in your browser"
+    echo ""
+    echo -e "Need help? ${CYAN}loki help${NC} lists every command."
+    echo ""
+    echo "Tip: preview cost and scope first: loki plan ./prd.md"
 }
 
 # Detect argument type for unified `loki start` (v6.84.0)
@@ -13388,7 +13408,9 @@ main() {
     fi
 
     if [ $# -eq 0 ]; then
-        show_help
+        # v7.28.x UX: bare `loki` shows a tight newcomer landing, not the full
+        # command wall. `loki help`/`--help` still print show_help unchanged.
+        show_landing
         exit 0
     fi
 
