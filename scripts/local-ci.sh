@@ -310,6 +310,53 @@ run_check "tests/test-prd-reuse.sh (codebase signature + PRD reuse decision)" "b
 # Asserts share does NOT publish without confirm and DOES with --yes.
 run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash tests/cli/test-proof-command.sh 2>&1 | tail -3"
 
+# task 562: `loki mcp` launcher (autonomy/mcp-launch.sh) + server.py SDK
+# detection. Stub-based, ZERO real installs / ZERO real server launches: a stub
+# python3 controls SDK-present/missing deterministically. Asserts --help exit 0,
+# no-python3 exit 2, SDK-missing non-TTY + LOKI_NO_INSTALL_OFFER exit 2 (no
+# install), and the server.py both-layouts detection unit.
+run_check "tests/cli/test-mcp-launch.sh (MCP launcher + SDK detection)" "bash tests/cli/test-mcp-launch.sh 2>&1 | tail -3"
+
+# task 562: real MCP stdio handshake. Only runs when the pip MCP SDK is actually
+# importable on this host (the namespace-collision fix in mcp/server.py needs
+# the genuine SDK present). Spawns `python -m mcp.server` over stdio, completes
+# initialize -> tools/list, and asserts the server boots and lists >0 tools.
+# This is the ONLY check that proves FastMCP truly loads (a file-exists probe is
+# a false positive under the local-vs-SDK `mcp` shadowing). Skipped (PASS) when
+# the SDK is not installed so CI without it stays green.
+run_check "MCP stdio handshake (initialize -> tools/list; skips if SDK absent)" '
+  (
+    repo="$PWD"
+    if ! python3 -m mcp.server --check-sdk >/dev/null 2>&1; then
+      echo "MCP SDK not importable on host; handshake skipped (OK)."
+      exit 0
+    fi
+    hsdir="$(mktemp -d -t loki-mcp-hs-XXXX)"
+    trap "rm -rf \"$hsdir\"" EXIT
+    out="$(cd "$hsdir" && python3 - "$repo" <<PYHS 2>&1
+import asyncio, os, sys
+repo = sys.argv[1]
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+async def run():
+    params = StdioServerParameters(command=sys.executable,
+        args=["-m","mcp.server","--transport","stdio"], cwd=repo, env=dict(os.environ))
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as s:
+            await s.initialize()
+            tl = await s.list_tools()
+            return len(tl.tools)
+n = asyncio.run(run())
+print("handshake OK: %d tools" % n)
+sys.exit(0 if n > 0 else 1)
+PYHS
+    )"
+    code=$?
+    echo "$out" | tail -2
+    exit "$code"
+  )
+'
+
 # v7.29.0: inline provider install offer (autonomy/provider-offer.sh). Stub-based,
 # ZERO real installs: a controlled PATH without provider CLIs + a stub npm that
 # records argv. Asserts the offer renders, non-TTY/CI never prompt and exit

@@ -35,7 +35,7 @@
 - **Cross-project memory** -- Episodic/semantic/procedural memory with vector search; knowledge learned on one project surfaces on the next (v5.15.0+, see `memory/engine.py`)
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
 - **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
-- **MCP server** -- 34 tools (including ChromaDB code search) plus 3 resources and 2 prompts (`mcp/server.py`, with managed-memory and magic tools registered from `mcp/managed_tools.py` and `mcp/magic_tools.py`)
+- **MCP server** -- 34 tools (including ChromaDB code search) plus 3 resources and 2 prompts (`mcp/server.py`, with magic tools registered from `mcp/magic_tools.py` and the managed-memory tool from `mcp/managed_tools.py`). Of the 34, 33 are always available; `loki_memory_redact` is registered but only succeeds when `LOKI_MANAGED_AGENTS=true` and `LOKI_MANAGED_MEMORY=true`. Launch with `loki mcp` (bootstraps the Python MCP SDK on first run).
 - **Full-stack output** -- Source code, tests, Docker Compose stacks (multi-service with healthchecks), CI/CD pipelines, audit logs
 - **Provider-agnostic** -- runs on Claude, Codex, Cline, or Aider with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
 - **Open source** -- Free for personal, internal, and academic use.
@@ -102,7 +102,7 @@ loki quick "build a landing page with a signup form"
 |--------|---------|-------|
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker** | `docker pull asklokesh/loki-mode:7.29.0 && docker run --rm asklokesh/loki-mode:7.29.0 start prd.md` | Bun pre-installed in image |
+| **Docker** | `docker pull asklokesh/loki-mode:7.30.0 && docker run --rm asklokesh/loki-mode:7.30.0 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -162,7 +162,7 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode:7.29.0` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.30.0` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 

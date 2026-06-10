@@ -297,7 +297,7 @@ Developers who value open-source tooling, speed, and terminal-native workflows. 
 | **Benchmark (SWE-bench)** | N/A | N/A | 80.9% (Opus 4.5) | 56.8% (Pro) | Configurable (uses any model) |
 | **CLI Interface** | No (Python API) | No (web UI) | Yes | Yes | Yes |
 | **IDE Integration** | No | No | Yes (VS Code, JetBrains) | No | Yes (VS Code extension) |
-| **MCP Support** | No | No | Yes | Yes | Yes (15 tools) |
+| **MCP Support** | No | No | Yes | Yes | Yes (34 tools) |
 | **Cost (Heavy Use)** | Enterprise contract | $100/mo | $200/mo or API | $20-200/mo or API | $0 + API costs |
 | **Context Window** | Model-dependent | N/A | 200K tokens | Model-dependent | Model-dependent |
 

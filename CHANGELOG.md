@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.30.0] - 2026-06-10
+
+### Added
+- `loki mcp`: launch the Loki Mode MCP server reliably from any project
+  directory. Fixes three independent launch blockers a fresh npm consumer
+  hit: the repo's local `mcp/` package shadowed the pip MCP SDK (namespace
+  collision; the loader now imports the real SDK subtree and restores the
+  local package), SDK detection only recognized the legacy file layout, and
+  FastMCP 1.x rejected legacy constructor kwargs. The launcher checks
+  python3 and SDK importability, offers a consent-gated dependency
+  bootstrap into the project-local `.loki/mcp-venv` (non-TTY/CI never
+  install: honest manual command and exit 2; `LOKI_NO_INSTALL_OFFER=1`
+  opt-out), and execs the server over stdio with the install root on
+  PYTHONPATH while preserving the user's cwd for `.loki` resolution.
+  Verified by a real MCP initialize/tools-list handshake from a non-repo
+  directory: 34 tools. Known narrow residual (documented in code): a user
+  cwd containing its own Python package literally named `mcp` still shadows
+  under `python -m`.
+- Bare `loki` landing now also points at `loki web` (the visual builder)
+  alongside the run monitor.
+
+### Fixed
+- CRITICAL (caught by the adversarial pre-release hunt, never shipped): the
+  first `loki mcp` implementation launched the pip SDK's stub server with
+  ZERO Loki tools whenever run outside the install root, because the SDK
+  probe cd-ed into the install root while the launch did not. The
+  PYTHONPATH-based fix above closes it, with a decoy-SDK regression test
+  that fails on the old behavior.
+- `loki web stop` no longer kills unrelated live loki runs: the machine-wide
+  orchestrator pkill was removed (Purple Lab's own children are still
+  reaped via its scoped child-pids ledger), with a foreign-survival
+  regression test.
+- Piped/redirected output of the bare-loki landing and `loki demo` no longer
+  contains ANSI color codes (TTY-gated in addition to NO_COLOR).
+- MCP tool count corrected to 34 across README, wiki, and walkthrough docs
+  (verified by live handshake; one tool registered but gated on the managed
+  memory/agents env vars), replacing stale "15 tools" claims.
+- The bundled demo PRD gained an acceptance line requiring a basic automated
+  check, still classifying SIMPLE (score 0, ~$1.86 estimate).
+- docker-compose.yml's first-line comment is version-free (was stale since
+  v6.73.1).
+
+### Tests
+- New: tests/cli/test-mcp-launch.sh (8 cases incl. the non-repo-cwd
+  decoy-SDK P0 regression), tests/test-web-stop-scoping.sh (5).
+  tests/test-cli-commands.sh: 26/26 on both routes. tests/test-plan-command.sh:
+  25/25. A real MCP stdio handshake check is wired into scripts/local-ci.sh.
+
 ## [7.29.0] - 2026-06-10
 
 ### Added (the quickstart trio, from UX-QUICKSTART-DESIGN)

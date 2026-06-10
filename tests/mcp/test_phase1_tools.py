@@ -66,6 +66,13 @@ def _ensure_fastmcp_stub() -> None:
             def run(self, *a, **kw):
                 pass
     """))
+    # v7.30.0: _load_real_fastmcp eagerly imports the SDK subtree it touches
+    # at runtime (mcp.types, mcp.server.lowlevel), not just fastmcp. The stub
+    # must provide all three or the loader treats the SDK as absent.
+    Path(os.path.join(stub_root, "mcp", "types.py")).write_text("")
+    lowlevel_dir = os.path.join(pkg_dir, "lowlevel")
+    os.makedirs(lowlevel_dir, exist_ok=True)
+    Path(os.path.join(lowlevel_dir, "__init__.py")).write_text("")
     _orig = site.getsitepackages
     site.getsitepackages = lambda *a, **kw: [stub_root] + _orig(*a, **kw)  # type: ignore[assignment]
     _STUB_DIR = stub_root
@@ -77,8 +84,17 @@ def _import_server():
     """Import mcp.server (with FastMCP stubbed). Adds repo root to sys.path."""
     _ensure_fastmcp_stub()
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
+    # v7.30.0 loader contract: _load_real_fastmcp() probes site dirs for SDK
+    # PRESENCE but imports mcp.server.fastmcp through sys.path (after evicting
+    # the local package and dropping repo_root). The stub dir must be on
+    # sys.path for that import to find it, but BEHIND repo_root, or the
+    # stub's empty mcp package shadows the repo's own mcp/server.py at
+    # test-import time. Enforce the exact order: repo_root, stub, rest.
+    for _p in (repo_root, _STUB_DIR):
+        while _p in sys.path:
+            sys.path.remove(_p)
+    sys.path.insert(0, _STUB_DIR)
+    sys.path.insert(0, repo_root)
     # Force reimport so the fastmcp loader runs against our stub.
     for k in list(sys.modules.keys()):
         if k == "mcp.server" or k.startswith("mcp.server."):

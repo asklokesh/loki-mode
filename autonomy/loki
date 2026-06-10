@@ -702,6 +702,13 @@ show_help() {
 show_landing() {
     local version
     version=$(get_version)
+    # v7.30.0 (item 5): strip color when stdout is not a TTY (piped/redirected)
+    # in addition to the global NO_COLOR honoring above, so captured landing
+    # output is clean. Local overrides only; the rest of the CLI is untouched.
+    local BOLD="$BOLD" CYAN="$CYAN" NC="$NC"
+    if [ ! -t 1 ]; then
+        BOLD=''; CYAN=''; NC=''
+    fi
     echo -e "${BOLD}Loki Mode v$version${NC} - the spec-driven builder that verifies its own work."
     echo ""
     echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
@@ -709,6 +716,7 @@ show_landing() {
     echo "Get started:"
     echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
     echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
+    echo -e "  ${CYAN}loki web${NC}              Open the visual builder to input a spec and watch agents build"
     echo -e "  ${CYAN}loki dashboard start${NC}  Start the live run monitor (then: loki dashboard open)"
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
@@ -4736,8 +4744,10 @@ cmd_web_stop() {
         rm -f "$pids_file" 2>/dev/null || true
     fi
 
-    # Global cleanup: kill ALL loki-related processes regardless of CWD
-    # This ensures "loki web stop" from anywhere cleans up everything
+    # Companion cleanup: stop the dashboard server that the web UI runs
+    # alongside. Scoped to the dashboard, NOT to every loki process: the
+    # documented intent of "loki web stop" is to stop the Purple Lab web UI
+    # session, not to reap unrelated builds.
 
     # Kill any dashboard server (by process name and by port)
     local dash_port="${LOKI_DASHBOARD_PORT:-57374}"
@@ -4762,21 +4772,14 @@ cmd_web_stop() {
         kill -0 "$dash_port_pid" 2>/dev/null && kill -9 "$dash_port_pid" 2>/dev/null || true
     fi
 
-    # Kill any loki run.sh orchestrator processes (status monitors, resource monitors)
-    local run_pids
-    run_pids=$(pgrep -f "loki-run-\|status-monitor\|resource-monitor" 2>/dev/null || true)
-    if [ -n "$run_pids" ]; then
-        for rpid in $run_pids; do
-            kill "$rpid" 2>/dev/null || true
-        done
-        sleep 1
-        for rpid in $run_pids; do
-            kill -0 "$rpid" 2>/dev/null && kill -9 "$rpid" 2>/dev/null || true
-        done
-        if [ "$stopped" = true ]; then
-            echo "Background processes cleaned up"
-        fi
-    fi
+    # FIX-563 (v7.30.0): do NOT blanket-kill loki-run-* orchestrators here.
+    # The prior unscoped `pgrep -f "loki-run-..."` reaped EVERY orchestrator on
+    # the machine, including foreign `loki start` sessions launched from other
+    # terminals/CWDs that the web UI never owned. Purple Lab's own build
+    # processes are already reaped authoritatively above via child-pids.json
+    # (the only PIDs this session actually started). Foreign builds survive,
+    # mirroring the cwd-scoped dashboard-stop pattern (FIX rationale: a user
+    # invoking "loki web stop" expects the web UI gone, not their other builds).
 
     # Clean up all PID files globally
     rm -f "${LOKI_DIR}/dashboard/dashboard.pid" 2>/dev/null || true
@@ -9082,6 +9085,14 @@ cmd_sandbox() {
 # caller then falls back to a no-number confirm). Never fabricates a number.
 emit_demo_estimate() {
     local prd_path="$1"
+    # v7.30.0 (item 5): the demo estimate always prints before spending, incl.
+    # non-TTY (--dry-run / --yes piped), so gate color on a TTY here too (the
+    # global vars are only blanked on NO_COLOR). Mirrors provider-offer.sh and
+    # quickstart.sh. Local overrides only.
+    local BOLD="$BOLD" YELLOW="$YELLOW" DIM="$DIM" NC="$NC"
+    if [ ! -t 1 ]; then
+        BOLD=''; YELLOW=''; DIM=''; NC=''
+    fi
     local plan_json=""
     plan_json=$(LOKI_COMPLEXITY=simple show_prd_plan "$prd_path" "true" "false" 2>/dev/null) || plan_json=""
 
@@ -9158,6 +9169,16 @@ cmd_demo() {
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
         echo "  loki demo --provider codex       # Use Codex instead of Claude"
         return 0
+    fi
+
+    # v7.30.0 (item 5): demo emits user-facing color (header, dry-run block,
+    # cancel/refuse messages) on paths that always run even when piped/non-TTY,
+    # so gate color on a TTY here (the global vars are only blanked on NO_COLOR).
+    # Placed AFTER the --help early return so help output is untouched. Local
+    # overrides only; mirrors provider-offer.sh / quickstart.sh.
+    local BOLD="$BOLD" CYAN="$CYAN" YELLOW="$YELLOW" GREEN="$GREEN" DIM="$DIM" RED="$RED" NC="$NC"
+    if [ ! -t 1 ]; then
+        BOLD=''; CYAN=''; YELLOW=''; GREEN=''; DIM=''; RED=''; NC=''
     fi
 
     local version
@@ -11636,6 +11657,28 @@ cmd_grill() {
     return $?
 }
 
+# ---------------------------------------------------------------------------
+# loki mcp - launch the MCP (Model Context Protocol) server
+#
+# Thin dispatcher that sources autonomy/mcp-launch.sh and delegates to
+# mcp_launch_main(). The launcher checks for python3 + the MCP SDK and, when
+# the SDK is missing, offers a consent-gated bootstrap into a project-local
+# virtualenv (.loki/mcp-venv) before exec'ing the server over stdio. This
+# closes the fresh-npm-consumer gap where the only bin was `loki` and the
+# Python MCP dependencies were never installed (task 562).
+# ---------------------------------------------------------------------------
+cmd_mcp() {
+    local mcp_mod="$_LOKI_SCRIPT_DIR/mcp-launch.sh"
+    if [ ! -f "$mcp_mod" ]; then
+        echo -e "${RED}Error: mcp launcher not found at $mcp_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$mcp_mod"
+    mcp_launch_main "$@"
+    return $?
+}
+
 cmd_heal_help() {
     echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
     echo ""
@@ -13821,6 +13864,9 @@ main() {
             ;;
         grill)
             cmd_grill "$@"
+            ;;
+        mcp)
+            cmd_mcp "$@"
             ;;
         migrate)
             cmd_migrate "$@"
