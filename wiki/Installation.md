@@ -62,7 +62,7 @@ Claude Code provides full feature support.
 npm install -g @anthropic-ai/claude-code
 
 # Authenticate
-claude login
+claude auth login
 ```
 
 ### OpenAI Codex CLI
@@ -185,7 +185,7 @@ claude --version
 
 # If not found, install it
 npm install -g @anthropic-ai/claude-code
-claude login
+claude auth login
 ```
 
 ---

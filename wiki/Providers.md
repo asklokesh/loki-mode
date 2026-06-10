@@ -53,7 +53,7 @@ Full-featured provider with complete Loki Mode capabilities.
 npm install -g @anthropic-ai/claude-code
 
 # Authenticate
-claude login
+claude auth login
 ```
 
 ### Models
@@ -392,7 +392,7 @@ npm install -g @openai/codex-cli
 
 ```bash
 # Re-authenticate
-claude login
+claude auth login
 codex auth
 ```
 
