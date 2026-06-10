@@ -120,8 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - tests/test-heldout-evals.sh: 32/32. tests/test-spec.sh: 34/34.
   tests/test-verify.sh: 11/11. tests/test-evidence-gate.sh: 48/48.
   tests/test-completion-claim.sh: 10/10. tests/test-cost-capture.sh: 6/6.
-  tests/test-cli-commands.sh: 22/22 on both routes (Bun and
-  LOKI_LEGACY_BASH=1). All suites wired into scripts/local-ci.sh.
+  tests/test-cli-commands.sh: 23/23 on both routes (Bun and
+  LOKI_LEGACY_BASH=1), including the new grill success-path regression test.
+  All suites wired into scripts/local-ci.sh (48 checks, full run green).
 
 ## [7.27.0] - 2026-06-09
 
