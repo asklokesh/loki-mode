@@ -351,6 +351,19 @@ run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/t
 # for the SWE-bench Pro pilot $0-cost / never-tripped-cap bug.
 run_check "tests/test-cost-capture.sh (result-line cost + budget breaker + slug)" "bash tests/test-cost-capture.sh 2>&1 | tail -3"
 
+# Fable model + mid-flight model switching: override file read/allowlist/
+# invalid-ignored/clear semantics, LOKI_FABLE_ARCHITECT default-off routing,
+# fable pricing rows at $10/$50 (2x Opus) across all model-keyed tables, the
+# catalog claude-fable-5 entry, and the security-review model guard. Never
+# invokes a real model. The dashboard endpoints are covered by the pytest gate
+# (tests/dashboard/test_session_model_endpoint.py).
+run_check "tests/test-model-override.sh (fable + mid-flight model switch)" "bash tests/test-model-override.sh 2>&1 | tail -3"
+
+# Cost/iteration estimator (loki plan): complexity detection, LOKI_COMPLEXITY
+# force, and the fable-quote path. Wired here so the plan suite is a pre-push
+# gate alongside the model-override suite it shares pricing with.
+run_check "tests/test-plan-command.sh (plan estimator + complexity force)" "bash tests/test-plan-command.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------

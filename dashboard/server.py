@@ -2159,6 +2159,21 @@ class FocusRequest(BaseModel):
     project_dir: str
 
 
+# Mid-flight model switching: the allowlist of aliases a live run may switch to.
+# MUST stay identical to the read-side allowlist in run.sh (the override file is
+# fed straight into `claude --model`). Fable is the top-tier advisory model at
+# 2x Opus cost; the UI shows that. `None`/empty clears the override.
+_SESSION_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus", "fable")
+
+
+class SessionModelRequest(BaseModel):
+    """Schema for setting (or clearing) the live run's model override."""
+    # Disable Pydantic's protected "model_" namespace so a field literally named
+    # "model" does not emit a warning.
+    model_config = ConfigDict(protected_namespaces=())
+    model: str | None = None
+
+
 @app.post("/api/focus", dependencies=[Depends(auth.require_scope("control"))])
 async def set_focus(request: FocusRequest):
     """Set the active project directory for .loki/ resolution.
@@ -2200,6 +2215,75 @@ async def clear_focus():
     global _active_project_dir
     _active_project_dir = None
     return {"project_dir": None, "loki_dir": str(_get_loki_dir())}
+
+
+def _model_override_path() -> _Path:
+    """Project-scoped path to the mid-flight model override file."""
+    return _get_loki_dir() / "state" / "model-override"
+
+
+@app.get("/api/session/model")
+async def get_session_model():
+    """Report the live run's model override and the effective default.
+
+    `override` is the alias currently written to .loki/state/model-override
+    (None when no override is active). `default` is the session model the run
+    falls back to when there is no override (LOKI_SESSION_MODEL or the catalog
+    default). `effective` is the model the next iteration will actually use.
+    """
+    override = None
+    try:
+        p = _model_override_path()
+        if p.is_file():
+            raw = p.read_text().strip()
+            if raw in _SESSION_MODEL_ALLOWLIST:
+                override = raw
+    except OSError:
+        override = None
+    default = (os.environ.get("LOKI_SESSION_MODEL") or "sonnet").strip().lower()
+    if default not in _SESSION_MODEL_ALLOWLIST:
+        default = "sonnet"
+    return {
+        "override": override,
+        "default": default,
+        "effective": override or default,
+        "allowed": list(_SESSION_MODEL_ALLOWLIST),
+    }
+
+
+@app.post("/api/session/model", dependencies=[Depends(auth.require_scope("control"))])
+async def set_session_model(request: SessionModelRequest):
+    """Set (or clear) the model a live Loki run uses, applied from the NEXT
+    iteration boundary.
+
+    The run reads .loki/state/model-override at the top of each iteration, so a
+    switch takes effect when the current iteration finishes and the next
+    `claude -p` is spawned (the model is fixed per invocation). Body
+    {"model": null} or {"model": ""} clears the override and reverts to the tier
+    mapping. The value is allowlist-validated server-side because the file is fed
+    straight into `claude --model`; arbitrary strings are rejected.
+    """
+    raw = (request.model or "").strip().lower()
+    override_path = _model_override_path()
+    if raw == "":
+        # Clear the override; revert to tier mapping.
+        try:
+            if override_path.exists():
+                override_path.unlink()
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Could not clear override: {exc}")
+        return {"model": None, "effective": "next_iteration"}
+    if raw not in _SESSION_MODEL_ALLOWLIST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model '{request.model}'. Allowed: {', '.join(_SESSION_MODEL_ALLOWLIST)}",
+        )
+    try:
+        override_path.parent.mkdir(parents=True, exist_ok=True)
+        override_path.write_text(raw + "\n")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write override: {exc}")
+    return {"model": raw, "effective": "next_iteration"}
 
 
 @app.get("/api/running-projects")
@@ -4389,6 +4473,9 @@ async def stop_session(request: Request):
 # At runtime, overridden by .loki/pricing.json if available
 _DEFAULT_PRICING = {
     # Claude (Anthropic)
+    # Fable 5 is the top-tier advisory model at exactly 2x Opus per token.
+    "fable":  {"input": 10.00, "output": 50.00},
+    "claude-fable-5": {"input": 10.00, "output": 50.00},
     "opus":   {"input": 5.00, "output": 25.00},
     "sonnet": {"input": 3.00, "output": 15.00},
     "haiku":  {"input": 1.00, "output": 5.00},
