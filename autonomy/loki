@@ -711,6 +711,7 @@ show_help() {
     echo "  --no-dashboard   Disable web dashboard"
     echo "  --sandbox        Run in Docker sandbox for isolation"
     echo "  --skip-memory    Skip loading memory context at startup"
+    echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
@@ -1142,10 +1143,12 @@ cmd_start() {
                 args+=("--parallel")
                 shift
                 ;;
-            --regen-prd|--regenerate-prd|--regen)
+            --regen-prd|--regenerate-prd|--regen|--fresh-prd)
                 # v7.8.1: force a fresh generated PRD on a no-PRD run, overriding
                 # the staleness-aware reuse (decide_generated_prd_action in
                 # run.sh reads LOKI_PRD_REGEN). Exported so the runner sees it.
+                # --fresh-prd is the documented alias surfaced in the reuse
+                # disclosure line ("pass --fresh-prd to regenerate").
                 export LOKI_PRD_REGEN=1
                 shift
                 ;;
@@ -1820,13 +1823,29 @@ cmd_start() {
             echo -e "${YELLOW}Warning: No PRD file specified. Auto-confirming (CI mode).${NC}"
         else
             echo -e "${YELLOW}No PRD file specified.${NC}"
-            echo "Loki Mode will analyze the existing codebase and generate"
-            echo "a PRD automatically. No requirements document needed."
+            # v7.8.1+: the runner (run_autonomous -> decide_generated_prd_action)
+            # makes the real reuse|update|generate decision. Here we only adjust
+            # the TTY prompt wording so it does not falsely claim "generate" when
+            # a previously generated PRD already exists. --regen-prd / --fresh-prd
+            # (LOKI_PRD_REGEN=1) always forces a fresh generation.
+            local _prompt_q="Generate PRD from codebase and start? [Y/n] "
+            if [ "${LOKI_PRD_REGEN:-}" = "1" ]; then
+                echo "Loki Mode will regenerate the PRD from the codebase (forced)."
+                _prompt_q="Regenerate PRD from codebase (forced) and start? [Y/n] "
+            elif [ -f ".loki/generated-prd.md" ] || [ -f ".loki/generated-prd.json" ]; then
+                echo "A previously generated PRD exists. Loki Mode will reuse it"
+                echo "if the codebase is unchanged, or update it incrementally if"
+                echo "it changed. Pass --fresh-prd to regenerate from scratch."
+                _prompt_q="Continue with the existing generated PRD and start? [Y/n] "
+            else
+                echo "Loki Mode will analyze the existing codebase and generate"
+                echo "a PRD automatically. No requirements document needed."
+            fi
             echo ""
             # v7.5.3 UX: rephrased + default flipped from N to Y. The pre-v7.5.3
             # "Continue? [y/N]" with default-N caused users to accidentally
             # cancel by hitting Enter after reading the explanation.
-            echo -e "Generate PRD from codebase and start? [Y/n] \c"
+            echo -e "$_prompt_q\c"
             read -r confirm
             if [[ "$confirm" =~ ^[Nn] ]]; then
                 echo "Aborted. Usage: loki start <path-to-prd.md>"

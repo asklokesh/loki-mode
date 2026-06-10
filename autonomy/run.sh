@@ -4575,10 +4575,30 @@ compute_codebase_signature() {
     )
 }
 
+# Content hash of the generated PRD file itself (NOT the codebase). Used to
+# detect that a user hand-edited the generated PRD: when the file no longer
+# matches the prd_sha Loki recorded after it last wrote the file, the PRD is
+# user-owned and must be used as-is, never silently overwritten. Echoes "" when
+# no generated PRD file is present.
+_loki_prd_file_hash() {
+    local loki_dir="${1:-.}/.loki"
+    local f=""
+    if [ -f "$loki_dir/generated-prd.md" ]; then
+        f="$loki_dir/generated-prd.md"
+    elif [ -f "$loki_dir/generated-prd.json" ]; then
+        f="$loki_dir/generated-prd.json"
+    fi
+    [ -n "$f" ] || { echo ""; return 0; }
+    _loki_hash_stdin < "$f"
+}
+
 # Decide what to do with a previously generated PRD on a no-PRD run.
-# Echoes one of: reuse | update | generate. Never fails the run.
-#   - LOKI_PRD_REGEN=1 (or --regen-prd, which sets it) -> generate (force fresh).
+# Echoes one of: reuse | update | generate | user_owned. Never fails the run.
+# Precedence: force-regen > user_owned (hand-edited) > reuse/update > generate.
+#   - LOKI_PRD_REGEN=1 (or --regen-prd/--fresh-prd, which set it) -> generate.
 #   - no generated PRD present -> generate (first run).
+#   - generated PRD present but its content hash differs from the recorded
+#     prd_sha -> user_owned (the user hand-edited it; use as-is, do not rewrite).
 #   - generated PRD present, no recorded signature -> update (have a PRD but no
 #     provenance: reconcile incrementally rather than trust-blindly or discard).
 #   - signature matches current codebase -> reuse (unchanged).
@@ -4595,7 +4615,7 @@ decide_generated_prd_action() {
     if [ ! -f "$sig_file" ]; then
         echo "update"; return 0
     fi
-    local stored current
+    local stored stored_prd_sha current cur_prd_sha
     stored=$(LOKI_SIG_FILE="$sig_file" python3 -c "
 import json, os
 try:
@@ -4603,7 +4623,23 @@ try:
 except Exception:
     print('')
 " 2>/dev/null)
+    stored_prd_sha=$(LOKI_SIG_FILE="$sig_file" python3 -c "
+import json, os
+try:
+    print(json.load(open(os.environ['LOKI_SIG_FILE'])).get('prd_sha',''))
+except Exception:
+    print('')
+" 2>/dev/null)
     [ -z "$stored" ] && { echo "update"; return 0; }
+    # Hand-edit detection (precedence above reuse/update): if we recorded a
+    # prd_sha and the file no longer matches it, the user edited it themselves.
+    # Treat as user-owned: use as-is, never regenerate over their changes.
+    if [ -n "$stored_prd_sha" ]; then
+        cur_prd_sha=$(_loki_prd_file_hash "${TARGET_DIR:-.}")
+        if [ -n "$cur_prd_sha" ] && [ "$cur_prd_sha" != "$stored_prd_sha" ]; then
+            echo "user_owned"; return 0
+        fi
+    fi
     current=$(compute_codebase_signature "${TARGET_DIR:-.}")
     if [ "$stored" = "$current" ]; then
         echo "reuse"
@@ -4618,6 +4654,12 @@ except Exception:
 persist_prd_signature_if_present() {
     local exit_code="${1:-0}"
     [ "$exit_code" = "0" ] || return 0
+    # Hand-edited (user-owned) PRD: do NOT rewrite the signature. Re-hashing the
+    # user's edited file would re-baseline its content as the new prd_sha, so the
+    # next run would fall through to plain reuse with the wrong (non-user-owned)
+    # disclosure. Preserve the prior Loki-authored prd_sha/generated_at so every
+    # subsequent run keeps detecting user_owned until --fresh-prd forces a regen.
+    [ "${GENERATED_PRD_ACTION:-}" = "user_owned" ] && return 0
     # only for no-PRD runs whose generated PRD exists
     case "${prd_path:-}" in
         ""|*.loki/generated-prd.md|*.loki/generated-prd.json) ;;
@@ -4630,17 +4672,38 @@ persist_prd_signature_if_present() {
     [ -n "$sig" ] || return 0
     mkdir -p "$loki_dir/state" 2>/dev/null || return 0
     local mode="files"; case "$sig" in git:*) mode="git" ;; esac
+    # Record the content hash of the PRD file Loki just wrote so a later
+    # hand-edit by the user is detectable (decide_generated_prd_action). This
+    # runs AFTER the agent's own PRD writes, so Loki's updates are not mistaken
+    # for user edits.
+    local prd_sha; prd_sha=$(_loki_prd_file_hash "${TARGET_DIR:-.}")
     local tmp="$loki_dir/state/.prd-signature.json.tmp.$$"
+    # Preserve generated_at when the codebase signature is unchanged so the
+    # reuse disclosure ("generated on <date>") stays honest across reuse runs;
+    # only stamp a new date when the PRD content actually changed (sig differs).
     LOKI_SIG="$sig" LOKI_SIG_MODE="$mode" LOKI_SIG_VER="$(get_version 2>/dev/null || echo unknown)" \
+    LOKI_PRD_SHA="$prd_sha" LOKI_SIG_FILE="$loki_dir/state/prd-signature.json" \
     python3 -c "
 import json, os, datetime
+sig = os.environ['LOKI_SIG']
+prev = {}
+try:
+    prev = json.load(open(os.environ['LOKI_SIG_FILE']))
+except Exception:
+    prev = {}
+prev_at = prev.get('generated_at') if isinstance(prev, dict) else None
+if prev_at and prev.get('signature') == sig:
+    generated_at = prev_at
+else:
+    generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
 rec = {
-  'signature': os.environ['LOKI_SIG'],
-  'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),
+  'signature': sig,
+  'generated_at': generated_at,
   'prd_path': '.loki/generated-prd.md',
+  'prd_sha': os.environ.get('LOKI_PRD_SHA',''),
   'mode': os.environ['LOKI_SIG_MODE'],
   'loki_version': os.environ['LOKI_SIG_VER'],
-}
+  }
 print(json.dumps(rec))
 " > "$tmp" 2>/dev/null && mv -f "$tmp" "$loki_dir/state/prd-signature.json" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }
@@ -12014,9 +12077,31 @@ run_autonomous() {
             export GENERATED_PRD_ACTION
             local _gen_prd=".loki/generated-prd.md"
             [ -f ".loki/generated-prd.md" ] || _gen_prd=".loki/generated-prd.json"
+            # Date the generated PRD was last written (for an honest disclosure).
+            local _prd_date=""
+            if [ -f ".loki/state/prd-signature.json" ]; then
+                _prd_date=$(LOKI_SIG_FILE=".loki/state/prd-signature.json" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['LOKI_SIG_FILE'])).get('generated_at','')
+    print((d or '')[:10])
+except Exception:
+    print('')
+" 2>/dev/null)
+            fi
             case "$GENERATED_PRD_ACTION" in
                 reuse)
-                    log_info "No user PRD found. Reusing generated PRD (codebase unchanged): $_gen_prd"
+                    if [ -n "$_prd_date" ]; then
+                        log_info "Reusing the PRD generated on $_prd_date; pass --fresh-prd to regenerate ($_gen_prd)"
+                    else
+                        log_info "Reusing the generated PRD (codebase unchanged); pass --fresh-prd to regenerate ($_gen_prd)"
+                    fi
+                    prd_path="$_gen_prd"
+                    ;;
+                user_owned)
+                    # The user hand-edited the generated PRD. Use it as-is (never
+                    # overwrite their edits); distinct disclosure from a clean reuse.
+                    log_info "Using your hand-edited PRD as-is ($_gen_prd); pass --fresh-prd to regenerate from the codebase"
                     prd_path="$_gen_prd"
                     ;;
                 update)
