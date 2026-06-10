@@ -139,6 +139,7 @@ export LOKI_PHASE_E2E_TESTS=false
 | `LOKI_COMPLETION_PROMISE` | - | Explicit stop condition text |
 | `LOKI_MAX_ITERATIONS` | `1000` | Maximum loop iterations |
 | `LOKI_PERPETUAL_MODE` | `false` | Ignore ALL completion signals |
+| `LOKI_HELDOUT_GATE` | `1` | Held-out spec evals (v7.28.0). When checklist items have been reserved as held-out, the completion council blocks completion if a held-out item is failing. Set to `0` to opt out (the gate never blocks). The gate is inert anyway when no held-out items were reserved (checklists with fewer than 4 items reserve nothing). See [[Quality Gates]]. |
 
 **Example - Custom completion promise:**
 ```bash

@@ -9,6 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.28.0] - 2026-06-10
+
+### Added
+- Held-out spec evals (anti-reward-hacking for the checklist, default-on when
+  reserved). Before the first verification, `checklist_select_heldout`
+  (`autonomy/prd-checklist.sh`) deterministically reserves a slice of checklist
+  items as held-out: `count = clamp(round(0.25 * N), 1, 5)` for checklists with
+  `N >= 4` items (smaller checklists reserve nothing). Selection is reproducible,
+  not random: items are ranked by `sha256(id)` and the first `count` are taken,
+  then written once to `.loki/checklist/held-out.json` (idempotent). Held-out
+  item IDs are excluded from everything the build loop sees (checklist summary,
+  visible counts, per-iteration checklist gate), so the build agent cannot tune
+  to those specific acceptance checks. The completion council evaluates them only
+  at the ship gate via `council_heldout_gate` (`autonomy/completion-council.sh`),
+  wired into `council_evaluate` and into both non-council completion routes in
+  `autonomy/run.sh` (the completion-promise route and the force-review route). A
+  held-out item whose status is `failing` (and not waived) blocks completion like
+  any other critical failure. Each evaluation records a `heldout_eval` trust
+  event. Opt out with `LOKI_HELDOUT_GATE=0`. Honest limit: this guards the PROMPT
+  FEED, not the filesystem. The reservation lives on disk at
+  `.loki/checklist/held-out.json`; an agent with read access to the working tree
+  can open that file and learn which items were held out. The guarantee is that
+  held-out items are kept out of the build loop's own prompt context, not that
+  they are sandboxed.
+- Evidence-gate inconclusive disclosure. When the verified-completion evidence
+  gate cannot establish a diff baseline (reason `no_git_repo` or
+  `no_run_start_sha`) it still passes through (it never blocks a non-git project),
+  but completion is no longer independently verified. Instead of passing silently,
+  the gate writes `.loki/state/evidence-inconclusive.json` (recording the reason,
+  iteration, and timestamp), emits an `evidence_inconclusive` trust event, and
+  `.loki/COMPLETION.txt` carries one honest line:
+  `Evidence gate: inconclusive (<reason>) - completion not independently
+  verified`. The record is removed automatically on a later run that resolves a
+  conclusive baseline. This is a diff-baseline-only disclosure: red tests still
+  block completion independently, regardless of the inconclusive state.
+- `loki spec` (living-spec family: `lock` / `status` / `sync`). Binds spec
+  requirements to content hashes in `.loki/spec/spec.lock` at lock time, then
+  detects drift deterministically with no LLM cost. `loki spec lock` builds or
+  refreshes the lock; `loki spec status` recomputes hashes and reports drift,
+  emitting `.loki/spec/drift-report.json`; `loki spec sync` refreshes the lock
+  after human review. Exit codes are CI-gate usable: 0 in-sync (status) or lock
+  written (lock/sync), 1 drift detected (status), 2 usage or spec-not-found. When
+  a spec lock exists, `loki verify` folds a single Medium `SPEC_DRIFT` finding
+  (CONCERNS) into its evidence; graceful no-op when no lock is present.
+- `loki grill` (Devil's-Advocate spec interrogation, pre-build). Invokes the
+  provider once with a Devil's-Advocate prompt to surface the hardest questions
+  exposing spec ambiguities, missing acceptance criteria, unstated assumptions,
+  and security/scale blind spots; writes `.loki/grill/report.md`. Honest about
+  its provider dependency: requires the provider CLI and fails cleanly with no
+  fabricated questions when it is absent. Exit codes: 0 success, 2 usage or
+  spec-not-found, 3 provider unavailable or interrogation failed (never silent).
+- Claude Code slash-command packaging. Three command wrappers ship under
+  `.claude/commands/`: `loki-verify.md`, `loki-spec-status.md`, and
+  `loki-grill.md`, exposing `loki verify`, `loki spec status`, and `loki grill`
+  as in-editor slash commands.
+- `mcpName` in `package.json` (`io.github.asklokesh/loki-mode`) for the official
+  MCP registry.
+
+### Changed
+- Test hardening. The spec and verify suites now isolate from the host's global
+  and system git config (a hostile `commit.gpgsign` or identity setting can no
+  longer break the suite), and a route-level wiring regression test asserts that
+  `council_heldout_gate` is invoked from both completion routes in `run.sh` and
+  from the council evaluate path, failing loudly if any wiring is silently
+  removed.
+
+### Tests
+- tests/test-heldout-evals.sh: 23/23. tests/test-spec.sh: 30/30.
+  tests/test-verify.sh: 11/11. tests/test-evidence-gate.sh: 48/48.
+  tests/test-cli-commands.sh: 22/22. (Re-run in the v7.28.0 worktree.)
+
 ## [7.27.0] - 2026-06-09
 
 ### Added

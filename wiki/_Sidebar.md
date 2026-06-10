@@ -18,6 +18,7 @@
 - [[Notifications]]
 - [[Dashboard]]
 - [[Completion Council]]
+- [[Quality Gates]]
 - [[Cross-Project Learning]]
 - [[Knowledge Compounding]]
 - [[Checkpoints]]

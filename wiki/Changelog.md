@@ -2,7 +2,17 @@
 
 For the complete release history and detailed changes, see the main [CHANGELOG.md](../CHANGELOG.md) in the repository root.
 
-## Recent Releases (current track: v7.7.x)
+## Recent Releases
+
+### [7.28.0] - 2026-06-10
+
+Added:
+- **Held-out spec evals** (anti-reward-hacking, default-on when reserved). A deterministic slice of checklist items (`count = clamp(round(0.25 * N), 1, 5)` for `N >= 4`, ranked by `sha256(id)`) is reserved and hidden from everything the build loop sees. The completion council evaluates them only at the ship gate; a failing held-out item blocks completion. Opt out with `LOKI_HELDOUT_GATE=0`. Honest limit: guards the prompt feed, not the filesystem (the reservation file is readable by an FS-capable agent). See [[Quality Gates]].
+- **Evidence-gate inconclusive disclosure.** When the verified-completion gate cannot establish a diff baseline (`no_git_repo` / `no_run_start_sha`) it passes through but writes `.loki/state/evidence-inconclusive.json` and `.loki/COMPLETION.txt` carries `Evidence gate: inconclusive (<reason>) - completion not independently verified`. Red tests still block independently.
+- **`loki spec`** (living-spec: `lock` / `status` / `sync`). Binds spec requirements to content hashes in `.loki/spec/spec.lock` and detects drift deterministically (no LLM cost), emitting `.loki/spec/drift-report.json`. A drifted spec folds a Medium `SPEC_DRIFT` finding into `loki verify`. Exit codes: 0 in-sync / lock written, 1 drift, 2 usage.
+- **`loki grill`** (Devil's-Advocate spec interrogation, pre-build). Invokes the provider once to surface the hardest questions exposing spec weaknesses; writes `.loki/grill/report.md`. Fails cleanly when the provider CLI is absent (no fabricated questions). Exit codes: 0 success, 2 usage, 3 provider unavailable.
+- **Claude Code slash commands** under `.claude/commands/`: `loki-verify.md`, `loki-spec-status.md`, `loki-grill.md`.
+- **`mcpName`** in `package.json` for the official MCP registry.
 
 ### [7.7.14] - 2026-05-27
 
