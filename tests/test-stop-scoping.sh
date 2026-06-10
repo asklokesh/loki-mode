@@ -33,14 +33,21 @@ grep -q 'mark_project_stopped' "$LOKI" \
   || bad "cmd_stop does not call mark_project_stopped"
 
 # The blanket pkill must sit UNDER the --all guard, never in the default path.
-# Assert: every `pkill -f "loki-run-"` in cmd_stop is preceded (within 4 lines)
-# by an `if [ "$stop_all" = true ]` guard. We check the cmd_stop function body.
+# Assert: the --all pkill (pkill -f "$_stop_all_pat") is preceded (within ~7
+# lines) by an `if [ "$stop_all" = true ]` guard, and that the pattern variable
+# defaults to "loki-run-" so user-facing --all semantics are unchanged. We check
+# the cmd_stop function body.
 STOP_BODY=$(awk '/^cmd_stop\(\)/{f=1} f{print} /^}/{if(f)exit}' "$LOKI")
-if echo "$STOP_BODY" | grep -q 'pkill -f "loki-run-"'; then
-    if echo "$STOP_BODY" | grep -B4 'pkill -f "loki-run-"' | grep -q '\[ "\$stop_all" = true \]'; then
+if echo "$STOP_BODY" | grep -q 'pkill -f "\$_stop_all_pat"'; then
+    if echo "$STOP_BODY" | grep -B7 'pkill -f "\$_stop_all_pat"' | grep -q '\[ "\$stop_all" = true \]'; then
         ok "blanket pkill is gated behind --all (not in default path)"
     else
         bad "blanket pkill in cmd_stop is NOT gated behind --all"
+    fi
+    if echo "$STOP_BODY" | grep -q '_stop_all_pat="\${LOKI_STOP_ALL_PATTERN:-loki-run-}"'; then
+        ok "--all kill pattern defaults to loki-run- (user semantics unchanged)"
+    else
+        bad "--all kill pattern does not default to loki-run-"
     fi
 else
     bad "expected a --all-gated pkill in cmd_stop, found none"
@@ -74,16 +81,28 @@ $PY -c "import ast; ast.parse(open('$REPO_ROOT/dashboard/registry.py').read())" 
 # Two fake runners imitating /tmp/loki-run-XXXXXX (run.sh:180), each writing
 # its own pid into <dir>/.loki/loki.pid then sleeping. `loki stop` in A must
 # kill A's runner and LEAVE B's alive. `loki stop --all` then kills B too.
+#
+# SAFETY (fix/local-ci-sentinel): the runners carry a UNIQUE per-run marker in
+# their script name (loki-run-STOPSCOPE-<rand>) and the `--all` call below sets
+# LOKI_STOP_ALL_PATTERN to that exact marker. This exercises the real
+# `cmd_stop --all` -> `pkill -f "$pattern"` code path (loki.sh) while scoping the
+# blanket kill to THIS test's runners only. Without it, `--all`'s default
+# "loki-run-" matcher would SIGKILL any unrelated live loki-run-* on the machine
+# (e.g. a long SWE-bench instance). The folder-scoped stop (no --all) kills A via
+# .loki/loki.pid, so it is unaffected by the marker rename.
 T2=$(
   set -u
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-stopscope-XXXXXX")
   mkdir -p "$WORK/A/.loki" "$WORK/B/.loki"
-  # fake runner script (matches the loki-run- pkill pattern); does NOT exec,
-  # so the script name stays in argv exactly like the real runner.
+  # Unique marker for this run's fake runners; the --all kill is scoped to it.
+  SCOPE_MARK="STOPSCOPE-$$-${RANDOM}"
+  # fake runner script (name carries the unique marker so the scoped --all pkill
+  # matches it); does NOT exec, so the script name stays in argv like the real
+  # runner.
   make_runner() {
     local dir="$1"
     local rs
-    rs=$(mktemp "${TMPDIR:-/tmp}/loki-run-XXXXXX")
+    rs=$(mktemp "${TMPDIR:-/tmp}/loki-run-${SCOPE_MARK}-XXXXXX")
     cat > "$rs" <<RUNNER
 #!/usr/bin/env bash
 echo \$\$ > "$dir/.loki/loki.pid"
@@ -107,8 +126,10 @@ RUNNER
   sleep 0.5
   kill -0 "$PIDA" 2>/dev/null && result="${result}A_ALIVE " || result="${result}A_DEAD "
   kill -0 "$PIDB" 2>/dev/null && result="${result}B_ALIVE " || result="${result}B_DEAD "
-  # --all from A (which now has no live session) must kill B too
+  # --all from A (which now has no live session) must kill B too. Scope the
+  # blanket kill to THIS run's marker so we never reap an unrelated loki-run-*.
   ( cd "$WORK/A" && LOKI_DIR=.loki SKILL_DIR="$REPO_ROOT" LOKI_SKIP_PROJECT_REGISTRY=1 \
+      LOKI_STOP_ALL_PATTERN="loki-run-${SCOPE_MARK}-" \
       bash "$LOKI" stop --all >/dev/null 2>&1 )
   sleep 0.8
   kill -0 "$PIDB" 2>/dev/null && result="${result}B_ALIVE_AFTER_ALL" || result="${result}B_DEAD_AFTER_ALL"

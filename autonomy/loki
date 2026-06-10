@@ -2286,10 +2286,18 @@ PYDASH
     # v7.7.30: --all preserves the legacy machine-wide kill. It runs even when
     # the current folder has no live session (the "clean everything" use case),
     # reaping every folder's orphaned loki-run-* temp script (SIGTERM, SIGKILL).
+    #
+    # The kill pattern is "loki-run-" for real users and is NOT user-overridable
+    # at the CLI -- that is the documented machine-wide behavior. LOKI_STOP_ALL_PATTERN
+    # exists ONLY so the test suite can exercise this exact code path against its
+    # own uniquely-marked fake runners without SIGKILLing an unrelated live
+    # loki-run-* on the same machine (e.g. a long SWE-bench instance). It defaults
+    # to "loki-run-" so user-facing semantics are unchanged when unset.
     if [ "$stop_all" = true ]; then
-        pkill -f "loki-run-" 2>/dev/null || true
+        local _stop_all_pat="${LOKI_STOP_ALL_PATTERN:-loki-run-}"
+        pkill -f "$_stop_all_pat" 2>/dev/null || true
         sleep 0.5
-        pkill -9 -f "loki-run-" 2>/dev/null || true
+        pkill -9 -f "$_stop_all_pat" 2>/dev/null || true
         echo -e "${RED}--all: signalled all loki-run-* processes on this machine.${NC}"
     fi
 }
