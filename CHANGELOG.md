@@ -25,10 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fable and the estimate discloses it. Routing scope is evidence-based per
   Anthropic's model documentation; security review deliberately stays on
   Opus (fable refuses cyber content, and a refusal would break the council).
-- The cost-honesty contract, enforced and tested: the loki plan quote, the
-  dashboard's reported effective model, and the actual dispatched model
-  always agree, and LOKI_MAX_TIER clamps every path (session lever,
-  mid-flight override, architect pin) with one honest log line. All three
+- The cost-honesty contract, enforced and tested: for every model lever
+  this release ships (session pin to fable, mid-flight override, architect
+  pass) and every LOKI_MAX_TIER path, the loki plan quote, the dashboard's
+  reported effective model, and the actual dispatched model agree, with the
+  clamp logging one honest line. (A pre-existing stock-path estimator label
+  gap on the default session pin is disclosed in the dashboard SCOPE NOTE
+  and tracked as a follow-up.) All three
   clamp readers resolve through one canonical provider-config rule, locked
   by a 224-cell parity matrix test against the real provider script,
   including miscased and padded cap spellings.
