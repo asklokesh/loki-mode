@@ -3943,11 +3943,15 @@ cmd_dashboard_start() {
 
     if kill -0 "$new_pid" 2>/dev/null; then
         local url="${url_scheme}://${host}:${port}"
-        echo -e "${GREEN}Dashboard server started${NC}"
+        echo -e "${GREEN}Dashboard (live run monitor) started${NC}"
         echo ""
         echo "  PID:  $new_pid"
         echo "  URL:  $url"
         echo "  Logs: $log_file"
+        echo ""
+        # v7.28.x UX #5: distinguish the two browser UIs up front so a newcomer
+        # who wants to submit a spec does not land on the ops monitor by mistake.
+        echo -e "${DIM}Looking for the project web UI to submit a spec? loki web (:${PURPLE_LAB_DEFAULT_PORT:-57375})${NC}"
         echo ""
         echo -e "Open in browser: ${CYAN}loki dashboard open${NC}"
         echo -e "Check status:    ${CYAN}loki dashboard status${NC}"
@@ -4561,12 +4565,15 @@ cmd_web_start() {
     local url="http://${PURPLE_LAB_DEFAULT_HOST}:${port}/lab/"
 
     if [ "$server_ready" = true ]; then
-        echo -e "${GREEN}Purple Lab running at: $url${NC} (PID: $pid)"
+        echo -e "${GREEN}Purple Lab (project web UI) running at: $url${NC} (PID: $pid)"
     else
-        echo -e "${YELLOW}Purple Lab starting at: $url${NC} (PID: $pid)"
+        echo -e "${YELLOW}Purple Lab (project web UI) starting at: $url${NC} (PID: $pid)"
         echo "Server may still be loading. Refresh the browser if it does not load immediately."
     fi
     echo -e "Logs: $log_file"
+    # v7.28.x UX #5: distinguish the two browser UIs so the ops monitor and the
+    # spec-input web UI are never confused for each other.
+    echo -e "${DIM}Looking for the live run monitor? loki dashboard (:${DASHBOARD_DEFAULT_PORT:-57374})${NC}"
     echo -e "Stop with: ${CYAN}loki web stop${NC}"
 
     # Open browser only after server is confirmed ready
