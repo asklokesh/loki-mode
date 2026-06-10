@@ -88,31 +88,60 @@ grep -q "Ignoring invalid model override" "$RUN_SH" \
   && ok "run.sh warns once on invalid override" || bad "run.sh invalid-override warn missing"
 
 # ---------------------------------------------------------------------------
-# 2. LOKI_FABLE_ARCHITECT default-off proof (source get_provider_tier_param).
+# 2. LOKI_FABLE_ARCHITECT default-off proof.
+#
+# IMPORTANT: the REAL `start` path resolves the claude planning model via
+# providers/claude.sh's resolve_model_for_tier (get_provider_tier_param early-
+# returns to it when the provider is loaded, run.sh:1801). So the routing is
+# tested by sourcing claude.sh and calling resolve_model_for_tier in a
+# subshell (the way run.sh actually resolves it), NOT by extracting the bare
+# get_provider_tier_param fallback. Each case runs in its own subshell so env
+# vars are seen at source time (claude.sh resolves PROVIDER_MODEL_* on source).
 # ---------------------------------------------------------------------------
+CLAUDE_SH="$REPO_ROOT/providers/claude.sh"
+rmt() {
+    # $@ : "VAR=val" exports, last arg is the tier
+    local tier="${!#}"
+    bash -c '
+      for kv in "${@:1:$#-1}"; do export "$kv"; done
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      resolve_model_for_tier "'"$tier"'"
+    ' _ "$@"
+}
+
+out_default="$(rmt planning)"
+[ "$out_default" = "opus" ] \
+  && ok "planning tier defaults to opus (LOKI_FABLE_ARCHITECT off, REAL claude.sh path)" \
+  || bad "planning default not opus: '$out_default'"
+out_fable="$(rmt LOKI_FABLE_ARCHITECT=1 planning)"
+[ "$out_fable" = "fable" ] \
+  && ok "LOKI_FABLE_ARCHITECT=1 routes planning to fable (REAL claude.sh path)" \
+  || bad "LOKI_FABLE_ARCHITECT=1 did not route to fable: '$out_fable'"
+out_override="$(rmt LOKI_FABLE_ARCHITECT=1 LOKI_MODEL_PLANNING=opus planning)"
+[ "$out_override" = "opus" ] \
+  && ok "explicit LOKI_MODEL_PLANNING wins over fable opt-in" \
+  || bad "explicit planning override failed: '$out_override'"
+out_max="$(rmt LOKI_FABLE_ARCHITECT=1 LOKI_MAX_TIER=opus planning)"
+[ "$out_max" = "opus" ] \
+  && ok "LOKI_MAX_TIER=opus caps the fable opt-in back to opus" \
+  || bad "maxTier ceiling did not cap fable: '$out_max'"
+out_dev="$(rmt LOKI_FABLE_ARCHITECT=1 development)"
+[ "$out_dev" = "opus" ] \
+  && ok "dev tier stays opus even with fable architect on" \
+  || bad "dev tier leaked to fable: '$out_dev'"
+
+# Also confirm the run.sh legacy fallback branch (used when no provider is
+# sourced) carries the same opt-in, so the two paths agree.
 eval "$(awk '/^get_provider_tier_param\(\)/,/^}/' "$RUN_SH")"
 if type get_provider_tier_param >/dev/null 2>&1; then
-    ok "get_provider_tier_param sourced"
     PROVIDER_NAME=claude
-    unset LOKI_FABLE_ARCHITECT PROVIDER_MODEL_PLANNING 2>/dev/null || true
-    out_default="$(get_provider_tier_param planning)"
-    [ "$out_default" = "opus" ] \
-      && ok "planning tier defaults to opus (LOKI_FABLE_ARCHITECT off)" \
-      || bad "planning default not opus: '$out_default'"
-    out_fable="$(LOKI_FABLE_ARCHITECT=1 get_provider_tier_param planning)"
-    [ "$out_fable" = "fable" ] \
-      && ok "LOKI_FABLE_ARCHITECT=1 routes planning to fable" \
-      || bad "LOKI_FABLE_ARCHITECT=1 did not route to fable: '$out_fable'"
-    out_override="$(LOKI_FABLE_ARCHITECT=1 PROVIDER_MODEL_PLANNING=opus get_provider_tier_param planning)"
-    [ "$out_override" = "opus" ] \
-      && ok "explicit PROVIDER_MODEL_PLANNING wins over fable opt-in" \
-      || bad "PROVIDER_MODEL_PLANNING override failed: '$out_override'"
-    out_dev="$(LOKI_FABLE_ARCHITECT=1 get_provider_tier_param development)"
-    [ "$out_dev" = "opus" ] \
-      && ok "dev tier stays opus even with fable architect on" \
-      || bad "dev tier leaked to fable: '$out_dev'"
+    out_fb_default="$(unset LOKI_FABLE_ARCHITECT PROVIDER_MODEL_PLANNING; get_provider_tier_param planning)"
+    out_fb_fable="$(unset PROVIDER_MODEL_PLANNING; LOKI_FABLE_ARCHITECT=1 get_provider_tier_param planning)"
+    [ "$out_fb_default" = "opus" ] && [ "$out_fb_fable" = "fable" ] \
+      && ok "run.sh legacy fallback agrees (opus default, fable on opt-in)" \
+      || bad "run.sh fallback disagrees: default='$out_fb_default' opt-in='$out_fb_fable'"
 else
-    bad "get_provider_tier_param could not be sourced"
+    bad "get_provider_tier_param fallback could not be sourced"
 fi
 
 # ---------------------------------------------------------------------------

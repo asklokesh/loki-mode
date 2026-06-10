@@ -2230,6 +2230,13 @@ async def get_session_model():
     (None when no override is active). `default` is the session model the run
     falls back to when there is no override (LOKI_SESSION_MODEL or the catalog
     default). `effective` is the model the next iteration will actually use.
+
+    KNOWN LIMITATION: when there is no override, `default`/`effective` are read
+    from the DASHBOARD process's LOKI_SESSION_MODEL, which is usually a different
+    process than the live run, so they may not reflect the run's real pinned
+    tier (e.g. a run pinned to opus still reads "sonnet" here). The override
+    case -- the feature this endpoint exists for -- is always accurate because
+    it reads the run's own state file.
     """
     override = None
     try:

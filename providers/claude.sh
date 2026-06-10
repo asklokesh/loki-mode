@@ -312,6 +312,22 @@ resolve_model_for_tier() {
         *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
     esac
 
+    # Evidence-based routing (scoped): opt the planning/architecture tier in to
+    # Fable 5 via LOKI_FABLE_ARCHITECT=1. The official model-config docs name
+    # "architecture decisions" and "root-cause investigations" as where Fable's
+    # extra investigation and self-verification pay off. Default OFF (Fable is
+    # 2x Opus per token; reserve it for the REASON/architecture iterations the
+    # user explicitly wants). An EXPLICIT planning-model env override
+    # (LOKI_CLAUDE_MODEL_PLANNING / LOKI_MODEL_PLANNING) still wins, so the opt-in
+    # only applies when the planning model is the resolved default. The maxTier
+    # ceiling below still caps it (e.g. LOKI_MAX_TIER=opus -> opus).
+    if [ "$tier" = "planning" ] \
+       && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
+       && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] \
+       && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
+        model="fable"
+    fi
+
     # Apply maxTier ceiling if set
     if [ -n "$max_tier" ]; then
         case "$max_tier" in
@@ -320,13 +336,16 @@ resolve_model_for_tier() {
                 model="$PROVIDER_MODEL_FAST"
                 ;;
             sonnet)
-                # Cap planning to development
-                if [ "$tier" = "planning" ]; then
+                # Cap planning to development; fable (above opus) also caps down.
+                if [ "$tier" = "planning" ] || [ "$model" = "fable" ]; then
                     model="$PROVIDER_MODEL_DEVELOPMENT"
                 fi
                 ;;
             opus)
-                # No cap needed, opus is max
+                # Opus is the ceiling: cap the fable architect opt-in back to opus.
+                if [ "$model" = "fable" ]; then
+                    model="opus"
+                fi
                 ;;
         esac
     fi
