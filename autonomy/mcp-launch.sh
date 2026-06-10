@@ -135,7 +135,7 @@ _ml_print_manual() {
     printf 'Install the MCP server dependencies manually:\n' >&2
     printf "  python3 -m venv '%s'\n" "$venv" >&2
     printf "  '%s/bin/pip' install -r '%s/mcp/requirements.txt'\n" "$venv" "$root" >&2
-    printf "  PYTHONPATH='%s' '%s/bin/python' -m mcp.server\n" "$root" "$venv" >&2
+    printf "  PYTHONPATH='%s' '%s/bin/python' '%s/mcp/server.py'\n" "$root" "$venv" "$root" >&2
 }
 
 _ml_help() {
@@ -255,20 +255,23 @@ mcp_launch_main() {
     fi
 
     # 3. If the venv already has the SDK, use it directly. The server is launched
-    #    with PYTHONPATH=$root (NOT by cd-ing) so the user's cwd is preserved for
+    #    by FILE PATH ($root/mcp/server.py) rather than `-m mcp.server`, with
+    #    PYTHONPATH=$root (NOT by cd-ing) so the user's cwd is preserved for
     #    .loki resolution; see _ml_sdk_importable for why.
-    #    Known narrow residual: if the user's cwd itself contains a Python
-    #    package literally named mcp/ with a server submodule, python -m puts
-    #    the cwd ahead of PYTHONPATH and that package wins. Essentially never
-    #    true for real projects; documented rather than fought.
+    #    Running the file directly avoids the runpy RuntimeWarning that `-m`
+    #    emits (the local mcp/ package is imported during SDK-namespace setup
+    #    before runpy executes mcp.server). server.py uses only absolute imports
+    #    (e.g. `from mcp._sdk_loader import ...`), which resolve via PYTHONPATH=$root
+    #    under file execution. File-exec also removes the old narrow cwd-shadowing
+    #    residual: an explicit path can never be shadowed by a cwd `mcp/` package.
     if [ -x "$venv_py" ] && _ml_sdk_importable "$venv_py" "$root"; then
-        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" -m mcp.server "$@"
+        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" "$root/mcp/server.py" "$@"
     fi
 
     # 4. If the BASE python already has the SDK (e.g. user pip-installed it),
     #    use it -- no venv needed.
     if _ml_sdk_importable "$base_py" "$root"; then
-        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$base_py" -m mcp.server "$@"
+        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$base_py" "$root/mcp/server.py" "$@"
     fi
 
     # 5. SDK missing. Decide whether we may bootstrap.
@@ -374,7 +377,7 @@ mcp_launch_main() {
         return 2
     fi
     printf "%sMCP dependencies ready. Launching server over stdio ...%s\n" "$_ML_BOLD" "$_ML_NC" >&2
-    exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" -m mcp.server "$@"
+    exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" "$root/mcp/server.py" "$@"
 }
 
 # Executed directly (tests, manual): run the dispatcher.

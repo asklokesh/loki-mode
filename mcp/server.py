@@ -537,6 +537,27 @@ def _build_fastmcp():
 
 mcp = _build_fastmcp()
 
+# Propagate the loki-mode VERSION into serverInfo.version.
+#
+# FastMCP 1.x exposes no `version=` kwarg (see _build_fastmcp above), so the
+# kwarg branch there never fires on the installed SDK. FastMCP DOES forward to
+# an underlying lowlevel `Server` (mcp._mcp_server), whose `version` attribute
+# is what `create_initialization_options()` reads into serverInfo at the
+# initialize handshake -- falling back to importlib.metadata.version("mcp")
+# (the SDK's OWN pip version, e.g. 1.27.x) when it is None. That fallback is
+# why the listing surfaced the SDK version instead of ours. Setting this
+# attribute is the only mechanism the installed SDK exposes to override
+# serverInfo.version; `version=` is a documented public parameter on the
+# lowlevel Server.__init__, so this is the supported field, not an internal
+# hack. Guarded so a future SDK that already set a version (e.g. via the
+# _build_fastmcp kwarg branch) is left untouched.
+try:
+    _inner = getattr(mcp, "_mcp_server", None)
+    if _inner is not None and getattr(_inner, "version", None) in (None, ""):
+        _inner.version = _version
+except Exception:  # pragma: no cover - defensive: never block server startup
+    pass
+
 # ============================================================
 # TOOLS - Functions Claude can call
 # ============================================================
