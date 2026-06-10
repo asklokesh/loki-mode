@@ -664,10 +664,11 @@ show_help() {
     echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
     echo ""
     echo "Knowledge:"
-    echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
+    echo "  analyze [cmd]    Codebase intelligence: explain|onboard|code|context"
+    echo "  memory [cmd]     Cross-project learnings (list|show|search|stats|compound)"
     echo ""
     echo "Modernize:"
-    echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
+    echo "  modernize [cmd]  Legacy modernization: heal|migrate"
     echo ""
     echo "Config:"
     echo "  config [cmd]     Manage configuration + provider (show|set|get|provider)"
@@ -677,10 +678,10 @@ show_help() {
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
     echo "More commands (init, watch, demo, web, api, logs, github,"
-    echo "import, council, proof, audit, agent, template, magic, onboard, explain,"
-    echo "code, context, docs, wiki, ci, test, bench, secrets, telemetry, crash,"
-    echo "worktree, failover, monitor, remote, kpis, ...) are dispatchable and"
-    echo "documented via 'loki <command> --help'."
+    echo "import, council, proof, audit, agent, template, magic, docs, wiki, ci,"
+    echo "test, bench, secrets, telemetry, crash, worktree, failover, monitor,"
+    echo "remote, kpis, ...) are dispatchable and documented via"
+    echo "'loki <command> --help'."
     echo ""
     echo "Aliases (deprecated): older command names still work; they print a"
     echo "one-line pointer to stderr and never alter --json output. See the full"
@@ -806,8 +807,16 @@ show_help_aliases() {
     echo "  dogfood            report dogfood"
     echo "  kpis               report kpis"
     echo "  trust-metrics      trust detail"
+    echo "  compound           memory compound"
+    echo "  explain            analyze explain"
+    echo "  onboard            analyze onboard"
+    echo "  code               analyze code"
+    echo "  context            analyze context"
+    echo "  ctx                analyze context"
+    echo "  heal               modernize heal"
+    echo "  migrate            modernize migrate"
     echo ""
-    echo "More groupings (ui, analyze, modernize, new, admin) land in Phase B."
+    echo "More groupings (ui, new, admin) land in later Phase B slices."
     echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
 }
 
@@ -11865,6 +11874,37 @@ cmd_heal_help() {
     echo "  loki heal --friction-map ./legacy-app          # View friction map"
 }
 
+# CLI consolidation (Phase B, design item 6): the 'modernize' noun groups the
+# legacy-modernization surface (heal/migrate) under one entry. It is a THIN
+# dispatcher: each arm forwards verbatim to the existing cmd_* handler (no
+# handler logic moves; heal and migrate keep their separate phase vocabularies
+# and state). The two top-level tokens remain deprecated forwarding aliases.
+cmd_modernize() {
+    local subcommand="${1:-help}"
+    case "$subcommand" in
+        heal)     shift; cmd_heal "$@";    return $? ;;
+        migrate)  shift; cmd_migrate "$@"; return $? ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki modernize${NC} - Legacy system modernization"
+            echo ""
+            echo "Usage: loki modernize <subcommand> [args]"
+            echo ""
+            echo "Subcommands (grouped modernization surface):"
+            echo "  heal <path>      Legacy system healing in phases (was: loki heal)"
+            echo "  migrate <path>   Codebase migration in phases (was: loki migrate)"
+            echo ""
+            echo "Run 'loki modernize <subcommand> --help' for each. The old"
+            echo "top-level names still work; see 'loki help aliases'."
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Unknown modernize command: $subcommand${NC}" >&2
+            echo "Run 'loki modernize --help' for usage." >&2
+            return 1
+            ;;
+    esac
+}
+
 cmd_heal() {
     local codebase_path=""
     local phase="${LOKI_HEAL_PHASE:-archaeology}"
@@ -14074,7 +14114,9 @@ main() {
             cmd_memory "$@"
             ;;
         compound)
-            cmd_compound "$@"
+            # CLI consolidation (Phase B): 'compound' -> 'memory compound'.
+            _deprecated_alias compound "memory compound" "$@"
+            cmd_memory compound "$@"
             ;;
         checkpoint|cp)
             # CLI consolidation (Phase A): 'cp' is a deprecated alias of 'checkpoint'.
@@ -14129,8 +14171,13 @@ main() {
         optimize)
             cmd_optimize "$@"
             ;;
+        modernize)
+            cmd_modernize "$@"
+            ;;
         heal)
-            cmd_heal "$@"
+            # CLI consolidation (Phase B): 'heal' -> 'modernize heal'.
+            _deprecated_alias heal "modernize heal" "$@"
+            cmd_modernize heal "$@"
             ;;
         verify)
             cmd_verify "$@"
@@ -14145,7 +14192,9 @@ main() {
             cmd_mcp "$@"
             ;;
         migrate)
-            cmd_migrate "$@"
+            # CLI consolidation (Phase B): 'migrate' -> 'modernize migrate'.
+            _deprecated_alias migrate "modernize migrate" "$@"
+            cmd_modernize migrate "$@"
             ;;
         cluster)
             cmd_cluster "$@"
@@ -14204,11 +14253,18 @@ main() {
         failover)
             cmd_failover "$@"
             ;;
+        analyze)
+            cmd_analyze "$@"
+            ;;
         onboard)
-            cmd_onboard "$@"
+            # CLI consolidation (Phase B): 'onboard' -> 'analyze onboard'.
+            _deprecated_alias onboard "analyze onboard" "$@"
+            cmd_analyze onboard "$@"
             ;;
         explain)
-            cmd_explain "$@"
+            # CLI consolidation (Phase B): 'explain' -> 'analyze explain'.
+            _deprecated_alias explain "analyze explain" "$@"
+            cmd_analyze explain "$@"
             ;;
         docs)
             cmd_docs "$@"
@@ -14243,10 +14299,15 @@ main() {
             cmd_bench "$@"
             ;;
         context|ctx)
-            cmd_context "$@"
+            # CLI consolidation (Phase B): 'context' (and short alias 'ctx')
+            # -> 'analyze context'.
+            _deprecated_alias "$command" "analyze context" "$@"
+            cmd_analyze context "$@"
             ;;
         code)
-            cmd_code "$@"
+            # CLI consolidation (Phase B): 'code' -> 'analyze code'.
+            _deprecated_alias code "analyze code" "$@"
+            cmd_analyze code "$@"
             ;;
         version|--version|-v)
             cmd_version "$@"
@@ -16587,6 +16648,7 @@ except Exception as e:
             echo "  export [file]     Export to JSON file"
             echo "  dedupe            Remove duplicate entries"
             echo "  clear [type]      Clear learnings (all or specific type)"
+            echo "  compound [cmd]    Compound-solutions knowledge store (was: loki compound)"
             echo ""
             echo "Memory System Commands:"
             echo "  index [rebuild]   Show or rebuild the memory index layer"
@@ -16952,6 +17014,18 @@ with os.fdopen(tmp_fd, 'w') as f:
 os.replace(tmp_path, settings_path)
 print('removed')
 "
+            ;;
+
+        compound)
+            # CLI consolidation (Phase B, design item 7): 'compound' is folded
+            # under the 'memory' noun as 'memory compound'. This arm forwards to
+            # the existing cmd_compound handler unchanged (no handler logic
+            # moves). The top-level 'compound' token stays a deprecated
+            # forwarding alias for back-compat. cmd_memory does not shift before
+            # the case, so $@ here is still 'compound <args>'; drop the leading
+            # 'compound' token, then forward the rest verbatim.
+            shift 2>/dev/null || true
+            cmd_compound "$@"
             ;;
 
         *)
@@ -20282,6 +20356,41 @@ METRICS_SCRIPT
         fi
         echo -e "${GREEN}Shared: ${gist_url}${NC}"
     fi
+}
+
+# CLI consolidation (Phase B, design item 8): the 'analyze' noun groups the
+# repo-intelligence surface (explain/onboard/code/context) under one entry. It
+# is a THIN dispatcher: every arm forwards verbatim to the existing cmd_*
+# handler (no handler logic moves). The four top-level tokens remain deprecated
+# forwarding aliases for back-compat.
+cmd_analyze() {
+    local subcommand="${1:-help}"
+    case "$subcommand" in
+        explain)  shift; cmd_explain "$@"; return $? ;;
+        onboard)  shift; cmd_onboard "$@"; return $? ;;
+        code)     shift; cmd_code "$@";    return $? ;;
+        context)  shift; cmd_context "$@"; return $? ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki analyze${NC} - Project knowledge and codebase intelligence"
+            echo ""
+            echo "Usage: loki analyze <subcommand> [args]"
+            echo ""
+            echo "Subcommands (grouped knowledge surface):"
+            echo "  explain [path]   Explain a codebase architecture in prose (was: loki explain)"
+            echo "  onboard [path]   Analyze a repo and generate CLAUDE.md (was: loki onboard)"
+            echo "  code [query]     Codebase intelligence queries (was: loki code)"
+            echo "  context [cmd]    Context-window management (was: loki context)"
+            echo ""
+            echo "Run 'loki analyze <subcommand> --help' for each. The old top-level"
+            echo "names still work; see 'loki help aliases'."
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Unknown analyze command: $subcommand${NC}" >&2
+            echo "Run 'loki analyze --help' for usage." >&2
+            return 1
+            ;;
+    esac
 }
 
 # Context window management (inspired by Kiro CLI /context command)

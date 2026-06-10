@@ -117,6 +117,19 @@ ALIAS_ROWS=(
     # invoked bare, so we exercise its forwarding contract via the deterministic
     # --help path instead. The deprecation line still fires under --help.
     "share|report share|--help"
+    # CLI consolidation Phase B (slice B2): compound -> memory compound;
+    # explain/onboard/code/context -> analyze <verb>; heal/migrate -> modernize
+    # <verb>. The bare forms spawn agents or read large repo state, so the
+    # deterministic --help path is used (matching the 'share' pattern). Each
+    # handler's --help is stable, exits 0, and spawns nothing. The pointer still
+    # fires under --help (not a machine-output flag).
+    "compound|memory compound|--help"
+    "explain|analyze explain|--help"
+    "onboard|analyze onboard|--help"
+    "code|analyze code|--help"
+    "context|analyze context|--help"
+    "heal|modernize heal|--help"
+    "migrate|modernize migrate|--help"
 )
 
 assert_row() {
@@ -230,6 +243,33 @@ assert_no_loki_exit_parity share "report share" "--format text"
 assert_no_loki_exit_parity stats "report session" ""
 assert_no_loki_exit_parity cost "report cost" ""
 
+# Phase B (slice B2): no-side-effect contract for each new alias. In a fresh dir
+# with no .loki, the alias and its canonical must exit identically and (proven by
+# the dedicated row at the end of this section) leave no .loki behind. --help is
+# used so heal/migrate/explain/onboard/code never spawn an agent or touch any
+# foreign process; the forwarding is still exercised through the noun dispatcher.
+assert_no_loki_exit_parity compound "memory compound" "--help"
+assert_no_loki_exit_parity explain "analyze explain" "--help"
+assert_no_loki_exit_parity onboard "analyze onboard" "--help"
+assert_no_loki_exit_parity code "analyze code" "--help"
+assert_no_loki_exit_parity context "analyze context" "--help"
+assert_no_loki_exit_parity heal "modernize heal" "--help"
+assert_no_loki_exit_parity migrate "modernize migrate" "--help"
+
+# Phase B (slice B2): prove each new alias creates NO .loki in a clean dir (the
+# named no-side-effect contract). _deprecated_alias gates its telemetry emit on
+# .loki already existing, so a forwarding alias must leave a fresh dir pristine.
+for _b2_alias in compound explain onboard code context heal migrate; do
+    _b2_fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-b2-noloki.XXXXXX")"
+    ( cd "$_b2_fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$_b2_alias" --help >/dev/null 2>&1 ) || true
+    if [ ! -e "$_b2_fresh/.loki" ]; then
+        log_pass "$_b2_alias alias: no .loki created in a clean dir (no-side-effect contract)"
+    else
+        log_fail "$_b2_alias alias: no .loki created in a clean dir" ".loki was created"
+    fi
+    rm -rf "$_b2_fresh"
+done
+
 # ---------------------------------------------------------------------------
 # Short-alias rows that share a handler with their canonical (cp/wt/rc/otel/
 # open/serve). These do not all have stable stdout to byte-compare cheaply
@@ -266,6 +306,9 @@ assert_short_alias rc remote
 assert_short_alias otel telemetry
 assert_short_alias serve "api start"
 assert_short_alias open preview
+# Phase B (slice B2): 'ctx' is the short alias of 'context', now forwarding to
+# 'analyze context' (the pointer uses the typed token 'ctx').
+assert_short_alias ctx "analyze context"
 
 # 'run' has its own inline deprecation (cmd_run, v6.84.0) aligned to the
 # standardized pointer. A real 'loki run <N>' touches the network/issue path,
@@ -374,7 +417,7 @@ for grp in "Build:" "Session:" "Verify / trust:" "Observe:" "Report:" "Knowledge
     fi
 done
 
-# Front-page canonical command-entry count is bounded (<= 22). We count lines
+# Front-page canonical command-entry count is bounded (<= 23). We count lines
 # in the "Commands:" block (up to the first "Options for" section) that look
 # like a command entry: two-space indent + a lowercase token. Group headers end
 # in ':' and are excluded.
@@ -382,19 +425,24 @@ done
 # commands into sensible groups -- quickstart (Build, guided first build) and
 # mcp (Observe, the MCP server launcher added in v7.30) -- so the grouped front
 # page lists them instead of burying them in the overflow prose.
+# Phase B (slice B2): grown 22 -> 23 to admit the 'analyze' canonical noun
+# (design section 2 #12), which absorbs explain/onboard/code/context as aliases.
+# Net CANONICAL commands drop (four top-level commands become aliases, one noun
+# is added); the line-count guardrail just tracks the new noun. Later Phase B
+# slices (ui/new/admin) pull the front page back toward the ~17 target.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 22 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,22] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 23 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,23] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,22]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,23]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
 # block (they live in the footer / `loki help aliases`). We check the entry
 # tokens specifically, not prose.
 ENTRY_TOKENS="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | awk '{print $1}')"
-ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc"
+ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc compound explain onboard code context heal migrate"
 alias_leak=0
 for tok in $ALIAS_TOKENS; do
     if echo "$ENTRY_TOKENS" | grep -qx "$tok"; then
@@ -422,7 +470,7 @@ fi
 
 # `loki help aliases` lists every alias-table row.
 ALIASES_OUT="$(run_loki help aliases 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run; do
+for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run compound explain onboard code context ctx heal migrate; do
     if echo "$ALIASES_OUT" | grep -qE "^  $tok( |\$)"; then
         log_pass "help aliases: lists '$tok'"
     else
