@@ -28,8 +28,16 @@ SUBSET = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # spend reaches USD 78. Instances not run are reported explicitly as
 # "not run (budget exhausted)" -- never silently dropped. Instance 1 ran
 # pre-amendment at max_iter=8 and is documented as such.
+#
+# Full-119 run (2026-06-10): same host-side cumulative breaker mechanism as the
+# Section 11 amendment, cap raised to the founder-authorized full-run envelope
+# of USD 700 (smoke calibration projected ~$608-629 generation cost for 119 at
+# max_iter=4; $700 hard cap, $952 worst case). max_iter stays 4. This is a
+# pre-registered operational parameter consistent with Section 11's mechanism;
+# only the numeric cap changed. The 10 smoke records in batch_records.json are
+# retained and skipped by the resume loop; their $62.16 counts toward the cap.
 BATCH_MAX_ITER = 4
-CUMULATIVE_CAP_USD = 78.0
+CUMULATIVE_CAP_USD = 700.0
 
 
 def main():
