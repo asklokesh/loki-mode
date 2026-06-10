@@ -555,6 +555,8 @@ show_help() {
     echo "  audit [cmd]      Agent audit log and quality scanning (log|scan)"
     echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
     echo "  verify [base]    Deterministic PR verification (Autonomi Verify MVP; CI-gate exit codes)"
+    echo "  spec [cmd]       Living spec: keep the spec true (lock|status|sync; drift detection, CI-gate exit codes)"
+    echo "  grill [spec]     Interrogate a spec with the hardest questions before you build it (Devil's Advocate)"
     echo "  review [opts]    Standalone code review with quality gates (diff, staged, PR, files)"
     echo "  optimize         Optimize prompts based on session history"
     echo "  enterprise       Enterprise feature management (tokens, OIDC)"
@@ -11380,6 +11382,47 @@ cmd_verify() {
     return $?
 }
 
+# ---------------------------------------------------------------------------
+# loki spec - the living spec (drift detection + lock)
+#
+# Thin dispatcher that sources autonomy/spec.sh and delegates to spec_main().
+# The spec core is deliberately standalone (it does NOT enter the autonomous
+# loop): it binds spec requirements to content hashes (.loki/spec/spec.lock)
+# and detects drift deterministically, emitting .loki/spec/drift-report.json.
+# Exit codes are propagated so `loki spec status` is CI-gate usable.
+# ---------------------------------------------------------------------------
+cmd_spec() {
+    local spec_mod="$_LOKI_SCRIPT_DIR/spec.sh"
+    if [ ! -f "$spec_mod" ]; then
+        echo -e "${RED}Error: spec module not found at $spec_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$spec_mod"
+    spec_main "$@"
+    return $?
+}
+
+# ---------------------------------------------------------------------------
+# loki grill - spec interrogation (Devil's-Advocate, pre-build)
+#
+# Thin dispatcher that sources autonomy/grill.sh and delegates to grill_main().
+# Invokes the provider once to produce the hardest questions exposing spec
+# weaknesses; writes .loki/grill/report.md. Requires the provider CLI and
+# fails cleanly when it is absent (no fabricated questions).
+# ---------------------------------------------------------------------------
+cmd_grill() {
+    local grill_mod="$_LOKI_SCRIPT_DIR/grill.sh"
+    if [ ! -f "$grill_mod" ]; then
+        echo -e "${RED}Error: grill module not found at $grill_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$grill_mod"
+    grill_main "$@"
+    return $?
+}
+
 cmd_heal_help() {
     echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
     echo ""
@@ -13529,6 +13572,12 @@ main() {
             ;;
         verify)
             cmd_verify "$@"
+            ;;
+        spec)
+            cmd_spec "$@"
+            ;;
+        grill)
+            cmd_grill "$@"
             ;;
         migrate)
             cmd_migrate "$@"

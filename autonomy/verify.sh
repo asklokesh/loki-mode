@@ -972,6 +972,55 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Living-spec drift gate (integration with autonomy/spec.sh).
+#
+# When .loki/spec/spec.lock exists, source the spec module and run its
+# verify hook, which emits at most one SPEC_DRIFT finding (Medium -> CONCERNS)
+# in the verify finding TSV shape. Records a gate row either way so the
+# evidence document shows the spec was checked. Fully graceful: no lock, no
+# module, or a hook error all degrade to a skipped gate and never abort verify.
+# ---------------------------------------------------------------------------
+verify_spec_drift_gate() {
+    local tree="${1:-.}"
+    local spec_dir="$tree/.loki/spec"
+    # Normalize a leading "./" so the lock-path probe is clean.
+    spec_dir="${spec_dir#./}"
+    local lock_file="$spec_dir/spec.lock"
+
+    if [ ! -f "$lock_file" ]; then
+        _verify_add_gate "spec_drift" "skipped" "loki-spec" "no spec lock (.loki/spec/spec.lock); run 'loki spec lock' to enable" "true"
+        return 0
+    fi
+
+    local spec_mod
+    spec_mod="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/spec.sh"
+    if [ ! -f "$spec_mod" ]; then
+        _verify_add_gate "spec_drift" "inconclusive" "loki-spec" "spec lock present but spec module not found" "true"
+        return 0
+    fi
+
+    # Source the spec module in a guarded subshell-free way: it defines
+    # spec_verify_hook which prints zero or one TSV finding line on stdout.
+    # shellcheck source=/dev/null
+    if ! source "$spec_mod" 2>/dev/null; then
+        _verify_add_gate "spec_drift" "inconclusive" "loki-spec" "could not load spec module" "true"
+        return 0
+    fi
+
+    local finding
+    finding="$(spec_verify_hook "$spec_dir" 2>/dev/null || true)"
+
+    if [ -n "$finding" ]; then
+        # Append the SPEC_DRIFT finding(s) verbatim (already TSV-shaped).
+        printf '%s\n' "$finding" >>"$_VERIFY_FINDINGS_FILE"
+        _verify_add_gate "spec_drift" "fail" "loki-spec" "spec has drifted from its lock (see SPEC_DRIFT finding)" "true"
+    else
+        _verify_add_gate "spec_drift" "pass" "loki-spec" "spec is in sync with its lock" "true"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 verify_main() {
@@ -1051,6 +1100,12 @@ verify_main() {
         verify_gate_secret_scan "$tree"
         verify_gate_dependency_audit "$tree"
     fi
+
+    # Living-spec integration: when a spec lock exists, fold a SPEC_DRIFT
+    # finding into the verdict. Graceful no-op when there is no lock or the
+    # spec machinery is unavailable -- verify must never fail to complete
+    # because the optional spec module is missing.
+    verify_spec_drift_gate "$tree"
 
     verify_compute_verdict "$block_on"
 
