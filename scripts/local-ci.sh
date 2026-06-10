@@ -528,11 +528,23 @@ if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
         # the next empty line. Substring match handles ANSI color codes.
         # Also normalize doctor Summary counts which shift slightly when
         # LOKI_LEGACY_BASH is set vs not.
+        # v7.31: strip the optional "Dashboard:" status line. It is
+        # environment-dependent, not route-dependent: loki status (text mode)
+        # prints it only when a dashboard pid file holds a LIVE pid. The bash
+        # text path checks only the project-local pid file while the Bun path
+        # (and the bash --json path) also check ~/.loki/dashboard/dashboard.pid,
+        # so when the operator standalone dashboard is up the line appears on
+        # the Bun side and not the bash side -- a deterministic, environment-
+        # induced diff that has nothing to do with route logic. Deleting the
+        # line on both sides keeps the matrix honest (it never hides a real
+        # route divergence: presence of the line is governed by external
+        # dashboard state, not by the two routes formatting status differently).
         for src in "$PARITY_TMP/$label.bash" "$PARITY_TMP/$label.bun"; do
           dst="${src}.norm"
           sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
             | sed -E "/Runtime route:/,/^$/d" \
             | sed -E "/Phase 1 artifacts:/,/^$/d" \
+            | sed -E "/Dashboard:.*http/d" \
             | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
             > "$dst"
         done

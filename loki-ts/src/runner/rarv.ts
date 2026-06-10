@@ -19,7 +19,7 @@ import { extname, join, relative } from "node:path";
 // RARV tier mapping
 // ---------------------------------------------------------------------------
 
-export type RarvTier = "planning" | "development" | "fast";
+export type RarvTier = "planning" | "development" | "fast" | "fable";
 export type RarvPhase = "REASON" | "ACT" | "REFLECT" | "VERIFY";
 export type Provider = "claude" | "codex" | "cline" | "aider";
 
@@ -51,7 +51,10 @@ function rarvCycleTier(iteration: number): RarvTier {
   }
 }
 
-// Map a session-pinned model name to a tier. Mirrors run.sh:10417-10423.
+// Map a session-pinned model name to a tier. Mirrors the run.sh session-pin
+// case (LOKI_SESSION_MODEL -> CURRENT_TIER), including the explicit `fable` arm
+// so a fable-pinned session resolves to the fable tier (not the development
+// default) and the Bun route stays parity-locked with bash.
 function sessionModelToTier(model: string): RarvTier {
   switch (model) {
     case "opus":
@@ -60,6 +63,8 @@ function sessionModelToTier(model: string): RarvTier {
       return "development";
     case "haiku":
       return "fast";
+    case "fable":
+      return "fable";
     case "planning":
     case "development":
     case "fast":
@@ -114,6 +119,13 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
           return process.env["PROVIDER_MODEL_DEVELOPMENT"] ?? "opus";
         case "fast":
           return process.env["PROVIDER_MODEL_FAST"] ?? "sonnet";
+        case "fable":
+          // Explicit fable tier (session pin / override). Mirrors the bash
+          // resolver's `fable) model="fable"` arm. NOTE: the LOKI_MAX_TIER
+          // clamp is not yet ported to the Bun route; the Bun runner is
+          // currently test-only (run.sh invokes bun only for phase1-hooks),
+          // so this is latent until Phase 6 flips the Bun runner live.
+          return "fable";
         default:
           return "sonnet";
       }

@@ -28,7 +28,8 @@
 #     The exact command is printed before it runs.
 #   * Non-interactive / CI: NEVER install by default. Print the manual command
 #     to stderr and exit 2 (mirrors autonomy/provider-offer.sh gate semantics).
-#     EXCEPTION: LOKI_MCP_AUTO_BOOTSTRAP=1 is explicit-env written consent. MCP
+#     EXCEPTION: LOKI_MCP_AUTO_BOOTSTRAP (1/true/yes/on, case-insensitive) is
+#     explicit-env written consent. MCP
 #     clients (Claude Desktop etc.) spawn the server non-interactively over piped
 #     stdio; a user who writes LOKI_MCP_AUTO_BOOTSTRAP=1 into their client config
 #     has consented in advance. On that flag, a missing-SDK non-TTY launch
@@ -67,10 +68,20 @@ _ml_repo_root() {
     (cd "$self_dir/.." && pwd)
 }
 
+# _ml_truthy <value>: true (0) when the value is a conventional affirmative
+# spelling (1/true/yes/on/y), case-insensitive. Centralizes consent parsing so
+# every knob accepts the same spellings rather than each hard-coding "1".
+_ml_truthy() {
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on|y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # _ml_assume_yes: true when the user opted into unattended confirmation.
 _ml_assume_yes() {
-    [ "${LOKI_ASSUME_YES:-}" = "1" ] && return 0
-    [ "${LOKI_AUTO_CONFIRM:-}" = "true" ] && return 0
+    _ml_truthy "${LOKI_ASSUME_YES:-}" && return 0
+    _ml_truthy "${LOKI_AUTO_CONFIRM:-}" && return 0
     return 1
 }
 
@@ -158,26 +169,61 @@ Environment:
                               the SDK is missing. Progress goes to stderr only so
                               stdout stays clean for JSON-RPC. On a TTY it also
                               skips the consent prompt (consent already given).
-  --yes / LOKI_ASSUME_YES=1   Auto-accept the dependency install (TTY).
+                              Accepts 1/true/yes/on (case-insensitive).
+  --yes / LOKI_ASSUME_YES=1   Auto-accept the dependency install. --yes is a
+                              launcher flag (equivalent to LOKI_ASSUME_YES=1); it
+                              is consumed here and never forwarded to the server.
+                              LOKI_ASSUME_YES / LOKI_AUTO_CONFIRM accept
+                              1/true/yes/on (case-insensitive).
+
+Argument handling: launcher flags (--help, --yes) are consumed here; every other
+argument is forwarded verbatim to the server, which accepts --transport/--port.
+A bare `--` ends launcher parsing so anything after it reaches the server as-is.
 
 Behavior in non-interactive / CI shells: never installs UNLESS
-LOKI_MCP_AUTO_BOOTSTRAP=1 is set. Without it, prints the manual install command
-to stderr and exits 2.
+LOKI_MCP_AUTO_BOOTSTRAP is set (1/true/yes/on). Without it, prints the manual
+install command to stderr and exits 2.
 EOF
 }
 
 # mcp_launch_main: dispatcher invoked by cmd_mcp() (autonomy/loki) or directly.
 mcp_launch_main() {
-    # Parse only flags we own; everything else is forwarded to the server.
+    # Split argv into launcher-owned flags (consumed here) and server argv
+    # (forwarded verbatim to `python -m mcp.server`). The server's argparse only
+    # accepts --transport/--port/--check-sdk; forwarding a launcher flag like
+    # --yes would make it abort with exit 2, so launcher flags MUST be stripped.
+    # A bare `--` ends launcher parsing: everything after it is forwarded as-is
+    # (escape hatch for any future server flag that collides with a launcher one).
     local arg
+    local _ml_server_argv=()
+    local _ml_after_sep=0
     for arg in "$@"; do
+        if [ "$_ml_after_sep" -eq 1 ]; then
+            _ml_server_argv+=("$arg")
+            continue
+        fi
         case "$arg" in
+            --)
+                _ml_after_sep=1
+                ;;
             --help|-h|help)
                 _ml_help
                 return 0
                 ;;
+            --yes)
+                # Launcher-owned: equivalent to LOKI_ASSUME_YES=1. Consumed here,
+                # never forwarded to the server.
+                LOKI_ASSUME_YES=1
+                ;;
+            *)
+                _ml_server_argv+=("$arg")
+                ;;
         esac
     done
+    # Replace the positional parameters with the filtered server argv so every
+    # downstream `exec ... "$@"` forwards only server-valid arguments. Safe
+    # empty-array expansion (bash 3.2 + set -u when no server args remain).
+    set -- ${_ml_server_argv[@]+"${_ml_server_argv[@]}"}
 
     local root
     root="$(_ml_repo_root)"
@@ -228,9 +274,9 @@ mcp_launch_main() {
     # 5. SDK missing. Decide whether we may bootstrap.
     #    Precedence: LOKI_NO_INSTALL_OFFER (explicit no) wins over
     #    LOKI_MCP_AUTO_BOOTSTRAP (explicit yes).
-    if [ "${LOKI_NO_INSTALL_OFFER:-}" = "1" ]; then
-        if [ "${LOKI_MCP_AUTO_BOOTSTRAP:-}" = "1" ]; then
-            printf 'LOKI_NO_INSTALL_OFFER=1 overrides LOKI_MCP_AUTO_BOOTSTRAP=1 (explicit no beats explicit yes); not installing.\n' >&2
+    if _ml_truthy "${LOKI_NO_INSTALL_OFFER:-}"; then
+        if _ml_truthy "${LOKI_MCP_AUTO_BOOTSTRAP:-}"; then
+            printf 'LOKI_NO_INSTALL_OFFER overrides LOKI_MCP_AUTO_BOOTSTRAP (explicit no beats explicit yes); not installing.\n' >&2
         fi
         printf '%sMCP SDK not installed.%s\n' "$_ML_YELLOW" "$_ML_NC" >&2
         _ml_print_manual "$root" "$venv"
@@ -241,14 +287,14 @@ mcp_launch_main() {
     # When true, the consent prompt is skipped and all progress goes to fd 2.
     local auto_consent=0
     if _ml_non_interactive; then
-        if [ "${LOKI_MCP_AUTO_BOOTSTRAP:-}" = "1" ]; then
+        if _ml_truthy "${LOKI_MCP_AUTO_BOOTSTRAP:-}"; then
             # Written consent: bootstrap non-interactively, progress to stderr
             # only (stdout is the client's JSON-RPC channel). Fall through to the
             # bootstrap below with auto-accept.
-            printf '%sMCP SDK not installed.%s LOKI_MCP_AUTO_BOOTSTRAP=1 set: bootstrapping the project venv non-interactively (progress on stderr; stdout reserved for JSON-RPC).\n' "$_ML_YELLOW" "$_ML_NC" >&2
+            printf '%sMCP SDK not installed.%s LOKI_MCP_AUTO_BOOTSTRAP set: bootstrapping the project venv non-interactively (progress on stderr; stdout reserved for JSON-RPC).\n' "$_ML_YELLOW" "$_ML_NC" >&2
             auto_consent=1
         else
-            printf '%sMCP SDK not installed%s and this is a non-interactive shell, so Loki will not install it automatically. Set LOKI_MCP_AUTO_BOOTSTRAP=1 to authorize this for MCP clients.\n' "$_ML_YELLOW" "$_ML_NC" >&2
+            printf '%sMCP SDK not installed%s and this is a non-interactive shell, so Loki will not install it automatically. Set LOKI_MCP_AUTO_BOOTSTRAP=1 (also accepts true/yes) to authorize this for MCP clients.\n' "$_ML_YELLOW" "$_ML_NC" >&2
             _ml_print_manual "$root" "$venv"
             return 2
         fi
@@ -259,7 +305,7 @@ mcp_launch_main() {
     #    - LOKI_MCP_AUTO_BOOTSTRAP=1 is set on a TTY (explicit yes skips the prompt), or
     #    - --yes / LOKI_ASSUME_YES / LOKI_AUTO_CONFIRM.
     local answer=""
-    if [ "$auto_consent" -eq 1 ] || [ "${LOKI_MCP_AUTO_BOOTSTRAP:-}" = "1" ] || _ml_assume_yes; then
+    if [ "$auto_consent" -eq 1 ] || _ml_truthy "${LOKI_MCP_AUTO_BOOTSTRAP:-}" || _ml_assume_yes; then
         answer="y"
     else
         printf '\n'

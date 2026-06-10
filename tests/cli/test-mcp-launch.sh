@@ -489,6 +489,107 @@ EOF
     fi
 }
 
+# --- Test 13: --yes is consumed, never forwarded into the server argv --------
+# (v7.31 finding 1). Stub python3 reports SDK present (check-sdk exit 0) and, on
+# the exec `-m mcp.server ...`, records the argv it received. The launcher must
+# strip --yes (a launcher-owned flag) while forwarding server flags like
+# --transport. Forwarding --yes would make the real server argparse exit 2.
+{
+    ARGV_OUT="$TMP/yes-argv.txt"
+    rm -f "$ARGV_OUT"
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    case "\$a" in --check-sdk) exit 0 ;; esac
+done
+# exec'd server launch: record full argv (minus the leading -m mcp.server).
+printf '%s' "\$*" > "$ARGV_OUT"
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+    USER_CWD5="$TMP/user-project5"
+    mkdir -p "$USER_CWD5"
+    (
+        cd "$USER_CWD5" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp --yes --transport stdio </dev/null >/dev/null 2>&1
+    )
+    argv="$(cat "$ARGV_OUT" 2>/dev/null)"
+    if [ -f "$ARGV_OUT" ] \
+        && ! printf '%s' "$argv" | grep -q -- "--yes" \
+        && printf '%s' "$argv" | grep -q -- "--transport stdio"; then
+        log_pass "--yes consumed (not in server argv), --transport forwarded"
+    else
+        log_fail "--yes filtering" "server argv: [$argv]"
+    fi
+}
+
+# --- Test 14: -- separator forwards trailing args verbatim to the server -----
+# (v7.31 finding 1). Anything after a bare -- reaches the server unchanged, even
+# a token that looks like a launcher flag.
+{
+    ARGV_OUT2="$TMP/sep-argv.txt"
+    rm -f "$ARGV_OUT2"
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    case "\$a" in --check-sdk) exit 0 ;; esac
+done
+printf '%s' "\$*" > "$ARGV_OUT2"
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+    USER_CWD6="$TMP/user-project6"
+    mkdir -p "$USER_CWD6"
+    (
+        cd "$USER_CWD6" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp --port 9 -- --weird </dev/null >/dev/null 2>&1
+    )
+    argv2="$(cat "$ARGV_OUT2" 2>/dev/null)"
+    if [ -f "$ARGV_OUT2" ] \
+        && printf '%s' "$argv2" | grep -q -- "--port 9" \
+        && printf '%s' "$argv2" | grep -q -- "--weird"; then
+        log_pass "-- separator forwards trailing args verbatim to server"
+    else
+        log_fail "-- separator passthrough" "server argv: [$argv2]"
+    fi
+}
+
+# --- Test 15: LOKI_MCP_AUTO_BOOTSTRAP truthy spellings honored (finding 2) ----
+# =true and =yes must be treated as written consent (bootstrap taken), NOT as
+# no-consent. =0 must still be no-consent (exit 2). Stub: SDK missing.
+{
+    make_python_sdk_missing
+    USER_CWD7="$TMP/user-project7"; mkdir -p "$USER_CWD7"
+    # =true -> must NOT print the "non-interactive shell" refusal; must reach the
+    # bootstrap (it will fail at the stub venv, but the key is consent accepted).
+    out_true=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=true LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    )
+    out_yes=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=yes LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    )
+    out_zero=$(
+        cd "$USER_CWD7" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=0 LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null 2>&1
+    ); zcode=$?
+    if printf '%s' "$out_true" | grep -q "bootstrapping the project venv" \
+        && printf '%s' "$out_yes" | grep -q "bootstrapping the project venv" \
+        && ! printf '%s' "$out_zero" | grep -q "bootstrapping the project venv" \
+        && [ "$zcode" -eq 2 ]; then
+        log_pass "LOKI_MCP_AUTO_BOOTSTRAP accepts true/yes; =0 still refuses (exit 2)"
+    else
+        log_fail "AUTO_BOOTSTRAP truthy parse" \
+            "true=$(printf '%s' "$out_true" | grep -q bootstrapping && echo ok || echo NO) yes=$(printf '%s' "$out_yes" | grep -q bootstrapping && echo ok || echo NO) zero_code=$zcode"
+    fi
+}
+
 # --- Summary ----------------------------------------------------------------
 echo ""
 echo "========================================"

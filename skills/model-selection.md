@@ -32,7 +32,7 @@ Claude Fable 5 (alias `fable`, full id `claude-fable-5`) is Anthropic's most cap
 
 ### Mid-flight model switching
 
-You can change the model a **live run** uses, from the dashboard or by writing a state file. The switch applies at the **next iteration boundary** (each iteration spawns a fresh `claude -p`, which fixes the model per invocation, so it never changes mid-invocation).
+You can change the model a **live run** uses, from the dashboard or by writing a state file. The switch applies at the **next iteration boundary** (each iteration spawns a fresh `claude -p`, which fixes the model per invocation, so it never changes mid-invocation). The override applies to the **current run only**: the runner clears a leftover override at the start of a fresh run, so a switch never silently carries into future runs. The override is also clamped by `LOKI_MAX_TIER`: if the operator set a cost ceiling, an override above it (e.g. `fable` under `LOKI_MAX_TIER=sonnet`) is clamped down with one honest log line, and the dashboard reports the clamped effective model.
 
 - Dashboard: the Model selector in the session-control panel. The Fable option shows its 2x-Opus cost; an inline notice discloses the iteration-boundary timing. It calls `POST /api/session/model`.
 - File / CLI: write an allowlisted alias (`haiku`, `sonnet`, `opus`, `fable`) to `.loki/state/model-override`. Empty or absent file reverts to the tier mapping. Invalid content is ignored (the runtime warns once). The value is allowlist-validated because it is fed straight into `claude --model`.
@@ -46,7 +46,7 @@ rm -f .loki/state/model-override
 
 ### Architecture-tier opt-in: `LOKI_FABLE_ARCHITECT`
 
-`LOKI_FABLE_ARCHITECT=1` routes ONLY the planning/architecture iterations to Fable (development and fast stay on Opus/Sonnet). Default OFF because of the 2x cost. An explicit `PROVIDER_MODEL_PLANNING` still wins.
+`LOKI_FABLE_ARCHITECT=1` routes ONLY the **first iteration** (the architecture / REASON pass) to Fable; every later iteration uses the session tier (the default pin, e.g. Sonnet/Opus). Default OFF because of the 2x cost. An explicit `LOKI_CLAUDE_MODEL_PLANNING` / `LOKI_MODEL_PLANNING` still wins, and the `LOKI_MAX_TIER` ceiling still clamps Fable down. This first-iteration scope is deliberate: under the default session pinning there is no recurring "planning tier", so scoping to the architecture iteration is the only honest way to give the architecture pass Fable without converting the whole session. `loki plan` discloses the extra Fable architecture iteration in its quote.
 
 ```bash
 LOKI_FABLE_ARCHITECT=1 loki start ./prd.md
@@ -58,7 +58,7 @@ For diffs that move money or mutate infrastructure (payments, billing, spend aut
 
 ### Cost estimate honesty
 
-`loki plan` quotes a Fable run honestly: set `LOKI_SESSION_MODEL=fable` (or `LOKI_MODEL=fable`), or have a pending `.loki/state/model-override` of `fable`, and the estimate uses Fable's $10/$50 pricing with a 2x-Opus note.
+`loki plan` quotes a Fable run honestly and only for levers the runner actually honors. Set `LOKI_SESSION_MODEL=fable`, or have a pending `.loki/state/model-override` of `fable`, and the estimate uses Fable's $10/$50 pricing with a 2x-Opus note. The quote, the dashboard `effective` model, and the actual `claude --model` argument always agree: the same lever that changes the quote changes the run. `LOKI_MAX_TIER` is applied to the quote too, so the estimate never quotes a model above the operator's cost ceiling. (`LOKI_MODEL` is not a session lever and does not affect the run; use `LOKI_SESSION_MODEL`.)
 
 ---
 

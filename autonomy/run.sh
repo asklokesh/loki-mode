@@ -12088,6 +12088,23 @@ run_autonomous() {
     _LOKI_RUN_START_SHA="$(cat "$_start_sha_file" 2>/dev/null || echo "")"
     export _LOKI_RUN_START_SHA
 
+    # Session-scope the mid-flight model override (model-honesty fix). The
+    # override file (.loki/state/model-override) is a LIVE-RUN control: the
+    # dashboard UI and docs state it "applies to the current run". A leftover
+    # file from a previous run must NOT silently pin every future `loki start`
+    # to that model (and to its cost). So clear it once at the start of a FRESH
+    # run (ITERATION_COUNT==0). A genuine resume (ITERATION_COUNT>0) and any
+    # mid-flight switch made at iteration>0 are preserved, because the clear is
+    # guarded on the fresh-run condition only.
+    if [ "${ITERATION_COUNT:-0}" -eq 0 ] && [ -f ".loki/state/model-override" ]; then
+        local _stale_override
+        _stale_override="$(cat .loki/state/model-override 2>/dev/null | tr -d '[:space:]')"
+        rm -f ".loki/state/model-override" 2>/dev/null || true
+        if [ -n "$_stale_override" ]; then
+            log_info "Cleared leftover model override ('$_stale_override') at session start; the override applies to the current run only."
+        fi
+    fi
+
     # Trust-metrics instrumentation marker: record one run_start event per
     # fresh run so the trust-metrics denominator counts ONLY instrumented runs.
     # This is what lets the aggregator distinguish "0 blocks measured" from
@@ -12310,9 +12327,33 @@ except Exception as exc:
                 opus)   CURRENT_TIER="planning" ;;
                 sonnet) CURRENT_TIER="development" ;;
                 haiku)  CURRENT_TIER="fast" ;;
+                fable)  CURRENT_TIER="fable" ;;
                 planning|development|fast) CURRENT_TIER="${LOKI_SESSION_MODEL}" ;;
                 *)      CURRENT_TIER="${LOKI_SESSION_MODEL}" ;;
             esac
+        fi
+        # Architect opt-in (LOKI_FABLE_ARCHITECT=1): route ONLY the first
+        # iteration (the architecture/REASON pass) to Fable, then fall back to
+        # the session tier for all later iterations. This is the honest
+        # implementation of "fable for architecture only": run.sh is the only
+        # scope that has ITERATION_COUNT, so the decision lives here (not in the
+        # stateless provider resolver). An EXPLICIT planning-model override still
+        # wins, and the LOKI_MAX_TIER ceiling clamps fable down via the resolver.
+        # Default OFF (Fable is 2x Opus). Without this scoping, a session pinned
+        # to opus would route EVERY iteration to fable.
+        #
+        # NOTE on the index: ITERATION_COUNT is incremented at the TOP of the
+        # loop (see "((ITERATION_COUNT++))" above), so the FIRST in-loop pass
+        # has ITERATION_COUNT==1, not 0. The guard matches 1 so the architecture
+        # iteration actually fires (a -eq 0 guard here would be a silent no-op,
+        # the exact bug this fix removes). The estimator models this same first
+        # iteration as its 0-indexed range() i==0, so quote and run agree.
+        if [ "${ITERATION_COUNT:-0}" -eq 1 ] \
+           && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
+           && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] \
+           && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
+            CURRENT_TIER="fable"
+            log_info "LOKI_FABLE_ARCHITECT=1: routing the first (architecture) iteration to fable; later iterations use the session tier"
         fi
         # Export LOKI_CURRENT_TIER so provider helper functions
         # can resolve the correct model.
@@ -12334,21 +12375,52 @@ except Exception as exc:
         # The override applies ONLY to the claude provider; other providers map
         # tier_param to effort/model strings and have no fable equivalent.
         if [ "${PROVIDER_NAME:-claude}" = "claude" ] && [ -s ".loki/state/model-override" ]; then
-            local _loki_override_raw
-            _loki_override_raw="$(tr -d '[:space:]' < .loki/state/model-override 2>/dev/null)"
-            case "$_loki_override_raw" in
-                haiku|sonnet|opus|fable)
-                    tier_param="$_loki_override_raw"
+            local _loki_override_file _loki_override_alias
+            _loki_override_file="$(cat .loki/state/model-override 2>/dev/null)"
+            # Canonical normalization shared with the dashboard + estimator
+            # (trim + lowercase + exact allowlist). "fab le" and other non-exact
+            # values normalize to empty and are rejected, so all three readers
+            # agree on what the file means. Falls back to a local case only if
+            # the provider helper is somehow not in scope.
+            if type loki_normalize_model_alias >/dev/null 2>&1; then
+                _loki_override_alias="$(loki_normalize_model_alias "$_loki_override_file")"
+            else
+                # Fallback only if the provider helper is not sourced. Mirror the
+                # canonical rule EXACTLY: trim ends + lowercase + exact allowlist,
+                # so interior whitespace ("fab le") is REJECTED here too (do NOT
+                # use `tr -d [:space:]`, which would collapse it into a false
+                # accept and re-introduce the normalization divergence).
+                _loki_override_alias=""
+                local _loki_ov_trim="$_loki_override_file"
+                _loki_ov_trim="${_loki_ov_trim#"${_loki_ov_trim%%[![:space:]]*}"}"
+                _loki_ov_trim="${_loki_ov_trim%"${_loki_ov_trim##*[![:space:]]}"}"
+                _loki_ov_trim="$(printf '%s' "$_loki_ov_trim" | tr '[:upper:]' '[:lower:]')"
+                case "$_loki_ov_trim" in
+                    haiku|sonnet|opus|fable) _loki_override_alias="$_loki_ov_trim" ;;
+                esac
+            fi
+            if [ -n "$_loki_override_alias" ]; then
+                # Apply the SAME LOKI_MAX_TIER ceiling the tier resolver uses, so
+                # a mid-flight override cannot silently bypass the operator's cost
+                # cap. Clamp via the shared helper when available.
+                local _loki_override_effective="$_loki_override_alias"
+                if type loki_apply_max_tier_clamp >/dev/null 2>&1; then
+                    _loki_override_effective="$(loki_apply_max_tier_clamp "$_loki_override_alias" "$_loki_override_alias")"
+                fi
+                if [ "$_loki_override_effective" != "$_loki_override_alias" ]; then
+                    tier_param="$_loki_override_effective"
+                    log_warn "model override '$_loki_override_alias' exceeds LOKI_MAX_TIER=${LOKI_MAX_TIER}; clamped to $tier_param (applies this iteration)"
+                    echo "=== Model override: $_loki_override_alias clamped to $tier_param by LOKI_MAX_TIER=${LOKI_MAX_TIER} (applies this iteration $ITERATION_COUNT) ===" | tee -a "$log_file" "$agent_log"
+                else
+                    tier_param="$_loki_override_effective"
                     log_info "model override: $tier_param (applies this iteration)"
                     echo "=== Model override: $tier_param (applies this iteration $ITERATION_COUNT) ===" | tee -a "$log_file" "$agent_log"
-                    ;;
-                "")
-                    : # empty file means no override; fall back to tier mapping
-                    ;;
-                *)
-                    log_warn "Ignoring invalid model override '$_loki_override_raw' (allowed: haiku, sonnet, opus, fable); using tier $tier_param"
-                    ;;
-            esac
+                fi
+            elif [ -z "$(printf '%s' "$_loki_override_file" | tr -d '[:space:]')" ]; then
+                : # empty file means no override; fall back to tier mapping
+            else
+                log_warn "Ignoring invalid model override '$_loki_override_file' (allowed: haiku, sonnet, opus, fable); using tier $tier_param"
+            fi
         fi
         echo "=== RARV Phase: $rarv_phase, Tier: $CURRENT_TIER ($tier_param) ===" | tee -a "$log_file" "$agent_log"
         log_info "RARV Phase: $rarv_phase -> Tier: $CURRENT_TIER ($tier_param)"

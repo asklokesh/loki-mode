@@ -282,7 +282,7 @@ export class LokiSessionControl extends LokiElement {
       if (result && result.error) throw new Error(result.error);
       this._model.override = next;
       this._model.notice = next
-        ? `Switching to ${next}. Applies from the next iteration.`
+        ? `Switching to ${next}. Applies from the next iteration, for the current run only.`
         : 'Override cleared. Reverts to the tier mapping from the next iteration.';
       // Refresh effective model from the server (authoritative).
       this._modelBusy = false;
@@ -320,7 +320,7 @@ export class LokiSessionControl extends LokiElement {
           </select>
         </div>
         ${isFable ? `<div class="model-cost-note">Fable 5 costs 2x Opus per token ($10/$50 per MTok).</div>` : ''}
-        <div class="model-disclosure">Model changes apply from the next iteration.</div>
+        <div class="model-disclosure">Model changes apply from the next iteration, for the current run only.</div>
         ${this._model.notice ? `<div class="model-notice">${this._escapeHtml(this._model.notice)}</div>` : ''}
       </div>
     `;

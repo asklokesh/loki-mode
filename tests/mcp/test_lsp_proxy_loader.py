@@ -234,5 +234,47 @@ def _cleanup_stub_modules():
             del sys.modules[k]
 
 
+class TestLspProxyDocstringConsistency(unittest.TestCase):
+    """v7.31 finding 9: the module docstring's 'Tools:' section must enumerate
+    exactly the tools actually registered via @mcp.tool(). Static source parse;
+    no SDK or interpreter import needed, so it runs on every host."""
+
+    def test_docstring_tool_count_matches_registered_tools(self):
+        import re
+
+        src = open(
+            os.path.join(_repo_root(), "mcp", "lsp_proxy.py"), encoding="utf-8"
+        ).read()
+
+        # Registered tools: every `@mcp.tool()`-decorated `async def lsp_...`.
+        registered = re.findall(
+            r"@mcp\.tool\(\)\s*\n\s*async def (lsp_[A-Za-z0-9_]+)", src
+        )
+        self.assertEqual(
+            len(registered), 7,
+            f"expected 7 registered lsp tools, found {len(registered)}: {registered}",
+        )
+
+        # Docstring header must declare the same count.
+        header = re.search(r"Tools \((\d+)\):", src)
+        self.assertIsNotNone(
+            header, "module docstring is missing a 'Tools (N):' header"
+        )
+        self.assertEqual(
+            int(header.group(1)), len(registered),
+            "docstring 'Tools (N)' count does not match registered tool count",
+        )
+
+        # Each registered tool name must appear in the docstring Tools section.
+        doc = re.search(r"Tools \(\d+\):\n(.*?)\n\nUsage:", src, re.S)
+        self.assertIsNotNone(doc, "could not isolate the docstring Tools section")
+        doc_body = doc.group(1)
+        for name in registered:
+            self.assertIn(
+                name, doc_body,
+                f"registered tool '{name}' is not documented in the docstring",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

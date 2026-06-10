@@ -4,6 +4,7 @@
   "_updated": "2026-05-22",
   "_source": "https://www.anthropic.com/pricing + provider docs",
   "pricing": {
+    "fable": { "input": 10.0, "output": 50.0 },
     "opus": { "input": 5.0, "output": 25.0 },
     "sonnet": { "input": 3.0, "output": 15.0 },
     "haiku": { "input": 1.0, "output": 5.0 },

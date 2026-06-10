@@ -116,11 +116,19 @@ fi
 # trust-metrics breakdown. The Bun `trust` handler only knows the trajectory
 # view (it rejects unknown args), and Phase A moves no handler logic, so the
 # `detail` subcommand lives only in bash (cmd_trust -> cmd_trust_metrics).
-# Force the bash route for `trust detail` so it resolves identically to the
-# `trust-metrics` alias on BOTH routes. Bare `trust` / `trust --json` stay on
-# the Bun-native path above.
-if [ "${1:-}" = "trust" ] && [ "${2:-}" = "detail" ]; then
-    exec "$BASH_CLI" "$@"
+# Force the bash route whenever `detail` appears as a trust arg (flag-anywhere:
+# `trust detail`, `trust --json detail`, `trust detail --json` all resolve
+# identically to the bash `trust-metrics` breakdown). Without this, only the
+# exact `trust detail` order routed to bash and `trust --json detail` hit the
+# Bun handler, which rejected `detail` to stderr while bash rejects to stdout --
+# divergent error channels for the same malformed input. Bare `trust` /
+# `trust --json` (no `detail`) stay on the Bun-native trajectory path above.
+if [ "${1:-}" = "trust" ]; then
+    for _trust_arg in "${@:2}"; do
+        if [ "$_trust_arg" = "detail" ]; then
+            exec "$BASH_CLI" "$@"
+        fi
+    done
 fi
 
 # Commands ported in Phase 2 -- route to Bun. Everything else goes to bash.

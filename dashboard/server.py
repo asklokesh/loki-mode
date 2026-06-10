@@ -2222,38 +2222,70 @@ def _model_override_path() -> _Path:
     return _get_loki_dir() / "state" / "model-override"
 
 
-@app.get("/api/session/model")
+def _normalize_session_model(raw: str | None) -> str:
+    """Canonical model-alias normalization shared with run.sh + the estimator.
+
+    Trim, lowercase, and accept ONLY an exact allowlisted alias. A value with
+    interior whitespace (e.g. "fab le") normalizes to "" and is rejected, so the
+    dashboard, the runner, and the estimator agree on what a value means.
+    """
+    val = (raw or "").strip().lower()
+    return val if val in _SESSION_MODEL_ALLOWLIST else ""
+
+
+def _clamp_to_max_tier(alias: str) -> str:
+    """Apply the operator LOKI_MAX_TIER ceiling to a model alias.
+
+    Mirrors providers/claude.sh loki_apply_max_tier_clamp so the dashboard's
+    reported `effective` model agrees with the model the run will dispatch when a
+    cost ceiling is set. PROVIDER_MODEL_DEVELOPMENT is opus by default on the
+    claude provider, so sonnet-cap resolves opus/fable down to opus. Cross-
+    process LOKI_MAX_TIER divergence is covered by the KNOWN LIMITATION below.
+    """
+    max_tier = (os.environ.get("LOKI_MAX_TIER") or "").strip().lower()
+    if not max_tier:
+        return alias
+    if max_tier == "haiku":
+        return "haiku"
+    if max_tier == "sonnet":
+        return "opus" if alias in ("opus", "fable") else alias
+    if max_tier == "opus":
+        return "opus" if alias == "fable" else alias
+    return alias
+
+
+@app.get("/api/session/model", dependencies=[Depends(auth.require_scope("read"))])
 async def get_session_model():
     """Report the live run's model override and the effective default.
 
     `override` is the alias currently written to .loki/state/model-override
     (None when no override is active). `default` is the session model the run
     falls back to when there is no override (LOKI_SESSION_MODEL or the catalog
-    default). `effective` is the model the next iteration will actually use.
+    default). `effective` is the model the next iteration will actually use,
+    after the LOKI_MAX_TIER cost ceiling is applied (so the dashboard never
+    reports a model the run would clamp down).
 
-    KNOWN LIMITATION: when there is no override, `default`/`effective` are read
-    from the DASHBOARD process's LOKI_SESSION_MODEL, which is usually a different
-    process than the live run, so they may not reflect the run's real pinned
-    tier (e.g. a run pinned to opus still reads "sonnet" here). The override
-    case -- the feature this endpoint exists for -- is always accurate because
-    it reads the run's own state file.
+    KNOWN LIMITATION: when there is no override, `default`/`effective` (and the
+    LOKI_MAX_TIER clamp) are read from the DASHBOARD process's environment, which
+    is usually a different process than the live run, so they may not reflect the
+    run's real pinned tier or ceiling (e.g. a run pinned to opus still reads
+    "sonnet" here). The override case -- the feature this endpoint exists for --
+    reads the run's own state file; its alias is always accurate, and the clamp
+    is exact whenever the dashboard shares the run's LOKI_MAX_TIER.
     """
     override = None
     try:
         p = _model_override_path()
         if p.is_file():
-            raw = p.read_text().strip()
-            if raw in _SESSION_MODEL_ALLOWLIST:
-                override = raw
+            override = _normalize_session_model(p.read_text()) or None
     except OSError:
         override = None
-    default = (os.environ.get("LOKI_SESSION_MODEL") or "sonnet").strip().lower()
-    if default not in _SESSION_MODEL_ALLOWLIST:
-        default = "sonnet"
+    default = _normalize_session_model(os.environ.get("LOKI_SESSION_MODEL")) or "sonnet"
+    effective = _clamp_to_max_tier(override or default)
     return {
         "override": override,
         "default": default,
-        "effective": override or default,
+        "effective": effective,
         "allowed": list(_SESSION_MODEL_ALLOWLIST),
     }
 
@@ -2265,32 +2297,42 @@ async def set_session_model(request: SessionModelRequest):
 
     The run reads .loki/state/model-override at the top of each iteration, so a
     switch takes effect when the current iteration finishes and the next
-    `claude -p` is spawned (the model is fixed per invocation). Body
+    `claude -p` is spawned (the model is fixed per invocation). The override
+    applies to the CURRENT run only: the runner clears a leftover override at the
+    start of a fresh run, so a switch does not persist into future runs. Body
     {"model": null} or {"model": ""} clears the override and reverts to the tier
     mapping. The value is allowlist-validated server-side because the file is fed
     straight into `claude --model`; arbitrary strings are rejected.
+
+    The `effective` field reports the model the next iteration will actually use
+    after the LOKI_MAX_TIER cost ceiling is applied (e.g. a fable override under
+    a sonnet ceiling reports the clamped model), so the response never claims a
+    model the run would clamp down. `clamped` is True when the ceiling reduced
+    the requested model.
     """
-    raw = (request.model or "").strip().lower()
+    requested_raw = (request.model or "").strip().lower()
     override_path = _model_override_path()
-    if raw == "":
+    if requested_raw == "":
         # Clear the override; revert to tier mapping.
         try:
             if override_path.exists():
                 override_path.unlink()
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Could not clear override: {exc}")
-        return {"model": None, "effective": "next_iteration"}
-    if raw not in _SESSION_MODEL_ALLOWLIST:
+        return {"model": None, "effective": "next_iteration", "clamped": False}
+    model = _normalize_session_model(requested_raw)
+    if not model:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid model '{request.model}'. Allowed: {', '.join(_SESSION_MODEL_ALLOWLIST)}",
         )
     try:
         override_path.parent.mkdir(parents=True, exist_ok=True)
-        override_path.write_text(raw + "\n")
+        override_path.write_text(model + "\n")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not write override: {exc}")
-    return {"model": raw, "effective": "next_iteration"}
+    effective = _clamp_to_max_tier(model)
+    return {"model": model, "effective": effective, "clamped": effective != model}
 
 
 @app.get("/api/running-projects")
@@ -8091,4 +8133,30 @@ def run_server(host: str = None, port: int = None) -> None:
 
 
 if __name__ == "__main__":
-    run_server()
+    # Honor an explicit --port/--host on a direct module launch
+    # (python -m dashboard.server --port N). The supported `loki dashboard start`
+    # path sets LOKI_DASHBOARD_PORT in the environment and passes NO argv flags,
+    # so it is unaffected. Previously --port was silently accepted and discarded,
+    # binding the default 57374 and risking a collision with another project's
+    # dashboard; now an unknown flag fails loudly via argparse (exit 2).
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m dashboard.server",
+        description="Loki Mode dashboard server. The supported launcher is "
+        "'loki dashboard start' (which uses LOKI_DASHBOARD_PORT / "
+        "LOKI_DASHBOARD_HOST); these flags are for direct module launches.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to bind (default: $LOKI_DASHBOARD_PORT or 57374).",
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Host to bind (default: $LOKI_DASHBOARD_HOST or 127.0.0.1).",
+    )
+    _args = parser.parse_args()
+    run_server(host=_args.host, port=_args.port)

@@ -204,7 +204,7 @@ loki mcp --help
 |----------------------|--------|
 | `LOKI_MCP_VENV=/abs/path` | Use a custom venv location instead of `.loki/mcp-venv`. |
 | `LOKI_NO_INSTALL_OFFER=1` | Never install; print the manual command and exit 2. Wins over `LOKI_MCP_AUTO_BOOTSTRAP`. |
-| `LOKI_MCP_AUTO_BOOTSTRAP=1` | Written consent for a non-interactive (MCP client) bootstrap. Progress on stderr only; skips the TTY prompt. |
+| `LOKI_MCP_AUTO_BOOTSTRAP=1` | Written consent for a non-interactive (MCP client) bootstrap. Progress on stderr only; skips the TTY prompt. Accepts `1`/`true`/`yes`/`on` (case-insensitive). |
 
 Example MCP client config entry that authorizes the bootstrap:
 
@@ -1344,6 +1344,90 @@ instrumentation reports `available: false` ("not instrumented"); it never
 fabricates a zero as if it were a measurement. Single project only
 (`--all-projects` is rejected).
 
+`loki trust detail` is the grouped form of `loki trust-metrics` (same output).
+The `detail` token is accepted in any position, so `loki trust detail --json`
+and `loki trust --json detail` behave identically on both the Bun and bash
+routes.
+
+---
+
+## Reporting Commands (grouped surface, v7.31)
+
+The CLI consolidation (Phase A) groups the read-only reporting commands under a
+single `loki report` noun. Each subcommand forwards 1:1 to the original
+top-level command; the old names still work (see [Deprecated Command
+Aliases](#deprecated-command-aliases)).
+
+```bash
+loki report session          # session statistics      (was: loki stats)
+loki report metrics          # efficiency/reward metrics (was: loki metrics)
+loki report cost             # token cost breakdown     (was: loki cost)
+loki report export json      # export session data      (was: loki export)
+loki report share            # share session assets     (was: loki share)
+loki report dogfood          # self-development stats   (was: loki dogfood)
+
+loki report --help           # lists all subcommands
+loki report <subcommand> --help
+```
+
+`loki report export` accepts the positional formats `json`, `markdown`, `csv`,
+and `timeline`. For the machine-readable formats (`json`, `csv`, `timeline`),
+the deprecation pointer is suppressed so a combined `2>&1` capture stays a clean
+machine stream.
+
+`loki report dogfood` reads `scripts/dogfood-stats.sh`, a development-only
+helper that is NOT shipped in the published npm package. On a packaged install
+it degrades honestly: human output explains it is unavailable (to stderr),
+`--json` returns `{"available": false, ...}` on stdout, and the exit code is 0.
+
+---
+
+## kpis (Bun route only)
+
+`loki kpis` reports single-run accuracy and efficiency KPIs. It is implemented
+in the Bun runtime and is unavailable on the bash route. Under
+`LOKI_LEGACY_BASH=1` (or on a machine without Bun installed), `loki kpis`
+prints an honest requirement message (and `{"available": false, ...}` for
+`--json`) and exits 1 rather than the generic "Unknown command".
+
+```bash
+loki kpis            # Bun route: accuracy + efficiency KPI snapshot
+loki kpis --json
+```
+
+---
+
+## Deprecated Command Aliases
+
+Several older top-level command names were grouped under the `report` and
+`trust` nouns in v7.31. The old names remain as deprecated aliases: each
+forwards 1:1 to its canonical command and prints exactly one pointer line to
+STDERR. The pointer is suppressed under `--json`, `-q`, `--quiet`, and for the
+positional machine-output formats (`json`, `csv`, `timeline`), so machine
+consumers and combined-`2>&1` captures stay clean. Run `loki help aliases` for
+the live table.
+
+| Deprecated form | Canonical form |
+|---|---|
+| `loki stats` | `loki report session` |
+| `loki metrics` | `loki report metrics` |
+| `loki cost` | `loki report cost` |
+| `loki export` | `loki report export` |
+| `loki share` | `loki report share` |
+| `loki dogfood` | `loki report dogfood` |
+| `loki trust-metrics` | `loki trust detail` |
+| `loki run` | `loki start <issue-ref>` |
+| `loki open` | `loki preview` |
+| `loki serve` | `loki api start` |
+| `loki cp` | `loki checkpoint` |
+| `loki wt` | `loki worktree` |
+| `loki otel` | `loki telemetry` |
+| `loki rc` | `loki remote` |
+
+No-side-effect contract: an alias never creates `.loki/` in a clean directory.
+Adoption telemetry (`cli_command_deprecated`) is emitted only when `.loki/`
+already exists, so a deprecated alias run in a fresh directory leaves no trace.
+
 ---
 
 ## Monitoring Commands
@@ -1610,7 +1694,14 @@ loki -v
 loki help
 loki --help
 loki -h
+
+# List every deprecated command alias and its canonical replacement (v7.31)
+loki help aliases
 ```
+
+When stdout is piped or redirected, `loki help` and `loki help aliases` emit
+plain text with no ANSI color sequences (matching the bare `loki` welcome), so
+captured output stays clean.
 
 ### `loki completions`
 
@@ -1629,10 +1720,15 @@ source <(loki completions zsh)
 
 ### `loki dogfood`
 
-Show self-development statistics (how Loki Mode was used to build itself).
+Show self-development statistics (how Loki Mode was used to build itself). Now
+also available as `loki report dogfood` (see [Reporting Commands](#reporting-commands-grouped-surface-v731)).
+The underlying `scripts/dogfood-stats.sh` is a development-only helper not
+shipped in the published package; on a packaged install the command degrades
+honestly rather than erroring.
 
 ```bash
 loki dogfood
+loki report dogfood
 ```
 
 ---

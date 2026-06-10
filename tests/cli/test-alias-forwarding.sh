@@ -99,7 +99,11 @@ ALIAS_ROWS=(
     "stats|report session|"
     "metrics|report metrics|"
     "cost|report cost|"
-    "export|report export|json"
+    # export uses 'markdown' (human-readable) here so the standard contract
+    # (deprecation line present on alias stderr) holds. The positional
+    # machine-output formats (json|csv|timeline) deliberately SUPPRESS the
+    # pointer; that is asserted separately below (v7.31 finding 4).
+    "export|report export|markdown"
     "dogfood|report dogfood|"
     "trust-metrics|trust detail|"
     # 'share' creates a real GitHub Gist (network + non-deterministic URL) when
@@ -282,6 +286,65 @@ assert_run_alias() {
 assert_run_alias
 
 # ---------------------------------------------------------------------------
+# v7.31 finding 3: the 'run' alias must add NO side effect in a clean dir. The
+# telemetry emit creates .loki/events/pending; gate it on .loki existing (like
+# every other alias). In a fresh dir with no .loki, `loki run <bogus>` must
+# leave NO .loki behind.
+# ---------------------------------------------------------------------------
+{
+    fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-run-noloki.XXXXXX")"
+    ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" run 999999 >/dev/null 2>&1 ) || true
+    if [ ! -e "$fresh/.loki" ]; then
+        log_pass "run alias: no .loki created in a clean dir (no-side-effect contract)"
+    else
+        log_fail "run alias: no .loki created in a clean dir" ".loki was created: $(find "$fresh/.loki" -type f 2>/dev/null | head -1)"
+    fi
+    rm -rf "$fresh"
+}
+
+# ---------------------------------------------------------------------------
+# v7.31 finding 4: positional machine-output formats (export json|csv|timeline)
+# must suppress the deprecation pointer so a combined 2>&1 stream stays clean.
+# We assert on the bash route specifically (export routes through bash); stdout
+# stays pure machine output and stderr carries no 'is now' note.
+# ---------------------------------------------------------------------------
+{
+    for fmt in json csv timeline; do
+        e_err="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" export "$fmt" ) 2>&1 1>/dev/null)"
+        if echo "$e_err" | grep -qF "is now 'loki report export'"; then
+            log_fail "export $fmt: pointer suppressed (positional machine format)" "note leaked to stderr"
+        else
+            log_pass "export $fmt: pointer suppressed (positional machine format)"
+        fi
+    done
+    # markdown (human-readable) is NOT a machine format: the pointer SHOULD fire.
+    md_err="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" export markdown ) 2>&1 1>/dev/null)"
+    if echo "$md_err" | grep -qF "is now 'loki report export'"; then
+        log_pass "export markdown: pointer still fires (human-readable, not suppressed)"
+    else
+        log_fail "export markdown: pointer still fires" "note missing for human-readable format"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# v7.31 finding 5: `trust detail` accepts the flag in any position and both
+# orderings produce byte-identical stdout on the current route. (bin/loki routes
+# any 'detail' token to bash; cmd_trust strips 'detail' flag-anywhere.)
+# ---------------------------------------------------------------------------
+{
+    o1="$(run_loki trust --json detail 2>/dev/null | normalize)"
+    o2="$(run_loki trust detail --json 2>/dev/null | normalize)"
+    c1=$?
+    run_loki trust --json detail >/dev/null 2>&1; rc1=$?
+    run_loki trust detail --json >/dev/null 2>&1; rc2=$?
+    if [ "$o1" = "$o2" ] && [ "$rc1" = "$rc2" ]; then
+        log_pass "trust detail: flag-anywhere byte-identical stdout + exit ($rc1)"
+    else
+        log_fail "trust detail: flag-anywhere parity" "stdout_match=$([ "$o1" = "$o2" ] && echo yes || echo no) rc1=$rc1 rc2=$rc2"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Help-structure assertions
 # ---------------------------------------------------------------------------
 echo -e "${YELLOW}=== help-structure assertions (route: $ROUTE) ===${NC}"
@@ -334,6 +397,22 @@ for tok in $ALIAS_TOKENS; do
 done
 [ "$alias_leak" = 0 ] && log_pass "help: no deprecated alias token in Commands block"
 
+# v7.31 finding 8: piped help/grouped-help must emit ZERO ANSI escape sequences
+# (isatty gate, matching the bare-loki welcome). We capture raw (no sed strip)
+# through a pipe (non-TTY stdout) and assert no ESC bytes.
+help_raw="$(run_loki help 2>/dev/null)"
+if printf '%s' "$help_raw" | grep -q "$(printf '\033')"; then
+    log_fail "help: no ANSI when piped" "ESC byte present in piped 'loki help'"
+else
+    log_pass "help: no ANSI when piped (isatty gate)"
+fi
+aliases_raw="$(run_loki help aliases 2>/dev/null)"
+if printf '%s' "$aliases_raw" | grep -q "$(printf '\033')"; then
+    log_fail "help aliases: no ANSI when piped" "ESC byte present in piped 'loki help aliases'"
+else
+    log_pass "help aliases: no ANSI when piped (isatty gate)"
+fi
+
 # `loki help aliases` lists every alias-table row.
 ALIASES_OUT="$(run_loki help aliases 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
 for tok in stats metrics cost export share dogfood trust-metrics serve open otel cp wt rc run; do
@@ -343,6 +422,80 @@ for tok in stats metrics cost export share dogfood trust-metrics serve open otel
         log_fail "help aliases: lists '$tok'" "row missing from 'loki help aliases'"
     fi
 done
+
+# ---------------------------------------------------------------------------
+# v7.31 finding 12: the bun-parity text normalizer in scripts/local-ci.sh must
+# strip the optional "Dashboard:" status line (environment-dependent, not
+# route-dependent) so the parity gate does not flake when the operator standalone
+# dashboard is up. We assert the exact sed deletion: a Dashboard line (with an
+# ANSI color prefix, as cmd_status / status.ts emit it) is removed while other
+# lines survive. This guards against the local-ci sed being dropped/altered.
+{
+    fixture="$(printf '%bDashboard:%b http://127.0.0.1:57374/\nPhase: build\nIteration: 2\n' '\033[0;36m' '\033[0m')"
+    stripped="$(printf '%s\n' "$fixture" | sed -E "/Dashboard:.*http/d")"
+    if ! printf '%s' "$stripped" | grep -q "Dashboard:" \
+        && printf '%s' "$stripped" | grep -q "Phase: build" \
+        && printf '%s' "$stripped" | grep -q "Iteration: 2"; then
+        log_pass "parity normalizer: Dashboard line stripped, other lines survive"
+    else
+        log_fail "parity normalizer Dashboard strip" "result: $(printf '%s' "$stripped" | tr '\n' '|')"
+    fi
+    # The local-ci script must actually contain this normalization rule.
+    if grep -q 'Dashboard:.*http' "$REPO_ROOT/scripts/local-ci.sh"; then
+        log_pass "parity normalizer: scripts/local-ci.sh has the Dashboard-line rule"
+    else
+        log_fail "parity normalizer rule present in local-ci.sh" "rule missing"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# v7.31 finding 6: `report dogfood` must degrade HONESTLY when
+# scripts/dogfood-stats.sh is absent (it is a dev-only helper not shipped in the
+# npm tarball). We force the absent path by pointing SKILL_DIR at a fixture dir
+# that lacks scripts/. Contract: exit 0, an honest message on stderr (human
+# mode), and a structured {"available": false} payload on stdout (--json).
+{
+    DF_SKILL="$(mktemp -d "${TMPDIR:-/tmp}/loki-dogfood-noscript.XXXXXX")"
+    # human mode
+    d_out="$(SKILL_DIR="$DF_SKILL" env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" report dogfood 2>"$DF_SKILL/d.err")"; d_code=$?
+    d_err="$(cat "$DF_SKILL/d.err")"
+    if [ "$d_code" -eq 0 ] \
+        && echo "$d_err" | grep -qi "unavailable in this install" \
+        && [ -z "$d_out" ]; then
+        log_pass "report dogfood (script absent): exit 0, honest stderr, clean stdout"
+    else
+        log_fail "report dogfood degrade (human)" "code=$d_code stderr=$(echo "$d_err" | head -1)"
+    fi
+    # --json mode
+    dj_out="$(SKILL_DIR="$DF_SKILL" env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" report dogfood --json 2>/dev/null)"; dj_code=$?
+    if [ "$dj_code" -eq 0 ] && echo "$dj_out" | grep -qF '"available": false'; then
+        log_pass "report dogfood --json (script absent): exit 0, {\"available\": false}"
+    else
+        log_fail "report dogfood degrade (--json)" "code=$dj_code json=$dj_out"
+    fi
+    rm -rf "$DF_SKILL"
+}
+
+# ---------------------------------------------------------------------------
+# v7.31 finding 7: kpis is Bun-only. On the bash route it must NOT say the
+# generic "Unknown command" (which contradicts help listing it); it must state
+# the Bun requirement honestly (and emit {"available": false} for --json).
+# ---------------------------------------------------------------------------
+{
+    k_err="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" kpis ) 2>&1 1>/dev/null)"
+    if echo "$k_err" | grep -qi "requires the Bun runtime" \
+        && ! echo "$k_err" | grep -qi "Unknown command"; then
+        log_pass "kpis (bash route): honest Bun-requirement message, not 'Unknown command'"
+    else
+        log_fail "kpis (bash route) honesty" "got: $(echo "$k_err" | head -1)"
+    fi
+    k_json="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" kpis --json ) 2>/dev/null)"
+    if echo "$k_json" | grep -qF '"available": false'; then
+        log_pass "kpis --json (bash route): structured {\"available\": false}"
+    else
+        log_fail "kpis --json (bash route)" "got: $k_json"
+    fi
+}
 
 # ---------------------------------------------------------------------------
 echo ""

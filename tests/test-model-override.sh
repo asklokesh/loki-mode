@@ -47,19 +47,20 @@ python3 -c "import json; json.load(open('$CATALOG'))" \
 #    case here and assert the same outcomes the runtime produces, then verify
 #    run.sh actually contains that branch (so this replica stays faithful).
 # ---------------------------------------------------------------------------
-# Drive via a tmp file using the same tr-strip the runtime uses.
+# Drive via a tmp file using the CANONICAL normalization the runtime now uses:
+# trim leading/trailing whitespace, lowercase, exact allowlist match. Interior
+# whitespace (e.g. "fab le") is REJECTED, not collapsed into "fable", so run.sh,
+# the dashboard, and the estimator all agree on what the file means. This
+# mirrors loki_normalize_model_alias in providers/claude.sh; the live run sources
+# claude.sh so the function is in scope.
+CLAUDE_SH="$REPO_ROOT/providers/claude.sh"
 override_outcome() {
     local content="$1" fallback="$2"
-    local f="$WORK/model-override"
-    printf '%s' "$content" > "$f"
-    local raw tier_param="$fallback"
-    raw="$(tr -d '[:space:]' < "$f" 2>/dev/null)"
-    case "$raw" in
-        haiku|sonnet|opus|fable) tier_param="$raw" ;;
-        "") : ;;
-        *) : ;;
-    esac
-    echo "$tier_param"
+    bash -c '
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      alias="$(loki_normalize_model_alias "$1")"
+      if [ -n "$alias" ]; then echo "$alias"; else echo "$2"; fi
+    ' _ "$content" "$fallback"
 }
 
 [ "$(override_outcome 'fable' 'sonnet')" = "fable" ] \
@@ -70,6 +71,10 @@ override_outcome() {
   && ok "override 'haiku' applied" || bad "override haiku not applied"
 [ "$(override_outcome '  fable  ' 'sonnet')" = "fable" ] \
   && ok "override whitespace-trimmed" || bad "override not trimmed"
+[ "$(override_outcome 'FABLE' 'sonnet')" = "fable" ] \
+  && ok "override uppercased normalizes to fable" || bad "uppercase override not normalized"
+[ "$(override_outcome 'fab le' 'sonnet')" = "sonnet" ] \
+  && ok "override with interior whitespace rejected (parity)" || bad "interior-whitespace override wrongly accepted"
 [ "$(override_outcome 'gpt-4' 'sonnet')" = "sonnet" ] \
   && ok "invalid override ignored (falls back to tier)" || bad "invalid override not ignored"
 [ "$(override_outcome 'rm -rf /' 'sonnet')" = "sonnet" ] \
@@ -88,17 +93,15 @@ grep -q "Ignoring invalid model override" "$RUN_SH" \
   && ok "run.sh warns once on invalid override" || bad "run.sh invalid-override warn missing"
 
 # ---------------------------------------------------------------------------
-# 2. LOKI_FABLE_ARCHITECT default-off proof.
+# 2. Model resolver: explicit tier arms + maxTier clamp (REAL claude.sh path).
 #
-# IMPORTANT: the REAL `start` path resolves the claude planning model via
-# providers/claude.sh's resolve_model_for_tier (get_provider_tier_param early-
-# returns to it when the provider is loaded, run.sh:1801). So the routing is
-# tested by sourcing claude.sh and calling resolve_model_for_tier in a
-# subshell (the way run.sh actually resolves it), NOT by extracting the bare
-# get_provider_tier_param fallback. Each case runs in its own subshell so env
-# vars are seen at source time (claude.sh resolves PROVIDER_MODEL_* on source).
-# ---------------------------------------------------------------------------
-CLAUDE_SH="$REPO_ROOT/providers/claude.sh"
+# The REAL `start` path resolves the claude model via resolve_model_for_tier
+# (get_provider_tier_param delegates to it, run.sh:1801). The model-honesty fix
+# added an explicit `fable)` tier arm and removed the planning-time architect
+# gate (the architect opt-in is now a run.sh iteration-0 decision, tested in
+# section 2b). Each case runs in its own subshell so env vars are seen at source
+# time (claude.sh resolves PROVIDER_MODEL_* on source).
+# CLAUDE_SH is defined above (section 1).
 rmt() {
     # $@ : "VAR=val" exports, last arg is the tier
     local tier="${!#}"
@@ -111,38 +114,143 @@ rmt() {
 
 out_default="$(rmt planning)"
 [ "$out_default" = "opus" ] \
-  && ok "planning tier defaults to opus (LOKI_FABLE_ARCHITECT off, REAL claude.sh path)" \
+  && ok "planning tier defaults to opus (REAL claude.sh path)" \
   || bad "planning default not opus: '$out_default'"
-out_fable="$(rmt LOKI_FABLE_ARCHITECT=1 planning)"
+# Explicit fable tier arm: a fable-pinned session / override resolves to fable
+# (the model-honesty lever runs fable instead of falling through to opus).
+out_fable="$(rmt fable)"
 [ "$out_fable" = "fable" ] \
-  && ok "LOKI_FABLE_ARCHITECT=1 routes planning to fable (REAL claude.sh path)" \
-  || bad "LOKI_FABLE_ARCHITECT=1 did not route to fable: '$out_fable'"
-out_override="$(rmt LOKI_FABLE_ARCHITECT=1 LOKI_MODEL_PLANNING=opus planning)"
-[ "$out_override" = "opus" ] \
-  && ok "explicit LOKI_MODEL_PLANNING wins over fable opt-in" \
-  || bad "explicit planning override failed: '$out_override'"
-out_max="$(rmt LOKI_FABLE_ARCHITECT=1 LOKI_MAX_TIER=opus planning)"
-[ "$out_max" = "opus" ] \
-  && ok "LOKI_MAX_TIER=opus caps the fable opt-in back to opus" \
-  || bad "maxTier ceiling did not cap fable: '$out_max'"
-out_dev="$(rmt LOKI_FABLE_ARCHITECT=1 development)"
+  && ok "explicit fable tier resolves to fable (lever genuinely runs fable)" \
+  || bad "fable tier did not resolve to fable: '$out_fable'"
+# The planning-time architect gate is REMOVED: LOKI_FABLE_ARCHITECT alone must
+# NOT convert the planning tier to fable (that scoping is now run.sh iter-0).
+out_planning_arch="$(rmt LOKI_FABLE_ARCHITECT=1 planning)"
+[ "$out_planning_arch" = "opus" ] \
+  && ok "LOKI_FABLE_ARCHITECT no longer converts planning tier in the resolver (scoping moved to run.sh iter-0)" \
+  || bad "planning tier wrongly converted to fable in resolver: '$out_planning_arch'"
+# maxTier clamp on the fable tier (the cost ceiling the override path also uses).
+out_max_sonnet="$(rmt LOKI_MAX_TIER=sonnet fable)"
+[ "$out_max_sonnet" = "opus" ] \
+  && ok "LOKI_MAX_TIER=sonnet clamps fable down to development (opus)" \
+  || bad "maxTier=sonnet did not clamp fable: '$out_max_sonnet'"
+out_max_opus="$(rmt LOKI_MAX_TIER=opus fable)"
+[ "$out_max_opus" = "opus" ] \
+  && ok "LOKI_MAX_TIER=opus caps fable back to opus" \
+  || bad "maxTier=opus did not cap fable: '$out_max_opus'"
+out_dev="$(rmt development)"
 [ "$out_dev" = "opus" ] \
-  && ok "dev tier stays opus even with fable architect on" \
-  || bad "dev tier leaked to fable: '$out_dev'"
+  && ok "dev tier resolves to opus (unchanged)" \
+  || bad "dev tier wrong: '$out_dev'"
 
-# Also confirm the run.sh legacy fallback branch (used when no provider is
-# sourced) carries the same opt-in, so the two paths agree.
-eval "$(awk '/^get_provider_tier_param\(\)/,/^}/' "$RUN_SH")"
-if type get_provider_tier_param >/dev/null 2>&1; then
-    PROVIDER_NAME=claude
-    out_fb_default="$(unset LOKI_FABLE_ARCHITECT PROVIDER_MODEL_PLANNING; get_provider_tier_param planning)"
-    out_fb_fable="$(unset PROVIDER_MODEL_PLANNING; LOKI_FABLE_ARCHITECT=1 get_provider_tier_param planning)"
-    [ "$out_fb_default" = "opus" ] && [ "$out_fb_fable" = "fable" ] \
-      && ok "run.sh legacy fallback agrees (opus default, fable on opt-in)" \
-      || bad "run.sh fallback disagrees: default='$out_fb_default' opt-in='$out_fb_fable'"
-else
-    bad "get_provider_tier_param fallback could not be sourced"
-fi
+# ---------------------------------------------------------------------------
+# 2b. LOKI_FABLE_ARCHITECT is scoped to the FIRST iteration only (run.sh).
+#
+# Replay the EXACT run.sh tier-selection logic (session-pin case + the iter-0
+# architect scoping) against the real claude.sh resolver. The architect flag
+# must route ONLY iteration 0 to fable and leave later iterations on the session
+# tier, so an opus-pinned session is NOT silently converted to fable wholesale
+# (the headline bug). An explicit planning override suppresses it.
+# ---------------------------------------------------------------------------
+# NOTE on the index: run.sh increments ITERATION_COUNT at the TOP of the loop,
+# so the FIRST in-loop iteration is ITERATION_COUNT==1 (not 0). This replay uses
+# the SAME `-eq 1` guard the runtime uses, so "first iteration" == iter 1 and
+# "a later iteration" == iter 2. A -eq 0 guard would be a silent no-op at
+# runtime; testing against the real index is what catches that.
+resolve_session_iter() {
+    # $1=session_model $2=iteration ; remaining "VAR=val" exports
+    local sm="$1" iter="$2"; shift 2
+    bash -c '
+      for kv in "$@"; do export "$kv"; done
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      sm="'"$sm"'"; iter='"$iter"'
+      case "$sm" in
+        opus) CURRENT_TIER="planning";; sonnet) CURRENT_TIER="development";;
+        haiku) CURRENT_TIER="fast";; fable) CURRENT_TIER="fable";;
+        planning|development|fast) CURRENT_TIER="$sm";; *) CURRENT_TIER="$sm";;
+      esac
+      if [ "$iter" -eq 1 ] && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
+         && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
+        CURRENT_TIER="fable"
+      fi
+      resolve_model_for_tier "$CURRENT_TIER"
+    ' _ "$@"
+}
+# Verify the run.sh source actually contains the first-iteration architect
+# scoping AT THE REAL INDEX (ITERATION_COUNT -eq 1), keeping this replay faithful
+# to the runtime and guarding against a -eq 0 silent no-op regression.
+grep -q 'LOKI_FABLE_ARCHITECT.*=.*"1"' "$RUN_SH" \
+  && grep -q 'routing the first .architecture. iteration to fable' "$RUN_SH" \
+  && grep -Eq 'ITERATION_COUNT:-0\}" -eq 1 \]' "$RUN_SH" \
+  && ok "run.sh scopes LOKI_FABLE_ARCHITECT to the first iteration (ITERATION_COUNT==1)" \
+  || bad "run.sh first-iteration architect scoping missing or guarded on the wrong index"
+arch0="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1)"
+arch1="$(resolve_session_iter opus 2 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch0" = "fable" ] && [ "$arch1" = "opus" ] \
+  && ok "architect routes ONLY the first iteration to fable; opus-pinned session NOT converted wholesale" \
+  || bad "architect scope wrong: iter1='$arch0' iter2='$arch1' (expected fable/opus)"
+arch_def0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_def0" = "fable" ] \
+  && ok "architect fires on the default session pin (no longer a silent no-op)" \
+  || bad "architect did not fire on default pin: '$arch_def0'"
+arch_ovr="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1 LOKI_MODEL_PLANNING=opus)"
+[ "$arch_ovr" = "opus" ] \
+  && ok "explicit LOKI_MODEL_PLANNING suppresses the architect opt-in" \
+  || bad "explicit planning override did not suppress architect: '$arch_ovr'"
+arch_max="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1 LOKI_MAX_TIER=opus)"
+[ "$arch_max" = "opus" ] \
+  && ok "LOKI_MAX_TIER caps the architect iteration too" \
+  || bad "maxTier did not cap architect iter: '$arch_max'"
+
+# ---------------------------------------------------------------------------
+# 2c. Mid-flight override respects LOKI_MAX_TIER (cost-ceiling bypass fix).
+#
+# Replay the override clamp the run_autonomous override path performs: normalize
+# the file -> apply loki_apply_max_tier_clamp. A sonnet-capped run must NOT
+# dispatch fable.
+# ---------------------------------------------------------------------------
+override_effective() {
+    # $1=file content ; remaining "VAR=val" exports
+    local content="$1"; shift
+    bash -c '
+      for kv in "$@"; do export "$kv"; done
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      alias="$(loki_normalize_model_alias "$1")"
+      [ -z "$alias" ] && { echo REJECTED; exit 0; }
+      loki_apply_max_tier_clamp "$alias" "$alias"
+    ' _ "$content" "$@"
+}
+[ "$(override_effective fable)" = "fable" ] \
+  && ok "override fable dispatches fable when uncapped" || bad "override fable not honored uncapped"
+[ "$(override_effective fable LOKI_MAX_TIER=sonnet)" = "opus" ] \
+  && ok "override fable clamped to opus under LOKI_MAX_TIER=sonnet (ceiling not bypassed)" \
+  || bad "override fable bypassed LOKI_MAX_TIER=sonnet"
+[ "$(override_effective fable LOKI_MAX_TIER=opus)" = "opus" ] \
+  && ok "override fable clamped to opus under LOKI_MAX_TIER=opus" \
+  || bad "override fable bypassed LOKI_MAX_TIER=opus"
+# Verify run.sh actually applies the clamp on the override path.
+grep -q 'loki_apply_max_tier_clamp' "$RUN_SH" \
+  && ok "run.sh override path applies the LOKI_MAX_TIER clamp" \
+  || bad "run.sh override path missing maxTier clamp"
+grep -q 'exceeds LOKI_MAX_TIER' "$RUN_SH" \
+  && ok "run.sh logs an honest clamp line when the override exceeds the ceiling" \
+  || bad "run.sh clamp log line missing"
+
+# ---------------------------------------------------------------------------
+# 2d. Session-start clears a leftover override (persistence-trap fix).
+#
+# Verify run.sh clears .loki/state/model-override at fresh-run start so a switch
+# applies to the current run only, not every future run.
+# ---------------------------------------------------------------------------
+grep -q 'Cleared leftover model override' "$RUN_SH" \
+  && ok "run.sh clears a leftover override at session start (current-run scope)" \
+  || bad "run.sh session-start override clear missing"
+
+# ---------------------------------------------------------------------------
+# 2e. LOKI_MODEL is no longer an estimator-only lever (removed).
+# ---------------------------------------------------------------------------
+grep -Eq "LOKI_MODEL[^_A-Za-z]*=*.*fable" "$LOKI" \
+  && bad "LOKI_MODEL=fable still referenced in estimator (should be removed)" \
+  || ok "LOKI_MODEL removed from estimator (no quote-only-cannot-run lever)"
 
 # ---------------------------------------------------------------------------
 # 3. Pricing-table presence: fable rows at $10/$50 (2x Opus).
@@ -209,11 +317,19 @@ cat > "$EST_DIR/prd.md" <<'EOF'
 # PRD
 Build a small todo API with one endpoint.
 EOF
-fable_total="$(cd "$EST_DIR" && LOKI_MODEL=fable "$LOKI" plan ./prd.md --json 2>/dev/null \
+fable_total="$(cd "$EST_DIR" && LOKI_SESSION_MODEL=fable "$LOKI" plan ./prd.md --json 2>/dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cost']['by_model'].get('Fable',0))" 2>/dev/null)"
 case "$fable_total" in
     0|0.0|"") bad "estimator did not quote fable cost (got '$fable_total')" ;;
-    *) ok "LOKI_MODEL=fable estimator quotes fable cost ($fable_total)" ;;
+    *) ok "LOKI_SESSION_MODEL=fable estimator quotes fable cost ($fable_total)" ;;
+esac
+# LOKI_SESSION_MODEL=fable under LOKI_MAX_TIER=sonnet must NOT quote fable
+# (estimator honors the ceiling, agreeing with the run).
+capped_fable="$(cd "$EST_DIR" && LOKI_SESSION_MODEL=fable LOKI_MAX_TIER=sonnet "$LOKI" plan ./prd.md --json 2>/dev/null \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cost']['by_model'].get('Fable',0))" 2>/dev/null)"
+case "$capped_fable" in
+    0|0.0) ok "estimator clamps fable to the LOKI_MAX_TIER ceiling (no over-quote)" ;;
+    *) bad "estimator quoted fable above LOKI_MAX_TIER ceiling (got '$capped_fable')" ;;
 esac
 # Override file also forces fable in the estimate.
 printf 'fable\n' > "$EST_DIR/.loki/state/model-override"

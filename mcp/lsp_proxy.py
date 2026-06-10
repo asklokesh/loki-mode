@@ -26,10 +26,14 @@ Supported languages (suffix -> binary):
     .go               -> gopls
     .rs               -> rust-analyzer
 
-Tools:
+Tools (7):
     lsp_find_references(file, line, character, include_declaration=False)
     lsp_go_to_definition(file, line, character)
     lsp_symbol_at_position(file, line, character)
+    lsp_check_exists(symbol, kind=None, ...)
+    lsp_get_diagnostics(file)
+    lsp_workspace_symbols(query, limit=20, ...)
+    lsp_find_definition_by_name(symbol, ...)
 
 Usage:
     python3 -m mcp.lsp_proxy                # stdio mode (default)

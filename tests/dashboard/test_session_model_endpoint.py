@@ -44,9 +44,23 @@ class SessionModelEndpointTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="loki-session-model-")
         (Path(self.tmp) / "state").mkdir(parents=True, exist_ok=True)
         self._override = Path(self.tmp) / "state" / "model-override"
+        # Snapshot + clear env that changes endpoint behavior so each test is
+        # isolated (LOKI_MAX_TIER clamp, LOKI_SESSION_MODEL default, enterprise
+        # auth scope). Restored in tearDown.
+        self._saved_env = {
+            k: os.environ.get(k)
+            for k in ("LOKI_MAX_TIER", "LOKI_SESSION_MODEL", "LOKI_ENTERPRISE_AUTH")
+        }
+        for k in self._saved_env:
+            os.environ.pop(k, None)
 
     def tearDown(self):
         import shutil
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _client(self):
@@ -65,12 +79,16 @@ class SessionModelEndpointTests(unittest.TestCase):
         self.assertEqual(body["allowed"], ["haiku", "sonnet", "opus", "fable"])
 
     def test_post_fable_writes_override_file(self):
+        # No LOKI_MAX_TIER (cleared in setUp): effective is the requested model
+        # itself (the field is now the model the next iteration will use, after
+        # any ceiling clamp).
         with _ForceLokiDir(self.tmp):
             resp = self._client().post("/api/session/model", json={"model": "fable"})
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["model"], "fable")
-        self.assertEqual(body["effective"], "next_iteration")
+        self.assertEqual(body["effective"], "fable")
+        self.assertFalse(body["clamped"])
         self.assertTrue(self._override.is_file())
         self.assertEqual(self._override.read_text().strip(), "fable")
 
@@ -122,6 +140,87 @@ class SessionModelEndpointTests(unittest.TestCase):
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         self.assertIsNone(resp.json()["override"])
+
+    # --- Model-honesty fixes -------------------------------------------------
+
+    def test_get_clamps_effective_to_max_tier(self):
+        # A fable override under LOKI_MAX_TIER=sonnet must report the CLAMPED
+        # effective model (opus), not fable, so the dashboard never claims a
+        # model the run would clamp down (cost-ceiling agreement).
+        self._override.write_text("fable\n")
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["override"], "fable")
+        self.assertEqual(body["effective"], "opus")
+
+    def test_post_clamps_effective_to_max_tier(self):
+        # POST validation response shows the clamped effective model + clamped flag.
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().post("/api/session/model", json={"model": "fable"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["model"], "fable")
+        self.assertEqual(body["effective"], "opus")
+        self.assertTrue(body["clamped"])
+        # The override file still records the requested alias; the run clamps it.
+        self.assertEqual(self._override.read_text().strip(), "fable")
+
+    def test_get_rejects_interior_whitespace_override(self):
+        # Normalization parity with run.sh: "fab le" (interior whitespace) is NOT
+        # a valid alias, so GET must report no override (run.sh rejects it too).
+        self._override.write_text("fab le\n")
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertIsNone(resp.json()["override"])
+
+    def test_post_rejects_interior_whitespace(self):
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().post("/api/session/model", json={"model": "fab le"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(self._override.exists())
+
+    def test_get_uppercase_override_normalized(self):
+        # Normalization parity: an uppercase file value normalizes to the alias.
+        self._override.write_text("FABLE\n")
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["override"], "fable")
+
+    def test_get_carries_read_scope_dependency(self):
+        # Anonymous-under-enterprise-auth fix: GET /api/session/model now carries
+        # require_scope("read"), matching GET /api/status (the conceptually paired
+        # read endpoint). Enterprise auth is evaluated at import time, so assert
+        # structurally that the route's dependencies include the read scope (the
+        # same way GET /api/status is scoped), rather than toggling import-time
+        # env. This is the verifiable invariant the finding asks for.
+        from dashboard.server import app
+
+        def _scope_deps(path: str, method: str = "GET"):
+            for route in app.routes:
+                if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
+                    return [
+                        getattr(getattr(d, "dependency", None), "__qualname__", "")
+                        for d in getattr(route, "dependencies", [])
+                    ]
+            return None
+
+        session_deps = _scope_deps("/api/session/model", "GET")
+        status_deps = _scope_deps("/api/status", "GET")
+        self.assertIsNotNone(session_deps, "GET /api/session/model route not found")
+        # GET /api/status is the paired scoped read endpoint; the session GET must
+        # carry a scope dependency too (no longer anonymous).
+        self.assertTrue(
+            any("check_scope" in d for d in session_deps),
+            f"GET /api/session/model missing require_scope dependency; deps={session_deps}",
+        )
+        if status_deps is not None:
+            self.assertTrue(
+                any("check_scope" in d for d in status_deps),
+                "GET /api/status expected to be scoped (baseline for parity)",
+            )
 
 
 if __name__ == "__main__":
