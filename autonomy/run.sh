@@ -2566,6 +2566,26 @@ except Exception:
     local ts
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
 
+    # v7.28.0: evidence-gate inconclusive line. When the evidence gate could not
+    # establish a diff baseline (no git repo, or no run-start SHA), it records a
+    # durable .loki/state/evidence-inconclusive.json instead of silently passing.
+    # Surface one honest line so the user knows completion was not independently
+    # verified. The record is removed by the gate on any conclusive run.
+    local evidence_inconclusive_line=""
+    local _inc_file="$loki_dir/state/evidence-inconclusive.json"
+    if [ -f "$_inc_file" ]; then
+        local _inc_reason
+        _inc_reason="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('reason','') if d.get('inconclusive') else '')
+except Exception:
+    print('')" "$_inc_file" 2>/dev/null)"
+        if [ -n "$_inc_reason" ]; then
+            evidence_inconclusive_line="Evidence gate: inconclusive (${_inc_reason}) - completion not independently verified"
+        fi
+    fi
+
     # ---- Durable human-readable file: .loki/COMPLETION.txt --------------------
     {
         echo "Loki Mode run summary"
@@ -2596,6 +2616,10 @@ except Exception:
         fi
         echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
+        if [ -n "$evidence_inconclusive_line" ]; then
+            echo "$evidence_inconclusive_line"
+            echo ""
+        fi
         echo "Review the work:"
         echo "  $review_cmd"
         echo ""

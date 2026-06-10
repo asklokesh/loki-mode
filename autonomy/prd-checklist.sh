@@ -106,6 +106,94 @@ checklist_should_verify() {
 }
 
 #===============================================================================
+# Held-out Spec Eval Selection (v7.28.0)
+#===============================================================================
+# Anti-reward-hacking: deterministically reserve ~25% of checklist items as
+# "held-out". Held-out item IDs are EXCLUDED from everything the build loop sees
+# (checklist_summary, council_checklist_gate) so the build agent cannot tune to
+# them. The completion council evaluates them only at the ship gate
+# (council_heldout_gate in completion-council.sh).
+#
+# Selection is idempotent and reproducible: count = clamp(round(0.25*N), 1, 5)
+# for N>=4 items; ordering by sha256 of each item's "id" (stable, not random).
+# Written once to .loki/checklist/held-out.json; never overwritten if present.
+checklist_select_heldout() {
+    local heldout_file="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json"
+
+    # Idempotent: never reselect once chosen (stable across iterations/runs).
+    if [ -f "$heldout_file" ]; then
+        return 0
+    fi
+    if [ ! -f "$CHECKLIST_FILE" ]; then
+        return 0
+    fi
+
+    _CHECKLIST_FILE="$CHECKLIST_FILE" _HELDOUT_FILE="$heldout_file" python3 -c "
+import json, os, sys, hashlib, tempfile
+
+cl_path = os.environ['_CHECKLIST_FILE']
+out_path = os.environ['_HELDOUT_FILE']
+try:
+    with open(cl_path) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+
+# Collect all item ids in document order.
+ids = []
+for cat in data.get('categories', []):
+    for item in cat.get('items', []):
+        iid = item.get('id', '')
+        if iid:
+            ids.append(iid)
+
+n = len(ids)
+# N>=4 gate: smaller checklists get no held-out (nothing to hide reliably).
+if n < 4:
+    payload = {'held_out': [], 'total_items': n, 'note': 'n<4: no held-out reserved'}
+else:
+    count = round(0.25 * n)
+    if count < 1:
+        count = 1
+    if count > 5:
+        count = 5
+    # Deterministic order: sort ids by sha256(id), take the first <count>.
+    ranked = sorted(ids, key=lambda i: hashlib.sha256(i.encode('utf-8')).hexdigest())
+    held = sorted(ranked[:count])
+    payload = {'held_out': held, 'total_items': n}
+
+# Atomic write.
+d = os.path.dirname(out_path) or '.'
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(payload, f, indent=2)
+    f.write('\n')
+os.replace(tmp, out_path)
+" 2>/dev/null || true
+
+    return 0
+}
+
+# Echo held-out item IDs (one per line) to stdout. Empty when none reserved.
+checklist_heldout_ids() {
+    local heldout_file="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json"
+    if [ ! -f "$heldout_file" ]; then
+        return 0
+    fi
+    _HELDOUT_FILE="$heldout_file" python3 -c "
+import json, os
+try:
+    with open(os.environ['_HELDOUT_FILE']) as f:
+        data = json.load(f)
+    for i in data.get('held_out', []):
+        print(i)
+except Exception:
+    pass
+" 2>/dev/null || true
+}
+
+#===============================================================================
 # Verification
 #===============================================================================
 
@@ -117,6 +205,10 @@ checklist_verify() {
     if [ ! -f "$CHECKLIST_FILE" ]; then
         return 0
     fi
+
+    # Held-out selection happens BEFORE the first verification so that the very
+    # first verification-results.json summary already excludes held-out items.
+    checklist_select_heldout
 
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -160,16 +252,12 @@ checklist_summary() {
 
     _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" \
     _CHECKLIST_WAIVERS="${CHECKLIST_DIR:-".loki/checklist"}/waivers.json" \
+    _CHECKLIST_HELDOUT="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json" \
     python3 -c "
 import json, sys, os
 try:
     fpath = os.environ.get('_CHECKLIST_RESULTS', '')
     data = json.load(open(fpath))
-    s = data.get('summary', {})
-    total = s.get('total', 0)
-    verified = s.get('verified', 0)
-    failing = s.get('failing', 0)
-    pending = s.get('pending', 0)
 
     # Load waivers
     waived_ids = set()
@@ -184,26 +272,54 @@ try:
         except Exception:
             pass
 
-    # Count waived items and adjust failing list
+    # Load held-out item ids (v7.28.0). Held-out items are NEVER surfaced to the
+    # build loop: they are fully excluded from the counts and the failing list so
+    # the build agent cannot tune to them. The council evaluates them separately.
+    heldout_ids = set()
+    heldout_path = os.environ.get('_CHECKLIST_HELDOUT', '')
+    if heldout_path and os.path.exists(heldout_path):
+        try:
+            with open(heldout_path) as hf:
+                hdata = json.load(hf)
+            heldout_ids = set(hdata.get('held_out', []))
+        except Exception:
+            pass
+
+    # Recompute counts over the VISIBLE (non-held-out) items so 'total' never
+    # leaks the existence of held-out items. Waived items are excluded too.
+    total = 0
+    verified = 0
+    pending = 0
+    failing = 0
     waived_count = 0
+    failing_items = []
+    for cat in data.get('categories', []):
+        for item in cat.get('items', []):
+            item_id = item.get('id', '')
+            if item_id in heldout_ids:
+                continue
+            if item_id in waived_ids:
+                waived_count += 1
+                continue
+            total += 1
+            status = item.get('status')
+            if status == 'verified':
+                verified += 1
+            elif status == 'failing':
+                failing += 1
+                if item.get('priority') in ('critical', 'major'):
+                    failing_items.append(item.get('title', item.get('id', '?')))
+            else:
+                pending += 1
+
     if total == 0:
         print('')
     else:
-        failing_items = []
-        for cat in data.get('categories', []):
-            for item in cat.get('items', []):
-                item_id = item.get('id', '')
-                if item_id in waived_ids:
-                    waived_count += 1
-                    continue
-                if item.get('status') == 'failing' and item.get('priority') in ('critical', 'major'):
-                    failing_items.append(item.get('title', item.get('id', '?')))
         detail = ''
         if failing_items:
             detail = ' FAILING: ' + ', '.join(failing_items[:5])
         waived_str = f', {waived_count} waived' if waived_count > 0 else ''
-        adjusted_failing = max(0, failing - waived_count)
-        print(f'{verified}/{total} verified, {adjusted_failing} failing{waived_str}, {pending} pending.{detail}')
+        print(f'{verified}/{total} verified, {failing} failing{waived_str}, {pending} pending.{detail}')
 except Exception:
     print('', file=sys.stderr)
 " 2>/dev/null || echo ""

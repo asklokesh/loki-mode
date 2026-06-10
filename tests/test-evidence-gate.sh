@@ -494,6 +494,196 @@ if [ "$GATE_RC" -eq 1 ]; then ok "case15 rc=1 (.loki/ state is not evidence even
 r="$(block_reason "$GATE_BLOCK_FILE")"
 [ "$r" = "empty_diff" ] && ok "case15 reason=empty_diff" || bad "case15 reason=empty_diff" "got [$r]"
 
+# ===========================================================================
+# Case 16 (v7.28.0): no git repo -> PASS (rc 0) AND a durable
+#         evidence-inconclusive.json is written with reason=no_git_repo.
+#         Closes "inconclusive passes through silently": the gate still does not
+#         block (non-git projects must work), but the inconclusive baseline is
+#         now recorded honestly.
+# ===========================================================================
+echo "Case 16: non-git directory -> PASS + evidence-inconclusive.json (reason=no_git_repo)"
+nogit16="$TMP_ROOT/case16-nogit"
+mkdir -p "$nogit16/.loki/council"
+write_test_results "$nogit16" jest true
+INC16="$nogit16/.loki/state/evidence-inconclusive.json"
+(
+    cd "$nogit16" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$nogit16/.loki/council"
+    export TARGET_DIR="$nogit16"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA=""
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then ok "case16 rc=0 (no git, still pass-through)"; else bad "case16 rc=0" "got rc=$GATE_RC"; fi
+[ -f "$INC16" ] && ok "case16 evidence-inconclusive.json written" || bad "case16 inconclusive file written" "missing"
+r="$(block_reason "$INC16")"
+[ "$r" = "no_git_repo" ] && ok "case16 reason=no_git_repo" || bad "case16 reason=no_git_repo" "got [$r]"
+
+# ===========================================================================
+# Case 17 (v7.28.0): git repo but NO run-start SHA (empty baseline, env unset,
+#         no .loki/state/start-sha file) -> PASS (rc 0) AND
+#         evidence-inconclusive.json with reason=no_run_start_sha.
+# ===========================================================================
+echo "Case 17: git repo, no baseline SHA -> PASS + evidence-inconclusive.json (reason=no_run_start_sha)"
+repo17="$(new_repo case17)"
+printf 'some work\n' > "$repo17/work.txt"
+grepo "$repo17" add work.txt >/dev/null
+grepo "$repo17" commit -q --no-gpg-sign --no-verify -m "work" 2>/dev/null
+write_test_results "$repo17" jest true
+INC17="$repo17/.loki/state/evidence-inconclusive.json"
+mkdir -p "$repo17/.loki/council"
+(
+    cd "$repo17" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$repo17/.loki/council"
+    export TARGET_DIR="$repo17"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA=""   # no env baseline, no start-sha file
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then ok "case17 rc=0 (no baseline, pass-through)"; else bad "case17 rc=0" "got rc=$GATE_RC"; fi
+[ -f "$INC17" ] && ok "case17 evidence-inconclusive.json written" || bad "case17 inconclusive file written" "missing"
+r="$(block_reason "$INC17")"
+[ "$r" = "no_run_start_sha" ] && ok "case17 reason=no_run_start_sha" || bad "case17 reason=no_run_start_sha" "got [$r]"
+
+# ===========================================================================
+# Case 18 (v7.28.0): lifecycle removal. A stale evidence-inconclusive.json is
+#         pre-created, then the gate runs with a CONCLUSIVE baseline (real diff +
+#         green tests) -> PASS (rc 0) AND the stale inconclusive record is
+#         removed. Prevents COMPLETION.txt from printing a stale inconclusive
+#         line on a run that later became conclusive.
+# ===========================================================================
+echo "Case 18: conclusive run removes stale evidence-inconclusive.json"
+repo18="$(new_repo case18)"
+base="$(grepo "$repo18" rev-parse HEAD)"
+printf 'real conclusive change\n' > "$repo18/change.txt"
+grepo "$repo18" add change.txt >/dev/null
+grepo "$repo18" commit -q --no-gpg-sign --no-verify -m "change" 2>/dev/null
+write_test_results "$repo18" jest true
+mkdir -p "$repo18/.loki/state"
+INC18="$repo18/.loki/state/evidence-inconclusive.json"
+cat > "$INC18" <<'STALE_INC'
+{"inconclusive":true,"reason":"no_git_repo","iteration":3}
+STALE_INC
+mkdir -p "$repo18/.loki/council"
+(
+    cd "$repo18" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$repo18/.loki/council"
+    export TARGET_DIR="$repo18"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA="$base"
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then ok "case18 rc=0 (conclusive run passes)"; else bad "case18 rc=0" "got rc=$GATE_RC"; fi
+[ ! -f "$INC18" ] && ok "case18 stale inconclusive record removed on conclusive run" \
+    || bad "case18 stale inconclusive removed" "file still present"
+
+# ===========================================================================
+# Case 19 (v7.28.0): inconclusive DIFF baseline (no git) + RED tests -> still
+#         BLOCKS on tests_red (the test signal is conclusive even when the diff
+#         baseline is not), AND evidence-inconclusive.json is still written
+#         (the record is about the diff baseline only, independent of tests).
+# ===========================================================================
+echo "Case 19: no-git + red tests -> BLOCK (tests_red) + evidence-inconclusive.json present"
+nogit19="$TMP_ROOT/case19-nogit"
+mkdir -p "$nogit19/.loki/council"
+write_test_results "$nogit19" jest false   # red
+INC19="$nogit19/.loki/state/evidence-inconclusive.json"
+BLK19="$nogit19/.loki/council/evidence-block.json"
+(
+    cd "$nogit19" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$nogit19/.loki/council"
+    export TARGET_DIR="$nogit19"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA=""
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 1 ]; then ok "case19 rc=1 (red tests block even with inconclusive diff)"; else bad "case19 rc=1" "got rc=$GATE_RC"; fi
+r="$(block_reason "$BLK19")"
+[ "$r" = "tests_red" ] && ok "case19 reason=tests_red" || bad "case19 reason=tests_red" "got [$r]"
+[ -f "$INC19" ] && ok "case19 evidence-inconclusive.json present (diff baseline tracked independently)" \
+    || bad "case19 inconclusive present" "missing"
+
+# ===========================================================================
+# Case 20 (v7.28.0): LOKI_EVIDENCE_GATE=0 with a no-git dir -> PASS (rc 0) AND
+#         NO evidence-inconclusive.json written (knob short-circuits before any
+#         read or write, mirroring case 6's no-block-file guarantee).
+# ===========================================================================
+echo "Case 20: LOKI_EVIDENCE_GATE=0 (no-git) -> PASS, no inconclusive file"
+nogit20="$TMP_ROOT/case20-nogit"
+mkdir -p "$nogit20/.loki/council"
+write_test_results "$nogit20" jest true
+INC20="$nogit20/.loki/state/evidence-inconclusive.json"
+(
+    cd "$nogit20" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$nogit20/.loki/council"
+    export TARGET_DIR="$nogit20"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA=""
+    export LOKI_EVIDENCE_GATE=0
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then ok "case20 rc=0 (knob off)"; else bad "case20 rc=0" "got rc=$GATE_RC"; fi
+[ ! -f "$INC20" ] && ok "case20 NO evidence-inconclusive.json (knob off, no read/write)" \
+    || bad "case20 no inconclusive file when off" "file was written"
+
+# ===========================================================================
+# Case 21 (v7.28.0): consumer side -- build_completion_summary RENDERS the
+#         honest inconclusive line into COMPLETION.txt when
+#         evidence-inconclusive.json is present. This proves Feature 2(b)
+#         end-to-end (producer is cases 16-19; this is the reader). Sourcing
+#         run.sh is safe: it guards `main` behind BASH_SOURCE==$0.
+# ===========================================================================
+RUN_SH="$REPO_ROOT/autonomy/run.sh"
+if [ -f "$RUN_SH" ]; then
+    echo "Case 21: build_completion_summary renders inconclusive line in COMPLETION.txt"
+    bcs21="$TMP_ROOT/case21"
+    mkdir -p "$bcs21/.loki/state"
+    printf '{"inconclusive":true,"reason":"no_git_repo","iteration":3}\n' > "$bcs21/.loki/state/evidence-inconclusive.json"
+    bash -c '
+        cd "$1" || exit 1
+        export TARGET_DIR="$1"
+        source "$2" >/dev/null 2>&1
+        type build_completion_summary >/dev/null 2>&1 || exit 7
+        build_completion_summary complete >/dev/null 2>&1
+    ' _ "$bcs21" "$RUN_SH"
+    rc21=$?
+    if [ "$rc21" -eq 7 ]; then
+        bad "case21 build_completion_summary callable" "function not defined after sourcing run.sh"
+    elif grep -qF "Evidence gate: inconclusive (no_git_repo) - completion not independently verified" "$bcs21/.loki/COMPLETION.txt" 2>/dev/null; then
+        ok "case21 honest inconclusive line rendered in COMPLETION.txt"
+    else
+        bad "case21 inconclusive line rendered" "line missing from COMPLETION.txt"
+    fi
+
+    # Case 22: NO inconclusive record -> NO inconclusive line (negative control).
+    echo "Case 22: no inconclusive record -> COMPLETION.txt has no inconclusive line"
+    bcs22="$TMP_ROOT/case22"
+    mkdir -p "$bcs22/.loki/state"
+    bash -c '
+        cd "$1" || exit 1
+        export TARGET_DIR="$1"
+        source "$2" >/dev/null 2>&1
+        build_completion_summary complete >/dev/null 2>&1
+    ' _ "$bcs22" "$RUN_SH"
+    if grep -qF "Evidence gate: inconclusive" "$bcs22/.loki/COMPLETION.txt" 2>/dev/null; then
+        bad "case22 no inconclusive line" "line present without a record"
+    else
+        ok "case22 no inconclusive line when no record (negative control)"
+    fi
+else
+    echo "SKIP: $RUN_SH not found; cannot test build_completion_summary consumer side."
+fi
+
 # ---------------------------------------------------------------------------
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
