@@ -68,6 +68,13 @@ def _ensure_fastmcp_stub() -> None:
     """))
     _orig = site.getsitepackages
     site.getsitepackages = lambda *a, **kw: [stub_root] + _orig(*a, **kw)  # type: ignore[assignment]
+    # v7.30.0: _load_real_fastmcp() probes site dirs for PRESENCE but imports
+    # mcp.server.fastmcp through sys.path (it evicts the local package and
+    # re-imports the real SDK subtree). The stub dir must therefore be on
+    # sys.path too, ahead of any real SDK install, or the loader import fails
+    # ("No module named 'mcp'") and server.py exits before the tests run.
+    if stub_root not in sys.path:
+        sys.path.insert(0, stub_root)
     _STUB_DIR = stub_root
 
 
