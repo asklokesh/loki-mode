@@ -391,11 +391,15 @@ got_title=$(python3 -c "import json;print(json.load(open('$d/.loki/council/heldo
 echo "Case 11: route-level wiring assertions (run.sh + completion-council.sh)"
 if [ -f "$RUN_SH" ]; then
     # (a) completion-promise route: a single elif line must gate completion on
-    #     both check_completion_promise AND council_heldout_gate.
-    if grep -Eq 'check_completion_promise.*! council_heldout_gate' "$RUN_SH"; then
-        ok "case11 promise route wires council_heldout_gate into check_completion_promise chain"
+    #     both the per-iteration completion claim AND council_heldout_gate.
+    #     v7.28 DROP-FIX: check_completion_promise is now evaluated exactly ONCE
+    #     per iteration into _completion_claimed (it consumes the signal), and the
+    #     held-out arm tests that variable instead of re-calling the consuming
+    #     helper. Match the new variable-based wiring so this stays load-bearing.
+    if grep -Eq '_completion_claimed.*! council_heldout_gate' "$RUN_SH"; then
+        ok "case11 promise route wires council_heldout_gate into _completion_claimed chain"
     else
-        bad "case11 promise route wiring" "no check_completion_promise line also calls ! council_heldout_gate in run.sh"
+        bad "case11 promise route wiring" "no _completion_claimed line also calls ! council_heldout_gate in run.sh"
     fi
 
     # (b) force-review route: the COUNCIL_REVIEW_REQUESTED signal block must call

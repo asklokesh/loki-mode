@@ -239,6 +239,11 @@ run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash t
 # exclusion from the build prompt feed, and the completion council held-out gate.
 run_check "tests/test-heldout-evals.sh (held-out selection + council gate)" "bash tests/test-heldout-evals.sh 2>&1 | tail -3"
 
+# v7.28: completion-claim DROP-FIX. The completion-promise chain must evaluate
+# the claim exactly ONCE per iteration (check_completion_promise consumes the
+# signal); arms test _completion_claimed. Guards against the multi-call drop.
+run_check "tests/test-completion-claim.sh (completion-claim single-evaluation)" "bash tests/test-completion-claim.sh 2>&1 | tail -3"
+
 # v7.28.0: living spec. `loki spec` lock/status/sync, drift-report.json, and the
 # SPEC_DRIFT finding surfaced by `loki verify`.
 run_check "tests/test-spec.sh (living spec lock/status/sync + drift finding)" "bash tests/test-spec.sh 2>&1 | tail -3"

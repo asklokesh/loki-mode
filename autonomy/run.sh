@@ -13190,6 +13190,24 @@ if __name__ == "__main__":
             case "${gate_failures:-}" in
                 *code_review,*|*code_review_ESCALATED*) _gate_block_for_completion="code_review" ;;
             esac
+            # DROP-FIX (v7.28): check_completion_promise -> check_task_completion_signal
+            # CONSUMES the completion signal (rm -f) on the FIRST successful call.
+            # The completion-promise chain below calls it up to five times in one
+            # iteration (reverify guard, code-review arm, evidence arm, held-out
+            # arm, success arm), so the first call consumed the claim and every
+            # later arm saw nothing -- the success arm never fired and the run
+            # iterated to max_iterations even though the agent had claimed done.
+            # Fix: evaluate the claim EXACTLY ONCE here, capture it in
+            # _completion_claimed, and have every arm test that variable. The
+            # single call discards stdout (matching the prior call sites, which
+            # also discarded it), so the task_completion_claim event still emits
+            # exactly once. Consumption semantics are preserved: the claim is
+            # consumed when evaluated; if a gate rejects it, the agent must
+            # re-claim next iteration (see internal/DEMO-CLAIM-DROP-BUG.md).
+            local _completion_claimed=0
+            if check_completion_promise "$iter_output"; then
+                _completion_claimed=1
+            fi
             # MEDIUM-3: this completion-promise route evaluates the council hard
             # gates (evidence + held-out) without the council_evaluate freshness
             # step, so the held-out gate could read stale verification statuses
@@ -13198,10 +13216,10 @@ if __name__ == "__main__":
             # check_completion_promise condition used by the gate chain below) so
             # verification does not run every iteration. Type-guarded and
             # best-effort: failure must never block the completion path.
-            if check_completion_promise "$iter_output" && type council_reverify_checklist &>/dev/null; then
+            if [ "$_completion_claimed" = 1 ] && type council_reverify_checklist &>/dev/null; then
                 council_reverify_checklist 2>/dev/null || true
             fi
-            if [ -n "$_gate_block_for_completion" ] && check_completion_promise "$iter_output"; then
+            if [ -n "$_gate_block_for_completion" ] && [ "$_completion_claimed" = 1 ]; then
                 log_warn "Completion claim rejected: code review is BLOCKED for this iteration (Critical/High findings). Fix review issues before completion."
                 log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"
                 _gate_block_for_completion=""
@@ -13216,7 +13234,7 @@ if __name__ == "__main__":
             # LOKI_EVIDENCE_GATE=0 (council_evidence_gate returns 0 immediately
             # when disabled, so this branch never fires). Gate output (reason +
             # opt-out hint) is printed by council_evidence_gate itself.
-            elif check_completion_promise "$iter_output" && type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
+            elif [ "$_completion_claimed" = 1 ] && type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
                 log_warn "Completion claim rejected: evidence gate found no proof of completion (empty diff vs run-start SHA, or red tests)."
                 log_warn "  Details under .loki/council/evidence-block.json ; opt out with LOKI_EVIDENCE_GATE=0"
                 # Fall through; keep iterating until there is real evidence.
@@ -13229,11 +13247,11 @@ if __name__ == "__main__":
             # LOKI_HELDOUT_GATE=0 (council_heldout_gate returns 0 immediately
             # when disabled or when no held-out items are reserved, so this
             # branch never fires). Gate output is printed by council_heldout_gate.
-            elif check_completion_promise "$iter_output" && type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
+            elif [ "$_completion_claimed" = 1 ] && type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
                 log_warn "Completion claim rejected: held-out spec-eval gate found failing held-out acceptance check(s)."
                 log_warn "  Details under .loki/council/heldout-block.json ; opt out with LOKI_HELDOUT_GATE=0"
                 # Fall through; keep iterating until the held-out checks pass.
-            elif check_completion_promise "$iter_output"; then
+            elif [ "$_completion_claimed" = 1 ]; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then
                     log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
