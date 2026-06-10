@@ -105,6 +105,13 @@ ALIAS_ROWS=(
     # pointer; that is asserted separately below (v7.31 finding 4).
     "export|report export|markdown"
     "dogfood|report dogfood|"
+    # kpis -> report kpis (CLI consolidation Phase B). kpis is Bun-only: on the
+    # Bun route both forms reach runKpis (timestamps normalized for byte
+    # parity); on the bash route both print the honest Bun-requirement message
+    # (empty stdout, exit 1). Either way the data-driven contract holds: alias
+    # gets the pointer, canonical does not, machine flags suppress it. The
+    # bash-route honesty specifics are also asserted in the finding-7 block.
+    "kpis|report kpis|"
     "trust-metrics|trust detail|"
     # 'share' creates a real GitHub Gist (network + non-deterministic URL) when
     # invoked bare, so we exercise its forwarding contract via the deterministic
@@ -387,7 +394,7 @@ fi
 # block (they live in the footer / `loki help aliases`). We check the entry
 # tokens specifically, not prose.
 ENTRY_TOKENS="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | awk '{print $1}')"
-ALIAS_TOKENS="stats metrics cost export share dogfood trust-metrics serve open otel cp wt rc"
+ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc"
 alias_leak=0
 for tok in $ALIAS_TOKENS; do
     if echo "$ENTRY_TOKENS" | grep -qx "$tok"; then
@@ -415,7 +422,7 @@ fi
 
 # `loki help aliases` lists every alias-table row.
 ALIASES_OUT="$(run_loki help aliases 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-for tok in stats metrics cost export share dogfood trust-metrics serve open otel cp wt rc run; do
+for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run; do
     if echo "$ALIASES_OUT" | grep -qE "^  $tok( |\$)"; then
         log_pass "help aliases: lists '$tok'"
     else

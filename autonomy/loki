@@ -392,6 +392,27 @@ _deprecated_alias() {
     fi
 }
 
+# CLI consolidation (Phase B): kpis is a Bun-only command (Phase K, v7.5.28+).
+# It ships in the Bun runtime (loki-ts) and reuses the canonical cost arithmetic
+# in loki-ts/src/runner/budget.ts (PRICING map + calculateCostFromRecords, the
+# cost single-source-of-truth). It is deliberately NOT reimplemented in bash:
+# a bash port would duplicate that arithmetic and risk drift. On the bash route
+# (LOKI_LEGACY_BASH=1, or a machine without Bun) both the canonical
+# `report kpis` and the deprecated `kpis` alias print this honest requirement
+# message rather than the generic "Unknown command" (which would contradict
+# `loki help` listing kpis). --json yields a structured {"available": false}
+# payload so a machine consumer is not handed prose. Exits 1.
+# Usage: _kpis_bash_unavailable "$@"   (the alias arm prints the pointer first)
+_kpis_bash_unavailable() {
+    if [ "${1:-}" = "--json" ]; then
+        printf '{"available": false, "reason": "loki kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
+    else
+        echo "loki kpis requires the Bun runtime and is not available on the bash route." >&2
+        echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki kpis'." >&2
+    fi
+    exit 1
+}
+
 # Emit learning signal (non-blocking) - SYN-018
 # Usage: emit_learning_signal <signal_type> [options]
 # Signal types: user_preference, error_pattern, success_pattern, tool_efficiency, workflow_pattern
@@ -710,7 +731,7 @@ show_help() {
     echo "  # Session ops + observability"
     echo "  loki status [--json]          # Current status"
     echo "  loki report session --efficiency   # Token + cost stats"
-    echo "  loki kpis [--json]            # Accuracy + efficiency KPI snapshot"
+    echo "  loki report kpis [--json]     # Accuracy + efficiency KPI snapshot"
     echo "  loki doctor [--json]          # System prereq + skill symlinks"
     echo "  loki logs                     # Tail recent log output"
     echo "  loki report export json|markdown|csv|timeline   # Export session"
@@ -783,6 +804,7 @@ show_help_aliases() {
     echo "  export             report export"
     echo "  share              report share"
     echo "  dogfood            report dogfood"
+    echo "  kpis               report kpis"
     echo "  trust-metrics      trust detail"
     echo ""
     echo "More groupings (ui, analyze, modernize, new, admin) land in Phase B."
@@ -14233,20 +14255,14 @@ main() {
             cmd_completions "$@"
             ;;
         kpis)
-            # kpis is a Bun-only command (Phase K, v7.5.28+): it ships in the
-            # Bun runtime (loki-ts) and bin/loki routes it there. On the bash
-            # route (LOKI_LEGACY_BASH=1, or a machine without Bun installed)
-            # there is no bash implementation. Rather than the generic
-            # "Unknown command" -- which contradicts `loki help` listing kpis --
-            # state the requirement honestly. Respect --json with a structured
-            # payload so a machine consumer is not handed prose.
-            if [ "${1:-}" = "--json" ]; then
-                printf '{"available": false, "reason": "loki kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
-            else
-                echo "loki kpis requires the Bun runtime and is not available on the bash route." >&2
-                echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki kpis'." >&2
-            fi
-            exit 1
+            # CLI consolidation (Phase B): `kpis` is a deprecated alias of the
+            # canonical `report kpis`. Emit the one-line pointer (suppressed
+            # under --json/-q/--quiet by _deprecated_alias), then print the
+            # honest Bun-requirement message via the shared helper. On a machine
+            # WITH Bun, bin/loki routes `kpis` to the Bun runtime before this arm
+            # is ever reached; this arm is the LOKI_LEGACY_BASH / no-Bun path.
+            _deprecated_alias kpis "report kpis" "$@"
+            _kpis_bash_unavailable "$@"
             ;;
         help|--help|-h)
             # CLI consolidation (Phase A): `loki help aliases` prints the full
@@ -26251,6 +26267,30 @@ _test_gen_bats() {
 # is emitted at the alias dispatch arm (main()), never here, so `report <sub>`
 # stays clean.
 cmd_report() {
+    # CLI consolidation (Phase B): `report kpis` is the canonical KPI snapshot
+    # entry. kpis is Bun-only; on a machine WITH Bun, bin/loki two-token-routes
+    # `report kpis` (flag-anywhere) to the Bun runtime before this function is
+    # reached. This is the bash-route (LOKI_LEGACY_BASH / no-Bun) path: print
+    # the honest requirement message, NO deprecation pointer (this IS the
+    # canonical form), exit 1. We scan flag-anywhere so `report --json kpis`
+    # behaves like `report kpis --json` (mirrors the bin/loki + Bun cli.ts
+    # routing) instead of falling through to cmd_report_legacy's "Unknown
+    # option" path. The non-kpis args (e.g. --json) are passed through so the
+    # helper still emits the structured machine payload.
+    local _has_kpis="" _kpis_args=()
+    local _a
+    for _a in "$@"; do
+        if [ "$_a" = "kpis" ]; then
+            _has_kpis=1
+        else
+            _kpis_args+=("$_a")
+        fi
+    done
+    if [ -n "$_has_kpis" ]; then
+        # ${arr[@]:-} guards the empty-array expansion under `set -u` on the
+        # bare `report kpis` case (no extra flags) for older bash (3.2/4.2).
+        _kpis_bash_unavailable "${_kpis_args[@]:-}"
+    fi
     case "${1:-}" in
         session)  shift; cmd_stats "$@";   return $? ;;
         metrics)  shift; cmd_metrics "$@"; return $? ;;
@@ -26283,6 +26323,7 @@ cmd_report_legacy() {
                 echo "  session     Session statistics (was: loki stats)"
                 echo "  metrics     Efficiency/reward metrics (was: loki metrics)"
                 echo "  cost        Token cost breakdown (was: loki cost)"
+                echo "  kpis        Accuracy + efficiency KPI snapshot (was: loki kpis; Bun runtime only)"
                 echo "  export      Export session data (was: loki export) [json|markdown|csv|timeline]"
                 echo "  share       Share session assets (was: loki share)"
                 echo "  dogfood     Self-development stats (was: loki dogfood)"

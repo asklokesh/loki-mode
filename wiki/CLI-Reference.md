@@ -1382,17 +1382,22 @@ it degrades honestly: human output explains it is unavailable (to stderr),
 
 ---
 
-## kpis (Bun route only)
+## report kpis (Bun route only)
 
-`loki kpis` reports single-run accuracy and efficiency KPIs. It is implemented
-in the Bun runtime and is unavailable on the bash route. Under
-`LOKI_LEGACY_BASH=1` (or on a machine without Bun installed), `loki kpis`
-prints an honest requirement message (and `{"available": false, ...}` for
-`--json`) and exits 1 rather than the generic "Unknown command".
+`loki report kpis` reports single-run accuracy and efficiency KPIs. (`loki kpis`
+is the deprecated alias; both reach the same handler.) It is implemented in the
+Bun runtime and is NOT ported to bash: it reuses the canonical cost arithmetic
+in the Bun runner (the pricing map plus `calculateCostFromRecords`, the cost
+single-source-of-truth), so a bash re-implementation would duplicate that
+arithmetic and risk drift. Under `LOKI_LEGACY_BASH=1` (or on a machine without
+Bun installed), both `loki report kpis` and `loki kpis` print an honest
+requirement message (and `{"available": false, ...}` for `--json`) and exit 1
+rather than the generic "Unknown command".
 
 ```bash
-loki kpis            # Bun route: accuracy + efficiency KPI snapshot
-loki kpis --json
+loki report kpis     # Bun route: accuracy + efficiency KPI snapshot (canonical)
+loki report kpis --json
+loki kpis            # deprecated alias of `report kpis` (prints a stderr pointer)
 ```
 
 ---
@@ -1415,6 +1420,7 @@ the live table.
 | `loki export` | `loki report export` |
 | `loki share` | `loki report share` |
 | `loki dogfood` | `loki report dogfood` |
+| `loki kpis` | `loki report kpis` |
 | `loki trust-metrics` | `loki trust detail` |
 | `loki run` | `loki start <issue-ref>` |
 | `loki open` | `loki preview` |
