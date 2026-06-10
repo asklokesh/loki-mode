@@ -11657,6 +11657,28 @@ cmd_grill() {
     return $?
 }
 
+# ---------------------------------------------------------------------------
+# loki mcp - launch the MCP (Model Context Protocol) server
+#
+# Thin dispatcher that sources autonomy/mcp-launch.sh and delegates to
+# mcp_launch_main(). The launcher checks for python3 + the MCP SDK and, when
+# the SDK is missing, offers a consent-gated bootstrap into a project-local
+# virtualenv (.loki/mcp-venv) before exec'ing the server over stdio. This
+# closes the fresh-npm-consumer gap where the only bin was `loki` and the
+# Python MCP dependencies were never installed (task 562).
+# ---------------------------------------------------------------------------
+cmd_mcp() {
+    local mcp_mod="$_LOKI_SCRIPT_DIR/mcp-launch.sh"
+    if [ ! -f "$mcp_mod" ]; then
+        echo -e "${RED}Error: mcp launcher not found at $mcp_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$mcp_mod"
+    mcp_launch_main "$@"
+    return $?
+}
+
 cmd_heal_help() {
     echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
     echo ""
@@ -13842,6 +13864,9 @@ main() {
             ;;
         grill)
             cmd_grill "$@"
+            ;;
+        mcp)
+            cmd_mcp "$@"
             ;;
         migrate)
             cmd_migrate "$@"

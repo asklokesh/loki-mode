@@ -270,6 +270,12 @@ test_cmd "loki open --help exits 0 and shows preview usage" \
     0 "Usage: loki preview" open --help
 
 # -------------------------------------------
+# Test: loki mcp --help (task 562 MCP server launcher)
+# -------------------------------------------
+test_cmd "loki mcp --help exits 0 and shows the MCP launcher usage" \
+    0 "launch the MCP" mcp --help
+
+# -------------------------------------------
 # Test: unknown command exits non-zero
 # -------------------------------------------
 test_cmd "loki unknown-command exits 1" \

@@ -172,7 +172,7 @@ These knobs together implement the RARV-C (closure) loop: findings -> override c
 | `memory/storage.py` | 1,521 | File-based memory backend |
 | `memory/engine.py` | 1,401 | Memory orchestrator |
 | `memory/consolidation.py` | 999 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | 2,288 | MCP server (15 tools) |
+| `mcp/server.py` | 2,288 | MCP server (34 tools: 26 in-file + 7 magic + 1 gated managed; +3 resources, 2 prompts) |
 | `providers/loader.sh` | 185 | Provider loader |
 
 ### Key Function Lookup

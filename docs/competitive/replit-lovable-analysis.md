@@ -368,7 +368,7 @@ Replit Agent has evolved rapidly through four major versions:
 | Figma | MCP + Import | Builder.io plugin | No |
 | GitHub | Yes | Bidirectional sync | Full Git workflow |
 | Slack/Notion/Linear | Native connectors | No | Via MCP (extensible) |
-| Custom MCP | Yes | No | Yes (15 MCP tools) |
+| Custom MCP | Yes | No | Yes (34 MCP tools) |
 | Salesforce | Native connector | No | No |
 | BigQuery/Snowflake | Native connectors | No | No |
 
@@ -544,7 +544,7 @@ When positioning Loki Mode against Replit and Lovable, emphasize:
 | Dashboard active sessions | Monitoring only | Build-along interface |
 | Figma integration | None | MCP connector live |
 | Starter templates | 13 PRD templates | +5 full-stack starter kits |
-| MCP connectors | 15 tools | 25+ tools with common services |
+| MCP connectors | 34 tools | 25+ tools with common services |
 | Cost transparency | Token tracking exists | Real-time cost dashboard |
 
 ---
