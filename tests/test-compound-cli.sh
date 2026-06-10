@@ -73,7 +73,7 @@ export HOME="$TEST_HOME"
 
 log_test "compound help shows usage information"
 output=$("$LOKI_CLI" compound help 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "loki compound" && \
+if echo "$output" | grep -q "loki memory compound" && \
    echo "$output" | grep -q "Knowledge compounding system" && \
    echo "$output" | grep -q "Commands:" && \
    echo "$output" | grep -q "list" && \

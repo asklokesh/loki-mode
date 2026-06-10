@@ -117,15 +117,28 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // subcommand (session/metrics/cost/export/share/dogfood); bin/loki
       // two-token-routes ONLY `report kpis` to Bun (mirroring `trust detail`,
       // including its flag-anywhere scan), because kpis is Bun-only. So this Bun
-      // `report` arm is reached solely when `kpis` appears in the args; it emits
-      // NO deprecation pointer (it is the canonical form). `kpis` is matched
-      // flag-anywhere (`report kpis --json`, `report --json kpis`) and the
-      // remaining args (the flags) are forwarded to runKpis. Any other
-      // subcommand that somehow lands here is delegated to bash, the owner of
-      // the report noun, so the noun stays coherent even if routing changes.
-      if (rest.includes("kpis")) {
+      // `report` arm is reached solely when `kpis` is the report subcommand; it
+      // emits NO deprecation pointer (it is the canonical form). `kpis` is
+      // matched as the FIRST non-flag token after `report` (so `report kpis
+      // --json` and `report --json kpis` both route here), NOT anywhere in the
+      // argv. A bare `kpis` token appearing as a POSITIONAL VALUE of a different
+      // report subcommand -- e.g. `report export json kpis`, where `kpis` is the
+      // export output filename -- must NOT be hijacked; it is delegated to bash,
+      // the owner of the report noun, exactly as on main (v7.31.0). Only the
+      // subcommand token is stripped before forwarding to runKpis; the flags are
+      // preserved.
+      const firstSub = rest.find((a) => !a.startsWith("-"));
+      if (firstSub === "kpis") {
         const { runKpis } = await import("./commands/kpis.ts");
-        return runKpis(rest.filter((a) => a !== "kpis"));
+        let dropped = false;
+        const kpisArgs = rest.filter((a) => {
+          if (!dropped && a === "kpis") {
+            dropped = true;
+            return false;
+          }
+          return true;
+        });
+        return runKpis(kpisArgs);
       }
       const { delegateToBash } = await import("./util/bash_delegate.ts");
       return delegateToBash(["report", ...rest]);

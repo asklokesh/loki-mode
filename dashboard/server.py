@@ -2233,6 +2233,29 @@ def _normalize_session_model(raw: str | None) -> str:
     return val if val in _SESSION_MODEL_ALLOWLIST else ""
 
 
+# Session-pin allowlist is BROADER than the override-file allowlist above.
+# run.sh's session-pin case (run.sh:12331) accepts the four model aliases AND
+# the three raw tier names (planning|development|fast) -- documented at
+# skills/model-selection.md:8. The OVERRIDE file / POST path keeps the narrow
+# _SESSION_MODEL_ALLOWLIST because that value is fed straight to `claude
+# --model`, where tier names are not valid. The session pin is a tier route, so
+# tier names ARE valid pins.
+_SESSION_PIN_ALLOWLIST = _SESSION_MODEL_ALLOWLIST + ("planning", "development", "fast")
+
+
+def _normalize_session_pin(raw: str | None) -> str:
+    """Normalize a LOKI_SESSION_MODEL pin value (aliases + raw tier names).
+
+    Mirrors run.sh's session-pin case: trim + lowercase, accept the four model
+    aliases and the three tier names. Interior whitespace is preserved (so
+    "fab le" stays junk and falls through to the default tier, exactly like the
+    runner's "*" arm). Use this for the session-pin (no-override) derivation;
+    use _normalize_session_model for the override-file / POST path.
+    """
+    val = (raw or "").strip().lower()
+    return val if val in _SESSION_PIN_ALLOWLIST else ""
+
+
 # Provider-config model resolution mirror.
 #
 # SYNC: This is a byte-faithful python port of the claude provider's tier->model
@@ -2332,6 +2355,13 @@ def _resolve_session_pin(alias: str) -> str:
         "sonnet": "development",
         "haiku": "fast",
         "fable": "fable",
+        # Raw tier-name pins (run.sh:12336 passthrough arm) map to their own
+        # tier, NOT through the alias table. pin=fast -> fast tier ->
+        # PROVIDER_MODEL_FAST, matching the runner's dispatch instead of
+        # collapsing onto development.
+        "planning": "planning",
+        "development": "development",
+        "fast": "fast",
     }.get((alias or "").strip().lower(), "development")
     if pin_tier == "planning":
         model = _provider_model_planning()
@@ -2405,7 +2435,9 @@ async def get_session_model():
             override = _normalize_session_model(p.read_text()) or None
     except OSError:
         override = None
-    default = _normalize_session_model(os.environ.get("LOKI_SESSION_MODEL")) or "sonnet"
+    # Session pin accepts tier names too (run.sh:12336), so use the broader
+    # session-pin normalizer here (NOT the narrow override allowlist).
+    default = _normalize_session_pin(os.environ.get("LOKI_SESSION_MODEL")) or "sonnet"
     # Resolve on the route the runner will actually take: override-path clamp when
     # an override file is present, session-pin tier route otherwise. This closes
     # the task-568 stock-path gap (a "sonnet" pin dispatches opus).

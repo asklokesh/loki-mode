@@ -163,6 +163,12 @@ resolve_session_iter() {
       for kv in "$@"; do export "$kv"; done
       source "'"$CLAUDE_SH"'" 2>/dev/null
       sm="'"$sm"'"; iter='"$iter"'
+      # Mirror run.sh:12331 EXACTLY: trim + lowercase the pin before the case
+      # (so OPUS / " opus " resolve like opus), but do NOT apply the narrow
+      # override allowlist (tier names planning|development|fast stay valid).
+      sm="${sm#"${sm%%[![:space:]]*}"}"
+      sm="${sm%"${sm##*[![:space:]]}"}"
+      sm="$(printf "%s" "$sm" | tr "[:upper:]" "[:lower:]")"
       case "$sm" in
         opus) CURRENT_TIER="planning";; sonnet) CURRENT_TIER="development";;
         haiku) CURRENT_TIER="fast";; fable) CURRENT_TIER="fable";;
@@ -541,7 +547,15 @@ sp_r="$(resolve_session_iter sonnet 2)"    # runner-resolved (session-pin route)
 # Estimator reads the env directly (no override file); dashboard drives
 # _resolve_session_pin(pin); runner drives resolve_session_iter PIN 2. All three
 # must agree on every cell.
-for pin in sonnet opus haiku fable; do
+#
+# v7.32: the pin set now includes the documented raw TIER-NAME pins
+# (planning|development|fast, skills/model-selection.md:8) alongside the four
+# model aliases. Before this fix the estimator + dashboard collapsed tier-name
+# pins onto the development tier (allowlist reject -> default), so pin=fast
+# quoted Opus while the runner dispatched Sonnet (the v7.32 cost-agreement HIGH).
+# The runner's passthrough arm (run.sh:12336) routes tier names to their own
+# tier; all three readers must now agree on those cells too.
+for pin in sonnet opus haiku fable planning development fast; do
   for ah in "" LOKI_ALLOW_HAIKU=true; do
     for ovr in "" LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet LOKI_MODEL_FAST=haiku LOKI_CLAUDE_MODEL_PLANNING=sonnet; do
       for cap in "" sonnet haiku opus; do
@@ -565,6 +579,41 @@ done
 [ "$sp_fail" -eq 0 ] \
   && ok "session-pin parity matrix: estimator == dashboard == runner across $sp_cells cells (no-override tier route)" \
   || bad "session-pin parity matrix had $sp_fail mismatches (of $sp_cells cells)"
+
+# Explicit tier-name headline cells (the v7.32 cost-agreement HIGH). pin=fast on
+# stock config MUST resolve to sonnet on all three readers: before the fix the
+# estimator + dashboard quoted opus (allowlist reject -> development tier) while
+# the runner dispatched sonnet (fast tier). This is the regression vs main.
+tn_e="$(est_quoted LOKI_SESSION_MODEL=fast)"
+tn_d="$(dash_session_pin fast LOKI_SESSION_MODEL=fast)"
+tn_r="$(resolve_session_iter fast 2 LOKI_SESSION_MODEL=fast)"
+[ "$tn_e" = "sonnet" ] && [ "$tn_d" = "sonnet" ] && [ "$tn_r" = "sonnet" ] \
+  && ok "tier-name pin: LOKI_SESSION_MODEL=fast resolves to sonnet on all three (est=$tn_e dash=$tn_d runner=$tn_r; was opus-quote regression)" \
+  || bad "pin=fast mismatch: est='$tn_e' dash='$tn_d' runner='$tn_r' (expected all sonnet)"
+
+# pin=planning + LOKI_ALLOW_HAIKU=true (Cell B): must resolve to opus on all
+# three (planning tier -> PROVIDER_MODEL_PLANNING=opus, unaffected by ALLOW_HAIKU).
+# Before the fix the ports quoted sonnet (allowlist reject -> development ->
+# sonnet under ALLOW_HAIKU) while the runner dispatched opus (the ~1.7x under-quote).
+tnp_e="$(est_quoted LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+tnp_d="$(dash_session_pin planning LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+tnp_r="$(resolve_session_iter planning 2 LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+[ "$tnp_e" = "opus" ] && [ "$tnp_d" = "opus" ] && [ "$tnp_r" = "opus" ] \
+  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to opus on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r; Cell B closed)" \
+  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all opus)"
+
+# Miscased / whitespace session pins (the folded pre-existing LOW): run.sh now
+# trim+lowercases the pin before the case, so OPUS and " opus " resolve like the
+# canonical opus pin. Under ALLOW_HAIKU this is the over-quote-prone direction
+# (planning tier -> opus). All three readers must agree.
+for mc in OPUS " opus "; do
+  mc_e="$(est_quoted "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  mc_d="$(dash_session_pin "$mc" "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  mc_r="$(resolve_session_iter "$mc" 2 "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  [ "$mc_e" = "opus" ] && [ "$mc_d" = "opus" ] && [ "$mc_r" = "opus" ] \
+    && ok "miscased pin '$mc' + ALLOW_HAIKU resolves to opus on all three (est=$mc_e dash=$mc_d runner=$mc_r)" \
+    || bad "miscased pin '$mc' mismatch: est='$mc_e' dash='$mc_d' runner='$mc_r' (expected all opus)"
+done
 
 # Regression guard: a 'sonnet' OVERRIDE file must still dispatch sonnet (the
 # override path is NOT the tier route). Nothing else locked this cell before.

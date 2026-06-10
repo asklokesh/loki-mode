@@ -3,12 +3,22 @@
 # Test: `loki mcp` launcher (autonomy/mcp-launch.sh) + server.py SDK detection
 # (task 562 -- MCP server launchability for a fresh npm consumer).
 #
-# Stub-based, ZERO real installs and ZERO real server launches. Every path that
-# could install or exec the server is driven through PATH stubs:
-#   * a stub `python3` whose `-m mcp.server --check-sdk` exit code we control,
-#     so "SDK present" vs "SDK missing" is deterministic regardless of whether
-#     the dev/CI host actually has the pip MCP SDK installed (it does on this
-#     Mac, which would otherwise mask the missing-SDK branches);
+# Stub-based for the install/launch decision paths: ZERO real installs, and the
+# install/exec decision paths are driven through PATH stubs (no real venv/pip,
+# no stubbed server kept running). The ONLY real-server interactions are
+# deliberate, narrow regression pins that need the real file-exec resolution:
+# the `--check-sdk` probe (Tests 6, 6b, 8b) and ONE real `initialize` handshake
+# from a decoy cwd (Test 6b); these intentionally exercise the real
+# `mcp/server.py` to pin the file-exec launch form and the no-RuntimeWarning
+# property, and they self-skip when the pip MCP SDK is not importable.
+# Every path that could install or exec the server is driven through PATH stubs:
+#   * a stub `python3` whose `--check-sdk` exit code we control (the launcher
+#     probes and launches by FILE path -- `python "$root/mcp/server.py"` --
+#     not `-m mcp.server`; the stubs match on the `--check-sdk` flag regardless
+#     of how it is invoked), so "SDK present" vs "SDK missing" is deterministic
+#     regardless of whether the dev/CI host actually has the pip MCP SDK
+#     installed (it does on this Mac, which would otherwise mask the
+#     missing-SDK branches);
 #   * no real `python3 -m venv` / `pip install` ever runs.
 #
 # Coverage:
@@ -53,10 +63,12 @@ mkdir -p "$STUB_BIN"
 # still create the source-probe child but reports check-sdk failure).
 REAL_PY="$(command -v python3 || true)"
 
-# Stub python3 that reports SDK MISSING: `-m mcp.server --check-sdk` exits 1,
-# `-m venv` / anything else exits 0 quietly (never used in exit-2 paths since we
-# stop before install). It also handles the inline heredoc probes the launcher
-# may run by exiting non-zero (treated as "not importable").
+# Stub python3 that reports SDK MISSING: any `--check-sdk` invocation exits 1
+# (the launcher probes via `python "$root/mcp/server.py" --check-sdk`; the stub
+# keys on the flag, not the exec form), `-m venv` / anything else exits 0
+# quietly (never used in exit-2 paths since we stop before install). It also
+# handles the inline heredoc probes the launcher may run by exiting non-zero
+# (treated as "not importable").
 make_python_sdk_missing() {
     cat > "$STUB_BIN/python3" <<'EOF'
 #!/usr/bin/env bash
@@ -66,8 +78,8 @@ for a in "$@"; do
         --check-sdk) exit 1 ;;
     esac
 done
-# -m mcp.server (no --check-sdk) or any other invocation: pretend it ran but
-# do nothing. Tests never reach a real launch in the missing-SDK branches.
+# A server file-exec (no --check-sdk) or any other invocation: pretend it ran
+# but do nothing. Tests never reach a real launch in the missing-SDK branches.
 exit 1
 EOF
     chmod +x "$STUB_BIN/python3"
@@ -180,22 +192,25 @@ fi
 #     from a NON-repo cwd (the bug: `python -m mcp.server` from the user's cwd
 #     without PYTHONPATH resolved to the pip MCP SDK's own `mcp` package, whose
 #     stub __main__ starts a server with ZERO Loki tools). The fix prepends the
-#     install root to PYTHONPATH so the LOCAL mcp/server.py wins.
+#     install root to PYTHONPATH AND launches/probes by FILE path
+#     (`python "$root/mcp/server.py"`) so the LOCAL mcp/server.py wins.
 #
 #     Resolution-ordering test (uses real python3, no real server launch): we
 #     plant a FAKE `mcp` package (shape the hunter used: mcp/server/__main__.py
-#     prints a sentinel) on the ambient PYTHONPATH, then drive the launcher's
-#     resolution from a mktemp non-repo cwd via the same predicate the launch
-#     path uses (_ml_sdk_importable). The fixed launcher prepends $root, so:
-#       - the FAKE sentinel must be ABSENT  (root won the `mcp` name), and
+#     prints a sentinel) on the ambient PYTHONPATH, then run the EXACT file-exec
+#     form the launcher's probe and exec sites use, from a mktemp non-repo cwd.
+#     The fixed launcher prepends $root and runs the server file directly, so:
+#       - the FAKE sentinel must be ABSENT  (the file path can never resolve to
+#         the ambient `mcp` package's __main__), and
 #       - a LOKI-only sentinel must be PRESENT (Loki's mcp/server.py ran). Loki's
 #         module emits the "loki-mcp" logger error when it cannot complete the
 #         SDK namespace juggle (because the fake shadows the real SDK on the same
 #         PYTHONPATH), OR "MCP SDK OK" on a clean machine; either proves Loki's
 #         module -- not the fake -- executed.
 #     The negative (fake-absent) assertion is the load-bearing guard: it fails
-#     loudly if the launcher ever drops the $root prepend and falls back to the
-#     ambient `mcp` resolution that caused the P0.
+#     loudly if the launcher ever reverts the probe/exec to the ambient `mcp`
+#     resolution that caused the P0. The file-exec form is verified to match the
+#     launcher's actual exec string in Test 8a below.
 if [ -n "$REAL_PY" ]; then
     FAKE_SITE="$TMP/fake-site"
     NONREPO="$TMP/nonrepo-cwd"
@@ -210,24 +225,67 @@ EOF
     out=$(
         cd "$NONREPO" || exit 99
         # Reproduce the EXACT resolution the launcher uses: $root prepended ahead
-        # of the ambient PYTHONPATH (which here carries the fake mcp). This is
-        # the literal command the fixed _ml_sdk_importable / exec sites run, with
-        # stderr captured so we can inspect which module executed. We assert on
-        # the launcher building this string identically below (Test 8).
+        # of the ambient PYTHONPATH (which here carries the fake mcp), and the
+        # server invoked by FILE PATH (the literal form the fixed
+        # _ml_sdk_importable probe and the three exec sites run), with stderr
+        # captured so we can inspect which module executed. Test 8a asserts the
+        # launcher builds this same file-exec string.
         PYTHONPATH="$REPO_ROOT${FAKE_SITE:+:$FAKE_SITE}" \
-            "$REAL_PY" -m mcp.server --check-sdk </dev/null 2>&1
+            "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null 2>&1
     )
     if printf '%s' "$out" | grep -q "FAKE_SDK_SENTINEL_DO_NOT_WANT"; then
         log_fail "P0 regression: launcher resolves Loki server from non-repo cwd" \
             "fake SDK sentinel leaked -- root was not prepended ahead of ambient mcp"
     elif printf '%s' "$out" | grep -Eq "MCP SDK OK|loki-mcp"; then
-        log_pass "P0 regression: non-repo cwd resolves LOKI's mcp.server (fake SDK shadowed out)"
+        log_pass "P0 regression: non-repo cwd resolves LOKI's mcp/server.py (fake SDK shadowed out)"
     else
         log_fail "P0 regression: launcher resolves Loki server from non-repo cwd" \
             "neither fake nor Loki sentinel seen -- resolution unverifiable: $(printf '%s' "$out" | head -1)"
     fi
 else
     log_fail "P0 regression: non-repo cwd resolution" "python3 not found to run the test"
+fi
+
+# --- Test 6b: decoy-cwd regression -- a cwd containing a regular `mcp/` python
+#     package must NOT defeat the probe OR the launch. This pins the probe/launch
+#     symmetry fix: the old probe used `-m mcp.server`, which puts the cwd at
+#     sys.path[0] ahead of PYTHONPATH=$root, so a cwd `mcp/` package shadowed
+#     Loki's server and the probe FALSE-NEGATIVED ("SDK not installed") even
+#     though the file-exec launch from the same cwd succeeded. The fixed probe
+#     uses the same file-exec form, so probe and launch resolve the IDENTICAL
+#     module. Uses the real SDK if importable; skipped (not failed) otherwise so
+#     hosts/CI without the pip MCP SDK do not break the suite.
+if [ -n "$REAL_PY" ] \
+    && PYTHONPATH="$REPO_ROOT" "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null >/dev/null 2>&1; then
+    DECOY_CWD="$TMP/decoy-cwd"
+    mkdir -p "$DECOY_CWD/mcp"
+    : > "$DECOY_CWD/mcp/__init__.py"
+    # Decoy mcp/server.py: exits 7 on any argv. If the probe or launch resolved
+    # THIS (cwd shadowing) instead of Loki's $root/mcp/server.py, it would fail.
+    printf 'import sys\nsys.exit(7)\n' > "$DECOY_CWD/mcp/server.py"
+    probe_ok=no
+    launch_ok=no
+    (
+        cd "$DECOY_CWD" || exit 99
+        # shellcheck source=/dev/null
+        source "$LAUNCHER"
+        _ml_sdk_importable "$REAL_PY" "$REPO_ROOT"
+    ) && probe_ok=yes
+    # Launch side: a real JSON-RPC initialize must succeed (proves $root's server
+    # ran, not the exit-7 decoy) -- run the launcher itself from the decoy cwd.
+    hs=$(
+        cd "$DECOY_CWD" || exit 99
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+            | bash "$LAUNCHER" 2>/dev/null
+    )
+    printf '%s' "$hs" | grep -q '"result"' && launch_ok=yes
+    if [ "$probe_ok" = yes ] && [ "$launch_ok" = yes ]; then
+        log_pass "decoy-cwd: probe AND launch both resolve Loki's server (cwd mcp/ package shadowed out)"
+    else
+        log_fail "decoy-cwd probe/launch symmetry" "probe=$probe_ok launch=$launch_ok"
+    fi
+else
+    log_pass "decoy-cwd probe/launch symmetry (SKIPPED: real MCP SDK not importable on this host)"
 fi
 
 # --- Test 7: venv-home -- bootstrap consent path creates the venv under the
@@ -312,8 +370,8 @@ EOF
 
 # --- Test 8: PYTHONPATH propagation -- the exec must carry PYTHONPATH=<root> so
 #     the LOCAL mcp/server.py wins. A stub base-python that already "has the SDK"
-#     (check-sdk exit 0) AND, when run as `-m mcp.server` (the exec), echoes its
-#     received PYTHONPATH to a file. We assert the install root is on it.
+#     (check-sdk exit 0) AND, on the file-exec launch, echoes its received
+#     PYTHONPATH to a file. We assert the install root is on it.
 {
     PPATH_OUT="$TMP/ppath-out.txt"
     rm -f "$PPATH_OUT"
@@ -322,7 +380,8 @@ EOF
 for a in "\$@"; do
     case "\$a" in --check-sdk) exit 0 ;; esac
 done
-# This is the exec'd \`-m mcp.server\` launch: record PYTHONPATH and exit.
+# This is the file-exec launch (\`python "\$root/mcp/server.py"\`): record
+# PYTHONPATH and exit.
 printf '%s' "\$PYTHONPATH" > "$PPATH_OUT"
 exit 0
 EOF
@@ -339,6 +398,65 @@ EOF
         log_fail "PYTHONPATH propagation" "PYTHONPATH seen at exec: $( [ -f "$PPATH_OUT" ] && cat "$PPATH_OUT" || echo '<not recorded>')"
     fi
 }
+
+# --- Test 8a: file-exec launch form is pinned -- the exec must invoke the server
+#     by FILE PATH (\`python "$root/mcp/server.py"\`), NEVER \`-m mcp.server\`.
+#     A stub python3 records its full argv on the launch; we assert the server
+#     file path is present and the \`-m mcp.server\` form is ABSENT. This is the
+#     load-bearing pin: reverting any exec site (or the probe) back to
+#     \`-m mcp.server\` must fail this test (the old suite passed 15/15 even after
+#     such a revert because no test recorded the exec argv).
+{
+    EXEC_ARGV_OUT="$TMP/exec-argv.txt"
+    rm -f "$EXEC_ARGV_OUT"
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    case "\$a" in --check-sdk) exit 0 ;; esac
+done
+# Launch invocation (no --check-sdk): record the full argv and exit.
+printf '%s' "\$*" > "$EXEC_ARGV_OUT"
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+    USER_CWD2A="$TMP/user-project2a"
+    mkdir -p "$USER_CWD2A"
+    (
+        cd "$USER_CWD2A" || exit 99
+        PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null >/dev/null 2>&1
+    )
+    exec_argv="$(cat "$EXEC_ARGV_OUT" 2>/dev/null)"
+    if [ -f "$EXEC_ARGV_OUT" ] \
+        && printf '%s' "$exec_argv" | grep -qF "$REPO_ROOT/mcp/server.py" \
+        && ! printf '%s' "$exec_argv" | grep -Eq -- '(^| )-m( |$)'; then
+        log_pass "file-exec launch form pinned: server invoked by file path, not -m mcp.server"
+    else
+        log_fail "file-exec launch form pin" "exec argv: [$exec_argv]"
+    fi
+}
+
+# --- Test 8b: no RuntimeWarning -- a REAL file-exec launch (using the real
+#     python3 + real MCP SDK) must emit no \`RuntimeWarning\` on stderr. The old
+#     \`-m mcp.server\` form triggered runpy's "found in sys.modules" warning
+#     because the local \`mcp/\` package was imported during SDK-namespace setup
+#     before runpy executed mcp.server; the file-exec form eliminates it. We run
+#     the launcher's own probe form (--check-sdk, which loads the same modules)
+#     from repo root and assert clean stderr. Skipped (not failed) when the real
+#     SDK is not importable so SDK-less hosts/CI do not break the suite.
+if [ -n "$REAL_PY" ] \
+    && PYTHONPATH="$REPO_ROOT" "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null >/dev/null 2>&1; then
+    rw_err=$(
+        cd "$REPO_ROOT" || exit 99
+        PYTHONPATH="$REPO_ROOT" "$REAL_PY" "$REPO_ROOT/mcp/server.py" --check-sdk </dev/null 2>&1 1>/dev/null
+    )
+    if ! printf '%s' "$rw_err" | grep -q "RuntimeWarning"; then
+        log_pass "no-RuntimeWarning: real file-exec launch emits no RuntimeWarning on stderr"
+    else
+        log_fail "no-RuntimeWarning" "stderr contained RuntimeWarning: $(printf '%s' "$rw_err" | grep RuntimeWarning | head -1)"
+    fi
+else
+    log_pass "no-RuntimeWarning (SKIPPED: real MCP SDK not importable on this host)"
+fi
 
 # --- Test 9: non-TTY + LOKI_MCP_AUTO_BOOTSTRAP=1 -> bootstrap taken, ALL
 #     progress on STDERR, STDOUT empty until the (stubbed) server exec. This is
@@ -381,8 +499,8 @@ if [ "\$mode" = "venv" ] && [ -n "\$venv_target" ]; then
 for a in "\\\$@"; do
     case "\\\$a" in --check-sdk) [ -f "$STUB_STATE/installed" ] && exit 0 || exit 1 ;; esac
 done
-# This is the exec'd \\\`-m mcp.server\\\` launch: emit the ALLOWED server sentinel
-# on STDOUT (this is the only thing permitted on stdout) and exit.
+# This is the file-exec launch (\\\`python "\$root/mcp/server.py"\\\`): emit the
+# ALLOWED server sentinel on STDOUT (the only thing permitted on stdout) and exit.
 echo "SERVER_STDOUT_OK"
 exit 0
 INNER
@@ -491,9 +609,10 @@ EOF
 
 # --- Test 13: --yes is consumed, never forwarded into the server argv --------
 # (v7.31 finding 1). Stub python3 reports SDK present (check-sdk exit 0) and, on
-# the exec `-m mcp.server ...`, records the argv it received. The launcher must
-# strip --yes (a launcher-owned flag) while forwarding server flags like
-# --transport. Forwarding --yes would make the real server argparse exit 2.
+# the file-exec launch (`python "$root/mcp/server.py" ...`), records the argv it
+# received. The launcher must strip --yes (a launcher-owned flag) while
+# forwarding server flags like --transport. Forwarding --yes would make the real
+# server argparse exit 2.
 {
     ARGV_OUT="$TMP/yes-argv.txt"
     rm -f "$ARGV_OUT"
@@ -502,7 +621,7 @@ EOF
 for a in "\$@"; do
     case "\$a" in --check-sdk) exit 0 ;; esac
 done
-# exec'd server launch: record full argv (minus the leading -m mcp.server).
+# file-exec launch: record full argv (launcher prepends the server.py file path).
 printf '%s' "\$*" > "$ARGV_OUT"
 exit 0
 EOF

@@ -113,15 +113,22 @@ _ml_python() {
 # `--check-sdk` probe, which runs the exact loader the server uses and exits 0
 # only when FastMCP loaded.
 #
-# Critical: we set PYTHONPATH to the install root and DO NOT cd into it, so the
-# probe exercises the SAME module resolution as the real launch (which preserves
-# the user's cwd). The redirect of stdin from /dev/null is insurance: if the
-# pip SDK's own `mcp.server` were ever reached, its stub starts a stdio receive
-# loop; the EOF makes it exit instead of hanging.
+# Critical: we probe with the SAME FILE-EXEC form the launch uses
+# (`"$root/mcp/server.py"`, NOT `-m mcp.server`), with PYTHONPATH set to the
+# install root and WITHOUT cd-ing into it, so the probe exercises byte-identical
+# module resolution to the real launch (which preserves the user's cwd). This
+# matters because `-m mcp.server` puts the user's cwd at sys.path[0] AHEAD of
+# PYTHONPATH=$root, so a cwd that happens to contain a regular `mcp/` python
+# package would shadow Loki's server during the probe (false SDK-missing) while
+# the file-exec launch -- immune to cwd shadowing -- would succeed. Probing by
+# file path keeps probe and launch resolving the IDENTICAL module. The redirect
+# of stdin from /dev/null is insurance: if the pip SDK's own `mcp.server` were
+# ever reached, its stub starts a stdio receive loop; the EOF makes it exit
+# instead of hanging.
 _ml_sdk_importable() {
     local py="$1" root="$2"
     PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" \
-        "$py" -m mcp.server --check-sdk </dev/null >/dev/null 2>&1
+        "$py" "$root/mcp/server.py" --check-sdk </dev/null >/dev/null 2>&1
 }
 
 # _ml_print_manual <root> <venv>: print the honest manual install commands.
@@ -189,7 +196,8 @@ EOF
 # mcp_launch_main: dispatcher invoked by cmd_mcp() (autonomy/loki) or directly.
 mcp_launch_main() {
     # Split argv into launcher-owned flags (consumed here) and server argv
-    # (forwarded verbatim to `python -m mcp.server`). The server's argparse only
+    # (forwarded verbatim to the file-exec launch `python "$root/mcp/server.py"`).
+    # The server's argparse only
     # accepts --transport/--port/--check-sdk; forwarding a launcher flag like
     # --yes would make it abort with exit 2, so launcher flags MUST be stripped.
     # A bare `--` ends launcher parsing: everything after it is forwarded as-is

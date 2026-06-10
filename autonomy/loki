@@ -403,12 +403,26 @@ _deprecated_alias() {
 # `loki help` listing kpis). --json yields a structured {"available": false}
 # payload so a machine consumer is not handed prose. Exits 1.
 # Usage: _kpis_bash_unavailable "$@"   (the alias arm prints the pointer first)
+# --json is honored FLAG-ANYWHERE (not just as $1): a machine consumer that
+# passes the suppression flags first -- e.g. `kpis --quiet --json` or `report
+# kpis -q --json` -- must still get the structured {"available": false} payload
+# on stdout, not prose. This mirrors _deprecated_alias_should_suppress, which
+# also scans all of "$@". Exit 1 either way (the bash route never produces KPIs).
+# Copy points at the CANONICAL `loki report kpis` (the deprecated `loki kpis`
+# alias prints its own pointer first, at the alias arm).
 _kpis_bash_unavailable() {
-    if [ "${1:-}" = "--json" ]; then
-        printf '{"available": false, "reason": "loki kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
+    local _ka _want_json=""
+    for _ka in "$@"; do
+        if [ "$_ka" = "--json" ]; then
+            _want_json=1
+            break
+        fi
+    done
+    if [ -n "$_want_json" ]; then
+        printf '{"available": false, "reason": "loki report kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
     else
-        echo "loki kpis requires the Bun runtime and is not available on the bash route." >&2
-        echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki kpis'." >&2
+        echo "loki report kpis requires the Bun runtime and is not available on the bash route." >&2
+        echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki report kpis'." >&2
     fi
     exit 1
 }
@@ -680,7 +694,7 @@ show_help() {
     echo "More commands (init, watch, demo, web, api, logs, github,"
     echo "import, council, proof, audit, agent, template, magic, docs, wiki, ci,"
     echo "test, bench, secrets, telemetry, crash, worktree, failover, monitor,"
-    echo "remote, kpis, ...) are dispatchable and documented via"
+    echo "remote, ...) are dispatchable and documented via"
     echo "'loki <command> --help'."
     echo ""
     echo "Aliases (deprecated): older command names still work; they print a"
@@ -13254,10 +13268,26 @@ def _loki_norm_alias(raw):
     raw = (raw or '').strip().lower()
     return raw if raw in ('haiku', 'sonnet', 'opus', 'fable') else ''
 
+# Session-pin normalization is BROADER than the override-file allowlist above.
+# run.sh's session-pin case (run.sh:12331) accepts the four model aliases AND
+# the three raw tier names (planning|development|fast) -- documented at
+# skills/model-selection.md:8 -- mapping each through resolve_model_for_tier.
+# The OVERRIDE file path (_loki_norm_alias) stays narrow because that value is
+# fed straight to 'claude --model', where tier names are not valid. The session
+# pin is a tier route, so tier names ARE valid pins. This normalizer mirrors
+# run.sh's trim+lowercase (interior whitespace preserved, so 'fab le' stays junk
+# and falls through to the default tier exactly like the runner's '*' arm).
+def _loki_norm_session_pin(raw):
+    raw = (raw or '').strip().lower()
+    return raw if raw in (
+        'haiku', 'sonnet', 'opus', 'fable',
+        'planning', 'development', 'fast',
+    ) else ''
+
 # session_model_env starts from LOKI_SESSION_MODEL; track the lever that set it
 # so the provenance line names the real source (never a false attribution).
 _session_model_source = 'LOKI_SESSION_MODEL'
-session_model_env = _loki_norm_alias(os.environ.get('LOKI_SESSION_MODEL', '')) or 'sonnet'
+session_model_env = _loki_norm_session_pin(os.environ.get('LOKI_SESSION_MODEL', '')) or 'sonnet'
 
 _fable_override = ''
 try:
@@ -13357,6 +13387,13 @@ def _resolve_session_pin(alias):
         'sonnet': 'development',
         'haiku': 'fast',
         'fable': 'fable',
+        # Raw tier-name pins (run.sh:12336 passthrough arm) map to their own
+        # tier, NOT through the alias table. So pin=fast -> fast tier ->
+        # PROVIDER_MODEL_FAST (sonnet stock / haiku ALLOW_HAIKU), matching the
+        # runner's dispatch instead of collapsing onto development.
+        'planning': 'planning',
+        'development': 'development',
+        'fast': 'fast',
     }.get(alias, 'development')
     # tier -> model (claude.sh resolve_model_for_tier explicit arms).
     if _pin_tier == 'planning':
@@ -13436,6 +13473,11 @@ _session_tier_map = {
     'opus': 'planning',
     'sonnet': 'development',
     'haiku': 'fast',
+    # Raw tier-name pins key off their own work tier directly (they ARE tier
+    # names), mirroring run.sh's session-pin passthrough arm.
+    'planning': 'planning',
+    'development': 'development',
+    'fast': 'fast',
 }
 session_tier = _session_tier_map.get(session_model_env, 'development')
 
@@ -17139,8 +17181,11 @@ print('removed')
             ;;
 
         *)
-            echo -e "${RED}Unknown memory command: $subcommand${NC}"
-            echo "Run 'loki memory help' for usage."
+            # Error-channel parity with the consolidated noun family (analyze,
+            # modernize): unknown-subcommand diagnostics go to STDERR so a scripted
+            # consumer capturing stdout is not handed error text. Exit 1 unchanged.
+            echo -e "${RED}Unknown memory command: $subcommand${NC}" >&2
+            echo "Run 'loki memory help' for usage." >&2
             exit 1
             ;;
     esac
@@ -17391,13 +17436,13 @@ COMPOUND_RUN_SCRIPT
             ;;
 
         help|--help|-h)
-            echo -e "${BOLD}loki compound${NC} - Knowledge compounding system"
+            echo -e "${BOLD}loki memory compound${NC} - Knowledge compounding system"
             echo ""
             echo "Extracts structured solutions from cross-project learnings."
             echo "Solutions are stored as markdown files with YAML frontmatter"
             echo "at ~/.loki/solutions/{category}/ and fed back into future planning."
             echo ""
-            echo "Usage: loki compound <command>"
+            echo "Usage: loki memory compound <command>   (alias: loki compound)"
             echo ""
             echo "Commands:"
             echo "  list              List all solutions by category"
@@ -26491,21 +26536,35 @@ cmd_report() {
     # `report kpis` (flag-anywhere) to the Bun runtime before this function is
     # reached. This is the bash-route (LOKI_LEGACY_BASH / no-Bun) path: print
     # the honest requirement message, NO deprecation pointer (this IS the
-    # canonical form), exit 1. We scan flag-anywhere so `report --json kpis`
-    # behaves like `report kpis --json` (mirrors the bin/loki + Bun cli.ts
-    # routing) instead of falling through to cmd_report_legacy's "Unknown
-    # option" path. The non-kpis args (e.g. --json) are passed through so the
-    # helper still emits the structured machine payload.
-    local _has_kpis="" _kpis_args=()
+    # canonical form), exit 1. `kpis` is the report subcommand ONLY when it is the
+    # FIRST non-flag token after `report` (so `report kpis --json` and `report
+    # --json kpis` both route here, mirroring the bin/loki + Bun cli.ts routing),
+    # NOT when it appears anywhere. A `kpis` token that is a positional VALUE of a
+    # different report subcommand -- e.g. `report export json kpis`, where `kpis`
+    # is the export OUTPUT FILENAME -- must NOT be hijacked; it falls through to
+    # the export arm below and behaves exactly as on main (v7.31.0): exit 0, file
+    # `kpis` created. Only the subcommand token is stripped before forwarding to
+    # the helper; flags (e.g. --json) are passed through so it still emits the
+    # structured machine payload.
+    local _report_first_sub="" _kpis_args=() _dropped_kpis=""
     local _a
     for _a in "$@"; do
-        if [ "$_a" = "kpis" ]; then
-            _has_kpis=1
-        else
-            _kpis_args+=("$_a")
-        fi
+        case "$_a" in
+            -*) _kpis_args+=("$_a") ;;
+            *)
+                if [ -z "$_report_first_sub" ]; then
+                    _report_first_sub="$_a"
+                    # Drop only the subcommand token itself, once.
+                    if [ "$_a" = "kpis" ]; then
+                        _dropped_kpis=1
+                        continue
+                    fi
+                fi
+                _kpis_args+=("$_a")
+                ;;
+        esac
     done
-    if [ -n "$_has_kpis" ]; then
+    if [ -n "$_dropped_kpis" ]; then
         # ${arr[@]:-} guards the empty-array expansion under `set -u` on the
         # bare `report kpis` case (no extra flags) for older bash (3.2/4.2).
         _kpis_bash_unavailable "${_kpis_args[@]:-}"
@@ -26579,7 +26638,7 @@ cmd_report_legacy() {
             --include-gates) include_gates=true; shift ;;
             --include-agents) include_agents=true; shift ;;
             --include-timeline) include_timeline=true; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki report --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki report --help' for usage." >&2; exit 1 ;;  # stderr for noun-family error-channel parity (analyze/modernize)
         esac
     done
 

@@ -325,8 +325,10 @@ run_check "tests/cli/test-mcp-launch.sh (MCP launcher + SDK detection)" "bash te
 
 # task 562: real MCP stdio handshake. Only runs when the pip MCP SDK is actually
 # importable on this host (the namespace-collision fix in mcp/server.py needs
-# the genuine SDK present). Spawns `python -m mcp.server` over stdio, completes
-# initialize -> tools/list, and asserts the server boots and lists >0 tools.
+# the genuine SDK present). Spawns the server exactly like the shipped launcher
+# (autonomy/mcp-launch.sh): file-exec of mcp/server.py with PYTHONPATH=repo from
+# a NON-repo cwd (the decoy dir), completes initialize -> tools/list, and
+# asserts the server boots and lists >0 tools.
 # This is the ONLY check that proves FastMCP truly loads (a file-exists probe is
 # a false positive under the local-vs-SDK `mcp` shadowing). Skipped (PASS) when
 # the SDK is not installed so CI without it stays green.
@@ -345,8 +347,10 @@ repo = sys.argv[1]
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 async def run():
+    env = dict(os.environ)
+    env["PYTHONPATH"] = repo + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     params = StdioServerParameters(command=sys.executable,
-        args=["-m","mcp.server","--transport","stdio"], cwd=repo, env=dict(os.environ))
+        args=[os.path.join(repo, "mcp", "server.py"), "--transport", "stdio"], env=env)
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
             await s.initialize()

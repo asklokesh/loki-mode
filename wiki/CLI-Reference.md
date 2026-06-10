@@ -686,6 +686,7 @@ loki memory [SUBCOMMAND] [OPTIONS]
 | `export [FILE]` | Export learnings to JSON |
 | `clear {patterns\|mistakes\|successes\|all}` | Clear learnings |
 | `dedupe` | Remove duplicate entries |
+| `compound [SUBCOMMAND]` | Knowledge compounding (see [`loki memory compound`](#loki-memory-compound)) |
 
 **Examples:**
 
@@ -719,12 +720,15 @@ loki memory clear mistakes
 
 ---
 
-### `loki compound`
+### `loki memory compound`
 
 Knowledge compounding -- structured solutions extracted from session learnings (v5.30.0).
+Grouped under the `memory` noun in the Phase B CLI consolidation; the top-level
+`loki compound` still works as a deprecated alias (see [Deprecated Command
+Aliases](#deprecated-command-aliases)).
 
 ```bash
-loki compound [SUBCOMMAND]
+loki memory compound [SUBCOMMAND]
 ```
 
 **Subcommands:**
@@ -741,25 +745,73 @@ loki compound [SUBCOMMAND]
 
 ```bash
 # List all solution categories
-loki compound list
+loki memory compound list
 
 # Show security solutions
-loki compound show security
+loki memory compound show security
 
 # Show performance solutions
-loki compound show performance
+loki memory compound show performance
 
 # Search for Docker-related solutions
-loki compound search "docker"
+loki memory compound search "docker"
 
 # Manually trigger compounding
-loki compound run
+loki memory compound run
 
 # View statistics
-loki compound stats
+loki memory compound stats
+
+# Deprecated alias (still works, prints a stderr pointer)
+loki compound list
 ```
 
 **Categories:** security, performance, architecture, testing, debugging, deployment, general
+
+---
+
+## Knowledge Commands (grouped surface)
+
+The CLI consolidation (Phase B) groups the repo-intelligence commands under a
+single `loki analyze` noun. Each subcommand forwards 1:1 to the original
+top-level command; the old names still work as deprecated aliases (see
+[Deprecated Command Aliases](#deprecated-command-aliases)).
+
+```bash
+loki analyze explain [path]   # explain a codebase architecture in prose (was: loki explain)
+loki analyze onboard [path]   # analyze a repo and generate CLAUDE.md      (was: loki onboard)
+loki analyze code [query]     # codebase intelligence queries             (was: loki code)
+loki analyze context [cmd]    # context-window management                 (was: loki context)
+
+loki analyze --help           # lists all subcommands
+loki analyze <subcommand> --help
+```
+
+`loki analyze` is a thin dispatcher: no handler logic moved during the
+consolidation, so each subcommand behaves exactly like its former top-level
+command. The short alias `ctx` maps to `loki analyze context`.
+
+---
+
+## Modernization Commands (grouped surface)
+
+The CLI consolidation (Phase B) groups the legacy-modernization commands under a
+single `loki modernize` noun. Each subcommand forwards 1:1 to the original
+top-level command; the old names still work as deprecated aliases (see
+[Deprecated Command Aliases](#deprecated-command-aliases)).
+
+```bash
+loki modernize heal <path>     # legacy system healing in phases   (was: loki heal)
+loki modernize migrate <path>  # codebase migration in phases       (was: loki migrate)
+
+loki modernize --help          # lists all subcommands
+loki modernize <subcommand> --help
+```
+
+`loki modernize heal` runs the Amazon AGI Lab-inspired healing phases
+(`archaeology`, `stabilize`, `isolate`, `modernize`, `validate`); `loki modernize
+migrate` runs the phased codebase-migration workflow. Both are thin forwarders:
+no handler logic moved during the consolidation.
 
 ---
 
@@ -1404,10 +1456,10 @@ loki kpis            # deprecated alias of `report kpis` (prints a stderr pointe
 
 ## Deprecated Command Aliases
 
-Several older top-level command names were grouped under the `report` and
-`trust` nouns in v7.31. The old names remain as deprecated aliases: each
-forwards 1:1 to its canonical command and prints exactly one pointer line to
-STDERR. The pointer is suppressed under `--json`, `-q`, `--quiet`, and for the
+Several older top-level command names were grouped under the `report`, `trust`,
+`analyze`, `modernize`, and `memory` nouns during the CLI consolidation. The old
+names remain as deprecated aliases: each forwards 1:1 to its canonical command
+and prints exactly one pointer line to STDERR. The pointer is suppressed under `--json`, `-q`, `--quiet`, and for the
 positional machine-output formats (`json`, `csv`, `timeline`), so machine
 consumers and combined-`2>&1` captures stay clean. Run `loki help aliases` for
 the live table.
@@ -1429,6 +1481,14 @@ the live table.
 | `loki wt` | `loki worktree` |
 | `loki otel` | `loki telemetry` |
 | `loki rc` | `loki remote` |
+| `loki compound` | `loki memory compound` |
+| `loki explain` | `loki analyze explain` |
+| `loki onboard` | `loki analyze onboard` |
+| `loki code` | `loki analyze code` |
+| `loki context` | `loki analyze context` |
+| `loki ctx` | `loki analyze context` |
+| `loki heal` | `loki modernize heal` |
+| `loki migrate` | `loki modernize migrate` |
 
 No-side-effect contract: an alias never creates `.loki/` in a clean directory.
 Adoption telemetry (`cli_command_deprecated`) is emitted only when `.loki/`
