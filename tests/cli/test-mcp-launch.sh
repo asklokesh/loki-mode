@@ -340,6 +340,155 @@ EOF
     fi
 }
 
+# --- Test 9: non-TTY + LOKI_MCP_AUTO_BOOTSTRAP=1 -> bootstrap taken, ALL
+#     progress on STDERR, STDOUT empty until the (stubbed) server exec. This is
+#     the load-bearing stdout/stderr separation proof: stdout is the JSON-RPC
+#     channel to the MCP client and MUST stay clean. We capture stdout and stderr
+#     to SEPARATE files (merged 2>&1 cannot prove cleanliness). The stub venv/pip
+#     deliberately emit a stdout sentinel that the launcher must route to stderr;
+#     the stubbed server exec emits its OWN allowed sentinel. Assertions:
+#       - the pip/venv noise sentinel is in STDERR and ABSENT from STDOUT;
+#       - STDOUT contains ONLY the server sentinel.
+make_python_autobootstrap_stub() {
+    # Base python3: --check-sdk reports missing until "installed" marker exists;
+    # `-m venv <path>` creates the venv tree, emits a stdout noise sentinel, and
+    # writes a venv python (reports OK once installed) + a venv pip (marks
+    # installed, emits a stdout noise sentinel). The base python is NEVER the one
+    # that execs the server here (the venv python is), so we do not need a server
+    # branch on the base stub.
+    cat > "$STUB_BIN/python3" <<EOF
+#!/usr/bin/env bash
+mode=""
+venv_target=""
+prev=""
+for a in "\$@"; do
+    case "\$a" in
+        --check-sdk) mode="check" ;;
+        venv) mode="venv" ;;
+    esac
+    if [ "\$prev" = "venv" ]; then venv_target="\$a"; fi
+    prev="\$a"
+done
+if [ "\$mode" = "check" ]; then
+    [ -f "$STUB_STATE/installed" ] && exit 0 || exit 1
+fi
+if [ "\$mode" = "venv" ] && [ -n "\$venv_target" ]; then
+    # venv noise on STDOUT -- the launcher must route this to stderr.
+    echo "VENV_STDOUT_NOISE"
+    mkdir -p "\$venv_target/bin"
+    cat > "\$venv_target/bin/python" <<INNER
+#!/usr/bin/env bash
+for a in "\\\$@"; do
+    case "\\\$a" in --check-sdk) [ -f "$STUB_STATE/installed" ] && exit 0 || exit 1 ;; esac
+done
+# This is the exec'd \\\`-m mcp.server\\\` launch: emit the ALLOWED server sentinel
+# on STDOUT (this is the only thing permitted on stdout) and exit.
+echo "SERVER_STDOUT_OK"
+exit 0
+INNER
+    chmod +x "\$venv_target/bin/python"
+    cat > "\$venv_target/bin/pip" <<INNER
+#!/usr/bin/env bash
+# pip noise on STDOUT -- the launcher must route this to stderr.
+echo "PIP_STDOUT_NOISE"
+touch "$STUB_STATE/installed"
+exit 0
+INNER
+    chmod +x "\$venv_target/bin/pip"
+    exit 0
+fi
+exit 0
+EOF
+    chmod +x "$STUB_BIN/python3"
+}
+
+{
+    STUB_STATE="$TMP/auto-state"
+    rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
+    make_python_autobootstrap_stub
+    USER_CWD3="$TMP/user-project3"
+    mkdir -p "$USER_CWD3"
+    A_OUT="$TMP/auto-stdout.txt"
+    A_ERR="$TMP/auto-stderr.txt"
+    rm -f "$A_OUT" "$A_ERR"
+    (
+        cd "$USER_CWD3" || exit 99
+        # Real non-TTY launch (piped stdin/stdout/stderr like an MCP client),
+        # flag set. stdout and stderr captured to SEPARATE files.
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" \
+            LOKI_MCP_AUTO_BOOTSTRAP=1 LOKI_LEGACY_BASH=1 \
+            bash "$LOKI" mcp </dev/null >"$A_OUT" 2>"$A_ERR"
+    )
+    so="$(cat "$A_OUT" 2>/dev/null)"
+    se="$(cat "$A_ERR" 2>/dev/null)"
+    if printf '%s' "$so" | grep -q "SERVER_STDOUT_OK" \
+        && ! printf '%s' "$so" | grep -q "PIP_STDOUT_NOISE" \
+        && ! printf '%s' "$so" | grep -q "VENV_STDOUT_NOISE" \
+        && printf '%s' "$se" | grep -q "PIP_STDOUT_NOISE" \
+        && printf '%s' "$se" | grep -q "VENV_STDOUT_NOISE"; then
+        log_pass "auto-bootstrap non-TTY+flag: stdout clean (server sentinel only), all progress on stderr"
+    else
+        log_fail "auto-bootstrap stdout/stderr separation" \
+            "stdout=[$(printf '%s' "$so" | tr '\n' '|')] stderr-has-noise=$(printf '%s' "$se" | grep -q PIP_STDOUT_NOISE && echo yes || echo no)"
+    fi
+}
+
+# --- Test 10: non-TTY WITHOUT the flag -> still exit 2 (regression guard) -----
+{
+    make_python_sdk_missing
+    out=$(PATH="$STUB_BIN:$PATH" LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
+    if [ "$code" -eq 2 ] \
+        && printf '%s' "$out" | grep -q "mcp/requirements.txt" \
+        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        log_pass "non-TTY WITHOUT flag still exits 2 (no silent install)"
+    else
+        log_fail "non-TTY no-flag regression" "exit=$code"
+    fi
+}
+
+# --- Test 11: flag + LOKI_NO_INSTALL_OFFER=1 -> refuses, logs precedence line --
+# Explicit no beats explicit yes: must exit 2 AND emit the precedence log line.
+{
+    make_python_sdk_missing
+    out=$(PATH="$STUB_BIN:$PATH" LOKI_NO_INSTALL_OFFER=1 LOKI_MCP_AUTO_BOOTSTRAP=1 \
+            LOKI_LEGACY_BASH=1 bash "$LOKI" mcp </dev/null 2>&1); code=$?
+    if [ "$code" -eq 2 ] \
+        && printf '%s' "$out" | grep -q "overrides LOKI_MCP_AUTO_BOOTSTRAP" \
+        && ! printf '%s' "$out" | grep -qi "Installing MCP dependencies"; then
+        log_pass "LOKI_NO_INSTALL_OFFER=1 overrides flag: exit 2 + precedence log, no install"
+    else
+        log_fail "precedence: NO_INSTALL_OFFER over AUTO_BOOTSTRAP" \
+            "exit=$code precedence-logged=$(printf '%s' "$out" | grep -q 'overrides LOKI_MCP_AUTO_BOOTSTRAP' && echo yes || echo no)"
+    fi
+}
+
+# --- Test 12: TTY + flag -> no consent prompt (consent already given) ---------
+# Override _ml_non_interactive to pretend a TTY, set the flag, drive the
+# bootstrap via the venv stub. Assert the "Proceed? [Y/n]" prompt is ABSENT and
+# the bootstrap proceeds (server sentinel reached).
+{
+    STUB_STATE="$TMP/tty-flag-state"
+    rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
+    make_python_autobootstrap_stub
+    USER_CWD4="$TMP/user-project4"
+    mkdir -p "$USER_CWD4"
+    out=$(
+        cd "$USER_CWD4" || exit 99
+        # shellcheck source=/dev/null
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" source "$LAUNCHER"
+        _ml_non_interactive() { return 1; }   # pretend interactive TTY
+        STUB_STATE="$STUB_STATE" PATH="$STUB_BIN:$PATH" LOKI_MCP_AUTO_BOOTSTRAP=1 \
+            mcp_launch_main </dev/null 2>&1
+    )
+    if ! printf '%s' "$out" | grep -qi "Proceed?" \
+        && printf '%s' "$out" | grep -q "SERVER_STDOUT_OK"; then
+        log_pass "TTY + flag: consent prompt skipped, bootstrap proceeds"
+    else
+        log_fail "TTY + flag prompt skip" \
+            "prompt-present=$(printf '%s' "$out" | grep -qi 'Proceed?' && echo yes || echo no)"
+    fi
+}
+
 # --- Summary ----------------------------------------------------------------
 echo ""
 echo "========================================"

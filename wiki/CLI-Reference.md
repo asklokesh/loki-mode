@@ -183,9 +183,41 @@ manual command and exiting 2; opt out with `LOKI_NO_INSTALL_OFFER=1`;
 relocate the venv with `LOKI_MCP_VENV`). The server resolves the project's
 `.loki` from your current directory.
 
+MCP clients (Claude Desktop and similar) spawn the server non-interactively
+over piped stdio, so the same non-TTY gate that protects CI also stops a
+first-run bootstrap there: a cold launch on a machine without the SDK exits 2.
+Set `LOKI_MCP_AUTO_BOOTSTRAP=1` in your MCP client config to authorize the
+one-time venv bootstrap in that non-interactive context. Writing the flag into
+the config IS the consent: it is explicit, per-client, and reversible. When it
+runs, all bootstrap progress goes to stderr only so stdout stays a clean
+JSON-RPC channel; the server execs once the SDK is importable. On a terminal the
+flag also skips the consent prompt (consent already given).
+`LOKI_NO_INSTALL_OFFER=1` always wins (explicit no beats explicit yes) and a
+one-line precedence note is logged.
+
 ```bash
 loki mcp           # launch (offers dependency bootstrap if needed)
 loki mcp --help
+```
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `LOKI_MCP_VENV=/abs/path` | Use a custom venv location instead of `.loki/mcp-venv`. |
+| `LOKI_NO_INSTALL_OFFER=1` | Never install; print the manual command and exit 2. Wins over `LOKI_MCP_AUTO_BOOTSTRAP`. |
+| `LOKI_MCP_AUTO_BOOTSTRAP=1` | Written consent for a non-interactive (MCP client) bootstrap. Progress on stderr only; skips the TTY prompt. |
+
+Example MCP client config entry that authorizes the bootstrap:
+
+```json
+{
+  "mcpServers": {
+    "loki-mode": {
+      "command": "npx",
+      "args": ["loki-mode", "mcp"],
+      "env": { "LOKI_MCP_AUTO_BOOTSTRAP": "1" }
+    }
+  }
+}
 ```
 
 ---

@@ -122,10 +122,14 @@ COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
-# Install dashboard Python dependencies
+# Install dashboard, web-app, and MCP server Python dependencies.
+# mcp/requirements.txt is installed here so the MCP SDK is present in the image:
+# Glama's clean-room introspection builds this image and launches the server, and
+# a baked-in SDK lets `loki mcp` serve tools without a first-run bootstrap.
 RUN pip3 install --no-cache-dir --break-system-packages \
     -r dashboard/requirements.txt \
-    -r web-app/requirements.txt
+    -r web-app/requirements.txt \
+    -r mcp/requirements.txt
 
 # Make scripts executable
 RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki
