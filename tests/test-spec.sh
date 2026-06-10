@@ -318,6 +318,52 @@ scenario_no_commit_lock() {
     rm -rf "$repo"
 }
 
+# ---------------------------------------------------------------------------
+# Scenario 7 (MEDIUM-4): the lock recorded a spec path, but that spec file is
+#             now DELETED. spec_verify_hook must emit a Medium spec_drift finding
+#             ("locked spec file missing: <path>") and must NOT silently pass or
+#             fall back to spec_resolve_source (comparing a different candidate).
+# ---------------------------------------------------------------------------
+scenario_deleted_locked_spec() {
+    local repo; repo="$(make_repo)"
+    cd "$repo" || return
+    printf '%s' "$FIXTURE_SPEC" > prd.md
+    git add prd.md && git commit -qm init --no-gpg-sign --no-verify
+
+    # Lock against prd.md (records spec_path=prd.md in spec.lock).
+    bash "$SPEC_SH" lock prd.md >/dev/null 2>&1
+
+    # Plant a DIFFERENT candidate that spec_resolve_source would otherwise pick
+    # up (PRD.md is in the resolution chain). The fix must NOT fall back to it.
+    printf '# Decoy\n\n- [ ] unrelated\n' > PRD.md
+
+    # Delete the locked spec file.
+    rm -f prd.md
+
+    # Source spec.sh and call the hook directly to capture the TSV finding it
+    # emits on stdout (verify.sh consumes this same hook output).
+    local hook_out hook_rc
+    hook_out="$(
+        # shellcheck source=/dev/null
+        source "$SPEC_SH"
+        spec_verify_hook ".loki/spec"
+    )"
+    hook_rc=$?
+
+    assert_eq "deleted-locked-spec: hook rc is non-fatal (0)" 0 "$hook_rc"
+    assert_contains "deleted-locked-spec: emits a Medium spec_drift finding" "$hook_out" "Medium	spec_drift"
+    assert_contains "deleted-locked-spec: message names the missing locked path" "$hook_out" "locked spec file missing: prd.md"
+    # The finding must reference the LOCKED path (prd.md), never the decoy (PRD.md).
+    TOTAL=$((TOTAL + 1))
+    case "$hook_out" in
+        *"PRD.md"*) log_fail "deleted-locked-spec: no fallback to a different candidate" "finding referenced decoy PRD.md" ;;
+        *) log_pass "deleted-locked-spec: no fallback to a different candidate (decoy PRD.md not referenced)" ;;
+    esac
+
+    cd "$SCRIPT_DIR" || true
+    rm -rf "$repo"
+}
+
 echo "Running loki spec lifecycle tests..."
 echo ""
 scenario_lifecycle
@@ -326,6 +372,7 @@ scenario_no_lock
 scenario_json
 scenario_verify_integration
 scenario_no_commit_lock
+scenario_deleted_locked_spec
 
 echo ""
 echo "========================================"

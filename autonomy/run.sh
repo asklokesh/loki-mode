@@ -13122,6 +13122,17 @@ if __name__ == "__main__":
             case "${gate_failures:-}" in
                 *code_review,*|*code_review_ESCALATED*) _gate_block_for_completion="code_review" ;;
             esac
+            # MEDIUM-3: this completion-promise route evaluates the council hard
+            # gates (evidence + held-out) without the council_evaluate freshness
+            # step, so the held-out gate could read stale verification statuses
+            # (and a stale reservation). Re-verify the checklist ONCE here, but
+            # only when a completion claim is actually present (mirror the
+            # check_completion_promise condition used by the gate chain below) so
+            # verification does not run every iteration. Type-guarded and
+            # best-effort: failure must never block the completion path.
+            if check_completion_promise "$iter_output" && type council_reverify_checklist &>/dev/null; then
+                council_reverify_checklist 2>/dev/null || true
+            fi
             if [ -n "$_gate_block_for_completion" ] && check_completion_promise "$iter_output"; then
                 log_warn "Completion claim rejected: code review is BLOCKED for this iteration (Critical/High findings). Fix review issues before completion."
                 log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"
@@ -13528,6 +13539,13 @@ check_human_intervention() {
     if [ -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED" ]; then
         log_info "Council force-review requested from dashboard"
         rm -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED"
+        # MEDIUM-3: this route evaluates the council hard gates directly without
+        # the council_evaluate freshness step, so re-verify the checklist ONCE
+        # before the gate chain to restore that invariant (refreshes held-out
+        # statuses and repairs a stale reservation). Type-guarded, best-effort.
+        if type council_reverify_checklist &>/dev/null; then
+            council_reverify_checklist 2>/dev/null || true
+        fi
         if type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
             log_info "Council force-review: blocked by checklist hard gate"
         elif type council_evidence_gate &>/dev/null && ! council_evidence_gate; then

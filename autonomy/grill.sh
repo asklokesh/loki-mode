@@ -120,6 +120,33 @@ EOF
 # Invoke the provider once and capture the interrogation report.
 # Echoes the report markdown on success; returns nonzero on failure.
 # ---------------------------------------------------------------------------
+# LOW-6: validate the provider (the same checks that produce rc=3) WITHOUT
+# invoking it, so grill_main can fail cleanly BEFORE logging "interrogating ...
+# via <provider>". Returns 0 if the provider is supported and its CLI is present;
+# otherwise prints the same error grill_invoke_provider would and returns rc=3.
+grill_check_provider() {
+    local provider="${LOKI_PROVIDER:-claude}"
+    case "$provider" in
+        claude)
+            if ! command -v claude >/dev/null 2>&1; then
+                _grill_err "Claude Code CLI not found. Install: https://docs.anthropic.com/en/docs/claude-code"
+                return $GRILL_EXIT_ERROR
+            fi
+            ;;
+        codex)
+            if ! command -v codex >/dev/null 2>&1; then
+                _grill_err "Codex CLI not found."
+                return $GRILL_EXIT_ERROR
+            fi
+            ;;
+        *)
+            _grill_err "grill currently supports the claude and codex providers (got: $provider)"
+            return $GRILL_EXIT_ERROR
+            ;;
+    esac
+    return 0
+}
+
 grill_invoke_provider() {
     local prompt="$1"
     local provider="${LOKI_PROVIDER:-claude}"
@@ -245,6 +272,11 @@ grill_main() {
         _grill_err "spec file is empty: $spec_path"
         return $GRILL_EXIT_USAGE
     fi
+
+    # LOW-6: validate the provider BEFORE logging the interrogation line, so an
+    # unavailable/unsupported provider fails cleanly (rc=3) without first printing
+    # a misleading "interrogating ... via <provider>" message.
+    grill_check_provider || return $GRILL_EXIT_ERROR
 
     local prompt
     prompt="$(grill_build_prompt "$spec_path" "$spec_body")"

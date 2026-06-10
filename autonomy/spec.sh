@@ -485,7 +485,20 @@ spec_verify_hook() {
     local spec_path
     # Prefer the spec path recorded in the lock; fall back to resolution.
     spec_path="$(python3 -c 'import sys,json; print(json.load(open(sys.argv[1])).get("spec_path",""))' "$lock_file" 2>/dev/null || echo "")"
-    if [ -z "$spec_path" ] || [ ! -f "$spec_path" ]; then
+    # MEDIUM-4: the lock recorded a spec path but that file is now MISSING (the
+    # locked spec was deleted). That is real drift -- the contract the lock binds
+    # no longer exists -- so emit a Medium spec_drift finding instead of silently
+    # returning 0. NEVER fall back to spec_resolve_source here: comparing against
+    # a different candidate file would mask the deletion and attest a spec that is
+    # not the locked one. The empty-spec_path case below is a SEPARATE, legitimate
+    # fallback (legacy locks that never recorded a path).
+    if [ -n "$spec_path" ] && [ ! -f "$spec_path" ]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "Medium" "spec_drift" "deterministic:loki-spec" "$spec_path" "null" \
+            "locked spec file missing: $spec_path (the spec is the contract; restore it or run 'loki spec sync' after review to re-lock against the current spec)"
+        return 0
+    fi
+    if [ -z "$spec_path" ]; then
         spec_path="$(spec_resolve_source "")" || return 0
     fi
     [ -n "$spec_path" ] && [ -f "$spec_path" ] || return 0

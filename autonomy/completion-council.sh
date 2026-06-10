@@ -1240,9 +1240,11 @@ council_heldout_gate() {
 
     # Evaluate held-out items against their freshly-verified statuses. Output is
     # a single line "<verdict> <pass> <fail>" where verdict is NONE (no held-out
-    # items reserved, gate inert), PASS, or BLOCK. The failing titles are NOT
-    # carried in this line (a checklist title may contain ':' or '|'); they are
-    # read separately from the held-out JSON block below in the BLOCK branch.
+    # items reserved, gate inert), STALE (ids reserved but ZERO matched current
+    # items -> reservation orphaned by a checklist regeneration), PASS, or BLOCK.
+    # The failing titles are NOT carried in this line (a checklist title may
+    # contain ':' or '|'); they are read separately from the held-out JSON block
+    # below in the BLOCK branch.
     local gate_result
     gate_result=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -c "
 import json, sys, os
@@ -1275,6 +1277,12 @@ if waivers_file and os.path.exists(waivers_file):
     except (json.JSONDecodeError, KeyError):
         pass
 
+# HIGH-1(b): track how many held-out ids actually matched a current item. If the
+# reservation lists ids but ZERO matched (orphaned after a checklist regen), the
+# gate must NOT report PASS (that reads as evaluated-and-passed). 'matched' is
+# distinct from passed/failed: an all-pending matched set legitimately yields
+# passed=0 failed=0 and must stay PASS/pass-through, not STALE.
+matched = 0
 passed = 0
 failed = 0
 for cat in results.get('categories', []):
@@ -1282,6 +1290,7 @@ for cat in results.get('categories', []):
         iid = item.get('id', '')
         if iid not in heldout_ids:
             continue
+        matched += 1
         if iid in waived_ids:
             continue
         status = item.get('status')
@@ -1290,6 +1299,13 @@ for cat in results.get('categories', []):
         elif status == 'failing':
             failed += 1
         # pending/inconclusive: pass-through (not counted as pass or fail block)
+
+if matched == 0:
+    # Reservation is stale: ids exist but none map to a current item. Selection-
+    # side repair (checklist_select_heldout) fixes this next iteration; emit STALE
+    # so this round is recorded honestly rather than as a silent PASS.
+    print('STALE 0 0')
+    sys.exit(0)
 
 verdict = 'BLOCK' if failed > 0 else 'PASS'
 print('%s %d %d' % (verdict, passed, failed))
@@ -1302,7 +1318,32 @@ print('%s %d %d' % (verdict, passed, failed))
     [ -z "$fail_count" ] && fail_count=0
 
     # NONE: no held-out items reserved -> gate inert, no trust-event, no block.
+    # LOW-5: still clear any stale block report so a prior BLOCK does not linger
+    # after the reservation is emptied (matches the PASS branch cleanup).
     if [ "$verdict" = "NONE" ]; then
+        if [ -n "${COUNCIL_STATE_DIR:-}" ] && [ -f "$COUNCIL_STATE_DIR/heldout-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/heldout-block.json"
+        fi
+        return 0
+    fi
+
+    # STALE: reservation orphaned by a checklist regeneration (ids reserved but
+    # zero matched current items). Emit a STALE trust event so the round is not
+    # silently counted as a pass, warn, clear any stale block file (LOW-5), and
+    # return 0 (pass-through): blocking here would loop forever, and the
+    # selection-side repair re-selects valid ids on the next iteration.
+    if [ "$verdict" = "STALE" ]; then
+        log_warn "[Council] Held-out reservation is stale (checklist regenerated; reserved ids match no current item). Selection will re-select next iteration; not treating this as an evaluated PASS."
+        if type record_trust_event_bash &>/dev/null; then
+            record_trust_event_bash "heldout_eval" \
+                "verdict=STALE" \
+                "pass=0" \
+                "fail=0" \
+                >/dev/null 2>&1 || true
+        fi
+        if [ -n "${COUNCIL_STATE_DIR:-}" ] && [ -f "$COUNCIL_STATE_DIR/heldout-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/heldout-block.json"
+        fi
         return 0
     fi
 

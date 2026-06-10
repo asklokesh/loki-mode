@@ -427,6 +427,189 @@ else
     bad "case11 completion-council.sh call site" "expected >=1, got $council_calls"
 fi
 
+# ===========================================================================
+# Case 12: STALE reservation. Select held-out, then regenerate the checklist
+#          with brand-new ids (orphaning the reservation). Re-running selection
+#          must RE-SELECT from the current checklist (file rewritten with valid
+#          ids), and the gate must then evaluate the new set.
+# ===========================================================================
+echo "Case 12: stale reservation -> re-select + gate evaluates new set"
+d="$TMP_ROOT/case12"; make_checklist "$d" 8
+(
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+    checklist_select_heldout
+)
+old_sel=$(python3 -c "import json;print(','.join(json.load(open('$d/.loki/checklist/held-out.json'))['held_out']))" 2>/dev/null)
+# Regenerate checklist + results with brand-new ids (new-1..new-8), all FAILING,
+# orphaning the OLD reservation entirely.
+_D="$d" python3 -c "
+import json, os
+d = os.environ['_D']
+items = [{'id':'new-%d'%i,'title':'New %d'%i,'description':'d','priority':'critical','status':'failing','verification':[]} for i in range(1,9)]
+cl = {'categories':[{'name':'Core','items':items}], 'summary':{'total':8,'verified':0,'failing':8,'pending':0}}
+json.dump(cl, open(os.path.join(d,'.loki/checklist/checklist.json'),'w'), indent=2)
+res = {'categories':[{'name':'Core','items':[{'id':it['id'],'title':it['title'],'priority':it['priority'],'status':it['status']} for it in items]}], 'summary':cl['summary']}
+json.dump(res, open(os.path.join(d,'.loki/checklist/verification-results.json'),'w'), indent=2)
+"
+(
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+    checklist_select_heldout   # must re-select (stale)
+)
+new_sel=$(python3 -c "import json;print(','.join(json.load(open('$d/.loki/checklist/held-out.json'))['held_out']))" 2>/dev/null)
+# All new ids start with 'new-'; the file must have been rewritten with valid ids.
+all_new=$(python3 -c "import json; ids=json.load(open('$d/.loki/checklist/held-out.json'))['held_out']; print('yes' if ids and all(i.startswith('new-') for i in ids) else 'no')" 2>/dev/null)
+[ "$all_new" = "yes" ] && ok "case12 stale reservation re-selected with current (valid) ids" \
+    || bad "case12 re-select" "old=[$old_sel] new=[$new_sel] all_new=$all_new"
+# The gate must now evaluate the re-selected (all-failing) set -> BLOCK rc 1.
+heldout_rc=0
+(
+    cd "$d" || exit 1
+    export COUNCIL_STATE_DIR="$d/.loki/council"; mkdir -p "$COUNCIL_STATE_DIR"
+    export TARGET_DIR="$d"; export ITERATION_COUNT=9
+    council_heldout_gate
+) || heldout_rc=$?
+[ "$heldout_rc" -eq 1 ] && ok "case12 gate evaluates re-selected set (BLOCK on failing held-out)" \
+    || bad "case12 gate after re-select" "got rc=$heldout_rc"
+
+# ===========================================================================
+# Case 13: PARTIAL mismatch. Select held-out, then regenerate the checklist so
+#          ONLY SOME reserved ids survive. Re-running selection must keep only
+#          the survivors (no silent shrink without trace) and drop the rest.
+# ===========================================================================
+echo "Case 13: partial mismatch -> survivors kept, dropped recorded"
+d="$TMP_ROOT/case13"; make_checklist "$d" 8
+(
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+    checklist_select_heldout
+)
+# held-out for N=8 is item-X,item-Y. Keep the FIRST reserved id, rename every
+# other item so exactly one reserved id survives.
+keep_id=$(python3 -c "import json;print(json.load(open('$d/.loki/checklist/held-out.json'))['held_out'][0])" 2>/dev/null)
+_D="$d" _KEEP="$keep_id" python3 -c "
+import json, os
+d = os.environ['_D']; keep = os.environ['_KEEP']
+for fn in ('checklist.json','verification-results.json'):
+    p = os.path.join(d,'.loki/checklist',fn)
+    data = json.load(open(p))
+    k = 0
+    for cat in data.get('categories', []):
+        for it in cat.get('items', []):
+            if it.get('id') != keep:
+                k += 1
+                it['id'] = 'renamed-%d' % k   # orphan all but the kept id
+    json.dump(data, open(p,'w'), indent=2)
+"
+(
+    cd "$d" || exit 1
+    # Un-stub log_warn locally so the dropped-count trace is captured for assert.
+    log_warn() { printf '%s\n' "$*"; }
+    CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+    checklist_select_heldout   # must keep only the survivor
+) > "$d/select.log" 2>&1
+survivors=$(python3 -c "import json;print(','.join(json.load(open('$d/.loki/checklist/held-out.json'))['held_out']))" 2>/dev/null)
+[ "$survivors" = "$keep_id" ] && ok "case13 partial mismatch keeps only surviving id ($keep_id)" \
+    || bad "case13 survivors" "got [$survivors] want [$keep_id]"
+# The dropped count must be traced (warning logged by checklist_select_heldout).
+if grep -q "partially stale" "$d/select.log" 2>/dev/null && grep -q "dropped=" "$d/select.log" 2>/dev/null; then
+    ok "case13 dropped count is logged (no silent shrink)"
+else
+    bad "case13 dropped-count logged" "no 'partially stale ... dropped=' trace in select.log: $(cat "$d/select.log" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# Case 14: duplicate ids. The id-based mechanism is unsound with dup ids, so
+#          selection must reserve NOTHING (no held-out.json written) and warn.
+#          Separately, checklist_summary must never be empty on a non-empty
+#          checklist (MEDIUM-2 guard).
+# ===========================================================================
+echo "Case 14: duplicate ids -> no reservation written, warning logged"
+d="$TMP_ROOT/case14"
+mkdir -p "$d/.loki/checklist"
+_D="$d" python3 -c "
+import json, os
+d = os.environ['_D']
+# Two items share id 'dup-1' -> not unique.
+items = [{'id':'dup-1','title':'A','priority':'critical','status':'pending'},
+         {'id':'dup-1','title':'B','priority':'critical','status':'pending'},
+         {'id':'uniq-3','title':'C','priority':'critical','status':'pending'},
+         {'id':'uniq-4','title':'D','priority':'critical','status':'verified'}]
+cl = {'categories':[{'name':'Core','items':items}], 'summary':{'total':4,'verified':1,'failing':0,'pending':3}}
+json.dump(cl, open(os.path.join(d,'.loki/checklist/checklist.json'),'w'), indent=2)
+json.dump(cl, open(os.path.join(d,'.loki/checklist/verification-results.json'),'w'), indent=2)
+"
+(
+    cd "$d" || exit 1
+    log_warn() { printf '%s\n' "$*"; }   # capture the dup-skip warning
+    CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+    checklist_select_heldout
+) > "$d/dup.log" 2>&1
+if [ ! -f "$d/.loki/checklist/held-out.json" ]; then
+    ok "case14 duplicate ids -> no held-out.json written"
+else
+    bad "case14 dup-skip" "held-out.json was written despite duplicate ids"
+fi
+if grep -q "not unique" "$d/dup.log" 2>/dev/null; then
+    ok "case14 duplicate-id warning logged"
+else
+    bad "case14 dup warning logged" "no 'not unique' warning in dup.log: $(cat "$d/dup.log" 2>/dev/null)"
+fi
+# Summary must be non-empty on this non-empty checklist (no held-out hiding here).
+summary=$(
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"
+    CHECKLIST_RESULTS_FILE=".loki/checklist/verification-results.json"
+    checklist_summary
+)
+[ -n "$summary" ] && ok "case14 checklist_summary non-empty on non-empty checklist" \
+    || bad "case14 summary non-empty" "summary was empty"
+
+# ===========================================================================
+# Case 15: zero-match gate. A reservation lists ids but NONE match the current
+#          items (orphaned by regen). The gate must NOT record a heldout_eval
+#          trust-event with verdict=PASS (it must record STALE instead) and must
+#          return 0 (pass-through, so selection-side repair fixes it next round).
+# ===========================================================================
+echo "Case 15: zero-match gate -> no PASS trust-event (STALE, pass-through)"
+d="$TMP_ROOT/case15"; make_checklist "$d" 8 "failing,failing,failing,failing,failing,failing,failing,failing"
+# Write a held-out.json whose ids do NOT exist in the checklist (orphaned).
+_D="$d" python3 -c "
+import json, os
+d = os.environ['_D']
+json.dump({'held_out':['ghost-1','ghost-2'],'total_items':8},
+          open(os.path.join(d,'.loki/checklist/held-out.json'),'w'), indent=2)
+"
+heldout_rc=0
+(
+    cd "$d" || exit 1
+    export COUNCIL_STATE_DIR="$d/.loki/council"; mkdir -p "$COUNCIL_STATE_DIR"
+    export TARGET_DIR="$d"; export ITERATION_COUNT=9
+    export LOKI_DIR="$d/.loki"
+    council_heldout_gate   # call DIRECTLY (no preceding select) to observe STALE
+) || heldout_rc=$?
+[ "$heldout_rc" -eq 0 ] && ok "case15 zero-match gate returns 0 (pass-through, not a forever-block)" \
+    || bad "case15 zero-match rc" "got rc=$heldout_rc"
+TE15="$d/.loki/metrics/trust-events.jsonl"
+if [ -f "$TE15" ]; then
+    if grep -q '"type": "heldout_eval"' "$TE15" 2>/dev/null && grep -q '"verdict": "PASS"' "$TE15" 2>/dev/null; then
+        bad "case15 no PASS trust-event on zero-match" "found a heldout_eval verdict=PASS for an orphaned reservation"
+    elif grep -q '"verdict": "STALE"' "$TE15" 2>/dev/null; then
+        ok "case15 zero-match recorded as STALE (not silent PASS)"
+    else
+        ok "case15 no heldout_eval PASS event on zero-match"
+    fi
+else
+    # No trust file (helper unavailable in harness): the rc=0 + no-PASS invariant
+    # still holds; the STALE path simply could not emit. Not a fail.
+    if type record_trust_event_bash >/dev/null 2>&1; then
+        bad "case15 trust-event file" "record_trust_event_bash available but no trust-events.jsonl"
+    else
+        ok "case15 STALE trust-event skipped (record_trust_event_bash unavailable in harness)"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
