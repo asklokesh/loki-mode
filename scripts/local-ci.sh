@@ -310,6 +310,10 @@ run_check "tests/test-claude-adoptions.sh (setting-sources + partial-messages)" 
 
 # v7.8.1: staleness-aware generated-PRD reuse (codebase signature + decision).
 run_check "tests/test-prd-reuse.sh (codebase signature + PRD reuse decision)" "bash tests/test-prd-reuse.sh 2>&1 | tail -3"
+# PRD-reuse end-to-end stub proof: run 1 makes a CODEBASE_ANALYSIS_MODE call and
+# generates; run 2 (reuse) makes ZERO re-analysis calls and reuses the byte-
+# identical PRD with a disclosure. Hermetic stub provider, MAX_ITERATIONS bounded.
+run_check "tests/test-prd-reuse-stub.sh (reuse hit = zero re-analysis provider calls)" "bash tests/test-prd-reuse-stub.sh 2>&1 | tail -3"
 
 # v7.9.0 (R1 proof-of-run): `loki proof list|show|open|share` bash route against
 # a fixture proofs dir. Faked gh/open on PATH -> no network, no browser launch.
