@@ -9030,6 +9030,69 @@ cmd_sandbox() {
     exec "$SANDBOX_SH" "$subcommand" "$@"
 }
 
+# v7.29.0 (feature #4): print the SIMPLE-tier cost/time/iteration estimate for
+# the demo PRD, parsed from the single estimator source (show_prd_plan JSON).
+# Because `loki demo` always runs `loki start --simple` (which exports
+# LOKI_COMPLEXITY=simple), the estimate is computed with LOKI_COMPLEXITY=simple
+# so the quoted figures are the ones the demo will actually incur -- honest by
+# construction (the keystone fix makes show_prd_plan honor LOKI_COMPLEXITY).
+# Returns 0 when a real estimate was printed, 1 when the estimator failed (the
+# caller then falls back to a no-number confirm). Never fabricates a number.
+emit_demo_estimate() {
+    local prd_path="$1"
+    local plan_json=""
+    plan_json=$(LOKI_COMPLEXITY=simple show_prd_plan "$prd_path" "true" "false" 2>/dev/null) || plan_json=""
+
+    if [ -z "$plan_json" ]; then
+        echo -e "${YELLOW}Could not compute a cost estimate (the estimator did not return a result).${NC}"
+        return 1
+    fi
+
+    local parsed
+    parsed=$(printf '%s' "$plan_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+cost = d.get('cost', {}).get('total_usd')
+time_est = d.get('time', {}).get('estimated')
+iters = d.get('iterations', {}).get('estimated')
+rng = d.get('iterations', {}).get('range', [])
+tier = d.get('complexity', {}).get('tier', 'simple')
+if cost is None or time_est is None or iters is None:
+    sys.exit(1)
+rng_str = ''
+if isinstance(rng, list) and len(rng) == 2:
+    rng_str = ' (range {}-{})'.format(rng[0], rng[1])
+print(tier.upper())
+print('{:.2f}'.format(float(cost)))
+print(time_est)
+print('{}{}'.format(iters, rng_str))
+" 2>/dev/null) || parsed=""
+
+    if [ -z "$parsed" ]; then
+        echo -e "${YELLOW}Could not compute a cost estimate (the estimator did not return a result).${NC}"
+        return 1
+    fi
+
+    local tier_u cost_u time_u iter_u
+    tier_u=$(printf '%s' "$parsed" | sed -n '1p')
+    cost_u=$(printf '%s' "$parsed" | sed -n '2p')
+    time_u=$(printf '%s' "$parsed" | sed -n '3p')
+    iter_u=$(printf '%s' "$parsed" | sed -n '4p')
+
+    echo -e "${BOLD}Estimate (${tier_u} tier, the path this demo actually runs):${NC}"
+    printf '  Cost:        ~$%s\n' "$cost_u"
+    echo "  Time:        ~$time_u"
+    echo "  Iterations:  $iter_u"
+    echo ""
+    echo -e "${DIM}This is an estimate. Actual usage depends on PRD complexity,"
+    echo -e "code review cycles, and test failures.${NC}"
+    echo ""
+    return 0
+}
+
 # Demo mode - build a real project from a bundled PRD template
 cmd_demo() {
     # Handle --help
@@ -9062,10 +9125,21 @@ cmd_demo() {
     local provider=""
     local dry_run=false
     local start_args=()
+    # v7.29.0 (feature #4): demo now shows the FORCED-simple cost estimate
+    # before spending and asks for confirmation. --yes / LOKI_ASSUME_YES skip
+    # the prompt but still print the estimate (the spend is never hidden).
+    local assume_yes=false
+    if [ "${LOKI_ASSUME_YES:-}" = "1" ] || [ "${LOKI_ASSUME_YES:-}" = "true" ]; then
+        assume_yes=true
+    fi
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --yes|-y)
+                assume_yes=true
+                shift
+                ;;
             --dir)
                 if [[ -z "${2:-}" ]]; then
                     echo -e "${RED}Error: --dir requires a path${NC}"
@@ -9146,6 +9220,9 @@ cmd_demo() {
     fi
 
     if [ "$dry_run" = true ]; then
+        # v7.29.0: dry-run is now a genuine cost preview -- show the estimate,
+        # no prompt, no spend.
+        emit_demo_estimate "$demo_dir/prd.md" || true
         echo -e "${YELLOW}[dry-run] Would run:${NC}"
         echo "  cd $demo_dir"
         echo -n "  loki start prd.md --simple --yes"
@@ -9154,6 +9231,52 @@ cmd_demo() {
         echo ""
         echo -e "${DIM}PRD copied to: $demo_dir/prd.md${NC}"
         return 0
+    fi
+
+    # v7.29.0 (feature #4): cost confirm before any spend. The estimate ALWAYS
+    # prints (even with --yes), so the spend is never hidden. The prompt is
+    # shown only on a TTY without --yes; non-TTY without --yes refuses (exit 2)
+    # rather than hanging on read -- the project's "never hang in CI" idiom.
+    local estimate_ok=true
+    emit_demo_estimate "$demo_dir/prd.md" || estimate_ok=false
+
+    # Interactive only when stdin is a real TTY and CI is not forcing
+    # non-interactive (matches the project's first-run gate semantics).
+    local demo_interactive=true
+    if [ ! -t 0 ] || [ -n "${CI:-}" ]; then
+        demo_interactive=false
+    fi
+
+    if [ "$assume_yes" != true ]; then
+        if [ "$demo_interactive" = true ]; then
+            local demo_answer=""
+            if [ "$estimate_ok" = true ]; then
+                # Default YES: Enter proceeds.
+                echo -n "Build the Todo app now? [Y/n] "
+                read -r demo_answer </dev/tty 2>/dev/null || demo_answer=""
+                if [[ -n "$demo_answer" && ! "$demo_answer" =~ ^[Yy] ]]; then
+                    echo ""
+                    echo -e "Cancelled. Nothing was spent. The demo PRD is at:"
+                    echo -e "  ${CYAN}$demo_dir/prd.md${NC}"
+                    echo -e "Run 'loki plan ${demo_dir}/prd.md' for the full breakdown."
+                    return 0
+                fi
+            else
+                # No honest number available: default NO (the safe direction).
+                echo -n "Proceed with the demo build anyway? [y/N] "
+                read -r demo_answer </dev/tty 2>/dev/null || demo_answer=""
+                if [[ ! "$demo_answer" =~ ^[Yy] ]]; then
+                    echo ""
+                    echo -e "Cancelled. Nothing was spent. The demo PRD is at:"
+                    echo -e "  ${CYAN}$demo_dir/prd.md${NC}"
+                    return 0
+                fi
+            fi
+        else
+            # Non-TTY without --yes: never hang; refuse with an honest message.
+            echo "demo needs confirmation; re-run with --yes to proceed non-interactively" >&2
+            return 2
+        fi
     fi
 
     echo -e "${DIM}Starting autonomous build...${NC}"
@@ -12833,6 +12956,20 @@ show_verbose = sys.argv[3] == 'true'
 session_model_env = (os.environ.get('LOKI_SESSION_MODEL', 'sonnet') or 'sonnet').strip().lower()
 legacy_tier_switching = (os.environ.get('LOKI_LEGACY_TIER_SWITCHING', 'false') or 'false').strip().lower() == 'true'
 
+# v7.29.0: Honor LOKI_COMPLEXITY -- the SAME env var the runner honors at
+# run.sh:920 -- so a forced-tier run (e.g. 'loki demo' / 'loki start --simple'
+# which export LOKI_COMPLEXITY=simple) quotes the tier it will actually run,
+# not the content-derived tier. Without this the estimate diverges from
+# execution (audit finding #9). Runner vocabulary is auto|simple|standard|complex;
+# the estimator's internal tiers are simple|moderate|complex|enterprise, so
+# 'standard' aliases to 'moderate' (the 6-12 iteration analog). 'auto', empty,
+# and any unrecognized value are ignored (content tier is used) -- honest by
+# construction. The override is applied AFTER the content score-to-tier map.
+_forced_complexity_raw = (os.environ.get('LOKI_COMPLEXITY', '') or '').strip().lower()
+forced_complexity = {'standard': 'moderate'}.get(_forced_complexity_raw, _forced_complexity_raw)
+if forced_complexity not in ('simple', 'moderate', 'complex', 'enterprise'):
+    forced_complexity = ''
+
 # Map session model name to tier key used in tokens_per_tier below.
 # Unknown models fall through to 'development' (Sonnet) as a safe default.
 _session_tier_map = {
@@ -12984,6 +13121,14 @@ elif complexity_score <= 5:
     complexity = 'complex'
 else:
     complexity = 'enterprise'
+
+# v7.29.0: apply the forced-tier override AFTER the content score-to-tier map,
+# so it is not clobbered by the assignment above. Everything downstream
+# (iterations, tokens, cost, time) derives from the complexity variable, so the
+# whole estimate becomes consistent with what the run will actually do.
+if forced_complexity:
+    complexity = forced_complexity
+    complexity_reasons.insert(0, 'Complexity forced via LOKI_COMPLEXITY=' + _forced_complexity_raw)
 
 # --- Estimate iterations ---
 iteration_map = {
@@ -13215,7 +13360,10 @@ if ui_count > 0:
 color = {'simple': GREEN, 'moderate': YELLOW, 'complex': RED, 'enterprise': RED}
 cx_color = color.get(complexity, NC)
 print(f'\n{CYAN}Complexity{NC}')
-print(f'  Tier: {cx_color}{BOLD}{complexity.upper()}{NC} (score: {complexity_score})')
+if forced_complexity:
+    print(f'  Tier: {cx_color}{BOLD}{complexity.upper()}{NC} (forced via LOKI_COMPLEXITY={_forced_complexity_raw})')
+else:
+    print(f'  Tier: {cx_color}{BOLD}{complexity.upper()}{NC} (score: {complexity_score})')
 for reason in complexity_reasons:
     print(f'  {DIM}- {reason}{NC}')
 
