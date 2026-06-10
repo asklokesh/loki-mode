@@ -11,8 +11,10 @@
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
 import { existsSync, lstatSync, readlinkSync, statfsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { REPO_ROOT } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
@@ -498,6 +500,19 @@ async function runText(): Promise<number> {
       `         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
     );
     tally.fail++;
+    // v7.29.0: consent-gated install offer. Parity by construction: rather than
+    // re-implementing the prompt copy in TypeScript (which would drift from the
+    // bash route), invoke the single shared helper autonomy/provider-offer.sh
+    // via child_process with inherited stdio. The helper's "report" mode is a
+    // no-op on non-TTY/CI, so doctor's non-interactive and --json output stay
+    // byte-identical (this is the only path; --json never reaches runText).
+    // Guarded on stdout being a TTY so we never spawn bash in piped/CI doctor.
+    if (process.stdout.isTTY) {
+      const offerScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
+      if (existsSync(offerScript)) {
+        spawnSync("bash", [offerScript, "report"], { stdio: "inherit" });
+      }
+    }
   }
   process.stdout.write(`\n`);
 

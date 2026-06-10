@@ -68,6 +68,15 @@ if [ -f "$_LOKI_SCRIPT_DIR/crash.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/crash.sh"
 fi
 
+# Provider install offer (v7.29.0): shared, self-contained helper providing
+# detect_any_provider, offer_provider_install, and provider_offer_gate. Sourced
+# here for the bash route; doctor.ts invokes the same file via child_process so
+# the offer copy never drifts between routes. Self-guarded against double-source.
+if [ -f "$_LOKI_SCRIPT_DIR/provider-offer.sh" ]; then
+    # shellcheck source=provider-offer.sh
+    source "$_LOKI_SCRIPT_DIR/provider-offer.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -1259,6 +1268,17 @@ cmd_start() {
                 ;;
         esac
     done
+
+    # v7.29.0: provider pre-flight gate. If no provider CLI is installed, offer
+    # to install one (TTY) or print honest manual instructions and exit 2
+    # (non-TTY/CI), BEFORE any spend or runner entry. This moves what used to be
+    # an opaque deep-runner failure to a friendly, actionable top-of-run gate.
+    # --help already returned inside the arg loop, so we never gate help.
+    if declare -f provider_offer_gate >/dev/null 2>&1; then
+        if ! provider_offer_gate; then
+            exit 2
+        fi
+    fi
 
     # Clear any stale raw-brief marker from a PRIOR run before we decide the
     # mode of THIS run. Only the brief branch (below) re-writes it. Without this,
@@ -7736,15 +7756,19 @@ cmd_doctor() {
     doctor_check "Cline CLI"           cline    optional || true
     doctor_check "Aider CLI"           aider    optional || true
 
-    # Check if at least one provider is installed
-    local _any_provider=false
-    for _dp in claude codex cline aider; do
-        command -v "$_dp" &>/dev/null && _any_provider=true && break
-    done
-    if ! $_any_provider; then
+    # Check if at least one provider is installed (detect_any_provider is the
+    # shared helper from provider-offer.sh, extracted from this exact loop).
+    if ! detect_any_provider; then
         echo -e "  ${RED}FAIL${NC}  No AI provider CLI installed -- at least one is required"
         echo -e "         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}"
         fail_count=$((fail_count + 1))
+        # v7.29.0: on a TTY (non-json), append the consent-gated install offer.
+        # In report mode the helper is a no-op on non-TTY/CI, so the doctor
+        # output stays byte-identical for the bun-parity matrix. --json never
+        # reaches here (cmd_doctor dispatches to cmd_doctor_json earlier).
+        if declare -f offer_provider_install >/dev/null 2>&1; then
+            offer_provider_install report || true
+        fi
     fi
     echo ""
 
@@ -9188,6 +9212,17 @@ cmd_demo() {
         esac
     done
 
+    # v7.29.0: provider pre-flight gate (skipped for --dry-run, which never
+    # spends). On a TTY, offer to install; on non-TTY/CI, print honest manual
+    # instructions and exit 2 before any spend. Detect-first, so the nested
+    # cmd_start gate below no-ops once a provider is present. --help already
+    # returned at the top of cmd_demo.
+    if [ "$dry_run" != true ] && declare -f provider_offer_gate >/dev/null 2>&1; then
+        if ! provider_offer_gate; then
+            exit 2
+        fi
+    fi
+
     # Fall back to examples/ if templates/ doesn't exist
     if [ ! -f "$demo_prd" ]; then
         demo_prd="$SKILL_DIR/examples/simple-todo-app.md"
@@ -9509,6 +9544,15 @@ cmd_quick() {
         echo "  loki quick \"add input validation to the signup form\""
         echo "  loki quick \"write unit tests for the API endpoints\""
         exit 2
+    fi
+
+    # v7.29.0: provider pre-flight gate. Offer install on a TTY; print honest
+    # manual instructions and exit 2 on non-TTY/CI, before any spend. --help and
+    # the no-args usage path already returned/exited above.
+    if declare -f provider_offer_gate >/dev/null 2>&1; then
+        if ! provider_offer_gate; then
+            exit 2
+        fi
     fi
 
     local task_desc="$*"

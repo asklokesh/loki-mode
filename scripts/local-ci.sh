@@ -310,6 +310,13 @@ run_check "tests/test-prd-reuse.sh (codebase signature + PRD reuse decision)" "b
 # Asserts share does NOT publish without confirm and DOES with --yes.
 run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash tests/cli/test-proof-command.sh 2>&1 | tail -3"
 
+# v7.29.0: inline provider install offer (autonomy/provider-offer.sh). Stub-based,
+# ZERO real installs: a controlled PATH without provider CLIs + a stub npm that
+# records argv. Asserts the offer renders, non-TTY/CI never prompt and exit
+# honestly, the exact install argv, npm-missing degraded copy, and the
+# start/demo gate.
+run_check "tests/cli/test-provider-offer.sh (provider install offer + gate)" "bash tests/cli/test-provider-offer.sh 2>&1 | tail -3"
+
 # v7.28.0: held-out spec evals. Deterministic ~25% checklist reservation,
 # exclusion from the build prompt feed, and the completion council held-out gate.
 run_check "tests/test-heldout-evals.sh (held-out selection + council gate)" "bash tests/test-heldout-evals.sh 2>&1 | tail -3"
