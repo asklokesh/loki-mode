@@ -180,7 +180,7 @@ Enter at every step builds the sample Todo app.
 
 1. Setup check: detects an AI provider CLI; if none is installed, offers to
    install Claude Code (consent-gated, interactive terminals only; the only
-   command it ever runs is `npm install -g @anthropic-ai/claude-code`,
+   install command it ever runs is `npm install -g @anthropic-ai/claude-code`,
    printed before execution; auth via `claude auth login`).
 2. What to build: one line, or a path to an existing PRD file.
 3. Template pick: the closest 3 of the bundled templates, matched by a
