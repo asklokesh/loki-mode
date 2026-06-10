@@ -43,40 +43,50 @@
 
 ## Get Started in 30 Seconds
 
-**Prerequisites**
+```bash
+bun install -g loki-mode                       # install (npm/brew/Docker also work, see below)
+loki init my-app --template simple-todo-app    # scaffold a starter PRD
+cd my-app && loki start prd.md                 # autonomous build from the spec
+```
 
-Loki drives a coding agent CLI and orchestrates real builds, so it needs a few tools on your PATH. `loki doctor` checks all of these and tells you what is missing.
+That is the happy path. One thing to know first: Loki drives a separate coding-agent CLI (Claude Code is the recommended one) and needs it plus a couple of common tools on your PATH. Run `loki doctor` any time and it tells you exactly what is present and what is missing, with a copy-pasteable install command for each gap.
+
+```bash
+loki doctor                                    # check your setup before the first build
+```
+
+<details>
+<summary><strong>What Loki needs (and what loki doctor checks)</strong></summary>
 
 Required:
 
-- An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Codex, Cline, and Aider are supported as experimental providers (wiring in place; not yet E2E-verified by us).
+- An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Codex, Cline, and Aider are supported as experimental providers (wiring in place; not yet E2E-verified by us). Loki cannot run a build without one of these installed and authenticated.
 - Python 3.10+ (`python3`) for the dashboard, memory system, and orchestration helpers.
 - Git 2.x (`git`) for checkpoints and worktrees.
 - `curl` for installation and network calls.
 
 Recommended:
 
-- Bun 1.3.0+ (`bun`) for the fast runtime (the recommended install path below installs it).
+- Bun 1.3.0+ (`bun`) for the fast runtime (the recommended install path above installs it).
 - Node.js 18+ and npm if you install via npm instead of Bun.
 - `jq` for nicer JSON handling in shell flows.
 - Docker if you want Loki's App Runner to run containerized projects, or to run Loki itself from the published image.
 
-You also need credentials for whichever provider you use (for Claude Code, an authenticated `claude` login or `ANTHROPIC_API_KEY`).
+You also need credentials for whichever provider you use (for Claude Code, an authenticated `claude` login or `ANTHROPIC_API_KEY`). `loki doctor` flags a missing or unauthenticated provider as the first thing to fix.
 
-**Recommended (Bun, fastest):**
+</details>
+
+If you do not have Bun yet:
 
 ```bash
-# Install Bun once (skip if you already have it)
-curl -fsSL https://bun.sh/install | bash      # macOS / Linux
-# or: brew install oven-sh/bun/bun
+curl -fsSL https://bun.sh/install | bash       # macOS / Linux (or: brew install oven-sh/bun/bun)
+```
 
-bun install -g loki-mode
-loki doctor                                   # verify environment
-loki init my-app --template simple-todo-app
-cd my-app
-loki start prd.md                             # autonomous build from a Markdown PRD
-loki start owner/repo#123                     # ...or a GitHub issue
-loki start ./openapi.yaml                     # ...or an OpenAPI/YAML spec
+Other spec sources work the same way:
+
+```bash
+loki start owner/repo#123                       # a GitHub issue
+loki start ./openapi.yaml                        # an OpenAPI/YAML spec
 ```
 
 Or skip scaffolding and go straight to a quick task:
