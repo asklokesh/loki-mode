@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.32.2] - 2026-06-10
+
+### Fixed
+- Generated-PRD reuse honesty (closes the four honest-behavior gaps in the
+  v7.8.1 staleness-aware reuse): the reuse disclosure now names the date and
+  the `--fresh-prd` lever; a hand-edited generated PRD is detected
+  (`user_owned`) and used as-is with its own disclosure, never overwritten or
+  re-baselined; the incremental-update path also discloses `--fresh-prd`;
+  reuse runs make zero re-analysis provider calls (proven end-to-end by a
+  stub suite: byte-identical PRD on run 2).
+- `--fresh-prd` (the flag named in the runtime disclosure) is now documented
+  in `loki start --help`, wiki/CLI-Reference.md, and
+  wiki/Environment-Variables.md alongside its aliases (`--regen-prd`,
+  `--regenerate-prd`, `--regen`, `LOKI_PRD_REGEN=1`).
+- The interactive pre-run prompt now also mentions the hand-edited
+  (use-as-is) outcome, matching actual behavior.
+
 ## [7.32.1] - 2026-06-10
 
 ### Fixed

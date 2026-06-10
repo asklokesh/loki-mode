@@ -113,7 +113,7 @@ N2=$(cat "$COUNT_FILE")
 [ "$N2" -eq 0 ] && ok "run 2 (reuse): ZERO CODEBASE_ANALYSIS_MODE provider calls" || bad "run 2: expected 0 re-analysis calls, got $N2 (reuse not honored)"
 PRD_HASH2=$(shasum -a 256 "$WORK/.loki/generated-prd.md" 2>/dev/null | cut -d' ' -f1)
 [ -n "$PRD_HASH1" ] && [ "$PRD_HASH1" = "$PRD_HASH2" ] && ok "run 2: generated-prd.md byte-identical (not regenerated)" || bad "run 2: generated PRD changed on reuse"
-grep -q 'Reusing the PRD generated on\|Reusing the generated PRD' "$WORK/.run.out" \
+grep -q 'Reusing the PRD last generated or updated on\|Reusing the generated PRD' "$WORK/.run.out" \
   && ok "run 2: reuse disclosure printed to the user" || bad "run 2: no reuse disclosure in output"
 
 echo ""

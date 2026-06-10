@@ -12092,7 +12092,7 @@ except Exception:
             case "$GENERATED_PRD_ACTION" in
                 reuse)
                     if [ -n "$_prd_date" ]; then
-                        log_info "Reusing the PRD generated on $_prd_date; pass --fresh-prd to regenerate ($_gen_prd)"
+                        log_info "Reusing the PRD last generated or updated on $_prd_date; pass --fresh-prd to regenerate ($_gen_prd)"
                     else
                         log_info "Reusing the generated PRD (codebase unchanged); pass --fresh-prd to regenerate ($_gen_prd)"
                     fi
@@ -12105,7 +12105,7 @@ except Exception:
                     prd_path="$_gen_prd"
                     ;;
                 update)
-                    log_info "No user PRD found. Codebase changed since the generated PRD; will update it incrementally: $_gen_prd"
+                    log_info "No user PRD found. Codebase changed since the generated PRD; will update it incrementally ($_gen_prd); pass --fresh-prd to regenerate from scratch"
                     prd_path="$_gen_prd"
                     ;;
                 *)

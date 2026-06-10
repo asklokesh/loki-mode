@@ -1031,6 +1031,9 @@ cmd_start() {
                 echo "  --api                 Start dashboard API server alongside the build"
                 echo "  --sandbox             Run in Docker sandbox"
                 echo "  --skip-memory         Skip loading memory context at startup"
+                echo "  --fresh-prd           Regenerate the PRD from the codebase on a no-PRD run"
+                echo "                        (ignores the reusable generated PRD; aliases: --regen-prd,"
+                echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
                 echo "  --budget USD          Cost budget limit (auto-pause when exceeded)"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
@@ -1834,8 +1837,9 @@ cmd_start() {
                 _prompt_q="Regenerate PRD from codebase (forced) and start? [Y/n] "
             elif [ -f ".loki/generated-prd.md" ] || [ -f ".loki/generated-prd.json" ]; then
                 echo "A previously generated PRD exists. Loki Mode will reuse it"
-                echo "if the codebase is unchanged, or update it incrementally if"
-                echo "it changed. Pass --fresh-prd to regenerate from scratch."
+                echo "if the codebase is unchanged, update it incrementally if it"
+                echo "changed, or use it as-is if you hand-edited it. Pass"
+                echo "--fresh-prd to regenerate from scratch."
                 _prompt_q="Continue with the existing generated PRD and start? [Y/n] "
             else
                 echo "Loki Mode will analyze the existing codebase and generate"

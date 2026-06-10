@@ -28,7 +28,7 @@ grep -q 'regen-prd' "$REPO_ROOT/autonomy/loki" \
 grep -q -- '--fresh-prd' "$REPO_ROOT/autonomy/loki" \
   && ok "loki --fresh-prd alias is wired" || bad "--fresh-prd not wired"
 # reuse disclosure must name the date and the --fresh-prd lever (honest behavior)
-grep -q 'Reusing the PRD generated on' "$SRC" \
+grep -q 'Reusing the PRD last generated or updated on' "$SRC" \
   && grep -q 'pass --fresh-prd to regenerate' "$SRC" \
   && ok "reuse disclosure names the generated date and --fresh-prd" || bad "reuse disclosure incomplete"
 grep -q 'hand-edited PRD as-is' "$SRC" \
