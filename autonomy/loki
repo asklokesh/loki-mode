@@ -3389,7 +3389,7 @@ cmd_provider_set() {
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
         echo "Usage: loki provider set <claude|codex|cline|aider>"
-        exit 1
+        exit 2
     fi
 
     # Validate provider
@@ -5160,7 +5160,7 @@ cmd_issue_parse() {
     if [[ -z "$issue_ref" ]]; then
         echo -e "${RED}Error: Issue reference required${NC}"
         echo "Usage: loki issue parse <issue-ref>"
-        exit 1
+        exit 2
     fi
 
     # Find and run issue-parser.sh
@@ -5204,7 +5204,7 @@ cmd_issue_view() {
     if [[ -z "$issue_ref" ]]; then
         echo -e "${RED}Error: Issue reference required${NC}"
         echo "Usage: loki issue view <issue-ref>"
-        exit 1
+        exit 2
     fi
 
     # Find and run issue-parser.sh
@@ -5542,7 +5542,7 @@ cmd_run() {
         echo "  loki run owner/repo#789         # GitHub with specific repo"
         echo ""
         echo "Run 'loki run --help' for full usage."
-        exit 1
+        exit 2
     fi
 
     # Source issue provider abstraction
@@ -6021,7 +6021,7 @@ cmd_issue() {
         echo -e "${RED}Error: No issue number specified${NC}"
         echo "Usage: loki issue <number> or loki issue --number <number>"
         echo "Run 'loki issue --help' for full usage."
-        exit 1
+        exit 2
     fi
 
     # Auto-detect repo if not specified
@@ -6939,7 +6939,7 @@ cmd_config_set() {
     if [[ -z "$key" || -z "$value" ]]; then
         echo -e "${RED}Usage: loki config set [--global] <key> <value>${NC}"
         echo "Run 'loki config' for list of settable keys."
-        return 1
+        return 2
     fi
 
     # Determine config directory: --global writes to ~/.config/loki-mode/
@@ -7086,7 +7086,7 @@ cmd_config_get() {
 
     if [[ -z "$key" ]]; then
         echo -e "${RED}Usage: loki config get <key>${NC}"
-        return 1
+        return 2
     fi
 
     local config_store="$LOKI_DIR/config/settings.json"
@@ -8808,7 +8808,7 @@ cmd_notify_send() {
     if [ -z "$message" ]; then
         echo -e "${RED}Error: Message required${NC}"
         echo "Usage: loki notify $channel <message>"
-        exit 1
+        exit 2
     fi
 
     case "$channel" in
@@ -9376,7 +9376,7 @@ cmd_quick() {
         echo "  loki quick \"fix the login bug in auth.js\""
         echo "  loki quick \"add input validation to the signup form\""
         echo "  loki quick \"write unit tests for the API endpoints\""
-        exit 1
+        exit 2
     fi
 
     local task_desc="$*"
@@ -10719,7 +10719,7 @@ cmd_migrate_start() {
         echo "Specify the migration target (e.g. --target typescript, --target react, --target microservices)"
         echo ""
         echo "Run 'loki migrate --help' for usage."
-        return 1
+        return 2
     fi
 
     # Validate compliance preset
@@ -11689,7 +11689,7 @@ for f in data.get('frictions', []):
     if [ -z "$codebase_path" ]; then
         echo -e "${RED}Error: Codebase path is required${NC}"
         echo "Usage: loki heal <path-to-codebase> [options]"
-        return 1
+        return 2
     fi
 
     if [[ ! -d "$codebase_path" ]]; then
@@ -12057,7 +12057,7 @@ cmd_migrate() {
         echo "Usage: loki migrate <path-to-codebase> --target <target>"
         echo ""
         echo "Run 'loki migrate --help' for usage."
-        return 1
+        return 2
     fi
 
     cmd_migrate_start "$codebase_path" "$target" "$plan_only" "$phase" "$parallel" "$compliance" "$dry_run" "$do_resume" "$multi_repo" "$export_report" "$no_dashboard" "$no_docs"
@@ -13360,7 +13360,7 @@ cmd_plan() {
     if [ -z "$prd_file" ]; then
         echo -e "${RED}Usage: loki plan <PRD file>${NC}"
         echo "Run 'loki plan --help' for usage."
-        return 1
+        return 2
     fi
 
     if [ ! -f "$prd_file" ]; then
@@ -17751,7 +17751,7 @@ cmd_enterprise() {
                     if [ -z "$name" ]; then
                         echo -e "${RED}Error: Token name required${NC}"
                         echo "Usage: loki enterprise token generate <name> [--scopes '*'] [--expires 30]"
-                        exit 1
+                        exit 2
                     fi
 
                     # Validate name is not a flag
@@ -17919,7 +17919,7 @@ else:
 
                     if [ -z "$identifier" ]; then
                         echo -e "${RED}Error: Token ID or name required${NC}"
-                        exit 1
+                        exit 2
                     fi
 
                     python3 -c "
@@ -17958,7 +17958,7 @@ else:
 
                     if [ -z "$identifier" ]; then
                         echo -e "${RED}Error: Token ID or name required${NC}"
-                        exit 1
+                        exit 2
                     fi
 
                     python3 -c "
