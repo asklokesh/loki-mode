@@ -15,3 +15,6 @@ index.html in a browser runs the whole app.
 
 Keep the whole thing minimal and readable. The goal is a quick end-to-end
 build that finishes fast, not a production system.
+
+A basic automated check or verification step confirms that add, list, toggle,
+and delete behave as described before the build is called done.
