@@ -11,9 +11,18 @@
 # venv's python so the SDK is actually importable.
 #
 # Design (least-invasive, honest):
-#   * Venv location: <project>/.loki/mcp-venv. Project-local, no global
-#     site-packages pollution, no sudo, no curl-pipe-bash. Removing .loki
-#     fully uninstalls. Override with LOKI_MCP_VENV=/abs/path.
+#   * Venv location: <user-cwd>/.loki/mcp-venv (the project Loki is invoked in,
+#     NOT the install root). Project-local, no global site-packages pollution,
+#     no sudo, no curl-pipe-bash, no root-owned writes under a global install.
+#     Removing the project's .loki fully uninstalls. Override with
+#     LOKI_MCP_VENV=/abs/path. Honors LOKI_DIR (defaults to .loki).
+#   * The server is launched with PYTHONPATH set to the install root (NOT by
+#     cd-ing into it) so the user's cwd is preserved: mcp/server.py resolves the
+#     project .loki from os.getcwd(). Without PYTHONPATH, `import mcp` from an
+#     arbitrary cwd resolves to the pip MCP SDK's own `mcp` package (zero Loki
+#     tools); PYTHONPATH puts the install root first so the LOCAL mcp/server.py
+#     wins, while server.py's namespace juggle still hands the real SDK its own
+#     `mcp.*` subtree.
 #   * The ONLY command run on the user's behalf is, after explicit consent:
 #       <venv>/bin/pip install -r mcp/requirements.txt
 #     The exact command is printed before it runs.
@@ -82,19 +91,28 @@ _ml_python() {
 # namespace collision the package-dir FastMCP can be present yet fail to import
 # (`No module named 'mcp.types'`). We delegate to mcp/server.py's own
 # `--check-sdk` probe, which runs the exact loader the server uses and exits 0
-# only when FastMCP loaded. We run it with the repo root as cwd so the
-# shadowing condition is exercised exactly as it will be at launch.
+# only when FastMCP loaded.
+#
+# Critical: we set PYTHONPATH to the install root and DO NOT cd into it, so the
+# probe exercises the SAME module resolution as the real launch (which preserves
+# the user's cwd). The redirect of stdin from /dev/null is insurance: if the
+# pip SDK's own `mcp.server` were ever reached, its stub starts a stdio receive
+# loop; the EOF makes it exit instead of hanging.
 _ml_sdk_importable() {
     local py="$1" root="$2"
-    ( cd "$root" && "$py" -m mcp.server --check-sdk >/dev/null 2>&1 )
+    PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" \
+        "$py" -m mcp.server --check-sdk </dev/null >/dev/null 2>&1
 }
 
+# _ml_print_manual <root> <venv>: print the honest manual install commands.
+# The venv lives in the user's project (.loki/mcp-venv by default), while
+# requirements.txt is shipped under the install root.
 _ml_print_manual() {
-    local root="$1"
+    local root="$1" venv="$2"
     printf 'Install the MCP server dependencies manually:\n' >&2
-    printf '  python3 -m venv %s/.loki/mcp-venv\n' "$root" >&2
-    printf '  %s/.loki/mcp-venv/bin/pip install -r %s/mcp/requirements.txt\n' "$root" "$root" >&2
-    printf '  %s/.loki/mcp-venv/bin/python -m mcp.server\n' "$root" >&2
+    printf '  python3 -m venv %s\n' "$venv" >&2
+    printf '  %s/bin/pip install -r %s/mcp/requirements.txt\n' "$venv" "$root" >&2
+    printf '  PYTHONPATH=%s %s/bin/python -m mcp.server\n' "$root" "$venv" >&2
 }
 
 _ml_help() {
@@ -150,31 +168,36 @@ mcp_launch_main() {
         return 2
     fi
 
-    # 2. venv location.
-    local venv="${LOKI_MCP_VENV:-$root/.loki/mcp-venv}"
+    # 2. venv location. Lives in the USER'S project (their cwd), NOT the install
+    #    root: $root may be a root-owned global npm prefix where we must never
+    #    write. LOKI_DIR (default .loki) keeps this consistent with every other
+    #    .loki artifact; LOKI_MCP_VENV overrides outright.
+    local venv="${LOKI_MCP_VENV:-$PWD/${LOKI_DIR:-.loki}/mcp-venv}"
     local venv_py="$venv/bin/python"
 
-    # 3. If the venv already has the SDK, use it directly.
+    # 3. If the venv already has the SDK, use it directly. The server is launched
+    #    with PYTHONPATH=$root (NOT by cd-ing) so the user's cwd is preserved for
+    #    .loki resolution; see _ml_sdk_importable for why.
     if [ -x "$venv_py" ] && _ml_sdk_importable "$venv_py" "$root"; then
-        exec "$venv_py" -m mcp.server "$@"
+        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" -m mcp.server "$@"
     fi
 
     # 4. If the BASE python already has the SDK (e.g. user pip-installed it),
     #    use it -- no venv needed.
     if _ml_sdk_importable "$base_py" "$root"; then
-        exec "$base_py" -m mcp.server "$@"
+        exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$base_py" -m mcp.server "$@"
     fi
 
     # 5. SDK missing. Decide whether we may bootstrap.
     if [ "${LOKI_NO_INSTALL_OFFER:-}" = "1" ]; then
         printf '%sMCP SDK not installed.%s\n' "$_ML_YELLOW" "$_ML_NC" >&2
-        _ml_print_manual "$root"
+        _ml_print_manual "$root" "$venv"
         return 2
     fi
 
     if _ml_non_interactive; then
         printf '%sMCP SDK not installed%s and this is a non-interactive shell, so Loki will not install it automatically.\n' "$_ML_YELLOW" "$_ML_NC" >&2
-        _ml_print_manual "$root"
+        _ml_print_manual "$root" "$venv"
         return 2
     fi
 
@@ -197,17 +220,25 @@ mcp_launch_main() {
         ""|y|Y|yes|YES) ;;
         *)
             printf 'Skipped.\n'
-            _ml_print_manual "$root"
+            _ml_print_manual "$root" "$venv"
             return 2
             ;;
     esac
 
-    # 7. Create the venv if needed.
+    # 7. Create the venv if needed. Ensure the parent .loki exists in the user's
+    #    project first (never write under the install root).
     if [ ! -x "$venv_py" ]; then
+        local venv_parent
+        venv_parent="$(dirname "$venv")"
+        if [ ! -d "$venv_parent" ] && ! mkdir -p "$venv_parent"; then
+            printf '%sCannot create %s (no write access).%s\n' "$_ML_RED" "$venv_parent" "$_ML_NC" >&2
+            _ml_print_manual "$root" "$venv"
+            return 2
+        fi
         printf 'Creating virtualenv (%s) ...\n' "$venv"
         if ! "$base_py" -m venv "$venv"; then
             printf '%sFailed to create virtualenv at %s.%s\n' "$_ML_RED" "$venv" "$_ML_NC" >&2
-            _ml_print_manual "$root"
+            _ml_print_manual "$root" "$venv"
             return 2
         fi
     fi
@@ -223,20 +254,21 @@ mcp_launch_main() {
     "$venv/bin/pip" install -r "$req" || code=$?
     if [ "$code" -ne 0 ]; then
         printf '%sInstall failed (pip exited %s).%s You can retry manually:\n' "$_ML_RED" "$code" "$_ML_NC" >&2
-        _ml_print_manual "$root"
+        _ml_print_manual "$root" "$venv"
         return 2
     fi
 
     # 9. Verify, then exec the server using the venv python (critical: the
     #    site-packages walk in server.py only finds the SDK if we run the
-    #    venv's interpreter, not the ambient python3).
+    #    venv's interpreter, not the ambient python3). PYTHONPATH=$root keeps the
+    #    user's cwd intact for .loki resolution; see _ml_sdk_importable.
     if ! _ml_sdk_importable "$venv_py" "$root"; then
         printf '%sDependencies installed but the MCP SDK still is not importable.%s\n' "$_ML_RED" "$_ML_NC" >&2
-        _ml_print_manual "$root"
+        _ml_print_manual "$root" "$venv"
         return 2
     fi
     printf "%sMCP dependencies ready. Launching server over stdio ...%s\n" "$_ML_BOLD" "$_ML_NC" >&2
-    exec "$venv_py" -m mcp.server "$@"
+    exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" "$venv_py" -m mcp.server "$@"
 }
 
 # Executed directly (tests, manual): run the dispatcher.
