@@ -13,6 +13,13 @@
 
 set -uo pipefail
 
+# Isolate from the host's global/system git config so a hostile setting such as
+# commit.gpgsign=true (with no signing key) cannot make every test commit fail
+# rc=128. Exported at top level so it is inherited by every subshell and every
+# child `bash "$SPEC_SH"` invocation below. Mirrors tests/test-evidence-gate.sh.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPEC_SH="$SCRIPT_DIR/../autonomy/spec.sh"
 VERIFY_SH="$SCRIPT_DIR/../autonomy/verify.sh"
@@ -55,6 +62,9 @@ make_repo() {
         git init -q
         git config user.email test@loki.test
         git config user.name "loki test"
+        # Repo-local gpgsign=false persists to .git/config on disk so it overrides
+        # a hostile global commit.gpgsign=true across every scenario commit below.
+        git config commit.gpgsign false
         git checkout -q -b main
     )
     printf '%s\n' "$d"
@@ -80,7 +90,7 @@ scenario_lifecycle() {
     local repo; repo="$(make_repo)"
     cd "$repo" || return
     printf '%s' "$FIXTURE_SPEC" > prd.md
-    git add prd.md && git commit -qm "init spec"
+    git add prd.md && git commit -qm "init spec" --no-gpg-sign --no-verify
 
     local out rc
 
@@ -139,7 +149,7 @@ scenario_added_removed() {
     local repo; repo="$(make_repo)"
     cd "$repo" || return
     printf '%s' "$FIXTURE_SPEC" > prd.md
-    git add prd.md && git commit -qm init
+    git add prd.md && git commit -qm init --no-gpg-sign --no-verify
     bash "$SPEC_SH" lock prd.md >/dev/null 2>&1
 
     # Add a brand new requirement section and remove an existing checklist item.
@@ -172,7 +182,7 @@ scenario_no_lock() {
     local repo; repo="$(make_repo)"
     cd "$repo" || return
     printf '%s' "$FIXTURE_SPEC" > prd.md
-    git add prd.md && git commit -qm init
+    git add prd.md && git commit -qm init --no-gpg-sign --no-verify
 
     local out rc
     out="$(bash "$SPEC_SH" status prd.md 2>&1)"; rc=$?
@@ -190,7 +200,7 @@ scenario_json() {
     local repo; repo="$(make_repo)"
     cd "$repo" || return
     printf '%s' "$FIXTURE_SPEC" > prd.md
-    git add prd.md && git commit -qm init
+    git add prd.md && git commit -qm init --no-gpg-sign --no-verify
     bash "$SPEC_SH" lock prd.md >/dev/null 2>&1
 
     local out rc
@@ -215,12 +225,12 @@ scenario_verify_integration() {
     local repo; repo="$(make_repo)"
     cd "$repo" || return
     printf '%s' "$FIXTURE_SPEC" > prd.md
-    git add prd.md && git commit -qm init
+    git add prd.md && git commit -qm init --no-gpg-sign --no-verify
 
     # Branch with a committed code change so verify has a non-empty diff vs main.
     git checkout -q -b work
     printf 'console.log("hi")\n' > app.js
-    git add app.js && git commit -qm "add app"
+    git add app.js && git commit -qm "add app" --no-gpg-sign --no-verify
 
     # ---- No lock yet: spec_drift gate skipped, no SPEC_DRIFT finding. ----
     bash "$VERIFY_SH" main >/dev/null 2>&1
@@ -278,6 +288,36 @@ print(f[0]["severity"] if f else "missing")' 2>/dev/null)"
     rm -rf "$repo"
 }
 
+# ---------------------------------------------------------------------------
+# Scenario 6: lock in a git repo with NO commits records an honest SHA.
+#             `git rev-parse HEAD` prints the literal "HEAD" on an empty repo, so
+#             the lock used to store "HEAD" as the locked_head. The fix records
+#             "no-commits" and prints honestly (no "HEAD HEAD" artifact).
+# ---------------------------------------------------------------------------
+scenario_no_commit_lock() {
+    local repo; repo="$(make_repo)"
+    cd "$repo" || return
+    printf '%s' "$FIXTURE_SPEC" > prd.md
+    # Deliberately do NOT commit: the repo has no commits / no resolvable HEAD.
+
+    local out rc
+    out="$(bash "$SPEC_SH" lock prd.md 2>&1)"; rc=$?
+    assert_eq "lock exits 0 in a no-commit repo" 0 "$rc"
+
+    local locked_head
+    locked_head="$(python3 -c 'import json;print(json.load(open(".loki/spec/spec.lock"))["locked_head"])' 2>/dev/null)"
+    assert_eq "no-commit lock records locked_head=no-commits (not literal HEAD)" "no-commits" "$locked_head"
+
+    TOTAL=$((TOTAL + 1))
+    case "$out" in
+        *"HEAD HEAD"*) log_fail "no-commit lock prints honestly" "stdout contained dishonest 'HEAD HEAD'" ;;
+        *) log_pass "no-commit lock prints honestly (no 'HEAD HEAD' artifact)" ;;
+    esac
+
+    cd "$SCRIPT_DIR" || true
+    rm -rf "$repo"
+}
+
 echo "Running loki spec lifecycle tests..."
 echo ""
 scenario_lifecycle
@@ -285,6 +325,7 @@ scenario_added_removed
 scenario_no_lock
 scenario_json
 scenario_verify_integration
+scenario_no_commit_lock
 
 echo ""
 echo "========================================"

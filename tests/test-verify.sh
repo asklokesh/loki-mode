@@ -16,6 +16,13 @@
 
 set -uo pipefail
 
+# Isolate from the host's global/system git config so a hostile setting such as
+# commit.gpgsign=true (with no signing key) cannot make every test commit fail
+# rc=128. Exported at top level so it is inherited by every subshell and every
+# child `bash "$VERIFY_SH"` invocation below. Mirrors tests/test-evidence-gate.sh.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERIFY_SH="$SCRIPT_DIR/../autonomy/verify.sh"
 
@@ -52,9 +59,12 @@ init_repo() {
       git init -q
       git config user.email "test@loki.local"
       git config user.name "loki test"
+      # Repo-local gpgsign=false persists to .git/config on disk, so it overrides
+      # a hostile global commit.gpgsign=true across every scenario subshell below.
+      git config commit.gpgsign false
       echo "# project" > README.md
       git add README.md
-      git commit -qm "base"
+      git commit -qm "base" --no-gpg-sign --no-verify
       git branch -m main
     )
 }
@@ -83,7 +93,7 @@ function add(a, b) { return a + b; }
 module.exports = { add };
 EOF
   git add util.js
-  git commit -qm "add util"
+  git commit -qm "add util" --no-gpg-sign --no-verify
 )
 run_verify "$S1" main
 if [ "$RC" -eq 0 ] && [ "$VERDICT" = "VERIFIED" ]; then
@@ -113,7 +123,7 @@ def test_always_fails():
     assert 1 == 2
 EOF
       git add pyproject.toml tests
-      git commit -qm "add failing test"
+      git commit -qm "add failing test" --no-gpg-sign --no-verify
     )
     run_verify "$S2" main
     if [ "$RC" -eq 2 ] && [ "$VERDICT" = "BLOCKED" ]; then
@@ -140,7 +150,7 @@ init_repo "$S3"
 AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
 EOF
   git add config.py
-  git commit -qm "add config with planted secret"
+  git commit -qm "add config with planted secret" --no-gpg-sign --no-verify
 )
 run_verify "$S3" main
 if [ "$RC" -eq 2 ] && [ "$VERDICT" = "BLOCKED" ]; then
@@ -171,7 +181,7 @@ def test_smoke():
     assert True
 EOF
   git add pyproject.toml tests
-  git commit -qm "python project, runner forced absent"
+  git commit -qm "python project, runner forced absent" --no-gpg-sign --no-verify
 )
 # Force pytest, npm, etc. to be unavailable: run with an empty PATH except the
 # essentials git/python3/date/grep need. We point PATH at a dir with only the
@@ -211,7 +221,7 @@ init_repo "$S4B"
 AKIAIOSFODNN7EXAMPLE
 EOF
   git add README.md
-  git commit -qm "amend base with planted secret in untouched file"
+  git commit -qm "amend base with planted secret in untouched file" --no-gpg-sign --no-verify
   git checkout -q -b feature
 )
 run_verify "$S4B" main
@@ -237,7 +247,7 @@ def test_root_level():
     assert 1 + 1 == 2
 EOF
   git add test_app.py
-  git commit -qm "bare root-level test file only"
+  git commit -qm "bare root-level test file only" --no-gpg-sign --no-verify
 )
 if command -v pytest >/dev/null 2>&1; then
     run_verify "$S4C" main

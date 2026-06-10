@@ -380,6 +380,53 @@ got_title=$(python3 -c "import json;print(json.load(open('$d/.loki/council/heldo
 [ "$got_title" = "$tricky_title" ] && ok "case10 full title preserved in block report" \
     || bad "case10 title preserved" "got [$got_title] want [$tricky_title]"
 
+# ===========================================================================
+# Case 11: route-level wiring assertion (static, no live run). The held-out
+#          ship gate is only enforced if council_heldout_gate is actually called
+#          from BOTH completion routes in run.sh and from the council evaluate
+#          path. These greps fail loudly if any wiring is silently removed.
+#          Pattern "! council_heldout_gate" matches only real call sites and
+#          excludes comments and the "council_heldout_gate() {" definition.
+# ===========================================================================
+echo "Case 11: route-level wiring assertions (run.sh + completion-council.sh)"
+if [ -f "$RUN_SH" ]; then
+    # (a) completion-promise route: a single elif line must gate completion on
+    #     both check_completion_promise AND council_heldout_gate.
+    if grep -Eq 'check_completion_promise.*! council_heldout_gate' "$RUN_SH"; then
+        ok "case11 promise route wires council_heldout_gate into check_completion_promise chain"
+    else
+        bad "case11 promise route wiring" "no check_completion_promise line also calls ! council_heldout_gate in run.sh"
+    fi
+
+    # (b) force-review route: the COUNCIL_REVIEW_REQUESTED signal block must call
+    #     council_heldout_gate. Slice from the signal handling to the end of the
+    #     elif chain (council_vote) and assert the gate appears inside it.
+    fr_block="$(awk '/COUNCIL_REVIEW_REQUESTED/{f=1} f{print} f&&/elif type council_vote/{exit}' "$RUN_SH" 2>/dev/null || true)"
+    if printf '%s' "$fr_block" | grep -q '! council_heldout_gate'; then
+        ok "case11 force-review route wires council_heldout_gate after COUNCIL_REVIEW_REQUESTED"
+    else
+        bad "case11 force-review route wiring" "council_heldout_gate not called in the COUNCIL_REVIEW_REQUESTED block"
+    fi
+
+    # (c) at least 2 real call sites in run.sh (promise + force-review).
+    run_calls="$(grep -c '! council_heldout_gate' "$RUN_SH" 2>/dev/null || echo 0)"
+    if [ "${run_calls:-0}" -ge 2 ]; then
+        ok "case11 run.sh has >=2 council_heldout_gate call sites (got $run_calls)"
+    else
+        bad "case11 run.sh call-site count" "expected >=2, got $run_calls"
+    fi
+else
+    bad "case11 run.sh present for wiring assertions" "RUN_SH not found at $RUN_SH"
+fi
+
+# (d) the council evaluate path (completion-council.sh) must also call the gate.
+council_calls="$(grep -c '! council_heldout_gate' "$COUNCIL_SH" 2>/dev/null || echo 0)"
+if [ "${council_calls:-0}" -ge 1 ]; then
+    ok "case11 completion-council.sh calls council_heldout_gate in council_evaluate (got $council_calls)"
+else
+    bad "case11 completion-council.sh call site" "expected >=1, got $council_calls"
+fi
+
 # ---------------------------------------------------------------------------
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"

@@ -215,9 +215,18 @@ spec_do_lock() {
         return $SPEC_EXIT_ERROR
     fi
 
+    # Resolve the current commit SHA honestly. Note: `git rev-parse HEAD` prints
+    # the literal string "HEAD" (and exits 0) in a repo with no commits, so the
+    # naive `|| echo "(none)"` fallback never fires there. Use `--verify HEAD`,
+    # which fails (rc!=0) when HEAD does not resolve, and record an honest
+    # sentinel instead of the failed-resolution artifact.
     local head_sha="(none)"
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        head_sha="$(git rev-parse HEAD 2>/dev/null || echo "(none)")"
+        if head_sha="$(git rev-parse --verify HEAD 2>/dev/null)"; then
+            :
+        else
+            head_sha="no-commits"
+        fi
     fi
 
     local locked_at tool_version
@@ -264,7 +273,13 @@ PYEOF
 
     local count
     count="$(printf '%s' "$req_json" | python3 -c 'import sys,json; print(len(json.load(sys.stdin).get("requirements", [])))' 2>/dev/null || echo "?")"
-    _spec_log "$origin: $count requirement(s) from $spec_path at HEAD ${head_sha:0:12}"
+    local head_label
+    if [ "$head_sha" = "no-commits" ] || [ "$head_sha" = "(none)" ]; then
+        head_label="$head_sha"
+    else
+        head_label="HEAD ${head_sha:0:12}"
+    fi
+    _spec_log "$origin: $count requirement(s) from $spec_path at $head_label"
     printf 'Locked %s requirement(s) -> %s\n' "$count" "$out_dir/$SPEC_LOCK_NAME"
     return $SPEC_EXIT_OK
 }
