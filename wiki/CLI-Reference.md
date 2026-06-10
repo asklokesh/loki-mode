@@ -1031,6 +1031,7 @@ loki verify [<base-ref>] [options]
 | `static_analysis` | syntax check of changed files (node / tsc / py_compile / bash -n) |
 | `secret_scan` | gitleaks if installed, else a high-confidence regex fallback over the diff |
 | `dependency_audit` | npm audit / pip-audit when a lockfile exists |
+| `spec_drift` | runs when a spec lock exists (`.loki/spec/spec.lock`); a drifted spec yields a Medium `SPEC_DRIFT` finding (CONCERNS). See `loki spec`. Graceful no-op (skipped) when there is no lock. |
 
 **Verdict model:**
 
@@ -1109,6 +1110,130 @@ jobs:
   Uncommitted working-tree changes are not verified; commit them first.
 - An empty diff yields CONCERNS (nothing to verify), never VERIFIED.
 - No LLM review in this slice (deterministic gates only).
+
+### `loki spec`
+
+The living spec: the spec is the contract; Loki keeps it true. Binds a spec
+(PRD) to content hashes so drift between the spec and the code is detectable
+cheaply and deterministically, with no LLM pass required to ask "has the spec
+gone stale". The lock and the drift report are auditable trust artifacts that
+feed `loki verify`.
+
+```bash
+loki spec <lock|status|sync> [<spec-path>] [options]
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `lock` | Build `.loki/spec/spec.lock`: a deterministic map of spec requirements (checklist items and headings) to content hashes, plus repo HEAD at lock time. |
+| `status` | Cheap drift detection: compare current spec hashes vs the lock, report ADDED / REMOVED / CHANGED requirements and whether code changed since the locked HEAD. Emits `.loki/spec/drift-report.json` and a human table. Exit 0 in sync, 1 on drift. |
+| `sync` | Refresh the lock after a human review (explicit action). This MVP never auto-rewrites the spec itself. |
+
+**Spec resolution** (when `<spec-path>` is omitted, first match wins):
+`.loki/generated-prd.md` -> `prd.md` -> `PRD.md` -> `docs/prd.md`.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--out <dir>` | `.loki/spec` | Output directory for the lock and report. |
+| `--json` | -- | (status only) Emit the full drift report JSON to stdout. |
+| `-h, --help` | -- | Show help. |
+
+**Requirement model:** a "requirement" is a markdown checklist item
+(`- [ ]` / `- [x]`) or a section heading. Each gets a stable id from its
+normalized text and a content hash over the requirement line plus the body
+beneath it up to the next same-or-shallower requirement, so a CHANGED verdict
+fires when the prose under a heading is edited, not only when the heading text
+moves.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | in sync (status) / lock written (lock, sync) |
+| 1 | drift detected (status) |
+| 2 | usage error (spec or lock not found) |
+| 3 | internal error |
+
+**Verify integration:** when `.loki/spec/spec.lock` exists, `loki verify` runs
+the drift check and adds a Medium-severity `SPEC_DRIFT` finding on drift, which
+maps to a CONCERNS verdict. No lock = graceful no-op (the `spec_drift` gate is
+recorded as `skipped`).
+
+**Examples:**
+
+```bash
+# Lock the current spec to its code
+loki spec lock prd.md
+
+# Has the spec drifted? (CI-gate: exit 1 on drift)
+loki spec status
+
+# Machine-readable drift report
+loki spec status --json
+
+# After reviewing and updating the spec, re-lock it
+loki spec sync prd.md
+```
+
+### `loki grill`
+
+Interrogate a spec with the hardest questions before you build it. Invokes the
+provider once with a Devil's-Advocate prompt to produce the 10-15 hardest
+questions exposing ambiguities, missing acceptance criteria, unstated
+assumptions, and security/scale blind spots. Writes a structured markdown
+report to `.loki/grill/report.md`. A grilled spec is a better Reason input to
+the RARV-C loop.
+
+This requires a provider CLI and fails cleanly (exit 3) when none is available:
+it never fabricates questions and never silently succeeds.
+
+```bash
+loki grill [<spec-path>] [options]
+```
+
+**Spec resolution** (when `<spec-path>` is omitted, first match wins):
+`prd.md` -> `.loki/generated-prd.md` -> `PRD.md` -> `docs/prd.md`.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--apply` | -- | Append the "Grill findings" section to the spec file itself. |
+| `--out <dir>` | `.loki/grill` | Output directory for the report. |
+| `-h, --help` | -- | Show help. |
+
+**Environment:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOKI_PROVIDER` | `claude` | Provider to use (`claude` or `codex`). |
+| `LOKI_GRILL_MODEL` | `sonnet` | Claude model for the interrogation. |
+| `LOKI_GRILL_TIMEOUT` | `180` | Per-invocation timeout in seconds. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | report written |
+| 2 | usage error (spec not found) |
+| 3 | provider unavailable or interrogation failed (never silent) |
+
+**Examples:**
+
+```bash
+# Grill the default spec, write .loki/grill/report.md
+loki grill
+
+# Grill a specific spec
+loki grill docs/prd.md
+
+# Grill and append the findings to the spec for the record
+loki grill --apply prd.md
+```
 
 ### `loki trust-metrics`
 
