@@ -702,7 +702,7 @@ show_help() {
 show_landing() {
     local version
     version=$(get_version)
-    # v7.29.1 (item 5): strip color when stdout is not a TTY (piped/redirected)
+    # v7.30.0 (item 5): strip color when stdout is not a TTY (piped/redirected)
     # in addition to the global NO_COLOR honoring above, so captured landing
     # output is clean. Local overrides only; the rest of the CLI is untouched.
     local BOLD="$BOLD" CYAN="$CYAN" NC="$NC"
@@ -4772,7 +4772,7 @@ cmd_web_stop() {
         kill -0 "$dash_port_pid" 2>/dev/null && kill -9 "$dash_port_pid" 2>/dev/null || true
     fi
 
-    # FIX-563 (v7.29.1): do NOT blanket-kill loki-run-* orchestrators here.
+    # FIX-563 (v7.30.0): do NOT blanket-kill loki-run-* orchestrators here.
     # The prior unscoped `pgrep -f "loki-run-..."` reaped EVERY orchestrator on
     # the machine, including foreign `loki start` sessions launched from other
     # terminals/CWDs that the web UI never owned. Purple Lab's own build
@@ -9085,7 +9085,7 @@ cmd_sandbox() {
 # caller then falls back to a no-number confirm). Never fabricates a number.
 emit_demo_estimate() {
     local prd_path="$1"
-    # v7.29.1 (item 5): the demo estimate always prints before spending, incl.
+    # v7.30.0 (item 5): the demo estimate always prints before spending, incl.
     # non-TTY (--dry-run / --yes piped), so gate color on a TTY here too (the
     # global vars are only blanked on NO_COLOR). Mirrors provider-offer.sh and
     # quickstart.sh. Local overrides only.
@@ -9171,7 +9171,7 @@ cmd_demo() {
         return 0
     fi
 
-    # v7.29.1 (item 5): demo emits user-facing color (header, dry-run block,
+    # v7.30.0 (item 5): demo emits user-facing color (header, dry-run block,
     # cancel/refuse messages) on paths that always run even when piped/non-TTY,
     # so gate color on a TTY here (the global vars are only blanked on NO_COLOR).
     # Placed AFTER the --help early return so help output is untouched. Local
