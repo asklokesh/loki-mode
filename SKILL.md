@@ -3,7 +3,7 @@ name: loki-mode
 description: Autonomous spec-driven build system with a built-in trust layer. It does not call work done until it is verified (RARV-C closure loop, 11 quality gates, completion council, verified-completion evidence gate). Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.27.0
+# Loki Mode v7.28.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -335,6 +335,15 @@ See `references/core-workflow.md` for the full RARV-C contract.
 
 ---
 
+## Trust-layer additions (v7.28.0)
+
+Two completion-trust features extend the verification gates. Full details in `skills/quality-gates.md`.
+
+- **Held-out spec evals:** ~25% of checklist items (deterministic `sha256(id)` order, `N >= 4`) are reserved into `.loki/checklist/held-out.json` and excluded from the build prompt feed; the completion council blocks if a held-out item fails. Opt out with `LOKI_HELDOUT_GATE=0`. Honest limit: this guards the prompt feed, not a sandbox; the reservation file is on disk and an agent with filesystem access can read it.
+- **Inconclusive-baseline disclosure:** when the evidence gate cannot establish a diff baseline (`no_git_repo` / `no_run_start_sha`) it writes `.loki/state/evidence-inconclusive.json` and `COMPLETION.txt` carries an honest "not independently verified" line. It never blocks non-git projects; red tests still block.
+
+---
+
 ## Concurrency and Security Hardening (v7.5.7 - v7.5.13)
 
 Three back-to-back patches closed cross-process and security gaps. No user-facing behavior change on the default flow; verify via the cited paths.
@@ -383,4 +392,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v7.27.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.28.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

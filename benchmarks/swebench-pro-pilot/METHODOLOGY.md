@@ -133,6 +133,100 @@ set."
 
 ---
 
+## 10. Amendment 2026-06-10 (recorded BEFORE batch instances 2-10 ran)
+
+Stage 2 (single-instance adapter validation, NodeBB instance 1 of the smoke
+batch) produced two measured facts that forced a config change BEFORE the
+batch:
+
+1. Measured cost was ~$14.55 for one instance at `LOKI_MAX_ITERATIONS=8`
+   (per-iteration: 4.73, 3.03, 0.77, 0.95, 1.10, 2.98, 0.99 USD from the
+   claude stream-log result records), vs the $3-8/instance planning estimate.
+   10 instances at that rate (~$145) would exceed the authorized $30-80.
+2. DEFECT: Loki's `.loki/metrics/efficiency/*.json` files all recorded
+   cost_usd=0 / tokens=0 (`.loki/context/tracking.json` never populated on
+   this host), which leaves the in-product `LOKI_BUDGET_LIMIT` USD breaker
+   inert. The iteration cap was the breaker that actually fired.
+
+Amended config for smoke-batch instances 2-10 (instance 1 already ran at
+max_iter=8 and is documented as such in the results):
+- `LOKI_MAX_ITERATIONS=4` (instance 1's first-4-iteration cost: $9.48).
+- Host-side cumulative hard cap: the batch aborts when total measured spend
+  (including instance 1's $14.55) reaches USD 78. Instances not run are
+  reported explicitly as "not run (budget exhausted)", never silently dropped.
+- Cost accounting source of record: `total_cost_usd` from `result` records in
+  `.loki/logs/autonomy-*.log` (authoritative claude CLI accounting), not the
+  zeroed efficiency files.
+- Adapter strip rule extended: newly-added .md files and new files under
+  memory/ are dropped from the extracted patch (Loki self-artifacts found
+  outside .loki/ in Stage 2: USAGE.md, memory/*.md). Files existing at
+  base_commit are always kept.
+
+No grading results for instances 2-10 existed when this amendment was written;
+instance 1's graded result existed (it doubled as the adapter apply-validation
+gate) and is reported with its pre-amendment config.
+
+---
+
+## 11. Outage note 2026-06-10 (provider session-limit during batch instances 4-10)
+
+Recorded 2026-06-10 after the first batch run, BEFORE the re-run of the
+affected instances. This documents an infrastructure failure, not a Loki
+result.
+
+What happened: the smoke batch (instances 1-10 of `pilot-subset-119.json`)
+ran overnight. The Claude Code CLI hit its account session limit partway
+through. From that point every Loki iteration's underlying `claude -p` call
+returned a `result` record with `is_error=true`,
+`total_cost_usd=0`, and `result="You've hit your session limit . resets
+4:20am (America/New_York)"`. No tokens were spent and no agent work occurred
+on those iterations.
+
+Per-instance classification from the `result` records in each run's
+`.loki/logs/autonomy-*.log` (authoritative claude CLI accounting):
+
+| # | Instance (repo) | result records | session-limit errors | real iters | log cost | classification |
+|---|---|---|---|---|---|---|
+| 1 | NodeBB 05f22361 | 7 | 0 | 7 | $14.5514 | real attempt (pre-amendment max_iter=8) |
+| 2 | NodeBB 087e6020 | 1 | 0 | 1 | $7.1715 | real attempt |
+| 3 | NodeBB 4327a09d | 3 | 1 | 2 | $4.3587 | real attempt (patch produced in 2 real iters at 00:51-00:55; a 3rd iteration at 00:56 hit the limit AFTER the patch already existed) |
+| 4 | NodeBB 6489e9fd | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:07) |
+| 5 | NodeBB 8ca65b0c | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:17) |
+| 6 | NodeBB a917210c | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:27) |
+| 7 | NodeBB b398321a | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:38) |
+| 8 | ansible 12734fa2 | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:48) |
+| 9 | ansible 1a4644ff | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (01:58) |
+| 10 | ansible 34db57a4 | 3 | 3 | 0 | $0.0000 | provider-down, never attempted (02:08) |
+
+Window: the provider was session-limited from roughly 00:56 EDT (instance 3's
+final iteration) through the batch end at 02:08 EDT. The stated reset was
+4:20am America/New_York. The re-run below was started after that reset (session
+availability re-confirmed with a one-line probe that returned a real,
+non-error result).
+
+Decision (binding):
+- Instances 4-10 were provider-down and produced ZERO real iterations. They
+  were never genuinely attempted. Under the 1-trial rule, an infrastructure
+  failure does not consume the instance's single trial. Their re-runs are
+  therefore FIRST REAL TRIALS, not retries.
+- Instance 3 keeps its result. It hit a session-limit error only on a 3rd
+  iteration that ran AFTER its patch had already been produced by two real
+  paid iterations. The 1-trial rule is honored: instance 3 was genuinely
+  attempted and is NOT re-run.
+- Instances 1 and 2 keep their results unchanged.
+- The re-run uses the amended config (Section 10): `LOKI_MAX_ITERATIONS=4`,
+  cumulative host hard cap $78 inclusive of instances 1-3's $26.08.
+
+Re-run mechanics (recorded for reproducibility): `run_batch.py` resume skips
+any instance already present in `batch_records.json`. To re-run 4-10 as fresh
+trials, their stale `patch_produced=false`, `cost=0` records were removed from
+`batch_records.json` (and their empty `.patch` files and stale run dirs
+cleared) so the resume loop treats them as not-yet-done. Records for instances
+1-3 were left untouched; `spent()` re-counts their $26.08 from the retained
+records, so the $78 cumulative cap remains correct across the resume.
+
+---
+
 Pre-registration note: this methodology, the pinned subset, the shim, and the
 gold-smoke evidence constitute the pre-registration bundle. Per Hard Rule 3 they
 are committed BEFORE any paid run; the smoke-batch results land in a separate

@@ -158,6 +158,18 @@ pass, not PRD-semantic correctness (the council vote is the semantic check).
 The common false-block is a project that was ALREADY red before the run; the
 one-step opt-out is the escape hatch.
 
+**Inconclusive-baseline disclosure (v7.28.0):** when the gate cannot establish a
+diff baseline (reason `no_git_repo` or `no_run_start_sha`) it still passes
+through (it never blocks a non-git project), but completion is no longer
+independently verified. Instead of passing silently, the gate writes
+`.loki/state/evidence-inconclusive.json` (recording the reason, iteration, and
+timestamp) and emits an `evidence_inconclusive` trust event. The run summary in
+`.loki/COMPLETION.txt` then carries one honest line:
+`Evidence gate: inconclusive (<reason>) - completion not independently
+verified`. The record is removed automatically on any later run that resolves a
+conclusive baseline. This is a diff-baseline-only disclosure: red tests still
+block completion independently, regardless of the inconclusive state.
+
 **Override-judge knobs (v7.5.4+):**
 
 ```bash
@@ -217,6 +229,40 @@ read-modify-write, so override-council quotas and per-finding counters
 remain consistent across processes. The lock file lives at
 `.loki/state/gate-counter-<iter>.json.lock` and is released even on
 crash via the primitive's `finally` cleanup.
+
+---
+
+## Held-out spec evals (v7.28.0, default-on when reserved)
+
+Anti-reward-hacking for the checklist. Before the first verification,
+`checklist_select_heldout` (`autonomy/prd-checklist.sh`) deterministically
+reserves a slice of checklist items as held-out:
+`count = clamp(round(0.25 * N), 1, 5)` for checklists with `N >= 4` items
+(smaller checklists reserve nothing). Selection is reproducible, not random:
+items are ranked by `sha256(id)` and the first `count` are taken, then written
+once to `.loki/checklist/held-out.json` (idempotent: never reselected once
+chosen).
+
+Held-out item IDs are EXCLUDED from everything the build loop sees: the checklist
+summary, the visible counts, and the per-iteration checklist gate all omit them,
+so the build agent cannot tune to those specific acceptance checks. The
+completion council evaluates them only at the ship gate via
+`council_heldout_gate` (`autonomy/completion-council.sh`): a held-out item whose
+status is `failing` (and not waived) blocks completion exactly like any other
+critical failure. Each evaluation records a `heldout_eval` trust event with the
+verdict and pass/fail counts (no event is emitted when nothing is reserved).
+
+```bash
+LOKI_HELDOUT_GATE=0       # opt out: the held-out gate never blocks completion.
+                          # Default is on (1), and the gate is inert anyway when
+                          # no held-out items were reserved (N < 4).
+```
+
+Honest limit: this protects against the PROMPT FEED, not against filesystem
+access. The reservation lives on disk at `.loki/checklist/held-out.json`; an
+adversarial agent with read access to the working tree can open that file and
+learn which items were held out. The guarantee is that held-out items are kept
+out of the build loop's own prompt context, not that they are sandboxed.
 
 ---
 

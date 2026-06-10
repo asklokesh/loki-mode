@@ -18,6 +18,7 @@
 - [[Notifications]]
 - [[Dashboard]]
 - [[Completion Council]]
+- [[Quality Gates]]
 - [[Cross-Project Learning]]
 - [[Knowledge Compounding]]
 - [[Checkpoints]]
@@ -42,6 +43,6 @@
 
 ---
 
-**Version:** 7.27.0
+**Version:** 7.28.0
 
 [Autonomi](https://www.autonomi.dev/) | [GitHub](https://github.com/asklokesh/loki-mode) | [npm](https://www.npmjs.com/package/loki-mode)

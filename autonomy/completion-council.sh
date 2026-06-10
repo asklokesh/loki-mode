@@ -1098,19 +1098,24 @@ council_reverify_checklist() {
 council_checklist_gate() {
     local results_file=".loki/checklist/verification-results.json"
     local waivers_file=".loki/checklist/waivers.json"
+    local heldout_file=".loki/checklist/held-out.json"
 
     # No checklist = no gate (backwards compatible)
     if [ ! -f "$results_file" ]; then
         return 0
     fi
 
-    # Check for critical failures, excluding waived items
+    # Check for critical failures, excluding waived AND held-out items. Held-out
+    # items (v7.28.0) must NOT block here: they are evaluated separately by
+    # council_heldout_gate at the ship gate, and surfacing them in this gate's
+    # block report would leak their identity back into the build loop.
     local gate_result
-    gate_result=$(_RESULTS_FILE="$results_file" _WAIVERS_FILE="$waivers_file" python3 -c "
+    gate_result=$(_RESULTS_FILE="$results_file" _WAIVERS_FILE="$waivers_file" _HELDOUT_FILE="$heldout_file" python3 -c "
 import json, sys, os
 
 results_file = os.environ['_RESULTS_FILE']
 waivers_file = os.environ.get('_WAIVERS_FILE', '')
+heldout_file = os.environ.get('_HELDOUT_FILE', '')
 
 try:
     with open(results_file) as f:
@@ -1129,12 +1134,22 @@ if waivers_file and os.path.exists(waivers_file):
     except (json.JSONDecodeError, KeyError):
         pass
 
-# Find critical failures not waived
+# Load held-out item ids (excluded from this gate)
+heldout_ids = set()
+if heldout_file and os.path.exists(heldout_file):
+    try:
+        with open(heldout_file) as f:
+            heldout_ids = set(json.load(f).get('held_out', []))
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+# Find critical failures not waived and not held-out
 critical_failures = []
 for cat in results.get('categories', []):
     for item in cat.get('items', []):
         if item.get('priority') == 'critical' and item.get('status') == 'failing':
-            if item.get('id') not in waived_ids:
+            iid = item.get('id')
+            if iid not in waived_ids and iid not in heldout_ids:
                 critical_failures.append(item.get('title', item.get('id', 'unknown')))
 
 if critical_failures:
@@ -1188,6 +1203,221 @@ GATE_EOF
 }
 
 #===============================================================================
+# Council Held-out Spec Eval Gate (v7.28.0) - anti-reward-hacking
+#===============================================================================
+# Held-out checklist items are reserved at PRD-checklist generation time and are
+# excluded from the prompt feed the build loop sees (checklist_summary, the build
+# prompt, and council_checklist_gate). The completion council evaluates them only
+# here, at the ship gate. Scope of the guarantee: this protects the prompt feed,
+# not a sandbox. .loki/checklist/held-out.json is plain on-disk JSON, so a
+# non-cooperative agent with filesystem tools can read the reservation directly;
+# the protection is against feeding held-out items to the loop, not isolation.
+# The gate uses the SAME verification machinery the
+# checklist already uses: council_reverify_checklist re-runs checklist-verify.py
+# over the FULL checklist (including held-out items), so this gate just reads
+# the held-out items' freshly-computed statuses from verification-results.json.
+#
+# A held-out item with status 'failing' blocks completion exactly like the
+# evidence gate (return 1 = CONTINUE). Pending/inconclusive items pass through.
+# Default-on ONLY when held-out items exist; opt out with LOKI_HELDOUT_GATE=0
+# (byte-identical to prior behavior: no read, no write).
+council_heldout_gate() {
+    # Knob first: opt-out is exact-as-today, before any file read or write.
+    [ "${LOKI_HELDOUT_GATE:-1}" = "0" ] && return 0
+
+    local results_file=".loki/checklist/verification-results.json"
+    local heldout_file=".loki/checklist/held-out.json"
+    local waivers_file=".loki/checklist/waivers.json"
+
+    # No held-out reservation = no gate (default-off when nothing reserved).
+    if [ ! -f "$heldout_file" ] || [ ! -f "$results_file" ]; then
+        return 0
+    fi
+
+    if [ -z "${COUNCIL_STATE_DIR:-}" ]; then
+        COUNCIL_STATE_DIR="${TARGET_DIR:-.}/.loki/council"
+    fi
+
+    # Evaluate held-out items against their freshly-verified statuses. Output is
+    # a single line "<verdict> <pass> <fail>" where verdict is NONE (no held-out
+    # items reserved, gate inert), STALE (ids reserved but ZERO matched current
+    # items -> reservation orphaned by a checklist regeneration), PASS, or BLOCK.
+    # The failing titles are NOT carried in this line (a checklist title may
+    # contain ':' or '|'); they are read separately from the held-out JSON block
+    # below in the BLOCK branch.
+    local gate_result
+    gate_result=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -c "
+import json, sys, os
+
+results_file = os.environ['_RESULTS_FILE']
+heldout_file = os.environ['_HELDOUT_FILE']
+waivers_file = os.environ.get('_WAIVERS_FILE', '')
+
+try:
+    with open(results_file) as f:
+        results = json.load(f)
+    with open(heldout_file) as f:
+        heldout_ids = set(json.load(f).get('held_out', []))
+except (json.JSONDecodeError, IOError, KeyError):
+    print('NONE 0 0')
+    sys.exit(0)
+
+# No held-out items reserved (e.g. N<4): gate is inert. Emit NONE so the caller
+# skips the trust-event entirely (no no-op heldout_eval pollution per round).
+if not heldout_ids:
+    print('NONE 0 0')
+    sys.exit(0)
+
+# Waived held-out items are not counted as failures (operator override path).
+waived_ids = set()
+if waivers_file and os.path.exists(waivers_file):
+    try:
+        with open(waivers_file) as f:
+            waived_ids = {w['item_id'] for w in json.load(f).get('waivers', []) if w.get('active', True)}
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+# HIGH-1(b): track how many held-out ids actually matched a current item. If the
+# reservation lists ids but ZERO matched (orphaned after a checklist regen), the
+# gate must NOT report PASS (that reads as evaluated-and-passed). 'matched' is
+# distinct from passed/failed: an all-pending matched set legitimately yields
+# passed=0 failed=0 and must stay PASS/pass-through, not STALE.
+matched = 0
+passed = 0
+failed = 0
+for cat in results.get('categories', []):
+    for item in cat.get('items', []):
+        iid = item.get('id', '')
+        if iid not in heldout_ids:
+            continue
+        matched += 1
+        if iid in waived_ids:
+            continue
+        status = item.get('status')
+        if status == 'verified':
+            passed += 1
+        elif status == 'failing':
+            failed += 1
+        # pending/inconclusive: pass-through (not counted as pass or fail block)
+
+if matched == 0:
+    # Reservation is stale: ids exist but none map to a current item. Selection-
+    # side repair (checklist_select_heldout) fixes this next iteration; emit STALE
+    # so this round is recorded honestly rather than as a silent PASS.
+    print('STALE 0 0')
+    sys.exit(0)
+
+verdict = 'BLOCK' if failed > 0 else 'PASS'
+print('%s %d %d' % (verdict, passed, failed))
+" 2>/dev/null || echo "NONE 0 0")
+
+    local verdict pass_count fail_count
+    read -r verdict pass_count fail_count <<< "$gate_result"
+    [ -z "$verdict" ] && verdict="NONE"
+    [ -z "$pass_count" ] && pass_count=0
+    [ -z "$fail_count" ] && fail_count=0
+
+    # NONE: no held-out items reserved -> gate inert, no trust-event, no block.
+    # LOW-5: still clear any stale block report so a prior BLOCK does not linger
+    # after the reservation is emptied (matches the PASS branch cleanup).
+    if [ "$verdict" = "NONE" ]; then
+        if [ -n "${COUNCIL_STATE_DIR:-}" ] && [ -f "$COUNCIL_STATE_DIR/heldout-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/heldout-block.json"
+        fi
+        return 0
+    fi
+
+    # STALE: reservation orphaned by a checklist regeneration (ids reserved but
+    # zero matched current items). Emit a STALE trust event so the round is not
+    # silently counted as a pass, warn, clear any stale block file (LOW-5), and
+    # return 0 (pass-through): blocking here would loop forever, and the
+    # selection-side repair re-selects valid ids on the next iteration.
+    if [ "$verdict" = "STALE" ]; then
+        log_warn "[Council] Held-out reservation is stale (checklist regenerated; reserved ids match no current item). Selection will re-select next iteration; not treating this as an evaluated PASS."
+        if type record_trust_event_bash &>/dev/null; then
+            record_trust_event_bash "heldout_eval" \
+                "verdict=STALE" \
+                "pass=0" \
+                "fail=0" \
+                >/dev/null 2>&1 || true
+        fi
+        if [ -n "${COUNCIL_STATE_DIR:-}" ] && [ -f "$COUNCIL_STATE_DIR/heldout-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/heldout-block.json"
+        fi
+        return 0
+    fi
+
+    # Trust-metrics: durable per-evaluation record (pass/fail counts). Emitted
+    # only when held-out items actually exist (verdict PASS or BLOCK).
+    if type record_trust_event_bash &>/dev/null; then
+        record_trust_event_bash "heldout_eval" \
+            "verdict=$verdict" \
+            "pass=$pass_count" \
+            "fail=$fail_count" \
+            >/dev/null 2>&1 || true
+    fi
+
+    if [ "$verdict" = "BLOCK" ]; then
+        # Read failing held-out titles directly from the data (colon/pipe-safe).
+        local titles_json titles_display
+        titles_json=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -c "
+import json, os
+results = json.load(open(os.environ['_RESULTS_FILE']))
+heldout_ids = set(json.load(open(os.environ['_HELDOUT_FILE'])).get('held_out', []))
+waived_ids = set()
+wf = os.environ.get('_WAIVERS_FILE', '')
+if wf and os.path.exists(wf):
+    try:
+        waived_ids = {w['item_id'] for w in json.load(open(wf)).get('waivers', []) if w.get('active', True)}
+    except Exception:
+        pass
+titles = []
+for cat in results.get('categories', []):
+    for item in cat.get('items', []):
+        iid = item.get('id', '')
+        if iid in heldout_ids and iid not in waived_ids and item.get('status') == 'failing':
+            titles.append(item.get('title', iid))
+print(json.dumps(titles[:5]))
+" 2>/dev/null || echo '[]')
+        titles_display=$(_T="$titles_json" python3 -c "
+import json, os
+try:
+    print(', '.join(json.loads(os.environ['_T'])))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+        log_warn "[Council] Held-out gate BLOCKED: ${fail_count} held-out acceptance check(s) failing: ${titles_display}"
+        log_warn "[Council] Held-out checks are hidden from the build loop and verified only at completion. To opt out: set LOKI_HELDOUT_GATE=0"
+
+        mkdir -p "$COUNCIL_STATE_DIR" 2>/dev/null || true
+        local ho_file="$COUNCIL_STATE_DIR/heldout-block.json"
+        local ho_tmp="${ho_file}.tmp"
+        local timestamp
+        timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        cat > "$ho_tmp" << HELDOUT_EOF
+{
+    "status": "blocked",
+    "blocked": true,
+    "blocked_at": "$timestamp",
+    "iteration": ${ITERATION_COUNT:-0},
+    "reason": "held_out_checks_failing",
+    "passed": $pass_count,
+    "failed": $fail_count,
+    "failures": $titles_json
+}
+HELDOUT_EOF
+        mv "$ho_tmp" "$ho_file"
+        return 1
+    fi
+
+    # Gate passes: remove any stale block report.
+    if [ -f "$COUNCIL_STATE_DIR/heldout-block.json" ]; then
+        rm -f "$COUNCIL_STATE_DIR/heldout-block.json"
+    fi
+    return 0
+}
+
+#===============================================================================
 # Council Evidence Hard Gate (v7.19.1) - "verified completion"
 #===============================================================================
 # Block the completion-approval path unless there is real on-disk evidence that
@@ -1224,13 +1454,20 @@ council_evidence_gate() {
     # read, so none is tracked (avoids SC2034 dead-assignment).
     local diff_fails="false"
     local diff_files=0
+    # v7.28.0: track WHY the diff baseline could not be established, so the
+    # inconclusive case is surfaced honestly instead of passing through silently.
+    # diff_inconclusive stays "false" on the conclusive branch below.
+    local diff_inconclusive="false"
+    local diff_inconclusive_reason=""
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         # No git repo => cannot prove fabrication => inconclusive => pass-through.
-        :
+        diff_inconclusive="true"
+        diff_inconclusive_reason="no_git_repo"
     elif [ -z "$base_sha" ]; then
         # No baseline captured (non-git/zero-commit run, or never set) =>
         # inconclusive => pass-through. Never false-block a legit first run.
-        :
+        diff_inconclusive="true"
+        diff_inconclusive_reason="no_run_start_sha"
     else
         # Count the UNION of three change sources (auto-commit is not guaranteed,
         # so committed-only would false-block a dirty-but-real working tree):
@@ -1307,6 +1544,40 @@ else:
     fi
     # Missing test-results.json (the else of the -f check) likewise leaves
     # test_fails="false" => inconclusive => pass-through (no file = no gate).
+
+    # --- v7.28.0: inconclusive-baseline lifecycle -------------------------------
+    # When the gate cannot establish a diff baseline (no git repo, or no run-start
+    # SHA) it does NOT block (would break non-git projects), but completion is no
+    # longer independently verified. Record that fact durably so the completion
+    # summary can surface one honest line, and emit a trust-event. The record is
+    # about the DIFF baseline only, so it is written regardless of the test
+    # outcome. On any CONCLUSIVE baseline we remove a stale record.
+    local inconclusive_file="${TARGET_DIR:-.}/.loki/state/evidence-inconclusive.json"
+    if [ "$diff_inconclusive" = "true" ]; then
+        mkdir -p "${TARGET_DIR:-.}/.loki/state" 2>/dev/null || true
+        local inc_tmp="${inconclusive_file}.tmp"
+        local inc_ts
+        inc_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        cat > "$inc_tmp" << INCONCLUSIVE_EOF
+{
+    "inconclusive": true,
+    "recorded_at": "$inc_ts",
+    "iteration": ${ITERATION_COUNT:-0},
+    "reason": "$diff_inconclusive_reason"
+}
+INCONCLUSIVE_EOF
+        mv "$inc_tmp" "$inconclusive_file" 2>/dev/null || rm -f "$inc_tmp" 2>/dev/null || true
+        if type record_trust_event_bash &>/dev/null; then
+            record_trust_event_bash "evidence_inconclusive" \
+                "reason=$diff_inconclusive_reason" \
+                >/dev/null 2>&1 || true
+        fi
+    else
+        # Conclusive baseline: clear any stale inconclusive record.
+        if [ -f "$inconclusive_file" ]; then
+            rm -f "$inconclusive_file"
+        fi
+    fi
 
     # --- Block decision: block iff DIFF FAILS or TEST FAILS ---
     if [ "$diff_fails" != "true" ] && [ "$test_fails" != "true" ]; then
@@ -2023,6 +2294,14 @@ council_evaluate() {
     if ! council_checklist_gate; then
         log_info "[Council] Completion blocked by checklist hard gate"
         return 1  # CONTINUE - can't complete with critical failures
+    fi
+
+    # v7.28.0: held-out spec eval gate - verify the hidden acceptance checks the
+    # build loop never saw. Runs after the visible-checklist gate, using the
+    # statuses council_reverify_checklist just recomputed over the full checklist.
+    if ! council_heldout_gate; then
+        log_info "[Council] Completion blocked by held-out spec eval gate"
+        return 1  # CONTINUE - cannot complete with failing held-out checks
     fi
 
     # Phase 2.5 (v7.19.1): evidence hard gate - block completion unless there is

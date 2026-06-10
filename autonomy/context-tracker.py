@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,11 +62,29 @@ def get_pricing(provider):
     return PRICING_BY_PROVIDER.get(provider, PRICING_BY_PROVIDER["claude"])
 
 
-def derive_project_slug():
-    """Derive Claude's project slug from cwd (matches Claude's naming convention)."""
-    cwd = os.getcwd()
-    # Claude uses: /Users/name/project -> -Users-name-project
+def derive_naive_project_slug():
+    """Legacy slug rule: replace only '/' with '-'.
+
+    Kept for backward compatibility: stale sessions created before the
+    sanitization fix live under this naming. find_session_file falls back to
+    it when the correctly-sanitized slug dir does not exist.
+    """
+    cwd = os.path.realpath(os.getcwd())
     return "-" + cwd.lstrip("/").replace("/", "-")
+
+
+def derive_project_slug():
+    """Derive Claude's project slug from cwd.
+
+    Claude Code sanitizes EVERY non-alphanumeric character in the realpath to
+    '-' (rule: re.sub(r'[^a-zA-Z0-9]', '-', path)). The earlier implementation
+    replaced only '/', so any path with underscores, dots, or other special
+    characters produced a slug that did not match Claude's real session dir,
+    silently zeroing token/cost capture. realpath resolves symlinks (e.g.
+    /tmp -> /private/tmp) to match Claude's own keying.
+    """
+    cwd = os.path.realpath(os.getcwd())
+    return "-" + re.sub(r"[^a-zA-Z0-9]", "-", cwd.lstrip("/"))
 
 
 def find_session_file(provider, session_file_arg=None):
@@ -84,10 +103,16 @@ def find_session_file(provider, session_file_arg=None):
         return path if path.exists() else None
 
     if provider == "claude":
-        project_slug = derive_project_slug()
-        session_dir = Path.home() / ".claude" / "projects" / project_slug
+        projects_root = Path.home() / ".claude" / "projects"
+        session_dir = projects_root / derive_project_slug()
+        # Backward compatibility: if the correctly-sanitized slug dir does not
+        # exist but a stale session under the old naive slug does, use it.
         if not session_dir.is_dir():
-            return None
+            naive_dir = projects_root / derive_naive_project_slug()
+            if naive_dir.is_dir():
+                session_dir = naive_dir
+            else:
+                return None
         jsonl_files = sorted(session_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
         return jsonl_files[0] if jsonl_files else None
 

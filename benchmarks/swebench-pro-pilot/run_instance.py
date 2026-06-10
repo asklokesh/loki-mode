@@ -124,6 +124,18 @@ def extract_patch(workdir, base_commit, test_paths):
         if f in test_paths:
             dropped.append(f)
             continue
+        # Adapter defect found in Stage 2: Loki writes self-artifacts OUTSIDE
+        # .loki/ (USAGE.md, memory/*.md notes). Drop NEWLY-ADDED files that are
+        # markdown docs or live under memory/ -- the held-out tests never read
+        # repo docs, and no gold fix in the batch adds .md files. Files that
+        # EXISTED at base_commit are always kept even if .md (a legit fix could
+        # modify docs).
+        existed_at_base = sh(
+            ["git", "cat-file", "-e", f"{base_commit}:{f}"], cwd=workdir
+        ).returncode == 0
+        if not existed_at_base and (f.endswith(".md") or f.startswith("memory/")):
+            dropped.append(f)
+            continue
         keep.append(f)
     if not keep:
         return "", dropped
@@ -132,32 +144,46 @@ def extract_patch(workdir, base_commit, test_paths):
 
 
 def collect_cost(loki_dir):
-    eff = os.path.join(loki_dir, "metrics", "efficiency")
-    pricing = {"opus": (5.0, 25.0), "sonnet": (3.0, 15.0), "haiku": (1.0, 5.0)}
+    """Real cost from claude stream `result` records in autonomy-*.log.
+
+    Defect found in Stage 2 (2026-06-10): .loki/metrics/efficiency/*.json all
+    report cost_usd=0 / tokens=0 because .loki/context/tracking.json never
+    populates on this host, which also leaves the LOKI_BUDGET_LIMIT breaker
+    inert. The stream logs DO carry authoritative total_cost_usd per
+    iteration-result record (one `result` line per outer iteration).
+    agent.log duplicates some records, so only autonomy-*.log files are
+    summed.
+    """
+    import glob
     total = 0.0
-    tin = tout = 0
+    tin = tout = cread = ccreate = 0
     found = False
-    if os.path.isdir(eff):
-        import glob
-        for fp in glob.glob(os.path.join(eff, "*.json")):
-            try:
-                d = json.load(open(fp))
-            except Exception:
-                continue
-            found = True
-            c = d.get("cost_usd")
-            i = d.get("input_tokens", 0) or 0
-            o = d.get("output_tokens", 0) or 0
-            tin += i
-            tout += o
-            if c is not None:
-                total += float(c)
-            else:
-                p = pricing.get((d.get("model") or "sonnet").lower(), pricing["sonnet"])
-                total += i / 1e6 * p[0] + o / 1e6 * p[1]
+    for fp in sorted(glob.glob(os.path.join(loki_dir, "logs", "autonomy-*.log"))):
+        try:
+            with open(fp, errors="ignore") as fh:
+                for line in fh:
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    if d.get("type") != "result":
+                        continue
+                    found = True
+                    tc = d.get("total_cost_usd")
+                    if tc:
+                        total += float(tc)
+                    u = d.get("usage") or {}
+                    tin += u.get("input_tokens", 0) or 0
+                    tout += u.get("output_tokens", 0) or 0
+                    cread += u.get("cache_read_input_tokens", 0) or 0
+                    ccreate += u.get("cache_creation_input_tokens", 0) or 0
+        except Exception:
+            continue
     return {"usd": round(total, 4) if found else None,
             "input_tokens": tin or None, "output_tokens": tout or None,
-            "found": found}
+            "cache_read_tokens": cread or None,
+            "cache_creation_tokens": ccreate or None,
+            "found": found, "source": "autonomy-log result records"}
 
 
 def run(instance_id, work_root, max_iter=8, budget=8, timeout=5400):

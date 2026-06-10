@@ -2566,6 +2566,26 @@ except Exception:
     local ts
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
 
+    # v7.28.0: evidence-gate inconclusive line. When the evidence gate could not
+    # establish a diff baseline (no git repo, or no run-start SHA), it records a
+    # durable .loki/state/evidence-inconclusive.json instead of silently passing.
+    # Surface one honest line so the user knows completion was not independently
+    # verified. The record is removed by the gate on any conclusive run.
+    local evidence_inconclusive_line=""
+    local _inc_file="$loki_dir/state/evidence-inconclusive.json"
+    if [ -f "$_inc_file" ]; then
+        local _inc_reason
+        _inc_reason="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('reason','') if d.get('inconclusive') else '')
+except Exception:
+    print('')" "$_inc_file" 2>/dev/null)"
+        if [ -n "$_inc_reason" ]; then
+            evidence_inconclusive_line="Evidence gate: inconclusive (${_inc_reason}) - completion not independently verified"
+        fi
+    fi
+
     # ---- Durable human-readable file: .loki/COMPLETION.txt --------------------
     {
         echo "Loki Mode run summary"
@@ -2596,6 +2616,10 @@ except Exception:
         fi
         echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
+        if [ -n "$evidence_inconclusive_line" ]; then
+            echo "$evidence_inconclusive_line"
+            echo ""
+        fi
         echo "Review the work:"
         echo "  $review_cmd"
         echo ""
@@ -4690,6 +4714,57 @@ print_ttfv_next_steps() {
     return 0
 }
 
+# _read_iteration_cost <iteration>
+# Emit "input output cost cache_read cache_creation" for the given iteration,
+# preferring the authoritative result-cost file written by the embedded stream
+# parser (Claude'\''s own total_cost_usd + usage, slug/symlink-independent) over
+# the context-tracker-derived estimate in tracking.json. Falls back to
+# tracking.json when no result-cost file exists, and to all zeros otherwise.
+# Best-effort: any parse failure yields "0 0 0 0 0" and never aborts.
+_read_iteration_cost() {
+    local iteration="$1"
+    local result_cost_file=".loki/metrics/result-cost-${iteration}.json"
+    if [ -f "$result_cost_file" ]; then
+        python3 -c "
+import json
+try:
+    d = json.load(open('$result_cost_file'))
+    print(
+        d.get('input_tokens', 0) or 0,
+        d.get('output_tokens', 0) or 0,
+        d.get('total_cost_usd', 0) or 0,
+        d.get('cache_read_tokens', 0) or 0,
+        d.get('cache_creation_tokens', 0) or 0,
+    )
+except Exception:
+    print(0, 0, 0, 0, 0)
+" 2>/dev/null || echo "0 0 0 0 0"
+    elif [ -f ".loki/context/tracking.json" ]; then
+        python3 -c "
+import json
+try:
+    t = json.load(open('.loki/context/tracking.json'))
+    iters = t.get('per_iteration', [])
+    match = [i for i in iters if i.get('iteration') == $iteration]
+    if match:
+        m = match[-1]
+        print(
+            m.get('input_tokens', 0),
+            m.get('output_tokens', 0),
+            m.get('cost_usd', 0),
+            m.get('cache_read_tokens', 0),
+            m.get('cache_creation_tokens', 0),
+        )
+    else:
+        print(0, 0, 0, 0, 0)
+except Exception:
+    print(0, 0, 0, 0, 0)
+" 2>/dev/null || echo "0 0 0 0 0"
+    else
+        echo "0 0 0 0 0"
+    fi
+}
+
 track_iteration_complete() {
     local iteration="$1"
     local exit_code="${2:-0}"
@@ -4772,32 +4847,14 @@ track_iteration_complete() {
     local phase="${LAST_KNOWN_PHASE:-}"
     [ -z "$phase" ] && phase=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', 'unknown'))" 2>/dev/null || echo "unknown")
 
-    # Read token data from context tracker output (v5.42.0)
+    # Read token data, preferring Claude'\''s authoritative result-cost file over
+    # the context-tracker estimate (v7.28.0 cost-capture fix). See
+    # _read_iteration_cost for precedence rationale.
     # v6.82.0: also capture cache_read_tokens / cache_creation_tokens for
     # prompt-cache hit-rate analysis (S1.1 prompt restructure).
     local iter_input=0 iter_output=0 iter_cost=0
     local iter_cache_read=0 iter_cache_creation=0
-    if [ -f ".loki/context/tracking.json" ]; then
-        read iter_input iter_output iter_cost iter_cache_read iter_cache_creation < <(python3 -c "
-import json
-try:
-    t = json.load(open('.loki/context/tracking.json'))
-    iters = t.get('per_iteration', [])
-    match = [i for i in iters if i.get('iteration') == $iteration]
-    if match:
-        m = match[-1]
-        print(
-            m.get('input_tokens', 0),
-            m.get('output_tokens', 0),
-            m.get('cost_usd', 0),
-            m.get('cache_read_tokens', 0),
-            m.get('cache_creation_tokens', 0),
-        )
-    else:
-        print(0, 0, 0, 0, 0)
-except: print(0, 0, 0, 0, 0)
-" 2>/dev/null || echo "0 0 0 0 0")
-    fi
+    read -r iter_input iter_output iter_cost iter_cache_read iter_cache_creation < <(_read_iteration_cost "$iteration")
 
     cat > ".loki/metrics/efficiency/iteration-${iteration}.json" << EFF_EOF
 {
@@ -12352,8 +12409,15 @@ except Exception as exc:
             claude)
                 # Claude: Full features with stream-json output and agent tracking
                 # Uses dynamic tier for model selection based on RARV phase
-                # Pass tier to Python via environment for dashboard display
-                { LOKI_CURRENT_MODEL="$tier_param" \
+                # Pass tier + iteration to the embedded stream parser via the
+                # environment. A bare `VAR=val cmd | parser` prefix applies ONLY
+                # to `cmd` (claude) and does NOT cross the pipe to the parser
+                # subprocess, so these must be exported into the shell env first.
+                # LOKI_ITERATION lets the parser stamp the authoritative
+                # result-cost file under the correct iteration index.
+                export LOKI_CURRENT_MODEL="$tier_param"
+                export LOKI_ITERATION="$ITERATION_COUNT"
+                { \
                 claude "${_loki_claude_argv[@]}" -p "$prompt" \
             --output-format stream-json --verbose 2>&1 | \
             tee -a "$log_file" "$agent_log" "$iter_output" | \
@@ -12666,6 +12730,34 @@ def process_stream():
                     active_agents[orchestrator_id]["tasks_completed"].append(f"{tool_count} tools used")
 
                 save_agents()
+
+                # Authoritative cost capture (path/slug/symlink-independent).
+                # Claude'"'"'s result message carries its own total_cost_usd plus a
+                # full usage object. The context-tracker session-file path is
+                # brittle (slug derivation must guess Claude'"'"'s naming), so this
+                # stamps the authoritative number to a per-iteration file that
+                # the efficiency writer prefers. Best-effort: a malformed or
+                # missing field must never break the iteration loop.
+                try:
+                    _iter = os.environ.get("LOKI_ITERATION", "0")
+                    _u = data.get("usage", {}) or {}
+                    _rec = {
+                        "total_cost_usd": data.get("total_cost_usd"),
+                        "input_tokens": _u.get("input_tokens", 0),
+                        "output_tokens": _u.get("output_tokens", 0),
+                        "cache_read_tokens": _u.get("cache_read_input_tokens", 0),
+                        "cache_creation_tokens": _u.get("cache_creation_input_tokens", 0),
+                    }
+                    if _rec["total_cost_usd"] is not None:
+                        os.makedirs(".loki/metrics", exist_ok=True)
+                        _p = ".loki/metrics/result-cost-" + str(_iter) + ".json"
+                        _tmp = _p + ".tmp"
+                        with open(_tmp, "w") as _f:
+                            json.dump(_rec, _f)
+                        os.replace(_tmp, _p)
+                except Exception:
+                    pass
+
                 print(f"\n{GREEN}[Session complete]{NC}", flush=True)
                 is_error = data.get("is_error", False)
                 sys.exit(1 if is_error else 0)
@@ -13098,7 +13190,36 @@ if __name__ == "__main__":
             case "${gate_failures:-}" in
                 *code_review,*|*code_review_ESCALATED*) _gate_block_for_completion="code_review" ;;
             esac
-            if [ -n "$_gate_block_for_completion" ] && check_completion_promise "$iter_output"; then
+            # DROP-FIX (v7.28): check_completion_promise -> check_task_completion_signal
+            # CONSUMES the completion signal (rm -f) on the FIRST successful call.
+            # The completion-promise chain below calls it up to five times in one
+            # iteration (reverify guard, code-review arm, evidence arm, held-out
+            # arm, success arm), so the first call consumed the claim and every
+            # later arm saw nothing -- the success arm never fired and the run
+            # iterated to max_iterations even though the agent had claimed done.
+            # Fix: evaluate the claim EXACTLY ONCE here, capture it in
+            # _completion_claimed, and have every arm test that variable. The
+            # single call discards stdout (matching the prior call sites, which
+            # also discarded it), so the task_completion_claim event still emits
+            # exactly once. Consumption semantics are preserved: the claim is
+            # consumed when evaluated; if a gate rejects it, the agent must
+            # re-claim next iteration (see internal/DEMO-CLAIM-DROP-BUG.md).
+            local _completion_claimed=0
+            if check_completion_promise "$iter_output"; then
+                _completion_claimed=1
+            fi
+            # MEDIUM-3: this completion-promise route evaluates the council hard
+            # gates (evidence + held-out) without the council_evaluate freshness
+            # step, so the held-out gate could read stale verification statuses
+            # (and a stale reservation). Re-verify the checklist ONCE here, but
+            # only when a completion claim is actually present (mirror the
+            # check_completion_promise condition used by the gate chain below) so
+            # verification does not run every iteration. Type-guarded and
+            # best-effort: failure must never block the completion path.
+            if [ "$_completion_claimed" = 1 ] && type council_reverify_checklist &>/dev/null; then
+                council_reverify_checklist 2>/dev/null || true
+            fi
+            if [ -n "$_gate_block_for_completion" ] && [ "$_completion_claimed" = 1 ]; then
                 log_warn "Completion claim rejected: code review is BLOCKED for this iteration (Critical/High findings). Fix review issues before completion."
                 log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"
                 _gate_block_for_completion=""
@@ -13113,11 +13234,24 @@ if __name__ == "__main__":
             # LOKI_EVIDENCE_GATE=0 (council_evidence_gate returns 0 immediately
             # when disabled, so this branch never fires). Gate output (reason +
             # opt-out hint) is printed by council_evidence_gate itself.
-            elif check_completion_promise "$iter_output" && type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
+            elif [ "$_completion_claimed" = 1 ] && type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
                 log_warn "Completion claim rejected: evidence gate found no proof of completion (empty diff vs run-start SHA, or red tests)."
                 log_warn "  Details under .loki/council/evidence-block.json ; opt out with LOKI_EVIDENCE_GATE=0"
                 # Fall through; keep iterating until there is real evidence.
-            elif check_completion_promise "$iter_output"; then
+            # v7.28.0: the held-out spec-eval gate must also guard the DEFAULT
+            # completion-promise route, not only the interval-gated council path
+            # (council_evaluate). Otherwise an agent can self-assert "done" and
+            # exit as completion_promise_fulfilled while a held-out acceptance
+            # check is failing, bypassing the anti-reward-hacking gate entirely.
+            # Mirrors the evidence-gate block above. Opt-out: the gate's own
+            # LOKI_HELDOUT_GATE=0 (council_heldout_gate returns 0 immediately
+            # when disabled or when no held-out items are reserved, so this
+            # branch never fires). Gate output is printed by council_heldout_gate.
+            elif [ "$_completion_claimed" = 1 ] && type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
+                log_warn "Completion claim rejected: held-out spec-eval gate found failing held-out acceptance check(s)."
+                log_warn "  Details under .loki/council/heldout-block.json ; opt out with LOKI_HELDOUT_GATE=0"
+                # Fall through; keep iterating until the held-out checks pass.
+            elif [ "$_completion_claimed" = 1 ]; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then
                     log_header "COMPLETION PROMISE FULFILLED: $COMPLETION_PROMISE"
@@ -13491,10 +13625,19 @@ check_human_intervention() {
     if [ -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED" ]; then
         log_info "Council force-review requested from dashboard"
         rm -f "$loki_dir/signals/COUNCIL_REVIEW_REQUESTED"
+        # MEDIUM-3: this route evaluates the council hard gates directly without
+        # the council_evaluate freshness step, so re-verify the checklist ONCE
+        # before the gate chain to restore that invariant (refreshes held-out
+        # statuses and repairs a stale reservation). Type-guarded, best-effort.
+        if type council_reverify_checklist &>/dev/null; then
+            council_reverify_checklist 2>/dev/null || true
+        fi
         if type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
             log_info "Council force-review: blocked by checklist hard gate"
         elif type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
             log_info "Council force-review: blocked by evidence hard gate"
+        elif type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
+            log_info "Council force-review: blocked by held-out spec-eval hard gate"
         elif type council_vote &>/dev/null && council_vote; then
             log_header "COMPLETION COUNCIL: FORCE REVIEW - PROJECT COMPLETE"
             # BUG #17 fix: Write COMPLETED marker, generate council report, and
