@@ -147,6 +147,24 @@ grill_check_provider() {
     return 0
 }
 
+# Run a command under a timeout when one is available. Mirrors the
+# invoke_with_timeout fallback chain in run.sh: GNU timeout, then gtimeout
+# (homebrew coreutils on macOS), then bare execution. Stock macOS ships
+# NEITHER, and the prior hard dependency made grill fail there with a
+# misleading "provider returned no output" (the command-not-found was
+# swallowed by 2>/dev/null). Caught by the grill success-path CI test on
+# macos-latest after shipping nowhere.
+_grill_with_timeout() {
+    local secs="$1"; shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+    else
+        "$@"
+    fi
+}
+
 grill_invoke_provider() {
     local prompt="$1"
     local provider="${LOKI_PROVIDER:-claude}"
@@ -161,7 +179,7 @@ grill_invoke_provider() {
             # Single-shot, non-interactive. Same pattern as the in-loop
             # adversarial reviewer (run.sh:7807) and USAGE regen (run.sh:9832).
             out="$(printf '%s' "$prompt" \
-                | timeout "${LOKI_GRILL_TIMEOUT:-180}" claude --dangerously-skip-permissions --model "${LOKI_GRILL_MODEL:-sonnet}" -p - 2>/dev/null)"
+                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" claude --dangerously-skip-permissions --model "${LOKI_GRILL_MODEL:-sonnet}" -p - 2>/dev/null)"
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output (timeout or invocation error)"
                 return $GRILL_EXIT_ERROR
@@ -175,7 +193,7 @@ grill_invoke_provider() {
                 return $GRILL_EXIT_ERROR
             fi
             local out
-            out="$(printf '%s' "$prompt" | timeout "${LOKI_GRILL_TIMEOUT:-180}" codex exec --full-auto - 2>/dev/null)"
+            out="$(printf '%s' "$prompt" | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" codex exec --full-auto - 2>/dev/null)"
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output"
                 return $GRILL_EXIT_ERROR

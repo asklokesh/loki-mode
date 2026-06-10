@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.28.1] - 2026-06-10
+
+### Fixed
+- HOTFIX: `loki grill` now works on stock macOS (no GNU coreutils). The
+  provider invocation hard-depended on the `timeout` command, which stock
+  macOS does not ship; the command-not-found was swallowed by stderr
+  suppression and surfaced as a misleading "provider returned no output".
+  grill now uses the same fallback chain as the runner (`timeout`, then
+  `gtimeout`, then bare execution). Caught by the new grill success-path CI
+  test on macos-latest runners: the v7.28.0 Tests workflow ran red on macOS
+  and the Release workflow was cancelled mid-publish (npm/tag/GitHub Release
+  for 7.28.0 had already gone out; 7.28.1 supersedes it on all channels).
+  Verified by repro under a stock-macOS PATH (no timeout/gtimeout): exit 0,
+  full report header.
+
+### Tests
+- tests/test-cli-commands.sh: 23/23 on both routes. scripts/local-ci.sh:
+  48 passed, 0 skipped, 0 failed.
+
 ## [7.28.0] - 2026-06-10
 
 ### Added
