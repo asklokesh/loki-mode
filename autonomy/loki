@@ -77,6 +77,15 @@ if [ -f "$_LOKI_SCRIPT_DIR/provider-offer.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/provider-offer.sh"
 fi
 
+# Quickstart guided interview (v7.29.0): provides cmd_quickstart and its
+# deterministic offline template matcher. Functions-only file (no top-level
+# command), sourced here so the dispatch case can call cmd_quickstart. Composes
+# the provider offer (above), show_prd_plan, and cmd_start. Self-guarded.
+if [ -f "$_LOKI_SCRIPT_DIR/quickstart.sh" ]; then
+    # shellcheck source=quickstart.sh
+    source "$_LOKI_SCRIPT_DIR/quickstart.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -531,6 +540,7 @@ show_help() {
     echo "  quick \"task\"     Quick single-task mode (lightweight, 3 iterations max)"
     echo "  monitor [path]   Monitor Docker Compose services with auto-fix (v6.67.0)"
     echo "  demo             Build a sample todo app end to end (real run)"
+    echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo "  init [name]      Project scaffolding with 21 PRD templates"
     echo "  issue <url|num>  (deprecated) Use 'loki start <issue-ref>' instead"
     echo "  watch [prd]      Auto-rerun on PRD file changes (v6.33.0)"
@@ -13645,6 +13655,9 @@ main() {
             ;;
         demo)
             cmd_demo "$@"
+            ;;
+        quickstart)
+            cmd_quickstart "$@"
             ;;
         welcome)
             cmd_welcome "$@"

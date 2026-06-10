@@ -317,6 +317,15 @@ run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash t
 # start/demo gate.
 run_check "tests/cli/test-provider-offer.sh (provider install offer + gate)" "bash tests/cli/test-provider-offer.sh 2>&1 | tail -3"
 
+# v7.29.0: quickstart guided interview (autonomy/quickstart.sh). Stub-based,
+# ZERO spend / ZERO build: source-level harness overrides _qs_non_interactive
+# and stubs show_prd_plan / provider_offer_gate / cmd_start / cmd_dashboard_open.
+# Asserts --help exit 0, non-TTY/CI exit 2 (timeout-guarded, no hang), the full
+# Enter x4 flow writes ./prd.md and invokes cmd_start --yes --no-plan, the
+# deterministic template scorer (run1==run2, design top-3, empty default), and
+# the existing-prd.md fallback to prd-quickstart.md.
+run_check "tests/cli/test-quickstart.sh (guided interview composition)" "bash tests/cli/test-quickstart.sh 2>&1 | tail -3"
+
 # v7.28.0: held-out spec evals. Deterministic ~25% checklist reservation,
 # exclusion from the build prompt feed, and the completion council held-out gate.
 run_check "tests/test-heldout-evals.sh (held-out selection + council gate)" "bash tests/test-heldout-evals.sh 2>&1 | tail -3"

@@ -249,6 +249,21 @@ _GRILL_ERR="$_GRILL_STUB/stderr.txt"
 rm -rf "$_GRILL_STUB" "$_GRILL_TMP"
 
 # -------------------------------------------
+# Test: loki quickstart --help (v7.29.0). Falls through to bash on both routes
+# (not in the bin/loki Bun allowlist), so behaves identically Bun and bash.
+# -------------------------------------------
+test_cmd "loki quickstart --help exits 0 and shows the guided-build usage" \
+    0 "guided first build" quickstart --help
+
+# -------------------------------------------
+# Test: loki quickstart with no TTY -> interactive-only refusal, exit 2.
+# test_cmd captures via $(...), so stdin/stdout are not a TTY: the gate must
+# fire and exit 2 with the automation hint, never hanging on a read.
+# -------------------------------------------
+test_cmd "loki quickstart non-TTY exits 2 with the automation hint" \
+    2 "needs a terminal" quickstart
+
+# -------------------------------------------
 # Test: loki open alias --help routes to preview
 # -------------------------------------------
 test_cmd "loki open --help exits 0 and shows preview usage" \
