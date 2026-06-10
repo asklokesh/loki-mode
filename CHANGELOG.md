@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses claude auth login, and "Provider ready" is claimed only after
   claude auth status confirms loggedIn=true; anything unconfirmed gets an
   honest check-it-yourself message. Opt out with LOKI_NO_INSTALL_OFFER=1.
+  Note: --yes / LOKI_ASSUME_YES now also consents to this install on an
+  interactive terminal (non-TTY and CI still never install).
 - `loki demo` cost confirm: the estimate (cost, time, iterations, labeled as
   an estimate) always prints before spending; interactive runs confirm
   [Y/n]; --yes skips the prompt but never the estimate; non-TTY/CI without
