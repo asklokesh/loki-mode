@@ -1,6 +1,6 @@
 # Alternative Installation Methods
 
-The recommended installation is via npm or Homebrew (see [README](../README.md#installation)). These alternatives serve specific use cases.
+The recommended installation is via npm or Homebrew (see [README](../README.md#get-started-in-30-seconds)). These alternatives serve specific use cases.
 
 ---
 
