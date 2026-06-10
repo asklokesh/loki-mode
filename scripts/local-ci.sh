@@ -195,6 +195,12 @@ fi
 run_check "tests/test-cli-commands.sh (Bun route)" "bash tests/test-cli-commands.sh 2>&1 | tail -3"
 run_check "tests/test-cli-commands.sh (LOKI_LEGACY_BASH=1)" "LOKI_LEGACY_BASH=1 bash tests/test-cli-commands.sh 2>&1 | tail -3"
 
+# CLI consolidation (Phase A): deprecated-alias back-compat contract + help
+# structure. Data-driven; runs on BOTH routes (Bun-native alias tokens like
+# stats must emit the deprecation line on the Bun route, not bypass it).
+run_check "tests/cli/test-alias-forwarding.sh (Bun route)" "LOKI_ROUTE=bun bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
+run_check "tests/cli/test-alias-forwarding.sh (bash route)" "LOKI_ROUTE=bash bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
+
 # v7.5.15: sentrux gate unit tests (fake on-PATH binary; safe on every host).
 # Mirrors the test.yml shell-tests job; fast, no network, no real sentrux dep.
 run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sentrux-gate.sh 2>&1 | tail -3"
