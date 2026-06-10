@@ -133,6 +133,41 @@ set."
 
 ---
 
+## 10. Amendment 2026-06-10 (recorded BEFORE batch instances 2-10 ran)
+
+Stage 2 (single-instance adapter validation, NodeBB instance 1 of the smoke
+batch) produced two measured facts that forced a config change BEFORE the
+batch:
+
+1. Measured cost was ~$14.55 for one instance at `LOKI_MAX_ITERATIONS=8`
+   (per-iteration: 4.73, 3.03, 0.77, 0.95, 1.10, 2.98, 0.99 USD from the
+   claude stream-log result records), vs the $3-8/instance planning estimate.
+   10 instances at that rate (~$145) would exceed the authorized $30-80.
+2. DEFECT: Loki's `.loki/metrics/efficiency/*.json` files all recorded
+   cost_usd=0 / tokens=0 (`.loki/context/tracking.json` never populated on
+   this host), which leaves the in-product `LOKI_BUDGET_LIMIT` USD breaker
+   inert. The iteration cap was the breaker that actually fired.
+
+Amended config for smoke-batch instances 2-10 (instance 1 already ran at
+max_iter=8 and is documented as such in the results):
+- `LOKI_MAX_ITERATIONS=4` (instance 1's first-4-iteration cost: $9.48).
+- Host-side cumulative hard cap: the batch aborts when total measured spend
+  (including instance 1's $14.55) reaches USD 78. Instances not run are
+  reported explicitly as "not run (budget exhausted)", never silently dropped.
+- Cost accounting source of record: `total_cost_usd` from `result` records in
+  `.loki/logs/autonomy-*.log` (authoritative claude CLI accounting), not the
+  zeroed efficiency files.
+- Adapter strip rule extended: newly-added .md files and new files under
+  memory/ are dropped from the extracted patch (Loki self-artifacts found
+  outside .loki/ in Stage 2: USAGE.md, memory/*.md). Files existing at
+  base_commit are always kept.
+
+No grading results for instances 2-10 existed when this amendment was written;
+instance 1's graded result existed (it doubled as the adapter apply-validation
+gate) and is reported with its pre-amendment config.
+
+---
+
 Pre-registration note: this methodology, the pinned subset, the shim, and the
 gold-smoke evidence constitute the pre-registration bundle. Per Hard Rule 3 they
 are committed BEFORE any paid run; the smoke-batch results land in a separate
