@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.31.0] - 2026-06-10
+
+### Added
+- Mid-flight model switching: change the model a live run uses from the
+  dashboard (GET/POST /api/session/model + a model select in session
+  controls). The switch applies at the next iteration boundary (each
+  iteration spawns a fresh provider invocation) and to the current run only:
+  a leftover override is cleared at fresh-run start. Server and runner share
+  one normalization rule; invalid values are ignored with a warning.
+- Claude Fable as a premium tier at its published $10/$50 per MTok (exactly
+  2x Opus 4.8), in the model catalog, all pricing tables, and the Bun
+  mirrors. LOKI_SESSION_MODEL=fable genuinely runs fable;
+  LOKI_FABLE_ARCHITECT=1 routes only the first (architecture) iteration to
+  fable and the estimate discloses it. Routing scope is evidence-based per
+  Anthropic's model documentation; security review deliberately stays on
+  Opus (fable refuses cyber content, and a refusal would break the council).
+- The cost-honesty contract, enforced and tested: the loki plan quote, the
+  dashboard's reported effective model, and the actual dispatched model
+  always agree, and LOKI_MAX_TIER clamps every path (session lever,
+  mid-flight override, architect pin) with one honest log line. All three
+  clamp readers resolve through one canonical provider-config rule, locked
+  by a 224-cell parity matrix test against the real provider script,
+  including miscased and padded cap spellings.
+- CLI consolidation Phase A: loki help is ~20 grouped workflow entries
+  (Build, Session, Verify/trust, Observe, Report, Knowledge, Modernize,
+  Config) with a collapsed alias footer and loki help aliases. Fourteen
+  merged commands forward as aliases: byte-identical stdout and exit codes,
+  one deprecation pointer on stderr only, suppressed for --json/-q/--quiet
+  and positional machine formats, no side effects in clean directories.
+  New report and trust noun dispatchers (trust-metrics -> trust detail).
+- LOKI_MCP_AUTO_BOOTSTRAP=1: written-consent cold launch for MCP clients
+  (the env var in a client config is consent); bootstrap progress goes to
+  stderr only so stdout stays pure JSON-RPC; LOKI_NO_INSTALL_OFFER=1 always
+  wins. Docker images now install mcp/requirements.txt so clean-room
+  introspection finds the SDK.
+- mcp/lsp_proxy.py loads the real MCP SDK via a shared loader and serves
+  its 7 LSP tools (it previously degraded to a silent no-op under modern
+  SDK layouts); degradation is now loud.
+
+### Fixed
+- 15 findings from a 4-dimension adversarial hunt (30 agents, per-finding
+  adversarial verification) plus 3 council rounds, all pre-release. The
+  notable ones: documented fable levers that quoted a model the runner
+  never dispatched; a mid-flight override that bypassed LOKI_MAX_TIER; an
+  override file that silently pinned all future runs; clamp resolution that
+  disagreed across quote/dashboard/runner on stock installs (including
+  miscased cap values reachable from settings.json); loki mcp --yes
+  documented but unparsed and leaked into server argv; a run-alias
+  telemetry side effect violating the no-side-effect alias contract; ANSI
+  codes in piped help output.
+
+### Tests
+- model-override 53/53 (incl. the 224-cell clamp parity matrix and
+  cross-route agreement transcripts), session-model endpoint 20/20,
+  alias-forwarding 112/112 on both routes, mcp-launch 15/15, cli 26/26 on
+  both routes, plan 25/25, lsp-proxy loader pytest, full pytest 1015+
+  passed. All wired into scripts/local-ci.sh.
+
 ## [7.30.0] - 2026-06-10
 
 ### Added
