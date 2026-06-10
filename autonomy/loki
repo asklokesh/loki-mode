@@ -13018,6 +13018,28 @@ show_verbose = sys.argv[3] == 'true'
 session_model_env = (os.environ.get('LOKI_SESSION_MODEL', 'sonnet') or 'sonnet').strip().lower()
 legacy_tier_switching = (os.environ.get('LOKI_LEGACY_TIER_SWITCHING', 'false') or 'false').strip().lower() == 'true'
 
+# Fable-forced quote (item 3): the estimator must honestly quote a fable run.
+# Two signals force fable in the estimate, mirroring how the runner picks a model:
+#   1. A pending mid-flight override file (.loki/state/model-override) -- so
+#      loki plan reflects a switch the dashboard already requested.
+#   2. LOKI_SESSION_MODEL=fable (the consistent codebase env lever) or the
+#      documented LOKI_MODEL=fable alias the founder named.
+# The override file wins (it is the most specific, just-requested intent). Only
+# the allowlisted alias is honored; anything else is ignored.
+_fable_override = ''
+try:
+    _ov_path = os.path.join('.loki', 'state', 'model-override')
+    if os.path.isfile(_ov_path):
+        with open(_ov_path) as _ovf:
+            _fable_override = ''.join(_ovf.read().split()).lower()
+except Exception:
+    _fable_override = ''
+_loki_model_env = (os.environ.get('LOKI_MODEL', '') or '').strip().lower()
+if _fable_override in ('haiku', 'sonnet', 'opus', 'fable'):
+    session_model_env = _fable_override
+elif _loki_model_env == 'fable':
+    session_model_env = 'fable'
+
 # v7.29.0: Honor LOKI_COMPLEXITY -- the SAME env var the runner honors at
 # run.sh:920 -- so a forced-tier run (e.g. 'loki demo' / 'loki start --simple'
 # which export LOKI_COMPLEXITY=simple) quotes the tier it will actually run,
@@ -13035,6 +13057,7 @@ if forced_complexity not in ('simple', 'moderate', 'complex', 'enterprise'):
 # Map session model name to tier key used in tokens_per_tier below.
 # Unknown models fall through to 'development' (Sonnet) as a safe default.
 _session_tier_map = {
+    'fable': 'advisor',
     'opus': 'planning',
     'sonnet': 'development',
     'haiku': 'fast',
@@ -13213,14 +13236,21 @@ estimated_iterations = (min_iter + max_iter) // 2
 # RARV cycle: 4 iterations per cycle (plan, develop, develop, test)
 # Tokens estimated per iteration step
 tokens_per_tier = {
+    'advisor': {'input': 50000, 'output': 8000, 'model': 'Fable'},
     'planning': {'input': 50000, 'output': 8000, 'model': 'Opus'},
     'development': {'input': 80000, 'output': 15000, 'model': 'Sonnet'},
     'fast': {'input': 30000, 'output': 5000, 'model': 'Haiku'},
 }
 
-# Pricing per 1M tokens
+# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at exactly 2x
+# Opus per token (published \$10/\$50 in/out vs Opus \$5/\$25). The Opus row was
+# corrected from a stale \$15/\$75 to the real Opus 4.8 \$5/\$25 so the estimate
+# stays consistent with the three canonical model-keyed tables (run.sh
+# pricing.json, check_budget_limit, dashboard _DEFAULT_PRICING) and so a
+# fable-forced quote honestly shows MORE than Opus, not less.
 pricing = {
-    'Opus':   {'input': 15.00, 'output': 75.00},
+    'Fable':  {'input': 10.00, 'output': 50.00},
+    'Opus':   {'input': 5.00, 'output': 25.00},
     'Sonnet': {'input': 3.00, 'output': 15.00},
     'Haiku':  {'input': 0.25, 'output': 1.25},
 }
@@ -13230,8 +13260,8 @@ iteration_plan = []
 total_input_tokens = 0
 total_output_tokens = 0
 total_cost = 0.0
-tier_totals = {'Opus': 0.0, 'Sonnet': 0.0, 'Haiku': 0.0}
-tier_iterations = {'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
+tier_totals = {'Fable': 0.0, 'Opus': 0.0, 'Sonnet': 0.0, 'Haiku': 0.0}
+tier_iterations = {'Fable': 0, 'Opus': 0, 'Sonnet': 0, 'Haiku': 0}
 
 for i in range(estimated_iterations):
     rarv_step = i % 4
@@ -13433,6 +13463,7 @@ for reason in complexity_reasons:
 print(f'\n{CYAN}Estimated Iterations{NC}')
 print(f'  Count: {BOLD}{estimated_iterations}{NC} (range: {min_iter}-{max_iter})')
 print(f'  RARV cycles: {cycle_count} (4 iterations per cycle)')
+fable_n = tier_iterations.get('Fable', 0)
 opus_n = tier_iterations.get('Opus', 0)
 sonnet_n = tier_iterations.get('Sonnet', 0)
 haiku_n = tier_iterations.get('Haiku', 0)
@@ -13442,6 +13473,8 @@ if legacy_tier_switching:
 else:
     # Session-pinned: exactly one tier has all iterations.
     pinned_parts = []
+    if fable_n > 0:
+        pinned_parts.append(f'Fable x{fable_n}')
     if opus_n > 0:
         pinned_parts.append(f'Opus x{opus_n}')
     if sonnet_n > 0:
@@ -13450,6 +13483,8 @@ else:
         pinned_parts.append(f'Haiku x{haiku_n}')
     print('  Model distribution: ' + (' | '.join(pinned_parts) if pinned_parts else '(none)'))
     print(f'  {DIM}(pinned via LOKI_SESSION_MODEL={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    if fable_n > 0:
+        print(f'  {YELLOW}Fable 5 is the top-tier advisory model priced at 2x Opus ({chr(36)}10/{chr(36)}50 per MTok).{NC}')
 
 # Tokens
 total_tok = total_input_tokens + total_output_tokens
@@ -13462,7 +13497,7 @@ print(f'  Total:  {total_tok:>12,} tokens')
 ds = chr(36)  # dollar sign
 print(f'\n{CYAN}Cost Estimate{NC}')
 print(f'  {BOLD}Total: {ds}{total_cost:.2f}{NC}')
-for model in ['Opus', 'Sonnet', 'Haiku']:
+for model in ['Fable', 'Opus', 'Sonnet', 'Haiku']:
     # v6.81.1: suppress zero-cost tiers (e.g. session-pinned runs). Keeps
     # the breakdown focused on models actually used. Legacy mode still
     # shows all three because each tier has non-zero iterations.

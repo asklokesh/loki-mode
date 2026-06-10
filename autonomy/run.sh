@@ -1809,7 +1809,24 @@ get_provider_tier_param() {
     case "${PROVIDER_NAME:-claude}" in
         claude)
             case "$tier" in
-                planning) echo "${PROVIDER_MODEL_PLANNING:-opus}" ;;
+                planning)
+                    # Evidence-based routing (scoped): the official model-config
+                    # docs explicitly name "architecture decisions" and
+                    # "root-cause investigations" as where Fable 5's extra
+                    # investigation and self-verification pay off. So the
+                    # planning/architecture tier may opt in to Fable via
+                    # LOKI_FABLE_ARCHITECT=1. Default OFF because Fable is 2x
+                    # Opus per token; reserve it for the REASON/architecture
+                    # iterations the user explicitly wants. An explicit
+                    # PROVIDER_MODEL_PLANNING still wins (operator override).
+                    if [ -n "${PROVIDER_MODEL_PLANNING:-}" ]; then
+                        echo "${PROVIDER_MODEL_PLANNING}"
+                    elif [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ]; then
+                        echo "fable"
+                    else
+                        echo "opus"
+                    fi
+                    ;;
                 development) echo "${PROVIDER_MODEL_DEVELOPMENT:-opus}" ;;
                 fast) echo "${PROVIDER_MODEL_FAST:-sonnet}" ;;
                 *) echo "sonnet" ;;
@@ -3803,6 +3820,8 @@ _write_pricing_json() {
   "updated": "${updated}",
   "source": "static",
   "models": {
+    "fable":           {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
+    "claude-fable-5":  {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
     "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus (latest)",   "provider": "claude"},
     "sonnet":          {"input": 3.00,  "output": 15.00, "label": "Sonnet (latest)", "provider": "claude"},
     "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku (latest)",  "provider": "claude"},
@@ -7648,6 +7667,21 @@ BUILD_PROMPT
             prompt_text=$(cat "$review_prompt_file")
             case "${PROVIDER_NAME:-claude}" in
                 claude)
+                    # SECURITY-REVIEW MODEL GUARD (evidence-based routing, item 4b):
+                    # Reviewers deliberately do NOT pass --model, so they run on
+                    # the account default model and are NEVER routed to Fable by a
+                    # mid-flight model override or LOKI_FABLE_ARCHITECT (those only
+                    # rewrite the iteration's tier_param, not this dispatch). This
+                    # must stay true. The official model-config docs CONTRADICT
+                    # routing security review to Fable: Fable's safety classifiers
+                    # refuse cybersecurity content, and in non-interactive (-p)
+                    # mode a flagged request ends the turn with stop_reason
+                    # "refusal" instead of a transparent Opus re-run. A refused
+                    # security reviewer would return no VERDICT and break the
+                    # unanimous-council gate. Defensive-cyber capability lives in
+                    # Mythos 5 (Project Glasswing), not Fable. If a future change
+                    # adds --model here, the security-sentinel reviewer must be
+                    # pinned to opus, never fable.
                     claude --dangerously-skip-permissions -p "$prompt_text" \
                         --output-format text > "$review_output" 2>/dev/null
                     ;;
@@ -9058,6 +9092,8 @@ check_budget_limit() {
 import json, glob
 total = 0.0
 pricing = {
+    'fable': {'input': 10.00, 'output': 50.00},
+    'claude-fable-5': {'input': 10.00, 'output': 50.00},
     'opus': {'input': 5.00, 'output': 25.00},
     'sonnet': {'input': 3.00, 'output': 15.00},
     'haiku': {'input': 1.00, 'output': 5.00},
@@ -12285,6 +12321,35 @@ except Exception as exc:
         export LOKI_CURRENT_TIER
         local rarv_phase=$(get_rarv_phase_name "$ITERATION_COUNT")
         local tier_param=$(get_provider_tier_param "$CURRENT_TIER")
+        # Mid-flight model override: the dashboard (POST /api/session/model) or a
+        # CLI user may rewrite .loki/state/model-override between iterations to
+        # change the model a live run uses. Read it here, after tier_param is
+        # resolved and before the claude argv is built (--model "$tier_param" is
+        # assembled below), so the override flows through effort/budget/fallback
+        # with no other change. Each iteration spawns a fresh `claude -p`, so the
+        # switch takes effect at THIS iteration boundary and never mid-invocation
+        # (claude -p fixes the model per call). Clearing/emptying the file reverts
+        # to the tier mapping. The file is fed straight into --model, so only an
+        # allowlisted alias is honored; invalid content is ignored with one warn.
+        # The override applies ONLY to the claude provider; other providers map
+        # tier_param to effort/model strings and have no fable equivalent.
+        if [ "${PROVIDER_NAME:-claude}" = "claude" ] && [ -s ".loki/state/model-override" ]; then
+            local _loki_override_raw
+            _loki_override_raw="$(tr -d '[:space:]' < .loki/state/model-override 2>/dev/null)"
+            case "$_loki_override_raw" in
+                haiku|sonnet|opus|fable)
+                    tier_param="$_loki_override_raw"
+                    log_info "model override: $tier_param (applies this iteration)"
+                    echo "=== Model override: $tier_param (applies this iteration $ITERATION_COUNT) ===" | tee -a "$log_file" "$agent_log"
+                    ;;
+                "")
+                    : # empty file means no override; fall back to tier mapping
+                    ;;
+                *)
+                    log_warn "Ignoring invalid model override '$_loki_override_raw' (allowed: haiku, sonnet, opus, fable); using tier $tier_param"
+                    ;;
+            esac
+        fi
         echo "=== RARV Phase: $rarv_phase, Tier: $CURRENT_TIER ($tier_param) ===" | tee -a "$log_file" "$agent_log"
         log_info "RARV Phase: $rarv_phase -> Tier: $CURRENT_TIER ($tier_param)"
 
