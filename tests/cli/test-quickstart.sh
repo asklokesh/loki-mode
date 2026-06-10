@@ -255,6 +255,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 8b: BOTH ./prd.md AND ./prd-quickstart.md already exist; declining the
+# overwrite must NOT clobber prd-quickstart.md either (bug-hunt MEDIUM). The
+# fallback walks numbered suffixes: prd-quickstart-2.md gets the new PRD and
+# both originals survive byte-for-byte.
+# ---------------------------------------------------------------------------
+T8B="$TMP/t8b"; mkdir -p "$T8B"
+printf 'ORIGINAL-PRD-CONTENT\n' > "$T8B/prd.md"
+printf 'ORIG-QUICKSTART-PRD\n' > "$T8B/prd-quickstart.md"
+make_harness "$T8B"
+printf 'printf '"'"'\\n\\n\\nn\\n'"'"' | cmd_quickstart\n' >> "$T8B/harness.sh"
+out=$(cd "$T8B" && run_to 15 bash harness.sh 2>&1); rc=$?
+start_args=$(cat "$T8B/cmd_start.log" 2>/dev/null || echo "")
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+grep -q "ORIGINAL-PRD-CONTENT" "$T8B/prd.md" 2>/dev/null || ok=false
+grep -q "ORIG-QUICKSTART-PRD" "$T8B/prd-quickstart.md" 2>/dev/null || ok=false
+[ -f "$T8B/prd-quickstart-2.md" ] || ok=false
+[ "$start_args" = "./prd-quickstart-2.md --yes --no-plan" ] || ok=false
+if [ "$ok" = true ]; then
+    log_pass "both PRDs exist: fallback walks to prd-quickstart-2.md, neither original clobbered"
+else
+    log_fail "fallback no-clobber" "rc=$rc start_args='$start_args'; an original was clobbered or suffix walk failed"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 9: a CI/non-TTY run produces ZERO side effects. The top gate exits 2
 # before step 2, so no PRD is ever written to the CWD and no build is started.
 # This is the anti-surprise guarantee: automation that accidentally invokes

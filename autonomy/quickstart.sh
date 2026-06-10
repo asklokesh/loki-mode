@@ -530,7 +530,19 @@ cmd_quickstart() {
         printf 'prd.md already exists. Overwrite? [y/N] '
         read -r overwrite 2>/dev/null || overwrite=""
         if [[ ! "$overwrite" =~ ^[Yy] ]]; then
+            # Declining to overwrite one file must never silently destroy
+            # another (bug-hunt MEDIUM): the fallback gets the same existence
+            # guard, walking numbered suffixes until a free name is found.
             target="./prd-quickstart.md"
+            local _qs_n=2
+            while [ -e "$target" ]; do
+                target="./prd-quickstart-${_qs_n}.md"
+                _qs_n=$((_qs_n + 1))
+                if [ "$_qs_n" -gt 100 ]; then
+                    printf '%sCould not find a free PRD filename (prd-quickstart-*.md all taken).%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 1
+                fi
+            done
         fi
     fi
     if ! cp "$prd_source" "$target" 2>/dev/null; then
