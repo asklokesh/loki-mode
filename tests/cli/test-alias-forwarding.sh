@@ -304,16 +304,20 @@ for grp in "Build:" "Session:" "Verify / trust:" "Observe:" "Report:" "Knowledge
     fi
 done
 
-# Front-page canonical command-entry count is bounded (<= 20). We count lines
+# Front-page canonical command-entry count is bounded (<= 22). We count lines
 # in the "Commands:" block (up to the first "Options for" section) that look
 # like a command entry: two-space indent + a lowercase token. Group headers end
 # in ':' and are excluded.
+# v7.31.0 integration: upper bound grown 20 -> 22 to promote two v7.30 canonical
+# commands into sensible groups -- quickstart (Build, guided first build) and
+# mcp (Observe, the MCP server launcher added in v7.30) -- so the grouped front
+# page lists them instead of burying them in the overflow prose.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 20 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,20] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 22 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,22] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,20]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,22]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands

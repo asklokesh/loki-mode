@@ -544,7 +544,7 @@ When positioning Loki Mode against Replit and Lovable, emphasize:
 | Dashboard active sessions | Monitoring only | Build-along interface |
 | Figma integration | None | MCP connector live |
 | Starter templates | 13 PRD templates | +5 full-stack starter kits |
-| MCP connectors | 34 tools | 25+ tools with common services |
+| MCP connectors | 34 tools | 34 tools + prebuilt connectors for common services |
 | Cost transparency | Token tracking exists | Real-time cost dashboard |
 
 ---

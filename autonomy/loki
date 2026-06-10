@@ -599,6 +599,7 @@ show_help() {
     echo "  plan <SPEC>      Dry-run analysis: complexity, cost, execution plan"
     echo "  grill [SPEC]     Devil's-advocate spec interrogation before you build"
     echo "  spec [cmd]       Living spec: lock|status|sync (drift detection)"
+    echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
     echo "  status [--json]  Show current status (--json for machine-readable)"
@@ -614,6 +615,7 @@ show_help() {
     echo ""
     echo "Observe:"
     echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"
+    echo "  mcp              Launch the MCP server (Model Context Protocol, stdio)"
     echo ""
     echo "Report:"
     echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
@@ -631,7 +633,7 @@ show_help() {
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
-    echo "More commands (init, watch, demo, quickstart, web, api, logs, github,"
+    echo "More commands (init, watch, demo, web, api, logs, github,"
     echo "import, council, proof, audit, agent, template, magic, onboard, explain,"
     echo "code, context, docs, wiki, ci, test, bench, secrets, telemetry, crash,"
     echo "worktree, failover, monitor, remote, kpis, ...) are dispatchable and"
@@ -13355,15 +13357,17 @@ tokens_per_tier = {
 
 # Pricing per 1M tokens. Fable 5 is the top-tier advisory model at exactly 2x
 # Opus per token (published \$10/\$50 in/out vs Opus \$5/\$25). The Opus row was
-# corrected from a stale \$15/\$75 to the real Opus 4.8 \$5/\$25 so the estimate
-# stays consistent with the three canonical model-keyed tables (run.sh
-# pricing.json, check_budget_limit, dashboard _DEFAULT_PRICING) and so a
-# fable-forced quote honestly shows MORE than Opus, not less.
+# corrected from a stale \$15/\$75 to the real Opus 4.8 \$5/\$25, and the Haiku
+# row from a stale \$0.25/\$1.25 (Haiku 3.5) to the published Claude Haiku 4.5
+# price of \$1/\$5 (anthropic.com/news/claude-haiku-4-5), so all four rows now
+# match the three canonical model-keyed tables (run.sh pricing.json, run.sh
+# check_budget_limit, dashboard _DEFAULT_PRICING) and a fable-forced quote
+# honestly shows MORE than Opus, not less.
 pricing = {
     'Fable':  {'input': 10.00, 'output': 50.00},
     'Opus':   {'input': 5.00, 'output': 25.00},
     'Sonnet': {'input': 3.00, 'output': 15.00},
-    'Haiku':  {'input': 0.25, 'output': 1.25},
+    'Haiku':  {'input': 1.00, 'output': 5.00},
 }
 
 # Build per-iteration plan

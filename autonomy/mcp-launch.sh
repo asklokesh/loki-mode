@@ -109,10 +109,13 @@ _ml_sdk_importable() {
 # requirements.txt is shipped under the install root.
 _ml_print_manual() {
     local root="$1" venv="$2"
+    # Display-only quoting: single-quote the substituted paths so the printed
+    # commands copy-paste correctly even when the project root or venv path
+    # contains spaces. This is presentation only; nothing is executed here.
     printf 'Install the MCP server dependencies manually:\n' >&2
-    printf '  python3 -m venv %s\n' "$venv" >&2
-    printf '  %s/bin/pip install -r %s/mcp/requirements.txt\n' "$venv" "$root" >&2
-    printf '  PYTHONPATH=%s %s/bin/python -m mcp.server\n' "$root" "$venv" >&2
+    printf "  python3 -m venv '%s'\n" "$venv" >&2
+    printf "  '%s/bin/pip' install -r '%s/mcp/requirements.txt'\n" "$venv" "$root" >&2
+    printf "  PYTHONPATH='%s' '%s/bin/python' -m mcp.server\n" "$root" "$venv" >&2
 }
 
 _ml_help() {
