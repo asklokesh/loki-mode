@@ -60,10 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its provider dependency: requires the provider CLI and fails cleanly with no
   fabricated questions when it is absent. Exit codes: 0 success, 2 usage or
   spec-not-found, 3 provider unavailable or interrogation failed (never silent).
-- Claude Code slash-command packaging. Three command wrappers ship under
-  `.claude/commands/`: `loki-verify.md`, `loki-spec-status.md`, and
+- Claude Code slash-command packaging. Three command wrappers live in the
+  repository under `.claude/commands/` (repo-local Claude Code config, not part
+  of the npm tarball): `loki-verify.md`, `loki-spec-status.md`, and
   `loki-grill.md`, exposing `loki verify`, `loki spec status`, and `loki grill`
-  as in-editor slash commands.
+  as in-editor slash commands. The underlying CLI commands themselves ship in
+  the package.
 - `mcpName` in `package.json` (`io.github.asklokesh/loki-mode`) for the official
   MCP registry.
 

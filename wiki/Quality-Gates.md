@@ -126,7 +126,7 @@ LOKI_HELDOUT_GATE=0   # opt out: the held-out gate never blocks completion.
                       # no held-out items were reserved (N < 4).
 ```
 
-Honest limit: this protects against the prompt feed, not against filesystem
+Honest limit: this protects the prompt feed, not against filesystem
 access. The reservation lives on disk at `.loki/checklist/held-out.json`; an
 agent with read access to the working tree can open that file and learn which
 items were held out. The guarantee is that held-out items are kept out of the

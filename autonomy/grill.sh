@@ -290,9 +290,12 @@ grill_main() {
 
     {
         printf '# Spec grill report\n\n'
-        printf '- Spec: %s\n' "$spec_path"
-        printf '- Generated: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        printf '- Provider: %s\n\n' "${LOKI_PROVIDER:-claude}"
+        # printf format strings must not begin with '-': bash's printf builtin
+        # parses a leading dash as an option flag (rc=2 "invalid option") and
+        # silently drops the line. Use '%s\n' with the dash inside the argument.
+        printf '%s\n' "- Spec: $spec_path"
+        printf '%s\n' "- Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '%s\n\n' "- Provider: ${LOKI_PROVIDER:-claude}"
         printf '%s\n' "$report"
     } >"$report_path" || { _grill_err "failed to write $report_path"; return $GRILL_EXIT_ERROR; }
 

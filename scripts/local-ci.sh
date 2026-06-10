@@ -248,6 +248,12 @@ run_check "tests/test-completion-claim.sh (completion-claim single-evaluation)" 
 # SPEC_DRIFT finding surfaced by `loki verify`.
 run_check "tests/test-spec.sh (living spec lock/status/sync + drift finding)" "bash tests/test-spec.sh 2>&1 | tail -3"
 
+# v7.27.0: verified-completion evidence gate (diff baseline, inconclusive
+# disclosure lifecycle) and the deterministic `loki verify` pipeline. Wired in
+# v7.28.0 after a council reviewer caught both suites missing from local-ci.
+run_check "tests/test-evidence-gate.sh (evidence gate + inconclusive lifecycle)" "bash tests/test-evidence-gate.sh 2>&1 | tail -3"
+run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/test-verify.sh 2>&1 | tail -3"
+
 # v7.28.0: cost-capture root cause. Authoritative result-line cost capture
 # (result-cost-<iter>.json), efficiency writer precedence, budget breaker trip,
 # and the slug-sanitization fix (underscore/dot/space paths). Regression guard

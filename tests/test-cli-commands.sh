@@ -222,7 +222,31 @@ printf '# Spec\n## Feature\nDo a thing.\n' > "$_GRILL_TMP/prd.md"
     && { echo -e "${GREEN}[PASS]${NC} loki grill with an unavailable provider exits 3 (clean error)"; ((PASS++)); } \
     || { echo -e "${RED}[FAIL]${NC} loki grill unavailable provider -- expected exit 3"; ((FAIL++)); }
 ((TOTAL++))
-rm -rf "$_GRILL_TMP"
+
+# -------------------------------------------
+# Test: loki grill SUCCESS path with a stubbed provider.
+# Regression guard for the printf leading-dash bug (council R2, v7.28.0):
+# bash's printf builtin parsed '- Spec: %s\n' as an option flag and silently
+# dropped the report metadata header lines. Stub a fake `claude` on PATH so
+# the success path runs deterministically with no cost, then assert the
+# report file carries the '- Spec:' and '- Provider:' header lines and the
+# stubbed body, with zero printf errors on stderr.
+# -------------------------------------------
+_GRILL_STUB=$(mktemp -d 2>/dev/null || echo "/tmp/loki-grillstub-test-$$")
+mkdir -p "$_GRILL_STUB/bin"
+printf '#!/usr/bin/env bash\necho "Q1: What happens when the thing fails?"\n' > "$_GRILL_STUB/bin/claude"
+chmod +x "$_GRILL_STUB/bin/claude"
+_GRILL_ERR="$_GRILL_STUB/stderr.txt"
+( cd "$_GRILL_TMP" \
+    && PATH="$_GRILL_STUB/bin:$PATH" "$LOKI" grill prd.md >/dev/null 2>"$_GRILL_ERR"; [ "$?" -eq 0 ] ) \
+    && grep -q -- "- Spec:" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && grep -q -- "- Provider:" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && grep -q "What happens when the thing fails" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && ! grep -q "invalid option" "$_GRILL_ERR" 2>/dev/null \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill success path writes full report header (stubbed provider)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill success path -- report header missing or printf error"; sed 's/^/    /' "$_GRILL_ERR" 2>/dev/null | head -4; ((FAIL++)); }
+((TOTAL++))
+rm -rf "$_GRILL_STUB" "$_GRILL_TMP"
 
 # -------------------------------------------
 # Test: loki open alias --help routes to preview
