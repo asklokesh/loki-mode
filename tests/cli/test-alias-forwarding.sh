@@ -105,11 +105,31 @@ ALIAS_ROWS=(
     # pointer; that is asserted separately below (v7.31 finding 4).
     "export|report export|markdown"
     "dogfood|report dogfood|"
+    # kpis -> report kpis (CLI consolidation Phase B). kpis is Bun-only: on the
+    # Bun route both forms reach runKpis (timestamps normalized for byte
+    # parity); on the bash route both print the honest Bun-requirement message
+    # (empty stdout, exit 1). Either way the data-driven contract holds: alias
+    # gets the pointer, canonical does not, machine flags suppress it. The
+    # bash-route honesty specifics are also asserted in the finding-7 block.
+    "kpis|report kpis|"
     "trust-metrics|trust detail|"
     # 'share' creates a real GitHub Gist (network + non-deterministic URL) when
     # invoked bare, so we exercise its forwarding contract via the deterministic
     # --help path instead. The deprecation line still fires under --help.
     "share|report share|--help"
+    # CLI consolidation Phase B (slice B2): compound -> memory compound;
+    # explain/onboard/code/context -> analyze <verb>; heal/migrate -> modernize
+    # <verb>. The bare forms spawn agents or read large repo state, so the
+    # deterministic --help path is used (matching the 'share' pattern). Each
+    # handler's --help is stable, exits 0, and spawns nothing. The pointer still
+    # fires under --help (not a machine-output flag).
+    "compound|memory compound|--help"
+    "explain|analyze explain|--help"
+    "onboard|analyze onboard|--help"
+    "code|analyze code|--help"
+    "context|analyze context|--help"
+    "heal|modernize heal|--help"
+    "migrate|modernize migrate|--help"
 )
 
 assert_row() {
@@ -223,6 +243,33 @@ assert_no_loki_exit_parity share "report share" "--format text"
 assert_no_loki_exit_parity stats "report session" ""
 assert_no_loki_exit_parity cost "report cost" ""
 
+# Phase B (slice B2): no-side-effect contract for each new alias. In a fresh dir
+# with no .loki, the alias and its canonical must exit identically and (proven by
+# the dedicated row at the end of this section) leave no .loki behind. --help is
+# used so heal/migrate/explain/onboard/code never spawn an agent or touch any
+# foreign process; the forwarding is still exercised through the noun dispatcher.
+assert_no_loki_exit_parity compound "memory compound" "--help"
+assert_no_loki_exit_parity explain "analyze explain" "--help"
+assert_no_loki_exit_parity onboard "analyze onboard" "--help"
+assert_no_loki_exit_parity code "analyze code" "--help"
+assert_no_loki_exit_parity context "analyze context" "--help"
+assert_no_loki_exit_parity heal "modernize heal" "--help"
+assert_no_loki_exit_parity migrate "modernize migrate" "--help"
+
+# Phase B (slice B2): prove each new alias creates NO .loki in a clean dir (the
+# named no-side-effect contract). _deprecated_alias gates its telemetry emit on
+# .loki already existing, so a forwarding alias must leave a fresh dir pristine.
+for _b2_alias in compound explain onboard code context heal migrate; do
+    _b2_fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-b2-noloki.XXXXXX")"
+    ( cd "$_b2_fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$_b2_alias" --help >/dev/null 2>&1 ) || true
+    if [ ! -e "$_b2_fresh/.loki" ]; then
+        log_pass "$_b2_alias alias: no .loki created in a clean dir (no-side-effect contract)"
+    else
+        log_fail "$_b2_alias alias: no .loki created in a clean dir" ".loki was created"
+    fi
+    rm -rf "$_b2_fresh"
+done
+
 # ---------------------------------------------------------------------------
 # Short-alias rows that share a handler with their canonical (cp/wt/rc/otel/
 # open/serve). These do not all have stable stdout to byte-compare cheaply
@@ -259,6 +306,9 @@ assert_short_alias rc remote
 assert_short_alias otel telemetry
 assert_short_alias serve "api start"
 assert_short_alias open preview
+# Phase B (slice B2): 'ctx' is the short alias of 'context', now forwarding to
+# 'analyze context' (the pointer uses the typed token 'ctx').
+assert_short_alias ctx "analyze context"
 
 # 'run' has its own inline deprecation (cmd_run, v6.84.0) aligned to the
 # standardized pointer. A real 'loki run <N>' touches the network/issue path,
@@ -367,7 +417,7 @@ for grp in "Build:" "Session:" "Verify / trust:" "Observe:" "Report:" "Knowledge
     fi
 done
 
-# Front-page canonical command-entry count is bounded (<= 22). We count lines
+# Front-page canonical command-entry count is bounded (<= 23). We count lines
 # in the "Commands:" block (up to the first "Options for" section) that look
 # like a command entry: two-space indent + a lowercase token. Group headers end
 # in ':' and are excluded.
@@ -375,19 +425,24 @@ done
 # commands into sensible groups -- quickstart (Build, guided first build) and
 # mcp (Observe, the MCP server launcher added in v7.30) -- so the grouped front
 # page lists them instead of burying them in the overflow prose.
+# Phase B (slice B2): grown 22 -> 23 to admit the 'analyze' canonical noun
+# (design section 2 #12), which absorbs explain/onboard/code/context as aliases.
+# Net CANONICAL commands drop (four top-level commands become aliases, one noun
+# is added); the line-count guardrail just tracks the new noun. Later Phase B
+# slices (ui/new/admin) pull the front page back toward the ~17 target.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 22 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,22] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 23 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,23] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,22]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,23]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
 # block (they live in the footer / `loki help aliases`). We check the entry
 # tokens specifically, not prose.
 ENTRY_TOKENS="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | awk '{print $1}')"
-ALIAS_TOKENS="stats metrics cost export share dogfood trust-metrics serve open otel cp wt rc"
+ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc compound explain onboard code context heal migrate"
 alias_leak=0
 for tok in $ALIAS_TOKENS; do
     if echo "$ENTRY_TOKENS" | grep -qx "$tok"; then
@@ -415,7 +470,7 @@ fi
 
 # `loki help aliases` lists every alias-table row.
 ALIASES_OUT="$(run_loki help aliases 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-for tok in stats metrics cost export share dogfood trust-metrics serve open otel cp wt rc run; do
+for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run compound explain onboard code context ctx heal migrate; do
     if echo "$ALIASES_OUT" | grep -qE "^  $tok( |\$)"; then
         log_pass "help aliases: lists '$tok'"
     else
@@ -494,6 +549,167 @@ done
         log_pass "kpis --json (bash route): structured {\"available\": false}"
     else
         log_fail "kpis --json (bash route)" "got: $k_json"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# v7.32 finding 1 (HIGH, token-hijack): `kpis` is the report subcommand ONLY
+# when it is the FIRST non-flag token after `report`. The canonical orderings
+# (`report kpis --json`, `report --json kpis`) still route to the KPI handler,
+# but a `kpis` token used as a POSITIONAL VALUE of a different report subcommand
+# (export's output filename) must NOT be hijacked: `report export json kpis`
+# (and the top-level `export json kpis` alias, which forwards through cmd_report)
+# must behave exactly as on main -- exit 0 and create a file named `kpis`. Both
+# routes (the suite runs twice: ROUTE=bun and ROUTE=bash).
+# ---------------------------------------------------------------------------
+{
+    # 1a. Canonical kpis orderings still resolve to the KPI handler. On the bash
+    # route both print the honest Bun-requirement message; on the Bun route both
+    # render the snapshot. Either way they must NOT fall through to the legacy
+    # report path ("Unknown option") -- that would mean the subcommand match
+    # broke. We assert the snapshot/Bun-message on stdout+stderr combined.
+    for order in "kpis --json" "--json kpis"; do
+        # shellcheck disable=SC2086
+        ro="$(run_loki report $order 2>&1)"
+        if echo "$ro" | grep -qiE 'requires the Bun runtime|"available"|"schema_version"|Loki Mode KPIs' \
+            && ! echo "$ro" | grep -qiF "Unknown option"; then
+            log_pass "report $order: routes to kpis handler (route $ROUTE)"
+        else
+            log_fail "report $order: routes to kpis handler" "got: $(echo "$ro" | head -1)"
+        fi
+    done
+
+    # 1b. export-positional-kpis must NOT be hijacked, both directions:
+    #   - `report export json kpis`     (direct report subcommand)
+    #   - `export json kpis`            (top-level export alias -> cmd_report)
+    # Expected on every route, exactly as on main: exit 0, a file named `kpis`
+    # created with the exported JSON. Run in a fresh mktemp dir so the output
+    # file is isolated and the cwd is clean.
+    for variant in "report export json kpis" "export json kpis"; do
+        hj="$(mktemp -d "${TMPDIR:-/tmp}/loki-kpis-hijack.XXXXXX")"
+        # cmd_export needs a session to export (else exit 1 "No active session");
+        # seed the minimal fixture the finding's repro used.
+        mkdir -p "$hj/.loki/state"
+        echo '{"phase":"act","iteration":3}' > "$hj/.loki/state/session.json"
+        # shellcheck disable=SC2086
+        ( cd "$hj" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" $variant >/dev/null 2>&1 ); hj_code=$?
+        if [ "$hj_code" -eq 0 ] && [ -f "$hj/kpis" ]; then
+            log_pass "$variant: not hijacked -- exit 0, file 'kpis' created (route $ROUTE)"
+        else
+            log_fail "$variant: not hijacked" "code=$hj_code file_exists=$([ -f "$hj/kpis" ] && echo yes || echo no)"
+        fi
+        rm -rf "$hj"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# v7.32 finding 1: main-parity proof for `report export json kpis`. We extract
+# main's autonomy/loki via `git show` into a temp script and run the SAME
+# command through it, then assert the current branch produces a byte-identical
+# exported file (timestamps normalized). This pins the UX-monotonicity contract:
+# a v7.31.0-working command keeps working identically. Runs on the BASH route
+# (export is bash-owned); on the Bun route the shim delegates `export` to bash
+# too, so the exported file is route-invariant. Skipped gracefully if git/main
+# are unavailable (e.g. a shallow CI checkout).
+# ---------------------------------------------------------------------------
+{
+    if git -C "$REPO_ROOT" rev-parse --verify -q main >/dev/null 2>&1; then
+        MAIN_LOKI="$(mktemp "${TMPDIR:-/tmp}/loki-main-XXXXXX.sh")"
+        if git -C "$REPO_ROOT" show main:autonomy/loki > "$MAIN_LOKI" 2>/dev/null && [ -s "$MAIN_LOKI" ]; then
+            # main dir (seed the same minimal session fixture the finding used)
+            md="$(mktemp -d "${TMPDIR:-/tmp}/loki-main-export.XXXXXX")"
+            mkdir -p "$md/.loki/state"; echo '{"phase":"act","iteration":3}' > "$md/.loki/state/session.json"
+            ( cd "$md" && env LOKI_LEGACY_BASH=1 bash "$MAIN_LOKI" report export json kpis >/dev/null 2>&1 ); m_code=$?
+            # branch dir (via the same bash entrypoint to match main's invocation)
+            bd="$(mktemp -d "${TMPDIR:-/tmp}/loki-branch-export.XXXXXX")"
+            mkdir -p "$bd/.loki/state"; echo '{"phase":"act","iteration":3}' > "$bd/.loki/state/session.json"
+            ( cd "$bd" && env LOKI_LEGACY_BASH=1 bash "$REPO_ROOT/autonomy/loki" report export json kpis >/dev/null 2>&1 ); b_code=$?
+            # The exported JSON embeds the VERSION string (differs main vs branch)
+            # and a wall-clock "exported_at"; both are blanked so the assertion
+            # pins the STRUCTURE + session payload (the monotonicity contract),
+            # not the version bump or timestamp. normalize() handles the ISO time;
+            # an extra sed blanks the "version" line.
+            export_norm() { normalize | sed -E 's/"version": *"[^"]*"/"version": "<V>"/'; }
+            if [ "$m_code" -eq 0 ] && [ "$b_code" -eq 0 ] && [ -f "$md/kpis" ] && [ -f "$bd/kpis" ] \
+                && [ "$(export_norm < "$md/kpis")" = "$(export_norm < "$bd/kpis")" ]; then
+                log_pass "report export json kpis: byte-identical to main (exit $b_code, file 'kpis' parity)"
+            else
+                log_fail "report export json kpis: main-parity" "main_code=$m_code branch_code=$b_code main_file=$([ -f "$md/kpis" ] && echo yes || echo no) branch_file=$([ -f "$bd/kpis" ] && echo yes || echo no)"
+            fi
+            rm -rf "$md" "$bd"
+        else
+            log_pass "report export json kpis: main-parity SKIPPED (main:autonomy/loki not extractable)"
+        fi
+        rm -f "$MAIN_LOKI"
+    else
+        log_pass "report export json kpis: main-parity SKIPPED (no 'main' ref in this checkout)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# v7.32 finding 2 (MEDIUM, --json first-arg-only): on the bash route the
+# Bun-requirement helper honors --json FLAG-ANYWHERE, not just as $1. With the
+# suppression flags first, a machine consumer must still get the structured
+# {"available": false} payload on stdout (not prose on stderr). Both the
+# deprecated `kpis` alias and the canonical `report kpis` forms. Bash route
+# specifically (the helper only runs there).
+# ---------------------------------------------------------------------------
+{
+    for argv in "kpis --quiet --json" "report kpis -q --json"; do
+        # shellcheck disable=SC2086
+        j_out="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" $argv ) 2>/dev/null)"
+        if echo "$j_out" | grep -qF '"available": false'; then
+            log_pass "$argv (bash route): structured JSON on stdout (--json flag-anywhere)"
+        else
+            log_fail "$argv (bash route): --json flag-anywhere" "stdout: $j_out"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# v7.32 finding 4 (LOW, error-channel parity): the consolidated noun family
+# emits unknown-subcommand diagnostics on STDERR. The new nouns (analyze,
+# modernize) already do; this asserts the migrated siblings (memory, report)
+# now match -- error text on stderr, empty stdout, exit 1 -- on both routes.
+# ---------------------------------------------------------------------------
+{
+    assert_err_channel() {
+        local label="$1"; shift
+        local fresh; fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-errchan.XXXXXX")"
+        local out err code
+        out="$( ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$@" ) 2>"$fresh/e.err")"; code=$?
+        err="$(cat "$fresh/e.err")"
+        if [ "$code" -eq 1 ] && [ -z "$out" ] && echo "$err" | grep -qiF "Unknown"; then
+            log_pass "$label: unknown-subcommand error on stderr, clean stdout, exit 1 (route $ROUTE)"
+        else
+            log_fail "$label: error-channel parity" "code=$code stdout='$out' stderr_head=$(echo "$err" | head -1)"
+        fi
+        rm -rf "$fresh"
+    }
+    assert_err_channel "memory bogus" memory bogus
+    assert_err_channel "report bogus" report bogus
+    # The new nouns are the reference (already stderr); assert they still are.
+    assert_err_channel "analyze bogus" analyze bogus
+    assert_err_channel "modernize bogus" modernize bogus
+}
+
+# ---------------------------------------------------------------------------
+# v7.32 finding 3 (MEDIUM, stale-dist inversion): bin/loki must prefer the src
+# dispatcher over a gitignored dist/loki.js when src is NEWER (so a dev machine
+# never runs a stale bundle that lacks a freshly-added shim->Bun route like
+# `report kpis`). A full touch-ordering mktemp test is awkward because bin/loki
+# derives REPO_ROOT from its OWN path, so a copied shim resolves back to the
+# real tree; per the task's sanctioned fallback we pin the guard with a static
+# assertion that the `-nt` freshness check is present in the dist-preference arm.
+# ---------------------------------------------------------------------------
+{
+    # Pattern starts with a non-dash char so it is never mis-parsed as a flag
+    # (some environments alias grep to ugrep, which reads a leading '-nt' as the
+    # -t option). Matches the `src/cli.ts" -nt "..dist/loki.js"` freshness arm.
+    if grep -qF 'src/cli.ts" -nt "$REPO_ROOT/loki-ts/dist/loki.js"' "$REPO_ROOT/bin/loki"; then
+        log_pass "bin/loki: stale-dist freshness guard present (src preferred when newer than dist)"
+    else
+        log_fail "bin/loki freshness guard" "the '-nt' dist-vs-src check is missing from bin/loki"
     fi
 }
 

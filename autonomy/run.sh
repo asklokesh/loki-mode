@@ -12328,13 +12328,30 @@ except Exception as exc:
             # helpers (which expect tier names) resolve correctly. Unknown
             # model strings are passed through as-is; provider loaders fall
             # back to a sane default.
-            case "${LOKI_SESSION_MODEL:-sonnet}" in
+            #
+            # Normalize case + surrounding whitespace BEFORE the match so
+            # 'OPUS' and ' opus ' resolve identically to 'opus'. We do NOT use
+            # loki_normalize_model_alias here: that helper is the narrow
+            # OVERRIDE-file allowlist (haiku|sonnet|opus|fable) and would strip
+            # the documented tier-name pins (planning|development|fast) to
+            # empty, collapsing them onto the default tier. The session pin
+            # legitimately accepts tier names (skills/model-selection.md), and
+            # the estimator + dashboard mirror this exact tier route, so the
+            # canonical session-pin rule is trim+lowercase WITHOUT the alias
+            # allowlist. Interior whitespace is preserved (so 'fab le' stays a
+            # junk value that falls through the '*' default arm), matching the
+            # estimator/dashboard ports.
+            local _session_pin="${LOKI_SESSION_MODEL:-sonnet}"
+            _session_pin="${_session_pin#"${_session_pin%%[![:space:]]*}"}"
+            _session_pin="${_session_pin%"${_session_pin##*[![:space:]]}"}"
+            _session_pin="$(printf '%s' "$_session_pin" | tr '[:upper:]' '[:lower:]')"
+            case "$_session_pin" in
                 opus)   CURRENT_TIER="planning" ;;
                 sonnet) CURRENT_TIER="development" ;;
                 haiku)  CURRENT_TIER="fast" ;;
                 fable)  CURRENT_TIER="fable" ;;
-                planning|development|fast) CURRENT_TIER="${LOKI_SESSION_MODEL}" ;;
-                *)      CURRENT_TIER="${LOKI_SESSION_MODEL}" ;;
+                planning|development|fast) CURRENT_TIER="$_session_pin" ;;
+                *)      CURRENT_TIER="$_session_pin" ;;
             esac
         fi
         # Architect opt-in (LOKI_FABLE_ARCHITECT=1): route ONLY the first

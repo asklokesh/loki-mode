@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.32.0] - 2026-06-10
+
+### Added
+- CLI consolidation Phase B: `loki report kpis` is the canonical KPI command
+  (old `loki kpis` kept as a working alias); `loki memory compound`,
+  `loki analyze` (explain/onboard/code/context), and `loki modernize`
+  (heal/migrate) nouns group their legacy commands under the alias contract:
+  byte-identical stdout, exit parity, exactly one stderr deprecation pointer,
+  suppressed under `--json`/`-q`/`--quiet` and positional machine formats
+  (json/csv/timeline), zero side effects in clean directories.
+- Homebrew now installs from a counted GitHub Release asset: the
+  update-homebrew release job builds a `git archive` tarball, uploads it to
+  the GitHub Release, and points the formula at it (sha256 of the same
+  bytes), so brew installs appear in release download counts.
+- `tests/test_dashboard_port_arg.py`: coverage for the v7.31 `--port`/`--host`
+  argparse on direct `python -m dashboard.server` launches.
+
+### Fixed
+- Cost-honesty (task 568): on the stock session path the estimator and the
+  dashboard now quote the model the runner actually dispatches (a `sonnet`
+  session pin routes through the development tier to Opus; the quote said
+  Sonnet and underquoted ~1.7x). `loki plan` output now names the model AND
+  the lever that selected it. Demo cost quote corrected to the Opus truth.
+- Tier-name session pins (`planning`/`development`/`fast`), documented in
+  skills/model-selection.md, now resolve byte-faithfully across all three
+  readers (run.sh dispatch, `loki plan` estimator, dashboard). run.sh folds
+  miscased/padded pins (trim + lowercase). Session-pin parity matrix grown
+  to 224 cells; dashboard endpoint tests 37/37.
+- `loki report export json kpis` was hijacked by a flag-anywhere kpis scan;
+  kpis routing now keys on the first non-flag token in all three layers
+  (bash dispatch, bin/loki shim, Bun CLI) with byte-parity against main.
+- `loki mcp` probe now resolves the server exactly like the launch exec
+  (file-exec of mcp/server.py with PYTHONPATH from the user cwd), so probe
+  and launch can no longer disagree under a decoy SDK; the runpy
+  RuntimeWarning on launch is gone and MCP serverInfo reports the real
+  loki-mode version.
+- A backtick command substitution inside the `loki plan` estimator comment
+  block executed a stray `claude --model` on every plan invocation,
+  polluting stderr (plan suite 19/25). Fixed; `loki plan --json` now emits
+  zero stderr bytes (25/25).
+- Homebrew formula license corrected from MIT to BUSL-1.1 (honesty fix) and
+  description updated.
+
+### Changed
+- `loki compound` help title reads the canonical `loki memory compound`
+  (the alias keeps working with a pointer).
+- scripts/local-ci.sh MCP handshake check launches the server in the shipped
+  launcher form (file-exec + PYTHONPATH from a non-repo cwd) instead of
+  `-m mcp.server` from the repo root.
+
 ## [7.31.0] - 2026-06-10
 
 ### Added

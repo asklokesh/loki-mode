@@ -326,19 +326,24 @@ else
 fi
 
 # -------------------------------------------
-# Test 22: Regression -- unforced plan on the demo PRD is unchanged
-# (simple, $1.86, 4 iters; the override is opt-in via the env var only)
+# Test 22: Regression -- unforced plan on the demo PRD quotes the stock session
+# path (simple tier, 4 iters, $3.10). Task 568: the default session pin (sonnet)
+# resolves through the development tier to PROVIDER_MODEL_DEVELOPMENT=opus, the
+# model the runner actually dispatches. Pre-568 this quoted $1.86 (Sonnet) while
+# the run dispatched opus (~1.7x understatement); $3.10 (Opus x4) is the truth.
+# (Cost rounds to 3.1 in JSON; the formatted demo block renders ~$3.10.)
 # -------------------------------------------
 ((TOTAL++))
 if [ -f "$TODO_PRD" ]; then
     todo_json=$("$LOKI" plan "$TODO_PRD" --json 2>/dev/null)
     todo_tier=$(echo "$todo_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['complexity']['tier'])" 2>/dev/null)
     todo_cost=$(echo "$todo_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['cost']['total_usd'])" 2>/dev/null)
+    todo_model=$(echo "$todo_json" | python3 -c "import json,sys; ibm=json.load(sys.stdin)['cost']['iterations_by_model']; m=[k for k,v in ibm.items() if v]; print(m[0] if len(m)==1 else 'MULTI')" 2>/dev/null)
     todo_iters=$(echo "$todo_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['iterations']['estimated'])" 2>/dev/null)
-    if [ "$todo_tier" = "simple" ] && [ "$todo_cost" = "1.86" ] && [ "$todo_iters" = "4" ]; then
-        log_pass "demo PRD unforced plan unchanged (simple, \$1.86, 4 iters)"
+    if [ "$todo_tier" = "simple" ] && [ "$todo_cost" = "3.1" ] && [ "$todo_model" = "Opus" ] && [ "$todo_iters" = "4" ]; then
+        log_pass "demo PRD unforced plan quotes stock session path (simple, Opus x4, \$3.10, 4 iters)"
     else
-        log_fail "demo PRD regression" "tier=$todo_tier cost=\$$todo_cost iters=$todo_iters"
+        log_fail "demo PRD regression" "tier=$todo_tier cost=\$$todo_cost model=$todo_model iters=$todo_iters"
     fi
 else
     log_fail "demo PRD regression" "templates/simple-todo-app.md not found"
@@ -368,7 +373,7 @@ dry_exit=0
 dry_out=$(TMPDIR="$DEMO_TMP_24" run_guarded 30 "$LOKI" demo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || dry_exit=$?
 if [ "$dry_exit" -eq 0 ] \
     && echo "$dry_out" | grep -q "Estimate (SIMPLE tier, the path this demo actually runs):" \
-    && echo "$dry_out" | grep -q 'Cost:        ~\$1.86' \
+    && echo "$dry_out" | grep -q 'Cost:        ~\$3.10' \
     && echo "$dry_out" | grep -q "\[dry-run\] Would run:"; then
     log_pass "loki demo --dry-run renders SIMPLE estimate block and exits 0"
 else

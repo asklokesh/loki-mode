@@ -392,6 +392,41 @@ _deprecated_alias() {
     fi
 }
 
+# CLI consolidation (Phase B): kpis is a Bun-only command (Phase K, v7.5.28+).
+# It ships in the Bun runtime (loki-ts) and reuses the canonical cost arithmetic
+# in loki-ts/src/runner/budget.ts (PRICING map + calculateCostFromRecords, the
+# cost single-source-of-truth). It is deliberately NOT reimplemented in bash:
+# a bash port would duplicate that arithmetic and risk drift. On the bash route
+# (LOKI_LEGACY_BASH=1, or a machine without Bun) both the canonical
+# `report kpis` and the deprecated `kpis` alias print this honest requirement
+# message rather than the generic "Unknown command" (which would contradict
+# `loki help` listing kpis). --json yields a structured {"available": false}
+# payload so a machine consumer is not handed prose. Exits 1.
+# Usage: _kpis_bash_unavailable "$@"   (the alias arm prints the pointer first)
+# --json is honored FLAG-ANYWHERE (not just as $1): a machine consumer that
+# passes the suppression flags first -- e.g. `kpis --quiet --json` or `report
+# kpis -q --json` -- must still get the structured {"available": false} payload
+# on stdout, not prose. This mirrors _deprecated_alias_should_suppress, which
+# also scans all of "$@". Exit 1 either way (the bash route never produces KPIs).
+# Copy points at the CANONICAL `loki report kpis` (the deprecated `loki kpis`
+# alias prints its own pointer first, at the alias arm).
+_kpis_bash_unavailable() {
+    local _ka _want_json=""
+    for _ka in "$@"; do
+        if [ "$_ka" = "--json" ]; then
+            _want_json=1
+            break
+        fi
+    done
+    if [ -n "$_want_json" ]; then
+        printf '{"available": false, "reason": "loki report kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
+    else
+        echo "loki report kpis requires the Bun runtime and is not available on the bash route." >&2
+        echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki report kpis'." >&2
+    fi
+    exit 1
+}
+
 # Emit learning signal (non-blocking) - SYN-018
 # Usage: emit_learning_signal <signal_type> [options]
 # Signal types: user_preference, error_pattern, success_pattern, tool_efficiency, workflow_pattern
@@ -643,10 +678,11 @@ show_help() {
     echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
     echo ""
     echo "Knowledge:"
-    echo "  memory [cmd]     Cross-project learnings (list|show|search|stats)"
+    echo "  analyze [cmd]    Codebase intelligence: explain|onboard|code|context"
+    echo "  memory [cmd]     Cross-project learnings (list|show|search|stats|compound)"
     echo ""
     echo "Modernize:"
-    echo "  heal <path>      Legacy system healing (archaeology, stabilize, modernize)"
+    echo "  modernize [cmd]  Legacy modernization: heal|migrate"
     echo ""
     echo "Config:"
     echo "  config [cmd]     Manage configuration + provider (show|set|get|provider)"
@@ -656,10 +692,10 @@ show_help() {
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
     echo "More commands (init, watch, demo, web, api, logs, github,"
-    echo "import, council, proof, audit, agent, template, magic, onboard, explain,"
-    echo "code, context, docs, wiki, ci, test, bench, secrets, telemetry, crash,"
-    echo "worktree, failover, monitor, remote, kpis, ...) are dispatchable and"
-    echo "documented via 'loki <command> --help'."
+    echo "import, council, proof, audit, agent, template, magic, docs, wiki, ci,"
+    echo "test, bench, secrets, telemetry, crash, worktree, failover, monitor,"
+    echo "remote, ...) are dispatchable and documented via"
+    echo "'loki <command> --help'."
     echo ""
     echo "Aliases (deprecated): older command names still work; they print a"
     echo "one-line pointer to stderr and never alter --json output. See the full"
@@ -710,7 +746,7 @@ show_help() {
     echo "  # Session ops + observability"
     echo "  loki status [--json]          # Current status"
     echo "  loki report session --efficiency   # Token + cost stats"
-    echo "  loki kpis [--json]            # Accuracy + efficiency KPI snapshot"
+    echo "  loki report kpis [--json]     # Accuracy + efficiency KPI snapshot"
     echo "  loki doctor [--json]          # System prereq + skill symlinks"
     echo "  loki logs                     # Tail recent log output"
     echo "  loki report export json|markdown|csv|timeline   # Export session"
@@ -783,9 +819,18 @@ show_help_aliases() {
     echo "  export             report export"
     echo "  share              report share"
     echo "  dogfood            report dogfood"
+    echo "  kpis               report kpis"
     echo "  trust-metrics      trust detail"
+    echo "  compound           memory compound"
+    echo "  explain            analyze explain"
+    echo "  onboard            analyze onboard"
+    echo "  code               analyze code"
+    echo "  context            analyze context"
+    echo "  ctx                analyze context"
+    echo "  heal               modernize heal"
+    echo "  migrate            modernize migrate"
     echo ""
-    echo "More groupings (ui, analyze, modernize, new, admin) land in Phase B."
+    echo "More groupings (ui, new, admin) land in later Phase B slices."
     echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
 }
 
@@ -11843,6 +11888,37 @@ cmd_heal_help() {
     echo "  loki heal --friction-map ./legacy-app          # View friction map"
 }
 
+# CLI consolidation (Phase B, design item 6): the 'modernize' noun groups the
+# legacy-modernization surface (heal/migrate) under one entry. It is a THIN
+# dispatcher: each arm forwards verbatim to the existing cmd_* handler (no
+# handler logic moves; heal and migrate keep their separate phase vocabularies
+# and state). The two top-level tokens remain deprecated forwarding aliases.
+cmd_modernize() {
+    local subcommand="${1:-help}"
+    case "$subcommand" in
+        heal)     shift; cmd_heal "$@";    return $? ;;
+        migrate)  shift; cmd_migrate "$@"; return $? ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki modernize${NC} - Legacy system modernization"
+            echo ""
+            echo "Usage: loki modernize <subcommand> [args]"
+            echo ""
+            echo "Subcommands (grouped modernization surface):"
+            echo "  heal <path>      Legacy system healing in phases (was: loki heal)"
+            echo "  migrate <path>   Codebase migration in phases (was: loki migrate)"
+            echo ""
+            echo "Run 'loki modernize <subcommand> --help' for each. The old"
+            echo "top-level names still work; see 'loki help aliases'."
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Unknown modernize command: $subcommand${NC}" >&2
+            echo "Run 'loki modernize --help' for usage." >&2
+            return 1
+            ;;
+    esac
+}
+
 cmd_heal() {
     local codebase_path=""
     local phase="${LOKI_HEAL_PHASE:-archaeology}"
@@ -13192,10 +13268,26 @@ def _loki_norm_alias(raw):
     raw = (raw or '').strip().lower()
     return raw if raw in ('haiku', 'sonnet', 'opus', 'fable') else ''
 
+# Session-pin normalization is BROADER than the override-file allowlist above.
+# run.sh's session-pin case (run.sh:12331) accepts the four model aliases AND
+# the three raw tier names (planning|development|fast) -- documented at
+# skills/model-selection.md:8 -- mapping each through resolve_model_for_tier.
+# The OVERRIDE file path (_loki_norm_alias) stays narrow because that value is
+# fed straight to 'claude --model', where tier names are not valid. The session
+# pin is a tier route, so tier names ARE valid pins. This normalizer mirrors
+# run.sh's trim+lowercase (interior whitespace preserved, so 'fab le' stays junk
+# and falls through to the default tier exactly like the runner's '*' arm).
+def _loki_norm_session_pin(raw):
+    raw = (raw or '').strip().lower()
+    return raw if raw in (
+        'haiku', 'sonnet', 'opus', 'fable',
+        'planning', 'development', 'fast',
+    ) else ''
+
 # session_model_env starts from LOKI_SESSION_MODEL; track the lever that set it
 # so the provenance line names the real source (never a false attribution).
 _session_model_source = 'LOKI_SESSION_MODEL'
-session_model_env = _loki_norm_alias(os.environ.get('LOKI_SESSION_MODEL', '')) or 'sonnet'
+session_model_env = _loki_norm_session_pin(os.environ.get('LOKI_SESSION_MODEL', '')) or 'sonnet'
 
 _fable_override = ''
 try:
@@ -13246,6 +13338,13 @@ def _provider_model_development():
     return (os.environ.get('LOKI_CLAUDE_MODEL_DEVELOPMENT')
             or os.environ.get('LOKI_MODEL_DEVELOPMENT')
             or ('sonnet' if _allow_haiku else 'opus'))
+def _provider_model_planning():
+    # claude.sh:65 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > opus.
+    # CLAUDE_DEFAULT_PLANNING is always opus (LOKI_ALLOW_HAIKU only lowers the
+    # development and fast defaults, not planning).
+    return (os.environ.get('LOKI_CLAUDE_MODEL_PLANNING')
+            or os.environ.get('LOKI_MODEL_PLANNING')
+            or 'opus')
 _max_tier = (os.environ.get('LOKI_MAX_TIER', '') or '').strip().lower()
 def _loki_clamp_alias(alias):
     if not _max_tier:
@@ -13259,14 +13358,96 @@ def _loki_clamp_alias(alias):
     if _max_tier == 'opus':
         return 'opus' if alias == 'fable' else alias
     return alias
-if _max_tier:
-    _clamped = _loki_clamp_alias(session_model_env)
-    if _clamped != session_model_env:
-        session_model_env = _clamped
-        _session_model_source = 'LOKI_MAX_TIER (clamped)'
-    if _fable_architect and _loki_clamp_alias('fable') != 'fable':
-        # The architect iteration would clamp down too; do not disclose fable.
-        _fable_architect = False
+
+# Session-pin tier route (the runner's NO-OVERRIDE path). When there is no
+# mid-flight override file, the runner does NOT feed the session alias straight
+# to --model. It maps the alias to an abstract TIER (run.sh:12331 -- opus->
+# planning, sonnet->development, haiku->fast, fable->fable) and resolves that
+# tier through resolve_model_for_tier (claude.sh:353), which reads
+# PROVIDER_MODEL_PLANNING/DEVELOPMENT/FAST and then applies
+# loki_apply_max_tier_clamp(model, REAL_tier). This DIFFERS from the override-
+# path clamp _loki_clamp_alias above: a 'sonnet' SESSION pin dispatches OPUS
+# (development tier -> PROVIDER_MODEL_DEVELOPMENT=opus on stock config), whereas
+# a 'sonnet' OVERRIDE file dispatches sonnet (alias fed straight to --model).
+# Quoting the alias name on the default session path was the task-568 gap (it
+# understated cost ~1.7x: Sonnet quote vs Opus dispatch). The estimator must
+# quote the model the runner actually dispatches.
+#
+# SYNC: byte-faithful with run.sh's session-pin case + claude.sh
+# resolve_model_for_tier + loki_apply_max_tier_clamp. The same resolver lives in
+# the dashboard (dashboard/server.py _resolve_session_pin). Locked by the
+# session-pin parity matrix and the no-cap stock cross-route cases in
+# tests/test-model-override.sh.
+def _resolve_session_pin(alias):
+    # alias -> abstract tier (run.sh:12331). Unknown -> development (the runner's
+    # '*' arm passes CURRENT_TIER through to resolve_model_for_tier, whose '*'
+    # default is PROVIDER_MODEL_DEVELOPMENT, i.e. the development tier).
+    _pin_tier = {
+        'opus': 'planning',
+        'sonnet': 'development',
+        'haiku': 'fast',
+        'fable': 'fable',
+        # Raw tier-name pins (run.sh:12336 passthrough arm) map to their own
+        # tier, NOT through the alias table. So pin=fast -> fast tier ->
+        # PROVIDER_MODEL_FAST (sonnet stock / haiku ALLOW_HAIKU), matching the
+        # runner's dispatch instead of collapsing onto development.
+        'planning': 'planning',
+        'development': 'development',
+        'fast': 'fast',
+    }.get(alias, 'development')
+    # tier -> model (claude.sh resolve_model_for_tier explicit arms).
+    if _pin_tier == 'planning':
+        _m = _provider_model_planning()
+    elif _pin_tier == 'fast':
+        _m = _provider_model_fast()
+    elif _pin_tier == 'fable':
+        _m = 'fable'
+    else:  # development (and the '*' fallthrough)
+        _m = _provider_model_development()
+    # Apply the shared LOKI_MAX_TIER clamp with the REAL tier and resolved model
+    # (loki_apply_max_tier_clamp(model, tier)), NOT the alias==alias override
+    # convention. This is the one place where the two paths legitimately diverge
+    # (e.g. opus pin + sonnet cap + ALLOW_HAIKU: tier route -> sonnet, because the
+    # planning tier downgrades to PROVIDER_MODEL_DEVELOPMENT=sonnet).
+    if not _max_tier:
+        return _m
+    if _max_tier == 'haiku':
+        return _provider_model_fast()
+    if _max_tier == 'sonnet':
+        if _pin_tier in ('planning', 'fable') or _m == 'fable':
+            return _provider_model_development()
+        return _m
+    if _max_tier == 'opus':
+        return 'opus' if _m == 'fable' else _m
+    return _m
+# Resolve the model the runner will ACTUALLY dispatch for the pinned session,
+# choosing the correct route:
+#   - OVERRIDE file present: the runner feeds the alias straight to --model via
+#     loki_apply_max_tier_clamp(alias, alias). Use _loki_clamp_alias (the
+#     override-path clamp). A 'sonnet' override dispatches sonnet.
+#   - No override (session pin): the runner maps alias -> tier ->
+#     resolve_model_for_tier -> clamp(model, real_tier). Use _resolve_session_pin.
+#     A 'sonnet' session pin dispatches OPUS (development tier).
+# This is the task-568 fix: price the actually-dispatched model on BOTH routes.
+_is_override = (_session_model_source == '.loki/state/model-override')
+if _is_override:
+    _dispatched_model = _loki_clamp_alias(session_model_env)
+else:
+    _dispatched_model = _resolve_session_pin(session_model_env)
+
+# Keep session_model_env (the alias) for token-volume tier mapping and provenance,
+# but record when the cost ceiling actually changed the dispatched model so the
+# provenance line is honest about the clamp.
+if _max_tier and _dispatched_model != session_model_env:
+    _session_model_source = 'LOKI_MAX_TIER (clamped)'
+# Clear the architect-fable disclosure when the ceiling would clamp the architect
+# iteration too. This is INDEPENDENT of whether the session model itself changed:
+# e.g. an opus pin under a sonnet cap leaves the session model opus (no change),
+# but the iter-0 fable architect tier still clamps down to development. Nesting
+# this under the session-changed branch would over-quote a Fable iteration the
+# runner actually dispatches as opus (estimator-vs-runner divergence).
+if _max_tier and _fable_architect and _loki_clamp_alias('fable') != 'fable':
+    _fable_architect = False
 
 # v7.29.0: Honor LOKI_COMPLEXITY -- the SAME env var the runner honors at
 # run.sh:920 -- so a forced-tier run (e.g. 'loki demo' / 'loki start --simple'
@@ -13282,15 +13463,30 @@ forced_complexity = {'standard': 'moderate'}.get(_forced_complexity_raw, _forced
 if forced_complexity not in ('simple', 'moderate', 'complex', 'enterprise'):
     forced_complexity = ''
 
-# Map session model name to tier key used in tokens_per_tier below.
-# Unknown models fall through to 'development' (Sonnet) as a safe default.
+# Map session model name to tier key used in tokens_per_tier below. This keys the
+# token VOLUME per iteration off the work tier the session pin selects (e.g. a
+# sonnet pin = the development tier = 80k/15k tokens). It does NOT decide the
+# priced model: that is _dispatched_model, the model the runner actually invokes.
+# Unknown models fall through to 'development' as a safe default.
 _session_tier_map = {
     'fable': 'advisor',
     'opus': 'planning',
     'sonnet': 'development',
     'haiku': 'fast',
+    # Raw tier-name pins key off their own work tier directly (they ARE tier
+    # names), mirroring run.sh's session-pin passthrough arm.
+    'planning': 'planning',
+    'development': 'development',
+    'fast': 'fast',
 }
 session_tier = _session_tier_map.get(session_model_env, 'development')
+
+# Pricing-table key (Fable/Opus/Sonnet/Haiku) for the model the runner dispatches.
+# The loop below uses tokens_per_tier[tier] for token VOLUME but prices by this
+# model, so the quote reflects the actually-dispatched model on every route.
+_PRICED_MODEL_KEY = {'fable': 'Fable', 'opus': 'Opus', 'sonnet': 'Sonnet', 'haiku': 'Haiku'}
+def _priced_model_for(alias):
+    return _PRICED_MODEL_KEY.get((alias or '').strip().lower(), 'Opus')
 
 # Colors (disabled for JSON mode)
 if show_json:
@@ -13524,7 +13720,19 @@ for i in range(estimated_iterations):
             tier = 'advisor'
 
     info = tokens_per_tier[tier]
-    model = info['model']
+    # Token VOLUME comes from the work tier (info), but the priced MODEL is the
+    # model the runner actually dispatches. In legacy rotation the per-tier model
+    # IS the dispatched model. In session-pinned mode (the default) the runner
+    # resolves the pin through provider config (_dispatched_model): a sonnet pin
+    # dispatches opus, so we price Opus, not the tier's static 'Sonnet' label.
+    # The fable-architect iteration 0 genuinely dispatches fable (already cap-
+    # cleared above when it would clamp), so it keeps the advisor tier's Fable.
+    if legacy_tier_switching:
+        model = info['model']
+    elif _fable_architect and i == 0:
+        model = info['model']  # advisor tier -> Fable
+    else:
+        model = _priced_model_for(_dispatched_model)
     inp = info['input']
     out = info['output']
 
@@ -13719,8 +13927,14 @@ else:
     print('  Model distribution: ' + (' | '.join(pinned_parts) if pinned_parts else '(none)'))
     # Provenance: name the lever that actually selected the pinned model, never a
     # false attribution. _session_model_source is the real source (env, override
-    # file, or maxTier clamp) tracked at selection time.
-    print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    # file, or maxTier clamp) tracked at selection time. When the session pin is a
+    # tier alias that resolves to a DIFFERENT dispatched model (the default: a
+    # 'sonnet' pin -> development tier -> opus), show the resolution so the
+    # distribution above (Opus x4) is legible against the pin name (sonnet).
+    if (not _is_override) and _dispatched_model != session_model_env:
+        print(f'  {DIM}(pinned via {_session_model_source}={session_model_env} -> {session_tier} tier -> {_dispatched_model}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
+    else:
+        print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
     if _fable_architect:
         print(f'  {DIM}(+ 1 architecture iteration on Fable via LOKI_FABLE_ARCHITECT=1){NC}')
     if fable_n > 0:
@@ -14052,7 +14266,9 @@ main() {
             cmd_memory "$@"
             ;;
         compound)
-            cmd_compound "$@"
+            # CLI consolidation (Phase B): 'compound' -> 'memory compound'.
+            _deprecated_alias compound "memory compound" "$@"
+            cmd_memory compound "$@"
             ;;
         checkpoint|cp)
             # CLI consolidation (Phase A): 'cp' is a deprecated alias of 'checkpoint'.
@@ -14107,8 +14323,13 @@ main() {
         optimize)
             cmd_optimize "$@"
             ;;
+        modernize)
+            cmd_modernize "$@"
+            ;;
         heal)
-            cmd_heal "$@"
+            # CLI consolidation (Phase B): 'heal' -> 'modernize heal'.
+            _deprecated_alias heal "modernize heal" "$@"
+            cmd_modernize heal "$@"
             ;;
         verify)
             cmd_verify "$@"
@@ -14123,7 +14344,9 @@ main() {
             cmd_mcp "$@"
             ;;
         migrate)
-            cmd_migrate "$@"
+            # CLI consolidation (Phase B): 'migrate' -> 'modernize migrate'.
+            _deprecated_alias migrate "modernize migrate" "$@"
+            cmd_modernize migrate "$@"
             ;;
         cluster)
             cmd_cluster "$@"
@@ -14182,11 +14405,18 @@ main() {
         failover)
             cmd_failover "$@"
             ;;
+        analyze)
+            cmd_analyze "$@"
+            ;;
         onboard)
-            cmd_onboard "$@"
+            # CLI consolidation (Phase B): 'onboard' -> 'analyze onboard'.
+            _deprecated_alias onboard "analyze onboard" "$@"
+            cmd_analyze onboard "$@"
             ;;
         explain)
-            cmd_explain "$@"
+            # CLI consolidation (Phase B): 'explain' -> 'analyze explain'.
+            _deprecated_alias explain "analyze explain" "$@"
+            cmd_analyze explain "$@"
             ;;
         docs)
             cmd_docs "$@"
@@ -14221,10 +14451,15 @@ main() {
             cmd_bench "$@"
             ;;
         context|ctx)
-            cmd_context "$@"
+            # CLI consolidation (Phase B): 'context' (and short alias 'ctx')
+            # -> 'analyze context'.
+            _deprecated_alias "$command" "analyze context" "$@"
+            cmd_analyze context "$@"
             ;;
         code)
-            cmd_code "$@"
+            # CLI consolidation (Phase B): 'code' -> 'analyze code'.
+            _deprecated_alias code "analyze code" "$@"
+            cmd_analyze code "$@"
             ;;
         version|--version|-v)
             cmd_version "$@"
@@ -14233,20 +14468,14 @@ main() {
             cmd_completions "$@"
             ;;
         kpis)
-            # kpis is a Bun-only command (Phase K, v7.5.28+): it ships in the
-            # Bun runtime (loki-ts) and bin/loki routes it there. On the bash
-            # route (LOKI_LEGACY_BASH=1, or a machine without Bun installed)
-            # there is no bash implementation. Rather than the generic
-            # "Unknown command" -- which contradicts `loki help` listing kpis --
-            # state the requirement honestly. Respect --json with a structured
-            # payload so a machine consumer is not handed prose.
-            if [ "${1:-}" = "--json" ]; then
-                printf '{"available": false, "reason": "loki kpis requires the Bun runtime; it is not implemented on the bash (LOKI_LEGACY_BASH) route"}\n'
-            else
-                echo "loki kpis requires the Bun runtime and is not available on the bash route." >&2
-                echo "Remove LOKI_LEGACY_BASH=1 (or install Bun: https://bun.sh) to use 'loki kpis'." >&2
-            fi
-            exit 1
+            # CLI consolidation (Phase B): `kpis` is a deprecated alias of the
+            # canonical `report kpis`. Emit the one-line pointer (suppressed
+            # under --json/-q/--quiet by _deprecated_alias), then print the
+            # honest Bun-requirement message via the shared helper. On a machine
+            # WITH Bun, bin/loki routes `kpis` to the Bun runtime before this arm
+            # is ever reached; this arm is the LOKI_LEGACY_BASH / no-Bun path.
+            _deprecated_alias kpis "report kpis" "$@"
+            _kpis_bash_unavailable "$@"
             ;;
         help|--help|-h)
             # CLI consolidation (Phase A): `loki help aliases` prints the full
@@ -16571,6 +16800,7 @@ except Exception as e:
             echo "  export [file]     Export to JSON file"
             echo "  dedupe            Remove duplicate entries"
             echo "  clear [type]      Clear learnings (all or specific type)"
+            echo "  compound [cmd]    Compound-solutions knowledge store (was: loki compound)"
             echo ""
             echo "Memory System Commands:"
             echo "  index [rebuild]   Show or rebuild the memory index layer"
@@ -16938,9 +17168,24 @@ print('removed')
 "
             ;;
 
+        compound)
+            # CLI consolidation (Phase B, design item 7): 'compound' is folded
+            # under the 'memory' noun as 'memory compound'. This arm forwards to
+            # the existing cmd_compound handler unchanged (no handler logic
+            # moves). The top-level 'compound' token stays a deprecated
+            # forwarding alias for back-compat. cmd_memory does not shift before
+            # the case, so $@ here is still 'compound <args>'; drop the leading
+            # 'compound' token, then forward the rest verbatim.
+            shift 2>/dev/null || true
+            cmd_compound "$@"
+            ;;
+
         *)
-            echo -e "${RED}Unknown memory command: $subcommand${NC}"
-            echo "Run 'loki memory help' for usage."
+            # Error-channel parity with the consolidated noun family (analyze,
+            # modernize): unknown-subcommand diagnostics go to STDERR so a scripted
+            # consumer capturing stdout is not handed error text. Exit 1 unchanged.
+            echo -e "${RED}Unknown memory command: $subcommand${NC}" >&2
+            echo "Run 'loki memory help' for usage." >&2
             exit 1
             ;;
     esac
@@ -17191,13 +17436,13 @@ COMPOUND_RUN_SCRIPT
             ;;
 
         help|--help|-h)
-            echo -e "${BOLD}loki compound${NC} - Knowledge compounding system"
+            echo -e "${BOLD}loki memory compound${NC} - Knowledge compounding system"
             echo ""
             echo "Extracts structured solutions from cross-project learnings."
             echo "Solutions are stored as markdown files with YAML frontmatter"
             echo "at ~/.loki/solutions/{category}/ and fed back into future planning."
             echo ""
-            echo "Usage: loki compound <command>"
+            echo "Usage: loki memory compound <command>   (alias: loki compound)"
             echo ""
             echo "Commands:"
             echo "  list              List all solutions by category"
@@ -20266,6 +20511,41 @@ METRICS_SCRIPT
         fi
         echo -e "${GREEN}Shared: ${gist_url}${NC}"
     fi
+}
+
+# CLI consolidation (Phase B, design item 8): the 'analyze' noun groups the
+# repo-intelligence surface (explain/onboard/code/context) under one entry. It
+# is a THIN dispatcher: every arm forwards verbatim to the existing cmd_*
+# handler (no handler logic moves). The four top-level tokens remain deprecated
+# forwarding aliases for back-compat.
+cmd_analyze() {
+    local subcommand="${1:-help}"
+    case "$subcommand" in
+        explain)  shift; cmd_explain "$@"; return $? ;;
+        onboard)  shift; cmd_onboard "$@"; return $? ;;
+        code)     shift; cmd_code "$@";    return $? ;;
+        context)  shift; cmd_context "$@"; return $? ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki analyze${NC} - Project knowledge and codebase intelligence"
+            echo ""
+            echo "Usage: loki analyze <subcommand> [args]"
+            echo ""
+            echo "Subcommands (grouped knowledge surface):"
+            echo "  explain [path]   Explain a codebase architecture in prose (was: loki explain)"
+            echo "  onboard [path]   Analyze a repo and generate CLAUDE.md (was: loki onboard)"
+            echo "  code [query]     Codebase intelligence queries (was: loki code)"
+            echo "  context [cmd]    Context-window management (was: loki context)"
+            echo ""
+            echo "Run 'loki analyze <subcommand> --help' for each. The old top-level"
+            echo "names still work; see 'loki help aliases'."
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Unknown analyze command: $subcommand${NC}" >&2
+            echo "Run 'loki analyze --help' for usage." >&2
+            return 1
+            ;;
+    esac
 }
 
 # Context window management (inspired by Kiro CLI /context command)
@@ -26251,6 +26531,44 @@ _test_gen_bats() {
 # is emitted at the alias dispatch arm (main()), never here, so `report <sub>`
 # stays clean.
 cmd_report() {
+    # CLI consolidation (Phase B): `report kpis` is the canonical KPI snapshot
+    # entry. kpis is Bun-only; on a machine WITH Bun, bin/loki two-token-routes
+    # `report kpis` (flag-anywhere) to the Bun runtime before this function is
+    # reached. This is the bash-route (LOKI_LEGACY_BASH / no-Bun) path: print
+    # the honest requirement message, NO deprecation pointer (this IS the
+    # canonical form), exit 1. `kpis` is the report subcommand ONLY when it is the
+    # FIRST non-flag token after `report` (so `report kpis --json` and `report
+    # --json kpis` both route here, mirroring the bin/loki + Bun cli.ts routing),
+    # NOT when it appears anywhere. A `kpis` token that is a positional VALUE of a
+    # different report subcommand -- e.g. `report export json kpis`, where `kpis`
+    # is the export OUTPUT FILENAME -- must NOT be hijacked; it falls through to
+    # the export arm below and behaves exactly as on main (v7.31.0): exit 0, file
+    # `kpis` created. Only the subcommand token is stripped before forwarding to
+    # the helper; flags (e.g. --json) are passed through so it still emits the
+    # structured machine payload.
+    local _report_first_sub="" _kpis_args=() _dropped_kpis=""
+    local _a
+    for _a in "$@"; do
+        case "$_a" in
+            -*) _kpis_args+=("$_a") ;;
+            *)
+                if [ -z "$_report_first_sub" ]; then
+                    _report_first_sub="$_a"
+                    # Drop only the subcommand token itself, once.
+                    if [ "$_a" = "kpis" ]; then
+                        _dropped_kpis=1
+                        continue
+                    fi
+                fi
+                _kpis_args+=("$_a")
+                ;;
+        esac
+    done
+    if [ -n "$_dropped_kpis" ]; then
+        # ${arr[@]:-} guards the empty-array expansion under `set -u` on the
+        # bare `report kpis` case (no extra flags) for older bash (3.2/4.2).
+        _kpis_bash_unavailable "${_kpis_args[@]:-}"
+    fi
     case "${1:-}" in
         session)  shift; cmd_stats "$@";   return $? ;;
         metrics)  shift; cmd_metrics "$@"; return $? ;;
@@ -26283,6 +26601,7 @@ cmd_report_legacy() {
                 echo "  session     Session statistics (was: loki stats)"
                 echo "  metrics     Efficiency/reward metrics (was: loki metrics)"
                 echo "  cost        Token cost breakdown (was: loki cost)"
+                echo "  kpis        Accuracy + efficiency KPI snapshot (was: loki kpis; Bun runtime only)"
                 echo "  export      Export session data (was: loki export) [json|markdown|csv|timeline]"
                 echo "  share       Share session assets (was: loki share)"
                 echo "  dogfood     Self-development stats (was: loki dogfood)"
@@ -26319,7 +26638,7 @@ cmd_report_legacy() {
             --include-gates) include_gates=true; shift ;;
             --include-agents) include_agents=true; shift ;;
             --include-timeline) include_timeline=true; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki report --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki report --help' for usage." >&2; exit 1 ;;  # stderr for noun-family error-channel parity (analyze/modernize)
         esac
     done
 

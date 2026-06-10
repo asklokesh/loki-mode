@@ -102,8 +102,46 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "kpis": {
       // Phase K MVP (v7.5.28): read-only KPI snapshot derived from
       // existing .loki/ state. No new instrumentation.
+      //
+      // CLI consolidation (Phase B): `kpis` is now a deprecated alias of the
+      // canonical `report kpis`. Pass aliasOf so the one-line pointer fires on
+      // the Bun route (kpis is Bun-native; bin/loki routes both `kpis` and
+      // `report kpis` here). Suppressed under --json/-q/--quiet by the helper.
       const { runKpis } = await import("./commands/kpis.ts");
-      return runKpis(rest);
+      return runKpis(rest, { aliasOf: "kpis" });
+    }
+
+    case "report": {
+      // CLI consolidation (Phase B): `report kpis` is the canonical reporting
+      // entry for the KPI snapshot. `report` is bash-routed for every other
+      // subcommand (session/metrics/cost/export/share/dogfood); bin/loki
+      // two-token-routes ONLY `report kpis` to Bun (mirroring `trust detail`,
+      // including its flag-anywhere scan), because kpis is Bun-only. So this Bun
+      // `report` arm is reached solely when `kpis` is the report subcommand; it
+      // emits NO deprecation pointer (it is the canonical form). `kpis` is
+      // matched as the FIRST non-flag token after `report` (so `report kpis
+      // --json` and `report --json kpis` both route here), NOT anywhere in the
+      // argv. A bare `kpis` token appearing as a POSITIONAL VALUE of a different
+      // report subcommand -- e.g. `report export json kpis`, where `kpis` is the
+      // export output filename -- must NOT be hijacked; it is delegated to bash,
+      // the owner of the report noun, exactly as on main (v7.31.0). Only the
+      // subcommand token is stripped before forwarding to runKpis; the flags are
+      // preserved.
+      const firstSub = rest.find((a) => !a.startsWith("-"));
+      if (firstSub === "kpis") {
+        const { runKpis } = await import("./commands/kpis.ts");
+        let dropped = false;
+        const kpisArgs = rest.filter((a) => {
+          if (!dropped && a === "kpis") {
+            dropped = true;
+            return false;
+          }
+          return true;
+        });
+        return runKpis(kpisArgs);
+      }
+      const { delegateToBash } = await import("./util/bash_delegate.ts");
+      return delegateToBash(["report", ...rest]);
     }
 
     case "trust": {

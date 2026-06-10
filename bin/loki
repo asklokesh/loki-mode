@@ -65,6 +65,21 @@ elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; t
     fi
 elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
+    # Stale-dist freshness guard. dist/loki.js is gitignored (loki-ts/.gitignore)
+    # and rebuilt by package.json's prepack and the release Docker build, so on
+    # released channels (npm/Docker/brew) src/cli.ts is absent and this guard is
+    # a no-op -- dist is always current there. On a DEV machine / worktree the
+    # gitignored dist can predate the current dispatcher: e.g. a new shim->Bun
+    # route (`report kpis`) added in src that the old dist bundle does not know,
+    # which would make the canonical form fail with "Unknown command" while a
+    # deprecated alias the old dist still knows silently works -- the exact
+    # deprecation inversion the report-kpis route exists to prevent. So when src
+    # exists AND is newer than dist (`-nt`, available on bash 3.2), prefer the src
+    # form so dev runs never execute a stale dispatcher. Released channels have no
+    # src, so they keep using dist unchanged.
+    if [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ] && [ "$REPO_ROOT/loki-ts/src/cli.ts" -nt "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
+        BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
+    fi
 elif [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
 else
@@ -129,6 +144,43 @@ if [ "${1:-}" = "trust" ]; then
             exec "$BASH_CLI" "$@"
         fi
     done
+fi
+
+# CLI consolidation (Phase B): `report kpis` is the canonical form of the
+# Bun-only KPI snapshot. The `report` noun is otherwise bash-owned (every other
+# subcommand -- session/metrics/cost/export/share/dogfood -- routes to bash
+# cmd_report), so it is NOT in the Bun allowlist below. But kpis has no bash
+# implementation (it reuses the canonical cost arithmetic in runner/budget.ts),
+# so the canonical `report kpis` must reach the Bun handler -- otherwise the
+# canonical form would print the honest "requires Bun" message on a Bun machine
+# while the deprecated `kpis` alias actually worked, inverting the deprecation.
+# Route `report kpis` to Bun when `kpis` is the report SUBCOMMAND, i.e. the FIRST
+# non-flag token after `report`. This satisfies `report kpis`, `report kpis
+# --json`, and `report --json kpis` (the flag-anywhere orderings the trust-detail
+# precedent established), while NOT hijacking `kpis` when it appears as a
+# positional VALUE of a different report subcommand. `report export json kpis`
+# (kpis = the export output filename) must keep working exactly as on main
+# (v7.31.0): exit 0, file `kpis` created. So we scan past leading flags, take the
+# first real token, and only route to Bun if it is literally `kpis`. Fire the
+# same cli_command telemetry the Bun case-arm below fires (command=report), so a
+# Bun-routed `report kpis` is not invisible to usage analytics (the v7.8.2 parity
+# the case-arm comment documents). Backgrounded, FD-detached, opt-out honored by
+# loki_telemetry itself.
+if [ "${1:-}" = "report" ]; then
+    _report_first_sub=""
+    for _report_arg in "${@:2}"; do
+        case "$_report_arg" in
+            -*) continue ;;
+            *) _report_first_sub="$_report_arg"; break ;;
+        esac
+    done
+    if [ "$_report_first_sub" = "kpis" ]; then
+        if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+            disown 2>/dev/null || true
+        fi
+        exec bun "$BUN_CLI" "$@"
+    fi
 fi
 
 # Commands ported in Phase 2 -- route to Bun. Everything else goes to bash.

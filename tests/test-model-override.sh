@@ -163,6 +163,12 @@ resolve_session_iter() {
       for kv in "$@"; do export "$kv"; done
       source "'"$CLAUDE_SH"'" 2>/dev/null
       sm="'"$sm"'"; iter='"$iter"'
+      # Mirror run.sh:12331 EXACTLY: trim + lowercase the pin before the case
+      # (so OPUS / " opus " resolve like opus), but do NOT apply the narrow
+      # override allowlist (tier names planning|development|fast stay valid).
+      sm="${sm#"${sm%%[![:space:]]*}"}"
+      sm="${sm%"${sm##*[![:space:]]}"}"
+      sm="$(printf "%s" "$sm" | tr "[:upper:]" "[:lower:]")"
       case "$sm" in
         opus) CURRENT_TIER="planning";; sonnet) CURRENT_TIER="development";;
         haiku) CURRENT_TIER="fast";; fable) CURRENT_TIER="fable";;
@@ -499,6 +505,160 @@ dD="$(dash_effective fable LOKI_MAX_TIER=sonnet)"
   && ok "cross-route sonnet-cap+fable (no ALLOW_HAIKU): estimator=$eD dashboard=$dD runner=$rD (all opus)" \
   || bad "cross-route sonnet-cap+fable (default) mismatch: est='$eD' dash='$dD' runner='$rD'"
 rm -f "$XR_DIR/.loki/state/model-override"
+
+# ---------------------------------------------------------------------------
+# 9. Session-pin tier-resolution parity (task 568): the NO-OVERRIDE path.
+#
+# This is the gap task 568 closes. With NO override file, the runner does NOT
+# feed the session alias straight to --model. It maps the pin to a tier
+# (sonnet->development) and resolves the tier through PROVIDER_MODEL_* (sonnet
+# pin -> development -> opus on stock config), then applies the cost ceiling. The
+# estimator (cost.iterations_by_model) and the dashboard (_resolve_session_pin)
+# must both quote/report that SAME dispatched model, across session-pin values x
+# LOKI_ALLOW_HAIKU x model env overrides x cost ceiling. The runner reference is
+# resolve_session_iter PIN 2 (iteration 2 -> no architect -> the pure session-pin
+# tier route). This is DISTINCT from the override-path clamp parity in section 7:
+# a 'sonnet' pin resolves to opus here but a 'sonnet' override stays sonnet.
+# ---------------------------------------------------------------------------
+# Dashboard no-override effective for a session pin + env (the session-pin route).
+dash_session_pin() {
+    # $1=pin ; remaining "VAR=val" exports
+    local pin="$1"; shift
+    env "$@" python3 -c '
+import sys, os
+sys.path.insert(0, os.environ["LOKI_REPO_ROOT"])
+from dashboard import server as s
+sys.stdout.write(s._resolve_session_pin(sys.argv[1]))
+' "$pin"
+}
+
+sp_fail=0
+sp_cells=0
+# Headline stock cell first (explicit, readable assertion): no levers at all.
+rm -f "$XR_DIR/.loki/state/model-override"
+sp_e="$(est_quoted)"                       # estimator quoted model on stock path
+sp_d="$(dash_session_pin sonnet)"          # dashboard effective, default pin
+sp_r="$(resolve_session_iter sonnet 2)"    # runner-resolved (session-pin route)
+[ "$sp_e" = "opus" ] && [ "$sp_d" = "opus" ] && [ "$sp_r" = "opus" ] \
+  && ok "STOCK no-levers: estimator=$sp_e dashboard=$sp_d runner=$sp_r (all opus; was Sonnet-quote gap, task 568)" \
+  || bad "STOCK no-levers session-pin mismatch: est='$sp_e' dash='$sp_d' runner='$sp_r' (expected all opus)"
+
+# Full session-pin matrix: pin x ALLOW_HAIKU x dev/fast env override x cap.
+# Estimator reads the env directly (no override file); dashboard drives
+# _resolve_session_pin(pin); runner drives resolve_session_iter PIN 2. All three
+# must agree on every cell.
+#
+# v7.32: the pin set now includes the documented raw TIER-NAME pins
+# (planning|development|fast, skills/model-selection.md:8) alongside the four
+# model aliases. Before this fix the estimator + dashboard collapsed tier-name
+# pins onto the development tier (allowlist reject -> default), so pin=fast
+# quoted Opus while the runner dispatched Sonnet (the v7.32 cost-agreement HIGH).
+# The runner's passthrough arm (run.sh:12336) routes tier names to their own
+# tier; all three readers must now agree on those cells too.
+for pin in sonnet opus haiku fable planning development fast; do
+  for ah in "" LOKI_ALLOW_HAIKU=true; do
+    for ovr in "" LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet LOKI_MODEL_FAST=haiku LOKI_CLAUDE_MODEL_PLANNING=sonnet; do
+      for cap in "" sonnet haiku opus; do
+        exports=("LOKI_SESSION_MODEL=$pin")
+        [ -n "$ah" ]  && exports+=("$ah")
+        [ -n "$ovr" ] && exports+=("$ovr")
+        [ -n "$cap" ] && exports+=("LOKI_MAX_TIER=$cap")
+        e="$(est_quoted "${exports[@]}")"
+        d="$(dash_session_pin "$pin" "${exports[@]}")"
+        r="$(resolve_session_iter "$pin" 2 "${exports[@]}")"
+        sp_cells=$((sp_cells+1))
+        # estimator quote is a pricing-table key lowercased; compare to runner alias.
+        if [ "$e" != "$r" ] || [ "$d" != "$r" ]; then
+          sp_fail=$((sp_fail+1))
+          echo "  SESSION-PIN MISMATCH: pin=$pin ah='$ah' ovr='$ovr' cap='$cap' est='$e' dash='$d' runner='$r'"
+        fi
+      done
+    done
+  done
+done
+[ "$sp_fail" -eq 0 ] \
+  && ok "session-pin parity matrix: estimator == dashboard == runner across $sp_cells cells (no-override tier route)" \
+  || bad "session-pin parity matrix had $sp_fail mismatches (of $sp_cells cells)"
+
+# Explicit tier-name headline cells (the v7.32 cost-agreement HIGH). pin=fast on
+# stock config MUST resolve to sonnet on all three readers: before the fix the
+# estimator + dashboard quoted opus (allowlist reject -> development tier) while
+# the runner dispatched sonnet (fast tier). This is the regression vs main.
+tn_e="$(est_quoted LOKI_SESSION_MODEL=fast)"
+tn_d="$(dash_session_pin fast LOKI_SESSION_MODEL=fast)"
+tn_r="$(resolve_session_iter fast 2 LOKI_SESSION_MODEL=fast)"
+[ "$tn_e" = "sonnet" ] && [ "$tn_d" = "sonnet" ] && [ "$tn_r" = "sonnet" ] \
+  && ok "tier-name pin: LOKI_SESSION_MODEL=fast resolves to sonnet on all three (est=$tn_e dash=$tn_d runner=$tn_r; was opus-quote regression)" \
+  || bad "pin=fast mismatch: est='$tn_e' dash='$tn_d' runner='$tn_r' (expected all sonnet)"
+
+# pin=planning + LOKI_ALLOW_HAIKU=true (Cell B): must resolve to opus on all
+# three (planning tier -> PROVIDER_MODEL_PLANNING=opus, unaffected by ALLOW_HAIKU).
+# Before the fix the ports quoted sonnet (allowlist reject -> development ->
+# sonnet under ALLOW_HAIKU) while the runner dispatched opus (the ~1.7x under-quote).
+tnp_e="$(est_quoted LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+tnp_d="$(dash_session_pin planning LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+tnp_r="$(resolve_session_iter planning 2 LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
+[ "$tnp_e" = "opus" ] && [ "$tnp_d" = "opus" ] && [ "$tnp_r" = "opus" ] \
+  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to opus on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r; Cell B closed)" \
+  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all opus)"
+
+# Miscased / whitespace session pins (the folded pre-existing LOW): run.sh now
+# trim+lowercases the pin before the case, so OPUS and " opus " resolve like the
+# canonical opus pin. Under ALLOW_HAIKU this is the over-quote-prone direction
+# (planning tier -> opus). All three readers must agree.
+for mc in OPUS " opus "; do
+  mc_e="$(est_quoted "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  mc_d="$(dash_session_pin "$mc" "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  mc_r="$(resolve_session_iter "$mc" 2 "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
+  [ "$mc_e" = "opus" ] && [ "$mc_d" = "opus" ] && [ "$mc_r" = "opus" ] \
+    && ok "miscased pin '$mc' + ALLOW_HAIKU resolves to opus on all three (est=$mc_e dash=$mc_d runner=$mc_r)" \
+    || bad "miscased pin '$mc' mismatch: est='$mc_e' dash='$mc_d' runner='$mc_r' (expected all opus)"
+done
+
+# Regression guard: a 'sonnet' OVERRIDE file must still dispatch sonnet (the
+# override path is NOT the tier route). Nothing else locked this cell before.
+printf 'sonnet\n' > "$XR_DIR/.loki/state/model-override"
+ov_e="$(est_quoted)"
+ov_d="$(dash_effective sonnet)"            # override-path clamp (dashboard)
+ov_r="$(bash_clamp sonnet)"               # runner override-path clamp
+[ "$ov_e" = "sonnet" ] && [ "$ov_d" = "sonnet" ] && [ "$ov_r" = "sonnet" ] \
+  && ok "sonnet OVERRIDE stays sonnet (override path != tier route): est=$ov_e dash=$ov_d runner=$ov_r" \
+  || bad "sonnet override regression: est='$ov_e' dash='$ov_d' runner='$ov_r' (expected all sonnet)"
+rm -f "$XR_DIR/.loki/state/model-override"
+
+# Architect (LOKI_FABLE_ARCHITECT=1) iteration-0 fable disclosure must be cleared
+# by a cost ceiling that would clamp the architect iteration too, EVEN when the
+# session model itself is unchanged by the cap (opus pin under a sonnet/opus cap:
+# the model stays opus but the iter-0 fable architect tier clamps to opus). The
+# estimator's iterations_by_model must show NO Fable cell, matching the runner.
+# Reference: resolve_session_iter PIN 1 with the architect flag (iter 1 = the
+# architecture pass, the only iteration the runner routes to fable).
+est_models() {
+    # $@ : "VAR=val" exports ; prints the set of nonzero-iteration model keys.
+    (cd "$XR_DIR" && env "$@" "$LOKI" plan ./prd.md --json 2>/dev/null) | python3 -c "
+import json,sys
+ibm=json.load(sys.stdin)['cost']['iterations_by_model']
+sys.stdout.write(','.join(sorted(k for k,v in ibm.items() if v)))
+"
+}
+rm -f "$XR_DIR/.loki/state/model-override"
+# opus pin + sonnet cap + architect: architect iter clamps -> all opus, no fable.
+arch_clamp_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=sonnet LOKI_FABLE_ARCHITECT=1)"
+arch_clamp_r0="$(resolve_session_iter opus 1 LOKI_MAX_TIER=sonnet LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_clamp_e" = "Opus" ] && [ "$arch_clamp_r0" = "opus" ] \
+  && ok "architect+sonnet-cap on opus pin: estimator quotes NO fable ($arch_clamp_e), runner architect iter clamps to $arch_clamp_r0" \
+  || bad "architect+cap over-quote: estimator='$arch_clamp_e' runner-iter1='$arch_clamp_r0' (expected Opus/opus, no fable)"
+# opus pin + opus cap + architect: same -- fable clamps back to opus.
+arch_opuscap_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=opus LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_opuscap_e" = "Opus" ] \
+  && ok "architect+opus-cap on opus pin: estimator quotes NO fable ($arch_opuscap_e)" \
+  || bad "architect+opus-cap over-quote: estimator='$arch_opuscap_e' (expected Opus, no fable)"
+# Control: stock + architect, NO cap -> iter-0 fable IS disclosed (Fable+Opus).
+arch_nocap_e="$(est_models LOKI_FABLE_ARCHITECT=1)"
+arch_nocap_r0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_nocap_e" = "Fable,Opus" ] && [ "$arch_nocap_r0" = "fable" ] \
+  && ok "architect no-cap on stock pin: estimator discloses Fable+Opus, runner architect iter = $arch_nocap_r0" \
+  || bad "architect no-cap mismatch: estimator='$arch_nocap_e' runner-iter1='$arch_nocap_r0' (expected Fable,Opus / fable)"
 
 # ---------------------------------------------------------------------------
 # Summary

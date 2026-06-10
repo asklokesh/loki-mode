@@ -78,13 +78,18 @@ class SessionModelEndpointTests(unittest.TestCase):
         return TestClient(app, raise_server_exceptions=False)
 
     def test_get_reports_no_override_by_default(self):
+        # No override, no env: default pin is "sonnet". Task 568: on the
+        # no-override path `effective` resolves through the session-pin TIER route
+        # (sonnet -> development tier -> PROVIDER_MODEL_DEVELOPMENT=opus), the
+        # model the runner dispatches -- NOT the pin alias. Before 568 this
+        # reported "sonnet" while the run dispatched opus.
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertIsNone(body["override"])
-        self.assertIn(body["default"], ("haiku", "sonnet", "opus", "fable"))
-        self.assertEqual(body["effective"], body["default"])
+        self.assertEqual(body["default"], "sonnet")
+        self.assertEqual(body["effective"], "opus")
         self.assertEqual(body["allowed"], ["haiku", "sonnet", "opus", "fable"])
 
     def test_post_fable_writes_override_file(self):
@@ -285,6 +290,170 @@ class SessionModelEndpointTests(unittest.TestCase):
                 any("check_scope" in d for d in status_deps),
                 "GET /api/status expected to be scoped (baseline for parity)",
             )
+
+    # --- Task 568: session-pin tier route (NO-override path) -----------------
+    # The no-override `effective` resolves the session pin through the runner's
+    # TIER route (pin -> tier -> PROVIDER_MODEL_*), which differs from the
+    # override-path clamp: a 'sonnet' pin dispatches opus, but a 'sonnet'
+    # OVERRIDE dispatches sonnet. These lock that distinction.
+
+    def test_get_no_override_sonnet_pin_resolves_opus(self):
+        # Explicit LOKI_SESSION_MODEL=sonnet, no override -> development tier ->
+        # opus (stock). The headline task-568 gap.
+        os.environ["LOKI_SESSION_MODEL"] = "sonnet"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertIsNone(body["override"])
+        self.assertEqual(body["default"], "sonnet")
+        self.assertEqual(body["effective"], "opus")
+
+    def test_get_no_override_opus_pin_resolves_opus(self):
+        os.environ["LOKI_SESSION_MODEL"] = "opus"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
+
+    def test_get_no_override_haiku_pin_resolves_sonnet(self):
+        # haiku pin -> fast tier -> PROVIDER_MODEL_FAST = sonnet (stock).
+        os.environ["LOKI_SESSION_MODEL"] = "haiku"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "sonnet")
+
+    def test_get_no_override_haiku_pin_allow_haiku_resolves_haiku(self):
+        os.environ["LOKI_SESSION_MODEL"] = "haiku"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "haiku")
+
+    def test_get_no_override_sonnet_pin_allow_haiku_resolves_sonnet(self):
+        # development tier lowers to sonnet under ALLOW_HAIKU.
+        os.environ["LOKI_SESSION_MODEL"] = "sonnet"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "sonnet")
+
+    def test_get_no_override_opus_pin_sonnet_cap_allow_haiku_resolves_sonnet(self):
+        # The DIVERGENCE cell: opus pin -> planning tier; under a sonnet cap the
+        # planning tier downgrades to PROVIDER_MODEL_DEVELOPMENT, which is sonnet
+        # under ALLOW_HAIKU. The override-path clamp of 'opus' would stay opus, so
+        # this proves the no-override path uses the tier route, not the clamp.
+        os.environ["LOKI_SESSION_MODEL"] = "opus"
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "sonnet")
+
+    def test_get_no_override_sonnet_pin_sonnet_cap_resolves_opus(self):
+        # sonnet pin -> development tier; a sonnet cap does NOT downgrade
+        # development (only planning/fable), so the dispatched model stays opus.
+        os.environ["LOKI_SESSION_MODEL"] = "sonnet"
+        os.environ["LOKI_MAX_TIER"] = "sonnet"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
+
+    # --- v7.32: documented tier-name session pins (planning|development|fast) --
+    # run.sh's session-pin case accepts raw tier names as well as model aliases
+    # (skills/model-selection.md:8). The dashboard default derivation must route
+    # them through the SAME tier rule (NOT the narrow override allowlist, which
+    # would collapse them onto the development tier). Before the fix pin=fast
+    # reported effective=opus (allowlist reject -> development tier) while the
+    # runner dispatched sonnet (fast tier): the v7.32 cost-agreement HIGH.
+
+    def test_get_no_override_fast_pin_resolves_sonnet(self):
+        # fast pin -> fast tier -> PROVIDER_MODEL_FAST = sonnet (stock). Was the
+        # opus-quote regression vs main.
+        os.environ["LOKI_SESSION_MODEL"] = "fast"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["default"], "fast")
+        self.assertEqual(body["effective"], "sonnet")
+
+    def test_get_no_override_fast_pin_allow_haiku_resolves_haiku(self):
+        os.environ["LOKI_SESSION_MODEL"] = "fast"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "haiku")
+
+    def test_get_no_override_planning_pin_resolves_opus(self):
+        # planning pin -> planning tier -> PROVIDER_MODEL_PLANNING = opus.
+        os.environ["LOKI_SESSION_MODEL"] = "planning"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["default"], "planning")
+        self.assertEqual(body["effective"], "opus")
+
+    def test_get_no_override_planning_pin_allow_haiku_resolves_opus(self):
+        # Cell B: planning tier is opus regardless of ALLOW_HAIKU (only the
+        # development/fast defaults lower). Was a ~1.7x under-quote (sonnet) on
+        # the ports before the fix.
+        os.environ["LOKI_SESSION_MODEL"] = "planning"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
+
+    def test_get_no_override_development_pin_resolves_opus(self):
+        # development pin -> development tier -> PROVIDER_MODEL_DEVELOPMENT = opus.
+        os.environ["LOKI_SESSION_MODEL"] = "development"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "opus")
+
+    def test_get_no_override_development_pin_allow_haiku_resolves_sonnet(self):
+        os.environ["LOKI_SESSION_MODEL"] = "development"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        self.assertEqual(resp.json()["effective"], "sonnet")
+
+    def test_get_no_override_miscased_opus_pin_resolves_opus(self):
+        # Folded LOW: the default derivation normalizes case + surrounding
+        # whitespace (trim+lowercase) so 'OPUS' resolves like the canonical opus
+        # pin -> planning tier -> opus. ALLOW_HAIKU is the over-quote-prone cell.
+        os.environ["LOKI_SESSION_MODEL"] = "OPUS"
+        os.environ["LOKI_ALLOW_HAIKU"] = "true"
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["default"], "opus")
+        self.assertEqual(body["effective"], "opus")
+
+    def test_get_no_override_whitespace_opus_pin_resolves_opus(self):
+        os.environ["LOKI_SESSION_MODEL"] = " opus "
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["default"], "opus")
+        self.assertEqual(body["effective"], "opus")
+
+    def test_post_rejects_tier_name_as_override(self):
+        # The OVERRIDE / POST path stays NARROW: tier names are not valid
+        # `claude --model` arguments, so 'fast' must be rejected here even though
+        # it is a valid SESSION PIN. This locks the split between the two paths.
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().post("/api/session/model", json={"model": "fast"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(self._override.exists())
+
+    def test_get_sonnet_override_stays_sonnet_not_tier_route(self):
+        # Regression guard: a 'sonnet' OVERRIDE file uses the override path (alias
+        # fed straight to --model), so it dispatches sonnet -- it must NOT be
+        # routed through the tier resolver (which would yield opus).
+        self._override.write_text("sonnet\n")
+        with _ForceLokiDir(self.tmp):
+            resp = self._client().get("/api/session/model")
+        body = resp.json()
+        self.assertEqual(body["override"], "sonnet")
+        self.assertEqual(body["effective"], "sonnet")
 
 
 if __name__ == "__main__":
