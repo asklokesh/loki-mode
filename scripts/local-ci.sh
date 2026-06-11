@@ -465,6 +465,13 @@ run_check "tests/test-model-override.sh (fable + mid-flight model switch)" "bash
 # gate alongside the model-override suite it shares pricing with.
 run_check "tests/test-plan-command.sh (plan estimator + complexity force)" "bash tests/test-plan-command.sh 2>&1 | tail -3"
 
+# v7.33.0 Claude Code 2.1.170 flag embeds (bash route): --strict-mcp-config
+# (EMBED 1), --bare on cheap non-main subcalls (EMBED 2), --disallowedTools on
+# reviewer/adversarial subcalls (EMBED 3). Stub-based: a fake claude on PATH
+# records argv; asserts each flag IS passed at the right sites, ABSENT at the
+# wrong sites (main RARV loop never gets --bare), and the opt-out env kills it.
+run_check "tests/test-cli-embeds-v733.sh (strict-mcp + bare-subcalls + review-tool-guard)" "bash tests/test-cli-embeds-v733.sh 2>&1 | tail -3"
+
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
 # ---------------------------------------------------------------------------

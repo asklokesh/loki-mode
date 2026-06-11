@@ -130,3 +130,50 @@ loki_claude_flag_supported() {
         *) return 1 ;;
     esac
 }
+
+# ---------- v7.33.0 cheap-subcall + reviewer-guard flag emitters ----------
+# These centralize three Claude Code 2.1.170 embeds so every cheap NON-MAIN
+# subcall site emits the same gated flags. Each emitter prints its flags to
+# stdout (space-free per element via one-per-line is not needed; callers read
+# them into an array with command substitution + word-splitting on the single
+# token they emit, OR append the function output as additional argv elements).
+# All are default-ON, opt-out via env, and gated on loki_claude_flag_supported
+# so an older CLI degrades gracefully (emits nothing).
+
+# EMBED 2 -- --bare (cheap NON-MAIN subcalls only). Minimal mode. Per
+# `claude --help` it SKIPS hooks, LSP, plugin sync, attribution, auto-memory,
+# background prefetches, keychain reads, AND CLAUDE.md auto-discovery (it also
+# nullifies --mcp-config / --settings / --agents). Therefore it is ONLY safe on
+# subcalls whose prompt is fully self-contained (the entire instruction set +
+# context is passed via -p), and NEVER on the main RARV loop or on any call that
+# relies on --agents / --mcp-config / CLAUDE.md auto-discovery.
+# Default-ON; opt out with LOKI_BARE_SUBCALLS=0. Predicate so call sites can
+# append "--bare" to their argv array uniformly:
+#   loki_subcall_bare_enabled && argv+=("--bare")
+loki_subcall_bare_enabled() {
+    [ "${LOKI_BARE_SUBCALLS:-1}" = "0" ] && return 1
+    loki_claude_flag_supported "--bare"
+}
+
+# EMBED 3 -- --disallowedTools (reviewer / adversarial subcalls). A reviewer
+# agent must NEVER mutate the working tree (a parallel agent once ran
+# `git reset --hard` and wiped uncommitted work). Per `claude --help` the value
+# is a comma-or-space-separated list of tool names (e.g. "Bash(git *) Edit").
+# We deny the direct file-mutation tools (Edit, Write, NotebookEdit) plus the
+# git MUTATION subcommands only -- read-only git (diff / log / show / status)
+# stays allowed so the reviewer can still inspect the tree. The flag is variadic
+# (<tools...>), so we emit ONE comma-separated token to avoid swallowing the
+# following -p prompt as additional tool names.
+# Default-ON; opt out with LOKI_REVIEW_TOOL_GUARD=0.
+# Predicate + denylist so call sites append uniformly:
+#   if loki_review_guard_enabled; then
+#       argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+#   fi
+loki_review_guard_enabled() {
+    [ "${LOKI_REVIEW_TOOL_GUARD:-1}" = "0" ] && return 1
+    loki_claude_flag_supported "--disallowedTools"
+}
+loki_review_guard_denylist() {
+    # Comma-separated single token. Bash(...) globs match the tool-input string.
+    printf '%s' "Edit,Write,NotebookEdit,Bash(git commit*),Bash(git reset*),Bash(git push*),Bash(git checkout*),Bash(git clean*),Bash(git rm*),Bash(git stash*)"
+}

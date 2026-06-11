@@ -179,6 +179,18 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
       const td = args.targetDir ?? process.env["TARGET_DIR"] ?? ".";
       const mcpArgv = buildMcpConfigArgv(td);
       out.push(...mcpArgv);
+      // EMBED 1 (v7.33.0): --strict-mcp-config. ONLY emitted alongside an
+      // actual --mcp-config (we are inside the success path that just pushed
+      // mcpArgv), never bare. Loads EXCLUSIVELY Loki's curated MCP bundle and
+      // ignores ambient user/project .mcp.json. Default-ON; opt out with
+      // LOKI_STRICT_MCP=0. Gated on CLI support. Mirrors providers/claude.sh.
+      if (
+        process.env["LOKI_STRICT_MCP"] !== "0" &&
+        mcpArgv.length > 0 &&
+        claudeFlagSupported("--strict-mcp-config")
+      ) {
+        out.push("--strict-mcp-config");
+      }
     } catch (e) {
       console.warn(`[claude_flags] --mcp-config emit skipped: ${(e as Error).message}`);
     }

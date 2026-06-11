@@ -3248,7 +3248,18 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
 
         case "${PROVIDER_NAME:-claude}" in
             claude)
-                resolution=$(claude --dangerously-skip-permissions -p "$conflict_prompt" --output-format text 2>/dev/null)
+                # EMBED 2 (v7.33.0): --bare on this cheap NON-MAIN subcall.
+                # Reasoning: $conflict_prompt is fully self-contained -- it
+                # carries the complete instruction set AND the entire conflicted
+                # file content inline, and the agent's output is captured to a
+                # variable (the shell, not the agent, writes the resolved file).
+                # It needs no hooks, LSP, CLAUDE.md auto-discovery, or MCP, so
+                # --bare is safe and cheaper. Gated + opt-out LOKI_BARE_SUBCALLS=0.
+                local _cr_argv=("--dangerously-skip-permissions")
+                if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                    _cr_argv+=("--bare")
+                fi
+                resolution=$(claude "${_cr_argv[@]}" -p "$conflict_prompt" --output-format text 2>/dev/null)
                 ;;
             codex)
                 resolution=$(codex exec --full-auto --skip-git-repo-check "$conflict_prompt" 2>/dev/null)
@@ -7803,7 +7814,28 @@ BUILD_PROMPT
                     # Mythos 5 (Project Glasswing), not Fable. If a future change
                     # adds --model here, the security-sentinel reviewer must be
                     # pinned to opus, never fable.
-                    claude --dangerously-skip-permissions -p "$prompt_text" \
+                    # EMBED 2 + 3 (v7.33.0). This is a 3-reviewer council
+                    # subcall. $prompt_text is fully self-contained (built above
+                    # into $review_prompt_file with the diff, changed files,
+                    # checks, and strict VERDICT/FINDINGS output format), output
+                    # is captured to $review_output, and it deliberately does NOT
+                    # pass --model or go through buildAutoFlags. So:
+                    #   EMBED 2 (--bare): the prompt needs no hooks/LSP/CLAUDE.md/
+                    #     MCP discovery, so --bare is safe and cheaper. Opt out
+                    #     LOKI_BARE_SUBCALLS=0.
+                    #   EMBED 3 (--disallowedTools): a reviewer must NEVER mutate
+                    #     the tree (a parallel agent once ran `git reset --hard`
+                    #     and wiped uncommitted work). Deny Edit/Write/NotebookEdit
+                    #     + git mutation subcommands; read-only git stays allowed.
+                    #     Opt out LOKI_REVIEW_TOOL_GUARD=0.
+                    local _rv_argv=("--dangerously-skip-permissions")
+                    if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                        _rv_argv+=("--bare")
+                    fi
+                    if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                        _rv_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+                    fi
+                    claude "${_rv_argv[@]}" -p "$prompt_text" \
                         --output-format text > "$review_output" 2>/dev/null
                     ;;
                 codex)
@@ -8016,7 +8048,24 @@ ADVERSARIAL_EOF
     case "${PROVIDER_NAME:-claude}" in
         claude)
             if command -v claude &>/dev/null; then
-                claude --dangerously-skip-permissions -p "$adversarial_prompt" \
+                # EMBED 2 + 3 (v7.33.0). Adversarial probe subcall.
+                # $adversarial_prompt is fully self-contained (instructions +
+                # changed files + diff inlined via the heredoc above) and output
+                # is captured to $result_file. So:
+                #   EMBED 2 (--bare): no hooks/LSP/CLAUDE.md/MCP needed; cheaper.
+                #     Opt out LOKI_BARE_SUBCALLS=0.
+                #   EMBED 3 (--disallowedTools): an adversarial agent that breaks
+                #     things must NEVER mutate the tree. Deny Edit/Write/
+                #     NotebookEdit + git mutations; read-only git stays allowed.
+                #     Opt out LOKI_REVIEW_TOOL_GUARD=0.
+                local _adv_argv=("--dangerously-skip-permissions")
+                if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                    _adv_argv+=("--bare")
+                fi
+                if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                    _adv_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+                fi
+                claude "${_adv_argv[@]}" -p "$adversarial_prompt" \
                     --output-format text > "$result_file" 2>/dev/null || true
             fi
             ;;
@@ -10041,9 +10090,21 @@ ${_commits}"
 
     # Use haiku for cheap, fast generation. --dangerously-skip-permissions
     # because this is a one-shot non-interactive call.
+    # EMBED 2 (v7.33.0): --bare on this cheap NON-MAIN haiku subcall. The
+    # USAGE.md-regen prompt ($_ic_prompt, piped via -p -) is fully self-contained
+    # (project tree + manifests + entrypoint contents + commits inlined) and the
+    # output is captured, not written by the agent. No hooks/LSP/CLAUDE.md/MCP
+    # needed, so --bare is safe and cheaper. Opt out LOKI_BARE_SUBCALLS=0.
+    # Always at least --dangerously-skip-permissions, so the array is never
+    # empty (empty "${arr[@]}" under set -u errors on bash 3.2, stock macOS).
+    local _ic_argv=("--dangerously-skip-permissions")
+    if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+        _ic_argv+=("--bare")
+    fi
+    _ic_argv+=("--model" "haiku")
     local _ic_out
     _ic_out=$(printf '%s' "$_ic_prompt" \
-        | timeout 60 claude --dangerously-skip-permissions --model haiku -p - 2>/dev/null \
+        | timeout 60 claude "${_ic_argv[@]}" -p - 2>/dev/null \
         | head -200)
     # Sanity check: response must look like Markdown (starts with # or ##).
     if [ -z "$_ic_out" ] || ! printf '%s' "$_ic_out" | head -1 | grep -qE '^#'; then

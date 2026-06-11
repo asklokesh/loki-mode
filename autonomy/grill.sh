@@ -38,6 +38,16 @@ GRILL_EXIT_ERROR=3
 GRILL_DIR_DEFAULT=".loki/grill"
 GRILL_REPORT_NAME="report.md"
 
+# Source the claude-flags helper (idempotent, guarded) so the v7.33.0 embeds
+# (--bare / --disallowedTools) are available in grill's standalone invocation
+# path. Best-effort: if the file is missing the type-guards at the call site
+# degrade to the prior bare invocation.
+_grill_flags_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/claude-flags.sh"
+if [ -f "$_grill_flags_helper" ]; then
+    # shellcheck disable=SC1090
+    . "$_grill_flags_helper"
+fi
+
 _grill_log() { printf '[grill] %s\n' "$*" >&2; }
 _grill_err() { printf '[grill][error] %s\n' "$*" >&2; }
 
@@ -178,8 +188,24 @@ grill_invoke_provider() {
             local out
             # Single-shot, non-interactive. Same pattern as the in-loop
             # adversarial reviewer (run.sh:7807) and USAGE regen (run.sh:9832).
+            # EMBED 2 + 3 (v7.33.0). The devil's-advocate grill is a cheap
+            # self-contained adversarial subcall (the entire spec + interrogation
+            # instructions are in $prompt, piped via -p -; output captured). So:
+            #   EMBED 2 (--bare): no hooks/LSP/CLAUDE.md/MCP needed; cheaper.
+            #     Opt out LOKI_BARE_SUBCALLS=0.
+            #   EMBED 3 (--disallowedTools): a grill agent interrogates a spec and
+            #     must never mutate the tree (defense-in-depth). Deny Edit/Write/
+            #     NotebookEdit + git mutations. Opt out LOKI_REVIEW_TOOL_GUARD=0.
+            # Type-guarded so an environment without the helper degrades cleanly.
+            local _gr_argv=("--dangerously-skip-permissions" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
+            if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                _gr_argv+=("--bare")
+            fi
+            if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                _gr_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+            fi
             out="$(printf '%s' "$prompt" \
-                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" claude --dangerously-skip-permissions --model "${LOKI_GRILL_MODEL:-sonnet}" -p - 2>/dev/null)"
+                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" claude "${_gr_argv[@]}" -p - 2>/dev/null)"
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output (timeout or invocation error)"
                 return $GRILL_EXIT_ERROR

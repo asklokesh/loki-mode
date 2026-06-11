@@ -1759,7 +1759,23 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
         claude)
             if command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
-                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -20)
+                # EMBED 2 + 3 (v7.33.0). Council member completion vote. The
+                # $prompt is fully self-contained (evidence + instructions +
+                # strict VOTE/REASON/ISSUES output format, piped via stdin) and
+                # the verdict is captured. So --bare (cheap, no hooks/LSP/CLAUDE.
+                # md/MCP) and --disallowedTools (a voting reviewer must never
+                # mutate the tree) both apply. Gated + opt-out
+                # LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0. Helpers may be
+                # out of scope when this file is sourced standalone, so each is
+                # type-guarded (degrades to the prior bare invocation).
+                local _cm_argv=("--model" "$council_model")
+                if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                    _cm_argv+=("--bare")
+                fi
+                if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                    _cm_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+                fi
+                verdict=$(echo "$prompt" | claude "${_cm_argv[@]}" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)
@@ -1842,7 +1858,19 @@ REASON: your reasoning"
         claude)
             if command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
-                verdict=$(echo "$prompt" | claude --model "$council_model" -p 2>/dev/null | tail -20)
+                # EMBED 2 + 3 (v7.33.0). Contrarian (devil's-advocate) vote --
+                # an adversarial reviewer. Self-contained $prompt via stdin,
+                # verdict captured. --bare + --disallowedTools both apply (a
+                # reviewer must never mutate the tree). Gated + opt-out
+                # LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0; type-guarded.
+                local _co_argv=("--model" "$council_model")
+                if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                    _co_argv+=("--bare")
+                fi
+                if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                    _co_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+                fi
+                verdict=$(echo "$prompt" | claude "${_co_argv[@]}" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)

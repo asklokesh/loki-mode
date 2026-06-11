@@ -256,6 +256,70 @@ describe("claude_flags.buildAutoFlags composition", () => {
     }
   });
 
+  // EMBED 1 (v7.33.0): --strict-mcp-config -- only alongside --mcp-config.
+  it("adds --strict-mcp-config when --mcp-config is emitted and CLI supports it (default on)", () => {
+    _resetClaudeHelpCacheForTest(
+      "  --mcp-config <configs...>  Load MCP servers\n  --strict-mcp-config  Only use MCP servers from --mcp-config",
+    );
+    const savedHookEnv = process.env["LOKI_HOOK_EVENTS"];
+    const savedStrict = process.env["LOKI_STRICT_MCP"];
+    process.env["LOKI_HOOK_EVENTS"] = "off";
+    delete process.env["LOKI_STRICT_MCP"];
+    try {
+      const out = buildAutoFlags({ tier: "development", primary: "opus", targetDir: td });
+      expect(out.includes("--mcp-config")).toBe(true);
+      expect(out.includes("--strict-mcp-config")).toBe(true);
+      // strict must come AFTER the mcp-config path (never bare / standalone).
+      expect(out.indexOf("--strict-mcp-config")).toBeGreaterThan(out.indexOf("--mcp-config"));
+    } finally {
+      if (savedHookEnv === undefined) delete process.env["LOKI_HOOK_EVENTS"];
+      else process.env["LOKI_HOOK_EVENTS"] = savedHookEnv;
+      if (savedStrict === undefined) delete process.env["LOKI_STRICT_MCP"];
+      else process.env["LOKI_STRICT_MCP"] = savedStrict;
+    }
+  });
+
+  it("omits --strict-mcp-config when the CLI lacks it (mcp-config supported, graceful degrade)", () => {
+    // Help advertises --mcp-config but NOT --strict-mcp-config. Note the help
+    // text deliberately avoids the literal substring "--strict-mcp-config".
+    _resetClaudeHelpCacheForTest("  --mcp-config <configs...>  Load MCP servers from JSON files");
+    const savedHookEnv = process.env["LOKI_HOOK_EVENTS"];
+    const savedStrict = process.env["LOKI_STRICT_MCP"];
+    process.env["LOKI_HOOK_EVENTS"] = "off";
+    delete process.env["LOKI_STRICT_MCP"];
+    try {
+      const out = buildAutoFlags({ tier: "development", primary: "opus", targetDir: td });
+      // mcp-config IS emitted (advertised), strict is NOT (not advertised).
+      expect(out.includes("--mcp-config")).toBe(true);
+      expect(out.includes("--strict-mcp-config")).toBe(false);
+    } finally {
+      if (savedHookEnv === undefined) delete process.env["LOKI_HOOK_EVENTS"];
+      else process.env["LOKI_HOOK_EVENTS"] = savedHookEnv;
+      if (savedStrict === undefined) delete process.env["LOKI_STRICT_MCP"];
+      else process.env["LOKI_STRICT_MCP"] = savedStrict;
+    }
+  });
+
+  it("suppresses --strict-mcp-config when LOKI_STRICT_MCP=0 (opt-out), mcp-config still emitted", () => {
+    _resetClaudeHelpCacheForTest(
+      "  --mcp-config <configs...>  Load MCP servers\n  --strict-mcp-config  Only use MCP servers from --mcp-config",
+    );
+    const savedHookEnv = process.env["LOKI_HOOK_EVENTS"];
+    const savedStrict = process.env["LOKI_STRICT_MCP"];
+    process.env["LOKI_HOOK_EVENTS"] = "off";
+    process.env["LOKI_STRICT_MCP"] = "0";
+    try {
+      const out = buildAutoFlags({ tier: "development", primary: "opus", targetDir: td });
+      expect(out.includes("--mcp-config")).toBe(true);
+      expect(out.includes("--strict-mcp-config")).toBe(false);
+    } finally {
+      if (savedHookEnv === undefined) delete process.env["LOKI_HOOK_EVENTS"];
+      else process.env["LOKI_HOOK_EVENTS"] = savedHookEnv;
+      if (savedStrict === undefined) delete process.env["LOKI_STRICT_MCP"];
+      else process.env["LOKI_STRICT_MCP"] = savedStrict;
+    }
+  });
+
   it("skips --include-hook-events when LOKI_HOOK_EVENTS=off (even if supported)", () => {
     _resetClaudeHelpCacheForTest("  --include-hook-events  Include all hook lifecycle events");
     const savedHookEnv = process.env["LOKI_HOOK_EVENTS"];

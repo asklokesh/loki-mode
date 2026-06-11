@@ -19,6 +19,7 @@ import {
   VOTER_SLUGS,
   type ClaudeRunner,
 } from "../../src/council/voter_agents.ts";
+import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import type { CouncilEvaluateContext, AgentVerdict } from "../../src/runner/council.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 
@@ -174,5 +175,98 @@ describe("dispatchClaudeAgents", () => {
     await expect(dispatchClaudeAgents(fakeCtx(), cannedRunner(stdout))).rejects.toThrow(
       /missing finding/,
     );
+  });
+});
+
+// EMBED 3 (v7.33.0): --disallowedTools on the council voter argv.
+describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", () => {
+  const validStdout = JSON.stringify({
+    findings: [
+      { role: VOTER_SLUGS.REQUIREMENTS_VERIFIER, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+      { role: VOTER_SLUGS.TEST_AUDITOR, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+      { role: VOTER_SLUGS.CONVERGENCE_VOTER, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+    ],
+  });
+
+  // Capturing runner records the argv it is handed, then returns canned output.
+  function capturingRunner(captured: { argv: string[] }): ClaudeRunner {
+    return async (argv: string[]) => {
+      captured.argv = argv;
+      return { stdout: validStdout, exitCode: 0 };
+    };
+  }
+
+  it("passes --disallowedTools with a deny list (default on) when CLI supports it", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      const idx = cap.argv.indexOf("--disallowedTools");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const denyList = cap.argv[idx + 1] ?? "";
+      // Mutating tools denied.
+      expect(denyList).toContain("Edit");
+      expect(denyList).toContain("Write");
+      expect(denyList).toContain("NotebookEdit");
+      expect(denyList).toContain("Bash(git reset*)");
+      expect(denyList).toContain("Bash(git push*)");
+      // Read-only git must NOT be in the deny list (reviewer still inspects).
+      expect(denyList).not.toContain("Bash(git diff");
+      expect(denyList).not.toContain("Bash(git log");
+      // The deny list is a single token; the -p prompt must follow it, never be
+      // swallowed as a tool name.
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+    }
+  });
+
+  it("never applies --bare (Embed 2) to the voter argv (it nullifies --agents)", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>\n  --bare");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.includes("--bare")).toBe(false);
+      expect(cap.argv.includes("--agents")).toBe(true);
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+    }
+  });
+
+  it("omits --disallowedTools when LOKI_REVIEW_TOOL_GUARD=0 (opt-out)", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    process.env["LOKI_REVIEW_TOOL_GUARD"] = "0";
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+    }
+  });
+
+  it("omits --disallowedTools when the CLI does not advertise it (graceful degrade)", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.includes("--disallowedTools")).toBe(false);
+      // The voter still functions (agents + schema + prompt present).
+      expect(cap.argv.includes("--agents")).toBe(true);
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+    }
   });
 });

@@ -263,7 +263,20 @@ Respond ONLY with a valid JSON object. No markdown fencing."
     case "${PROVIDER_NAME:-claude}" in
         claude)
             if command -v claude &>/dev/null; then
-                result=$(echo "$full_prompt" | claude --model haiku -p 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
+                # EMBED 2 + 3 (v7.33.0). Council-v2 reviewer verdict. $full_prompt
+                # is self-contained (evidence + PRD + strict JSON output, via
+                # stdin) and the JSON result is captured. --bare + --disallowedTools
+                # both apply (a reviewer must never mutate the tree). Gated +
+                # opt-out LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0;
+                # type-guarded for standalone sourcing.
+                local _c2_argv=("--model" "haiku")
+                if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                    _c2_argv+=("--bare")
+                fi
+                if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                    _c2_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+                fi
+                result=$(echo "$full_prompt" | claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
             else
                 result='{"verdict":"REJECT","reasoning":"reviewer CLI unavailable","issues":[]}'
             fi

@@ -190,6 +190,17 @@ _loki_build_claude_auto_flags() {
             for _mcp_path in $_mcp_argv; do
                 _LOKI_CLAUDE_AUTO_FLAGS+=("$_mcp_path")
             done
+            # EMBED 1 (v7.33.0): --strict-mcp-config. ONLY emitted alongside an
+            # actual --mcp-config (never bare). With it, the autonomous agent
+            # loads EXCLUSIVELY Loki's curated MCP bundle and ignores ambient
+            # user/project .mcp.json, so a run is reproducible and cannot be
+            # influenced by whatever MCP servers happen to live in the user's
+            # environment. Default-ON; opt out with LOKI_STRICT_MCP=0. Gated on
+            # CLI support so an older claude degrades gracefully.
+            if [ "${LOKI_STRICT_MCP:-1}" != "0" ] \
+               && loki_claude_flag_supported "--strict-mcp-config"; then
+                _LOKI_CLAUDE_AUTO_FLAGS+=("--strict-mcp-config")
+            fi
         fi
     fi
 
