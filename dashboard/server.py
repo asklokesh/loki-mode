@@ -967,8 +967,13 @@ async def get_status() -> StatusResponse:
     if claude_session_file.exists():
         try:
             _cs = _safe_json_read(claude_session_file, {})
-            claude_session_id = _cs.get("claude_session_uuid", "") or ""
-        except (json.JSONDecodeError, OSError, KeyError):
+            # Guard against a syntactically-valid non-object JSON (array, string,
+            # number) that would make .get() raise AttributeError. The normal
+            # writer (run.sh) always emits an object, so this only triggers on
+            # external file corruption, but /api/status must never 500 on it.
+            if isinstance(_cs, dict):
+                claude_session_id = _cs.get("claude_session_uuid", "") or ""
+        except (json.JSONDecodeError, OSError, KeyError, AttributeError):
             pass
 
     # Read dashboard state (with retry for concurrent writes)

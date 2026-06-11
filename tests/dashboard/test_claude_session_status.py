@@ -84,6 +84,17 @@ class ClaudeSessionStatusTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["claude_session_id"], "")
 
+    def test_status_claude_session_id_empty_on_valid_non_object_json(self):
+        # Hunter LOW finding: a syntactically-valid non-object (array/string/
+        # number) must not raise AttributeError -> 500; degrade to "".
+        path = Path(self.tmp) / "state" / "claude-session.json"
+        for payload in ("[1,2,3]", '"x"', "42", "null"):
+            path.write_text(payload, encoding="utf-8")
+            with _ForceLokiDir(self.tmp):
+                resp = self._client().get("/api/status")
+            self.assertEqual(resp.status_code, 200, f"500 on payload {payload!r}")
+            self.assertEqual(resp.json()["claude_session_id"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
