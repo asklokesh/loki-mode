@@ -149,12 +149,41 @@ loki_claude_flag_supported() {
 # whose prompt is fully self-contained (the entire instruction set + context is
 # passed via -p), and NEVER on the main RARV loop or on any call that relies on
 # auto-discovered CLAUDE.md / hooks / auto-memory.
-# Default-ON; opt out with LOKI_BARE_SUBCALLS=0. Predicate so call sites can
-# append "--bare" to their argv array uniformly:
+#
+# AUTH GATE (critical): --bare sets CLAUDE_CODE_SIMPLE=1 and per `claude --help`
+# reads Anthropic auth STRICTLY from ANTHROPIC_API_KEY or an apiKeyHelper via
+# --settings -- "OAuth and keychain are never read". A subscription/OAuth user
+# (no ANTHROPIC_API_KEY) gets "Not logged in" on every --bare subcall, which
+# exits 0 with the error on stdout, so a council vote parses as the default
+# REJECT and the loop silently corrupts. So --bare is enabled ONLY when an
+# API-key auth path exists (ANTHROPIC_API_KEY set, or an apiKeyHelper configured
+# in settings); otherwise it emits nothing and the subcall runs full-auth, the
+# same as before this embed. Subscription users are thus unaffected by default.
+# Default-ON (when auth-safe); opt out entirely with LOKI_BARE_SUBCALLS=0.
+# Predicate so call sites can append "--bare" to their argv array uniformly:
 #   loki_subcall_bare_enabled && argv+=("--bare")
 loki_subcall_bare_enabled() {
     [ "${LOKI_BARE_SUBCALLS:-1}" = "0" ] && return 1
+    # API-key auth required (see AUTH GATE above). ANTHROPIC_API_KEY is the
+    # common case; apiKeyHelper covers the settings-configured helper. Anything
+    # else (OAuth/keychain subscription) must NOT use --bare.
+    if [ -z "${ANTHROPIC_API_KEY:-}" ] && ! _loki_apikey_helper_configured; then
+        return 1
+    fi
     loki_claude_flag_supported "--bare"
+}
+
+# True when an apiKeyHelper is configured in any Claude settings source, which
+# (unlike OAuth/keychain) IS honored under --bare. Best-effort, read-only.
+_loki_apikey_helper_configured() {
+    local f
+    for f in "$HOME/.claude/settings.json" "$HOME/.config/claude/settings.json" \
+             "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" \
+             "$PWD/.claude/settings.json" "$PWD/.claude/settings.local.json"; do
+        [ -f "$f" ] || continue
+        grep -q '"apiKeyHelper"' "$f" 2>/dev/null && return 0
+    done
+    return 1
 }
 
 # EMBED 3 -- --disallowedTools (reviewer / adversarial subcalls). Motivation: a

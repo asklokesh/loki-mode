@@ -93,10 +93,19 @@ argv_has() { grep -qxF -e "$1" "$ARGV_LOG"; }
   # EMBED 2 predicate: enabled by default when --bare supported.
   unset LOKI_BARE_SUBCALLS
   unset __LOKI_CLAUDE_HELP_CACHE
-  if loki_subcall_bare_enabled; then echo "A1_OK"; else echo "A1_BAD"; fi
-  # opt-out kills it.
-  LOKI_BARE_SUBCALLS=0
-  if loki_subcall_bare_enabled; then echo "A2_BAD"; else echo "A2_OK"; fi
+  # AUTH GATE (council R1 CRITICAL): --bare reads auth strictly from
+  # ANTHROPIC_API_KEY/apiKeyHelper, never OAuth/keychain. Default-on must be
+  # DISABLED on a subscription machine (no key, no helper) and ENABLED with a key.
+  HOME="$TMP/nohelper"; mkdir -p "$HOME/.claude"
+  unset ANTHROPIC_API_KEY
+  if loki_subcall_bare_enabled; then echo "A1_BAD"; else echo "A1_OK"; fi
+  if ANTHROPIC_API_KEY=sk-test loki_subcall_bare_enabled; then echo "A1b_OK"; else echo "A1b_BAD"; fi
+  # apiKeyHelper in settings also enables it (the helper auth path --bare honors).
+  printf '{"apiKeyHelper":"echo k"}' > "$HOME/.claude/settings.json"
+  if loki_subcall_bare_enabled; then echo "A1c_OK"; else echo "A1c_BAD"; fi
+  rm -f "$HOME/.claude/settings.json"
+  # opt-out kills it even with a key.
+  if ANTHROPIC_API_KEY=sk-test LOKI_BARE_SUBCALLS=0 loki_subcall_bare_enabled; then echo "A2_BAD"; else echo "A2_OK"; fi
   unset LOKI_BARE_SUBCALLS
 
   # EMBED 3 predicate: enabled by default when --disallowedTools supported.
@@ -125,8 +134,10 @@ argv_has() { grep -qxF -e "$1" "$ARGV_LOG"; }
 check_tok() { # marker label
   if grep -qx "$1" "$TMP/secA.out"; then ok "$2"; else bad "$2" "marker $1 not found"; fi
 }
-check_tok A1_OK "EMBED2 predicate ON by default when --bare supported"
-check_tok A2_OK "EMBED2 predicate OFF when LOKI_BARE_SUBCALLS=0"
+check_tok A1_OK "EMBED2 --bare DISABLED on subscription auth (no API key/helper) -- council R1"
+check_tok A1b_OK "EMBED2 --bare ENABLED when ANTHROPIC_API_KEY is set"
+check_tok A1c_OK "EMBED2 --bare ENABLED when an apiKeyHelper is configured"
+check_tok A2_OK "EMBED2 predicate OFF when LOKI_BARE_SUBCALLS=0 (even with a key)"
 check_tok A3_OK "EMBED3 predicate ON by default when --disallowedTools supported"
 check_tok A4_OK "EMBED3 predicate OFF when LOKI_REVIEW_TOOL_GUARD=0"
 check_tok A5a_OK "EMBED3 deny list contains Edit"
@@ -244,10 +255,13 @@ drive_conflict() { # extra-env -> records argv to ARGV_LOG
 }
 
 : > "$ARGV_LOG"
-( unset LOKI_BARE_SUBCALLS; drive_conflict )
+# ANTHROPIC_API_KEY set so the auth gate (council R1) enables --bare; on a
+# subscription/OAuth runner without it, --bare is correctly suppressed (tested
+# by A1 above), and asserting its presence here would be a false negative.
+( unset LOKI_BARE_SUBCALLS; export ANTHROPIC_API_KEY=sk-test; drive_conflict )
 if [ -s "$ARGV_LOG" ]; then
   if argv_has "--bare"; then
-    ok "EMBED2: resolve_conflicts_with_ai passes --bare (default ON, real site)"
+    ok "EMBED2: resolve_conflicts_with_ai passes --bare (default ON + API key, real site)"
   else
     bad "EMBED2: conflict --bare default-on" "argv: $(tr '\n' ' ' < "$ARGV_LOG")"
   fi
