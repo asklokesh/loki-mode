@@ -4582,14 +4582,16 @@ compute_codebase_signature() {
           total_sz=$(printf '%s\n' "$listing" | awk -F'\t' '{s+=$2} END {printf "%d", s}')
           budget="${LOKI_PRD_SIG_CONTENT_BUDGET:-52428800}"
           if [ "${total_sz:-0}" -le "$budget" ] 2>/dev/null; then
-              # Content pass: stream every (path, content) through one hash in
-              # the same sorted order as the listing. Detects same-size edits.
+              # Content pass: stream all file contents through one hash in the
+              # same sorted order as the listing. Detects same-size edits.
+              # xargs -0 batches the reads into a handful of cat invocations,
+              # so cost scales with BYTES (which the budget above bounds), not
+              # file count: a fork-per-file loop here measured ~38s of added
+              # startup on a 30k-small-file tree. Renames and content swaps
+              # are still caught by the listing hash (paths+sizes) below.
               local content_hash
-              content_hash=$(printf '%s\n' "$listing" | cut -f1 \
-                  | while IFS= read -r f; do
-                        printf '%s\n' "$f"
-                        cat "$f" 2>/dev/null
-                    done | _loki_hash_stdin)
+              content_hash=$(printf '%s\n' "$listing" | cut -f1 | tr '\n' '\0' \
+                  | xargs -0 cat 2>/dev/null | _loki_hash_stdin)
               echo "files:$(printf '%s' "$listing" | _loki_hash_stdin):${count}:${content_hash}"
           else
               echo "files-shallow:$(printf '%s' "$listing" | _loki_hash_stdin):${count}"
