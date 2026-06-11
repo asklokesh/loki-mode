@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.34.0] - 2026-06-11
+
+### Added
+- Claude session-id stamping (Phase 1, correlation-only): every run writes a
+  deterministic per-run UUID (UUIDv5 of the trust-run-id) to
+  `.loki/state/claude-session.json` and surfaces it as `claude_session_id` on
+  the dashboard `/api/status`, so a run can be correlated with its Claude
+  session. Opt-in `LOKI_SESSION_STAMP=1` additionally passes a distinct
+  per-iteration `--session-id` to the main-loop Claude call (never to subcalls;
+  never a pinned id across the run, so context is not accumulated). Default OFF
+  keeps the Claude argv byte-identical to v7.33.0. Bash and Bun routes derive
+  the same UUID byte-for-byte. Gated on CLI support.
+- `LOKI_NO_SESSION_PERSIST=1` (opt-in, default OFF): passes
+  `--no-session-persistence` so a run leaves no Claude session state on disk
+  (useful for ephemeral/CI runs). Gated on CLI support.
+- Both new env knobs documented in wiki/Environment-Variables.md;
+  `claude_session_id` documented in wiki/API-Reference.md.
+
+### Fixed
+- CLI honesty: `loki config` help no longer advertises a nonexistent
+  `config provider` subcommand; cold `loki status` tips now point at the
+  canonical `loki analyze context show` / `loki analyze code overview`
+  (instead of deprecated aliases that emitted a deprecation note); README.md
+  and docs/INSTALLATION.md use the canonical command names
+  (`loki modernize heal`, `loki analyze onboard`, `loki preview`,
+  `loki api start`) with "was:" annotations.
+
 ## [7.33.0] - 2026-06-11
 
 ### Added
