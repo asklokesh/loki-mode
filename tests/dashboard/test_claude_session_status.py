@@ -88,7 +88,16 @@ class ClaudeSessionStatusTests(unittest.TestCase):
         # Hunter LOW finding: a syntactically-valid non-object (array/string/
         # number) must not raise AttributeError -> 500; degrade to "".
         path = Path(self.tmp) / "state" / "claude-session.json"
-        for payload in ("[1,2,3]", '"x"', "42", "null"):
+        # non-object JSON AND a non-STRING value (council R2: a non-str value
+        # would fail StatusResponse str validation -> 500) must both degrade.
+        payloads = (
+            "[1,2,3]", '"x"', "42", "null",
+            '{"claude_session_uuid": 123}',
+            '{"claude_session_uuid": {"x": 1}}',
+            '{"claude_session_uuid": [1, 2]}',
+            '{"claude_session_uuid": true}',
+        )
+        for payload in payloads:
             path.write_text(payload, encoding="utf-8")
             with _ForceLokiDir(self.tmp):
                 resp = self._client().get("/api/status")
