@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.33.0] - 2026-06-11
+
+### Added
+- Embedded three Claude Code 2.1.170 CLI flags, all default-on with env
+  opt-outs and gated on CLI support (older `claude` degrades to no-op):
+  - `--strict-mcp-config` (`LOKI_STRICT_MCP=0` to disable): added wherever
+    Loki already passes an explicit `--mcp-config` bundle, so a run loads MCP
+    servers only from that curated bundle (which includes your
+    `~/.claude/mcp.json` overlay) and ignores all other MCP sources, keeping
+    runs reproducible.
+  - `--bare` (`LOKI_BARE_SUBCALLS=0` to disable): added to cheap,
+    self-contained internal subcalls (USAGE generation, conflict resolution,
+    bash-route reviewer/adversarial/council votes, the grill) for a faster,
+    cheaper, cache-friendlier call. Never applied to the main RARV loop.
+    Auth-gated: `--bare` reads Anthropic auth strictly from
+    `ANTHROPIC_API_KEY`/`apiKeyHelper`, so Loki only enables it when one is
+    present; subscription/OAuth logins run full-auth unchanged.
+  - `--disallowedTools` (`LOKI_REVIEW_TOOL_GUARD=0` to disable): added to
+    reviewer/adversarial/council subcalls denying Edit/Write/NotebookEdit and
+    the git mutation forms (commit/reset/push/checkout/clean/rm/stash,
+    including the `git -C`/`--git-dir`/`-c` flag-prefixed forms), so a review
+    agent does not casually mutate the working tree. Read-only git stays
+    allowed. A guardrail, not a sandbox.
+- The three new env knobs are documented in `wiki/Environment-Variables.md`.
+
 ## [7.32.3] - 2026-06-10
 
 ### Fixed
