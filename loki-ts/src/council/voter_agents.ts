@@ -266,7 +266,7 @@ export async function dispatchClaudeAgents(
   ) {
     argv.push(
       "--disallowedTools",
-      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*)",
+      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
     );
   }
   argv.push("-p", topPrompt);

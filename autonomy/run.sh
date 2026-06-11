@@ -7823,11 +7823,14 @@ BUILD_PROMPT
                     #   EMBED 2 (--bare): the prompt needs no hooks/LSP/CLAUDE.md/
                     #     MCP discovery, so --bare is safe and cheaper. Opt out
                     #     LOKI_BARE_SUBCALLS=0.
-                    #   EMBED 3 (--disallowedTools): a reviewer must NEVER mutate
-                    #     the tree (a parallel agent once ran `git reset --hard`
-                    #     and wiped uncommitted work). Deny Edit/Write/NotebookEdit
-                    #     + git mutation subcommands; read-only git stays allowed.
-                    #     Opt out LOKI_REVIEW_TOOL_GUARD=0.
+                    #   EMBED 3 (--disallowedTools): raise the cost of a reviewer
+                    #     casually mutating the tree (a parallel agent once ran
+                    #     `git reset --hard` and wiped uncommitted work). Deny
+                    #     Edit/Write/NotebookEdit + git mutation forms (incl. the
+                    #     git -C / --git-dir evasions); read-only git stays allowed.
+                    #     Guardrail, not a sandbox -- echo>/sed -i/etc. remain; the
+                    #     real net is commit-before-agent-wave. Opt out
+                    #     LOKI_REVIEW_TOOL_GUARD=0. See loki_review_guard_denylist.
                     local _rv_argv=("--dangerously-skip-permissions")
                     if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                         _rv_argv+=("--bare")
@@ -8054,9 +8057,10 @@ ADVERSARIAL_EOF
                 # is captured to $result_file. So:
                 #   EMBED 2 (--bare): no hooks/LSP/CLAUDE.md/MCP needed; cheaper.
                 #     Opt out LOKI_BARE_SUBCALLS=0.
-                #   EMBED 3 (--disallowedTools): an adversarial agent that breaks
-                #     things must NEVER mutate the tree. Deny Edit/Write/
-                #     NotebookEdit + git mutations; read-only git stays allowed.
+                #   EMBED 3 (--disallowedTools): keep an adversarial agent from
+                #     casually mutating the tree. Deny Edit/Write/NotebookEdit +
+                #     git mutation forms (incl. git -C / --git-dir evasions);
+                #     read-only git stays allowed. Guardrail, not a sandbox.
                 #     Opt out LOKI_REVIEW_TOOL_GUARD=0.
                 local _adv_argv=("--dangerously-skip-permissions")
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then

@@ -155,15 +155,25 @@ loki_subcall_bare_enabled() {
     loki_claude_flag_supported "--bare"
 }
 
-# EMBED 3 -- --disallowedTools (reviewer / adversarial subcalls). A reviewer
-# agent must NEVER mutate the working tree (a parallel agent once ran
-# `git reset --hard` and wiped uncommitted work). Per `claude --help` the value
-# is a comma-or-space-separated list of tool names (e.g. "Bash(git *) Edit").
-# We deny the direct file-mutation tools (Edit, Write, NotebookEdit) plus the
-# git MUTATION subcommands only -- read-only git (diff / log / show / status)
-# stays allowed so the reviewer can still inspect the tree. The flag is variadic
-# (<tools...>), so we emit ONE comma-separated token to avoid swallowing the
-# following -p prompt as additional tool names.
+# EMBED 3 -- --disallowedTools (reviewer / adversarial subcalls). Motivation: a
+# parallel agent once ran `git reset --hard` and wiped uncommitted work, so a
+# reviewer/voter subcall should not casually mutate the tree. Per `claude --help`
+# the value is a comma-or-space-separated list of tool names (e.g. "Bash(git *)
+# Edit"); Bash(...) matching is command-PREFIX based (the `cmd:*` form).
+#
+# SCOPE / LIMITS (honest -- this is a denylist, NOT a sandbox):
+#   - Denies the direct file-mutation tools (Edit, Write, NotebookEdit).
+#   - Denies the common git MUTATION forms: the bare subcommand (`git reset:*`)
+#     AND the global-flag-prefixed evasions (`git -C:*`, `git --git-dir:*`,
+#     `git -c:*`) that slip a flag before the subcommand so the bare prefix
+#     does not match. Read-only git (diff/log/show/status) stays allowed.
+#   - It does NOT and cannot block every mutation path: a determined agent can
+#     still write via `Bash(echo > f)`, `sed -i`, `cp/mv/tee`, `python -c`, etc.
+#     This is a guardrail that raises the cost of the casual/common destructive
+#     command, not a guarantee the tree is immutable. The real safety net is
+#     that the integrator commits before any agent wave (see CLAUDE.md).
+# The flag is variadic (<tools...>), so we emit ONE comma-separated token to
+# avoid swallowing the following -p prompt as additional tool names.
 # Default-ON; opt out with LOKI_REVIEW_TOOL_GUARD=0.
 # Predicate + denylist so call sites append uniformly:
 #   if loki_review_guard_enabled; then
@@ -174,6 +184,8 @@ loki_review_guard_enabled() {
     loki_claude_flag_supported "--disallowedTools"
 }
 loki_review_guard_denylist() {
-    # Comma-separated single token. Bash(...) globs match the tool-input string.
-    printf '%s' "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*)"
+    # Comma-separated single token. Bash(cmd:*) is command-prefix matching.
+    # The `git -C:*` / `git --git-dir:*` / `git -c:*` entries close the
+    # global-flag-before-subcommand evasion of the bare git-mutation rules.
+    printf '%s' "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)"
 }
