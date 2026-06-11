@@ -103,7 +103,12 @@ argv_has() { grep -qxF -e "$1" "$ARGV_LOG"; }
   # apiKeyHelper in settings also enables it (the helper auth path --bare honors).
   printf '{"apiKeyHelper":"echo k"}' > "$HOME/.claude/settings.json"
   if loki_subcall_bare_enabled; then echo "A1c_OK"; else echo "A1c_BAD"; fi
+  # the bare token in prose (no key:value) must NOT enable (council R2 tighten).
+  printf '{"note":"set apiKeyHelper later"}' > "$HOME/.claude/settings.json"
+  if loki_subcall_bare_enabled; then echo "A1d_BAD"; else echo "A1d_OK"; fi
   rm -f "$HOME/.claude/settings.json"
+  # whitespace-only key must NOT enable (council R2 tighten).
+  if ANTHROPIC_API_KEY="   " loki_subcall_bare_enabled; then echo "A1e_BAD"; else echo "A1e_OK"; fi
   # opt-out kills it even with a key.
   if ANTHROPIC_API_KEY=sk-test LOKI_BARE_SUBCALLS=0 loki_subcall_bare_enabled; then echo "A2_BAD"; else echo "A2_OK"; fi
   unset LOKI_BARE_SUBCALLS
@@ -137,6 +142,8 @@ check_tok() { # marker label
 check_tok A1_OK "EMBED2 --bare DISABLED on subscription auth (no API key/helper) -- council R1"
 check_tok A1b_OK "EMBED2 --bare ENABLED when ANTHROPIC_API_KEY is set"
 check_tok A1c_OK "EMBED2 --bare ENABLED when an apiKeyHelper is configured"
+check_tok A1d_OK "EMBED2 --bare NOT enabled by the bare apiKeyHelper token in prose"
+check_tok A1e_OK "EMBED2 --bare NOT enabled by a whitespace-only ANTHROPIC_API_KEY"
 check_tok A2_OK "EMBED2 predicate OFF when LOKI_BARE_SUBCALLS=0 (even with a key)"
 check_tok A3_OK "EMBED3 predicate ON by default when --disallowedTools supported"
 check_tok A4_OK "EMBED3 predicate OFF when LOKI_REVIEW_TOOL_GUARD=0"

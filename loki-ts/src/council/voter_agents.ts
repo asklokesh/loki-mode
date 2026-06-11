@@ -252,8 +252,9 @@ export async function dispatchClaudeAgents(
     schemaPath,
   ];
   // EMBED 3 (v7.33.0): --disallowedTools on the council voter argv. A reviewer
-  // / voter agent must NEVER mutate the working tree (a parallel agent once ran
-  // `git reset --hard` and wiped uncommitted work). Deny Edit/Write/NotebookEdit
+  // / voter agent should not casually mutate the working tree (a parallel agent
+  // once ran `git reset --hard` and wiped uncommitted work).
+  // Deny Edit/Write/NotebookEdit
   // + git MUTATION forms incl. the git -C / --git-dir / -c evasions; read-only
   // git (diff/log/show/status) stays allowed so the voter can still inspect the
   // tree. A guardrail (raises the cost of the common destructive command), not a

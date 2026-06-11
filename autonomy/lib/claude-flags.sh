@@ -166,8 +166,11 @@ loki_subcall_bare_enabled() {
     [ "${LOKI_BARE_SUBCALLS:-1}" = "0" ] && return 1
     # API-key auth required (see AUTH GATE above). ANTHROPIC_API_KEY is the
     # common case; apiKeyHelper covers the settings-configured helper. Anything
-    # else (OAuth/keychain subscription) must NOT use --bare.
-    if [ -z "${ANTHROPIC_API_KEY:-}" ] && ! _loki_apikey_helper_configured; then
+    # else (OAuth/keychain subscription) must NOT use --bare. Trim the key so a
+    # whitespace-only value does not count as set (it would fail --bare auth).
+    local _key
+    _key="$(printf '%s' "${ANTHROPIC_API_KEY:-}" | tr -d '[:space:]')"
+    if [ -z "$_key" ] && ! _loki_apikey_helper_configured; then
         return 1
     fi
     loki_claude_flag_supported "--bare"
@@ -181,7 +184,10 @@ _loki_apikey_helper_configured() {
              "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" \
              "$PWD/.claude/settings.json" "$PWD/.claude/settings.local.json"; do
         [ -f "$f" ] || continue
-        grep -q '"apiKeyHelper"' "$f" 2>/dev/null && return 0
+        # Require "apiKeyHelper" : "<non-empty value>" (a real key:value pair),
+        # not the bare token in a comment/prose. Tolerates whitespace around the
+        # colon. Not a full JSON parse, but rejects the obvious false-positives.
+        grep -Eq '"apiKeyHelper"[[:space:]]*:[[:space:]]*"[^"]+"' "$f" 2>/dev/null && return 0
     done
     return 1
 }
