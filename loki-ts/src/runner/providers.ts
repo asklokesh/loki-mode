@@ -23,7 +23,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
-import { buildAutoFlags, ensureClaudeHelpCache } from "../providers/claude_flags.ts";
+import { buildAutoFlags, ensureClaudeHelpCache, sessionStampArgv } from "../providers/claude_flags.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -208,6 +208,13 @@ export function claudeProvider(): ProviderInvoker {
         targetDir: call.cwd,
       });
 
+      // v7.34.0 Phase 1 (correlation-only): per-iteration --session-id, OPT-IN
+      // via LOKI_SESSION_STAMP=1. Default OFF keeps this argv byte-identical to
+      // v7.33. Distinct deterministic UUIDv5("<run-id>:<iteration>") per
+      // iteration (never a pinned id), gated on CLI support. Mirrors the run.sh
+      // main-loop block; run id + iteration read from env exactly as bash does.
+      const sessionArgv = sessionStampArgv();
+
       const argv: string[] = [
         cli,
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG
@@ -215,6 +222,7 @@ export function claudeProvider(): ProviderInvoker {
         "--model",
         model,
         ...autoFlags,
+        ...sessionArgv,
         // claude.sh:32 PROVIDER_PROMPT_FLAG
         "-p",
         call.prompt,

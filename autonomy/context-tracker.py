@@ -304,7 +304,13 @@ def update_tracking(loki_dir, iteration, window_size, provider="claude",
         if result["new_offset"] == last_offset:
             return  # Nothing new
 
-        # Update session ID and offset
+        # Update session ID and offset.
+        # v7.34.0 Phase 1: when LOKI_SESSION_STAMP=1, run.sh passes a
+        # per-iteration --session-id, so claude names the JSONL after that uuid
+        # and jsonl_path.stem is that uuid rather than a claude-minted one. This
+        # is just a string label for the tracking record; any value (uuid or
+        # otherwise) is fine here, so no reconcile/parse is needed and there is
+        # no crash path from the id differing.
         tracking["session_id"] = jsonl_path.stem
         tracking["updated_at"] = datetime.now(timezone.utc).isoformat()
         offset_file.write_text(str(result["new_offset"]))

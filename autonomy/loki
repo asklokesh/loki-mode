@@ -685,7 +685,7 @@ show_help() {
     echo "  modernize [cmd]  Legacy modernization: heal|migrate"
     echo ""
     echo "Config:"
-    echo "  config [cmd]     Manage configuration + provider (show|set|get|provider)"
+    echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
     echo "  doctor [--json]  Check system prerequisites and skill symlinks"
     echo ""
     echo "  version          Show version"
@@ -2888,8 +2888,8 @@ cmd_status() {
     fi
 
     echo ""
-    echo -e "${DIM}  Tip: loki context show   - detailed token breakdown${NC}"
-    echo -e "${DIM}  Tip: loki code overview   - codebase intelligence${NC}"
+    echo -e "${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}"
+    echo -e "${DIM}  Tip: loki analyze code overview  - codebase intelligence${NC}"
 }
 
 # JSON output for loki status --json

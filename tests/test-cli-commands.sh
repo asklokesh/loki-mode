@@ -124,6 +124,31 @@ test_cmd "loki config path exits 0" \
     0 "" config path
 
 # -------------------------------------------
+# FIX A (v7.34.0): the top-level help must NOT advertise a `config provider`
+# subcommand that does not exist. `provider` is a settable KEY (config set
+# provider X) and a SEPARATE top-level command (loki provider ...); it is not a
+# config subcommand. The cmd_config handler has no `provider)` arm, so
+# `loki config provider` falls through to the usage error.
+# -------------------------------------------
+((TOTAL++))
+_help_out=$("$LOKI" help 2>&1) || true
+case "$_help_out" in
+    *"show|set|get|provider"*)
+        log_fail "loki help does not claim a nonexistent config provider subcommand" \
+            "help still advertises 'config ... provider' as a subcommand"
+        ;;
+    *)
+        log_pass "loki help does not claim a nonexistent config provider subcommand"
+        ;;
+esac
+
+# And `loki config provider` itself is not a real subcommand: it must NOT exit 0
+# (it falls through to the cmd_config usage block). We assert it prints the
+# config usage rather than succeeding silently.
+test_cmd "loki config provider is not a subcommand (prints config usage)" \
+    0 "Usage: loki config" config provider
+
+# -------------------------------------------
 # Test: loki memory list
 # -------------------------------------------
 test_cmd "loki memory list exits 0 and shows Learnings" \

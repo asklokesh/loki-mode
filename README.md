@@ -36,7 +36,7 @@
 - **Intelligent `loki start`** -- For interactive foreground runs the dashboard auto-opens in the browser (cross-platform; skipped in CI, SSH-without-TTY, and piped runs; opt out with `LOKI_NO_AUTO_OPEN=1`). The completion summary shows "Your app is live at <url>" so you know exactly where to try what Loki just built. The autonomous loop passes Claude Code's `--effort`, `--max-budget-usd`, and `--fallback-model` on every iteration (each gated on CLI support and individual opt-out env vars) for better long-run unattended execution (v7.25.0).
 - **Cross-project memory** -- Episodic/semantic/procedural memory with vector search; knowledge learned on one project surfaces on the next (v5.15.0+, see `memory/engine.py`)
 - **Self-hosted and private** -- Your keys, your infrastructure, no data leaves your network
-- **Legacy system healing** -- `loki heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
+- **Legacy system healing** -- `loki modernize heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
 - **MCP server** -- 34 tools (including ChromaDB code search) plus 3 resources and 2 prompts (`mcp/server.py`, with magic tools registered from `mcp/magic_tools.py` and the managed-memory tool from `mcp/managed_tools.py`). Of the 34, 33 are always available; `loki_memory_redact` is registered but only succeeds when `LOKI_MANAGED_AGENTS=true` and `LOKI_MANAGED_MEMORY=true`. Launch with `loki mcp` (bootstraps the Python MCP SDK on first run).
 - **Full-stack output** -- Source code, tests, Docker Compose stacks (multi-service with healthchecks), CI/CD pipelines, audit logs
 - **Provider-agnostic** -- runs on Claude, Codex, Cline, or Aider with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. Gemini CLI deprecated v7.5.18; Antigravity CLI coming soon.
@@ -366,17 +366,17 @@ Status legend: "E2E-verified" means we run real spec-to-code builds on it oursel
 |---------|-------------|
 | `loki start [PRD]` | Start with optional PRD file (also accepts an issue ref; replaces deprecated `loki run`). Auto-opens the dashboard in the browser for interactive runs and passes native `--effort`/`--max-budget-usd`/`--fallback-model` for resilience (v7.25.0) |
 | `loki stop` | Stop execution |
-| `loki heal <path>` | Legacy system healing (archaeology, stabilize, isolate, modernize, validate -- v6.67.0) |
+| `loki modernize heal <path>` | Legacy system healing (archaeology, stabilize, isolate, modernize, validate -- v6.67.0; was: `loki heal`) |
 | `loki pause` / `resume` | Pause/resume after current session |
 | `loki status` | Show current status |
 | `loki dashboard` | Open web dashboard |
-| `loki preview` / `loki open` | Print running app URL and open in browser (Live App Preview, v7.24.0) |
+| `loki preview` | Print running app URL and open in browser (Live App Preview, v7.24.0; was: `loki open`) |
 | `loki web` | Launch Purple Lab web UI |
 | `loki doctor` | Check environment and dependencies |
 | `loki plan [PRD]` | Pre-execution analysis: complexity, cost, iterations |
 | `loki review [--staged\|--diff]` | AI-powered code review with severity filtering |
 | `loki test [--file\|--dir\|--changed]` | AI test generation (8 languages, 9 frameworks) |
-| `loki onboard [path]` | Project analysis and CLAUDE.md generation |
+| `loki analyze onboard [path]` | Project analysis and CLAUDE.md generation (was: `loki onboard`) |
 | `loki import` | Import GitHub issues as tasks |
 | `loki ci` | CI/CD quality gate integration |
 | `loki failover` | Cross-provider auto-failover management |

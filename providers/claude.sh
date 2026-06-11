@@ -247,6 +247,17 @@ _loki_build_claude_auto_flags() {
        && loki_claude_flag_supported "--include-partial-messages"; then
         _LOKI_CLAUDE_AUTO_FLAGS+=("--include-partial-messages")
     fi
+
+    # --no-session-persistence (v7.34.0): boolean flag that disables Claude's
+    # own session persistence (it would otherwise write transcript JSONL under
+    # ~/.claude/projects). OPT-IN only via LOKI_NO_SESSION_PERSIST=1; DEFAULT OFF
+    # so this is zero behavior change (the flag is never emitted unless the user
+    # asks for it). Useful for ephemeral/CI runs that do not want on-disk
+    # transcripts. Gated on CLI support so an older claude degrades gracefully.
+    if [ "${LOKI_NO_SESSION_PERSIST:-0}" = "1" ] \
+       && loki_claude_flag_supported "--no-session-persistence"; then
+        _LOKI_CLAUDE_AUTO_FLAGS+=("--no-session-persistence")
+    fi
 }
 
 # The system-prompt text that authorizes autonomous operation and resolves

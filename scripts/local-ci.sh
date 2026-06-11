@@ -159,6 +159,8 @@ fi
 # Dashboard proof routes need fastapi (python3.12 only).
 if command -v python3.12 >/dev/null 2>&1; then
   run_check "tests/dashboard/test_proofs_routes.py (R1 proof routes + traversal)" "python3.12 -m pytest -q tests/dashboard/test_proofs_routes.py 2>&1 | tail -5"
+  # v7.34.0 Phase 1: /api/status surfaces claude_session_id from claude-session.json.
+  run_check "tests/dashboard/test_claude_session_status.py (v7.34.0 claude_session_id)" "python3.12 -m pytest -q tests/dashboard/test_claude_session_status.py 2>&1 | tail -5"
 else
   skip_check "proof routes dashboard gate" "python3.12 not on PATH (fastapi)"
 fi
@@ -471,6 +473,13 @@ run_check "tests/test-plan-command.sh (plan estimator + complexity force)" "bash
 # records argv; asserts each flag IS passed at the right sites, ABSENT at the
 # wrong sites (main RARV loop never gets --bare), and the opt-out env kills it.
 run_check "tests/test-cli-embeds-v733.sh (strict-mcp + bare-subcalls + review-tool-guard)" "bash tests/test-cli-embeds-v733.sh 2>&1 | tail -3"
+
+# v7.34.0 Phase 1: Claude session-id stamping (correlation-only). Asserts the
+# deterministic per-run UUIDv5, the run-start metadata file, the DEFAULT argv
+# being byte-identical to v7.33 (no --session-id), the opt-in per-iteration
+# DISTINCT --session-id (no continuity leak), main-loop-only (never on subcalls),
+# bash<->Bun uuid parity, and FIX D --no-session-persistence opt-in.
+run_check "tests/test-cli-session-v734.sh (session stamp + uuid parity + FIX D)" "bash tests/test-cli-session-v734.sh 2>&1 | tail -3"
 
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)

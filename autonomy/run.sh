@@ -12324,6 +12324,26 @@ except Exception:
         LOKI_TRUST_RUN_ID="$(_loki_trust_run_id --new)"
         export LOKI_TRUST_RUN_ID
         record_trust_event_bash "run_start" "start_sha=${_LOKI_RUN_START_SHA:-}" 2>/dev/null || true
+
+        # v7.34.0 Phase 1 (correlation-only): write a deterministic claude
+        # session UUID derived from the trust-run-id to .loki/state/claude-session.json.
+        # mode is "stamp" (Phase 1); Phase 2 continuity is a separate, opt-in arc.
+        # Best-effort: the helper is in scope via providers/claude.sh sourcing
+        # claude-flags.sh; if absent (e.g. non-claude provider, no python3) we
+        # skip silently and never fail the run. The dashboard reads this file to
+        # surface a `claude --resume <uuid>` hint for run inspection.
+        if type _loki_claude_session_uuid >/dev/null 2>&1; then
+            local _loki_session_uuid
+            _loki_session_uuid="$(_loki_claude_session_uuid "$LOKI_TRUST_RUN_ID")"
+            if [ -n "$_loki_session_uuid" ]; then
+                local _loki_session_created
+                _loki_session_created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                mkdir -p ".loki/state" 2>/dev/null || true
+                printf '{"run_id":"%s","claude_session_uuid":"%s","mode":"stamp","created_at":"%s"}\n' \
+                    "$LOKI_TRUST_RUN_ID" "$_loki_session_uuid" "$_loki_session_created" \
+                    > ".loki/state/claude-session.json" 2>/dev/null || true
+            fi
+        fi
     fi
 
     # Notify dashboard of active project directory (for AI Chat cross-directory usage)
@@ -12719,6 +12739,20 @@ except Exception as exc:
            && loki_claude_flag_supported "--include-partial-messages"; then
             _loki_claude_argv+=("--include-partial-messages")
         fi
+        # v7.34.0 Phase 1 (correlation-only): per-iteration --session-id. OPT-IN
+        # via LOKI_SESSION_STAMP=1 (CONSERVATIVE DEFAULT is OFF so the default
+        # argv stays byte-identical to v7.33 -- the UX-monotonicity requirement).
+        # The id is a DISTINCT, deterministic UUIDv5 of "<run-id>:<iteration>",
+        # never one pinned id across the run: a reused id would make claude RESUME
+        # and accumulate transcript (Phase 2 continuity, out of scope). This keeps
+        # each iteration a fresh stateless session while making its ~/.claude
+        # JSONL name predictable for dashboard correlation. Gated on CLI support.
+        if type loki_session_stamp_enabled >/dev/null 2>&1 \
+           && loki_session_stamp_enabled; then
+            local _loki_iter_session_uuid
+            _loki_iter_session_uuid="$(_loki_claude_iteration_session_uuid "${LOKI_TRUST_RUN_ID:-}" "$ITERATION_COUNT")"
+            [ -n "$_loki_iter_session_uuid" ] && _loki_claude_argv+=("--session-id" "$_loki_iter_session_uuid")
+        fi
         # ---- Bash<->Bun invocation-flag convergence ledger (v7.25.0) ----------
         # The fixture corpus covers build_prompt/stats output, NOT this claude
         # argv, so drift here is invisible to parity tests. Keep this ledger
@@ -12729,8 +12763,13 @@ except Exception as exc:
         # today.
         # Bash argv (canonical, live): --dangerously-skip-permissions --model M
         #   [--append-system-prompt] [--setting-sources] [--include-partial-messages]
+        #   [--session-id UUID (only when LOKI_SESSION_STAMP=1, v7.34.0)]
         #   [--effort] [--max-budget-usd] [--fallback-model] -p PROMPT
         #   --output-format stream-json --verbose
+        # v7.34.0: --session-id is emitted ONLY on this MAIN loop, only under
+        #   LOKI_SESSION_STAMP=1, as a per-iteration distinct UUIDv5; the DEFAULT
+        #   argv (knob unset) is byte-identical to v7.33. Bun mirror lives in
+        #   loki-ts/src/runner/providers.ts (sessionStampArgv).
         # Bun buildAutoFlags also emits: --exclude-dynamic-system-prompt-sections
         #   (cost-only), --mcp-config (bash gets MCP via --setting-sources +
         #   .mcp.json discovery; a how-difference, likely behavior-equivalent),

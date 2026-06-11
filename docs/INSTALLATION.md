@@ -534,7 +534,7 @@ Loki Mode uses two network ports for different services:
 LOKI_DASHBOARD_PORT=57374 loki dashboard start
 
 # API port (default: 57374)
-loki serve --port 57374
+loki api start --port 57374   # was: loki serve
 ```
 
 ### CORS Configuration

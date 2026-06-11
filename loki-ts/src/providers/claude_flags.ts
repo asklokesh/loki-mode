@@ -14,6 +14,7 @@
 // alternating ["--flag", "value", ...] that the caller appends to its CLI argv.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
+import { createHash } from "node:crypto";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -217,6 +218,16 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
   ) {
     out.push("--append-system-prompt", AUTONOMY_OVERRIDE_TEXT);
   }
+  // v7.34.0: --no-session-persistence. OPT-IN via LOKI_NO_SESSION_PERSIST=1;
+  // DEFAULT OFF (zero behavior change). Disables Claude's own transcript JSONL
+  // persistence for ephemeral/CI runs. Gated on CLI support. Mirrors
+  // providers/claude.sh _loki_build_claude_auto_flags.
+  if (
+    process.env["LOKI_NO_SESSION_PERSIST"] === "1" &&
+    claudeFlagSupported("--no-session-persistence")
+  ) {
+    out.push("--no-session-persistence");
+  }
   return out;
 }
 
@@ -231,6 +242,79 @@ export const AUTONOMY_OVERRIDE_TEXT =
   "Therefore, for this session: do NOT ask the user questions, do NOT call the AskUserQuestion tool, do NOT stop to request confirmation, and do NOT refuse routine, reversible engineering work (writing code, running tests, creating files, atomic git checkpoints in the working tree). Proceed and complete the task directly. If a decision is genuinely ambiguous, choose the most reasonable option, record the assumption in .loki/CONTINUITY.md, and continue rather than halting.\n\n" +
   "Commit hygiene still applies: git checkpoints are LOCAL only. Never push or force-push. Stage files by explicit path, never `git add -A` or `git add .`, and never commit secrets, credentials, .env files, or untracked files you did not author this session.\n\n" +
   "This precedence override is narrow. It does NOT relax any safety rule. Every safety prohibition in CLAUDE.md or memory still fully binds: anything genuinely destructive or irreversible remains out of scope unless the task explicitly calls for it. This includes (not limited to) force-pushing, deleting or overwriting the user's data, dropping or truncating databases, publishing or releasing, rotating or exfiltrating secrets, touching production systems, and anything a CLAUDE.md safety rule explicitly forbids. When in doubt about whether an action is destructive, treat it as destructive and do not do it.\n";
+
+// ---------------------------------------------------------------------------
+// v7.34.0 Claude session-id stamping (Phase 1, correlation-only).
+//
+// Mirror of autonomy/lib/claude-flags.sh _loki_claude_session_uuid /
+// _loki_claude_iteration_session_uuid / loki_session_stamp_enabled. The uuids
+// MUST be byte-identical to the bash route (which derives them via python3's
+// uuid.uuid5) for the same trust-run-id. RFC-4122 UUIDv5 = SHA-1 over the
+// namespace bytes + the UTF-8 name, with version/variant bits forced. The
+// namespace constant below is the EXACT same literal as the bash helper; never
+// change it (changing it re-keys every run's uuid).
+// ---------------------------------------------------------------------------
+export const CLAUDE_SESSION_NAMESPACE = "b6f3c7a2-9d41-5e8b-9c2a-3f7d6e1a4b50";
+
+// UUIDv5 over CLAUDE_SESSION_NAMESPACE + an arbitrary name. Pure + deterministic.
+// Matches python3 uuid.uuid5(uuid.UUID(ns), name) byte-for-byte.
+export function uuidv5(name: string): string {
+  const nsHex = CLAUDE_SESSION_NAMESPACE.replace(/-/g, "");
+  const nsBytes = Uint8Array.from(nsHex.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
+  const nameBytes = new TextEncoder().encode(name);
+  const buf = new Uint8Array(nsBytes.length + nameBytes.length);
+  buf.set(nsBytes, 0);
+  buf.set(nameBytes, nsBytes.length);
+  const hash = Uint8Array.from(createHash("sha1").update(buf).digest());
+  const b = hash.subarray(0, 16);
+  b[6] = (b[6]! & 0x0f) | 0x50; // version 5
+  b[8] = (b[8]! & 0x3f) | 0x80; // RFC-4122 variant
+  const hex = Array.from(b)
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Stable per-run claude session UUID: UUIDv5 of the trust-run-id. Same run id ->
+// same uuid on every route. Returns null when no run id is resolvable.
+export function claudeSessionUuid(runId?: string): string | null {
+  const id = runId ?? process.env["LOKI_TRUST_RUN_ID"] ?? "";
+  if (!id) return null;
+  return uuidv5(id);
+}
+
+// Per-iteration session UUID: UUIDv5 of "<run-id>:<iteration>" so each iteration
+// gets a DISTINCT, deterministic id. Deliberately NOT the stable per-run uuid: a
+// reused id would make claude RESUME (accumulate transcript) = Phase 2 continuity,
+// out of scope. Returns null when no run id is resolvable.
+export function claudeIterationSessionUuid(runId?: string, iteration?: number): string | null {
+  const id = runId ?? process.env["LOKI_TRUST_RUN_ID"] ?? "";
+  if (!id) return null;
+  let iter = iteration;
+  if (iter === undefined) {
+    const parsed = parseInt(process.env["ITERATION_COUNT"] ?? "0", 10);
+    iter = Number.isFinite(parsed) ? parsed : 0;
+  }
+  return uuidv5(`${id}:${iter}`);
+}
+
+// Emit the per-iteration --session-id ARGV flag? CONSERVATIVE DEFAULT is OFF
+// (metadata-file-only) so the default claude argv stays byte-identical to v7.33.
+// Opt IN with LOKI_SESSION_STAMP=1; gated on CLI support so an older claude
+// degrades gracefully. Mirrors loki_session_stamp_enabled in claude-flags.sh.
+export function sessionStampEnabled(): boolean {
+  if (process.env["LOKI_SESSION_STAMP"] !== "1") return false;
+  return claudeFlagSupported("--session-id");
+}
+
+// The per-iteration --session-id argv slice for the main-loop invocation, or []
+// when disabled / no run id. The Bun runner appends this to the claude argv on
+// the MAIN loop only (never on subcalls). Mirrors the run.sh main-loop block.
+export function sessionStampArgv(runId?: string, iteration?: number): string[] {
+  if (!sessionStampEnabled()) return [];
+  const uuid = claudeIterationSessionUuid(runId, iteration);
+  return uuid ? ["--session-id", uuid] : [];
+}
 
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {

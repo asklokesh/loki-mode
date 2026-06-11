@@ -620,8 +620,8 @@ async function runStatusText(): Promise<number> {
   await renderPhase1Section(dir);
 
   process.stdout.write(`\n`);
-  process.stdout.write(`${DIM}  Tip: loki context show   - detailed token breakdown${NC}\n`);
-  process.stdout.write(`${DIM}  Tip: loki code overview   - codebase intelligence${NC}\n`);
+  process.stdout.write(`${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}\n`);
+  process.stdout.write(`${DIM}  Tip: loki analyze code overview  - codebase intelligence${NC}\n`);
   return 0;
 }
 

@@ -387,6 +387,11 @@ class StatusResponse(BaseModel):
     mode: str = ""
     provider: str = "claude"
     current_task: str = ""
+    # v7.34.0 Phase 1: the deterministic per-run Claude session UUID derived from
+    # the trust-run-id (read from .loki/state/claude-session.json). Surfaced so a
+    # user can inspect/resume the run with `claude --resume <uuid>`. Empty when
+    # the run predates this field or no claude session was stamped.
+    claude_session_id: str = ""
     # Concurrent sessions (v6.4.0)
     sessions: list[SessionInfo] = []
 
@@ -954,6 +959,18 @@ async def get_status() -> StatusResponse:
     pending_tasks = 0
     running_agents = 0
 
+    # v7.34.0 Phase 1: the deterministic per-run Claude session UUID, written at
+    # run-start by run.sh (correlation-only). Best-effort read; empty when the
+    # file is absent (run predates the field, or a non-claude provider).
+    claude_session_id = ""
+    claude_session_file = loki_dir / "state" / "claude-session.json"
+    if claude_session_file.exists():
+        try:
+            _cs = _safe_json_read(claude_session_file, {})
+            claude_session_id = _cs.get("claude_session_uuid", "") or ""
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+
     # Read dashboard state (with retry for concurrent writes)
     _has_dashboard_state = False
     if state_file.exists():
@@ -1206,6 +1223,7 @@ async def get_status() -> StatusResponse:
         mode=mode,
         provider=provider,
         current_task=current_task,
+        claude_session_id=claude_session_id,
         sessions=active_session_list,
     )
 

@@ -226,3 +226,64 @@ loki_review_guard_denylist() {
     # global-flag-before-subcommand evasion of the bare git-mutation rules.
     printf '%s' "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)"
 }
+
+# ---------- v7.34.0 Claude session-id stamping (Phase 1, correlation-only) -----
+# Derive a deterministic per-run UUID from the existing trust-run-id so the same
+# run always maps to the same claude session UUID, and the bash + Bun routes
+# produce BYTE-IDENTICAL uuids for the same run id. We use RFC-4122 UUIDv5
+# (SHA-1 over a stable namespace + the name). The namespace below is a fixed,
+# Loki-specific constant; never change it (changing it re-keys every run's uuid).
+# The TS mirror is loki-ts/src/providers/claude_flags.ts claudeSessionUuid().
+#
+# Phase 1 is correlation-only: the uuid is written to a metadata file and (only
+# when LOKI_SESSION_STAMP=1) emitted as a PER-ITERATION --session-id on the main
+# loop. It NEVER pins one id across the run (that is Phase 2 continuity, which
+# would accumulate transcript and compete with Loki's own injected memory).
+LOKI_CLAUDE_SESSION_NS="b6f3c7a2-9d41-5e8b-9c2a-3f7d6e1a4b50"
+
+# UUIDv5 over the Loki session namespace + an arbitrary name string. Pure
+# (stdout only), deterministic, no side effects. Uses python3 (always present on
+# the bash route; every other helper here already depends on it). Emits empty on
+# any failure so the caller degrades to metadata-only without breaking the run.
+_loki_uuid5() {
+    local name="${1:-}"
+    [ -z "$name" ] && return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    LOKI_CLAUDE_SESSION_NS="$LOKI_CLAUDE_SESSION_NS" _LOKI_UUID5_NAME="$name" \
+    python3 - <<'UUID5_PY' 2>/dev/null || true
+import os, uuid
+ns = uuid.UUID(os.environ["LOKI_CLAUDE_SESSION_NS"])
+print(uuid.uuid5(ns, os.environ["_LOKI_UUID5_NAME"]))
+UUID5_PY
+}
+
+# The stable per-run claude session UUID: UUIDv5 of the trust-run-id. Same run
+# id -> same uuid, on every route. Emits empty when no run id is resolvable.
+_loki_claude_session_uuid() {
+    local run_id="${1:-${LOKI_TRUST_RUN_ID:-}}"
+    [ -z "$run_id" ] && return 0
+    _loki_uuid5 "$run_id"
+}
+
+# The PER-ITERATION session UUID emitted on the main loop when LOKI_SESSION_STAMP=1.
+# UUIDv5 of "<run-id>:<iteration>", so every iteration gets a DISTINCT, deterministic
+# id. This is deliberately NOT the stable per-run uuid: a single pinned id reused
+# across iterations would make claude RESUME (accumulate transcript), which is
+# Phase 2 continuity, explicitly out of scope here. Distinct-per-iteration keeps
+# each iteration a fresh stateless session (byte-identical default behavior to
+# v7.33 except for the added correlation flag).
+_loki_claude_iteration_session_uuid() {
+    local run_id="${1:-${LOKI_TRUST_RUN_ID:-}}"
+    local iteration="${2:-${ITERATION_COUNT:-0}}"
+    [ -z "$run_id" ] && return 0
+    _loki_uuid5 "${run_id}:${iteration}"
+}
+
+# Predicate: emit the per-iteration --session-id ARGV flag? CONSERVATIVE DEFAULT
+# is OFF (metadata-file-only) so the default claude argv stays byte-identical to
+# v7.33 (the UX-monotonicity requirement). Opt IN with LOKI_SESSION_STAMP=1.
+# Gated on CLI support so an older claude degrades gracefully (no flag emitted).
+loki_session_stamp_enabled() {
+    [ "${LOKI_SESSION_STAMP:-0}" = "1" ] || return 1
+    loki_claude_flag_supported "--session-id"
+}
