@@ -82,7 +82,7 @@ Get detailed session status. Reads from `.loki/` flat files (dashboard-state.jso
 }
 ```
 
-`claude_session_id` (v7.34.0) is the deterministic per-run UUID stamped at run-start (correlation-only) for matching a run to its Claude session JSONL under `~/.claude/projects/`. Empty string when the run predates the field or uses a non-Claude provider.
+`claude_session_id` (v7.34.0) is the deterministic per-run UUID stamped at run-start, a stable identifier for the run (correlation-only). With `LOKI_SESSION_STAMP=1`, Loki derives per-iteration UUIDs from it and passes them to Claude as `--session-id`, so the iteration JSONLs under `~/.claude/projects/` are predictably named and correlate back to this run id. Empty string when the run predates the field or uses a non-Claude provider.
 
 **`loki status --json` Phase 1 block (v7.5.5+):**
 
