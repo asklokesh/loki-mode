@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.34.1] - 2026-06-11
+
+### Fixed
+- `loki api start --help` (and `-h`) now short-circuit to the help text
+  instead of being swallowed by the `--host`/`--port` parse loop and starting
+  the dashboard server. `loki api --help` already worked; this covers the
+  flag-after-subcommand case.
+- README GitHub-stars badge: added `cacheSeconds=86400` so shields.io serves a
+  cached count instead of leaking its rate-limit error ("UNABLE TO SELECT NEXT
+  GITHUB TOKEN FROM POOL") into the badge when its shared GitHub token pool is
+  exhausted.
+
 ## [7.34.0] - 2026-06-11
 
 ### Added
