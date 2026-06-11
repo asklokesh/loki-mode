@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.32.3] - 2026-06-10
+
+### Fixed
+- Non-git codebase signature was blind to same-size content edits (path+size
+  pairs only), so a stale generated PRD could be silently reused with a false
+  "codebase unchanged" disclosure. The files: signature now also streams file
+  content through the hash (clone-stable, batched via xargs so cost scales
+  with bytes, measured ~0.2s per 10k files). Trees over
+  `LOKI_PRD_SIG_CONTENT_BUDGET` bytes (default 50MB, documented in
+  wiki/Environment-Variables.md) fall back to the previous fast listing
+  (`files-shallow:`), where the limitation is documented honestly.
+- The one-time signature-format upgrade is invisible and honest: a stored
+  old-format signature whose listing fields match decides reuse (no false
+  "Codebase changed" disclosure, no spurious update cycle) and the persisted
+  date is preserved. Corrupted or truncated stored signatures still fall to
+  update, as before.
+- Empty-tree signature no longer embeds a double-zero count.
+- Git projects are unaffected (git status already detects all edits).
+
 ## [7.32.2] - 2026-06-10
 
 ### Fixed

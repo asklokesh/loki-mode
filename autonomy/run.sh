@@ -4543,7 +4543,7 @@ _loki_hash_stdin() {
 # Compute a cheap, clone-stable signature of the codebase so we can tell whether
 # it changed since the generated PRD was last written. Git repos: HEAD sha +
 # dirty flag (.loki/.git churn filtered out). Non-git: a hash of sorted
-# path+size pairs PLUS file content (v7.33, #569: path+size alone was blind to
+# path+size pairs PLUS file content (v7.32.3, #569: path+size alone was blind to
 # a same-size content edit, so a stale PRD could be silently reused with a
 # false "codebase unchanged" disclosure). Content hashing is clone-stable
 # (mtime is not, which is why mtime was never used). Trees larger than
@@ -4678,8 +4678,12 @@ except Exception:
         # made BEFORE the upgrade stays invisible for this one run, exactly as it
         # was on the old version (no regression, no false disclosure).
         case "$stored" in
-            files:*)
-                if [ "${current#"${stored}":}" != "$current" ]; then
+            files:*:*)
+                # Require the legitimate old 3-field format (files:HASH:COUNT,
+                # exactly 2 colons), not a truncated/corrupted 2-field value
+                # (council hardening: corruption must fall to update, as before).
+                if [ "$(printf '%s' "$stored" | tr -dc ':' | wc -c | tr -d ' ')" = "2" ] \
+                   && [ "${current#"${stored}":}" != "$current" ]; then
                     echo "reuse"; return 0
                 fi
                 ;;
@@ -4738,6 +4742,7 @@ prev_sig = prev.get('signature') if isinstance(prev, dict) else None
 # Preserve the date in both cases; the PRD content did not change.
 _legacy_upgrade = (
     isinstance(prev_sig, str) and prev_sig.startswith('files:')
+    and prev_sig.count(':') == 2
     and sig.startswith(prev_sig + ':')
 )
 if prev_at and (prev_sig == sig or _legacy_upgrade):

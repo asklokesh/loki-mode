@@ -158,7 +158,7 @@ echo "b" > "$NG/b.py"
 NG3=$(compute_codebase_signature "$NG")
 [ "$NG1" != "$NG3" ] && ok "non-git fallback detects a new file" || bad "non-git missed a new file"
 
-# v7.33 (#569): a SAME-SIZE content edit must change the signature (path+size
+# v7.32.3 (#569): a SAME-SIZE content edit must change the signature (path+size
 # alone was blind to it and a stale PRD could be silently reused).
 NG4=$(compute_codebase_signature "$NG")
 printf 'c\n' > "$NG/b.py"   # same byte count as "b\n", different content
