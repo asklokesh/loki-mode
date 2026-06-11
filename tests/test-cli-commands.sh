@@ -301,6 +301,16 @@ test_cmd "loki mcp --help exits 0 and shows the MCP launcher usage" \
     0 "launch the MCP" mcp --help
 
 # -------------------------------------------
+# Test: loki api start --help short-circuits to help (#574), does NOT start
+# the server. The help banner shows and exits 0; a started server would print a
+# different first line and would not exit cleanly here.
+# -------------------------------------------
+test_cmd "loki api start --help shows help, does not start the server (#574)" \
+    0 "Dashboard/API Server" api start --help
+test_cmd "loki api start -h shows help (#574)" \
+    0 "Dashboard/API Server" api start -h
+
+# -------------------------------------------
 # Test: unknown command exits non-zero
 # -------------------------------------------
 test_cmd "loki unknown-command exits 1" \

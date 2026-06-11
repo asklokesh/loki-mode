@@ -8697,8 +8697,12 @@ cmd_api() {
 
     # Parse --host/--port (the old code ignored them, so `loki serve --port X`
     # silently bound 57374 and `--host 0.0.0.0` was dropped).
+    # A trailing --help/-h on any subcommand (e.g. `loki api start --help`)
+    # short-circuits to the help text instead of being swallowed and starting
+    # the server (#574).
     while [ $# -gt 0 ]; do
         case "$1" in
+            --help|-h) subcommand="help"; break ;;
             --port) port="${2:-$port}"; shift 2 ;;
             --port=*) port="${1#*=}"; shift ;;
             --host) host="${2:-$host}"; shift 2 ;;
