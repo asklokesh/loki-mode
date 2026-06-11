@@ -254,12 +254,14 @@ export async function dispatchClaudeAgents(
   // EMBED 3 (v7.33.0): --disallowedTools on the council voter argv. A reviewer
   // / voter agent must NEVER mutate the working tree (a parallel agent once ran
   // `git reset --hard` and wiped uncommitted work). Deny Edit/Write/NotebookEdit
-  // + git MUTATION subcommands only; read-only git (diff/log/show/status) stays
-  // allowed so the voter can still inspect the tree. Default-ON; opt out with
+  // + git MUTATION forms incl. the git -C / --git-dir / -c evasions; read-only
+  // git (diff/log/show/status) stays allowed so the voter can still inspect the
+  // tree. A guardrail (raises the cost of the common destructive command), not a
+  // sandbox -- echo>/sed -i/etc. remain. Default-ON; opt out with
   // LOKI_REVIEW_TOOL_GUARD=0. Gated on CLI support. NOTE: --bare (Embed 2) is
-  // deliberately NOT applied here -- per `claude --help`, --bare nullifies
-  // --agents, which this voter argv is built around. Mirrors the bash reviewer/
-  // adversarial sites in autonomy/run.sh and loki_review_guard_denylist.
+  // deliberately NOT applied to this voter path: it relies on auto-discovered
+  // context (CLAUDE.md/hooks) that --bare drops, which could change voter
+  // judgment. Mirrors loki_review_guard_denylist in autonomy/lib/claude-flags.sh.
   if (
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
     claudeFlagSupported("--disallowedTools")

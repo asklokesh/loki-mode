@@ -142,11 +142,13 @@ loki_claude_flag_supported() {
 
 # EMBED 2 -- --bare (cheap NON-MAIN subcalls only). Minimal mode. Per
 # `claude --help` it SKIPS hooks, LSP, plugin sync, attribution, auto-memory,
-# background prefetches, keychain reads, AND CLAUDE.md auto-discovery (it also
-# nullifies --mcp-config / --settings / --agents). Therefore it is ONLY safe on
-# subcalls whose prompt is fully self-contained (the entire instruction set +
-# context is passed via -p), and NEVER on the main RARV loop or on any call that
-# relies on --agents / --mcp-config / CLAUDE.md auto-discovery.
+# background prefetches, keychain reads, and CLAUDE.md AUTO-discovery. It does
+# NOT nullify explicit --mcp-config/--settings/--agents (the help lists those as
+# the way to "explicitly provide context" UNDER --bare); what it drops is the
+# IMPLICIT/auto-discovered context. Therefore --bare is ONLY safe on subcalls
+# whose prompt is fully self-contained (the entire instruction set + context is
+# passed via -p), and NEVER on the main RARV loop or on any call that relies on
+# auto-discovered CLAUDE.md / hooks / auto-memory.
 # Default-ON; opt out with LOKI_BARE_SUBCALLS=0. Predicate so call sites can
 # append "--bare" to their argv array uniformly:
 #   loki_subcall_bare_enabled && argv+=("--bare")

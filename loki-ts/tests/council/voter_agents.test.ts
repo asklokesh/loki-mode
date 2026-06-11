@@ -224,7 +224,7 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     }
   });
 
-  it("never applies --bare (Embed 2) to the voter argv (it nullifies --agents)", async () => {
+  it("never applies --bare (Embed 2) to the voter argv (it would drop auto-discovered context the voter relies on)", async () => {
     _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>\n  --bare");
     const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
     delete process.env["LOKI_REVIEW_TOOL_GUARD"];
