@@ -1,5 +1,5 @@
 name: 'Loki Mode Code Review'
-description: 'Multi-agent autonomous code review using loki-mode. Supports Claude, Codex, and Gemini providers.'
+description: 'Multi-agent autonomous code review using loki-mode. Supports Claude, Codex, Cline, and Aider providers.'
 author: 'asklokesh'
 
 branding:
@@ -12,7 +12,7 @@ inputs:
     required: false
     default: 'review'
   provider:
-    description: 'AI provider: claude, codex, or gemini'
+    description: 'AI provider: claude, codex, cline, or aider'
     required: false
     default: 'claude'
   budget_limit:
@@ -93,17 +93,11 @@ runs:
               echo "Installed: $(codex --version 2>/dev/null || echo 'unknown')"
             fi
             ;;
-          gemini)
-            if command -v gemini &>/dev/null; then
-              echo "Google Gemini CLI already installed: $(gemini --version 2>/dev/null || echo 'unknown')"
-            else
-              echo "--- Installing Google Gemini CLI ---"
-              npm install -g @google/gemini-cli
-              echo "Installed: $(gemini --version 2>/dev/null || echo 'unknown')"
-            fi
+          cline|aider)
+            echo "Provider '$ACTION_PROVIDER' uses no dedicated CLI install step here; ensure its prerequisites are available in the runner."
             ;;
           *)
-            echo "::error::Unknown provider '$ACTION_PROVIDER'. Supported: claude, codex, gemini"
+            echo "::error::Unknown provider '$ACTION_PROVIDER'. Supported: claude, codex, cline, aider"
             exit 1
             ;;
         esac
@@ -146,24 +140,6 @@ runs:
               echo "      provider: codex"
               echo "    env:"
               echo "      OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}"
-              exit 1
-            fi
-            ;;
-          gemini)
-            if [ -n "${GOOGLE_API_KEY:-}" ]; then
-              echo "GOOGLE_API_KEY is set"
-            elif [ -n "${GEMINI_API_KEY:-}" ]; then
-              echo "GEMINI_API_KEY is set"
-            else
-              echo "::error::No Gemini credentials found. Set GOOGLE_API_KEY or GEMINI_API_KEY as a repository secret."
-              echo ""
-              echo "Example workflow configuration:"
-              echo "  - uses: asklokesh/loki-mode@v5"
-              echo "    with:"
-              echo "      github_token: \${{ secrets.GITHUB_TOKEN }}"
-              echo "      provider: gemini"
-              echo "    env:"
-              echo "      GOOGLE_API_KEY: \${{ secrets.GOOGLE_API_KEY }}"
               exit 1
             fi
             ;;
