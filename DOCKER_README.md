@@ -296,7 +296,7 @@ docker inspect --format='{{.State.Health.Status}}' <container-id>
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1) -- See [LICENSE](https://github.com/asklokesh/loki-mode/blob/main/LICENSE) and [LICENSE-CHANGE-NOTICE.md](https://github.com/asklokesh/loki-mode/blob/main/LICENSE-CHANGE-NOTICE.md). Converts to Apache 2.0 on March 19, 2030.
+Business Source License 1.1 (BUSL-1.1) -- See [LICENSE](https://github.com/asklokesh/loki-mode/blob/main/LICENSE) and [docs/LICENSE-CHANGE-NOTICE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/LICENSE-CHANGE-NOTICE.md). Converts to Apache 2.0 on March 19, 2030.
 
 ## Support
 

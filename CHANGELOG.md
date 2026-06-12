@@ -9924,7 +9924,7 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Commercial use that competes with Loki Mode requires a separate license from Autonomi, Inc.
 - Each version automatically converts to Apache License 2.0 four years after release (Change Date: March 19, 2030)
 - Updated license references across all distribution channels: package.json, vscode-extension, Python SDK (pyproject.toml), TypeScript SDK, README badge and section
-- Added LICENSE-CHANGE-NOTICE.md explaining what changed and what is/isn't affected
+- Added docs/LICENSE-CHANGE-NOTICE.md explaining what changed and what is/isn't affected
 
 ## [6.36.5] - 2026-03-19
 
