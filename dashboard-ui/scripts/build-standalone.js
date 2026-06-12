@@ -413,6 +413,27 @@ function generateStandaloneHTML(bundleCode) {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* v7.35: the chip name is a switch-project affordance. Clickable names get
+       a pointer + hover accent; the active project's name is emphasized and
+       not clickable (already focused). */
+    .project-stop-row .project-stop-name.is-clickable {
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 0 2px;
+      transition: color 0.12s ease, background 0.12s ease;
+    }
+    .project-stop-row .project-stop-name.is-clickable:hover {
+      color: var(--loki-accent, #553DE9);
+      background: var(--loki-bg-hover, rgba(85, 61, 233, 0.08));
+    }
+    .project-stop-row .project-stop-name.is-clickable:focus-visible {
+      outline: 2px solid var(--loki-accent, #553DE9);
+      outline-offset: 1px;
+    }
+    .project-stop-row .project-stop-name.is-active {
+      font-weight: 600;
+      color: var(--loki-accent, #553DE9);
+    }
     .project-stop-row button {
       padding: 2px 8px;
       background: transparent;
@@ -1318,6 +1339,16 @@ document.addEventListener('DOMContentLoaded', function() {
     var sel = document.getElementById('project-switcher');
     if (!sel) return;
     var stopList = document.getElementById('project-stop-list');
+    // v7.35: focus a project by its working dir, then reload so every panel
+    // re-fetches against it. The active section lives in the URL hash now, so
+    // the reload lands the user on the SAME section (no reset to overview).
+    // Shared by the dropdown <select> and the clickable project chips.
+    function focusProject(dir) {
+      var req = dir
+        ? fetch('/api/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_dir: dir }) })
+        : fetch('/api/focus', { method: 'DELETE' });
+      return req.then(function(){ window.location.reload(); }).catch(function(){ /* ignore */ });
+    }
     // v7.7.30: build a per-row Stop control for each running project using
     // createElement + textContent only (never innerHTML for project-supplied
     // strings), so a project name can never inject markup.
@@ -1331,6 +1362,24 @@ document.addEventListener('DOMContentLoaded', function() {
         var name = document.createElement('span');
         name.className = 'project-stop-name';
         name.textContent = p.name || p.path || 'project';
+        // v7.35: the chip name is now a clickable affordance that focuses
+        // that project (same path as the dropdown). The Stop button keeps its
+        // own handler; clicking the name never triggers Stop. is_active chips
+        // are marked so the current project is visually obvious and its click
+        // is a no-op (already focused).
+        if (p.is_active) {
+          name.classList.add('is-active');
+        } else if (p.path) {
+          name.classList.add('is-clickable');
+          name.setAttribute('role', 'button');
+          name.setAttribute('tabindex', '0');
+          name.setAttribute('title', 'Switch to ' + (p.name || p.path));
+          var go = function(ev){ if (ev) ev.stopPropagation(); focusProject(p.path); };
+          name.addEventListener('click', go);
+          name.addEventListener('keydown', function(ev){
+            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(ev); }
+          });
+        }
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = 'Stop';
@@ -1377,14 +1426,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(function(){ /* offline / no endpoint: leave as-is */ });
     }
     sel.addEventListener('change', function(){
-      var dir = sel.value;
-      var req = dir
-        ? fetch('/api/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_dir: dir }) })
-        : fetch('/api/focus', { method: 'DELETE' });
-      req.then(function(){
-        // Reload so every panel re-fetches against the newly focused project.
-        window.location.reload();
-      }).catch(function(){ /* ignore */ });
+      focusProject(sel.value);
     });
     refresh();
     setInterval(refresh, 15000);
@@ -1610,6 +1652,17 @@ document.addEventListener('DOMContentLoaded', function() {
     // Scroll main content to top on section switch
     mainContent.scrollTop = 0;
     localStorage.setItem('loki-active-section', sectionId);
+    // v7.35: reflect the active section in the URL hash so a refresh,
+    // back-button, or a project switch (which reloads the page) lands the
+    // user back on the SAME section instead of resetting to overview. The
+    // hash is updated in place (replaceState) so it does not stack history
+    // entries on every tab click.
+    try {
+      var nh = '#section=' + sectionId;
+      if (window.location.hash !== nh) {
+        history.replaceState(null, '', window.location.pathname + window.location.search + nh);
+      }
+    } catch (e) { /* file:// or sandboxed: hash routing best-effort */ }
   }
 
   navLinks.forEach(function(link) {
@@ -1622,8 +1675,35 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
-  // Show the default section (overview) on load
-  switchSection('overview');
+  // v7.35: restore the active section on load. Priority: URL hash
+  // (#section=<id>, shareable + survives the project-switch reload) ->
+  // localStorage (last-used on this machine) -> overview (default). Only
+  // honor a section id that maps to a real nav link, so a stale/hand-edited
+  // hash can never blank the page.
+  function lokiInitialSection() {
+    var fromHash = '';
+    try {
+      var m = (window.location.hash || '').match(/section=([A-Za-z0-9_-]+)/);
+      if (m) fromHash = m[1];
+    } catch (e) { /* ignore */ }
+    var fromStore = '';
+    try { fromStore = localStorage.getItem('loki-active-section') || ''; } catch (e) { /* ignore */ }
+    var candidate = fromHash || fromStore || 'overview';
+    if (!document.querySelector('.nav-link[data-section="' + candidate + '"]')) {
+      candidate = 'overview';
+    }
+    return candidate;
+  }
+  switchSection(lokiInitialSection());
+
+  // Keep the view in sync if the hash changes (back/forward button, or a
+  // shared link opened in the same tab).
+  window.addEventListener('hashchange', function() {
+    var m = (window.location.hash || '').match(/section=([A-Za-z0-9_-]+)/);
+    if (m && document.querySelector('.nav-link[data-section="' + m[1] + '"]')) {
+      switchSection(m[1]);
+    }
+  });
 
   // Keyboard shortcuts: Cmd/Ctrl + 1-7
   document.addEventListener('keydown', function(e) {

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.35.0] - 2026-06-12
+
+### Added
+- Dashboard: running-project chips in the sidebar are now clickable. Clicking
+  a chip name focuses that project (the same path as the project dropdown),
+  so switching apps is one click. The Stop button keeps its own handler;
+  clicking the name never triggers Stop. The active project's chip is
+  emphasized and is a no-op (already focused). Project names remain
+  textContent-only (no HTML injection).
+
+### Fixed
+- Dashboard: switching projects (or refreshing) no longer resets the view to
+  Overview. The active nav section is now URL-encoded as `#section=<id>` and
+  restored on load (hash -> localStorage -> overview), so a project switch
+  (which reloads the page) and a browser refresh both land on the SAME tab.
+  Added a `hashchange` listener for back/forward + shared links; stale or
+  invalid hashes fall back safely and can never blank the page.
+
 ## [7.34.1] - 2026-06-11
 
 ### Fixed
