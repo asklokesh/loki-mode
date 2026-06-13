@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.36.0] - 2026-06-13
+
+### Added
+- `loki review --ultra` (issue #168): an explicit, opt-in, on-demand cloud
+  multi-agent code review that wraps the upstream `claude ultrareview`
+  subcommand. Paid cloud operation, billed by Anthropic, separate from local
+  model spend. Strictly opt-in: the disclosure prints every time, an interactive
+  TTY prompts with default NO, and a non-interactive shell without `--yes` (or
+  `LOKI_ULTRAREVIEW=1`) refuses with exit 2 and makes zero cloud calls. Findings
+  are advisory and do not block the completion gate. Capability-gated: if the
+  installed claude lacks `ultrareview` it prints an honest upgrade note and
+  exits. No dollar amount is shown (no price API exists); the disclosure states
+  the cost class only.
+- `loki plan` now states the trust moat (issue #166): a short, honest block
+  ("Why this estimate is trustworthy") naming verified completion (the
+  completion council blocks "done" without a real diff and green tests) and cost
+  honesty (the quoted model is the model the run dispatches and the dashboard
+  reports). Mirrored as a structured `moat` field in `loki plan --json`.
+- `--allowedTools` positive allowlist for reviewer/adversarial/council subcalls
+  (issue #167), opt-in via `LOKI_REVIEW_ALLOWLIST=1`, default OFF and
+  byte-identical default argv on both routes. Complements the v7.33.0
+  `--disallowedTools` denylist with a least-privilege read/inspect allowlist
+  (Read, Grep, Glob, read-only git and shell). Deny-precedence verified against
+  the live CLI and the Claude Code permissions docs, so allowlist and denylist
+  ship together. Gated on CLI support.
+
+### Fixed
+- Non-git codebase signature hardening (issue #171): trees over the content
+  budget (or file-count cap `LOKI_PRD_SIG_CONTENT_MAXFILES`, default 20000) now
+  use a sampled head+tail content hash (`files-sampled:`) instead of the old
+  content-blind `files-shallow:` listing, so most same-size edits on large
+  non-git trees are detected and a stale generated PRD is no longer silently
+  reused. Batched (xargs -0 -n 64) to avoid per-file fork cost. A stored
+  pre-upgrade `files-shallow:` signature with a matching listing + count still
+  decides reuse on the first post-upgrade run. Git projects unaffected. Residual
+  honest gap (a same-size edit confined to the middle of a file larger than 8KB)
+  documented in the signature docblock.
+- Nightly parity-drift workflow (issue #173) now normalizes environment-only
+  lines (disk space GB, the runtime-route block, the LOKI_LEGACY_BASH warning,
+  dashboard pid, summary counts) before diffing the bash and Bun `doctor` output,
+  matching the normalization already in scripts/local-ci.sh. This stops
+  env-only false positives while still surfacing real route-logic divergence.
+
 ## [7.35.0] - 2026-06-12
 
 ### Added

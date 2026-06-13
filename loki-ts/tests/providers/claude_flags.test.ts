@@ -21,6 +21,9 @@ import {
   claudeSessionUuid,
   claudeIterationSessionUuid,
   sessionStampArgv,
+  reviewAllowlistEnabled,
+  reviewAllowlistArgv,
+  REVIEW_ALLOWLIST_TOKEN,
   _resetClaudeHelpCacheForTest,
 } from "../../src/providers/claude_flags.ts";
 
@@ -474,5 +477,74 @@ describe("claude_flags.buildAutoFlags --no-session-persistence (v7.34.0 FIX D)",
       if (saved === undefined) delete process.env["LOKI_NO_SESSION_PERSIST"];
       else process.env["LOKI_NO_SESSION_PERSIST"] = saved;
     }
+  });
+});
+
+// EMBED 3b (v7.35.0, #167): --allowedTools positive review allowlist helpers.
+describe("claude_flags review allowlist (EMBED 3b, #167)", () => {
+  const HELP_WITH = "  --allowedTools, --allowed-tools <tools...>  allow\n  --disallowedTools <tools...>  deny";
+  const HELP_WITHOUT = "  --disallowedTools <tools...>  deny"; // no --allowedTools
+
+  let savedFlag: string | undefined;
+  beforeEach(() => {
+    savedFlag = process.env["LOKI_REVIEW_ALLOWLIST"];
+  });
+  afterEach(() => {
+    if (savedFlag === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
+    else process.env["LOKI_REVIEW_ALLOWLIST"] = savedFlag;
+    _resetClaudeHelpCacheForTest(null);
+  });
+
+  it("DEFAULT OFF: reviewAllowlistEnabled() false and argv empty when env unset", () => {
+    delete process.env["LOKI_REVIEW_ALLOWLIST"];
+    _resetClaudeHelpCacheForTest(HELP_WITH);
+    expect(reviewAllowlistEnabled()).toBe(false);
+    expect(reviewAllowlistArgv()).toEqual([]);
+  });
+
+  it("ON: emits --allowedTools with the token when =1 and CLI supports the flag", () => {
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+    _resetClaudeHelpCacheForTest(HELP_WITH);
+    expect(reviewAllowlistEnabled()).toBe(true);
+    const argv = reviewAllowlistArgv();
+    expect(argv.length).toBe(2);
+    expect(argv[0]).toBe("--allowedTools");
+    expect(argv[1]).toBe(REVIEW_ALLOWLIST_TOKEN);
+  });
+
+  it("graceful degrade: =1 but CLI lacks --allowedTools -> disabled, argv empty", () => {
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+    _resetClaudeHelpCacheForTest(HELP_WITHOUT);
+    expect(reviewAllowlistEnabled()).toBe(false);
+    expect(reviewAllowlistArgv()).toEqual([]);
+  });
+
+  it("token grants only read/inspect tools (Read/Grep/Glob + read-only git), never mutators", () => {
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Read");
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Grep");
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Glob");
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git diff:*)");
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git log:*)");
+    expect(REVIEW_ALLOWLIST_TOKEN).toContain("Bash(git status:*)");
+    // No mutation tools or git mutation forms in an ALLOW grant.
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("Edit");
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("Write");
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("NotebookEdit");
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("git push");
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("git reset");
+    expect(REVIEW_ALLOWLIST_TOKEN).not.toContain("git commit");
+  });
+
+  it("returns exactly [--allowedTools, <token>] so the token is one argv element (never swallows the -p prompt)", () => {
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+    _resetClaudeHelpCacheForTest(HELP_WITH);
+    const argv = reviewAllowlistArgv();
+    // Exactly one flag + one token element. The token legitimately contains
+    // spaces inside Bash(git diff:*) specifiers; what matters is that it is a
+    // SINGLE array element (argv.length === 2), so when spread into the claude
+    // argv the following -p prompt is never consumed as extra tool names.
+    expect(argv.length).toBe(2);
+    expect(argv[0]).toBe("--allowedTools");
+    expect(argv[1]).toBe(REVIEW_ALLOWLIST_TOKEN);
   });
 });

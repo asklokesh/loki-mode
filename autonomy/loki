@@ -13898,6 +13898,7 @@ if show_json:
             'recommended': recommended_provider,
             'reason': provider_reason,
         },
+        'moat': {'verified_completion': True, 'cost_honest': True},
     }
     if show_verbose:
         result['iteration_details'] = iteration_plan
@@ -14034,6 +14035,12 @@ if show_verbose:
 
 print(f'\n{DIM}This is an estimate. Actual usage depends on PRD complexity,')
 print(f'code review cycles, and test failures.{NC}')
+
+print(f'\n{CYAN}Why this estimate is trustworthy{NC}')
+print(f'{DIM}Verified completion. The completion council refuses to call work done')
+print(f'without evidence - a real diff and green tests, or it blocks.{NC}')
+print(f'{DIM}Cost honesty. The model quoted here is the model the run dispatches')
+print(f'and the dashboard reports. Quote, dashboard, and dispatch agree.{NC}')
 print()
 " "$prd_path" "$show_json" "$show_verbose"
 }
@@ -14520,6 +14527,117 @@ main() {
             ;;
     esac
 }
+# v7.36.0 (issue #168): optional cloud multi-agent review tier (`loki review
+# --ultra`). Wraps the upstream `claude ultrareview` subcommand. ALWAYS opt-in,
+# cost-disclosed, default OFF, and advisory only (it does NOT block any gate).
+#
+# Consent model (modeled on cmd_demo's cost-confirm, autonomy/loki ~9488-9540):
+#   - The disclosure ALWAYS prints (paid cloud op + may take up to 30 min).
+#   - There is NO price API: we disclose the cost-CLASS, never a dollar figure.
+#   - Interactive TTY without --yes: prompt, default NO.
+#   - Non-TTY/CI without --yes (and no LOKI_ULTRAREVIEW=1): REFUSE with exit 2
+#     and ZERO ultrareview calls (the no-silent-bill guard). Never hang on read.
+#   - --yes or LOKI_ULTRAREVIEW=1 proceeds without prompting (this command only).
+# Args: <format> <assume_yes> <timeout_minutes> <target>
+_review_ultra() {
+    local fmt="${1:-text}"
+    local assume_yes="${2:-false}"
+    local timeout_min="${3:-}"
+    local target="${4:-}"
+
+    # Make the ultrareview gate predicates available even though autonomy/loki
+    # does not source claude-flags.sh globally (same on-demand pattern as
+    # autonomy/lib/voter-agents.sh). Degrade honestly if the lib is missing.
+    if ! declare -F loki_ultrareview_supported >/dev/null 2>&1; then
+        local _ur_lib=""
+        if [ -f "${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" ]; then
+            _ur_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh"
+        elif [ -f "$(dirname "$0")/lib/claude-flags.sh" ]; then
+            _ur_lib="$(dirname "$0")/lib/claude-flags.sh"
+        fi
+        if [ -n "$_ur_lib" ]; then
+            # shellcheck source=autonomy/lib/claude-flags.sh
+            . "$_ur_lib" 2>/dev/null || true
+        fi
+    fi
+
+    # 1. claude CLI present at all?
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${RED}Error: 'claude' CLI not found on PATH.${NC}" >&2
+        echo "loki review --ultra requires the Claude Code CLI (2.1.x) for cloud review." >&2
+        return 1
+    fi
+
+    # 2. Capability gate: does this claude support the ultrareview subcommand?
+    #    If absent, honest message + clean exit, never a half-feature.
+    if ! declare -F loki_ultrareview_supported >/dev/null 2>&1 \
+       || ! loki_ultrareview_supported; then
+        echo -e "${RED}Error: your 'claude' CLI does not support 'ultrareview'.${NC}" >&2
+        echo "Cloud multi-agent review needs Claude Code 2.1.x or newer; please upgrade." >&2
+        return 1
+    fi
+
+    # 3. Cost disclosure -- ALWAYS printed, even with --yes, so spend is never
+    #    hidden. NO dollar figure (there is no price API); cost-CLASS only.
+    echo -e "${BOLD}loki review --ultra${NC} - cloud multi-agent code review (optional, paid)" >&2
+    echo "" >&2
+    echo -e "${YELLOW}ultrareview is a PAID cloud operation billed by Anthropic, separate${NC}" >&2
+    echo -e "${YELLOW}from local model spend. It may take up to 30 minutes.${NC}" >&2
+    echo "Findings are advisory only and do not block Loki's completion gate." >&2
+    echo "" >&2
+
+    # 4. Consent. LOKI_ULTRAREVIEW=1 is the non-interactive opt-in equivalent of
+    #    --yes for THIS command only (never a council auto-trigger).
+    local proceed=false
+    if [ "$assume_yes" = true ]; then
+        proceed=true
+    elif declare -F loki_ultrareview_enabled >/dev/null 2>&1 && loki_ultrareview_enabled; then
+        proceed=true
+    else
+        # Interactive only when stdin is a real TTY and CI is not forcing
+        # non-interactive (matches the project's first-run gate semantics).
+        local ultra_interactive=true
+        if [ ! -t 0 ] || [ -n "${CI:-}" ]; then
+            ultra_interactive=false
+        fi
+        if [ "$ultra_interactive" = true ]; then
+            local ans=""
+            echo -n "Run cloud ultrareview now? [y/N] " >&2
+            read -r ans </dev/tty 2>/dev/null || ans=""
+            if [[ "$ans" =~ ^[Yy] ]]; then
+                proceed=true
+            else
+                echo "Cancelled. Nothing was spent." >&2
+                return 0
+            fi
+        else
+            # Non-TTY/CI without --yes: never hang; refuse with exit 2 and make
+            # ZERO ultrareview calls (the no-silent-bill guard).
+            echo "ultrareview needs confirmation; re-run with --yes (or set LOKI_ULTRAREVIEW=1) to proceed non-interactively" >&2
+            return 2
+        fi
+    fi
+
+    [ "$proceed" = true ] || { echo "Cancelled. Nothing was spent." >&2; return 0; }
+
+    # 5. Invoke `claude ultrareview [--json] [--timeout N] [target]` exactly once.
+    local ur_argv=("ultrareview")
+    if [ "$fmt" = "json" ]; then
+        ur_argv+=("--json")
+    fi
+    if [ -n "$timeout_min" ]; then
+        ur_argv+=("--timeout" "$timeout_min")
+    fi
+    if [ -n "$target" ]; then
+        ur_argv+=("$target")
+    fi
+
+    echo -e "${DIM}Running: claude ${ur_argv[*]}${NC}" >&2
+    echo "" >&2
+    claude "${ur_argv[@]}"
+    return $?
+}
+
 # Standalone code review - diff-based quality gates (v6.20.0)
 cmd_review() {
     local review_staged=false
@@ -14528,6 +14646,9 @@ cmd_review() {
     local review_target=""
     local review_format="text"
     local review_severity="all"
+    local review_ultra=false
+    local review_assume_yes=false
+    local review_timeout=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -14548,6 +14669,15 @@ cmd_review() {
                 echo "Options:"
                 echo "  --format json        Output as JSON (for CI integration)"
                 echo "  --severity <level>   Filter: critical, high, medium, low, info (shows level+above)"
+                echo "  --ultra              Run an OPTIONAL cloud multi-agent review via"
+                echo "                       'claude ultrareview' (PAID cloud op, opt-in,"
+                echo "                       default OFF, advisory only). Requires"
+                echo "                       confirmation; --yes or LOKI_ULTRAREVIEW=1 to"
+                echo "                       skip the prompt. Optional [file-or-dir] is"
+                echo "                       passed as the ultrareview target (branch / PR"
+                echo "                       number / base branch)."
+                echo "  --yes, -y            Skip the --ultra confirmation prompt"
+                echo "  --timeout <minutes>  --ultra: max minutes to wait (default 30)"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Exit codes:"
@@ -14563,7 +14693,21 @@ cmd_review() {
                 echo "  loki review --since HEAD~5       # Changes in last 5 commits"
                 echo "  loki review --format json        # JSON output for CI"
                 echo "  loki review --severity high      # Only HIGH+ findings"
+                echo "  loki review --ultra              # Cloud multi-agent review (paid, opt-in)"
+                echo "  loki review --ultra 42           # Cloud review of GitHub PR #42"
+                echo "  loki review --ultra --yes        # Skip confirmation (e.g. in a script)"
                 return 0
+                ;;
+            --ultra) review_ultra=true; shift ;;
+            --yes|-y) review_assume_yes=true; shift ;;
+            --timeout)
+                shift
+                review_timeout="${1:-}"
+                if [ -z "$review_timeout" ]; then
+                    echo -e "${RED}Error: --timeout requires a value in minutes${NC}"
+                    return 1
+                fi
+                shift
                 ;;
             --staged) review_staged=true; shift ;;
             --pr)
@@ -14599,6 +14743,16 @@ cmd_review() {
             *) review_target="$1"; shift ;;
         esac
     done
+
+    # v7.36.0 (issue #168): optional cloud multi-agent review tier. This is an
+    # explicit, on-demand, opt-in, cost-disclosed path that wraps the existing
+    # `claude ultrareview` subcommand. It short-circuits the local-only review
+    # below: --ultra is a different operation (paid cloud), not a flag that
+    # augments the local static analysis.
+    if [ "$review_ultra" = true ]; then
+        _review_ultra "$review_format" "$review_assume_yes" "$review_timeout" "$review_target"
+        return $?
+    fi
 
     # Severity level ordering (higher number = more severe)
     _review_sev_level() {

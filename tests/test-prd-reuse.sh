@@ -172,10 +172,33 @@ NG6=$(compute_codebase_signature "$NGC")
 [ "$NG5" = "$NG6" ] && ok "non-git signature is clone-stable (content-based, not mtime)" || bad "non-git signature not clone-stable"
 rm -rf "$NGC"
 
-# budget fallback: trees over LOKI_PRD_SIG_CONTENT_BUDGET bytes use the cheap
-# files-shallow: listing (documented honest limitation: size-blind there)
+# budget fallback (#171): trees over LOKI_PRD_SIG_CONTENT_BUDGET bytes use the
+# SAMPLED content tier (head+tail 4KB hash), not the old size-blind shallow one.
 NG7=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NG")
-case "$NG7" in files-shallow:*) ok "non-git over-budget falls back to files-shallow:" ;; *) bad "budget fallback wrong: $NG7" ;; esac
+case "$NG7" in files-sampled:*) ok "non-git over-budget falls back to files-sampled:" ;; *) bad "budget fallback wrong: $NG7" ;; esac
+
+# #171 CORE REGRESSION: with the sampled tier forced (budget=1), a same-size
+# edit within the first 4KB must STILL change the signature. The old size-blind
+# files-shallow: was content-blind here; files-sampled: must catch it.
+printf 'x\n' > "$NG/b.py"
+NG_S1=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NG")
+printf 'y\n' > "$NG/b.py"   # same byte count, different content, within first 4KB
+NG_S2=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NG")
+[ "$NG_S1" != "$NG_S2" ] && ok "sampled tier detects a same-size edit in the head window (#171)" \
+  || bad "sampled tier BLIND to a same-size head-window edit (#171 regression)"
+
+# #171: the file-count cap (MAXFILES) also forces the sampled tier even when the
+# tree is well under the byte budget. A 2-file tree with MAXFILES=1 -> sampled.
+NG_MF=$(LOKI_PRD_SIG_CONTENT_MAXFILES=1 compute_codebase_signature "$NG")
+case "$NG_MF" in files-sampled:*) ok "non-git over file-count cap falls back to files-sampled:" ;; *) bad "maxfiles cap fallback wrong: $NG_MF" ;; esac
+
+# #171: the sampled tier is clone-stable too (head+tail content, not mtime).
+NG_S3=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NG")
+NGCS=$(mktemp -d "${TMPDIR:-/tmp}/loki-prdreuse-ngcs-XXXXXX")
+cp -R "$NG/." "$NGCS/"
+NG_S4=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NGCS")
+[ "$NG_S3" = "$NG_S4" ] && ok "sampled-tier signature is clone-stable (#171)" || bad "sampled-tier signature not clone-stable"
+rm -rf "$NGCS"
 
 # v7.32.3 format transition: a stored OLD-format signature (3-field files:,
 # no content hash) whose listing fields match the new signature must yield
@@ -200,6 +223,30 @@ NG_AT=$(python3 -c "import json; print(json.load(open('$NG/.loki/state/prd-signa
 [ "$NG_AT" = "2026-01-01T00:00:00Z" ] \
   && ok "format-upgrade persist preserves generated_at (honest date)" \
   || bad "format-upgrade persist re-stamped generated_at: $NG_AT"
+
+# #171 format transition: a stored pre-#171 size-blind 'files-shallow:<listing>:
+# <count>' whose listing fields match the new sampled signature must decide
+# REUSE (not a false 'codebase changed') on the first post-upgrade run.
+NG_SAMP=$(LOKI_PRD_SIG_CONTENT_BUDGET=1 compute_codebase_signature "$NG")
+case "$NG_SAMP" in files-sampled:*) : ;; *) bad "expected files-sampled current sig, got: $NG_SAMP" ;; esac
+# derive the old shallow form (same listing+count, no sample hash) from it
+NG_SHALLOW="files-shallow:$(printf '%s' "$NG_SAMP" | cut -d: -f2-3)"
+python3 -c "
+import json, sys
+json.dump({'signature': sys.argv[1], 'generated_at': '2026-02-02T00:00:00Z',
+           'prd_path': '.loki/generated-prd.md', 'prd_sha': '', 'mode': 'files',
+           'loki_version': 'old'}, open(sys.argv[2], 'w'))
+" "$NG_SHALLOW" "$NG/.loki/state/prd-signature.json"
+[ "$(TARGET_DIR="$NG" LOKI_PRD_SIG_CONTENT_BUDGET=1 decide_generated_prd_action)" = "reuse" ] \
+  && ok "files-shallow -> files-sampled transition decides reuse (#171)" \
+  || bad "files-shallow -> files-sampled transition produced a spurious update"
+# the persist that follows must PRESERVE generated_at (no false re-stamp)
+( cd "$NG" && TARGET_DIR="." LOKI_PRD_SIG_CONTENT_BUDGET=1 prd_path=".loki/generated-prd.md" GENERATED_PRD_ACTION=reuse persist_prd_signature_if_present 0 ) 2>/dev/null
+NG_AT2=$(python3 -c "import json; print(json.load(open('$NG/.loki/state/prd-signature.json'))['generated_at'])")
+[ "$NG_AT2" = "2026-02-02T00:00:00Z" ] \
+  && ok "files-shallow -> files-sampled persist preserves generated_at (#171)" \
+  || bad "files-shallow -> files-sampled persist re-stamped generated_at: $NG_AT2"
+
 rm -rf "$NG"
 
 rm -rf "$WORK"

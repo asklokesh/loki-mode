@@ -316,6 +316,46 @@ export function sessionStampArgv(runId?: string, iteration?: number): string[] {
   return uuid ? ["--session-id", uuid] : [];
 }
 
+// ---------------------------------------------------------------------------
+// EMBED 3b (v7.35.0, GitHub #167) -- --allowedTools POSITIVE ALLOWLIST for the
+// reviewer / adversarial / council subcalls. Mirror of
+// loki_review_allowlist_enabled / loki_review_allowlist in
+// autonomy/lib/claude-flags.sh.
+//
+// Complements the v7.33 --disallowedTools denylist with a least-privilege grant:
+// only the read/inspect tools a voter needs. Per the official permission docs
+// (https://code.claude.com/docs/en/permissions) rules are "evaluated in order:
+// deny, then ask, then allow", and "if a tool is denied at any level, no other
+// level can allow it." Verified live against claude 2.1.177 (2026-06-13): with
+// both an allow and a deny rule on the same command, the command is BLOCKED,
+// even under --dangerously-skip-permissions. So DENY PRECEDENCE holds: the
+// allowlist and denylist are SAFE to emit together (the denylist still blocks
+// every mutation form; the allowlist additionally narrows the surface). They are
+// NOT mutually exclusive.
+//
+// DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1) so the default argv stays
+// byte-identical to v7.34. Gated on CLI support (graceful degrade). The token
+// MUST stay byte-identical to loki_review_allowlist() in claude-flags.sh.
+// ---------------------------------------------------------------------------
+export const REVIEW_ALLOWLIST_TOKEN =
+  "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git blame:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(wc:*)";
+
+// Emit the --allowedTools least-privilege grant on reviewer/voter subcalls?
+// DEFAULT OFF; opt in with LOKI_REVIEW_ALLOWLIST=1; gated on CLI support.
+// Mirrors loki_review_allowlist_enabled in autonomy/lib/claude-flags.sh.
+export function reviewAllowlistEnabled(): boolean {
+  if (process.env["LOKI_REVIEW_ALLOWLIST"] !== "1") return false;
+  return claudeFlagSupported("--allowedTools");
+}
+
+// The --allowedTools argv slice for a reviewer/voter subcall, or [] when
+// disabled / unsupported. One comma-separated token so the following -p prompt
+// is never swallowed as additional tool names. Mirrors the bash call-site shape.
+export function reviewAllowlistArgv(): string[] {
+  if (!reviewAllowlistEnabled()) return [];
+  return ["--allowedTools", REVIEW_ALLOWLIST_TOKEN];
+}
+
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
   _claudeHelpCache = text;

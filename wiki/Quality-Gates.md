@@ -146,6 +146,44 @@ Inconclusive evidence is never reported VERIFIED. When a spec lock exists
 
 ---
 
+## Optional cloud review: `loki review --ultra` (issue #168)
+
+`loki review --ultra` adds an OPTIONAL cloud multi-agent review on top of Loki's
+own local council, by wrapping the upstream `claude ultrareview` subcommand
+(Claude Code 2.1.x). It is a deliberate, on-demand command, NOT an automatic
+completion-council voice: the council runs many times per build, so auto-firing
+a paid cloud call there would be a silent-billing footgun. Findings are advisory
+only; they never block the completion gate.
+
+It is PAID and opt-in (default OFF, zero behavior change when unused). Because
+there is no price API, the disclosure states the cost-CLASS, never a dollar
+figure:
+
+> ultrareview is a PAID cloud operation billed by Anthropic, separate from local
+> model spend. It may take up to 30 minutes.
+
+Consent model:
+
+- Interactive TTY without `--yes`: prompts "Run cloud ultrareview now? [y/N]"
+  (default NO).
+- Non-TTY / CI without confirmation: refuses with exit code 2 and makes zero
+  cloud calls (the no-silent-bill guard; never hangs in CI).
+- `--yes` / `-y`, or `LOKI_ULTRAREVIEW=1`, proceeds non-interactively (this
+  command only; never a council auto-trigger).
+
+If the installed `claude` does not support `ultrareview`, the command prints an
+honest "please upgrade to 2.1.x" message and exits without a half-feature.
+
+```bash
+loki review --ultra                # confirm, then cloud-review the current branch
+loki review --ultra 42             # cloud-review GitHub PR #42
+loki review --ultra --yes          # skip the prompt (scripts)
+loki review --ultra --format json  # raw bugs.json (emits 'claude ultrareview --json')
+LOKI_ULTRAREVIEW=1 loki review --ultra   # non-interactive opt-in
+```
+
+---
+
 ## Override council on BLOCK (v7.5.0)
 
 When a gate blocks but the agent has structured counter-evidence, an optional

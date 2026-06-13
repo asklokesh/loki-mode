@@ -33,7 +33,12 @@ import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { parseMultiResponse } from "./finding_schema.ts";
-import { claudeFlagSupported, effortForTier, ensureClaudeHelpCache } from "../providers/claude_flags.ts";
+import {
+  claudeFlagSupported,
+  effortForTier,
+  ensureClaudeHelpCache,
+  reviewAllowlistArgv,
+} from "../providers/claude_flags.ts";
 
 export type AgentSpec = {
   description: string;
@@ -272,6 +277,15 @@ export async function dispatchClaudeAgents(
       "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
     );
   }
+  // EMBED 3b (v7.35.0, #167): positive --allowedTools least-privilege grant.
+  // DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1). Emitted ALONGSIDE the denylist:
+  // verified live that deny precedence holds (deny wins over allow even under
+  // --dangerously-skip-permissions), so the denylist still hard-blocks every
+  // mutation form while this narrows the in-context surface to read/inspect
+  // tools. reviewAllowlistArgv() returns [] when disabled / CLI-unsupported, so
+  // the default argv stays byte-identical. Mirrors the bash call sites
+  // (run.sh reviewer + adversarial) and loki_review_allowlist.
+  argv.push(...reviewAllowlistArgv());
   argv.push("-p", topPrompt);
 
   const result = await runner(argv);

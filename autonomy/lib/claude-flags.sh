@@ -227,6 +227,61 @@ loki_review_guard_denylist() {
     printf '%s' "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)"
 }
 
+# EMBED 3b (v7.35.0, GitHub #167) -- --allowedTools POSITIVE ALLOWLIST for the
+# reviewer / adversarial / council subcalls. Complements the v7.33 denylist with
+# a least-privilege grant: the value lists ONLY the read/inspect tools a voter
+# needs (Read, Grep, Glob, read-only git, and a small set of read-only shell
+# commands). Per `claude --help` and the official permission docs
+# (https://code.claude.com/docs/en/cli-reference,
+#  https://code.claude.com/docs/en/permissions) --allowedTools entries are
+# permission ALLOW rules ("tools that execute without prompting"), using the same
+# Tool / Tool(specifier) / Bash(cmd:*) prefix syntax as --disallowedTools.
+#
+# PRECEDENCE (proven empirically + documented): the docs state rules are
+# "evaluated in order: deny, then ask, then allow ... the first match in that
+# order determines the outcome", and "if a tool is denied at any level, no other
+# level can allow it." Verified live against claude 2.1.177 on 2026-06-13 with a
+# clean minimal env (temp git dir, --strict-mcp-config --mcp-config
+# '{"mcpServers":{}}', --advisor opus to dodge the Fable-pinned default advisor
+# tool, --tools "Bash,Read"):
+#   - allow-only  Bash(git status:*)                -> PERMITTED  (control)
+#   - deny-only   Bash(git status:*)                -> BLOCKED    (control)
+#   - allow + deny BOTH on Bash(git status:*)       -> BLOCKED    (deny wins)
+#   - allow + deny BOTH, under --dangerously-skip-permissions -> BLOCKED
+# So DENY PRECEDENCE holds even in bypassPermissions mode (the mode every council
+# subcall uses). This is the SAFE outcome: the allowlist and the denylist can be
+# emitted TOGETHER. The denylist still blocks every mutation form even though the
+# allowlist names read-only git; the allowlist additionally narrows the surface
+# to least-privilege. They are NOT mutually exclusive; we ship both.
+#
+# This is a GUARDRAIL, not a sandbox (same caveat as the denylist): --allowedTools
+# governs whether a tool runs WITHOUT A PROMPT, and these subcalls already run
+# under --dangerously-skip-permissions, so the practical effect is to restrict the
+# in-context tool surface to the allowlisted set while the denylist hard-blocks
+# the dangerous forms. echo>/sed -i/python -c style writes are not enumerable and
+# remain possible; the real net is commit-before-agent-wave (see CLAUDE.md).
+#
+# DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1) so the default argv on BOTH routes
+# stays byte-identical to v7.34. Gated on CLI support so an older claude degrades
+# gracefully (emits nothing). Predicate + token so call sites append uniformly:
+#   if loki_review_allowlist_enabled; then
+#       argv+=("--allowedTools" "$(loki_review_allowlist)")
+#   fi
+loki_review_allowlist_enabled() {
+    [ "${LOKI_REVIEW_ALLOWLIST:-0}" = "1" ] || return 1
+    loki_claude_flag_supported "--allowedTools"
+}
+loki_review_allowlist() {
+    # Comma-separated single token (the flag is variadic; one token keeps the
+    # following -p prompt from being swallowed as additional tool names). Grants
+    # ONLY read/inspect tools: the file-read tools (Read/Grep/Glob), read-only
+    # git (diff/log/show/status/ls-files/rev-parse/blame), and a small set of
+    # read-only shell commands a reviewer uses to inspect the tree. No Edit,
+    # Write, NotebookEdit, or any mutation form. Kept BYTE-IDENTICAL to
+    # REVIEW_ALLOWLIST_TOKEN in loki-ts/src/providers/claude_flags.ts.
+    printf '%s' "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git blame:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(wc:*)"
+}
+
 # ---------- v7.34.0 Claude session-id stamping (Phase 1, correlation-only) -----
 # Derive a deterministic per-run UUID from the existing trust-run-id so the same
 # run always maps to the same claude session UUID, and the bash + Bun routes
@@ -286,4 +341,40 @@ _loki_claude_iteration_session_uuid() {
 loki_session_stamp_enabled() {
     [ "${LOKI_SESSION_STAMP:-0}" = "1" ] || return 1
     loki_claude_flag_supported "--session-id"
+}
+
+# ---------- v7.36.0 ultrareview (cloud multi-agent review) gates ----------
+# `claude ultrareview [options] [target]` (Claude Code 2.1.x) runs a
+# cloud-hosted multi-agent code review of the current branch / a PR number / a
+# base branch and prints the findings. It is a PAID CLOUD operation billed by
+# Anthropic, SEPARATE from local model spend, and can take up to 30 minutes.
+#
+# These two predicates are the ONLY policy surface for the optional `loki review
+# --ultra` tier (issue #168). Both are read-only and side-effect-free.
+#
+# DESIGN (issue #168, architected):
+#   - This is an EXPLICIT, on-demand user action (`loki review --ultra`), NEVER
+#     an automatic completion-council voice. The council runs many times per
+#     build; auto-running a paid cloud call there would be a silent-billing
+#     footgun. The user typing "ultra" IS the consent signal; a confirmation
+#     prompt (or --yes / LOKI_ULTRAREVIEW=1) is still required before any spend.
+#   - There is NO price API, so we CANNOT show a dollar figure. We disclose the
+#     cost-CLASS (paid cloud op) and require confirmation. Never claim to show
+#     an estimated dollar amount here (that would be a lie).
+
+# Capability gate: does the installed `claude` CLI ship the `ultrareview`
+# subcommand? loki_claude_flag_supported greps `claude --help`, whose top-level
+# command list includes "ultrareview", so it matches subcommands too. Returns 0
+# when supported, 1 otherwise (so callers can emit an honest upgrade message).
+loki_ultrareview_supported() {
+    loki_claude_flag_supported "ultrareview"
+}
+
+# Non-interactive opt-in: is LOKI_ULTRAREVIEW=1 set? This is the env equivalent
+# of passing --yes to THIS command only. It is deliberately NOT wired into the
+# completion council or any auto path -- it only suppresses the interactive
+# confirmation prompt for an explicit `loki review --ultra` invocation. Any
+# other value (unset, 0, "true", etc.) returns 1 so only the exact "1" opts in.
+loki_ultrareview_enabled() {
+    [ "${LOKI_ULTRAREVIEW:-0}" = "1" ]
 }

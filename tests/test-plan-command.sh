@@ -157,7 +157,7 @@ fi
 has_fields=$(echo "$json_output" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-required = ['complexity', 'iterations', 'tokens', 'cost', 'time', 'execution_plan', 'quality_gates', 'provider']
+required = ['complexity', 'iterations', 'tokens', 'cost', 'time', 'execution_plan', 'quality_gates', 'provider', 'moat']
 missing = [k for k in required if k not in d]
 print('OK' if not missing else 'MISSING: ' + ', '.join(missing))
 " 2>/dev/null)
@@ -397,6 +397,41 @@ else
     log_fail "demo non-TTY refuse" "exit=$nt_exit (124=timeout/hang)"
 fi
 rm -rf "$DEMO_TMP_25"
+
+# ===========================================
+# Issue #166: verified-completion + cost-honesty moat legible on loki plan
+# ===========================================
+
+# -------------------------------------------
+# Test 26: --json carries the moat block (verified_completion + cost_honest both
+# true) and is valid JSON.
+# -------------------------------------------
+((TOTAL++))
+moat_exit=0
+moat_json=$("$LOKI" plan "$SIMPLE_PRD" --json 2>&1) || moat_exit=$?
+moat_check=$(echo "$moat_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+m = d.get('moat', {})
+print('OK' if m.get('verified_completion') is True and m.get('cost_honest') is True else 'BAD')
+" 2>/dev/null)
+if [ "$moat_exit" -eq 0 ] && [ "$moat_check" = "OK" ]; then
+    log_pass "loki plan --json has moat.verified_completion==true and moat.cost_honest==true (valid JSON)"
+else
+    log_fail "plan --json moat block" "exit=$moat_exit check=$moat_check"
+fi
+
+# -------------------------------------------
+# Test 27: human (non-JSON) output makes the moat legible.
+# -------------------------------------------
+((TOTAL++))
+moat_fmt=$("$LOKI" plan "$SIMPLE_PRD" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+if echo "$moat_fmt" | grep -q "Verified completion" \
+    && echo "$moat_fmt" | grep -q "Quote, dashboard, and dispatch agree"; then
+    log_pass "loki plan human output shows 'Verified completion' and 'Quote, dashboard, and dispatch agree'"
+else
+    log_fail "plan human moat block" "missing moat lines in formatted output"
+fi
 
 # -------------------------------------------
 # Summary

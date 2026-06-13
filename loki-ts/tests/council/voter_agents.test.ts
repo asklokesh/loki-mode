@@ -270,3 +270,97 @@ describe("dispatchClaudeAgents EMBED 3 --disallowedTools tree-mutation guard", (
     }
   });
 });
+
+// EMBED 3b (v7.35.0, #167): --allowedTools positive least-privilege allowlist on
+// the council voter argv. DEFAULT OFF; opt in with LOKI_REVIEW_ALLOWLIST=1.
+describe("dispatchClaudeAgents EMBED 3b --allowedTools least-privilege allowlist", () => {
+  const validStdout = JSON.stringify({
+    findings: [
+      { role: VOTER_SLUGS.REQUIREMENTS_VERIFIER, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+      { role: VOTER_SLUGS.TEST_AUDITOR, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+      { role: VOTER_SLUGS.CONVERGENCE_VOTER, vote: "APPROVE", reason: "ok", confidence: 0.9 },
+    ],
+  });
+  function capturingRunner(captured: { argv: string[] }): ClaudeRunner {
+    return async (argv: string[]) => {
+      captured.argv = argv;
+      return { stdout: validStdout, exitCode: 0 };
+    };
+  }
+
+  const HELP_FULL =
+    "  --agents\n  --json-schema\n  --disallowedTools <tools...>\n  --allowedTools <tools...>";
+
+  it("DEFAULT OFF: no --allowedTools when LOKI_REVIEW_ALLOWLIST unset; argv byte-identical to denylist-only", async () => {
+    _resetClaudeHelpCacheForTest(HELP_FULL);
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const savedAllow = process.env["LOKI_REVIEW_ALLOWLIST"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"]; // denylist default-on
+    delete process.env["LOKI_REVIEW_ALLOWLIST"]; // allowlist default-off
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.includes("--allowedTools")).toBe(false);
+      // Denylist still present (default on), prompt still last.
+      expect(cap.argv.includes("--disallowedTools")).toBe(true);
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+      if (savedAllow === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
+      else process.env["LOKI_REVIEW_ALLOWLIST"] = savedAllow;
+    }
+  });
+
+  it("ON: adds --allowedTools with read/inspect token (and keeps the denylist) when =1 and supported", async () => {
+    _resetClaudeHelpCacheForTest(HELP_FULL);
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const savedAllow = process.env["LOKI_REVIEW_ALLOWLIST"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      const idx = cap.argv.indexOf("--allowedTools");
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const allowList = cap.argv[idx + 1] ?? "";
+      expect(allowList).toContain("Read");
+      expect(allowList).toContain("Grep");
+      expect(allowList).toContain("Glob");
+      expect(allowList).toContain("Bash(git diff:*)");
+      // No mutators in the ALLOW grant.
+      expect(allowList).not.toContain("Edit");
+      expect(allowList).not.toContain("Write");
+      expect(allowList).not.toContain("git push");
+      // Deny precedence is safe (verified live), so denylist coexists.
+      expect(cap.argv.includes("--disallowedTools")).toBe(true);
+      // The -p prompt stays second-to-last (token never swallows it).
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+      if (savedAllow === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
+      else process.env["LOKI_REVIEW_ALLOWLIST"] = savedAllow;
+    }
+  });
+
+  it("graceful degrade: =1 but CLI lacks --allowedTools -> no flag emitted, voter still works", async () => {
+    _resetClaudeHelpCacheForTest("  --agents\n  --json-schema\n  --disallowedTools <tools...>");
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const savedAllow = process.env["LOKI_REVIEW_ALLOWLIST"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      expect(cap.argv.includes("--allowedTools")).toBe(false);
+      expect(cap.argv.includes("--agents")).toBe(true);
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+      if (savedAllow === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
+      else process.env["LOKI_REVIEW_ALLOWLIST"] = savedAllow;
+    }
+  });
+});
