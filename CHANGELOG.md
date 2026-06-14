@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.40.0] - 2026-06-14
+
+### Added
+- Autonomous, complexity-gated decision for the no-PRD codebase-analysis pass.
+  When no PRD is provided, Loki reverse-engineers a PRD from the existing code.
+  On the Claude provider, when the repo is detected as complex (file_count > 50,
+  microservices, external deps, or a complex inferred spec), Loki now dispatches
+  that read-only analysis pass as a Claude Code Dynamic Workflow (parallel
+  fan-out, the `ultracode` trigger) for more thorough first-run analysis, and
+  otherwise keeps the cheaper three-pass analysis. The decision is made once per
+  run (not always-on) and is parity-locked across both routes
+  (autonomy/run.sh and loki-ts/src/runner/build_prompt.ts), evaluated in the same
+  order: non-Claude provider or degraded provider -> three-pass;
+  `LOKI_USE_CLAUDE_WORKFLOWS=0` -> three-pass (escape hatch);
+  `LOKI_USE_CLAUDE_WORKFLOWS=1` -> workflow (force on); variable unset ->
+  workflow only when complexity == complex. Simple and standard repos keep the
+  byte-identical default behavior. When the workflow path is taken autonomously,
+  a one-time stderr disclosure names the higher cost class (no fabricated dollar
+  figure; there is no price API) and the `LOKI_USE_CLAUDE_WORKFLOWS=0` opt-out.
+
+### Fixed
+- `detect_complexity()` was defined but never called on the bash route, so
+  `DETECTED_COMPLEXITY` stayed empty and every complexity consumer
+  (effort-for-tier, telemetry, phase selection, and the new analysis gate)
+  silently fell back to "standard". It now runs once per run before the first
+  prompt build, so the complexity signal is live on bash, matching the Bun route.
+- parity-drift CI check: removed an over-normalization that blanked summary
+  counts, which was hiding real count drift between the bash and Bun routes.
+  The legitimate disk-space and route-specific Runtime normalizations are kept,
+  so genuine drift is caught while the prior false positive stays closed.
+
+### Docs
+- Installation guide now leads with Bun as the recommended install
+  (`bun install -g loki-mode`) with npm as a fully supported alternative,
+  matching the README and clarifying that the core autonomous engine runs the
+  same on both routes (you lose no capability by choosing Bun).
+
 ## [7.39.1] - 2026-06-14
 
 ### Fixed

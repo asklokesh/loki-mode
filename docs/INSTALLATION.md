@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.39.1
+**Version:** v7.40.0
 
 ---
 
@@ -40,7 +40,8 @@ setting any flag to `0`.
 
 ## Table of Contents
 
-- [npm (Recommended)](#npm-recommended)
+- [Bun (Recommended)](#bun-recommended)
+- [npm](#npm)
 - [Homebrew](#homebrew)
 - [Quick Start](#quick-start)
 - [Verify Installation](#verify-installation)
@@ -57,17 +58,39 @@ setting any flag to `0`.
 
 ---
 
-## npm (Recommended)
+## Bun (Recommended)
+
+```bash
+bun install -g loki-mode
+```
+
+Installs the `loki` CLI. Bun is the recommended path: the `loki` shim runs the
+faster TypeScript runtime when `bun` is on `PATH`, and the stable bash engine
+(the autonomous loop, quality gates, and completion council) runs underneath on
+every route, so you lose nothing by choosing Bun. Run `loki setup-skill` once
+after install to create the per-provider skill symlinks (Claude Code, Codex CLI).
+
+**Prerequisites:** Bun 1.3+ (`curl -fsSL https://bun.sh/install | bash`, or
+`brew install oven-sh/bun/bun`). No separate Node install is required.
+
+**Update:** `bun update -g loki-mode`
+
+**Uninstall:** `bun remove -g loki-mode`
+
+---
+
+## npm
 
 ```bash
 npm install -g loki-mode
 ```
 
-Installs the `loki` CLI. As of v7.4.12 there is no postinstall step; run
-`loki setup-skill` once after install to create the per-provider skill
-symlinks (Claude Code, Codex CLI). The `loki` shim auto-routes
-read-only commands to the Bun runtime when `bun` is on `PATH` and falls
-back to the bash CLI otherwise.
+A fully supported alternative when you prefer npm or do not have Bun. As of
+v7.4.12 there is no postinstall step; run `loki setup-skill` once after install
+to create the per-provider skill symlinks (Claude Code, Codex CLI). The `loki`
+shim auto-routes read-only commands to the Bun runtime when `bun` is on `PATH`
+and falls back to the bash CLI otherwise (the core autonomous engine is the
+same on both routes).
 
 **Prerequisites:** Node.js 18+. Bun 1.3+ optional but recommended for the
 faster routed commands and forward-compat with v8.0.0.
@@ -117,7 +140,7 @@ and orchestrator components ship via npm, Docker, and Homebrew only.
 pip install loki-mode-sdk
 
 # Install the full CLI (recommended)
-npm install -g loki-mode  # or: brew tap asklokesh/tap && brew install loki-mode
+bun install -g loki-mode  # or: npm install -g loki-mode, or: brew tap asklokesh/tap && brew install loki-mode
 ```
 
 The naming asymmetry (`loki-mode` on npm vs `loki-mode-sdk` on PyPI) is

@@ -443,12 +443,16 @@ describe("buildPrompt end-to-end (gate failure injection)", () => {
   });
 });
 
-// v7.38.0 (Phase 2): optional Claude Code Dynamic Workflow dispatch for the
-// READ-ONLY codebase-analysis pass. The default (flag unset) MUST be
-// byte-identical to today; only LOKI_USE_CLAUDE_WORKFLOWS=1 + Claude provider
-// prepends "ultracode: " to the analysis instruction.
-describe("buildPrompt Phase 2 ultracode analysis gating (LOKI_USE_CLAUDE_WORKFLOWS)", () => {
-  it("default (flag unset) produces NO 'ultracode:' prefix on the analysis prompt", async () => {
+// v7.40.0 (#584): AUTONOMOUS complexity-gated Claude Code Dynamic Workflow
+// dispatch for the READ-ONLY codebase-analysis pass. Decision cascade (same
+// order on bash + Bun):
+//   provider != claude          -> three-pass
+//   PROVIDER_DEGRADED=true       -> three-pass
+//   LOKI_USE_CLAUDE_WORKFLOWS=0  -> three-pass (escape hatch)
+//   LOKI_USE_CLAUDE_WORKFLOWS=1  -> workflow   (force on)
+//   var UNSET                    -> workflow IFF DETECTED_COMPLEXITY == complex
+describe("buildPrompt v7.40.0 autonomous complexity-gated ultracode analysis", () => {
+  it("default (flag unset, no complexity) produces NO 'ultracode:' prefix", async () => {
     const out = await buildPrompt({
       retry: 0,
       prd: null,
@@ -457,12 +461,29 @@ describe("buildPrompt Phase 2 ultracode analysis gating (LOKI_USE_CLAUDE_WORKFLO
     });
     expect(out).toContain("CODEBASE_ANALYSIS_MODE:");
     expect(out).not.toContain("ultracode:");
-    // Exact: the analysis line is the bare instruction (no prefix).
     expect(out).toContain(_internals.ANALYSIS_INSTRUCTION);
     expect(out).not.toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
   });
 
-  it("is byte-identical to default when the flag is explicitly off", async () => {
+  it("byte-identical to default for simple/standard + unset var", async () => {
+    const baseline = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: { cwd: workDir, env: emptyEnv() },
+    });
+    for (const cx of ["simple", "standard"]) {
+      const out = await buildPrompt({
+        retry: 0,
+        prd: null,
+        iteration: 7,
+        ctx: { cwd: workDir, env: emptyEnv({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: cx }) },
+      });
+      expect(out).toBe(baseline);
+    }
+  });
+
+  it("byte-identical to default when the flag is explicitly off (escape hatch), even on complex", async () => {
     const baseline = await buildPrompt({
       retry: 0,
       prd: null,
@@ -475,13 +496,17 @@ describe("buildPrompt Phase 2 ultracode analysis gating (LOKI_USE_CLAUDE_WORKFLO
       iteration: 7,
       ctx: {
         cwd: workDir,
-        env: emptyEnv({ LOKI_USE_CLAUDE_WORKFLOWS: "0", LOKI_PROVIDER: "claude" }),
+        env: emptyEnv({
+          LOKI_USE_CLAUDE_WORKFLOWS: "0",
+          LOKI_PROVIDER: "claude",
+          DETECTED_COMPLEXITY: "complex",
+        }),
       },
     });
     expect(flaggedOff).toBe(baseline);
   });
 
-  it("with LOKI_USE_CLAUDE_WORKFLOWS=1 + claude provider prepends 'ultracode:' to the analysis prompt", async () => {
+  it("LOKI_USE_CLAUDE_WORKFLOWS=1 forces 'ultracode:' on (regardless of complexity)", async () => {
     const out = await buildPrompt({
       retry: 0,
       prd: null,
@@ -492,33 +517,156 @@ describe("buildPrompt Phase 2 ultracode analysis gating (LOKI_USE_CLAUDE_WORKFLO
       },
     });
     expect(out).toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
-    // The prefixed instruction equals the prefix + the bare instruction exactly.
     expect(out).toContain("ultracode: " + _internals.ANALYSIS_INSTRUCTION);
   });
 
-  it("does NOT prefix when the flag is on but the provider is not claude", async () => {
+  it("var UNSET + DETECTED_COMPLEXITY=complex autonomously prefixes 'ultracode:'", async () => {
     const out = await buildPrompt({
       retry: 0,
       prd: null,
       iteration: 1,
       ctx: {
         cwd: workDir,
-        env: emptyEnv({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "codex" }),
+        env: emptyEnv({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "complex" }),
+      },
+    });
+    expect(out).toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
+    expect(out).toContain("ultracode: " + _internals.ANALYSIS_INSTRUCTION);
+  });
+
+  it("does NOT prefix when provider is not claude (even =1, even complex)", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({
+          LOKI_USE_CLAUDE_WORKFLOWS: "1",
+          LOKI_PROVIDER: "codex",
+          DETECTED_COMPLEXITY: "complex",
+        }),
       },
     });
     expect(out).toContain("CODEBASE_ANALYSIS_MODE:");
     expect(out).not.toContain("ultracode:");
   });
 
-  it("predicate: useClaudeWorkflowsForAnalysis honors flag + provider + degraded", () => {
+  it("predicate: useClaudeWorkflowsForAnalysis implements the 6-case cascade", () => {
     const f = _internals.useClaudeWorkflowsForAnalysis;
-    expect(f({})).toBe(false);
-    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1" })).toBe(true); // provider defaults to claude
-    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "claude" })).toBe(true);
-    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "codex" })).toBe(false);
-    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "0", LOKI_PROVIDER: "claude" })).toBe(false);
+    _internals.resetWorkflowDisclosure();
+    // workDir is an empty tmp dir -> detectComplexity classifies it non-complex,
+    // so the unset-flag FS-walk fallback resolves to "standard" deterministically.
+    // 1. non-claude provider -> false (even forced, even complex)
+    expect(f({ LOKI_PROVIDER: "codex", LOKI_USE_CLAUDE_WORKFLOWS: "1" }, workDir)).toBe(false);
+    expect(f({ LOKI_PROVIDER: "codex", DETECTED_COMPLEXITY: "complex" }, workDir)).toBe(false);
+    // 2. degraded -> false
     expect(
-      f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "claude", PROVIDER_DEGRADED: "true" }),
+      f(
+        { LOKI_PROVIDER: "claude", PROVIDER_DEGRADED: "true", LOKI_USE_CLAUDE_WORKFLOWS: "1" },
+        workDir,
+      ),
     ).toBe(false);
+    // 3. =0 escape hatch -> false (even complex)
+    expect(
+      f(
+        { LOKI_PROVIDER: "claude", LOKI_USE_CLAUDE_WORKFLOWS: "0", DETECTED_COMPLEXITY: "complex" },
+        workDir,
+      ),
+    ).toBe(false);
+    // 4. =1 force on -> true (provider defaults to claude; any complexity)
+    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1" }, workDir)).toBe(true);
+    expect(f({ LOKI_PROVIDER: "claude", LOKI_USE_CLAUDE_WORKFLOWS: "1" }, workDir)).toBe(true);
+    // 5. unset + complex (env var injected) -> true (autonomous)
+    expect(f({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "complex" }, workDir)).toBe(true);
+    // 6. unset + non-complex env var -> false; unset + no env var + non-complex
+    //    target dir (FS-walk fallback) -> false.
+    expect(f({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "simple" }, workDir)).toBe(false);
+    expect(f({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "standard" }, workDir)).toBe(false);
+    expect(f({ LOKI_PROVIDER: "claude" }, workDir)).toBe(false);
+  });
+
+  it("Bun production path: unset env var FALLS BACK to detectComplexity FS-walk", () => {
+    // This is the dual of Finding 1 on the DEFAULT Bun route: run.sh never runs,
+    // so DETECTED_COMPLEXITY is absent and the decision MUST still fire via the
+    // FS-walk fallback. Build a complex target dir (docker-compose => complex)
+    // with NO DETECTED_COMPLEXITY env var and confirm the predicate returns true.
+    _internals.resetWorkflowDisclosure();
+    const complexDir = mkdtempSync(resolve(tmpdir(), "loki-bp-complex-"));
+    try {
+      writeFileSync(resolve(complexDir, "docker-compose.yml"), "services:\n  web:\n    image: x\n");
+      const f = _internals.useClaudeWorkflowsForAnalysis;
+      // No DETECTED_COMPLEXITY in env; provider defaults to claude; flag unset.
+      expect(f({ LOKI_PROVIDER: "claude" }, complexDir)).toBe(true);
+      // And a sibling simple dir falls back to three-pass.
+      const simpleDir = mkdtempSync(resolve(tmpdir(), "loki-bp-simple-"));
+      try {
+        _internals.resetWorkflowDisclosure();
+        writeFileSync(resolve(simpleDir, "index.js"), "console.log(1)\n");
+        expect(f({ LOKI_PROVIDER: "claude" }, simpleDir)).toBe(false);
+      } finally {
+        rmSync(simpleDir, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(complexDir, { recursive: true, force: true });
+      _internals.resetWorkflowDisclosure();
+    }
+  });
+
+  it("decision: only unset+complex is flagged autonomous (disclosure key)", () => {
+    const d = _internals.workflowAnalysisDecision;
+    // forced =1 is workflow but NOT autonomous (no disclosure)
+    expect(d({ LOKI_PROVIDER: "claude", LOKI_USE_CLAUDE_WORKFLOWS: "1" })).toEqual({
+      useWorkflow: true,
+      autonomous: false,
+    });
+    // unset + complex is workflow AND autonomous (disclosure fires)
+    expect(d({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "complex" })).toEqual({
+      useWorkflow: true,
+      autonomous: true,
+    });
+    // three-pass is neither
+    expect(d({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "simple" })).toEqual({
+      useWorkflow: false,
+      autonomous: false,
+    });
+  });
+
+  it("disclosure fires once on the autonomous-workflow case, to stderr, and NOT on three-pass", () => {
+    const orig = console.error;
+    const calls: string[] = [];
+    console.error = (...args: unknown[]) => {
+      calls.push(args.map(String).join(" "));
+    };
+    try {
+      // three-pass (simple): no disclosure
+      _internals.resetWorkflowDisclosure();
+      _internals.maybeDiscloseWorkflowAnalysis({
+        LOKI_PROVIDER: "claude",
+        DETECTED_COMPLEXITY: "simple",
+      });
+      expect(calls.length).toBe(0);
+
+      // forced =1: workflow but not autonomous -> no disclosure
+      _internals.maybeDiscloseWorkflowAnalysis({
+        LOKI_PROVIDER: "claude",
+        LOKI_USE_CLAUDE_WORKFLOWS: "1",
+      });
+      expect(calls.length).toBe(0);
+
+      // autonomous workflow: discloses once even when called repeatedly
+      _internals.resetWorkflowDisclosure();
+      const autoEnv = { LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "complex" };
+      _internals.maybeDiscloseWorkflowAnalysis(autoEnv);
+      _internals.maybeDiscloseWorkflowAnalysis(autoEnv);
+      _internals.maybeDiscloseWorkflowAnalysis(autoEnv);
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toContain("complexity=complex");
+      expect(calls[0]).toContain("LOKI_USE_CLAUDE_WORKFLOWS=0");
+      expect(calls[0]).toContain("cost meaningfully more");
+    } finally {
+      console.error = orig;
+      _internals.resetWorkflowDisclosure();
+    }
   });
 });

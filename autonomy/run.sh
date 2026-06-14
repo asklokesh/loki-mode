@@ -10887,6 +10887,20 @@ build_prompt() {
     # the result is diff-friendly for later incremental updates).
     local analysis_instruction="CODEBASE_ANALYSIS_MODE: No PRD provided. Reverse-engineer a precise PRD from the existing code in three passes, cheaply and without blind full scans. PASS 1 (orient): list the top two directory levels; read ONLY high-signal manifests that exist (package.json, requirements.txt, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, composer.json) to identify language, framework, and scripts; read README and any docs index. PASS 2 (locate): from the manifests and conventional layout, identify the entrypoints, the public API or CLI surface, the test directory and runner, and the config or env contract; read those first; skip generated, vendored, and lockfile content; prefer LSP workspace symbols when the lsp-proxy server is available. PASS 3 (write): write .loki/generated-prd.md with these sections: Overview, Detected Stack, Entrypoints and Components, Existing Behavior and Requirements (reverse-engineered, observable), Test and Build Setup, Gaps and TODOs, Out of Scope. Keep it under 200 lines, plain Markdown, no emojis, no em dashes. Do not invent features not evidenced by the code. THEN execute SDLC phases against that PRD."
 
+    # v7.40.0 (#584): when the autonomous complexity-gated decision in
+    # run_autonomous chose the Claude Code Dynamic Workflow path
+    # (USE_WORKFLOW_ANALYSIS=1), prefix the read-only analysis instruction with
+    # "ultracode: " so the three-pass reverse-engineer-a-PRD flow runs as a
+    # workflow fan-out. The decision (and its one-time stderr disclosure) is made
+    # ONCE in run_autonomous, not here -- this subshell only reads the resolved
+    # global so the prefix is deterministic per iteration. When the global is 0 /
+    # unset (simple/standard + var unset, or non-Claude, or degraded, or escape
+    # hatch =0), the instruction stays byte-identical to before. Parity-locked
+    # with analysisInstruction() in loki-ts/src/runner/build_prompt.ts.
+    if [ "${USE_WORKFLOW_ANALYSIS:-0}" = "1" ]; then
+        analysis_instruction="ultracode: ${analysis_instruction}"
+    fi
+
     # v7.8.1: incremental-update instruction for when a generated PRD already
     # exists and the codebase changed (GENERATED_PRD_ACTION=update). Reconcile,
     # do not regenerate, so the PRD stays continuous and the update is cheap.
@@ -12546,6 +12560,62 @@ except Exception as exc:
         emit_completion_summary max_iterations
         return 1
     fi
+
+    # v7.40.0 (#584): autonomous complexity-gated decision for the no-PRD
+    # codebase-analysis dispatch. detect_complexity() is defined (~1611) but was
+    # never called on the bash route, so DETECTED_COMPLEXITY stayed "" and the
+    # gate was inert here. Call it ONCE per run, before the first build_prompt,
+    # so DETECTED_COMPLEXITY is populated for the gate AND for the existing
+    # complexity consumers (effort-for-tier, telemetry, phase selection) that
+    # previously always fell back to "standard" on bash. detect_complexity()
+    # sets the DETECTED_COMPLEXITY global directly (no echo); call once and let
+    # the cached value carry through every iteration so the static prompt prefix
+    # is stable across the run.
+    if [ -z "${DETECTED_COMPLEXITY:-}" ]; then
+        detect_complexity "$prd_path"
+    fi
+
+    # Decide the workflow-analysis dispatch ONCE here (parent shell), not inside
+    # build_prompt (which runs in a $(...) subshell where a write would not
+    # propagate). The decision is parity-locked with the Bun route
+    # (useClaudeWorkflowsForAnalysis in loki-ts/src/runner/build_prompt.ts) and
+    # evaluated in the SAME order:
+    #   provider != claude          -> three-pass (USE_WORKFLOW_ANALYSIS=0)
+    #   PROVIDER_DEGRADED=true       -> three-pass
+    #   LOKI_USE_CLAUDE_WORKFLOWS=0  -> three-pass (escape hatch)
+    #   LOKI_USE_CLAUDE_WORKFLOWS=1  -> workflow   (force on)
+    #   var UNSET                    -> workflow IFF DETECTED_COMPLEXITY == complex
+    # When the workflow path is chosen AUTONOMOUSLY (var unset + complex), emit a
+    # one-time cost disclosure to stderr (NOT stdout, which is the prompt). The
+    # decision is read by build_prompt to prefix the analysis instruction with
+    # "ultracode: ". This ONLY affects the read-only no-PRD analysis instruction,
+    # so the entire decision is gated on the no-PRD case ([ -z "$prd_path" ]).
+    # When a PRD exists, build_prompt never emits the analysis instruction, so
+    # USE_WORKFLOW_ANALYSIS stays 0 and no disclosure fires (the "no PRD found"
+    # message would be false otherwise). detect_complexity above stays
+    # unconditional because its other consumers run in PRD mode too.
+    USE_WORKFLOW_ANALYSIS=0
+    local _wf_autonomous=0
+    if [ -z "$prd_path" ] && [ "${LOKI_PROVIDER:-claude}" = "claude" ] && [ "${PROVIDER_DEGRADED:-false}" != "true" ]; then
+        if [ "${LOKI_USE_CLAUDE_WORKFLOWS:-}" = "0" ]; then
+            USE_WORKFLOW_ANALYSIS=0
+        elif [ "${LOKI_USE_CLAUDE_WORKFLOWS:-}" = "1" ]; then
+            USE_WORKFLOW_ANALYSIS=1
+        elif [ -z "${LOKI_USE_CLAUDE_WORKFLOWS:-}" ] && [ "${DETECTED_COMPLEXITY:-}" = "complex" ]; then
+            USE_WORKFLOW_ANALYSIS=1
+            _wf_autonomous=1
+        fi
+    fi
+    # One-time autonomous-decision disclosure to stderr. Only fires when this run
+    # took the workflow path on its own (not when forced via =1, not when off).
+    # No fabricated dollar figure (no price API): name the cost CLASS and the
+    # opt-out. Guard so it prints once per run.
+    if [ "$_wf_autonomous" = "1" ] && [ -z "${_LOKI_WORKFLOW_DISCLOSED:-}" ]; then
+        echo "Loki: no PRD found and this repo looks complex (complexity=complex), so the codebase-analysis pass is dispatching a Claude Code Dynamic Workflow (parallel fan-out). Workflows are more thorough but cost meaningfully more than the default three-pass analysis. Set LOKI_USE_CLAUDE_WORKFLOWS=0 to keep the cheaper three-pass pass." >&2
+        _LOKI_WORKFLOW_DISCLOSED=1
+        export _LOKI_WORKFLOW_DISCLOSED
+    fi
+    export USE_WORKFLOW_ANALYSIS
 
     while [ $retry -lt $MAX_RETRIES ]; do
         # Check for human intervention BEFORE incrementing iteration count

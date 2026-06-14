@@ -105,7 +105,7 @@ loki quick "build a landing page with a signup form"
 |--------|---------|-------|
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker** | `docker pull asklokesh/loki-mode:7.31.0 && docker run --rm asklokesh/loki-mode:7.31.0 start prd.md` | Bun pre-installed in image |
+| **Docker** | `docker pull asklokesh/loki-mode:7.40.0 && docker run --rm asklokesh/loki-mode:7.40.0 start prd.md` | Bun pre-installed in image |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -165,7 +165,7 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode:7.31.0` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.40.0` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 

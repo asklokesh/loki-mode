@@ -81,12 +81,14 @@ jobs:
             LOKI_LEGACY_BASH=1 bin/loki $args >"$bash_out" 2>/dev/null
             set -e
             if [ "$mode" = "json" ]; then
-              # Normalize disk.available_gb: floor to int so a 1GB drift between
-              # near-simultaneous df reads (or float vs int representation) does
-              # not produce a false positive. Matches local-ci.sh v7.4.12 fix.
-              jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" \
+              # Canonicalize disk.available_gb: drop the key entirely. It is pure
+              # environment state (free disk between two near-simultaneous df
+              # reads), never a route-behavior signal, and flooring still flips at
+              # integer boundaries (9.99 vs 10.01 -> 9 vs 10). Removing it is the
+              # robust canonicalization (#173). Self-contained: inline jq only.
+              jq -S "if .disk?.available_gb? != null then del(.disk.available_gb) else . end" \
                 "$bun_out"  >"${bun_out}.s"  2>/dev/null || cp "$bun_out"  "${bun_out}.s"
-              jq -S "if .disk?.available_gb? != null then .disk.available_gb = (.disk.available_gb | floor) else . end" \
+              jq -S "if .disk?.available_gb? != null then del(.disk.available_gb) else . end" \
                 "$bash_out" >"${bash_out}.s" 2>/dev/null || cp "$bash_out" "${bash_out}.s"
               if ! diff -u "${bash_out}.s" "${bun_out}.s" >"$diff_out"; then
                 FAILED+=("$label")
@@ -101,28 +103,34 @@ jobs:
               # Normalize env-only lines that are expected to differ between routes
               # and/or between near-simultaneous runs. None of these suppressions
               # hide real behavioral divergence -- they are all governed by external
-              # environment state, not by route logic.
+              # environment state, not by route logic. Self-contained: inline sed
+              # only, no dependency on local-ci.sh.
               #
-              # Rules (kept in sync with local-ci.sh text-mode normalization):
+              # Rules (#173 hardening):
               #   1. "Disk space: NGB" -- disk value changes between two df reads
               #      on a busy runner; the GB count is not a route-behavior signal.
               #   2. "Runtime route:" block -- intentionally differs: bash route
               #      prints "Active runtime: Bash" and the LOKI_LEGACY_BASH WARN
               #      line; Bun route prints "Active runtime: Bun". Delete the
-              #      whole block (header to next blank line) on both sides.
+              #      whole block (header to next blank line) on both sides. This is
+              #      the route-specific block that produced the false positive.
               #   3. "Phase 1 artifacts:" block -- environment-dependent, same
               #      reasoning as Runtime route block.
               #   4. "Dashboard: http..." line -- present only when a dashboard
               #      pid file holds a live pid; purely env state, not route logic.
-              #   5. Summary pass/fail/warning counts -- can shift by 1 when
-              #      LOKI_LEGACY_BASH adds or removes a check on one side.
+              #
+              # NOTE (#173): the summary pass/fail/warning COUNTS are intentionally
+              # KEPT (not blanked). A real divergence that shifts a check between
+              # routes MUST surface as drift; blanking the counts hid that class of
+              # bug. The Runtime-route block drop already removes the one benign
+              # count-shifter (the LOKI_LEGACY_BASH-only WARN line), so the counts
+              # match for genuinely-equivalent runs.
               for src in "$bash_out" "$bun_out"; do
                 dst="${src}.norm"
                 sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
                   | sed -E "/Runtime route:/,/^$/d" \
                   | sed -E "/Phase 1 artifacts:/,/^$/d" \
                   | sed -E "/Dashboard:.*http/d" \
-                  | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
                   > "$dst"
               done
               if ! diff -u "${bash_out}.norm" "${bun_out}.norm" >"$diff_out"; then

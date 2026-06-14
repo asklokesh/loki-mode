@@ -30,6 +30,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { runInline } from "../util/python.ts";
+import { detectComplexity } from "./rarv.ts";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -206,37 +207,122 @@ const ANALYSIS_INSTRUCTION =
   // run.sh:10043 - kept byte-identical to the bash route (v7.8.1 three-pass analysis)
   `CODEBASE_ANALYSIS_MODE: No PRD provided. Reverse-engineer a precise PRD from the existing code in three passes, cheaply and without blind full scans. PASS 1 (orient): list the top two directory levels; read ONLY high-signal manifests that exist (package.json, requirements.txt, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, composer.json) to identify language, framework, and scripts; read README and any docs index. PASS 2 (locate): from the manifests and conventional layout, identify the entrypoints, the public API or CLI surface, the test directory and runner, and the config or env contract; read those first; skip generated, vendored, and lockfile content; prefer LSP workspace symbols when the lsp-proxy server is available. PASS 3 (write): write .loki/generated-prd.md with these sections: Overview, Detected Stack, Entrypoints and Components, Existing Behavior and Requirements (reverse-engineered, observable), Test and Build Setup, Gaps and TODOs, Out of Scope. Keep it under 200 lines, plain Markdown, no emojis, no em dashes. Do not invent features not evidenced by the code. THEN execute SDLC phases against that PRD.`;
 
-// v7.38.0 (Phase 2): optional Claude Code Dynamic Workflow dispatch for the
-// READ-ONLY codebase-analysis pass ONLY. Gated behind LOKI_USE_CLAUDE_WORKFLOWS=1
-// AND the Claude provider (Tier 1, not degraded). When ON, the no-PRD analysis
+// v7.40.0 (#584): AUTONOMOUS complexity-gated Claude Code Dynamic Workflow
+// dispatch for the READ-ONLY codebase-analysis pass ONLY. The no-PRD analysis
 // prompt is prefixed with "ultracode: " so the three-pass reverse-engineer-a-PRD
-// flow runs as a workflow fan-out. When OFF / non-Claude / degraded, the existing
-// three-pass path runs UNCHANGED (byte-identical default). This NEVER touches the
+// flow runs as a workflow fan-out. When the three-pass path is chosen, the
+// instruction stays UNCHANGED (byte-identical default). This NEVER touches the
 // council, the 11 gates, the evidence gate, or the RARV loop -- only this one
-// read-only analysis instruction. Mirrors the bash predicate loki_workflows_*.
+// read-only analysis instruction. Parity-locked with the bash route in
+// autonomy/run.sh (run_autonomous decides once, build_prompt prefixes).
+//
+// Decision cascade, evaluated in the SAME order as the bash route:
+//   provider != claude          -> three-pass (false)
+//   PROVIDER_DEGRADED=true       -> three-pass (false)
+//   LOKI_USE_CLAUDE_WORKFLOWS=0  -> three-pass (false) escape hatch
+//   LOKI_USE_CLAUDE_WORKFLOWS=1  -> workflow   (true)  force on
+//   var UNSET                    -> workflow IFF DETECTED_COMPLEXITY == complex
 //
 // Provider detection mirrors the bash convention (LOKI_PROVIDER default "claude")
-// and additionally refuses when PROVIDER_DEGRADED=true (Tier 2/3 routes never use
-// the full static-first analysis prompt anyway, but the guard keeps intent clear).
+// and refuses when PROVIDER_DEGRADED=true. Complexity for the autonomous branch
+// is resolved by resolveDetectedComplexity(): the DETECTED_COMPLEXITY env var
+// when present (parity with the bash global), else a memoized detectComplexity()
+// FS walk. On the bash route DETECTED_COMPLEXITY is set by run_autonomous; on
+// the DEFAULT Bun route run.sh never executes, so the env var is normally absent
+// and the FS-walk fallback is what makes the autonomous decision actually fire
+// in production (the dual of Finding 1 on the Bun route).
 const WORKFLOW_ANALYSIS_PREFIX = "ultracode: ";
+
+// Memoized FS-walk complexity, keyed by target dir, so the per-iteration
+// build_prompt does exactly one walk per run. Exposed via
+// _internals.resetWorkflowDisclosure path is separate; this cache is reset by
+// resetWorkflowDisclosure too so unit tests do not leak a stale walk.
+let complexityCache: { dir: string; complexity: string } | null = null;
+
+function resolveDetectedComplexity(
+  env: Readonly<Record<string, string | undefined>>,
+  targetDir?: string,
+): string {
+  // Env var wins (bash route sets it; tests inject it). Empty string is treated
+  // as absent so the FS-walk fallback runs.
+  const fromEnv = env["DETECTED_COMPLEXITY"];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  // FS-walk fallback (default Bun route). Scope to the resolved target dir so a
+  // test with a small workDir is classified by THAT dir, not the host repo.
+  const dir = targetDir ?? process.env["TARGET_DIR"] ?? process.cwd();
+  if (complexityCache && complexityCache.dir === dir) return complexityCache.complexity;
+  const complexity = detectComplexity({ filesGlob: dir }).complexity;
+  complexityCache = { dir, complexity };
+  return complexity;
+}
+
+// Whether the unset-var autonomous branch was the reason workflows are on. The
+// disclosure fires ONLY in that case (not for the forced =1 path, not for the
+// three-pass path). Returned out-of-band so the once-per-run disclosure can be
+// keyed on it without recomputing. targetDir scopes the complexity FS-walk
+// fallback (omitted in the predicate-only unit tests, which inject the env var).
+function workflowAnalysisDecision(
+  env: Readonly<Record<string, string | undefined>>,
+  targetDir?: string,
+): { useWorkflow: boolean; autonomous: boolean } {
+  const provider = envStr(env, "LOKI_PROVIDER", "claude");
+  if (provider !== "claude") return { useWorkflow: false, autonomous: false };
+  if (envBool(env, "PROVIDER_DEGRADED")) return { useWorkflow: false, autonomous: false };
+
+  const flag = env["LOKI_USE_CLAUDE_WORKFLOWS"];
+  if (flag === "0") return { useWorkflow: false, autonomous: false };
+  if (flag === "1") return { useWorkflow: true, autonomous: false };
+  // var unset (or any non-0/1 value): autonomous, gated on detected complexity.
+  if (flag === undefined && resolveDetectedComplexity(env, targetDir) === "complex") {
+    return { useWorkflow: true, autonomous: true };
+  }
+  return { useWorkflow: false, autonomous: false };
+}
 
 export function useClaudeWorkflowsForAnalysis(
   env: Readonly<Record<string, string | undefined>>,
+  targetDir?: string,
 ): boolean {
-  if (env["LOKI_USE_CLAUDE_WORKFLOWS"] !== "1") return false;
-  const provider = envStr(env, "LOKI_PROVIDER", "claude");
-  if (provider !== "claude") return false;
-  if (envBool(env, "PROVIDER_DEGRADED")) return false;
-  return true;
+  return workflowAnalysisDecision(env, targetDir).useWorkflow;
 }
 
-// The analysis instruction, optionally workflow-prefixed. Default (flag off /
-// non-Claude) returns ANALYSIS_INSTRUCTION verbatim, so the prompt is
-// byte-identical to today.
+// Once-per-run guard for the autonomous-decision disclosure. A module-scope
+// latch (process-lifetime). Exposed via _internals.resetWorkflowDisclosure so
+// unit tests do not leak the latch (or the complexity cache) across cases in
+// the same process.
+let workflowDisclosed = false;
+function resetWorkflowDisclosure(): void {
+  workflowDisclosed = false;
+  complexityCache = null;
+}
+
+// Emit the one-time autonomous-decision cost disclosure to stderr. Mirrors the
+// bash route's stderr disclosure content (no fabricated dollar figure -- there
+// is no price API; name the cost CLASS and the opt-out). Fires ONLY when the
+// workflow path was chosen autonomously (var unset + complexity=complex), once
+// per process. stdout carries the prompt, so this MUST go to stderr.
+function maybeDiscloseWorkflowAnalysis(
+  env: Readonly<Record<string, string | undefined>>,
+  targetDir?: string,
+): void {
+  if (workflowDisclosed) return;
+  if (!workflowAnalysisDecision(env, targetDir).autonomous) return;
+  workflowDisclosed = true;
+  // eslint-disable-next-line no-console
+  console.error(
+    "Loki: no PRD found and this repo looks complex (complexity=complex), so the codebase-analysis pass is dispatching a Claude Code Dynamic Workflow (parallel fan-out). Workflows are more thorough but cost meaningfully more than the default three-pass analysis. Set LOKI_USE_CLAUDE_WORKFLOWS=0 to keep the cheaper three-pass pass.",
+  );
+}
+
+// The analysis instruction, optionally workflow-prefixed. Default (three-pass)
+// returns ANALYSIS_INSTRUCTION verbatim, so the prompt is byte-identical to
+// before for simple/standard + unset, non-Claude, degraded, and the =0 escape
+// hatch.
 function analysisInstruction(
   env: Readonly<Record<string, string | undefined>>,
+  targetDir?: string,
 ): string {
-  if (useClaudeWorkflowsForAnalysis(env)) {
+  if (useClaudeWorkflowsForAnalysis(env, targetDir)) {
     return WORKFLOW_ANALYSIS_PREFIX + ANALYSIS_INSTRUCTION;
   }
   return ANALYSIS_INSTRUCTION;
@@ -1077,6 +1163,10 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   const perpetualMode = envBool(env, "PERPETUAL_MODE");
   const perpetual = autonomyMode === "perpetual" || perpetualMode;
   const targetDir = envStr(env, "TARGET_DIR", ".");
+  // Absolute target dir for the workflow-analysis complexity FS-walk fallback,
+  // resolved against the runner cwd so a relative TARGET_DIR (default ".") walks
+  // the run's project, not the process cwd. (#584)
+  const analysisTargetDir = resolve(ctx.cwd, targetDir);
   const legacyOrdering = envBool(env, "LOKI_LEGACY_PROMPT_ORDERING");
   const providerDegraded = envBool(env, "PROVIDER_DEGRADED");
 
@@ -1092,12 +1182,19 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
     if (providerDegraded) {
       return buildLegacyDegraded(opts, sections, prd, retry, iteration);
     }
+    // v7.40.0 (#584): same once-per-run autonomous-decision disclosure on the
+    // legacy layout's no-PRD path. buildLegacyFull always receives the analysis
+    // string but only emits it when there is no PRD, so gate the disclosure the
+    // same way.
+    if (prd === null || prd.length === 0) {
+      maybeDiscloseWorkflowAnalysis(env, analysisTargetDir);
+    }
     return buildLegacyFull(opts, {
       rarvText,
       completionText,
       autonomyText,
       sdlcText,
-      analysis: analysisInstruction(env),
+      analysis: analysisInstruction(env, analysisTargetDir),
       memory: MEMORY_INSTRUCTION,
       sections,
     });
@@ -1122,7 +1219,12 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
   if (prd === null || prd.length === 0) {
-    lines.push(analysisInstruction(env));
+    // v7.40.0 (#584): emit the autonomous-decision cost disclosure once per run
+    // BEFORE pushing the (possibly workflow-prefixed) analysis instruction. The
+    // module latch makes this fire once even though buildPrompt runs per
+    // iteration. No-op unless the unset-var + complexity=complex branch fired.
+    maybeDiscloseWorkflowAnalysis(env, analysisTargetDir);
+    lines.push(analysisInstruction(env, analysisTargetDir));
   }
   lines.push("</loki_system>");
   lines.push("[CACHE_BREAKPOINT]");
@@ -1280,6 +1382,9 @@ export const _internals = {
   ANALYSIS_INSTRUCTION,
   analysisInstruction,
   useClaudeWorkflowsForAnalysis,
+  workflowAnalysisDecision,
+  maybeDiscloseWorkflowAnalysis,
+  resetWorkflowDisclosure,
   MEMORY_INSTRUCTION,
   USAGE_DOC_INSTRUCTION,
   COMPOSE_INSTRUCTION,
