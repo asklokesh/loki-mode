@@ -513,7 +513,7 @@ case "$1" in --help) printf '  --session-id <uuid>  id\n'; exit 0;; esac
 exit 0
 DST2
   chmod +x "$DEG2/claude"
-  cd "$P2_PROJ"
+  cd "$P2_PROJ" || exit 1
   PATH="$DEG2:$PATH" bash -c '
     set -uo pipefail
     unset __LOKI_CLAUDE_HELP_CACHE

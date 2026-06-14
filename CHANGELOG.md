@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.37.1] - 2026-06-14
+
+### Fixed
+- CI: `tests/test-cli-session-v734.sh` tripped the shellcheck gate (SC2164: a
+  `cd` without an `|| exit` guard at line 516), failing the Tests workflow on
+  v7.37.0. Added the guard. Test-only change; no runtime behavior change. Root
+  cause: shellcheck was not installed locally when v7.37.0 was cut, so the
+  warning was not caught pre-push.
+
 ## [7.37.0] - 2026-06-13
 
 ### Added
