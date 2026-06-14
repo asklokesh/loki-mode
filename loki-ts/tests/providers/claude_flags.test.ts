@@ -24,6 +24,10 @@ import {
   reviewAllowlistEnabled,
   reviewAllowlistArgv,
   REVIEW_ALLOWLIST_TOKEN,
+  resumeSessionEnabled,
+  sessionForkEnabled,
+  resumeTargetUuid,
+  sessionResumeArgv,
   _resetClaudeHelpCacheForTest,
 } from "../../src/providers/claude_flags.ts";
 
@@ -546,5 +550,104 @@ describe("claude_flags review allowlist (EMBED 3b, #167)", () => {
     expect(argv.length).toBe(2);
     expect(argv[0]).toBe("--allowedTools");
     expect(argv[1]).toBe(REVIEW_ALLOWLIST_TOKEN);
+  });
+});
+
+// Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION recovery resume.
+describe("claude_flags Phase 2 resume (#165)", () => {
+  const RESUME = "LOKI_RESUME_SESSION";
+  const FORK = "LOKI_SESSION_FORK";
+  let savedResume: string | undefined;
+  let savedFork: string | undefined;
+  let savedLokiDir: string | undefined;
+  let dir: string;
+
+  beforeEach(() => {
+    savedResume = process.env[RESUME];
+    savedFork = process.env[FORK];
+    savedLokiDir = process.env["LOKI_DIR"];
+    delete process.env[RESUME];
+    delete process.env[FORK];
+    dir = mkdtempSync(join(tmpdir(), "loki-p2-flags-"));
+    mkdirSync(join(dir, ".loki", "state"), { recursive: true });
+    process.env["LOKI_DIR"] = join(dir, ".loki");
+    _resetClaudeHelpCacheForTest(
+      "  --session-id <uuid>\n  --resume <id>\n  --fork-session\n",
+    );
+  });
+  afterEach(() => {
+    if (savedResume === undefined) delete process.env[RESUME];
+    else process.env[RESUME] = savedResume;
+    if (savedFork === undefined) delete process.env[FORK];
+    else process.env[FORK] = savedFork;
+    if (savedLokiDir === undefined) delete process.env["LOKI_DIR"];
+    else process.env["LOKI_DIR"] = savedLokiDir;
+    rmSync(dir, { recursive: true, force: true });
+    _resetClaudeHelpCacheForTest(null);
+  });
+
+  const seed = (uuid: string, mode = "resume") =>
+    writeFileSync(
+      join(dir, ".loki", "state", "claude-session.json"),
+      JSON.stringify({ run_id: "r", claude_session_uuid: uuid, mode }),
+    );
+
+  it("resumeSessionEnabled default OFF; ON only with =1 + CLI support", () => {
+    expect(resumeSessionEnabled()).toBe(false);
+    process.env[RESUME] = "1";
+    expect(resumeSessionEnabled()).toBe(true);
+  });
+
+  it("resumeSessionEnabled degrades when --resume absent from help", () => {
+    _resetClaudeHelpCacheForTest("  --session-id <uuid>\n");
+    process.env[RESUME] = "1";
+    expect(resumeSessionEnabled()).toBe(false);
+  });
+
+  it("resumeTargetUuid reads a valid stored uuid, rejects malformed", () => {
+    const u = claudeSessionUuid("run-x") as string;
+    seed(u);
+    expect(resumeTargetUuid(dir)).toBe(u);
+    seed("not-a-uuid");
+    expect(resumeTargetUuid(dir)).toBeNull();
+  });
+
+  it("resumeTargetUuid returns null when the file is absent", () => {
+    expect(resumeTargetUuid(dir)).toBeNull();
+  });
+
+  it("sessionResumeArgv default OFF -> [] (byte-identical to v7.34)", () => {
+    const u = claudeSessionUuid("run-x") as string;
+    seed(u);
+    expect(sessionResumeArgv(dir)).toEqual([]);
+  });
+
+  it("sessionResumeArgv with =1 emits --resume <stored uuid>", () => {
+    const u = claudeSessionUuid("run-x") as string;
+    seed(u);
+    process.env[RESUME] = "1";
+    expect(sessionResumeArgv(dir)).toEqual(["--resume", u]);
+  });
+
+  it("sessionResumeArgv with FORK=1 appends --fork-session", () => {
+    const u = claudeSessionUuid("run-x") as string;
+    seed(u);
+    process.env[RESUME] = "1";
+    process.env[FORK] = "1";
+    expect(sessionResumeArgv(dir)).toEqual(["--resume", u, "--fork-session"]);
+  });
+
+  it("FORK without RESUME is a no-op (fork only honored with resume)", () => {
+    const u = claudeSessionUuid("run-x") as string;
+    seed(u);
+    process.env[FORK] = "1";
+    expect(sessionForkEnabled()).toBe(false);
+    expect(sessionResumeArgv(dir)).toEqual([]);
+  });
+
+  it("sessionResumeArgv with =1 but malformed stored uuid -> [] (safe degrade)", () => {
+    seed("not-a-uuid");
+    process.env[RESUME] = "1";
+    expect(sessionResumeArgv(dir)).toEqual([]);
   });
 });

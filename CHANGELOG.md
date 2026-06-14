@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.37.0] - 2026-06-13
+
+### Added
+- Session-Continuity Phase 2, recovery resume (issue #165), opt-in via
+  `LOKI_RESUME_SESSION=1`, default OFF. When a previously interrupted run
+  (paused, rate-limited, or budget-cutoff) is restarted, the FIRST main-loop
+  claude call emits `--resume <stored-session-uuid>` to reattach the prior
+  Claude session context, then the run reverts to normal stateless
+  per-iteration behavior (no resume chain, so transcript context cannot
+  accumulate). `LOKI_SESSION_FORK=1` optionally adds `--fork-session` on the
+  resumed call. Gated on CLI support; degrades to a fresh call on an older
+  claude or a missing/malformed stored session file. Default argv is
+  byte-identical to v7.36; the resumed call never co-emits `--session-id` and
+  `--resume` together.
+  - NAMING: `LOKI_RESUME_SESSION` governs the underlying CLAUDE session-resume
+    layer. It is UNRELATED to the existing `loki heal`/`loki migrate --resume`
+    CHECKPOINT flag, which resumes a Loki run from its own saved checkpoint.
+    This is a narrow recovery feature, not whole-loop session continuity (a
+    `--resume` chain over every iteration was deliberately rejected because it
+    would compete with Loki's curated injected memory and grow context
+    unboundedly).
+  - The Bun runner honors a `resumeFirstCall` invocation field for parity, but
+    the production autonomous loop runs the bash route (autonomy/run.sh), which
+    is the fully-wired path; the Bun path is staged for when its main loop
+    becomes the live route.
+
 ## [7.36.0] - 2026-06-13
 
 ### Added

@@ -23,7 +23,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
-import { buildAutoFlags, ensureClaudeHelpCache, sessionStampArgv } from "../providers/claude_flags.ts";
+import {
+  buildAutoFlags,
+  ensureClaudeHelpCache,
+  sessionStampArgv,
+  sessionResumeArgv,
+} from "../providers/claude_flags.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -218,7 +223,18 @@ export function claudeProvider(): ProviderInvoker {
       // claudeProvider backs both, so an ungated stamp leaked the same
       // --session-id onto the judge subcall, breaking the main-loop-only
       // invariant). Mirrors the bash route confining it to _loki_claude_argv.
-      const sessionArgv = call.mainLoop ? sessionStampArgv() : [];
+      //
+      // Session-continuity Phase 2 (GitHub #165): on the FIRST main-loop call of
+      // a RESTARTED run (call.resumeFirstCall) with LOKI_RESUME_SESSION=1, emit
+      // `--resume <stored-uuid>` (+ optional --fork-session) INSTEAD of the stamp
+      // (--session-id and --resume are mutually exclusive on one invocation).
+      // Both default OFF -> []. Mirrors the run.sh main-loop resume-or-stamp
+      // decision. resumeFirstCall is set by the caller only on that one call.
+      let sessionArgv: string[] = [];
+      if (call.mainLoop) {
+        const resumeArgv = call.resumeFirstCall ? sessionResumeArgv(call.cwd) : [];
+        sessionArgv = resumeArgv.length > 0 ? resumeArgv : sessionStampArgv();
+      }
 
       const argv: string[] = [
         cli,

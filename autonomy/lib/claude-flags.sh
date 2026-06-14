@@ -378,3 +378,78 @@ loki_ultrareview_supported() {
 loki_ultrareview_enabled() {
     [ "${LOKI_ULTRAREVIEW:-0}" = "1" ]
 }
+
+# ---------------------------------------------------------------------------
+# Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION recovery resume
+#
+# NAMING COLLISION WARNING: Loki already has a user-facing `loki heal --resume`
+# / `loki migrate --resume` CHECKPOINT flag (autonomy/loki). LOKI_RESUME_SESSION
+# governs the CLAUDE-CLI session-resume layer (claude --resume <uuid>), NOT the
+# Loki checkpoint resume. They are unrelated.
+#
+# SCOPE (minimum useful, design s2): on a RESTARTED run (the prior run was
+# interrupted -- crash / rate limit / --max-budget cutoff -- so its non-terminal
+# autonomy-state.json persisted iterationCount>0), the FIRST main-loop claude
+# call of the restarted run emits `claude --resume <stored-uuid>` (the stable
+# per-run uuid from .loki/state/claude-session.json) instead of a fresh
+# stateless call, reattaching the prior Claude context. After that single
+# resumed call the run reverts to normal per-iteration stateless behavior
+# (injected memory carries forward as today). This is a RECOVERY feature, NOT a
+# per-iteration resume chain -- so transcript growth cannot accumulate.
+#
+# CONSERVATIVE DEFAULT OFF: with the knob unset the default claude argv is
+# byte-identical to v7.34 (no --resume ever emitted). Opt IN with
+# LOKI_RESUME_SESSION=1. Gated on CLI support so an older claude degrades.
+#
+# MUTUAL EXCLUSION: --session-id and --resume are mutually exclusive on one
+# claude invocation (claude rejects a session-id already in use, and resume
+# replaces the fresh-session intent). The run.sh main-loop block emits the
+# resume slice INSTEAD of the stamp slice on the one resumed call, never both.
+# ---------------------------------------------------------------------------
+
+# Predicate: is recovery resume enabled AND supported? CONSERVATIVE DEFAULT OFF.
+# Opt IN with LOKI_RESUME_SESSION=1; gated on `claude --resume` support so an
+# older CLI degrades to normal stateless behavior (no flag emitted).
+loki_resume_session_enabled() {
+    [ "${LOKI_RESUME_SESSION:-0}" = "1" ] || return 1
+    loki_claude_flag_supported "--resume"
+}
+
+# Predicate: when resuming, also fork into a NEW session id (leaving the parent
+# transcript untouched)? Only honored together with LOKI_RESUME_SESSION=1.
+# DEFAULT OFF. Gated on `claude --fork-session` support.
+loki_session_fork_enabled() {
+    [ "${LOKI_SESSION_FORK:-0}" = "1" ] || return 1
+    loki_resume_session_enabled || return 1
+    loki_claude_flag_supported "--fork-session"
+}
+
+# The stable per-run claude session uuid to resume, read from the run-start
+# metadata file .loki/state/claude-session.json (written on the FRESH run, so it
+# survives into a restart). Emits the stored uuid on stdout, or nothing when the
+# file is absent / unreadable / has no uuid (caller then skips resume and runs a
+# normal fresh call -- safe degrade). Pure read, no side effects. Honors LOKI_DIR
+# / TARGET_DIR exactly like the rest of run.sh.
+_loki_resume_target_uuid() {
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
+    local cs_file="$loki_dir/state/claude-session.json"
+    [ -s "$cs_file" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    _LOKI_CS_FILE="$cs_file" python3 - <<'RESUME_UUID_PY' 2>/dev/null || true
+import json, os, re
+try:
+    with open(os.environ["_LOKI_CS_FILE"]) as f:
+        d = json.load(f)
+    if not isinstance(d, dict):
+        raise ValueError
+    u = d.get("claude_session_uuid", "")
+    # RFC-4122 shape check: only print a well-formed uuid so a corrupt file
+    # never injects a bogus --resume argument.
+    if isinstance(u, str) and re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", u
+    ):
+        print(u, end="")
+except Exception:
+    pass
+RESUME_UUID_PY
+}

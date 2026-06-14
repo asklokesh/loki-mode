@@ -94,6 +94,18 @@ export type ProviderInvocation = {
   // subcalls (e.g. the override-council judge), mirroring the bash route which
   // confines --session-id to the main-loop argv. Defaults to false (no stamp).
   mainLoop?: boolean;
+  // Session-continuity Phase 2 (GitHub #165): true on the FIRST main-loop call
+  // of a RESTARTED run (the prior run was interrupted, non-terminal). With
+  // LOKI_RESUME_SESSION=1 this is the single call that emits `claude --resume
+  // <stored-uuid>` instead of the per-iteration stamp; the caller must clear it
+  // after that one call so later iterations revert to normal (no resume chain).
+  // Defaults to false. Mirrors the bash _LOKI_RESTARTED_RUN + _LOKI_RESUME_CONSUMED
+  // snapshot/latch.
+  // STAGED, not yet wired on the Bun route: the production autonomous loop execs
+  // the bash runner (autonomy/run.sh), which is fully wired. No Bun caller sets
+  // this field today; providers.ts honors it so the Bun runner gets resume for
+  // free once its main loop becomes the live route. See #165.
+  resumeFirstCall?: boolean;
 };
 
 export interface ProviderInvoker {

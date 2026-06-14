@@ -369,6 +369,200 @@ else
   bad "FIX D opt-in" "flag missing with =1: $(printf '%s ' $NSP_ON)"
 fi
 
+# ============================================================================
+# Section H: Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION
+# ============================================================================
+# Stub-level proof of the resume-or-stamp main-loop decision. HONEST SCOPE: a
+# stub advertises --resume/--fork-session in --help; these tests assert the FLAG
+# IS / IS NOT passed, the resume uuid is the stored stable per-run uuid, and the
+# mutual-exclusion invariant (--session-id and --resume never co-occur). The REAL
+# claude --resume context-carry / cost-capture semantics were verified LIVE in
+# internal/V735-PHASE2-PROBE-RESULTS.md (PROBE 1, opus) -- not re-run here.
+
+# A Phase-2 stub that advertises the resume flags.
+P2_BIN="$TMP/p2-bin"; mkdir -p "$P2_BIN"
+cat > "$P2_BIN/claude" <<'P2STUB'
+#!/usr/bin/env bash
+case "$1" in
+  --help)
+    cat <<'HELP'
+  --session-id <uuid>                   Use a specific session id
+  --resume <id>                         Resume a session by id
+  --fork-session                        Fork on resume
+  --dangerously-skip-permissions        skip
+HELP
+    exit 0
+    ;;
+esac
+exit 0
+P2STUB
+chmod +x "$P2_BIN/claude"
+
+# Reproduce the run.sh main-loop resume-or-stamp slice in isolation. Mirrors
+# run.sh exactly: resume wins on a restarted first call, else stamp, never both.
+# Args: <restarted 0|1> <consumed 0|1> <iteration> ; reads env knobs + run dir.
+build_main_argv_p2() {
+  local restarted="$1" consumed="$2" iter="$3"
+  PATH="$P2_BIN:$PATH" bash -c '
+    set -uo pipefail
+    unset __LOKI_CLAUDE_HELP_CACHE
+    # shellcheck disable=SC1090
+    . "'"$FLAGS_SH"'"
+    _LOKI_RESTARTED_RUN="'"$restarted"'"
+    _LOKI_RESUME_CONSUMED="'"$consumed"'"
+    ITERATION_COUNT="'"$iter"'"
+    LOKI_TRUST_RUN_ID="run-p2-test-7"
+    _loki_claude_argv=("--dangerously-skip-permissions" "--model" "opus")
+    _loki_did_resume=0
+    if [ "${_LOKI_RESTARTED_RUN:-0}" = "1" ] && [ "${_LOKI_RESUME_CONSUMED:-0}" = "0" ] \
+       && type loki_resume_session_enabled >/dev/null 2>&1 \
+       && loki_resume_session_enabled; then
+      _loki_resume_uuid="$(_loki_resume_target_uuid)"
+      if [ -n "$_loki_resume_uuid" ]; then
+        _loki_claude_argv+=("--resume" "$_loki_resume_uuid")
+        if type loki_session_fork_enabled >/dev/null 2>&1 && loki_session_fork_enabled; then
+          _loki_claude_argv+=("--fork-session")
+        fi
+        _loki_did_resume=1
+      fi
+    fi
+    if [ "$_loki_did_resume" = "0" ] \
+       && type loki_session_stamp_enabled >/dev/null 2>&1 \
+       && loki_session_stamp_enabled; then
+      _loki_iter_session_uuid="$(_loki_claude_iteration_session_uuid "${LOKI_TRUST_RUN_ID:-}" "$ITERATION_COUNT")"
+      [ -n "$_loki_iter_session_uuid" ] && _loki_claude_argv+=("--session-id" "$_loki_iter_session_uuid")
+    fi
+    printf "%s\n" "${_loki_claude_argv[@]}"
+  ' 2>/dev/null
+}
+
+# Seed a claude-session.json with a known stable uuid in a run dir.
+P2_PROJ="$TMP/p2-proj"; mkdir -p "$P2_PROJ/.loki/state"
+P2_STORED="$(PATH="$P2_BIN:$PATH" bash -c '. "'"$FLAGS_SH"'"; _loki_claude_session_uuid "run-p2-test-7"')"
+printf '{"run_id":"run-p2-test-7","claude_session_uuid":"%s","mode":"resume","created_at":"2026-06-13T00:00:00Z"}\n' \
+  "$P2_STORED" > "$P2_PROJ/.loki/state/claude-session.json"
+
+# Case 1: DEFAULT (no knobs) -> neither --resume nor --session-id.
+H1="$(cd "$P2_PROJ" && unset LOKI_RESUME_SESSION LOKI_SESSION_STAMP LOKI_SESSION_FORK; LOKI_DIR="$P2_PROJ/.loki" build_main_argv_p2 1 0 1)"
+if printf '%s\n' "$H1" | grep -qx -- '--resume' || printf '%s\n' "$H1" | grep -qx -- '--session-id'; then
+  bad "H1 default OFF" "unexpected session flag: $(printf '%s ' $H1)"
+else
+  ok "H1: default (no knobs) emits neither --resume nor --session-id (byte-identical to v7.34)"
+fi
+
+# Case 2: RESUME=1 fresh run (restarted=0) iter0 -> stamp path, NOT resume.
+# Fresh run iter0 with STAMP also on emits the per-run-stable... no: stamp is
+# per-iteration. The design says a fresh RESUME-eligible run stamps iter0 so a
+# later restart has an anchor; that anchor write is the claude-session.json (run
+# start), proven in Section C. Here we assert the ARGV on a fresh run does NOT
+# resume (restarted=0) and only stamps when STAMP=1.
+H2="$(cd "$P2_PROJ" && LOKI_DIR="$P2_PROJ/.loki" LOKI_RESUME_SESSION=1 build_main_argv_p2 0 0 0)"
+if printf '%s\n' "$H2" | grep -qx -- '--resume'; then
+  bad "H2 fresh run no resume" "fresh run (restarted=0) must NOT resume: $(printf '%s ' $H2)"
+else
+  ok "H2: RESUME=1 on a FRESH run (restarted=0) does NOT emit --resume (recovery-only)"
+fi
+
+# Case 3: restarted run, first call, RESUME=1 -> --resume <stored>, NO --session-id.
+H3="$(cd "$P2_PROJ" && LOKI_DIR="$P2_PROJ/.loki" LOKI_RESUME_SESSION=1 LOKI_SESSION_STAMP=1 build_main_argv_p2 1 0 1)"
+H3_RESUME_VAL="$(printf '%s\n' "$H3" | grep -A1 -x -- '--resume' | tail -1)"
+if printf '%s\n' "$H3" | grep -qx -- '--resume' && [ "$H3_RESUME_VAL" = "$P2_STORED" ]; then
+  ok "H3: restarted first call -> --resume <stored stable uuid> ($P2_STORED)"
+else
+  bad "H3 resume stored uuid" "expected --resume $P2_STORED, got: $(printf '%s ' $H3)"
+fi
+
+# Case 5 (mutual exclusion): even with STAMP=1, the resumed call has NO --session-id.
+if printf '%s\n' "$H3" | grep -qx -- '--session-id'; then
+  bad "H5 mutual exclusion" "--session-id co-occurred with --resume: $(printf '%s ' $H3)"
+else
+  ok "H5: mutual exclusion -- the resumed call emits NO --session-id (never both)"
+fi
+
+# After consumption (consumed=1): reverts to normal stamp behavior, no resume.
+H3B="$(cd "$P2_PROJ" && LOKI_DIR="$P2_PROJ/.loki" LOKI_RESUME_SESSION=1 LOKI_SESSION_STAMP=1 build_main_argv_p2 1 1 2)"
+if printf '%s\n' "$H3B" | grep -qx -- '--resume'; then
+  bad "H3B revert" "later iteration still resumed (no once-only latch): $(printf '%s ' $H3B)"
+elif printf '%s\n' "$H3B" | grep -qx -- '--session-id'; then
+  ok "H3B: after the one resume (consumed=1) the run reverts to per-iteration --session-id (no chain)"
+else
+  bad "H3B revert stamp" "expected --session-id after revert: $(printf '%s ' $H3B)"
+fi
+
+# Case 4: FORK=1 -> --fork-session appended to the resume slice.
+H4="$(cd "$P2_PROJ" && LOKI_DIR="$P2_PROJ/.loki" LOKI_RESUME_SESSION=1 LOKI_SESSION_FORK=1 build_main_argv_p2 1 0 1)"
+if printf '%s\n' "$H4" | grep -qx -- '--resume' && printf '%s\n' "$H4" | grep -qx -- '--fork-session'; then
+  ok "H4: LOKI_SESSION_FORK=1 appends --fork-session on the resume call"
+else
+  bad "H4 fork" "expected --resume + --fork-session: $(printf '%s ' $H4)"
+fi
+# FORK without RESUME is a no-op (fork only honored with resume).
+H4B="$(cd "$P2_PROJ" && unset LOKI_RESUME_SESSION; LOKI_DIR="$P2_PROJ/.loki" LOKI_SESSION_FORK=1 build_main_argv_p2 1 0 1)"
+if printf '%s\n' "$H4B" | grep -qx -- '--fork-session'; then
+  bad "H4B fork needs resume" "--fork-session emitted without --resume: $(printf '%s ' $H4B)"
+else
+  ok "H4B: --fork-session is a no-op without LOKI_RESUME_SESSION=1"
+fi
+
+# Case 7: older CLI (no --resume in help) degrades -> no resume even with =1.
+H7="$(
+  DEG2="$TMP/p2-deg"; mkdir -p "$DEG2"
+  cat > "$DEG2/claude" <<'DST2'
+#!/usr/bin/env bash
+case "$1" in --help) printf '  --session-id <uuid>  id\n'; exit 0;; esac
+exit 0
+DST2
+  chmod +x "$DEG2/claude"
+  cd "$P2_PROJ"
+  PATH="$DEG2:$PATH" bash -c '
+    set -uo pipefail
+    unset __LOKI_CLAUDE_HELP_CACHE
+    # shellcheck disable=SC1090
+    . "'"$FLAGS_SH"'"
+    if LOKI_RESUME_SESSION=1 loki_resume_session_enabled; then echo "ENABLED"; else echo "DISABLED"; fi
+  ' 2>/dev/null
+)"
+if [ "$H7" = "DISABLED" ]; then
+  ok "H7: older CLI without --resume in help degrades (resume OFF even with =1)"
+else
+  bad "H7 graceful degrade" "got: $H7"
+fi
+
+# Malformed stored uuid -> no resume (safe degrade).
+P2_BADPROJ="$TMP/p2-bad"; mkdir -p "$P2_BADPROJ/.loki/state"
+printf '{"run_id":"x","claude_session_uuid":"not-a-uuid","mode":"resume"}\n' > "$P2_BADPROJ/.loki/state/claude-session.json"
+H_BAD="$(cd "$P2_BADPROJ" && LOKI_DIR="$P2_BADPROJ/.loki" LOKI_RESUME_SESSION=1 build_main_argv_p2 1 0 1)"
+if printf '%s\n' "$H_BAD" | grep -qx -- '--resume'; then
+  bad "H-bad uuid" "resumed on a malformed stored uuid: $(printf '%s ' $H_BAD)"
+else
+  ok "H-bad: malformed stored uuid -> no --resume (safe degrade to fresh call)"
+fi
+
+# Case 6: bash <-> Bun parity for the resume slice.
+if command -v bun >/dev/null 2>&1; then
+  BUN_P2="$(cd "$REPO_ROOT/loki-ts" && LOKI_DIR="$P2_PROJ/.loki" LOKI_RESUME_SESSION=1 bun -e '
+    import { sessionResumeArgv, resumeSessionEnabled, sessionForkEnabled, _resetClaudeHelpCacheForTest } from "./src/providers/claude_flags.ts";
+    _resetClaudeHelpCacheForTest("  --session-id <uuid>\n  --resume <id>\n  --fork-session\n");
+    console.log("RESUME:" + JSON.stringify(sessionResumeArgv()));
+    delete process.env.LOKI_RESUME_SESSION;
+    console.log("DEF:" + JSON.stringify(sessionResumeArgv()));
+  ' 2>/dev/null)"
+  BUN_RESUME="$(printf '%s\n' "$BUN_P2" | grep '^RESUME:' | sed 's/^RESUME://')"
+  BUN_DEF="$(printf '%s\n' "$BUN_P2" | grep '^DEF:' | sed 's/^DEF://')"
+  if [ "$BUN_DEF" = "[]" ]; then
+    ok "H6 (Bun): sessionResumeArgv() default OFF -> [] (byte-identical to v7.34)"
+  else
+    bad "H6 Bun default OFF" "got: $BUN_DEF"
+  fi
+  if printf '%s' "$BUN_RESUME" | grep -q -- "$P2_STORED"; then
+    ok "H6 (Bun): sessionResumeArgv() emits --resume + the SAME stored uuid as bash ($P2_STORED)"
+  else
+    bad "H6 Bun resume parity" "bash stored=$P2_STORED bun=$BUN_RESUME"
+  fi
+else
+  bad "H6 bash<->Bun resume parity" "bun not on PATH"
+fi
+
 echo
 echo "======================================================================"
 echo "test-cli-session-v734: $PASS passed, $FAIL failed"

@@ -12390,6 +12390,25 @@ except Exception:
         fi
     fi
 
+    # Session-continuity Phase 2 (GitHub #165): snapshot whether THIS run is a
+    # RESTARTED run BEFORE the main loop mutates ITERATION_COUNT. load_state
+    # (called above) restored ITERATION_COUNT from .loki/autonomy-state.json's
+    # iterationCount, resetting to 0 after a terminal prior run. So at this point
+    # ITERATION_COUNT>0 means "the prior run was interrupted (non-terminal) and
+    # is being restarted"; ==0 means fresh. The main loop increments
+    # ITERATION_COUNT at the top of each pass, so the resume decision MUST key on
+    # this run-start snapshot, never the live counter. _LOKI_RESUME_CONSUMED is
+    # the once-only latch so the recovery resume fires on exactly the FIRST
+    # main-loop call of a restarted run, then the run reverts to normal stateless
+    # iterations (no resume chain -- transcript growth cannot accumulate).
+    if [ "${ITERATION_COUNT:-0}" -gt 0 ]; then
+        _LOKI_RESTARTED_RUN=1
+    else
+        _LOKI_RESTARTED_RUN=0
+    fi
+    _LOKI_RESUME_CONSUMED=0
+    export _LOKI_RESTARTED_RUN _LOKI_RESUME_CONSUMED
+
     # Trust-metrics instrumentation marker: record one run_start event per
     # fresh run so the trust-metrics denominator counts ONLY instrumented runs.
     # This is what lets the aggregator distinguish "0 blocks measured" from
@@ -12415,9 +12434,22 @@ except Exception:
             if [ -n "$_loki_session_uuid" ]; then
                 local _loki_session_created
                 _loki_session_created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                # mode reflects the active session-continuity layer for this run,
+                # surfaced on the dashboard: "resume" when Phase 2 recovery resume
+                # is enabled (GitHub #165), else "stamp" (Phase 1 correlation-only,
+                # v7.34). DEFAULT (no knobs) stays "stamp" so existing behavior +
+                # dashboard output are unchanged. The uuid is the SAME stable
+                # per-run uuid either way -- it is the resume anchor a later
+                # restart reads back. The "stamp" vs "resume" label only records
+                # intent; the actual argv decision is gated again at call time.
+                local _loki_session_mode="stamp"
+                if type loki_resume_session_enabled >/dev/null 2>&1 \
+                   && loki_resume_session_enabled; then
+                    _loki_session_mode="resume"
+                fi
                 mkdir -p ".loki/state" 2>/dev/null || true
-                printf '{"run_id":"%s","claude_session_uuid":"%s","mode":"stamp","created_at":"%s"}\n' \
-                    "$LOKI_TRUST_RUN_ID" "$_loki_session_uuid" "$_loki_session_created" \
+                printf '{"run_id":"%s","claude_session_uuid":"%s","mode":"%s","created_at":"%s"}\n' \
+                    "$LOKI_TRUST_RUN_ID" "$_loki_session_uuid" "$_loki_session_mode" "$_loki_session_created" \
                     > ".loki/state/claude-session.json" 2>/dev/null || true
             fi
         fi
@@ -12816,6 +12848,34 @@ except Exception as exc:
            && loki_claude_flag_supported "--include-partial-messages"; then
             _loki_claude_argv+=("--include-partial-messages")
         fi
+        # Session-continuity Phase 2 (GitHub #165): on the FIRST main-loop call of
+        # a RESTARTED run (snapshot _LOKI_RESTARTED_RUN==1, latch
+        # _LOKI_RESUME_CONSUMED==0) with LOKI_RESUME_SESSION=1, emit
+        # `--resume <stored-uuid>` INSTEAD of the per-iteration --session-id stamp
+        # (the two are mutually exclusive on one invocation). This reattaches the
+        # prior Claude context once, then the latch flips so every later iteration
+        # reverts to normal stateless behavior. Optional --fork-session
+        # (LOKI_SESSION_FORK=1) writes the resumed turn to a new id, leaving the
+        # parent transcript untouched. DEFAULT OFF: with no knobs neither --resume
+        # nor --session-id is emitted (argv byte-identical to v7.34).
+        local _loki_did_resume=0
+        if [ "${_LOKI_RESTARTED_RUN:-0}" = "1" ] && [ "${_LOKI_RESUME_CONSUMED:-0}" = "0" ] \
+           && type loki_resume_session_enabled >/dev/null 2>&1 \
+           && loki_resume_session_enabled; then
+            local _loki_resume_uuid
+            _loki_resume_uuid="$(_loki_resume_target_uuid)"
+            if [ -n "$_loki_resume_uuid" ]; then
+                _loki_claude_argv+=("--resume" "$_loki_resume_uuid")
+                if type loki_session_fork_enabled >/dev/null 2>&1 \
+                   && loki_session_fork_enabled; then
+                    _loki_claude_argv+=("--fork-session")
+                fi
+                _loki_did_resume=1
+                _LOKI_RESUME_CONSUMED=1
+                export _LOKI_RESUME_CONSUMED
+                log_info "LOKI_RESUME_SESSION=1: resuming Claude session $_loki_resume_uuid (recovery resume, first call of restarted run)"
+            fi
+        fi
         # v7.34.0 Phase 1 (correlation-only): per-iteration --session-id. OPT-IN
         # via LOKI_SESSION_STAMP=1 (CONSERVATIVE DEFAULT is OFF so the default
         # argv stays byte-identical to v7.33 -- the UX-monotonicity requirement).
@@ -12824,7 +12884,10 @@ except Exception as exc:
         # and accumulate transcript (Phase 2 continuity, out of scope). This keeps
         # each iteration a fresh stateless session while making its ~/.claude
         # JSONL name predictable for dashboard correlation. Gated on CLI support.
-        if type loki_session_stamp_enabled >/dev/null 2>&1 \
+        # MUTUAL EXCLUSION: skip the stamp on the call that emitted --resume above
+        # (claude rejects --session-id + --resume together).
+        if [ "$_loki_did_resume" = "0" ] \
+           && type loki_session_stamp_enabled >/dev/null 2>&1 \
            && loki_session_stamp_enabled; then
             local _loki_iter_session_uuid
             _loki_iter_session_uuid="$(_loki_claude_iteration_session_uuid "${LOKI_TRUST_RUN_ID:-}" "$ITERATION_COUNT")"

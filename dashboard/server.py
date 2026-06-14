@@ -392,6 +392,11 @@ class StatusResponse(BaseModel):
     # user can correlate the run with its Claude session JSONL (in ~/.claude/projects). Empty when
     # the run predates this field or no claude session was stamped.
     claude_session_id: str = ""
+    # Session-continuity Phase 2 (#165): the active session-continuity layer for
+    # the current run, read from claude-session.json. "stamp" = Phase 1
+    # correlation-only (v7.34); "resume" = LOKI_RESUME_SESSION recovery resume.
+    # Empty when the run predates this field or no claude session was stamped.
+    claude_session_mode: str = ""
     # Concurrent sessions (v6.4.0)
     sessions: list[SessionInfo] = []
 
@@ -963,6 +968,7 @@ async def get_status() -> StatusResponse:
     # run-start by run.sh (correlation-only). Best-effort read; empty when the
     # file is absent (run predates the field, or a non-claude provider).
     claude_session_id = ""
+    claude_session_mode = ""
     claude_session_file = loki_dir / "state" / "claude-session.json"
     if claude_session_file.exists():
         try:
@@ -976,6 +982,11 @@ async def get_status() -> StatusResponse:
             if isinstance(_cs, dict):
                 _v = _cs.get("claude_session_uuid", "")
                 claude_session_id = _v if isinstance(_v, str) else ""
+                # Phase 2 (#165): "stamp" (Phase 1 correlation-only) or "resume"
+                # (LOKI_RESUME_SESSION recovery resume). Empty when the run
+                # predates the field. Same non-string guard as the uuid.
+                _m = _cs.get("mode", "")
+                claude_session_mode = _m if isinstance(_m, str) else ""
         except (json.JSONDecodeError, OSError, KeyError, AttributeError):
             pass
 
@@ -1232,6 +1243,7 @@ async def get_status() -> StatusResponse:
         provider=provider,
         current_task=current_task,
         claude_session_id=claude_session_id,
+        claude_session_mode=claude_session_mode,
         sessions=active_session_list,
     )
 

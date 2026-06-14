@@ -356,6 +356,77 @@ export function reviewAllowlistArgv(): string[] {
   return ["--allowedTools", REVIEW_ALLOWLIST_TOKEN];
 }
 
+// ---------------------------------------------------------------------------
+// Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION recovery resume
+//
+// NAMING COLLISION WARNING: Loki already has a user-facing `loki heal/migrate
+// --resume` CHECKPOINT flag. LOKI_RESUME_SESSION governs the CLAUDE-CLI
+// session-resume layer (claude --resume <uuid>), NOT the Loki checkpoint resume.
+//
+// SCOPE: on the FIRST main-loop call of a RESTARTED run, emit
+// `claude --resume <stored-uuid>` (the stable per-run uuid from
+// .loki/state/claude-session.json) instead of a fresh stateless call, then
+// revert to normal. Recovery only, never a per-iteration chain. DEFAULT OFF
+// (argv byte-identical to v7.34). Mirrors loki_resume_session_enabled /
+// loki_session_fork_enabled / _loki_resume_target_uuid in claude-flags.sh.
+// ---------------------------------------------------------------------------
+
+// Recovery resume enabled AND supported? DEFAULT OFF (opt in LOKI_RESUME_SESSION=1),
+// gated on `claude --resume` support. Mirrors loki_resume_session_enabled (bash).
+export function resumeSessionEnabled(): boolean {
+  if (process.env["LOKI_RESUME_SESSION"] !== "1") return false;
+  return claudeFlagSupported("--resume");
+}
+
+// Fork the resumed session into a new id? Only honored with LOKI_RESUME_SESSION=1.
+// DEFAULT OFF. Gated on `claude --fork-session` support. Mirrors
+// loki_session_fork_enabled (bash).
+export function sessionForkEnabled(): boolean {
+  if (process.env["LOKI_SESSION_FORK"] !== "1") return false;
+  if (!resumeSessionEnabled()) return false;
+  return claudeFlagSupported("--fork-session");
+}
+
+// The stable per-run uuid to resume, read from .loki/state/claude-session.json
+// (written on the fresh run, survives into a restart). Returns the stored uuid
+// or null when absent / unreadable / malformed (caller then skips resume).
+// Mirrors _loki_resume_target_uuid (bash). targetDir defaults to cwd, matching
+// the bash LOKI_DIR/TARGET_DIR resolution.
+export function resumeTargetUuid(targetDir?: string): string | null {
+  const base = targetDir ?? process.env["TARGET_DIR"] ?? ".";
+  const lokiDir = process.env["LOKI_DIR"] ?? `${base}/.loki`;
+  const csPath = `${lokiDir}/state/claude-session.json`;
+  try {
+    const raw = readFileSync(csPath, "utf8");
+    const d = JSON.parse(raw) as unknown;
+    if (typeof d !== "object" || d === null) return null;
+    const u = (d as Record<string, unknown>)["claude_session_uuid"];
+    if (
+      typeof u === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(u)
+    ) {
+      return u;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// The --resume (+ optional --fork-session) argv slice for the ONE recovery
+// resume call, or [] when disabled / no stored uuid. The Bun runner appends this
+// on the first main-loop call of a restarted run, INSTEAD of sessionStampArgv()
+// (mutual exclusion: --session-id and --resume never co-occur). Mirrors the
+// run.sh main-loop resume block.
+export function sessionResumeArgv(targetDir?: string): string[] {
+  if (!resumeSessionEnabled()) return [];
+  const uuid = resumeTargetUuid(targetDir);
+  if (!uuid) return [];
+  const argv = ["--resume", uuid];
+  if (sessionForkEnabled()) argv.push("--fork-session");
+  return argv;
+}
+
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
   _claudeHelpCache = text;
