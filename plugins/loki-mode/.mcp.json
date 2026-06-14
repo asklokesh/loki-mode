@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "loki-mode": {
+      "command": "loki",
+      "args": ["mcp", "--transport", "stdio"],
+      "env": {
+        "LOKI_MCP_AUTO_BOOTSTRAP": "1"
+      }
+    }
+  }
+}

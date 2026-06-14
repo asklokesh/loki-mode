@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "loki-mode",
+  "owner": {
+    "name": "Autonomi"
+  },
+  "description": "Autonomi marketplace: Loki Mode, the autonomous spec-to-product build system with a built-in trust layer.",
+  "plugins": [
+    {
+      "name": "loki-mode",
+      "source": "./plugins/loki-mode",
+      "description": "Autonomous spec-to-product build system with a built-in trust layer. Ships Loki's spec-hardening (grill), living-spec drift detection, and deterministic PR verification commands, plus the Loki MCP server (memory, task queue, code search, build management). Requires the loki-mode CLI on PATH (npm install -g loki-mode or brew install).",
+      "homepage": "https://github.com/asklokesh/loki-mode",
+      "repository": "https://github.com/asklokesh/loki-mode",
+      "license": "SEE LICENSE IN LICENSE",
+      "category": "automation",
+      "keywords": [
+        "autonomous",
+        "agent",
+        "spec-driven",
+        "verification",
+        "code-review",
+        "mcp",
+        "loki"
+      ]
+    }
+  ]
+}

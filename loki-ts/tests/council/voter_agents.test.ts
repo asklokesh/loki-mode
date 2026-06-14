@@ -291,17 +291,38 @@ describe("dispatchClaudeAgents EMBED 3b --allowedTools least-privilege allowlist
   const HELP_FULL =
     "  --agents\n  --json-schema\n  --disallowedTools <tools...>\n  --allowedTools <tools...>";
 
-  it("DEFAULT OFF: no --allowedTools when LOKI_REVIEW_ALLOWLIST unset; argv byte-identical to denylist-only", async () => {
+  it("DEFAULT ON: --allowedTools present (alongside the denylist) when LOKI_REVIEW_ALLOWLIST unset", async () => {
     _resetClaudeHelpCacheForTest(HELP_FULL);
     const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
     const savedAllow = process.env["LOKI_REVIEW_ALLOWLIST"];
     delete process.env["LOKI_REVIEW_TOOL_GUARD"]; // denylist default-on
-    delete process.env["LOKI_REVIEW_ALLOWLIST"]; // allowlist default-off
+    delete process.env["LOKI_REVIEW_ALLOWLIST"]; // allowlist default-on (flipped)
+    const cap = { argv: [] as string[] };
+    try {
+      await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
+      // Allowlist now default-on: present by default.
+      expect(cap.argv.includes("--allowedTools")).toBe(true);
+      // Deny precedence is safe (verified live), so denylist coexists.
+      expect(cap.argv.includes("--disallowedTools")).toBe(true);
+      expect(cap.argv[cap.argv.length - 2]).toBe("-p");
+    } finally {
+      if (savedGuard === undefined) delete process.env["LOKI_REVIEW_TOOL_GUARD"];
+      else process.env["LOKI_REVIEW_TOOL_GUARD"] = savedGuard;
+      if (savedAllow === undefined) delete process.env["LOKI_REVIEW_ALLOWLIST"];
+      else process.env["LOKI_REVIEW_ALLOWLIST"] = savedAllow;
+    }
+  });
+
+  it("OPT OUT: no --allowedTools when LOKI_REVIEW_ALLOWLIST=0 (escape hatch); denylist still present", async () => {
+    _resetClaudeHelpCacheForTest(HELP_FULL);
+    const savedGuard = process.env["LOKI_REVIEW_TOOL_GUARD"];
+    const savedAllow = process.env["LOKI_REVIEW_ALLOWLIST"];
+    delete process.env["LOKI_REVIEW_TOOL_GUARD"]; // denylist default-on
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "0"; // escape hatch
     const cap = { argv: [] as string[] };
     try {
       await dispatchClaudeAgents(fakeCtx(), capturingRunner(cap));
       expect(cap.argv.includes("--allowedTools")).toBe(false);
-      // Denylist still present (default on), prompt still last.
       expect(cap.argv.includes("--disallowedTools")).toBe(true);
       expect(cap.argv[cap.argv.length - 2]).toBe("-p");
     } finally {

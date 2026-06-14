@@ -649,13 +649,18 @@ show_help() {
     # do NOT appear here; they live in the collapsed footer below and in
     # `loki help aliases`. The full long-tail surface is still dispatchable and
     # documented per-command via `loki <command> --help`.
+    #
+    # v7.39.0: trimmed three lower-traffic canonical entries off the front page
+    # to hold the lean target after `ultracode` (v7.38.0) joined Verify/trust:
+    # grill (pre-build spec interrogation, advanced), spec (living-spec drift,
+    # advanced), and cleanup (orphaned-process recovery, rare). They remain
+    # fully canonical (NOT aliases), dispatchable, and listed in the "More
+    # commands" footer below + documented via `loki <command> --help`.
     echo "Commands:"
     echo ""
     echo "Build:"
     echo "  start [SPEC]     Start a build (PRD file, GitHub issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
-    echo "  grill [SPEC]     Devil's-advocate spec interrogation before you build"
-    echo "  spec [cmd]       Living spec: lock|status|sync (drift detection)"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
@@ -663,7 +668,6 @@ show_help() {
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume paused execution"
-    echo "  cleanup          Kill orphaned processes from crashed sessions"
     echo ""
     echo "Verify / trust:"
     echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
@@ -692,10 +696,10 @@ show_help() {
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
-    echo "More commands (init, watch, demo, web, api, logs, github,"
-    echo "import, council, proof, audit, agent, template, magic, docs, wiki, ci,"
-    echo "test, bench, secrets, telemetry, crash, worktree, failover, monitor,"
-    echo "remote, ...) are dispatchable and documented via"
+    echo "More commands (grill, spec, cleanup, init, watch, demo, web, api,"
+    echo "logs, github, import, council, proof, audit, agent, template, magic,"
+    echo "docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
+    echo "failover, monitor, remote, ...) are dispatchable and documented via"
     echo "'loki <command> --help'."
     echo ""
     echo "Aliases (deprecated): older command names still work; they print a"

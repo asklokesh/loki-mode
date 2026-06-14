@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.39.0] - 2026-06-14
+
+### Added
+- Claude Code plugin and marketplace packaging. Loki now ships a plugin manifest
+  (plugins/loki-mode/.claude-plugin/plugin.json) and a marketplace manifest
+  (.claude-plugin/marketplace.json) so users can install via the Claude Code
+  plugin marketplace: `/plugin marketplace add asklokesh/loki-mode` then
+  `/plugin install loki-mode@loki-mode`. The plugin bundles the loki slash
+  commands, wires the MCP server via `loki mcp --transport stdio` (PATH-resolved,
+  install-location-independent, requires the loki CLI on PATH), and includes an
+  opt-in Bash safety guard hook gated on LOKI_GUARD=1 (default OFF). License is
+  BUSL-1.1 (source-available), declared as "SEE LICENSE IN LICENSE".
+
+### Changed
+- Review tool allowlist (LOKI_REVIEW_ALLOWLIST) is now default-ON. Council
+  reviewers run with a least-privilege read/inspect tool surface by default.
+  Opt out with LOKI_REVIEW_ALLOWLIST=0. The mutation-blocking denylist is
+  unchanged and still takes precedence; the allowlist can only narrow the
+  reviewer surface, never grant a mutating tool.
+- Front-page `loki --help` trimmed: grill, spec, and cleanup moved to the
+  collapsed "More commands" footer to keep the front page lean. All three remain
+  fully dispatchable and documented via `loki <command> --help`.
+
 ## [7.38.0] - 2026-06-14
 
 ### Added

@@ -261,14 +261,18 @@ loki_review_guard_denylist() {
 # the dangerous forms. echo>/sed -i/python -c style writes are not enumerable and
 # remain possible; the real net is commit-before-agent-wave (see CLAUDE.md).
 #
-# DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1) so the default argv on BOTH routes
-# stays byte-identical to v7.34. Gated on CLI support so an older claude degrades
-# gracefully (emits nothing). Predicate + token so call sites append uniformly:
+# DEFAULT ON (safety-additive least-privilege; opt OUT with LOKI_REVIEW_ALLOWLIST=0).
+# Flipped default-on because deny precedence (verified live) means the denylist
+# still hard-blocks every mutation form while this allowlist only narrows the
+# reviewer surface to read/inspect tools -- pure safety win, no surprise spend, no
+# egress. The escape hatch (LOKI_REVIEW_ALLOWLIST=0) restores the prior off state.
+# Gated on CLI support so an older claude degrades gracefully (emits nothing).
+# Predicate + token so call sites append uniformly:
 #   if loki_review_allowlist_enabled; then
 #       argv+=("--allowedTools" "$(loki_review_allowlist)")
 #   fi
 loki_review_allowlist_enabled() {
-    [ "${LOKI_REVIEW_ALLOWLIST:-0}" = "1" ] || return 1
+    [ "${LOKI_REVIEW_ALLOWLIST:-1}" = "0" ] && return 1
     loki_claude_flag_supported "--allowedTools"
 }
 loki_review_allowlist() {

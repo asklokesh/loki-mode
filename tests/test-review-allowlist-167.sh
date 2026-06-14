@@ -61,9 +61,13 @@ chmod +x "$STUB_BIN/claude"
   # shellcheck disable=SC1090
   . "$FLAGS_SH"
 
-  # DEFAULT OFF: predicate must be OFF when LOKI_REVIEW_ALLOWLIST unset.
+  # DEFAULT ON: predicate must be ON when LOKI_REVIEW_ALLOWLIST unset AND
+  # --allowedTools supported (safety-additive least-privilege, flipped default-on).
   unset LOKI_REVIEW_ALLOWLIST
-  if loki_review_allowlist_enabled; then echo "B1_BAD"; else echo "B1_OK"; fi
+  if loki_review_allowlist_enabled; then echo "B1_OK"; else echo "B1_BAD"; fi
+
+  # OPT OUT: predicate must be OFF when =0 (escape hatch), even when supported.
+  if LOKI_REVIEW_ALLOWLIST=0 loki_review_allowlist_enabled; then echo "B1b_BAD"; else echo "B1b_OK"; fi
 
   # ON: predicate enabled when =1 AND --allowedTools supported.
   if LOKI_REVIEW_ALLOWLIST=1 loki_review_allowlist_enabled; then echo "B2_OK"; else echo "B2_BAD"; fi
@@ -94,7 +98,8 @@ chmod +x "$STUB_BIN/claude"
 check_tok() { # marker label
   if grep -qx "$1" "$TMP/secA.out"; then ok "$2"; else bad "$2" "marker $1 not found"; fi
 }
-check_tok B1_OK "EMBED3b predicate OFF by default (LOKI_REVIEW_ALLOWLIST unset)"
+check_tok B1_OK "EMBED3b predicate ON by default (LOKI_REVIEW_ALLOWLIST unset, --allowedTools supported)"
+check_tok B1b_OK "EMBED3b predicate OFF when =0 (escape hatch)"
 check_tok B2_OK "EMBED3b predicate ON when =1 and --allowedTools supported"
 check_tok B3a_OK "EMBED3b allow list starts with Read"
 check_tok B3b_OK "EMBED3b allow list contains Grep"

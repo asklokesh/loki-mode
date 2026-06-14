@@ -499,8 +499,18 @@ describe("claude_flags review allowlist (EMBED 3b, #167)", () => {
     _resetClaudeHelpCacheForTest(null);
   });
 
-  it("DEFAULT OFF: reviewAllowlistEnabled() false and argv empty when env unset", () => {
+  it("DEFAULT ON: reviewAllowlistEnabled() true and emits the token when env unset and CLI supports the flag", () => {
     delete process.env["LOKI_REVIEW_ALLOWLIST"];
+    _resetClaudeHelpCacheForTest(HELP_WITH);
+    expect(reviewAllowlistEnabled()).toBe(true);
+    const argv = reviewAllowlistArgv();
+    expect(argv.length).toBe(2);
+    expect(argv[0]).toBe("--allowedTools");
+    expect(argv[1]).toBe(REVIEW_ALLOWLIST_TOKEN);
+  });
+
+  it("OPT OUT: reviewAllowlistEnabled() false and argv empty when =0 (escape hatch)", () => {
+    process.env["LOKI_REVIEW_ALLOWLIST"] = "0";
     _resetClaudeHelpCacheForTest(HELP_WITH);
     expect(reviewAllowlistEnabled()).toBe(false);
     expect(reviewAllowlistArgv()).toEqual([]);
@@ -516,8 +526,8 @@ describe("claude_flags review allowlist (EMBED 3b, #167)", () => {
     expect(argv[1]).toBe(REVIEW_ALLOWLIST_TOKEN);
   });
 
-  it("graceful degrade: =1 but CLI lacks --allowedTools -> disabled, argv empty", () => {
-    process.env["LOKI_REVIEW_ALLOWLIST"] = "1";
+  it("graceful degrade: CLI lacks --allowedTools -> disabled even by default, argv empty", () => {
+    delete process.env["LOKI_REVIEW_ALLOWLIST"];
     _resetClaudeHelpCacheForTest(HELP_WITHOUT);
     expect(reviewAllowlistEnabled()).toBe(false);
     expect(reviewAllowlistArgv()).toEqual([]);

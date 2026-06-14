@@ -333,18 +333,21 @@ export function sessionStampArgv(runId?: string, iteration?: number): string[] {
 // every mutation form; the allowlist additionally narrows the surface). They are
 // NOT mutually exclusive.
 //
-// DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1) so the default argv stays
-// byte-identical to v7.34. Gated on CLI support (graceful degrade). The token
-// MUST stay byte-identical to loki_review_allowlist() in claude-flags.sh.
+// DEFAULT ON (safety-additive least-privilege; opt OUT with LOKI_REVIEW_ALLOWLIST=0).
+// Deny precedence (verified live) means the denylist still hard-blocks every
+// mutation form while this allowlist only narrows the reviewer surface to
+// read/inspect tools -- pure safety win, no surprise spend, no egress. Gated on
+// CLI support (graceful degrade). The token MUST stay byte-identical to
+// loki_review_allowlist() in claude-flags.sh.
 // ---------------------------------------------------------------------------
 export const REVIEW_ALLOWLIST_TOKEN =
   "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git blame:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(wc:*)";
 
 // Emit the --allowedTools least-privilege grant on reviewer/voter subcalls?
-// DEFAULT OFF; opt in with LOKI_REVIEW_ALLOWLIST=1; gated on CLI support.
+// DEFAULT ON; opt OUT with LOKI_REVIEW_ALLOWLIST=0; gated on CLI support.
 // Mirrors loki_review_allowlist_enabled in autonomy/lib/claude-flags.sh.
 export function reviewAllowlistEnabled(): boolean {
-  if (process.env["LOKI_REVIEW_ALLOWLIST"] !== "1") return false;
+  if (process.env["LOKI_REVIEW_ALLOWLIST"] === "0") return false;
   return claudeFlagSupported("--allowedTools");
 }
 

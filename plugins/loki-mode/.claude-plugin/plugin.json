@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "loki-mode",
+  "displayName": "Loki Mode",
+  "version": "7.39.0",
+  "description": "Autonomous spec-to-product build system with a built-in trust layer (RARV-C closure loop, 11 quality gates, completion council). Ships Loki's spec-hardening, drift-detection, and deterministic PR verification commands plus the Loki MCP server.",
+  "author": {
+    "name": "Autonomi",
+    "url": "https://www.autonomi.dev/"
+  },
+  "homepage": "https://github.com/asklokesh/loki-mode",
+  "repository": "https://github.com/asklokesh/loki-mode",
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "autonomous",
+    "agent",
+    "spec-driven",
+    "verification",
+    "code-review",
+    "mcp",
+    "loki"
+  ],
+  "commands": [
+    "./commands/"
+  ],
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json"
+}
