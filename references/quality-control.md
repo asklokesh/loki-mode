@@ -287,6 +287,12 @@ Task(subagent_type="general-purpose", model="opus",
 - ALWAYS re-run ALL 3 reviewers after fixes (not just the one that found the issue)
 - Wait for all reviews to complete before aggregating results
 
+### Inconclusive Reviews Block (v7.41.1)
+
+A code-review round must produce real verdicts to pass. `run_code_review` counts only reviewer outputs that exist, are non-empty, and carry a recognized `VERDICT:` line. If every reviewer returns no usable verdict (all NO_OUTPUT or unparseable), the round is treated as INCONCLUSIVE and BLOCKS rather than silently passing with zero findings. A bounded one-shot retry runs first; the block is opt-out via `LOKI_REVIEW_INCONCLUSIVE_BLOCK=0` (records, never blocks). APPROVE / PASS-with-concerns still pass.
+
+The reviewer-prompt diff excludes `.loki/` and `.git/` via git pathspec (`git diff <sha>..HEAD -- . ':(exclude).loki/'`). This mirrors the completion evidence gate and prevents a `.loki/`-tracked repo from ballooning the diff to the point that the reviewer model overflows and returns empty (the original NO_OUTPUT cause). Source: `autonomy/run.sh` (`run_code_review`, diff at `:2578`, inconclusive handling at `:8134`-`:8270`).
+
 ---
 
 ## Structured Prompting for Subagents

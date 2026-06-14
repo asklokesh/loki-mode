@@ -589,6 +589,36 @@ export function cavemanActivateEnv(tier?: string): string | null {
   return lokiLevel;
 }
 
+// One-time capture of the user's pre-existing global caveman mode into
+// LOKI_CAVEMAN_USER_MODE, so the no-raise / opt-out guard in cavemanActivateEnv
+// has something to read on the Bun route.
+//
+// PARITY: mirrors autonomy/lib/claude-flags.sh:574-577 BYTE-FOR-BYTE in intent.
+// The bash route, at source time, runs:
+//     if [ -z "${LOKI_CAVEMAN_USER_MODE+x}" ]; then
+//         LOKI_CAVEMAN_USER_MODE="${CAVEMAN_DEFAULT_MODE:-}"
+//     fi
+//     export LOKI_CAVEMAN_USER_MODE
+// and then exports CAVEMAN_DEFAULT_MODE=off tree-wide. On the Bun route we do NOT
+// clobber CAVEMAN_DEFAULT_MODE globally (the runner sets it per-spawn in
+// providers.ts), so only the capture half is mirrored here.
+//
+// Two semantics matter and both mirror bash exactly:
+//   - Guard on UNSET, not falsy (`${var+x}` is empty only when genuinely unset):
+//     an inherited empty LOKI_CAVEMAN_USER_MODE="" (user had no global mode) must
+//     NOT be recaptured. So branch on `=== undefined`, never on truthiness.
+//   - Capture to "" when CAVEMAN_DEFAULT_MODE is absent (`${CAVEMAN_DEFAULT_MODE:-}`),
+//     so the var is genuinely set afterward and the guard never re-fires.
+//
+// UNCONDITIONAL (no supported/enabled gate): bash captures at source time before
+// any caveman predicate runs, so this must too. Idempotent and process-wide:
+// safe to call once at runner startup; a second call is a no-op (already set).
+export function cavemanCaptureUserMode(): void {
+  if (process.env["LOKI_CAVEMAN_USER_MODE"] === undefined) {
+    process.env["LOKI_CAVEMAN_USER_MODE"] = process.env["CAVEMAN_DEFAULT_MODE"] ?? "";
+  }
+}
+
 // The suppression env VALUE for a parsed-output subcall: ALWAYS "off",
 // UNCONDITIONALLY (not gated on supported/enabled). The runner sets
 // CAVEMAN_DEFAULT_MODE="off" on every trust-gate claude spawn. Harmless no-op

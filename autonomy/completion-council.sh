@@ -710,8 +710,18 @@ print('true' if ratio > budget else 'false')
         ((member++))
     done
 
-    # Anti-sycophancy check: if unanimous APPROVE, run devil's advocate
+    # Anti-sycophancy check: if unanimous APPROVE, run devil's advocate.
+    #
+    # Audit-trail snapshots (these do NOT affect the live vote): capture whether
+    # the council was unanimous BEFORE the decrement below, and whether the DA
+    # actually fired and flipped the verdict. The transcript fields
+    # _ct_triggered/_ct_flipped used to be re-derived from approve_count AFTER
+    # this block decremented it, so on rounds where the DA fired AND flipped they
+    # were mis-recorded as false/false, corrupting the trust-metrics audit trail.
+    local _da_was_unanimous="false"
+    local _da_flipped="false"
     if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
+        _da_was_unanimous="true"
         log_warn "Unanimous approval detected - running anti-sycophancy check..."
         local contrarian_verdict
         contrarian_verdict=$(council_devils_advocate "$evidence_file" "$vote_dir")
@@ -731,6 +741,7 @@ print('true' if ratio > budget else 'false')
             log_warn "Overriding to require one more iteration for verification"
             approve_count=$((approve_count - 1))
             reject_count=$((reject_count + 1))
+            _da_flipped="true"
         fi
     fi
 
@@ -795,20 +806,18 @@ with open(state_file, 'w') as f:
             >/dev/null 2>&1 || true
     fi
 
-    # Write transcript for this council round (Path A: council_vote path)
+    # Write transcript for this council round (Path A: council_vote path).
+    #
+    # Drive contrarian_triggered/_flipped off the snapshots captured in the
+    # anti-sycophancy block ABOVE, not off the now-mutated approve_count. The DA
+    # fires exactly when the council was unanimous (_da_was_unanimous), and it
+    # flips exactly when it did not confirm the approval (_da_flipped). Re-deriving
+    # from approve_count was wrong because the flip path already decremented it,
+    # so triggered/flipped were both recorded as false on flip rounds.
     local _ct_outcome
     _ct_outcome=$([ $approve_count -ge $effective_threshold ] && echo "APPROVED" || echo "REJECTED")
-    local _ct_triggered="false"
-    local _ct_flipped="false"
-    if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
-        _ct_triggered="true"
-    fi
-    # contrarian_flipped: DA voted REJECT/CANNOT_VALIDATE causing approve_count drop
-    # Detect by checking if approve dropped from unanimous (COUNCIL_SIZE) to less
-    # We infer flip if triggered AND final approve < COUNCIL_SIZE
-    if [ "$_ct_triggered" = "true" ] && [ $approve_count -lt $COUNCIL_SIZE ]; then
-        _ct_flipped="true"
-    fi
+    local _ct_triggered="$_da_was_unanimous"
+    local _ct_flipped="$_da_flipped"
     council_write_transcript "${ITERATION_COUNT:-0}" "$_ct_outcome" "$_ct_triggered" "$_ct_flipped" "$effective_threshold"
 
     if [ $approve_count -ge $effective_threshold ]; then

@@ -135,6 +135,7 @@ Task(
 - WAIT for all 3 before aggregating
 - IF unanimous PASS: run Devil's Advocate reviewer (anti-sycophancy)
 - Critical/High = BLOCK, Medium = TODO, Low = informational
+- IF every reviewer returns no usable verdict (all NO_OUTPUT / unparseable): the round is INCONCLUSIVE and BLOCKS, never silently passes (v7.41.1, bounded retry first; opt out `LOKI_REVIEW_INCONCLUSIVE_BLOCK=0`). The reviewer diff excludes `.loki/` and `.git/` so a tracked `.loki/` cannot overflow the prompt into the empty-output that caused the original silent pass. See `skills/quality-gates.md` for the env knobs.
 
 ---
 

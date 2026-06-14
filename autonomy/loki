@@ -13178,13 +13178,18 @@ FEOF
                 ;;
             --disable)
                 if [ -f "$failover_file" ]; then
-                    python3 -c "
-import json
-with open('$failover_file') as f: d = json.load(f)
+                    if _FAILOVER_FILE="$failover_file" python3 -c "
+import json, os
+failover_file = os.environ['_FAILOVER_FILE']
+with open(failover_file) as f: d = json.load(f)
 d['enabled'] = False
-with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
-" 2>/dev/null
-                    echo -e "${YELLOW}Failover disabled${NC}"
+with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
+"; then
+                        echo -e "${YELLOW}Failover disabled${NC}"
+                    else
+                        echo -e "${RED}Error: failed to disable failover${NC}"
+                        return 1
+                    fi
                 else
                     echo "Failover not initialized."
                 fi
@@ -13212,13 +13217,19 @@ with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
                     return 1
                 fi
 
-                python3 -c "
-import json
-with open('$failover_file') as f: d = json.load(f)
-d['chain'] = '$new_chain'.split(',')
-with open('$failover_file', 'w') as f: json.dump(d, f, indent=2)
-" 2>/dev/null
-                echo "Failover chain updated: $new_chain"
+                if _FAILOVER_FILE="$failover_file" _NEW_CHAIN="$new_chain" python3 -c "
+import json, os
+failover_file = os.environ['_FAILOVER_FILE']
+new_chain = os.environ['_NEW_CHAIN']
+with open(failover_file) as f: d = json.load(f)
+d['chain'] = new_chain.split(',')
+with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
+"; then
+                    echo "Failover chain updated: $new_chain"
+                else
+                    echo -e "${RED}Error: failed to update failover chain${NC}"
+                    return 1
+                fi
                 shift
                 ;;
             --test)
@@ -18601,16 +18612,16 @@ else:
                 exit 1
             fi
 
-            python3 -c "
+            _REGISTRY_FILE="$registry_file" _PROJ_PATH="$path" _PROJ_NAME="$name" _PROJ_ALIAS="$alias" python3 -c "
 import json
 import os
 import hashlib
 from datetime import datetime, timezone
 
-registry_file = '$registry_file'
-path = '$path'
-name = '$name' or os.path.basename(path)
-alias = '$alias' or None
+registry_file = os.environ['_REGISTRY_FILE']
+path = os.environ['_PROJ_PATH']
+name = os.environ['_PROJ_NAME'] or os.path.basename(path)
+alias = os.environ['_PROJ_ALIAS'] or None
 
 # Generate project ID
 project_id = hashlib.md5(path.encode()).hexdigest()[:12]
@@ -18651,7 +18662,7 @@ with open(registry_file, 'w') as f:
 print(f'  Path: {path}')
 if alias:
     print(f'  Alias: {alias}')
-" 2>/dev/null
+"
             ;;
 
         remove|rm)
@@ -18662,12 +18673,12 @@ if alias:
                 exit 1
             fi
 
-            python3 -c "
+            _REGISTRY_FILE="$registry_file" _IDENTIFIER="$identifier" python3 -c "
 import json
 import os
 
-registry_file = '$registry_file'
-identifier = '$identifier'
+registry_file = os.environ['_REGISTRY_FILE']
+identifier = os.environ['_IDENTIFIER']
 
 with open(registry_file, 'r') as f:
     data = json.load(f)
@@ -18690,7 +18701,7 @@ if found_id:
 else:
     print(f'Not found: {identifier}')
     exit(1)
-" 2>/dev/null
+"
             ;;
 
         discover)
@@ -18842,12 +18853,12 @@ print(f'Added: {added}, Missing: {missing}, Total: {len(projects)}')
         health)
             local identifier="${2:-$(pwd)}"
 
-            python3 -c "
+            _REGISTRY_FILE="$registry_file" _IDENTIFIER="$identifier" python3 -c "
 import json
 import os
 
-registry_file = '$registry_file'
-identifier = '$identifier'
+registry_file = os.environ['_REGISTRY_FILE']
+identifier = os.environ['_IDENTIFIER']
 
 # If it's a path, resolve it
 if os.path.isdir(identifier):
@@ -18886,7 +18897,7 @@ print('Health Checks:')
 for check, passed in checks.items():
     icon = '[OK]' if passed else '[FAIL]'
     print(f'  {icon} {check}')
-" 2>/dev/null
+"
             ;;
 
         --help|-h|help)
@@ -19040,17 +19051,17 @@ cmd_enterprise() {
                         esac
                     done
 
-                    python3 -c "
+                    _TOKEN_FILE="$token_file" _TOKEN_NAME="$name" _TOKEN_SCOPES="$scopes" _TOKEN_EXPIRES="$expires" python3 -c "
 import json
 import secrets
 import hashlib
 from datetime import datetime, timezone, timedelta
 import os
 
-token_file = '$token_file'
-name = '$name'
-scopes_str = '$scopes'
-expires_str = '$expires'
+token_file = os.environ['_TOKEN_FILE']
+name = os.environ['_TOKEN_NAME']
+scopes_str = os.environ['_TOKEN_SCOPES']
+expires_str = os.environ['_TOKEN_EXPIRES']
 
 # Parse scopes
 scopes = scopes_str.split(',') if scopes_str else ['*']
@@ -19105,7 +19116,7 @@ if expires_at:
 print('')
 print('Token (save this - shown only once):')
 print(f'  {raw_token}')
-" 2>/dev/null
+"
                     ;;
 
                 list|ls)
@@ -19174,12 +19185,12 @@ else:
                         exit 2
                     fi
 
-                    python3 -c "
-import json
+                    _TOKEN_FILE="$token_file" _IDENTIFIER="$identifier" python3 -c "
+import json, os
 from datetime import datetime, timezone
 
-token_file = '$token_file'
-identifier = '$identifier'
+token_file = os.environ['_TOKEN_FILE']
+identifier = os.environ['_IDENTIFIER']
 
 with open(token_file, 'r') as f:
     data = json.load(f)
@@ -19202,7 +19213,7 @@ if found_id:
 else:
     print(f'Token not found: {identifier}')
     exit(1)
-" 2>/dev/null
+"
                     ;;
 
                 delete)
@@ -19213,11 +19224,11 @@ else:
                         exit 2
                     fi
 
-                    python3 -c "
-import json
+                    _TOKEN_FILE="$token_file" _IDENTIFIER="$identifier" python3 -c "
+import json, os
 
-token_file = '$token_file'
-identifier = '$identifier'
+token_file = os.environ['_TOKEN_FILE']
+identifier = os.environ['_IDENTIFIER']
 
 with open(token_file, 'r') as f:
     data = json.load(f)
@@ -19241,7 +19252,7 @@ if found_id:
 else:
     print(f'Token not found: {identifier}')
     exit(1)
-" 2>/dev/null
+"
                     ;;
 
                 *)

@@ -28,6 +28,7 @@ import {
 } from "./types.ts";
 import { run as shellRun } from "../util/shell.ts";
 import { maybeGenerateProof } from "./proof.ts";
+import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 
 // ---------------------------------------------------------------------------
 // Graceful dynamic imports.
@@ -243,6 +244,17 @@ async function runAutonomousCore(
   log(`[runner] max_retries=${ctx.maxRetries} max_iterations=${ctx.maxIterations}`);
 
   ensureLokiDirs(ctx);
+
+  // Capture the user's pre-existing global caveman mode ONCE at startup, before
+  // any caveman activate/suppress path runs (providers.ts:292-295). Mirrors the
+  // source-time capture in autonomy/lib/claude-flags.sh:574-577: the bash route
+  // snapshots CAVEMAN_DEFAULT_MODE into LOKI_CAVEMAN_USER_MODE before clobbering
+  // the default tree-wide, so the no-raise / opt-out guard in cavemanActivateEnv
+  // has the user's level to read. On the Bun route nothing else populated this
+  // var, so without this call the guard was dead and a globally-lite/off user
+  // would be silently raised to Loki's level (or have their opt-out ignored).
+  cavemanCaptureUserMode();
+
   // v7.4.9: refuse to start if a bash runner (or another Bun runner) is
   // already holding the session lock. Mirrors autonomy/run.sh:3013-3060.
   acquireSessionSingleton(ctx);

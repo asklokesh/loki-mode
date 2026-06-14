@@ -180,6 +180,28 @@ export LOKI_COUNCIL_STAGNATION_LIMIT=3
 
 ---
 
+## Accuracy & Verification Gates (v7.41.x)
+
+These are default-on accuracy knobs. They make the verification path refuse to
+pass on missing or empty evidence rather than passing silently. Each is opt-OUT:
+the default keeps the gate strict, and the listed value relaxes it. See
+[[Quality Gates]] for the prose semantics and honest limits.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOKI_REVIEW_INCONCLUSIVE_BLOCK` | `1` | When on (default), a code-review round in which zero reviewers returned a usable verdict (all NO_OUTPUT / empty) BLOCKS the iteration instead of silently passing. An all-empty review proves nothing, so it cannot stand in for a real review. A bounded single retry runs first (`LOKI_REVIEW_RETRY=1`, default on) to absorb a transient empty-output blip. Set to `0` to record the inconclusive result and pass through without blocking. |
+| `LOKI_COMPLETION_TEST_CAPTURE` | `1` | When on (default), the verified-completion gate captures fresh test evidence before it scores when no `test-results.json` exists for the current iteration. It runs the project's own detected test command (via `enforce_test_coverage`), which persists real PASS/FAIL results the gate then reads. Cheap: it reuses this iteration's results if already fresh, and stays pass-through when no test runner truly exists (records `runner:none`). Set to `0` to skip the fresh capture; the gate then scores only on whatever evidence already exists. |
+| `LOKI_AUTO_DOCS` | `true` | When on (default), Loki auto-generates the `.loki/docs/` suite in the loop before the documentation gate evaluates, so the gate scores on real generated docs instead of nagging you to run `loki docs generate` by hand. Bounded: it runs at most once when docs are missing, and again only when existing docs are more than 10 commits stale. Provider-agnostic (falls back to template docs when no provider CLI is present) and best-effort (never fails the iteration loop). Set to `false` to disable auto-generation. |
+
+**Example - relax all three (not recommended; weakens verification):**
+```bash
+export LOKI_REVIEW_INCONCLUSIVE_BLOCK=0
+export LOKI_COMPLETION_TEST_CAPTURE=0
+export LOKI_AUTO_DOCS=false
+```
+
+---
+
 ## Proof of Run
 
 | Variable | Default | Description |

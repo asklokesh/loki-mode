@@ -7034,6 +7034,96 @@ def _pid_is_alive(pid):
         return None
 
 
+# Margin (seconds) added to the recorded reference time before a live pid is
+# judged to be a recycled (different) process. Must comfortably exceed clock
+# skew plus the launch-to-first-state-write gap so a genuine app is never
+# downgraded. A PID recycled after a crash typically belongs to a process that
+# started minutes or hours later, so a generous margin still catches recycles
+# while strongly biasing against the far worse false-positive of killing a live
+# app's status. See _reconcile_app_runner_liveness.
+_APP_RUNNER_PID_RECYCLE_MARGIN_SECONDS = 120
+
+
+def _pid_start_time(pid):
+    """Best-effort wall-clock start time of pid, as epoch seconds, or None.
+
+    Reads `ps -o lstart= -p <pid>`, which is available on both macOS and Linux
+    and prints the process start time in local time (e.g. "Sun Jun 14 18:39:15
+    2026"). The string is locale-dependent (%a/%b), so any parse failure, empty
+    output, or missing process returns None and the caller degrades gracefully
+    to its prior behavior. The returned epoch is timezone-correct because the
+    naive local timestamp is interpreted in the system's local zone before
+    conversion (ps reports local time; never mix it with a UTC value directly).
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    raw = (out.stdout or "").strip()
+    if not raw:
+        return None
+    try:
+        # lstart is local time without a zone; parse naive then attach the
+        # local zone so .timestamp() yields a correct epoch regardless of TZ.
+        naive = datetime.strptime(raw, "%a %b %d %H:%M:%S %Y")
+        local = naive.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return local.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _state_reference_epoch(state):
+    """Epoch seconds for state.json's recorded reference time, or None.
+
+    Uses `started_at` (rewritten by the app-runner on every state write; it is
+    the last-state-write time, not pure launch time). For a genuine process the
+    real start time is always <= this value, so it is a safe upper bound to
+    compare a live pid's start time against. The value is UTC (Z-suffixed).
+    """
+    if not isinstance(state, dict):
+        return None
+    started_at = state.get("started_at")
+    if not started_at:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.timestamp()
+
+
+def _pid_is_recycled(state):
+    """True if the recorded main_pid is alive but is a DIFFERENT process now.
+
+    After the recorded app dies, the OS can recycle its numeric pid for an
+    unrelated process; os.kill(pid, 0) then reports the stale pid "alive"
+    forever and a dead run is never reconciled. We detect this by comparing the
+    live pid's real start time against the recorded reference time: a genuine
+    process started at or before the reference, so a live pid whose start time
+    is comfortably AFTER the reference cannot be the original.
+
+    Returns True only with positive evidence of recycling. Any missing data
+    (no recorded reference, start time unavailable) returns False so the caller
+    keeps its prior behavior -- best-effort, biased against false positives.
+    """
+    reference = _state_reference_epoch(state)
+    if reference is None:
+        return False
+    pid_start = _pid_start_time(state.get("main_pid"))
+    if pid_start is None:
+        return False
+    return pid_start > reference + _APP_RUNNER_PID_RECYCLE_MARGIN_SECONDS
+
+
 def _health_checked_age_seconds(state):
     """Seconds since last_health.checked_at, or None if unparseable/absent."""
     health = state.get("last_health")
@@ -7059,6 +7149,9 @@ def _reconcile_app_runner_liveness(state):
     Here we cross-check the recorded main_pid against the real OS before
     returning, and only ever downgrade -- never upgrade -- the status:
       - recorded running/starting + pid genuinely gone   -> "stopped"
+      - recorded running/starting + pid "alive" but its real start time is
+        after the recorded reference (the OS recycled a dead run's pid for an
+        unrelated process)                                -> "stopped"
       - recorded running/starting + pid not verifiable    +
         last_health.checked_at older than the threshold   -> "stale"
     Any failure falls back to the raw recorded status (fail open to the writer's
@@ -7075,6 +7168,15 @@ def _reconcile_app_runner_liveness(state):
         if alive is False:
             state["status"] = "stopped"
             state["liveness"] = "pid_gone"
+            return state
+        if alive is True:
+            # The numeric pid exists, but os.kill(pid, 0) cannot tell whether it
+            # is still the SAME process. After a dead run the OS can recycle the
+            # pid; detect that via the process start time so a recycled pid is
+            # treated as gone rather than reported "running" forever.
+            if _pid_is_recycled(state):
+                state["status"] = "stopped"
+                state["liveness"] = "pid_recycled"
             return state
         if alive is None:
             # Cannot verify via pid (e.g. compose subshell pid). Fall back to

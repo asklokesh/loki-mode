@@ -23,6 +23,7 @@ import {
   cavemanActivateEnv,
   cavemanInferLevel,
   cavemanSuppressEnv,
+  cavemanCaptureUserMode,
   CAVEMAN_PINNED_VERSION,
 } from "../../src/providers/claude_flags.ts";
 
@@ -250,6 +251,100 @@ describe("caveman_flags predicates", () => {
     // Even with an exported-empty level (the BUG1 path) the off opt-out wins.
     process.env["LOKI_CAVEMAN_LEVEL"] = "";
     expect(cavemanActivateEnv("planning")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// USER-MODE CAPTURE (Bun-route parity, bug-hunter 4 finding 3 / hunter 7 #4).
+//
+// The no-raise / opt-out guard in cavemanActivateEnv reads
+// LOKI_CAVEMAN_USER_MODE, but on the Bun route NOTHING populated it: the bash
+// route captures the user's global CAVEMAN_DEFAULT_MODE into
+// LOKI_CAVEMAN_USER_MODE at source time (claude-flags.sh:574-577) and exports it
+// tree-wide. cavemanCaptureUserMode() mirrors that source-time capture so the
+// guard is live on the Bun route. These tests prove the END-TO-END behavior:
+// capture -> activate honors no-raise / opt-out.
+//
+// The capture mutates real process.env (it IS the env mirror), so this block
+// manages CAVEMAN_DEFAULT_MODE in addition to the shared KNOBS and asserts the
+// EXACT level ("lite", not merely "not full") so a broken cavemanSupported()
+// setup (which would make activate return null early) cannot masquerade as pass.
+// ---------------------------------------------------------------------------
+describe("caveman_flags user-mode capture (Bun-route parity)", () => {
+  const CAP_KNOBS = [...KNOBS, "CAVEMAN_DEFAULT_MODE"] as const;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of CAP_KNOBS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of CAP_KNOBS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k]!;
+    }
+  });
+
+  it("captures CAVEMAN_DEFAULT_MODE into LOKI_CAVEMAN_USER_MODE when unset", () => {
+    // Mirror of claude-flags.sh:574-577: guard on unset, capture the value.
+    process.env["CAVEMAN_DEFAULT_MODE"] = "lite";
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBeUndefined();
+    cavemanCaptureUserMode();
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("lite");
+  });
+
+  it("captures to empty string when CAVEMAN_DEFAULT_MODE is absent (${var:-} parity)", () => {
+    // Bash captures `${CAVEMAN_DEFAULT_MODE:-}` -> empty; the var must be SET
+    // (not undefined) afterward so the unset-guard never re-fires.
+    expect(process.env["CAVEMAN_DEFAULT_MODE"]).toBeUndefined();
+    cavemanCaptureUserMode();
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("");
+  });
+
+  it("guards on UNSET, not falsy: does NOT recapture an inherited empty value", () => {
+    // Parity with bash `${var+x}`: an already-set (even empty) user mode must NOT
+    // be overwritten by a later CAVEMAN_DEFAULT_MODE. This is the guard that stops
+    // a re-source from recapturing the now-exported default as the user mode.
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "";
+    process.env["CAVEMAN_DEFAULT_MODE"] = "full";
+    cavemanCaptureUserMode();
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("");
+  });
+
+  it("does NOT overwrite an already-captured non-empty user mode (idempotent)", () => {
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "lite";
+    process.env["CAVEMAN_DEFAULT_MODE"] = "ultra";
+    cavemanCaptureUserMode();
+    cavemanCaptureUserMode(); // second call is a no-op
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("lite");
+  });
+
+  it("END-TO-END no-raise: inherited CAVEMAN_DEFAULT_MODE=lite -> activate honors lite, does not raise to full", () => {
+    // The dead-guard bug: pre-fix nothing populated LOKI_CAVEMAN_USER_MODE on the
+    // Bun route, so a globally-lite user got raised to full. Post-fix the capture
+    // makes the no-raise guard live. Precondition: user mode genuinely unset.
+    process.env["CAVEMAN_DEFAULT_MODE"] = "lite";
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBeUndefined();
+    // LOKI_CAVEMAN_LEVEL stays unset so a development tier INFERS full (rank 2),
+    // and the rank comparison (lite=1 < full=2) actually exercises the guard.
+    cavemanCaptureUserMode();
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("lite");
+    // Assert EXACT "lite": if cavemanSupported() were unsatisfied, activate would
+    // return null, and `null !== "full"` would let a broken setup pass. "lite"
+    // forces the correct path (Claude provider default, knob on, no legacy match).
+    expect(cavemanActivateEnv("development")).toBe("lite");
+  });
+
+  it("END-TO-END opt-out: inherited CAVEMAN_DEFAULT_MODE=off -> suppression holds (activate null)", () => {
+    // A user who globally set off opted OUT of compression entirely; the capture
+    // must carry that through so activate returns null (no activation).
+    process.env["CAVEMAN_DEFAULT_MODE"] = "off";
+    cavemanCaptureUserMode();
+    expect(process.env["LOKI_CAVEMAN_USER_MODE"]).toBe("off");
+    expect(cavemanActivateEnv("development")).toBeNull();
+    // The unconditional suppress moat is untouched and still hard-off.
+    expect(cavemanSuppressEnv()).toBe("off");
   });
 });
 

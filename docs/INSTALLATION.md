@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.41.5
+**Version:** v7.42.0
 
 ---
 
@@ -63,6 +63,7 @@ review verdict, evidence-related parses) so determinism is never affected.
 - [VS Code Extension (Deprecated)](#vs-code-extension-deprecated)
 - [Sandbox Mode](#sandbox-mode)
 - [Multi-Provider Support](#multi-provider-support)
+- [Environment Variables](#environment-variables)
 - [Claude Code (CLI)](#claude-code-cli)
 - [Claude.ai (Web)](#claudeai-web)
 - [Anthropic API Console](#anthropic-api-console)
@@ -364,6 +365,74 @@ When using `codex`, `cline`, or `aider` providers, Loki Mode operates in **degra
 - Quality gates and RARV cycle remain fully functional
 
 **Recommendation:** For the best experience and full feature support, use the default `claude` provider.
+
+---
+
+## Environment Variables
+
+Loki Mode is designed to run with zero configuration: the trust-layer and
+quality features below are default-on and decide intelligently by inspecting
+the work. The environment variables here are opt-out escape hatches for power
+users, not required setup. Set the documented value to disable a feature; leave
+the variable unset to keep the intelligent default.
+
+### Trust-gate and completion knobs (default-on)
+
+These are read by the orchestrator (`autonomy/run.sh`) on every run.
+
+- `LOKI_REVIEW_INCONCLUSIVE_BLOCK` (default `1`) -- when a code-review cycle
+  returns zero usable verdicts (every reviewer produced empty output), the
+  review is treated as INCONCLUSIVE and the gate BLOCKS, because an all-empty
+  review proves nothing. A bounded one-shot retry runs first
+  (`LOKI_REVIEW_RETRY`, default `1`). Set `LOKI_REVIEW_INCONCLUSIVE_BLOCK=0` to
+  record the inconclusive result without blocking.
+
+- `LOKI_COMPLETION_TEST_CAPTURE` (default `1`) -- before the verified-completion
+  evidence gate runs, Loki captures a fresh `test-results.json` so the gate
+  scores on real PASS/FAIL test results instead of a stale or missing file. It
+  reuses this iteration's results if already fresh, and never crashes the
+  completion path on red tests (the gate is the decider). Set
+  `LOKI_COMPLETION_TEST_CAPTURE=0` to opt out.
+
+- `LOKI_AUTO_DOCS` (default `true`) -- auto-generates the `.loki/docs/` suite
+  before the documentation gate evaluates, so the gate scores on real generated
+  docs instead of nagging you to run `loki docs generate` by hand. Bounded:
+  runs at most once per run when docs are missing, and again only when existing
+  docs are substantially stale; best-effort, never fails the iteration loop.
+  Set `LOKI_AUTO_DOCS=false` to opt out.
+
+### Output-token compressor (caveman, Claude-only)
+
+Loki integrates [caveman](https://github.com/JuliusBrussee/caveman), an optional
+Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
+technical substance). It activates on free-form generation (the main RARV dev
+loop) and is HARD-SUPPRESSED on every trust-gate subcall (council votes, code
+review verdicts, evidence-related parses) so determinism is never affected. It
+is Claude-provider-only; runs are byte-identical on Codex / Cline / Aider. These
+variables are read in `autonomy/lib/claude-flags.sh`.
+
+- `LOKI_CAVEMAN` (default on) -- set `LOKI_CAVEMAN=0` to disable the compressor.
+  Suppression on trust-gate subcalls is unconditional and applies even when
+  caveman is globally installed but `LOKI_CAVEMAN=0`, so trust gates are never
+  exposed to compression.
+
+- `LOKI_CAVEMAN_LEVEL` (default `full`) -- the compression level for free-form
+  activation. When you do NOT set this, the level is inferred per-invocation
+  from the run's RARV tier (planning -> `lite`, development/fast -> `full`); the
+  auto path never selects `ultra`. Setting `LOKI_CAVEMAN_LEVEL` explicitly
+  overrides the inference entirely (the opt-out escape hatch).
+
+- `LOKI_CAVEMAN_VERSION` (default `1.9.0`) -- the pinned caveman version used by
+  the one-time bootstrap. Bump only to upgrade the compressor.
+
+### RARV-C closure knobs (default-on)
+
+The Phase 1 / RARV-C closure loop (findings injection, override council,
+learnings writer, handoff doc) is default-on and documented in detail at the
+top of this guide under [Phase 1 RARV-C closure](#phase-1-rarv-c-closure-shipped-v750-default-on-as-of-v753):
+`LOKI_INJECT_FINDINGS`, `LOKI_OVERRIDE_COUNCIL`, `LOKI_AUTO_LEARNINGS`, and
+`LOKI_HANDOFF_MD` (each opt out with `=0`). For the full schema and
+reachability notes, see `skills/quality-gates.md`.
 
 ---
 

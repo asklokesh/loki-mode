@@ -134,6 +134,62 @@ build loop's own prompt context, not that they are sandboxed.
 
 ---
 
+## Accuracy knobs: no silent passes (v7.41.x, default-on, opt-out)
+
+Three default-on knobs close gaps where a gate could pass on missing or empty
+evidence. Each is opt-OUT: the default keeps verification strict, and the listed
+value relaxes it. They are also listed in
+[[Environment Variables]].
+
+### Inconclusive code review blocks (`LOKI_REVIEW_INCONCLUSIVE_BLOCK`, default 1)
+
+When a code-review round returns zero usable verdicts (every reviewer produced
+NO_OUTPUT or empty output), the gate BLOCKS the iteration instead of silently
+passing. An all-empty review proves nothing, so it cannot stand in for a real
+review. A bounded single retry runs first (`LOKI_REVIEW_RETRY=1`, default on) to
+absorb a transient empty-output blip; if the retry is still empty (or disabled),
+the inconclusive result blocks.
+
+```bash
+LOKI_REVIEW_INCONCLUSIVE_BLOCK=0   # opt out: an all-empty review round is
+                                   # recorded and passes through instead of
+                                   # blocking. Default is on (1).
+```
+
+### Fresh test evidence at completion (`LOKI_COMPLETION_TEST_CAPTURE`, default 1)
+
+Before the verified-completion evidence gate scores, Loki captures fresh test
+evidence when no `test-results.json` exists for the current iteration. It runs
+the project's own detected test command (via `enforce_test_coverage`), which
+persists real PASS/FAIL results the gate then reads, so the gate is not
+half-blind when the quality ladder has not already produced results. It is cheap:
+it reuses this iteration's results when they are already fresh, and it stays
+pass-through when no test runner truly exists (records `runner:none`).
+
+```bash
+LOKI_COMPLETION_TEST_CAPTURE=0   # opt out: skip the fresh capture; the gate
+                                 # scores only on whatever evidence already
+                                 # exists. Default is on (1).
+```
+
+### Auto-generated docs before the documentation gate (`LOKI_AUTO_DOCS`, default true)
+
+Loki auto-generates the `.loki/docs/` suite in the loop before the documentation
+gate evaluates, so the gate scores on real generated docs instead of nagging you
+to run `loki docs generate` by hand. It is bounded: it runs at most once when
+docs are missing, and again only when existing docs are more than 10 commits
+stale (the same threshold the staleness check uses). It is provider-agnostic
+(falls back to template docs when no provider CLI is available) and best-effort
+(never fails the iteration loop).
+
+```bash
+LOKI_AUTO_DOCS=false   # opt out: do not auto-generate docs in the loop; run
+                       # 'loki docs generate' by hand instead. Default is on
+                       # (true).
+```
+
+---
+
 ## Standalone verification: `loki verify`
 
 `loki verify [base-ref]` runs the deterministic side of the gate stack against

@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.42.0] - 2026-06-14
+
+Ten-team parallel hardening + documentation completeness wave (worktree-isolated,
+file-sharded, merged after independent review). Closes the remaining deferred
+bug-hunt findings and documents the v7.41.x default-on knobs across all surfaces.
+
+### Fixed
+- MCP LSP proxy no longer stalls the event loop: every tool handler offloads its
+  blocking LSP I/O via anyio.to_thread, with per-request-id and stdin-write
+  locking added since the handlers are now truly concurrent. lsp_get_diagnostics
+  also sends textDocument/didChange when a file changed on disk, so it returns
+  fresh diagnostics instead of the first-open snapshot.
+- Dashboard app-runner liveness now detects PID reuse: a recycled PID whose
+  process start time is later than the recorded launch is treated as stopped,
+  instead of reporting a dead run as "running" forever.
+- Healing hooks (currently unwired) made correct-when-wired:
+  hook_post_healing_modify reverts only the healing edit via a pre-edit snapshot
+  (no longer git-checkout-nukes unrelated uncommitted changes, and reports
+  honestly for untracked files); hook_pre_healing_modify uses path-aware matching
+  instead of substring containment.
+- Completion council contrarian transcript fields (contrarian_triggered /
+  contrarian_flipped) are recorded correctly from a pre-decrement snapshot
+  (audit-trail only; the live vote was already correct).
+- Admin commands (loki failover, projects, enterprise token) pass user values to
+  their python helpers via environment variables instead of raw string
+  interpolation, so a value containing a quote no longer silently no-ops while
+  the file goes unwritten.
+- Bun route captures LOKI_CAVEMAN_USER_MODE from the inherited
+  CAVEMAN_DEFAULT_MODE at startup, so the caveman no-raise / opt-out guard is
+  live on the Bun route (was dead; dormant until the Phase 6 sunset).
+
+### Added
+- Documented the v7.41.x default-on opt-out knobs
+  (LOKI_REVIEW_INCONCLUSIVE_BLOCK, LOKI_COMPLETION_TEST_CAPTURE, LOKI_AUTO_DOCS,
+  and the caveman compressor knobs) across wiki (Environment-Variables,
+  Quality-Gates), README, and docs/INSTALLATION, with each default verified
+  against source. Synced references/ and skills/ docs with the v7.41.x
+  verification-integrity behavior. Fixed a stale README claim that Claude Fable
+  was an available premium API tier (it collapses to Opus everywhere).
+
 ## [7.41.5] - 2026-06-14
 
 Defensive hardening from the bug-hunt fleet's lower-severity findings. Each fix

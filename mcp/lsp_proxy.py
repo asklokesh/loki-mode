@@ -9,8 +9,12 @@ language's LSP is not detected, tools targeting that language return a
 structured `{"error": ...}` payload but the server itself stays up.
 
 Architecture:
-    - Stdlib only (json, subprocess, shutil, threading, os, pathlib,
-      atexit, signal, time, urllib). NO new pip dependencies.
+    - Stdlib for the LSP wire + lifecycle (json, subprocess, shutil,
+      threading, os, pathlib, atexit, signal, time, urllib). The only
+      non-stdlib import is anyio (a transitive MCP-SDK dependency), used
+      solely for the threading bridge that keeps the async tool handlers
+      off the event loop; it is guarded so the module still imports on the
+      no-SDK degrade path.
     - Lazy lifecycle: an `LSPClient` is spawned on the first tool call
       that needs a given language. Spawn does the LSP `initialize`
       handshake and caches `didOpen` per file URI.
@@ -43,6 +47,7 @@ Usage:
 from __future__ import annotations
 
 import atexit
+import functools
 import json
 import logging
 import os
@@ -54,8 +59,42 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
+
+# v7.x async-safety fix: the MCP SDK dispatches @mcp.tool() handlers
+# concurrently on its anyio event loop via start_soon. Every handler in this
+# module does blocking I/O (LSP handshake up to 10s, request waits up to 5s,
+# diagnostics poll sleeps) with no await, so each one stalls the whole loop.
+# We offload the blocking body to a worker thread via anyio.to_thread.run_sync.
+#
+# anyio is a transitive dependency of the MCP SDK, so it is present whenever
+# the proxy is actually runnable. But this module must still IMPORT cleanly on
+# the _NoopFastMCP degrade path (no SDK, possibly no anyio), so the import is
+# guarded and `_to_thread` falls back to an inline call when anyio is absent.
+# The inline fallback only runs in degrade/test envs that have no event loop
+# to stall, so it is safe there.
+try:
+    import anyio.to_thread as _anyio_to_thread  # noqa: E402
+
+    _HAS_ANYIO = True
+except ImportError:  # pragma: no cover - degrade path without anyio
+    _anyio_to_thread = None  # type: ignore[assignment]
+    _HAS_ANYIO = False
+
+
+async def _to_thread(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a blocking callable off the event loop.
+
+    Uses anyio.to_thread.run_sync (the MCP SDK's own threading bridge) when
+    anyio is available; otherwise calls inline (degrade/test path, no loop to
+    stall). anyio's run_sync is positional-only, so kwargs are bound via
+    functools.partial before handing the callable to the worker thread."""
+    if _HAS_ANYIO and _anyio_to_thread is not None:
+        if kwargs:
+            func = functools.partial(func, **kwargs)
+        return await _anyio_to_thread.run_sync(func, *args)
+    return func(*args, **kwargs)
 
 
 # ============================================================
@@ -249,8 +288,38 @@ class LSPClient:
         self.extra_args = list(extra_args)
         self.proc: Optional[subprocess.Popen] = None
         self._next_id = 1
-        self._opened_uris: set = set()
+        # v7.x staleness fix: track per-URI document version + on-disk mtime
+        # (st_mtime_ns) instead of a plain "opened" set. On a second open of a
+        # file whose mtime changed, we send textDocument/didChange with an
+        # incremented version (full-sync) so the LSP re-analyzes the new
+        # content; without this, did_open early-returned and every query (and
+        # diagnostics) saw the first-open snapshot forever. mtime is used
+        # (not a content hash) because it is content-independent: it always
+        # bumps on save, sidestepping the same-size-edit blind spot that bit
+        # the non-git codebase signature (see task #569).
+        #   _doc_versions: uri -> last LSP document version we sent
+        #   _doc_mtimes:   uri -> st_mtime_ns at the time we last (re)opened
+        self._doc_versions: Dict[str, int] = {}
+        self._doc_mtimes: Dict[str, int] = {}
         self._lock = threading.Lock()
+        # v7.x async-safety fix: with handlers now offloaded to worker threads
+        # (anyio.to_thread), two tool calls can run did_open()/request() in
+        # parallel. _write_lsp() does write(header)+write(body)+flush(); if two
+        # threads interleave there, the Content-Length framing on the LSP's
+        # stdin is corrupted. _write_lock serializes ONLY the stdin write
+        # sequences (and the did_open check-and-record), never the response
+        # wait or the diagnostics poll, so concurrency is preserved everywhere
+        # that matters.
+        self._write_lock = threading.Lock()
+        # v7.x async-safety fix: _next_request_id() is a read-modify-write on
+        # _next_id. With handlers offloaded to worker threads, two concurrent
+        # request() calls on the same-language client can allocate the SAME id
+        # (the GIL can switch between the load and the store), which collides
+        # in _response_queues -- one waiter is overwritten and hangs, or a
+        # response is routed to the wrong caller. This leaf lock (it never
+        # calls out while held, so no ordering concern with the other locks)
+        # makes id allocation atomic.
+        self._id_lock = threading.Lock()
         self._initialized = False
         # v7.7.14 LSP regression fix (was broken since v7.7.0):
         # publishDiagnostics notifications were dropped by request()'s
@@ -298,7 +367,9 @@ class LSPClient:
             self._response_queues.clear()
         with self._lock:
             self.pending_diagnostics.clear()
-        self._opened_uris.clear()
+        with self._write_lock:
+            self._doc_versions.clear()
+            self._doc_mtimes.clear()
         self._initialized = False
         cmd = [self.binary_path] + self.extra_args
         self.proc = subprocess.Popen(
@@ -427,37 +498,93 @@ class LSPClient:
                 pass
 
     def _next_request_id(self) -> int:
-        rid = self._next_id
-        self._next_id += 1
-        return rid
+        # Atomic id allocation: see _id_lock note in __init__. Called from
+        # request() and shutdown(), which may run concurrently once handlers
+        # are offloaded to worker threads.
+        with self._id_lock:
+            rid = self._next_id
+            self._next_id += 1
+            return rid
 
     def did_open(self, file_path: str) -> None:
-        """Send `textDocument/didOpen` for `file_path` if not already
-        opened. Reads file contents from disk; silently no-ops if the
-        file is unreadable (subsequent request will fail with a clean
-        LSP error rather than crashing the proxy)."""
+        """Ensure the LSP has the CURRENT content of `file_path` open.
+
+        First call for a URI: sends `textDocument/didOpen` at version 1 and
+        records the file's on-disk mtime. Subsequent call for an already-open
+        URI whose on-disk mtime CHANGED since the last (re)open: sends
+        `textDocument/didChange` (full document sync) with an incremented
+        version so the server re-analyzes the edited file, and clears any
+        stale published diagnostics for that URI so the next poll waits for a
+        fresh publish instead of returning the pre-edit snapshot. Unchanged
+        files early-return (no redundant didChange), preserving the original
+        no-op optimization.
+
+        Reads file contents from disk; silently no-ops if the file is
+        unreadable (a subsequent request will fail with a clean LSP error
+        rather than crashing the proxy)."""
         uri = _path_to_uri(file_path)
-        if uri in self._opened_uris:
+        try:
+            mtime = os.stat(file_path).st_mtime_ns
+        except OSError:
             return
+        # Fast path: already open and on-disk content unchanged since last
+        # (re)open. No write, no lock contention beyond the dict read.
+        with self._write_lock:
+            prev_mtime = self._doc_mtimes.get(uri)
+            already_open = uri in self._doc_versions
+            if already_open and prev_mtime == mtime:
+                return
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as fh:
                 text = fh.read()
         except OSError:
             return
         lsp_id, _suffixes, _bin, _args = LANG_MAP[self.language]
-        _write_lsp(self.proc.stdin, {
-            'jsonrpc': '2.0',
-            'method': 'textDocument/didOpen',
-            'params': {
-                'textDocument': {
-                    'uri': uri,
-                    'languageId': lsp_id,
-                    'version': 1,
-                    'text': text,
+        with self._write_lock:
+            # Re-read under the lock so two racing threads agree on state.
+            prev_version = self._doc_versions.get(uri)
+            if prev_version is None:
+                # First open of this URI.
+                _write_lsp(self.proc.stdin, {
+                    'jsonrpc': '2.0',
+                    'method': 'textDocument/didOpen',
+                    'params': {
+                        'textDocument': {
+                            'uri': uri,
+                            'languageId': lsp_id,
+                            'version': 1,
+                            'text': text,
+                        },
+                    },
+                })
+                self._doc_versions[uri] = 1
+                self._doc_mtimes[uri] = mtime
+                return
+            if self._doc_mtimes.get(uri) == mtime:
+                # Another thread already refreshed to this mtime; nothing to do.
+                return
+            # File changed on disk since we last opened it: full-sync
+            # didChange with an incremented version.
+            new_version = prev_version + 1
+            _write_lsp(self.proc.stdin, {
+                'jsonrpc': '2.0',
+                'method': 'textDocument/didChange',
+                'params': {
+                    'textDocument': {
+                        'uri': uri,
+                        'version': new_version,
+                    },
+                    'contentChanges': [{'text': text}],
                 },
-            },
-        })
-        self._opened_uris.add(uri)
+            })
+            self._doc_versions[uri] = new_version
+            self._doc_mtimes[uri] = mtime
+        # Drop the stale published diagnostics for this URI (outside the
+        # write lock, under _lock which guards pending_diagnostics) so that
+        # lsp_get_diagnostics polls for the re-published set instead of
+        # immediately returning the pre-edit snapshot.
+        with self._lock:
+            self.pending_diagnostics.pop(uri, None)
 
     def request(self, method: str, params: Dict[str, Any], timeout: float = 5.0) -> Dict[str, Any]:
         """Send a JSON-RPC request and block until its response arrives.
@@ -472,12 +599,17 @@ class LSPClient:
             self._response_queues[rid] = wait_q
         try:
             try:
-                _write_lsp(self.proc.stdin, {
-                    'jsonrpc': '2.0',
-                    'id': rid,
-                    'method': method,
-                    'params': params,
-                })
+                # Serialize the stdin write sequence against did_open() and
+                # other concurrent request() calls so the Content-Length
+                # framing is never interleaved. The lock is held ONLY for the
+                # write, never across the wait below.
+                with self._write_lock:
+                    _write_lsp(self.proc.stdin, {
+                        'jsonrpc': '2.0',
+                        'id': rid,
+                        'method': method,
+                        'params': params,
+                    })
             except (BrokenPipeError, OSError) as exc:
                 return {'error': {'message': f'LSP I/O failure on write: {exc}'}}
             try:
@@ -498,7 +630,11 @@ class LSPClient:
         if not self.proc or self.proc.poll() is not None:
             return
         try:
-            with self._lock:
+            # Serialize against concurrent request()/did_open() stdin writes
+            # via _write_lock so the shutdown + exit frames are not interleaved
+            # with another in-flight write. (Switched from _lock, which guards
+            # pending_diagnostics, to the dedicated stdin write lock.)
+            with self._write_lock:
                 _write_lsp(self.proc.stdin, {
                     'jsonrpc': '2.0',
                     'id': self._next_request_id(),
@@ -560,7 +696,23 @@ def _get_or_spawn_client(language: str) -> Optional[LSPClient]:
         logger.warning("LSP spawn failed for %s: %s", language, exc)
         return None
     with _clients_lock:
-        _clients[language] = client
+        # Double-check after re-acquiring: a concurrent first-call for the same
+        # language (now reachable because handlers run in worker threads via
+        # _to_thread) may have spawned and registered a live client while we
+        # were handshaking. If so, keep the cached one and shut down our
+        # duplicate so we never leak an orphaned LSP subprocess.
+        existing = _clients.get(language)
+        if existing is not None and existing.proc and existing.proc.poll() is None:
+            losing = client
+            client = existing
+        else:
+            losing = None
+            _clients[language] = client
+    if losing is not None:
+        try:
+            losing.shutdown()
+        except Exception as exc:  # best-effort reap; never fail the caller
+            logger.warning("LSP duplicate-client shutdown failed for %s: %s", language, exc)
     return client
 
 
@@ -776,7 +928,8 @@ async def lsp_find_references(file: str, line: int, character: int,
         JSON-encoded string. Success: {"result": [...], "language": ...}.
         Error: {"error": "..."}.
     """
-    result = _dispatch_lsp(
+    result = await _to_thread(
+        _dispatch_lsp,
         file, line, character, 'textDocument/references',
         extra_params={'context': {'includeDeclaration': bool(include_declaration)}},
     )
@@ -797,7 +950,8 @@ async def lsp_go_to_definition(file: str, line: int, character: int) -> str:
         JSON-encoded string with `result` (LSP Location | Location[] |
         LocationLink[]) on success or `error` on failure.
     """
-    result = _dispatch_lsp(
+    result = await _to_thread(
+        _dispatch_lsp,
         file, line, character, 'textDocument/definition',
     )
     return json.dumps(result)
@@ -818,7 +972,8 @@ async def lsp_symbol_at_position(file: str, line: int, character: int) -> str:
         JSON-encoded string with `result` (LSP Hover) on success or
         `error` on failure.
     """
-    result = _dispatch_lsp(
+    result = await _to_thread(
+        _dispatch_lsp,
         file, line, character, 'textDocument/hover',
     )
     return json.dumps(result)
@@ -894,30 +1049,11 @@ def _workspace_symbol_request(language: str, query: str, limit: int = 50) -> Dic
     return {'result': result[:limit], 'language': language}
 
 
-@mcp.tool()
-async def lsp_check_exists(symbol: str, kind: Optional[str] = None,
-                           language: Optional[str] = None) -> str:
-    """Cheap existence check for a symbol in the current workspace.
-
-    The single most useful grounding primitive: an agent about to write
-    `flightApi.getStatus()` should call `lsp_check_exists("getStatus")`
-    first. If false, it means LSP could not find that name anywhere in
-    the workspace; the agent should resolve via find / grep / read
-    before writing the call.
-
-    Args:
-        symbol: Symbol name to look for (substring match per LSP spec).
-        kind: Optional filter: 'function', 'class', 'method', 'variable',
-            etc. If provided, only symbols whose LSP SymbolKind matches
-            are counted.
-        language: Optional language override. If None, auto-detected
-            from workspace markers (package.json, requirements.txt, etc.).
-
-    Returns:
-        JSON-encoded string: {"exists": bool, "matches": N, "samples": [...],
-        "language": "...", "elapsed_ms": float}. On no-LSP-available:
-        {"error": "...", "exists": null}.
-    """
+def _lsp_check_exists_blocking(symbol: str, kind: Optional[str] = None,
+                               language: Optional[str] = None) -> str:
+    """Blocking implementation of lsp_check_exists. Runs on a worker thread
+    via _to_thread so the spawn handshake + workspace/symbol request never
+    stall the MCP event loop."""
     import time as _t
     t0 = _t.perf_counter()
     if not symbol or not isinstance(symbol, str):
@@ -960,22 +1096,36 @@ async def lsp_check_exists(symbol: str, kind: Optional[str] = None,
 
 
 @mcp.tool()
-async def lsp_get_diagnostics(file: str) -> str:
-    """Return current LSP diagnostics (errors + warnings) for a file.
+async def lsp_check_exists(symbol: str, kind: Optional[str] = None,
+                           language: Optional[str] = None) -> str:
+    """Cheap existence check for a symbol in the current workspace.
 
-    Diagnostics are published asynchronously by LSP servers via
-    `textDocument/publishDiagnostics`. This tool opens the file (if not
-    already open) and waits up to 1 second for diagnostics to arrive,
-    then returns whatever has been published.
+    The single most useful grounding primitive: an agent about to write
+    `flightApi.getStatus()` should call `lsp_check_exists("getStatus")`
+    first. If false, it means LSP could not find that name anywhere in
+    the workspace; the agent should resolve via find / grep / read
+    before writing the call.
 
     Args:
-        file: Absolute or cwd-relative path to the source file.
+        symbol: Symbol name to look for (substring match per LSP spec).
+        kind: Optional filter: 'function', 'class', 'method', 'variable',
+            etc. If provided, only symbols whose LSP SymbolKind matches
+            are counted.
+        language: Optional language override. If None, auto-detected
+            from workspace markers (package.json, requirements.txt, etc.).
 
     Returns:
-        JSON: {"diagnostics": [{severity, message, range, source}, ...],
-        "count_errors": N, "count_warnings": M, "language": "...",
-        "elapsed_ms": float}.
+        JSON-encoded string: {"exists": bool, "matches": N, "samples": [...],
+        "language": "...", "elapsed_ms": float}. On no-LSP-available:
+        {"error": "...", "exists": null}.
     """
+    return await _to_thread(_lsp_check_exists_blocking, symbol, kind, language)
+
+
+def _lsp_get_diagnostics_blocking(file: str) -> str:
+    """Blocking implementation of lsp_get_diagnostics. Runs on a worker
+    thread via _to_thread; the spawn handshake, didOpen/didChange and the
+    ~1s diagnostics poll (time.sleep loop) must not stall the event loop."""
     import time as _t
     t0 = _t.perf_counter()
     abs_file = os.path.abspath(file)
@@ -1020,24 +1170,30 @@ async def lsp_get_diagnostics(file: str) -> str:
 
 
 @mcp.tool()
-async def lsp_workspace_symbols(query: str, limit: int = 20,
-                                language: Optional[str] = None) -> str:
-    """Fuzzy-search symbols across the entire workspace.
+async def lsp_get_diagnostics(file: str) -> str:
+    """Return current LSP diagnostics (errors + warnings) for a file.
 
-    Use when an agent is hunting for the right name (knows the
-    function/class is about "config loading" but isn't sure of the
-    actual identifier). Returns LSP workspace/symbol results scoped to
-    the detected language (or the language override).
+    Diagnostics are published asynchronously by LSP servers via
+    `textDocument/publishDiagnostics`. This tool opens the file (if not
+    already open, or re-syncs it via didChange if edited since first open)
+    and waits up to 1 second for diagnostics to arrive, then returns
+    whatever has been published.
 
     Args:
-        query: Symbol query (substring or fuzzy per LSP server impl).
-        limit: Max results to return (default 20, hard cap 100).
-        language: Optional language override.
+        file: Absolute or cwd-relative path to the source file.
 
     Returns:
-        JSON: {"matches": [...], "count": N, "language": "...",
+        JSON: {"diagnostics": [{severity, message, range, source}, ...],
+        "count_errors": N, "count_warnings": M, "language": "...",
         "elapsed_ms": float}.
     """
+    return await _to_thread(_lsp_get_diagnostics_blocking, file)
+
+
+def _lsp_workspace_symbols_blocking(query: str, limit: int = 20,
+                                    language: Optional[str] = None) -> str:
+    """Blocking implementation of lsp_workspace_symbols. Runs on a worker
+    thread via _to_thread (spawn handshake + workspace/symbol request)."""
     import time as _t
     t0 = _t.perf_counter()
     if not isinstance(query, str):
@@ -1070,20 +1226,31 @@ async def lsp_workspace_symbols(query: str, limit: int = 20,
 
 
 @mcp.tool()
-async def lsp_find_definition_by_name(symbol: str,
-                                      language: Optional[str] = None) -> str:
-    """Find where a named symbol is defined, without needing a file
-    position upfront. Convenience wrapper: runs workspace/symbol then
-    returns the first result's location.
+async def lsp_workspace_symbols(query: str, limit: int = 20,
+                                language: Optional[str] = None) -> str:
+    """Fuzzy-search symbols across the entire workspace.
+
+    Use when an agent is hunting for the right name (knows the
+    function/class is about "config loading" but isn't sure of the
+    actual identifier). Returns LSP workspace/symbol results scoped to
+    the detected language (or the language override).
 
     Args:
-        symbol: Symbol name to find.
+        query: Symbol query (substring or fuzzy per LSP server impl).
+        limit: Max results to return (default 20, hard cap 100).
         language: Optional language override.
 
     Returns:
-        JSON: {"location": {uri, range} | null, "name": str | null,
-        "language": "...", "elapsed_ms": float}.
+        JSON: {"matches": [...], "count": N, "language": "...",
+        "elapsed_ms": float}.
     """
+    return await _to_thread(_lsp_workspace_symbols_blocking, query, limit, language)
+
+
+def _lsp_find_definition_by_name_blocking(symbol: str,
+                                          language: Optional[str] = None) -> str:
+    """Blocking implementation of lsp_find_definition_by_name. Runs on a
+    worker thread via _to_thread (spawn handshake + workspace/symbol)."""
     import time as _t
     t0 = _t.perf_counter()
     root = _resolve_workspace_root()
@@ -1113,6 +1280,24 @@ async def lsp_find_definition_by_name(symbol: str,
         'language': lang,
         'elapsed_ms': round((_t.perf_counter() - t0) * 1000, 1),
     })
+
+
+@mcp.tool()
+async def lsp_find_definition_by_name(symbol: str,
+                                      language: Optional[str] = None) -> str:
+    """Find where a named symbol is defined, without needing a file
+    position upfront. Convenience wrapper: runs workspace/symbol then
+    returns the first result's location.
+
+    Args:
+        symbol: Symbol name to find.
+        language: Optional language override.
+
+    Returns:
+        JSON: {"location": {uri, range} | null, "name": str | null,
+        "language": "...", "elapsed_ms": float}.
+    """
+    return await _to_thread(_lsp_find_definition_by_name_blocking, symbol, language)
 
 
 # ============================================================

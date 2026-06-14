@@ -317,14 +317,38 @@ hook_pre_healing_modify() {
     if [[ -f "$heal_dir/friction-map.json" ]]; then
         local blocked
         blocked=$(python3 -c "
-import json, sys
+import json, os, sys
 file_path = sys.argv[1]
 strict = sys.argv[2] == 'true'
 with open(sys.argv[3]) as f:
     data = json.load(f)
+
+# Path-aware match (not raw substring 'in', which over-matched app.py against
+# myapp.py and under-matched src/foo.py against a foo.py:10 location). Friction
+# locations are formatted 'path:line' (or just 'path'); strip a trailing
+# ':<line>' then compare by basename and normalized path so the same file is
+# matched regardless of how it was referenced.
+def norm(p):
+    # Drop a trailing ':<line>' (and optional ':<col>') suffix from a location.
+    parts = p.rsplit(':', 1)
+    while len(parts) == 2 and parts[1].isdigit():
+        p = parts[0]
+        parts = p.rsplit(':', 1)
+    return p
+
+def matches(target, loc):
+    loc = norm(loc)
+    if not target or not loc:
+        return False
+    # Exact normalized-path match, or same basename. Basename equality is the
+    # path-aware replacement for substring containment.
+    if os.path.normpath(target) == os.path.normpath(loc):
+        return True
+    return os.path.basename(target) == os.path.basename(loc)
+
 for friction in data.get('frictions', []):
     loc = friction.get('location', '')
-    if file_path in loc:
+    if matches(file_path, loc):
         cls = friction.get('classification', 'unknown')
         safe = friction.get('safe_to_remove', False)
         if cls in ('business_rule', 'unknown') and not safe:
@@ -343,7 +367,99 @@ print('OK')
         fi
     fi
 
+    # Capture a pre-edit snapshot so post_healing_modify can revert ONLY the
+    # healing edit on test failure (not unrelated uncommitted changes, and not
+    # via git checkout which discards everything). Keyed by file path.
+    _heal_snapshot_save "$heal_dir" "$file_path"
+
     return 0
+}
+
+# Snapshot path helper: maps a target file path to its snapshot blob location.
+# Uses a flat directory with the path's basename plus a hash of the full path
+# to avoid collisions between same-named files in different directories.
+_heal_snapshot_path() {
+    local heal_dir="$1"
+    local file_path="$2"
+    local key
+    key=$(printf '%s' "$file_path" | cksum | awk '{print $1"-"$2}')
+    printf '%s/snapshots/%s.%s' "$heal_dir" "$(basename "$file_path")" "$key"
+}
+
+# Save a pre-edit snapshot of file_path. If the file does not exist yet (the
+# healing edit will CREATE it), write a sentinel marker instead so the revert
+# path knows to remove the file rather than restore content.
+#
+# Pairing contract: hook_pre_healing_modify (which calls this) MUST run for a
+# file before hook_post_healing_modify reverts it. The snapshot is refreshed on
+# every pre call, so a post without a matching fresh pre could restore a stale
+# blob. On the success path the snapshot is intentionally left in place; the
+# next pre overwrites it.
+_heal_snapshot_save() {
+    local heal_dir="$1"
+    local file_path="$2"
+    [[ -z "$file_path" ]] && return 0
+    local snap_dir="$heal_dir/snapshots"
+    mkdir -p "$snap_dir" 2>/dev/null || return 0
+    local snap
+    snap=$(_heal_snapshot_path "$heal_dir" "$file_path")
+    if [[ -f "$file_path" ]]; then
+        cp "$file_path" "$snap" 2>/dev/null || return 0
+        rm -f "$snap.absent" 2>/dev/null || true
+    else
+        # File does not exist pre-edit: record an "absent" marker, drop any
+        # stale content snapshot.
+        rm -f "$snap" 2>/dev/null || true
+        : > "$snap.absent" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Restore file_path from its pre-edit snapshot, reverting ONLY the healing edit.
+# Echoes an accurate human-readable message describing what actually happened
+# (content restored / healing-added file removed / could not revert). Returns 0
+# when the revert succeeded as reported, 1 when it could not be performed.
+_heal_snapshot_restore() {
+    local heal_dir="$1"
+    local file_path="$2"
+    if [[ -z "$file_path" ]]; then
+        echo "No file path given; nothing reverted."
+        return 1
+    fi
+    local snap
+    snap=$(_heal_snapshot_path "$heal_dir" "$file_path")
+
+    if [[ -f "$snap" ]]; then
+        # Pre-edit content snapshot exists: restore exactly that content, which
+        # preserves any unrelated uncommitted changes present before the edit.
+        if cp "$snap" "$file_path" 2>/dev/null; then
+            echo "Healing edit reverted to pre-edit snapshot."
+            return 0
+        fi
+        echo "Could not restore pre-edit snapshot for ${file_path}; file left as-is."
+        return 1
+    fi
+
+    if [[ -f "$snap.absent" ]]; then
+        # File did not exist pre-edit: the healing edit created it. Remove only
+        # that file, not unrelated state.
+        if [[ ! -e "$file_path" ]]; then
+            echo "Healing-added file ${file_path} no longer present; nothing to remove."
+            return 0
+        fi
+        if rm -f "$file_path" 2>/dev/null; then
+            echo "Healing-added file ${file_path} removed."
+            return 0
+        fi
+        echo "Could not remove healing-added file ${file_path}; file left as-is."
+        return 1
+    fi
+
+    # No snapshot was captured (pre_healing_modify did not run for this file).
+    # Be honest: do not claim a revert that did not happen, and do NOT fall back
+    # to a destructive git checkout.
+    echo "No pre-edit snapshot found for ${file_path}; could not revert (left as-is)."
+    return 1
 }
 
 # Hook: post_healing_modify - runs AFTER agent modifies a file in healing mode
@@ -384,9 +500,17 @@ hook_post_healing_modify() {
         test_output=$(cat "$test_result_file")
         rm -f "$test_result_file"
 
-        # Revert the change - characterization tests must pass
-        git -C "$codebase_path" checkout -- "$file_path" 2>/dev/null || true
-        echo "HOOK_BLOCKED: Characterization tests failed after healing modification to ${file_path}. Change reverted."
+        # Revert ONLY the healing edit using the pre-edit snapshot captured by
+        # hook_pre_healing_modify. Do NOT use `git checkout -- "$file_path"`:
+        # that discards ALL uncommitted changes to the file (not just the
+        # healing edit) and silently no-ops for an untracked file while still
+        # claiming the change was reverted. Report exactly what happened.
+        local revert_msg
+        # _heal_snapshot_restore returns nonzero when it could not revert; we
+        # surface the outcome via its message (recorded below) rather than a
+        # code, and must not let a nonzero return abort under set -e.
+        revert_msg=$(_heal_snapshot_restore "$heal_dir" "$file_path") || true
+        echo "HOOK_BLOCKED: Characterization tests failed after healing modification to ${file_path}. ${revert_msg}"
         echo "Test output: ${test_output}"
 
         # Record failure in failure-modes.json
@@ -404,12 +528,12 @@ data.setdefault('modes', []).append({
     'trigger': 'healing_modification',
     'file': sys.argv[2],
     'behavior': 'Characterization tests failed after modification',
-    'recovery': 'Change automatically reverted',
+    'recovery': sys.argv[3],
     'is_intentional': False
 })
 with open(sys.argv[1], 'w') as f:
     json.dump(data, f, indent=2)
-" "$heal_dir/failure-modes.json" "$file_path" 2>/dev/null || true
+" "$heal_dir/failure-modes.json" "$file_path" "$revert_msg" 2>/dev/null || true
         fi
 
         return 1
