@@ -93,15 +93,19 @@ class SessionModelEndpointTests(unittest.TestCase):
         self.assertEqual(body["allowed"], ["haiku", "sonnet", "opus", "fable"])
 
     def test_post_fable_writes_override_file(self):
-        # No LOKI_MAX_TIER (cleared in setUp): effective is the requested model
-        # itself (the field is now the model the next iteration will use, after
-        # any ceiling clamp).
+        # Fable (claude-fable-5) is not available at the Claude API, so a fable
+        # pin collapses to opus at dispatch (v7.39.1). The endpoint persists the
+        # user's raw choice ("fable") in the override file, but reports the
+        # effective (dispatched) model as opus so the UI shows what will actually
+        # run. The collapse is NOT a ceiling clamp (clamped stays False): it is a
+        # model-unavailability substitution, computed after the optional
+        # LOKI_MAX_TIER clamp.
         with _ForceLokiDir(self.tmp):
             resp = self._client().post("/api/session/model", json={"model": "fable"})
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["model"], "fable")
-        self.assertEqual(body["effective"], "fable")
+        self.assertEqual(body["effective"], "opus")
         self.assertFalse(body["clamped"])
         self.assertTrue(self._override.is_file())
         self.assertEqual(self._override.read_text().strip(), "fable")

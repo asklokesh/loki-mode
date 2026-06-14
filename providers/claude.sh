@@ -398,7 +398,12 @@ resolve_model_for_tier() {
         planning)    model="$PROVIDER_MODEL_PLANNING" ;;
         development) model="$PROVIDER_MODEL_DEVELOPMENT" ;;
         fast)        model="$PROVIDER_MODEL_FAST" ;;
-        fable)       model="fable" ;;
+        # fable unavailable, collapse to opus. Claude Fable 5 is not available at
+        # the Claude API ("use Opus 4.8"). The fable tier label and session-pin
+        # parsing (loki_normalize_model_alias still accepts "fable") stay; only
+        # the RESOLVED dispatch model becomes opus, matching the estimator and
+        # dashboard so the session-pin parity matrix agrees (v7.39.1).
+        fable)       model="opus" ;;
         *)           model="$PROVIDER_MODEL_DEVELOPMENT" ;;
     esac
 

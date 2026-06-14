@@ -2406,7 +2406,12 @@ def _resolve_session_pin(alias: str) -> str:
     elif pin_tier == "fast":
         model = _provider_model_fast()
     elif pin_tier == "fable":
-        model = "fable"
+        # fable unavailable, collapse to opus. Claude Fable 5 is not available at
+        # the Claude API ("use Opus 4.8"); the runner dispatches opus for a fable
+        # pin (claude.sh resolve_model_for_tier, run.sh dispatch backstop), and
+        # the estimator quotes opus. The dashboard effective model agrees so the
+        # session-pin parity matrix stays green (v7.39.1).
+        model = "opus"
     else:  # development (and the unknown-alias '*' fallthrough)
         model = _provider_model_development()
     max_tier = (os.environ.get("LOKI_MAX_TIER") or "").strip().lower()
@@ -2483,6 +2488,13 @@ async def get_session_model():
         effective = _clamp_to_max_tier(override)
     else:
         effective = _resolve_session_pin(default)
+    # fable unavailable, collapse to opus (final dispatch backstop, mirrors run.sh
+    # and the estimator). The override-path clamp leaves an uncapped fable override
+    # as "fable", but the runner dispatches opus for it; the session-pin route is
+    # already collapsed inside _resolve_session_pin. Apply the same collapse here so
+    # the reported effective model agrees with dispatch on BOTH routes (v7.39.1).
+    if effective == "fable":
+        effective = "opus"
     return {
         "override": override,
         "default": default,
@@ -2533,7 +2545,16 @@ async def set_session_model(request: SessionModelRequest):
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not write override: {exc}")
     effective = _clamp_to_max_tier(model)
-    return {"model": model, "effective": effective, "clamped": effective != model}
+    # `clamped` reflects ONLY the LOKI_MAX_TIER cost ceiling, computed before the
+    # fable->opus collapse below (the collapse is model unavailability, not a cost
+    # clamp, so it must not flip `clamped`).
+    clamped = effective != model
+    # fable unavailable, collapse to opus (final dispatch backstop, mirrors run.sh
+    # and the estimator). An uncapped fable override clamps to "fable" above but the
+    # runner dispatches opus for it, so report opus as the effective model (v7.39.1).
+    if effective == "fable":
+        effective = "opus"
+    return {"model": model, "effective": effective, "clamped": clamped}
 
 
 @app.get("/api/running-projects")

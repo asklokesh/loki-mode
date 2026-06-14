@@ -1822,18 +1822,23 @@ get_provider_tier_param() {
                     if [ -n "${PROVIDER_MODEL_PLANNING:-}" ]; then
                         echo "${PROVIDER_MODEL_PLANNING}"
                     elif [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ]; then
-                        echo "fable"
+                        # fable unavailable, collapse to opus. Claude Fable 5 is
+                        # not available at the Claude API ("use Opus 4.8"); the
+                        # architect opt-in now runs opus. Matches claude.sh
+                        # resolve_model_for_tier and the estimator/dashboard.
+                        echo "opus"
                     else
                         echo "opus"
                     fi
                     ;;
                 development) echo "${PROVIDER_MODEL_DEVELOPMENT:-opus}" ;;
                 fast) echo "${PROVIDER_MODEL_FAST:-sonnet}" ;;
-                # Honor the fable lever here too: without this arm an
+                # fable unavailable, collapse to opus. Without this arm an
                 # unsourced-claude.sh environment (this static fallback) would
                 # silently downgrade a fable-pinned tier to sonnet via the `*`
-                # default. Matches resolve_model_for_tier's explicit fable) arm.
-                fable) echo "fable" ;;
+                # default. Matches resolve_model_for_tier's explicit fable) arm,
+                # which now resolves to opus (Fable 5 unavailable at the API).
+                fable) echo "opus" ;;
                 *) echo "sonnet" ;;
             esac
             ;;
@@ -12780,6 +12785,17 @@ except Exception as exc:
             else
                 log_warn "Ignoring invalid model override '$_loki_override_file' (allowed: haiku, sonnet, opus, fable); using tier $tier_param"
             fi
+        fi
+        # fable unavailable, collapse to opus (final dispatch backstop). Claude
+        # Fable 5 is not available at the Claude API ("use Opus 4.8"). Any path
+        # that left tier_param="fable" (static fallback, override file, architect
+        # opt-in) is collapsed to opus here, after all tier_param mutations and
+        # before the claude argv is built (--model "$tier_param"). Keeps dispatch,
+        # the cost quote, and the dashboard effective-model in agreement. Only for
+        # the claude provider: codex/cline/aider map tier_param to their own
+        # effort/model strings and have no fable equivalent (v7.39.1).
+        if [ "${PROVIDER_NAME:-claude}" = "claude" ] && [ "$tier_param" = "fable" ]; then
+            tier_param="opus"
         fi
         echo "=== RARV Phase: $rarv_phase, Tier: $CURRENT_TIER ($tier_param) ===" | tee -a "$log_file" "$agent_log"
         log_info "RARV Phase: $rarv_phase -> Tier: $CURRENT_TIER ($tier_param)"

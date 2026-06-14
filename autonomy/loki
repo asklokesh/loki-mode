@@ -13433,7 +13433,12 @@ def _resolve_session_pin(alias):
     elif _pin_tier == 'fast':
         _m = _provider_model_fast()
     elif _pin_tier == 'fable':
-        _m = 'fable'
+        # fable unavailable, collapse to opus. Claude Fable 5 is not available at
+        # the Claude API (advises use Opus 4.8); the runner dispatches opus for a
+        # fable pin (claude.sh resolve_model_for_tier, run.sh dispatch backstop).
+        # Quote opus pricing (\$5/\$25) so the estimator agrees with dispatch and
+        # the dashboard (v7.39.1).
+        _m = 'opus'
     else:  # development (and the '*' fallthrough)
         _m = _provider_model_development()
     # Apply the shared LOKI_MAX_TIER clamp with the REAL tier and resolved model
@@ -13466,6 +13471,16 @@ if _is_override:
     _dispatched_model = _loki_clamp_alias(session_model_env)
 else:
     _dispatched_model = _resolve_session_pin(session_model_env)
+
+# fable unavailable, collapse to opus (final dispatch backstop, mirrors run.sh).
+# The override-path clamp (_loki_clamp_alias) leaves an uncapped fable override as
+# 'fable', but the runner's dispatch backstop collapses tier_param=='fable' to
+# opus before --model. Apply the same collapse here so the OVERRIDE route quotes
+# opus too, agreeing with dispatch and the dashboard. The session-pin route is
+# already collapsed inside _resolve_session_pin; this also covers a fable override
+# file (v7.39.1).
+if _dispatched_model == 'fable':
+    _dispatched_model = 'opus'
 
 # Keep session_model_env (the alias) for token-volume tier mapping and provenance,
 # but record when the cost ceiling actually changed the dispatched model so the
@@ -13757,12 +13772,16 @@ for i in range(estimated_iterations):
     # IS the dispatched model. In session-pinned mode (the default) the runner
     # resolves the pin through provider config (_dispatched_model): a sonnet pin
     # dispatches opus, so we price Opus, not the tier's static 'Sonnet' label.
-    # The fable-architect iteration 0 genuinely dispatches fable (already cap-
-    # cleared above when it would clamp), so it keeps the advisor tier's Fable.
+    # The fable-architect iteration 0 collapses to opus at dispatch (Fable 5 is
+    # unavailable at the claude API), so it is priced as Opus, not Fable (v7.39.1).
     if legacy_tier_switching:
         model = info['model']
     elif _fable_architect and i == 0:
-        model = info['model']  # advisor tier -> Fable
+        # Architect opt-in iter-0: fable unavailable, the runner dispatches opus
+        # for the architecture pass (LOKI_FABLE_ARCHITECT collapses to opus in
+        # run.sh / claude.sh). Token VOLUME stays the advisor/planning tier
+        # (50k/8k), but the priced model is Opus, not Fable (v7.39.1).
+        model = 'Opus'
     else:
         model = _priced_model_for(_dispatched_model)
     inp = info['input']
@@ -13969,7 +13988,10 @@ else:
     else:
         print(f'  {DIM}(pinned via {_session_model_source}={session_model_env}; set LOKI_LEGACY_TIER_SWITCHING=true to rotate){NC}')
     if _fable_architect:
-        print(f'  {DIM}(+ 1 architecture iteration on Fable via LOKI_FABLE_ARCHITECT=1){NC}')
+        # fable unavailable: the architect opt-in now runs the architecture pass
+        # on opus (Claude Fable 5 is not available at the Claude API). Disclose
+        # Opus so the quote matches dispatch (v7.39.1).
+        print(f'  {DIM}(+ 1 architecture iteration on Opus via LOKI_FABLE_ARCHITECT=1){NC}')
     if fable_n > 0:
         print(f'  {YELLOW}Fable 5 is the top-tier advisory model priced at 2x Opus ({chr(36)}10/{chr(36)}50 per MTok).{NC}')
 

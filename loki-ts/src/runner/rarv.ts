@@ -120,12 +120,13 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
         case "fast":
           return process.env["PROVIDER_MODEL_FAST"] ?? "sonnet";
         case "fable":
-          // Explicit fable tier (session pin / override). Mirrors the bash
-          // resolver's `fable) model="fable"` arm. NOTE: the LOKI_MAX_TIER
-          // clamp is not yet ported to the Bun route; the Bun runner is
-          // currently test-only (run.sh invokes bun only for phase1-hooks),
-          // so this is latent until Phase 6 flips the Bun runner live.
-          return "fable";
+          // fable unavailable, collapse to opus. Claude Fable 5 is not
+          // available at the Claude API ("use Opus 4.8"). Mirrors the bash
+          // resolver's `fable) model="opus"` arm and run.sh's static fallback,
+          // so dispatch, the cost quote, and the dashboard agree. The fable tier
+          // label and session-pin parsing stay; only the RESOLVED model becomes
+          // opus (v7.39.1).
+          return "opus";
         default:
           return "sonnet";
       }

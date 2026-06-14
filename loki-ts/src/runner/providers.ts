@@ -104,6 +104,12 @@ export function truthy(value: string | undefined): boolean {
 // (provider_get_tier_param) including the LOKI_ALLOW_HAIKU branch that
 // upgrades fast/development tiers when haiku is opt-in only.
 function claudeTierToModel(tier: SessionTier): string {
+  // fable unavailable, collapse to opus. Claude Fable 5 is not available at the
+  // Claude API ("use Opus 4.8"). This guard precedes the allowHaiku branch
+  // because the allowHaiku default arm returns sonnet, which would silently
+  // downgrade a fable pin. Mirrors claude.sh resolve_model_for_tier and run.sh
+  // (v7.39.1).
+  if (tier === "fable") return "opus";
   const allowHaiku = truthy(process.env["LOKI_ALLOW_HAIKU"]);
   if (allowHaiku) {
     switch (tier) {

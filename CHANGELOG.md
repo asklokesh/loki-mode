@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.39.1] - 2026-06-14
+
+### Fixed
+- Fable model (claude-fable-5) is not available at the Claude API ("Claude
+  Fable 5 is not available, use Opus 4.8"). A session pin, mid-flight override,
+  or architect opt-in to fable now resolves to opus consistently across all
+  three readers: the dispatched model (providers/claude.sh resolve_model_for_tier,
+  autonomy/run.sh static fallback and the final pre-argv backstop,
+  loki-ts claudeTierToModel and rarv.ts getProviderTierParam), the `loki plan`
+  cost quote, and the dashboard effective-model. A fable pin now both runs AND
+  quotes opus ($5/$25), not fable ($10/$50), so the quote matches the dispatch
+  (cost honesty). The fable tier label, session-pin parsing (fable stays a valid
+  input alias), and pricing-table rows are preserved; only the resolved model
+  changes. The 224-cell session-pin parity matrix stays green (dispatch == quote
+  == dashboard for every fable cell).
+
 ## [7.39.0] - 2026-06-14
 
 ### Added

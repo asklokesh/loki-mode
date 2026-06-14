@@ -116,12 +116,16 @@ out_default="$(rmt planning)"
 [ "$out_default" = "opus" ] \
   && ok "planning tier defaults to opus (REAL claude.sh path)" \
   || bad "planning default not opus: '$out_default'"
-# Explicit fable tier arm: a fable-pinned session / override resolves to fable
-# (the model-honesty lever runs fable instead of falling through to opus).
+# Explicit fable tier arm: fable is NOT available at the Claude API ("Claude
+# Fable 5 is not available, use Opus 4.8"), so a fable-pinned session / override
+# collapses to opus in resolve_model_for_tier. The fable tier LABEL and the
+# session-pin parsing (loki_normalize_model_alias still accepts "fable") stay;
+# only the RESOLVED dispatch model becomes opus, agreeing with the estimator and
+# dashboard so the session-pin parity matrix holds (v7.39.1).
 out_fable="$(rmt fable)"
-[ "$out_fable" = "fable" ] \
-  && ok "explicit fable tier resolves to fable (lever genuinely runs fable)" \
-  || bad "fable tier did not resolve to fable: '$out_fable'"
+[ "$out_fable" = "opus" ] \
+  && ok "explicit fable tier collapses to opus (Fable 5 unavailable at the API)" \
+  || bad "fable tier did not collapse to opus: '$out_fable'"
 # The planning-time architect gate is REMOVED: LOKI_FABLE_ARCHITECT alone must
 # NOT convert the planning tier to fable (that scoping is now run.sh iter-0).
 out_planning_arch="$(rmt LOKI_FABLE_ARCHITECT=1 planning)"
@@ -181,6 +185,35 @@ resolve_session_iter() {
       resolve_model_for_tier "$CURRENT_TIER"
     ' _ "$@"
 }
+# Non-vacuity helper: echo CURRENT_TIER PRE-collapse (the abstract tier the
+# architect/session-pin routing selects) WITHOUT calling resolve_model_for_tier.
+# This proves the architect block is alive (it routes iter-0 to the fable TIER)
+# independently of the fable->opus dispatch collapse. Without this, the
+# dispatch=opus assertions below would pass even if the architect block were dead
+# (a fable pin AND a dead architect both yield opus after the collapse). Mirrors
+# the run.sh tier-selection logic above, minus the resolver call.
+resolve_session_tier() {
+    # $1=session_model $2=iteration ; remaining "VAR=val" exports
+    local sm="$1" iter="$2"; shift 2
+    bash -c '
+      for kv in "$@"; do export "$kv"; done
+      source "'"$CLAUDE_SH"'" 2>/dev/null
+      sm="'"$sm"'"; iter='"$iter"'
+      sm="${sm#"${sm%%[![:space:]]*}"}"
+      sm="${sm%"${sm##*[![:space:]]}"}"
+      sm="$(printf "%s" "$sm" | tr "[:upper:]" "[:lower:]")"
+      case "$sm" in
+        opus) CURRENT_TIER="planning";; sonnet) CURRENT_TIER="development";;
+        haiku) CURRENT_TIER="fast";; fable) CURRENT_TIER="fable";;
+        planning|development|fast) CURRENT_TIER="$sm";; *) CURRENT_TIER="$sm";;
+      esac
+      if [ "$iter" -eq 1 ] && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
+         && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
+        CURRENT_TIER="fable"
+      fi
+      printf "%s" "$CURRENT_TIER"
+    ' _ "$@"
+}
 # Verify the run.sh source actually contains the first-iteration architect
 # scoping AT THE REAL INDEX (ITERATION_COUNT -eq 1), keeping this replay faithful
 # to the runtime and guarding against a -eq 0 silent no-op regression.
@@ -189,15 +222,34 @@ grep -q 'LOKI_FABLE_ARCHITECT.*=.*"1"' "$RUN_SH" \
   && grep -Eq 'ITERATION_COUNT:-0\}" -eq 1 \]' "$RUN_SH" \
   && ok "run.sh scopes LOKI_FABLE_ARCHITECT to the first iteration (ITERATION_COUNT==1)" \
   || bad "run.sh first-iteration architect scoping missing or guarded on the wrong index"
+# NON-VACUITY (tier routing, PRE-collapse): the architect block must route iter-0
+# to the fable TIER (CURRENT_TIER=fable) BEFORE the fable->opus dispatch collapse.
+# This proves the architect block is ALIVE independently of the collapse: without
+# it, the dispatch=opus assertions below could pass on a dead architect (an opus
+# pin already dispatches opus). A later iteration on an opus pin stays the planning
+# tier; the default sonnet pin's iter-0 also routes to the fable tier.
+arch0_tier="$(resolve_session_tier opus 1 LOKI_FABLE_ARCHITECT=1)"
+arch1_tier="$(resolve_session_tier opus 2 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch0_tier" = "fable" ] && [ "$arch1_tier" = "planning" ] \
+  && ok "architect routes ONLY iter-0 to the FABLE TIER pre-collapse (opus pin); iter-2 stays planning (block is alive)" \
+  || bad "architect tier routing wrong pre-collapse: iter1='$arch0_tier' iter2='$arch1_tier' (expected fable/planning)"
+arch_def0_tier="$(resolve_session_tier sonnet 1 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_def0_tier" = "fable" ] \
+  && ok "architect fires on the default session pin pre-collapse (routes iter-0 to the fable tier)" \
+  || bad "architect did not route default pin iter-0 to the fable tier: '$arch_def0_tier'"
+# DISPATCH (POST-collapse): fable is unavailable, so the architect iter-0 collapses
+# to opus at dispatch (resolve_model_for_tier fable arm -> opus). Later iterations
+# on an opus pin dispatch opus too, so the scoping is now visible only via the tier
+# routing above (that is exactly why the non-vacuity guard exists).
 arch0="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1)"
 arch1="$(resolve_session_iter opus 2 LOKI_FABLE_ARCHITECT=1)"
-[ "$arch0" = "fable" ] && [ "$arch1" = "opus" ] \
-  && ok "architect routes ONLY the first iteration to fable; opus-pinned session NOT converted wholesale" \
-  || bad "architect scope wrong: iter1='$arch0' iter2='$arch1' (expected fable/opus)"
+[ "$arch0" = "opus" ] && [ "$arch1" = "opus" ] \
+  && ok "architect iter-0 dispatches opus (fable unavailable, collapsed); opus-pinned session NOT converted wholesale" \
+  || bad "architect dispatch wrong: iter1='$arch0' iter2='$arch1' (expected opus/opus post-collapse)"
 arch_def0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
-[ "$arch_def0" = "fable" ] \
-  && ok "architect fires on the default session pin (no longer a silent no-op)" \
-  || bad "architect did not fire on default pin: '$arch_def0'"
+[ "$arch_def0" = "opus" ] \
+  && ok "architect on the default session pin dispatches opus (fable collapsed)" \
+  || bad "architect default pin did not dispatch opus: '$arch_def0'"
 arch_ovr="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1 LOKI_MODEL_PLANNING=opus)"
 [ "$arch_ovr" = "opus" ] \
   && ok "explicit LOKI_MODEL_PLANNING suppresses the architect opt-in" \
@@ -211,8 +263,10 @@ arch_max="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1 LOKI_MAX_TIER=o
 # 2c. Mid-flight override respects LOKI_MAX_TIER (cost-ceiling bypass fix).
 #
 # Replay the override clamp the run_autonomous override path performs: normalize
-# the file -> apply loki_apply_max_tier_clamp. A sonnet-capped run must NOT
-# dispatch fable.
+# the file -> apply loki_apply_max_tier_clamp -> apply the fable->opus dispatch
+# backstop (run.sh collapses tier_param=="fable" to opus before --model). A
+# sonnet-capped run must NOT dispatch fable; an UNCAPPED fable override now
+# dispatches opus too, because fable is unavailable at the Claude API (v7.39.1).
 # ---------------------------------------------------------------------------
 override_effective() {
     # $1=file content ; remaining "VAR=val" exports
@@ -222,11 +276,15 @@ override_effective() {
       source "'"$CLAUDE_SH"'" 2>/dev/null
       alias="$(loki_normalize_model_alias "$1")"
       [ -z "$alias" ] && { echo REJECTED; exit 0; }
-      loki_apply_max_tier_clamp "$alias" "$alias"
+      tier_param="$(loki_apply_max_tier_clamp "$alias" "$alias")"
+      # run.sh dispatch backstop: fable unavailable, collapse to opus.
+      [ "$tier_param" = "fable" ] && tier_param="opus"
+      printf "%s" "$tier_param"
     ' _ "$content" "$@"
 }
-[ "$(override_effective fable)" = "fable" ] \
-  && ok "override fable dispatches fable when uncapped" || bad "override fable not honored uncapped"
+[ "$(override_effective fable)" = "opus" ] \
+  && ok "override fable dispatches opus when uncapped (Fable 5 unavailable, dispatch backstop)" \
+  || bad "override fable did not collapse to opus uncapped"
 [ "$(override_effective fable LOKI_MAX_TIER=sonnet)" = "opus" ] \
   && ok "override fable clamped to opus under LOKI_MAX_TIER=sonnet (ceiling not bypassed)" \
   || bad "override fable bypassed LOKI_MAX_TIER=sonnet"
@@ -315,7 +373,14 @@ grep -q "SECURITY-REVIEW MODEL GUARD" "$RUN_SH" \
   && ok "security-review model guard comment present" || bad "security-review guard comment missing"
 
 # ---------------------------------------------------------------------------
-# 6. End-to-end estimator quotes fable when forced (no real model invoked).
+# 6. End-to-end estimator: a fable pin quotes OPUS, never Fable (v7.39.1).
+#
+# Fable is unavailable at the Claude API, so the runner dispatches opus for a
+# fable pin / override / architect iteration. The estimator must quote the model
+# the runner actually dispatches (opus, $5/$25), NOT fable ($10/$50). The token
+# VOLUME stays the advisor work tier (50k/8k per iteration), but the priced model
+# is Opus. So by_model['Fable'] is 0 and by_model['Opus'] is nonzero on every
+# fable route.
 # ---------------------------------------------------------------------------
 EST_DIR="$WORK/est"
 mkdir -p "$EST_DIR/.loki/state"
@@ -323,28 +388,42 @@ cat > "$EST_DIR/prd.md" <<'EOF'
 # PRD
 Build a small todo API with one endpoint.
 EOF
-fable_total="$(cd "$EST_DIR" && LOKI_SESSION_MODEL=fable "$LOKI" plan ./prd.md --json 2>/dev/null \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cost']['by_model'].get('Fable',0))" 2>/dev/null)"
-case "$fable_total" in
-    0|0.0|"") bad "estimator did not quote fable cost (got '$fable_total')" ;;
-    *) ok "LOKI_SESSION_MODEL=fable estimator quotes fable cost ($fable_total)" ;;
+# Session pin = fable: must quote Opus, never Fable.
+read -r sp_fable sp_opus <<EOF2
+$(cd "$EST_DIR" && LOKI_SESSION_MODEL=fable "$LOKI" plan ./prd.md --json 2>/dev/null \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); bm=d['cost']['by_model']; print(bm.get('Fable',0), bm.get('Opus',0))" 2>/dev/null)
+EOF2
+case "$sp_fable" in
+    0|0.0|"") : ;;
+    *) bad "fable session pin still quoted Fable cost ($sp_fable); must collapse to Opus" ;;
+esac
+case "$sp_opus" in
+    0|0.0|"") bad "fable session pin did not quote Opus cost (got Opus='$sp_opus')" ;;
+    *) ok "LOKI_SESSION_MODEL=fable estimator quotes OPUS, not Fable (Fable=$sp_fable Opus=$sp_opus)" ;;
 esac
 # LOKI_SESSION_MODEL=fable under LOKI_MAX_TIER=sonnet must NOT quote fable
-# (estimator honors the ceiling, agreeing with the run).
+# (estimator honors the ceiling; fable already collapses below opus anyway).
 capped_fable="$(cd "$EST_DIR" && LOKI_SESSION_MODEL=fable LOKI_MAX_TIER=sonnet "$LOKI" plan ./prd.md --json 2>/dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cost']['by_model'].get('Fable',0))" 2>/dev/null)"
 case "$capped_fable" in
-    0|0.0) ok "estimator clamps fable to the LOKI_MAX_TIER ceiling (no over-quote)" ;;
+    0|0.0) ok "estimator never quotes fable under LOKI_MAX_TIER=sonnet (no over-quote)" ;;
     *) bad "estimator quoted fable above LOKI_MAX_TIER ceiling (got '$capped_fable')" ;;
 esac
-# Override file also forces fable in the estimate.
+# Override file = fable: also collapses to Opus in the estimate (dispatch backstop).
 printf 'fable\n' > "$EST_DIR/.loki/state/model-override"
-ov_total="$(cd "$EST_DIR" && "$LOKI" plan ./prd.md --json 2>/dev/null \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cost']['by_model'].get('Fable',0))" 2>/dev/null)"
-case "$ov_total" in
-    0|0.0|"") bad "override file did not force fable in estimate (got '$ov_total')" ;;
-    *) ok "override file forces fable in estimate ($ov_total)" ;;
+read -r ov_fable ov_opus <<EOF3
+$(cd "$EST_DIR" && "$LOKI" plan ./prd.md --json 2>/dev/null \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); bm=d['cost']['by_model']; print(bm.get('Fable',0), bm.get('Opus',0))" 2>/dev/null)
+EOF3
+case "$ov_fable" in
+    0|0.0|"") : ;;
+    *) bad "fable override still quoted Fable cost ($ov_fable); must collapse to Opus" ;;
 esac
+case "$ov_opus" in
+    0|0.0|"") bad "fable override did not quote Opus cost (got Opus='$ov_opus')" ;;
+    *) ok "override file fable collapses to OPUS in estimate (Fable=$ov_fable Opus=$ov_opus)" ;;
+esac
+rm -f "$EST_DIR/.loki/state/model-override"
 
 # ---------------------------------------------------------------------------
 # 7. Resolver parity matrix: the dashboard/estimator python clamp must resolve
@@ -506,6 +585,33 @@ dD="$(dash_effective fable LOKI_MAX_TIER=sonnet)"
   || bad "cross-route sonnet-cap+fable (default) mismatch: est='$eD' dash='$dD' runner='$rD'"
 rm -f "$XR_DIR/.loki/state/model-override"
 
+# --- Repro E (v7.39.1): UNCAPPED fable OVERRIDE -> opus on all three routes ---
+# Fable is unavailable at the Claude API, so even with NO cost ceiling a fable
+# override dispatches opus. The runner reference is the override-path clamp PLUS
+# the fable->opus dispatch backstop (run.sh collapses tier_param=="fable" before
+# --model). The dashboard reads the same effective via get_session_model. All
+# three must quote/report opus, NOT fable. This locks the override route end-to-end
+# (the session-pin route is locked by the section-9 matrix).
+printf 'fable\n' > "$XR_DIR/.loki/state/model-override"
+eE="$(est_quoted)"
+# Runner: override-path clamp (no cap -> "fable") then the dispatch backstop -> opus.
+rE_clamp="$(bash_clamp fable)"
+rE="$rE_clamp"; [ "$rE" = "fable" ] && rE="opus"
+# Dashboard get_session_model effective (reads the override file + the v7.39.1
+# fable->opus collapse), run from the override dir so it sees the override file.
+dE="$(cd "$XR_DIR" && env LOKI_REPO_ROOT="$REPO_ROOT" python3 -c '
+import sys, os, asyncio
+sys.path.insert(0, os.environ["LOKI_REPO_ROOT"])
+from dashboard import server as s
+# new_event_loop (not get_event_loop) -- get_event_loop with no running loop
+# raises RuntimeError on Python 3.12+, which would falsely empty dE.
+sys.stdout.write(asyncio.new_event_loop().run_until_complete(s.get_session_model())["effective"])
+')"
+[ "$eE" = "opus" ] && [ "$dE" = "opus" ] && [ "$rE" = "opus" ] && [ "$rE_clamp" = "fable" ] \
+  && ok "cross-route UNCAPPED fable override: estimator=$eE dashboard=$dE runner=$rE (all opus; clamp alone=$rE_clamp, backstop collapses)" \
+  || bad "cross-route uncapped fable override mismatch: est='$eE' dash='$dE' runner='$rE' (clamp=$rE_clamp; expected all opus, clamp fable)"
+rm -f "$XR_DIR/.loki/state/model-override"
+
 # ---------------------------------------------------------------------------
 # 9. Session-pin tier-resolution parity (task 568): the NO-OVERRIDE path.
 #
@@ -653,12 +759,19 @@ arch_opuscap_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=opus LOKI_FAB
 [ "$arch_opuscap_e" = "Opus" ] \
   && ok "architect+opus-cap on opus pin: estimator quotes NO fable ($arch_opuscap_e)" \
   || bad "architect+opus-cap over-quote: estimator='$arch_opuscap_e' (expected Opus, no fable)"
-# Control: stock + architect, NO cap -> iter-0 fable IS disclosed (Fable+Opus).
+# Architect, NO cap: fable is unavailable, so the architecture pass collapses to
+# opus on BOTH the estimator quote and the runner dispatch. The estimator quotes
+# Opus only (NOT Fable,Opus), and the runner architect iteration dispatches opus
+# (NOT fable). The architect block is still ALIVE: its tier routing sets the fable
+# TIER pre-collapse (proven by the non-vacuity assertions in section 2b and the
+# pre-collapse tier check below). This is the v7.39.1 coherence: quote, runner
+# tier, runner dispatch all agree on opus for a fable architecture pass.
 arch_nocap_e="$(est_models LOKI_FABLE_ARCHITECT=1)"
 arch_nocap_r0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
-[ "$arch_nocap_e" = "Fable,Opus" ] && [ "$arch_nocap_r0" = "fable" ] \
-  && ok "architect no-cap on stock pin: estimator discloses Fable+Opus, runner architect iter = $arch_nocap_r0" \
-  || bad "architect no-cap mismatch: estimator='$arch_nocap_e' runner-iter1='$arch_nocap_r0' (expected Fable,Opus / fable)"
+arch_nocap_tier0="$(resolve_session_tier sonnet 1 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_nocap_e" = "Opus" ] && [ "$arch_nocap_r0" = "opus" ] && [ "$arch_nocap_tier0" = "fable" ] \
+  && ok "architect no-cap: estimator quotes Opus (not Fable,Opus), runner dispatches $arch_nocap_r0 from the live fable TIER ($arch_nocap_tier0) -- collapse coherent, block alive" \
+  || bad "architect no-cap mismatch: estimator='$arch_nocap_e' runner-dispatch='$arch_nocap_r0' runner-tier='$arch_nocap_tier0' (expected Opus / opus / fable)"
 
 # ---------------------------------------------------------------------------
 # Summary
