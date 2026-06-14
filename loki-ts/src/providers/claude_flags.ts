@@ -427,6 +427,22 @@ export function sessionResumeArgv(targetDir?: string): string[] {
   return argv;
 }
 
+// ---------------------------------------------------------------------------
+// v7.38.0 Dynamic Workflows (ultracode) -- Bun-route parity predicate.
+//
+// Mirror of loki_workflows_enabled in autonomy/lib/claude-flags.sh. This is the
+// opt-in env knob (LOKI_USE_CLAUDE_WORKFLOWS=1, default OFF) that turns ON the
+// Phase 2 read-only-analysis workflow dispatch. It is intentionally a pure env
+// check here; the provider gate (Claude-only) and the "ultracode: " prompt
+// prefixing live in runner/build_prompt.ts (useClaudeWorkflowsForAnalysis +
+// analysisInstruction), the one place the analysis prompt is composed. Workflows
+// are Claude-provider-only and never touch the council, the 11 gates, the
+// evidence gate, or the RARV loop -- only the read-only codebase-analysis prompt.
+// ---------------------------------------------------------------------------
+export function workflowsEnabled(): boolean {
+  return process.env["LOKI_USE_CLAUDE_WORKFLOWS"] === "1";
+}
+
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
   _claudeHelpCache = text;

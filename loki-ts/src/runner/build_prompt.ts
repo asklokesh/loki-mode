@@ -206,6 +206,42 @@ const ANALYSIS_INSTRUCTION =
   // run.sh:10043 - kept byte-identical to the bash route (v7.8.1 three-pass analysis)
   `CODEBASE_ANALYSIS_MODE: No PRD provided. Reverse-engineer a precise PRD from the existing code in three passes, cheaply and without blind full scans. PASS 1 (orient): list the top two directory levels; read ONLY high-signal manifests that exist (package.json, requirements.txt, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, composer.json) to identify language, framework, and scripts; read README and any docs index. PASS 2 (locate): from the manifests and conventional layout, identify the entrypoints, the public API or CLI surface, the test directory and runner, and the config or env contract; read those first; skip generated, vendored, and lockfile content; prefer LSP workspace symbols when the lsp-proxy server is available. PASS 3 (write): write .loki/generated-prd.md with these sections: Overview, Detected Stack, Entrypoints and Components, Existing Behavior and Requirements (reverse-engineered, observable), Test and Build Setup, Gaps and TODOs, Out of Scope. Keep it under 200 lines, plain Markdown, no emojis, no em dashes. Do not invent features not evidenced by the code. THEN execute SDLC phases against that PRD.`;
 
+// v7.38.0 (Phase 2): optional Claude Code Dynamic Workflow dispatch for the
+// READ-ONLY codebase-analysis pass ONLY. Gated behind LOKI_USE_CLAUDE_WORKFLOWS=1
+// AND the Claude provider (Tier 1, not degraded). When ON, the no-PRD analysis
+// prompt is prefixed with "ultracode: " so the three-pass reverse-engineer-a-PRD
+// flow runs as a workflow fan-out. When OFF / non-Claude / degraded, the existing
+// three-pass path runs UNCHANGED (byte-identical default). This NEVER touches the
+// council, the 11 gates, the evidence gate, or the RARV loop -- only this one
+// read-only analysis instruction. Mirrors the bash predicate loki_workflows_*.
+//
+// Provider detection mirrors the bash convention (LOKI_PROVIDER default "claude")
+// and additionally refuses when PROVIDER_DEGRADED=true (Tier 2/3 routes never use
+// the full static-first analysis prompt anyway, but the guard keeps intent clear).
+const WORKFLOW_ANALYSIS_PREFIX = "ultracode: ";
+
+export function useClaudeWorkflowsForAnalysis(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  if (env["LOKI_USE_CLAUDE_WORKFLOWS"] !== "1") return false;
+  const provider = envStr(env, "LOKI_PROVIDER", "claude");
+  if (provider !== "claude") return false;
+  if (envBool(env, "PROVIDER_DEGRADED")) return false;
+  return true;
+}
+
+// The analysis instruction, optionally workflow-prefixed. Default (flag off /
+// non-Claude) returns ANALYSIS_INSTRUCTION verbatim, so the prompt is
+// byte-identical to today.
+function analysisInstruction(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  if (useClaudeWorkflowsForAnalysis(env)) {
+    return WORKFLOW_ANALYSIS_PREFIX + ANALYSIS_INSTRUCTION;
+  }
+  return ANALYSIS_INSTRUCTION;
+}
+
 const MEMORY_INSTRUCTION =
   // run.sh:8962
   `MEMORY SYSTEM: Relevant context from past sessions is provided below (if any). Your actions will be automatically recorded for future reference. For complex handoffs: create .loki/memory/handoffs/{timestamp}.md. For important decisions: they will be captured in the timeline. Check .loki/CONTINUITY.md for session-level working memory.`;
@@ -1061,7 +1097,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
       completionText,
       autonomyText,
       sdlcText,
-      analysis: ANALYSIS_INSTRUCTION,
+      analysis: analysisInstruction(env),
       memory: MEMORY_INSTRUCTION,
       sections,
     });
@@ -1086,7 +1122,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
   if (prd === null || prd.length === 0) {
-    lines.push(ANALYSIS_INSTRUCTION);
+    lines.push(analysisInstruction(env));
   }
   lines.push("</loki_system>");
   lines.push("[CACHE_BREAKPOINT]");
@@ -1242,6 +1278,8 @@ export const _internals = {
   autonomousSuffix,
   sdlcInstruction,
   ANALYSIS_INSTRUCTION,
+  analysisInstruction,
+  useClaudeWorkflowsForAnalysis,
   MEMORY_INSTRUCTION,
   USAGE_DOC_INSTRUCTION,
   COMPOSE_INSTRUCTION,

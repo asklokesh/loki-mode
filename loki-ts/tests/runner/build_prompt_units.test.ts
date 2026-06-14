@@ -442,3 +442,83 @@ describe("buildPrompt end-to-end (gate failure injection)", () => {
     expect(out).toContain("FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.");
   });
 });
+
+// v7.38.0 (Phase 2): optional Claude Code Dynamic Workflow dispatch for the
+// READ-ONLY codebase-analysis pass. The default (flag unset) MUST be
+// byte-identical to today; only LOKI_USE_CLAUDE_WORKFLOWS=1 + Claude provider
+// prepends "ultracode: " to the analysis instruction.
+describe("buildPrompt Phase 2 ultracode analysis gating (LOKI_USE_CLAUDE_WORKFLOWS)", () => {
+  it("default (flag unset) produces NO 'ultracode:' prefix on the analysis prompt", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: { cwd: workDir, env: emptyEnv() },
+    });
+    expect(out).toContain("CODEBASE_ANALYSIS_MODE:");
+    expect(out).not.toContain("ultracode:");
+    // Exact: the analysis line is the bare instruction (no prefix).
+    expect(out).toContain(_internals.ANALYSIS_INSTRUCTION);
+    expect(out).not.toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
+  });
+
+  it("is byte-identical to default when the flag is explicitly off", async () => {
+    const baseline = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: { cwd: workDir, env: emptyEnv() },
+    });
+    const flaggedOff = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({ LOKI_USE_CLAUDE_WORKFLOWS: "0", LOKI_PROVIDER: "claude" }),
+      },
+    });
+    expect(flaggedOff).toBe(baseline);
+  });
+
+  it("with LOKI_USE_CLAUDE_WORKFLOWS=1 + claude provider prepends 'ultracode:' to the analysis prompt", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "claude" }),
+      },
+    });
+    expect(out).toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
+    // The prefixed instruction equals the prefix + the bare instruction exactly.
+    expect(out).toContain("ultracode: " + _internals.ANALYSIS_INSTRUCTION);
+  });
+
+  it("does NOT prefix when the flag is on but the provider is not claude", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "codex" }),
+      },
+    });
+    expect(out).toContain("CODEBASE_ANALYSIS_MODE:");
+    expect(out).not.toContain("ultracode:");
+  });
+
+  it("predicate: useClaudeWorkflowsForAnalysis honors flag + provider + degraded", () => {
+    const f = _internals.useClaudeWorkflowsForAnalysis;
+    expect(f({})).toBe(false);
+    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1" })).toBe(true); // provider defaults to claude
+    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "claude" })).toBe(true);
+    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "codex" })).toBe(false);
+    expect(f({ LOKI_USE_CLAUDE_WORKFLOWS: "0", LOKI_PROVIDER: "claude" })).toBe(false);
+    expect(
+      f({ LOKI_USE_CLAUDE_WORKFLOWS: "1", LOKI_PROVIDER: "claude", PROVIDER_DEGRADED: "true" }),
+    ).toBe(false);
+  });
+});

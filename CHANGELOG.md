@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.38.0] - 2026-06-14
+
+### Added
+- Claude Code Dynamic Workflows adoption, opt-in and Claude-provider-only
+  (issue: workflows-embed). Two surfaces, both additive; the council, the 11
+  quality gates, the evidence gate, and the RARV loop are untouched (they stay
+  hand-rolled, deterministic, and provider-agnostic by design).
+  - `loki ultracode "<task>"`: a passthrough that prepends the `ultracode`
+    keyword so a native Claude Code Dynamic Workflow (background multi-agent
+    fan-out) runs for the task. Loki adds no orchestration of its own. Opt-in
+    (explicit command), capability-gated (Claude provider AND claude CLI
+    >= 2.1.154 AND workflows not disabled), with a cost-class disclosure printed
+    every time (workflows spawn many agents and cost meaningfully more; no dollar
+    figure is shown because there is no price API). Non-interactive without
+    `--yes` refuses with exit 2 and zero invocation. On Codex/Cline/Aider or an
+    older/disabled CLI it prints an honest message and exits cleanly.
+  - `LOKI_USE_CLAUDE_WORKFLOWS=1` (default OFF): when set on the Claude provider,
+    the first-run READ-ONLY codebase-analysis pass (the no-PRD reverse-engineer
+    step) is dispatched as a workflow fan-out. Default behavior is byte-identical
+    when the flag is off or the provider is not Claude (deterministic fallback to
+    the existing three-pass analysis). Read-only; never gates "done".
+
 ## [7.37.1] - 2026-06-14
 
 ### Fixed

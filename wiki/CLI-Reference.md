@@ -222,6 +222,34 @@ Example MCP client config entry that authorizes the bootstrap:
 
 ---
 
+### `loki ultracode` (v7.38.0)
+
+Run a task as a native Claude Code Dynamic Workflow (a background multi-agent
+fan-out) from inside Loki. This is a PASSTHROUGH: Loki prepends the `ultracode`
+keyword and lets Claude Code orchestrate the workflow; Loki adds no orchestration
+of its own and does not touch the council, the 11 quality gates, the evidence
+gate, or the RARV loop.
+
+Claude-provider-only and opt-in. Requires the claude CLI >= 2.1.154 with
+workflows enabled. On Codex/Cline/Aider, an older CLI, or with workflows
+disabled, it prints an honest message and exits cleanly without invoking
+anything. A cost-class disclosure prints every time (workflows spawn many agents
+and cost meaningfully more than a normal run; no dollar figure is shown because
+there is no price API). A non-interactive shell without `--yes` refuses with
+exit 2 and makes zero calls.
+
+```bash
+loki ultracode "audit every API endpoint under src/routes for missing auth checks"
+loki ultracode "migrate all callers of the old client" --yes   # non-interactive
+loki ultracode --help
+```
+
+Related: set `LOKI_USE_CLAUDE_WORKFLOWS=1` to opt the first-run read-only
+codebase-analysis pass into a workflow fan-out (Claude provider only; default
+off; deterministic fallback otherwise).
+
+---
+
 ### `loki quickstart` (v7.29.0)
 
 A guided first build: four quick questions, then the build starts. Pressing

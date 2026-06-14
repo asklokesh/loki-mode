@@ -379,6 +379,105 @@ loki_ultrareview_enabled() {
     [ "${LOKI_ULTRAREVIEW:-0}" = "1" ]
 }
 
+# ---------- v7.38.0 Dynamic Workflows (ultracode) gates ----------
+# Claude Code "Dynamic Workflows" are JS orchestration scripts Claude writes that
+# fan out into many background subagents. They are triggered by the `ultracode`
+# keyword in a prompt and fire under `claude -p` (verified empirically: a headless
+# workflow returned "The workflow finished"). They are:
+#   - Claude-PROVIDER-ONLY (no Codex/Cline/Aider equivalent),
+#   - require claude CLI >= 2.1.154,
+#   - cost meaningfully MORE than a normal run (a trivial workflow observed at
+#     ~$0.71 vs ~$0.01 for a plain read; there is NO price API so we never quote
+#     a dollar figure -- we disclose the cost CLASS only),
+#   - disablable via CLAUDE_CODE_DISABLE_WORKFLOWS=1 or the `disableWorkflows`
+#     setting in any Claude settings.json.
+#
+# These predicates mirror loki_ultrareview_supported/enabled exactly: read-only,
+# side-effect free, the ONLY policy surface for the optional `loki ultracode`
+# passthrough and the Phase 2 opt-in analysis dispatch. The user typing
+# `loki ultracode` (or setting LOKI_USE_CLAUDE_WORKFLOWS=1) IS the consent signal.
+
+# Minimum claude CLI version that ships Dynamic Workflows.
+LOKI_WORKFLOWS_MIN_VERSION="${LOKI_WORKFLOWS_MIN_VERSION:-2.1.154}"
+
+# Parse the installed claude CLI semantic version (e.g. "2.1.177") to stdout, or
+# empty on any failure. Mirrors the `claude --version | sed` pattern already used
+# at autonomy/loki:7888. Cached per-process so we do not shell out repeatedly.
+_loki_claude_version() {
+    if [ -z "${__LOKI_CLAUDE_VERSION_CACHE:-}" ]; then
+        if command -v claude >/dev/null 2>&1; then
+            __LOKI_CLAUDE_VERSION_CACHE="$(claude --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)"
+        fi
+        # Sentinel so an empty real result does not re-shell every call.
+        __LOKI_CLAUDE_VERSION_CACHE="${__LOKI_CLAUDE_VERSION_CACHE:-__none__}"
+        export __LOKI_CLAUDE_VERSION_CACHE
+    fi
+    [ "$__LOKI_CLAUDE_VERSION_CACHE" = "__none__" ] && return 0
+    printf '%s' "$__LOKI_CLAUDE_VERSION_CACHE"
+}
+
+# Dotted-version >= compare: returns 0 when $1 >= $2, 1 otherwise. Pure, no
+# external tools beyond awk (always present). Pads missing components with 0.
+_loki_version_ge() {
+    local have="${1:-}" want="${2:-}"
+    [ -z "$have" ] && return 1
+    [ -z "$want" ] && return 0
+    awk -v a="$have" -v b="$want" '
+    function cmp(x, y,   na, nb, i, n, xi, yi) {
+        na = split(x, A, ".")
+        nb = split(y, B, ".")
+        n = (na > nb) ? na : nb
+        for (i = 1; i <= n; i++) {
+            xi = (i <= na) ? A[i] + 0 : 0
+            yi = (i <= nb) ? B[i] + 0 : 0
+            if (xi > yi) return 1
+            if (xi < yi) return -1
+        }
+        return 0
+    }
+    BEGIN { exit (cmp(a, b) >= 0) ? 0 : 1 }
+    '
+}
+
+# True when CLAUDE_CODE_DISABLE_WORKFLOWS=1 OR a `disableWorkflows` setting is
+# active in any Claude settings source. Best-effort, read-only (not a full JSON
+# parse, but rejects the obvious cases). Returns 0 (disabled) / 1 (not disabled).
+_loki_workflows_disabled() {
+    [ "${CLAUDE_CODE_DISABLE_WORKFLOWS:-0}" = "1" ] && return 0
+    local f
+    for f in "$HOME/.claude/settings.json" "$HOME/.config/claude/settings.json" \
+             "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" \
+             "$PWD/.claude/settings.json" "$PWD/.claude/settings.local.json"; do
+        [ -f "$f" ] || continue
+        # Match "disableWorkflows": true (tolerating whitespace around the colon).
+        grep -Eq '"disableWorkflows"[[:space:]]*:[[:space:]]*true' "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+# Capability gate: is the active provider Claude AND the claude CLI present AND
+# version >= the workflows minimum AND workflows not disabled? Returns 0 when
+# workflows can run, 1 otherwise (so callers emit an honest message + clean exit).
+loki_workflows_supported() {
+    # Provider must be Claude (Tier 1). Workflows are Claude-only.
+    [ "${LOKI_PROVIDER:-claude}" = "claude" ] || return 1
+    command -v claude >/dev/null 2>&1 || return 1
+    _loki_workflows_disabled && return 1
+    local ver
+    ver="$(_loki_claude_version)"
+    _loki_version_ge "$ver" "$LOKI_WORKFLOWS_MIN_VERSION" || return 1
+    return 0
+}
+
+# Non-interactive opt-in: is LOKI_USE_CLAUDE_WORKFLOWS=1 set? This is the env knob
+# that turns ON the Phase 2 read-only-analysis workflow dispatch. Default OFF. Any
+# value other than the exact "1" returns 1 so only an explicit opt-in counts. This
+# is independent of the `loki ultracode` passthrough (which is itself an explicit
+# user invocation and does not require this flag).
+loki_workflows_enabled() {
+    [ "${LOKI_USE_CLAUDE_WORKFLOWS:-0}" = "1" ]
+}
+
 # ---------------------------------------------------------------------------
 # Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION recovery resume
 #

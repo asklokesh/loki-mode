@@ -668,6 +668,7 @@ show_help() {
     echo "Verify / trust:"
     echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
     echo "  review [opts]    Standalone code review with quality gates"
+    echo "  ultracode \"task\" Run a task as a native Claude Code Dynamic Workflow (opt-in, Claude-only)"
     echo "  trust [cmd]      Visible trust trajectory; 'trust detail' for metrics"
     echo ""
     echo "Observe:"
@@ -14354,6 +14355,9 @@ main() {
         review)
             cmd_review "$@"
             ;;
+        ultracode)
+            cmd_ultracode "$@"
+            ;;
         optimize)
             cmd_optimize "$@"
             ;;
@@ -14635,6 +14639,182 @@ _review_ultra() {
     echo -e "${DIM}Running: claude ${ur_argv[*]}${NC}" >&2
     echo "" >&2
     claude "${ur_argv[@]}"
+    return $?
+}
+
+# v7.38.0: optional native Claude Code Dynamic Workflow passthrough
+# (`loki ultracode "<task>"`). Structurally identical to _review_ultra (issue
+# #168): opt-in, capability-gated, cost-class disclosed, Claude-provider-only,
+# clean exit on any unsupported path. PURE passthrough -- Loki adds NO
+# orchestration of its own; it prepends the `ultracode` keyword to the prompt and
+# routes through `claude -p`, which fires the workflow runtime.
+#
+# Consent model (mirrors _review_ultra):
+#   - The cost-CLASS disclosure ALWAYS prints. There is NO price API, so we never
+#     quote a dollar figure (that would be a lie).
+#   - Interactive TTY without --yes: prompt, default NO.
+#   - Non-TTY/CI without --yes (and no LOKI_USE_CLAUDE_WORKFLOWS=1): REFUSE with
+#     exit 2 and ZERO workflow invocation (the no-silent-bill guard).
+#   - --yes or LOKI_USE_CLAUDE_WORKFLOWS=1 proceeds without prompting.
+# Args: <assume_yes> <task...>
+_run_ultracode() {
+    local assume_yes="${1:-false}"
+    shift || true
+    local task="$*"
+
+    if [ -z "$task" ]; then
+        echo -e "${RED}Error: loki ultracode requires a task description.${NC}" >&2
+        echo "Usage: loki ultracode \"<task>\" [--yes]" >&2
+        return 1
+    fi
+
+    # Make the workflow gate predicates available even though autonomy/loki does
+    # not source claude-flags.sh globally (same on-demand pattern as
+    # _review_ultra). Degrade honestly if the lib is missing.
+    if ! declare -F loki_workflows_supported >/dev/null 2>&1; then
+        local _wf_lib=""
+        if [ -f "${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" ]; then
+            _wf_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh"
+        elif [ -f "$(dirname "$0")/lib/claude-flags.sh" ]; then
+            _wf_lib="$(dirname "$0")/lib/claude-flags.sh"
+        fi
+        if [ -n "$_wf_lib" ]; then
+            # shellcheck source=autonomy/lib/claude-flags.sh
+            . "$_wf_lib" 2>/dev/null || true
+        fi
+    fi
+
+    # 1. Provider gate: workflows are Claude-only. On Codex/Cline/Aider, print the
+    #    honest message and exit CLEANLY (0) with ZERO invocation. Never break the
+    #    other providers.
+    local _provider="${LOKI_PROVIDER:-claude}"
+    if [ "$_provider" != "claude" ]; then
+        echo -e "${YELLOW}loki ultracode: Claude provider only.${NC}" >&2
+        echo "Workflows need the Claude provider and claude CLI >= 2.1.154." >&2
+        echo "Active provider is '${_provider}'; nothing was run." >&2
+        return 0
+    fi
+
+    # 2. claude CLI present at all?
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${RED}Error: 'claude' CLI not found on PATH.${NC}" >&2
+        echo "Workflows need the Claude provider and claude CLI >= 2.1.154." >&2
+        return 1
+    fi
+
+    # 3. Capability gate: provider==claude AND CLI present AND version >= 2.1.154
+    #    AND workflows not disabled. Honest message + clean exit if unsupported.
+    if ! declare -F loki_workflows_supported >/dev/null 2>&1 \
+       || ! loki_workflows_supported; then
+        echo -e "${YELLOW}loki ultracode: workflows unavailable on this setup.${NC}" >&2
+        echo "Workflows need the Claude provider and claude CLI >= 2.1.154" >&2
+        echo "(and must not be disabled via CLAUDE_CODE_DISABLE_WORKFLOWS or the" >&2
+        echo "disableWorkflows setting). Nothing was run." >&2
+        return 0
+    fi
+
+    # 4. Cost-CLASS disclosure -- ALWAYS printed, even with --yes, so spend is
+    #    never hidden. NO dollar figure (there is no price API); cost-CLASS only.
+    echo -e "${BOLD}loki ultracode${NC} - native Claude Code Dynamic Workflow (optional)" >&2
+    echo "" >&2
+    echo -e "${YELLOW}Workflows spawn many agents and cost meaningfully more than a normal${NC}" >&2
+    echo -e "${YELLOW}run; this is a Claude Code feature billed as normal usage.${NC}" >&2
+    echo "" >&2
+
+    # 5. Consent. LOKI_USE_CLAUDE_WORKFLOWS=1 is the non-interactive opt-in
+    #    equivalent of --yes for THIS command.
+    local proceed=false
+    if [ "$assume_yes" = true ]; then
+        proceed=true
+    elif declare -F loki_workflows_enabled >/dev/null 2>&1 && loki_workflows_enabled; then
+        proceed=true
+    else
+        local uc_interactive=true
+        if [ ! -t 0 ] || [ -n "${CI:-}" ]; then
+            uc_interactive=false
+        fi
+        if [ "$uc_interactive" = true ]; then
+            local ans=""
+            echo -n "Run the workflow now? [y/N] " >&2
+            read -r ans </dev/tty 2>/dev/null || ans=""
+            if [[ "$ans" =~ ^[Yy] ]]; then
+                proceed=true
+            else
+                echo "Cancelled. Nothing was spent." >&2
+                return 0
+            fi
+        else
+            # Non-TTY/CI without --yes: never hang; refuse with exit 2 and make
+            # ZERO workflow calls (the no-silent-bill guard).
+            echo "workflows need confirmation; re-run with --yes (or set LOKI_USE_CLAUDE_WORKFLOWS=1) to proceed non-interactively" >&2
+            return 2
+        fi
+    fi
+
+    [ "$proceed" = true ] || { echo "Cancelled. Nothing was spent." >&2; return 0; }
+
+    # 6. Invoke the Claude provider once with the prompt PREFIXED by "ultracode: "
+    #    so the workflow runtime fires. ALWAYS opus per project policy (planning-
+    #    grade fan-out). The keyword prefix is the only supported, stable trigger;
+    #    Loki never authors a workflow script itself.
+    local uc_prompt="ultracode: ${task}"
+    local uc_argv=("-p" "$uc_prompt" "--model" "opus")
+
+    echo -e "${DIM}Running: claude -p \"ultracode: ...\" --model opus${NC}" >&2
+    echo "" >&2
+    claude "${uc_argv[@]}"
+    return $?
+}
+
+# v7.38.0: `loki ultracode "<task>"` command. Thin opt-in surface that routes a
+# task through a native Claude Code Dynamic Workflow. See _run_ultracode.
+cmd_ultracode() {
+    local uc_assume_yes=false
+    local uc_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki ultracode${NC} - run a task as a native Claude Code Dynamic Workflow"
+                echo ""
+                echo "Usage: loki ultracode \"<task>\" [--yes]"
+                echo ""
+                echo "Prepends the 'ultracode' keyword to your task and routes it through"
+                echo "the Claude provider, firing Claude Code's Dynamic Workflow runtime"
+                echo "(many background subagents fanning out on a read/research/audit task)."
+                echo ""
+                echo "This is a PASSTHROUGH: Loki adds no orchestration of its own. It is"
+                echo "OPT-IN, default OFF, and Claude-provider-only. The council, the 11"
+                echo "quality gates, the evidence gate, and the RARV loop are untouched."
+                echo ""
+                echo "Requirements:"
+                echo "  - Active provider is Claude (Tier 1)"
+                echo "  - claude CLI >= 2.1.154"
+                echo "  - Workflows not disabled (CLAUDE_CODE_DISABLE_WORKFLOWS / disableWorkflows)"
+                echo "On any unmet requirement: an honest message prints and nothing runs."
+                echo ""
+                echo "Cost: workflows spawn many agents and cost meaningfully more than a"
+                echo "normal run; this is a Claude Code feature billed as normal usage."
+                echo "There is no price API, so no dollar figure is shown."
+                echo ""
+                echo "Options:"
+                echo "  --yes, -y    Skip the confirmation prompt (consent to the cost)"
+                echo "  --help, -h   Show this help"
+                echo ""
+                echo "Environment:"
+                echo "  LOKI_USE_CLAUDE_WORKFLOWS=1   Non-interactive opt-in (like --yes)"
+                echo "  CLAUDE_CODE_DISABLE_WORKFLOWS=1  Disable workflows entirely"
+                echo ""
+                echo "Examples:"
+                echo "  loki ultracode \"audit this repo for dead code\""
+                echo "  loki ultracode \"research the top 5 auth libraries for Node\" --yes"
+                return 0
+                ;;
+            --yes|-y) uc_assume_yes=true; shift ;;
+            --) shift; while [[ $# -gt 0 ]]; do uc_args+=("$1"); shift; done ;;
+            *) uc_args+=("$1"); shift ;;
+        esac
+    done
+    _run_ultracode "$uc_assume_yes" "${uc_args[@]}"
     return $?
 }
 
