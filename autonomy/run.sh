@@ -14116,7 +14116,7 @@ if __name__ == "__main__":
             # refuse completion until the review passes.
             local _gate_block_for_completion=""
             case "${gate_failures:-}" in
-                *code_review,*|*code_review_ESCALATED*) _gate_block_for_completion="code_review" ;;
+                *code_review,*|*code_review_ESCALATED*|*code_review_PAUSED*) _gate_block_for_completion="code_review" ;;
             esac
             # DROP-FIX (v7.28): check_completion_promise -> check_task_completion_signal
             # CONSUMES the completion signal (rm -f) on the FIRST successful call.

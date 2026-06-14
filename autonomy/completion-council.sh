@@ -549,6 +549,31 @@ print(str(rc) + ' ' + json.dumps(new_state))
 # Council Voting - 3 independent reviewers check completion
 #===============================================================================
 
+# _council_parse_vote: extract a canonical council verdict from a reviewer's
+# raw output. Returns exactly one of APPROVE | REJECT | CANNOT_VALIDATE | ""
+# (empty when no canonical VOTE line is present).
+#
+# Hardening (v7.41.3):
+#   - Word-bounded verdict: "VOTE: APPROVED" / "VOTE: APPROVE_WITH_CONCERNS"
+#     do NOT match APPROVE (non-canonical tokens are unparseable -> empty ->
+#     caller treats as REJECT). A trailing class [^A-Za-z0-9_] (or end of line)
+#     enforces the boundary; "\b" is a GNU-grep extension that BSD grep on this
+#     machine ignores, so it is deliberately avoided for dual-route parity.
+#   - Markdown / quote tolerance both BEFORE the keyword and AFTER the colon, so
+#     "**VOTE:** APPROVE", "> VOTE: APPROVE", and "VOTE:APPROVE" all match.
+#   - Conservative tie-break: only a clean canonical APPROVE yields APPROVE;
+#     anything ambiguous yields the empty string, which every caller maps to the
+#     conservative outcome (REJECT / re-iterate).
+_council_parse_vote() {
+    local raw="$1"
+    # markdown/whitespace/quote class allowed around the keyword and colon
+    local _pat='[*_> [:space:]]*VOTE[*_ [:space:]]*:[*_> [:space:]]*(APPROVE|REJECT|CANNOT_VALIDATE)([^A-Za-z0-9_]|$)'
+    printf '%s' "$raw" \
+        | grep -oE "$_pat" \
+        | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" \
+        | head -1
+}
+
 council_vote() {
     local prd_path="${COUNCIL_PRD_PATH:-}"
     local loki_dir="${TARGET_DIR:-.}/.loki"
@@ -596,7 +621,7 @@ council_vote() {
         verdict=$(council_member_review "$member" "$role" "$evidence_file" "$vote_dir")
 
         local vote_result
-        vote_result=$(echo "$verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT|CANNOT_VALIDATE)" | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" | head -1)
+        vote_result=$(_council_parse_vote "$verdict")
 
         # v6.0.0: Handle CANNOT_VALIDATE - validator lacks enough context to decide
         if [ "$vote_result" = "CANNOT_VALIDATE" ]; then
@@ -691,15 +716,21 @@ print('true' if ratio > budget else 'false')
         local contrarian_verdict
         contrarian_verdict=$(council_devils_advocate "$evidence_file" "$vote_dir")
         local contrarian_vote
-        contrarian_vote=$(echo "$contrarian_verdict" | grep -oE "VOTE:\s*(APPROVE|REJECT|CANNOT_VALIDATE)" | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" | head -1)
+        contrarian_vote=$(_council_parse_vote "$contrarian_verdict")
 
-        if [ "$contrarian_vote" = "REJECT" ] || [ "$contrarian_vote" = "CANNOT_VALIDATE" ]; then
-            log_warn "Anti-sycophancy: Devil's advocate REJECTED unanimous approval"
+        # Conservative tie-break (v7.41.3): ONLY a clean canonical APPROVE
+        # confirms the unanimous approval. Any other outcome -- REJECT,
+        # CANNOT_VALIDATE, or an unparseable/hedged verdict (empty) -- overrides
+        # to one more verification iteration. Previously the else-branch treated
+        # an empty/hedged contrarian verdict as "confirmed approval", letting a
+        # hedged "VOTE: APPROVED" ship; this flip closes that on the veto path.
+        if [ "$contrarian_vote" = "APPROVE" ]; then
+            log_info "Anti-sycophancy: Devil's advocate confirmed approval"
+        else
+            log_warn "Anti-sycophancy: Devil's advocate did not confirm unanimous approval (verdict: ${contrarian_vote:-unparseable})"
             log_warn "Overriding to require one more iteration for verification"
             approve_count=$((approve_count - 1))
             reject_count=$((reject_count + 1))
-        else
-            log_info "Anti-sycophancy: Devil's advocate confirmed approval"
         fi
     fi
 
@@ -860,7 +891,10 @@ if not voters:
     if mdir.exists():
         for mf in sorted(mdir.glob('member-*.txt')):
             content = mf.read_text(errors='replace').strip()
-            vote_match = re.search(r'VOTE\s*:\s*(APPROVE|REJECT|CANNOT_VALIDATE)', content)
+            # v7.41.3: word-bounded + markdown-tolerant. VOTE:APPROVED and
+            # VOTE:APPROVE_WITH_CONCERNS must NOT match APPROVE; bold/quoted
+            # VOTE: APPROVE must match. Unmatched -> default REJECT (conservative).
+            vote_match = re.search(r'[*_> ]*VOTE[*_ ]*:[*_> ]*(APPROVE|REJECT|CANNOT_VALIDATE)(?![A-Za-z0-9_])', content)
             reason_match = re.search(r'REASON\s*:\s*(.+?)(?:\n|\$)', content)
             issues = []
             for im in re.finditer(r'ISSUES\s*:\s*(CRITICAL|HIGH|MEDIUM|LOW)\s*:\s*(.+?)(?:\n|\$)', content):
@@ -1783,27 +1817,33 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # Set inline (not via a helper) so the carve-out holds even when
                 # this file is sourced standalone and the helpers are out of scope.
                 # Inlined on `claude` only (does not cross the pipe). No-op absent.
-                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null | tail -20)
+                # v7.41.3 BUG A: do NOT tail-truncate before parsing. A thorough
+                # reviewer that lists >~18 ISSUES lines after VOTE would push its
+                # own VOTE: line out of a tail-20 window, making the parser find
+                # no VOTE and default a real APPROVE to REJECT. Capture the full
+                # output; the downstream parse already greps VOTE/REASON/ISSUES.
+                # CAVEMAN_DEFAULT_MODE=off suppression is preserved (see above).
+                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -20)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null)
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -20)
+                verdict=$(echo "$prompt" | gemini 2>/dev/null)
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
-                verdict=$(cline -y "$prompt" 2>/dev/null | tail -20)
+                verdict=$(cline -y "$prompt" 2>/dev/null)
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
-                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -20)
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
             fi
             ;;
     esac
@@ -1882,27 +1922,29 @@ REASON: your reasoning"
                 # (contrarian) vote is parsed for "VOTE:". Disable caveman
                 # unconditionally so compression cannot flip the contrarian vote.
                 # Inlined on `claude` only (does not cross the pipe). No-op absent.
-                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null | tail -20)
+                # v7.41.3 BUG A: full capture, no tail-truncation (see member
+                # subcall note). CAVEMAN_DEFAULT_MODE=off suppression preserved.
+                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null)
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
-                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null | tail -20)
+                verdict=$(codex exec --full-auto "$prompt" 2>/dev/null)
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
-                verdict=$(echo "$prompt" | gemini 2>/dev/null | tail -20)
+                verdict=$(echo "$prompt" | gemini 2>/dev/null)
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
-                verdict=$(cline -y "$prompt" 2>/dev/null | tail -20)
+                verdict=$(cline -y "$prompt" 2>/dev/null)
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
-                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null | tail -20)
+                verdict=$(aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
             fi
             ;;
     esac

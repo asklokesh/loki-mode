@@ -200,6 +200,24 @@ _app_runner_reconcile_port() {
 
     [ -n "$real_port" ] || return 0
     if [ "$real_port" != "$_APP_RUNNER_PORT" ]; then
+        # Liveness guard: only overwrite the recorded port when the reconciled
+        # port ACTUALLY serves HTTP. A log line can name a non-serving port (a
+        # metrics endpoint like ":9464" or a DB connection like ":5432") emitted
+        # after the real serving URL; committing that would clobber a correct
+        # recorded port and point the preview at a dead port. We deliberately do
+        # NOT use curl -f: any HTTP response (including 404/401/500) proves a
+        # server is bound and serving on that port (Spring Boot whitelabel 404,
+        # REST-only roots, and auth-gated "/" all return non-2xx but ARE live).
+        # A dead/unbound port produces a connection error, which curl reports as
+        # a non-zero exit even without -f. If curl is unavailable we cannot
+        # verify, so fall back to the prior behavior and commit the parsed port
+        # (no regression on curl-less hosts).
+        if command -v curl >/dev/null 2>&1; then
+            if ! curl -s -o /dev/null -m 2 "http://localhost:${real_port}/" 2>/dev/null; then
+                log_info "App Runner: skipped reconcile to port $real_port (no HTTP response); keeping recorded port $_APP_RUNNER_PORT"
+                return 0
+            fi
+        fi
         log_info "App Runner: reconciled port $_APP_RUNNER_PORT -> $real_port (from app.log listen line)"
         _APP_RUNNER_PORT="$real_port"
         _APP_RUNNER_URL="http://localhost:${real_port}"
@@ -212,6 +230,16 @@ _app_runner_reconcile_port() {
 # shapes in priority order and returns the LAST (most recent) plausible port,
 # tolerating ANSI color codes that dev servers emit. Validates 1-65535. Echoes
 # the port or nothing.
+#
+# Tiers 1 and 2 are restricted to lines that ALSO carry a serving keyword
+# (listen|running|ready|started|serving|server|local) so that non-serving noise
+# such as a DB connection string ("Connecting to database on port 5432") or an
+# outbound URL does not win. Note: a metrics endpoint line like
+# "Prometheus metrics server listening on http://0.0.0.0:9464" DOES carry
+# serving keywords ("server"/"listening") and so can still be returned here; the
+# reconcile caller liveness-verifies the parsed port before committing it, which
+# is the layer that rejects a non-serving metrics/DB port.
+_SERVING_KEYWORDS='listen|running|ready|started|serving|server|local'
 _parse_listen_port() {
     local file="$1"
     [ -f "$file" ] || return 0
@@ -220,16 +248,28 @@ _parse_listen_port() {
     clean=$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$file" 2>/dev/null) || clean=$(cat "$file" 2>/dev/null)
     [ -n "$clean" ] || return 0
 
+    # Restrict candidate lines to those carrying a serving keyword. This drops
+    # DB-connection and outbound-URL noise before any port extraction.
+    local serving
+    serving=$(printf '%s\n' "$clean" | grep -iE "$_SERVING_KEYWORDS")
+
     local candidate=""
     # 1) Explicit URL with a port: http://host:PORT  (most reliable).
-    candidate=$(printf '%s\n' "$clean" \
+    candidate=$(printf '%s\n' "$serving" \
         | grep -oiE 'https?://[a-z0-9.\-]+:[0-9]{1,5}' \
         | grep -oE ':[0-9]{1,5}' | tr -d ':' | tail -1)
-    # 2) A number anchored to the literal word "port": "port 8080", "port=3000",
+    # 2a) Spring Boot form: "Tomcat started on port(s): 8081". The literal
+    #     "(s):" breaks the generic port[ =:]+ scan below, so match it first.
+    if [ -z "$candidate" ]; then
+        candidate=$(printf '%s\n' "$serving" \
+            | grep -ioE 'port\(s\):[ ]*[0-9]{1,5}' \
+            | grep -oE '[0-9]{1,5}' | tail -1)
+    fi
+    # 2b) A number anchored to the literal word "port": "port 8080", "port=3000",
     #    "port: 5000". This runs BEFORE the bare host:port scan so a clock-style
     #    timestamp on the same line (e.g. "12:30:45 ... port 8080") cannot win.
     if [ -z "$candidate" ]; then
-        candidate=$(printf '%s\n' "$clean" \
+        candidate=$(printf '%s\n' "$serving" \
             | grep -ioE 'port[ =:]+[0-9]{1,5}' \
             | grep -oE '[0-9]{1,5}' | tail -1)
     fi
@@ -238,8 +278,7 @@ _parse_listen_port() {
     #    or a dot immediately left of the colon excludes "HH:MM" timestamps,
     #    which have a digit there.
     if [ -z "$candidate" ]; then
-        candidate=$(printf '%s\n' "$clean" \
-            | grep -iE 'listen|running on|ready|started|serving|server' \
+        candidate=$(printf '%s\n' "$serving" \
             | grep -oiE '[a-z.][a-z0-9.\-]*:[0-9]{1,5}' \
             | grep -oE ':[0-9]{1,5}' | tr -d ':' | tail -1)
     fi

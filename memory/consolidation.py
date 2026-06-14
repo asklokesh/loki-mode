@@ -766,6 +766,14 @@ class ConsolidationPipeline:
             usage_count=best_match.usage_count,
             last_used=best_match.last_used,
             links=best_match.links.copy(),
+            # Preserve retrieval/decay-relevant fields. The constructor previously
+            # omitted these, so the merged pattern fell back to schema defaults
+            # (importance=0.5, access_count=0, last_accessed=None), resetting a hot,
+            # high-importance pattern to the floor on every merge and corrupting
+            # apply_decay() + importance-weighted ranking in retrieval.
+            importance=max(best_match.importance, new_pattern.importance),
+            access_count=best_match.access_count,
+            last_accessed=best_match.last_accessed,
         )
 
         return merged

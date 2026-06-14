@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.41.3] - 2026-06-14
+
+Accuracy + autonomy hardening from a 10-agent adversarial bug-hunt across the
+trust-gate, app-runner, dashboard, healing, and memory surfaces. Every fix has a
+concrete trigger and a regression test; latent / dormant-Bun-route / dead-code
+findings were deferred (tracked in internal/v7413-bughunt-findings.md).
+
+### Fixed
+- Completion gate now blocks on the most-severe code-review state. The guard
+  matched `code_review` (BLOCKED) and `code_review_ESCALATED` but not
+  `code_review_PAUSED`, so an iteration that hit the PAUSE limit AND claimed
+  completion could return "fulfilled", bypassing the human-intervention PAUSE.
+- Council vote parsing no longer drops or misreads verdicts: (a) the verdict
+  capture no longer `tail`-truncates, so a reviewer that lists many issues can no
+  longer push its own `VOTE:` line out of the window and be silently counted as
+  REJECT; (b) the matcher is word-bounded and markdown-tolerant, so `VOTE:
+  APPROVED` / `VOTE: APPROVE_WITH_CONCERNS` no longer count as a clean APPROVE and
+  `**VOTE:** APPROVE` now parses; ambiguous verdicts resolve conservatively.
+- council-v2 now uses the ceiling(2/3) quorum like every other council path
+  (was a flat threshold of 2, which approved at 2/5 when COUNCIL_SIZE=5); an
+  explicit LOKI_COUNCIL_THRESHOLD is still honored.
+- App-runner port reconcile liveness-verifies a reconciled port before
+  committing it, so a metrics-server port (e.g. 9464) or a DB-connection port
+  (5432) logged after the serving URL can no longer become the dashboard preview
+  URL, and a correct recorded port is no longer clobbered when the fast-path
+  health check flakes. Adds serving-keyword filtering and a Spring Boot
+  `port(s): N` parser.
+- Dashboard no longer freezes the event loop: `/api/wiki/ask` (up to 180s) and
+  `/api/checkpoints` (git + copytree) now run via `asyncio.to_thread`, so one
+  request can no longer stall liveness/status/WebSocket for every other client.
+  The checkpoint git-sha is now read with the correct project cwd.
+- `loki monitor --help` (and `loki assets --help`) now print help and exit 0
+  even when Docker / python3 is unavailable, instead of erroring on a
+  precondition before reaching the help arm.
+- Healing test gate fails CLOSED: when a healing run has no detectable test
+  command and LOKI_TEST_COMMAND is unset, the phase gate now BLOCKS with an
+  actionable message instead of treating "no tests" as "tests passed" (the
+  behavioral-preservation safety net was silently absent). Non-healing callers
+  are unchanged.
+- Memory consolidation preserves a merged pattern's importance, access_count,
+  and last_accessed (previously reset to schema defaults on every merge, so a
+  hot, high-importance pattern was repeatedly demoted to the floor, corrupting
+  decay and retrieval ranking).
+
 ## [7.41.2] - 2026-06-14
 
 CI integrity patch. The v7.41.1 release shipped to npm but its Tests workflow

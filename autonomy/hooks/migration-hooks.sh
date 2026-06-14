@@ -110,8 +110,31 @@ detect_test_command() {
     elif [[ -d "${codebase_path}/tests" ]]; then
         echo "cd '${codebase_path}' && python -m pytest tests/ -q"
     else
-        echo "echo 'No test command detected. Set LOKI_TEST_COMMAND.'"
+        # No framework detected and LOKI_TEST_COMMAND unset.
+        # In healing mode the gates MUST fail closed: "no tests" can never be
+        # treated as "tests passed", or the behavioral-preservation guarantee
+        # is silently defeated. Emit a sentinel the healing consumers detect and
+        # turn into a hard BLOCK (see is_no_test_cmd). The bare token also fails
+        # if eval'd directly (command-not-found, exit 127) so the default is
+        # fail-closed even if a string check is ever missed.
+        # Outside healing mode, preserve the prior fail-open behavior: the
+        # non-healing consumers (post_file_edit, post_step, pre_phase_gate) run
+        # this via `eval` and a bare token there would exit 127 -> taken block
+        # -> destructive (e.g. reverting a user edit in a repo with no tests).
+        if [[ "${LOKI_HEAL_MODE:-false}" == "true" ]]; then
+            echo "__LOKI_NO_TEST_CMD__"
+        else
+            echo "echo 'No test command detected. Set LOKI_TEST_COMMAND.'"
+        fi
     fi
+}
+
+# Returns 0 (true) when detect_test_command yielded the no-test-command
+# sentinel, i.e. no framework was detected and LOKI_TEST_COMMAND is unset.
+# Used by the healing gates to distinguish "no tests available" (block) from
+# "tests ran and passed" (allow) and "tests ran and failed" (block).
+is_no_test_cmd() {
+    [[ "${1:-}" == "__LOKI_NO_TEST_CMD__" ]]
 }
 
 # Hook: post_file_edit - runs after ANY agent modifies a source file
@@ -342,6 +365,17 @@ hook_post_healing_modify() {
     # Run characterization tests
     local test_cmd
     test_cmd=$(detect_test_command "$codebase_path")
+
+    # No test command available in healing mode -> fail closed. "No tests" can
+    # never count as "characterization tests passed". Do not git-revert here:
+    # there is no test-driven baseline to restore against, and the actionable
+    # fix is to provide a test command.
+    if is_no_test_cmd "$test_cmd"; then
+        echo "HOOK_BLOCKED: no test command available; set LOKI_TEST_COMMAND"
+        echo "Characterization tests cannot run for healing modification to ${file_path}; refusing to treat absence of tests as success."
+        return 1
+    fi
+
     local test_result_file
     test_result_file=$(mktemp)
 
@@ -437,6 +471,10 @@ except: print(0)
 
             local test_cmd
             test_cmd=$(detect_test_command "$codebase_path")
+            if is_no_test_cmd "$test_cmd"; then
+                echo "GATE_BLOCKED: no test command available; set LOKI_TEST_COMMAND"
+                return 1
+            fi
             if ! eval "$test_cmd" >/dev/null 2>&1; then
                 echo "GATE_BLOCKED: Characterization tests do not pass"
                 return 1
@@ -445,6 +483,10 @@ except: print(0)
         stabilize:isolate)
             local test_cmd
             test_cmd=$(detect_test_command "$codebase_path")
+            if is_no_test_cmd "$test_cmd"; then
+                echo "GATE_BLOCKED: no test command available; set LOKI_TEST_COMMAND"
+                return 1
+            fi
             if ! eval "$test_cmd" >/dev/null 2>&1; then
                 echo "GATE_BLOCKED: Tests do not pass after stabilization"
                 return 1
@@ -453,6 +495,10 @@ except: print(0)
         isolate:modernize)
             local test_cmd
             test_cmd=$(detect_test_command "$codebase_path")
+            if is_no_test_cmd "$test_cmd"; then
+                echo "GATE_BLOCKED: no test command available; set LOKI_TEST_COMMAND"
+                return 1
+            fi
             if ! eval "$test_cmd" >/dev/null 2>&1; then
                 echo "GATE_BLOCKED: Tests do not pass after isolation"
                 return 1
@@ -461,6 +507,10 @@ except: print(0)
         modernize:validate)
             local test_cmd
             test_cmd=$(detect_test_command "$codebase_path")
+            if is_no_test_cmd "$test_cmd"; then
+                echo "GATE_BLOCKED: no test command available; set LOKI_TEST_COMMAND"
+                return 1
+            fi
             if ! eval "$test_cmd" >/dev/null 2>&1; then
                 echo "GATE_BLOCKED: Tests do not pass after modernization"
                 return 1

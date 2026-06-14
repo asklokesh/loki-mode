@@ -6708,14 +6708,23 @@ cmd_assets() {
     shift 2>/dev/null || true
 
     local helper="$_LOKI_SCRIPT_DIR/lib/assets_bundle.py"
-    if [ ! -f "$helper" ]; then
-        echo -e "${RED}Error: assets helper not found at $helper${NC}" >&2
-        return 1
-    fi
-    if ! command -v python3 &>/dev/null; then
-        echo -e "${RED}Error: python3 is required for 'loki assets'${NC}" >&2
-        return 1
-    fi
+    # The help path needs neither the python3 helper nor python3 itself, so
+    # guard these preconditions to skip help/empty subcommands. Otherwise
+    # `loki assets --help` would error on a missing helper/python3 instead of
+    # printing help (same class as #574 / the cmd_monitor fix).
+    case "$subcommand" in
+        --help|-h|help|"") ;;
+        *)
+            if [ ! -f "$helper" ]; then
+                echo -e "${RED}Error: assets helper not found at $helper${NC}" >&2
+                return 1
+            fi
+            if ! command -v python3 &>/dev/null; then
+                echo -e "${RED}Error: python3 is required for 'loki assets'${NC}" >&2
+                return 1
+            fi
+            ;;
+    esac
 
     # Project dir holds .loki/ (memory, council, wiki). Default to cwd.
     local project_dir
@@ -9878,16 +9887,11 @@ QPRDEOF
 
 # Docker Compose monitoring with auto-fix (v6.67.0)
 cmd_monitor() {
-    # Verify Docker is available
-    if ! command -v docker &>/dev/null; then
-        echo -e "${RED}Docker is not installed. Install from https://docker.com${NC}"
-        return 1
-    fi
-    if ! docker info &>/dev/null 2>&1; then
-        echo -e "${RED}Docker daemon is not running. Start Docker Desktop or the Docker service.${NC}"
-        return 1
-    fi
-
+    # A --help/-h in any position (e.g. `loki monitor --help`) short-circuits
+    # to the help text BEFORE the Docker preconditions, so `monitor --help`
+    # works even when Docker is down (same class as #574). The arg parser's
+    # existing --help arm below prints the help; we just defer the Docker
+    # checks until after parsing so help is reachable.
     local project_dir="."
     local watch_only=false
     local poll_interval="${LOKI_MONITOR_INTERVAL:-10}"
@@ -9944,6 +9948,17 @@ cmd_monitor() {
                 ;;
         esac
     done
+
+    # Verify Docker is available (deferred past arg parsing so --help works
+    # without a running daemon).
+    if ! command -v docker &>/dev/null; then
+        echo -e "${RED}Docker is not installed. Install from https://docker.com${NC}"
+        return 1
+    fi
+    if ! docker info &>/dev/null 2>&1; then
+        echo -e "${RED}Docker daemon is not running. Start Docker Desktop or the Docker service.${NC}"
+        return 1
+    fi
 
     # Resolve to absolute path
     if [[ ! "$project_dir" = /* ]]; then

@@ -94,6 +94,8 @@ check_parse "ansi-wrapped url"      $'\x1b[32mready\x1b[0m - started server on h
 check_parse "running on host:port"  "Server running on 0.0.0.0:8080"             "8080"
 check_parse "iso-ts + port word"    "2026-06-14T12:30:45 info: Server listening on port 8080" "8080"
 check_parse "bracket-ts + port="    "[12:30:45] Server started, port=3000"       "3000"
+# Spring Boot "port(s):" form (the generic port[ =:]+ scan misses the "(s):").
+check_parse "spring boot port(s)"   "Tomcat started on port(s): 8081 (http) with context path ''" "8081"
 # A line with no plausible listen info must NOT yield a port.
 printf '%s\n' "compiling modules at 12:30:45" > "$PARSE_DIR/log"
 if [ -z "$(_parse_listen_port "$PARSE_DIR/log")" ]; then
@@ -101,7 +103,153 @@ if [ -z "$(_parse_listen_port "$PARSE_DIR/log")" ]; then
 else
     note_fail "parse: noise line wrongly produced a port"
 fi
+
+# DB-connection noise carries no serving keyword, so it must NOT yield a port.
+printf '%s\n' "Connecting to database on port 5432" > "$PARSE_DIR/log"
+if [ -z "$(_parse_listen_port "$PARSE_DIR/log")" ]; then
+    note_pass "parse: DB-connection noise yields no port"
+else
+    note_fail "parse: DB-connection noise wrongly produced a port"
+fi
+
+# Metrics endpoint line carries serving keywords ("server"/"listening"), so the
+# PARSER can still return the metrics port. That is acceptable -- the reconcile
+# layer's liveness check is what rejects a non-serving port (asserted below).
+# Here we only document the parser behavior on a serving-URL-then-metrics log.
+printf '%s\n' "Server running on http://localhost:3000" \
+              "Prometheus metrics server listening on http://0.0.0.0:9464" \
+              > "$PARSE_DIR/log"
+parsed_metrics=$(_parse_listen_port "$PARSE_DIR/log")
+if [ "$parsed_metrics" = "9464" ] || [ "$parsed_metrics" = "3000" ]; then
+    note_pass "parse: metrics-after-serving returns a plausible port ($parsed_metrics)"
+else
+    note_fail "parse: metrics-after-serving expected 9464 or 3000, got '$parsed_metrics'"
+fi
 rm -rf "$PARSE_DIR"
+
+#------------------------------------------------------------------------------
+# Unit: _app_runner_reconcile_port liveness guard (mocked curl, no node needed)
+#
+# These exercise the PRIMARY fix: a parsed port is only committed when it
+# actually serves HTTP. curl is stubbed so we control which ports "serve".
+#------------------------------------------------------------------------------
+RECON_DIR="$(mktemp -d -t loki-recon.XXXXXX)"
+_APP_RUNNER_DIR="$RECON_DIR"
+_APP_RUNNER_IS_DOCKER=false
+
+# Stub curl modeling the real `curl -s -o /dev/null -m 2 http://localhost:PORT/`
+# idiom (NO -f): curl exits 0 for ANY HTTP response, including 4xx/5xx, and only
+# non-zero on a connection failure (dead/unbound port).
+#   _LIVE_PORTS       -- ports that respond 2xx (alive)
+#   _LIVE_404_PORTS   -- ports that respond non-2xx (e.g. Spring Boot whitelabel
+#                        404, REST-only or auth-gated "/") but ARE bound/serving.
+# Both sets must yield exit 0 (a bound server responded). If the stub used the
+# old `-f` behavior, _LIVE_404_PORTS would exit non-zero and the reconcile would
+# wrongly skip a live relocated port -- the regression this case guards.
+_LIVE_PORTS=""
+_LIVE_404_PORTS=""
+curl() {
+    local url="" arg has_f=false
+    for arg in "$@"; do
+        case "$arg" in
+            -*f*) case "$arg" in -[A-Za-z]*f*|-f) has_f=true ;; esac ;;
+            http*://*) url="$arg" ;;
+        esac
+    done
+    local p
+    p=$(printf '%s\n' "$url" | grep -oE ':[0-9]+/' | grep -oE '[0-9]+')
+    case " $_LIVE_PORTS " in
+        *" $p "*) return 0 ;;
+    esac
+    case " $_LIVE_404_PORTS " in
+        # A non-2xx-but-alive port: exit 0 without -f, non-zero with -f.
+        *" $p "*) if [ "$has_f" = "true" ]; then return 22; else return 0; fi ;;
+    esac
+    return 7   # connection refused: port is dead/unbound
+}
+
+reset_recon() {
+    # $1 = recorded port, $2... = app.log lines
+    local recorded="$1"; shift
+    _APP_RUNNER_PORT="$recorded"
+    _APP_RUNNER_URL="http://localhost:${recorded}"
+    _APP_RUNNER_PID=""
+    : > "$RECON_DIR/app.log"
+    local line
+    for line in "$@"; do printf '%s\n' "$line" >> "$RECON_DIR/app.log"; done
+    _write_detection "override" "node server.js"
+    export LOKI_APP_PORT_RECONCILE_SECS=2
+}
+
+# Case 1 (the v7.41.1 corruption bug): recorded 3000 is CORRECT, but the
+# fast-path curl flakes (Next.js first-compile > 2s), and the parser surfaces
+# the metrics port 9464 from a line logged after the serving URL. Without the
+# liveness guard the reconcile would clobber 3000 with the dead 9464. With the
+# guard: fast-path fails (3000 not yet live in this stub), parser returns 9464,
+# 9464 fails liveness -> recorded 3000 is kept.
+reset_recon 3000 \
+    "Server running on http://localhost:3000" \
+    "Prometheus metrics server listening on http://0.0.0.0:9464"
+_LIVE_PORTS=""   # 3000 flaking at fast-path; metrics port 9464 never serves
+_app_runner_reconcile_port
+if [ "$_APP_RUNNER_PORT" = "3000" ] && [ "$_APP_RUNNER_URL" = "http://localhost:3000" ]; then
+    note_pass "reconcile: metrics-after-serving + flaky fast-path keeps recorded 3000"
+else
+    note_fail "reconcile: metrics-after-serving expected 3000 got '$_APP_RUNNER_PORT' ($_APP_RUNNER_URL)"
+fi
+
+# Case 2: liveness verifies BEFORE commit -- recorded port flakes (fast-path
+# curl fails) but the parsed port genuinely serves -> reconcile commits it.
+reset_recon 3000 "Server listening on http://127.0.0.1:4100"
+_LIVE_PORTS="4100"   # recorded 3000 not live (fast path fails), 4100 serves
+_app_runner_reconcile_port
+if [ "$_APP_RUNNER_PORT" = "4100" ] && [ "$_APP_RUNNER_URL" = "http://localhost:4100" ]; then
+    note_pass "reconcile: live parsed port 4100 committed over flaky recorded 3000"
+else
+    note_fail "reconcile: expected commit to 4100 got '$_APP_RUNNER_PORT' ($_APP_RUNNER_URL)"
+fi
+
+# Case 3: parsed port does NOT serve (e.g. a DB/metrics-only port) and neither
+# does the recorded port at parse time -> keep the recorded port, never commit a
+# dead port.
+reset_recon 3000 "Server listening on port 5432"
+_LIVE_PORTS=""   # nothing serves
+_app_runner_reconcile_port
+if [ "$_APP_RUNNER_PORT" = "3000" ]; then
+    note_pass "reconcile: non-serving parsed port rejected, recorded 3000 kept"
+else
+    note_fail "reconcile: expected recorded 3000 kept got '$_APP_RUNNER_PORT'"
+fi
+
+# Case 4 (no regression on the happy reconcile): recorded port is a stale guess,
+# the app bound a different port that serves -> commit the real port.
+reset_recon 3000 "Server running on http://localhost:8081"
+_LIVE_PORTS="8081"
+_app_runner_reconcile_port
+if [ "$_APP_RUNNER_PORT" = "8081" ]; then
+    note_pass "reconcile: stale guess 3000 reconciled to live 8081"
+else
+    note_fail "reconcile: expected 8081 got '$_APP_RUNNER_PORT'"
+fi
+
+# Case 5 (the v7.41.3 council fix): the relocated serving port responds non-2xx
+# on "/" (Spring Boot whitelabel 404, REST-only or auth-gated root) but IS bound
+# and serving. With curl -f it would look dead and the reconcile would skip,
+# keeping the old dead port (reintroducing #597). Without -f, any HTTP response
+# proves the port is live, so the reconcile commits it.
+reset_recon 3000 "Tomcat started on port(s): 8081 (http) with context path ''"
+_LIVE_PORTS=""
+_LIVE_404_PORTS="8081"   # 8081 serves but returns 404 on /
+_app_runner_reconcile_port
+if [ "$_APP_RUNNER_PORT" = "8081" ] && [ "$_APP_RUNNER_URL" = "http://localhost:8081" ]; then
+    note_pass "reconcile: alive-but-404 port 8081 committed (curl -f would have wrongly skipped)"
+else
+    note_fail "reconcile: alive-but-404 expected commit to 8081 got '$_APP_RUNNER_PORT' ($_APP_RUNNER_URL)"
+fi
+
+unset -f curl
+unset LOKI_APP_PORT_RECONCILE_SECS _LIVE_404_PORTS
+rm -rf "$RECON_DIR"
 
 #------------------------------------------------------------------------------
 # Integration: requires node

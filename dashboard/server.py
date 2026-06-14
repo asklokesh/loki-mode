@@ -5787,12 +5787,20 @@ async def create_checkpoint(body: CheckpointCreate = None):
     checkpoint_dir = checkpoints_dir / checkpoint_id
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # Capture git SHA
+    # Capture git SHA. Pass cwd= the active project root so the recorded
+    # git_sha belongs to the project being checkpointed, not whatever directory
+    # the dashboard process happens to run from (correctness bug for
+    # multi-project dashboards). Offload to a thread so the blocking git call
+    # does not stall the single-worker uvicorn event loop.
     git_sha = ""
+    git_cwd = str(loki_dir.parent) if loki_dir.name == ".loki" else None
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+        result = await asyncio.to_thread(
+            lambda: subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+                cwd=git_cwd,
+            )
         )
         if result.returncode == 0:
             git_sha = result.stdout.strip()
@@ -5812,11 +5820,15 @@ async def create_checkpoint(body: CheckpointCreate = None):
             except Exception:
                 pass
 
-    # Copy queue directory if present
+    # Copy queue directory if present. Offload to a thread: a large queue tree
+    # would otherwise block the single-worker uvicorn event loop.
     queue_src = loki_dir / "queue"
     if queue_src.exists():
         try:
-            shutil.copytree(str(queue_src), str(checkpoint_dir / "queue"), dirs_exist_ok=True)
+            await asyncio.to_thread(
+                shutil.copytree,
+                str(queue_src), str(checkpoint_dir / "queue"), dirs_exist_ok=True,
+            )
         except Exception:
             pass
 
@@ -5898,7 +5910,11 @@ async def rollback_checkpoint(checkpoint_id: str):
         src = loki_dir / dname
         if src.exists() and src.is_dir():
             try:
-                shutil.copytree(str(src), str(pre_dir / dname), dirs_exist_ok=True)
+                # Offload the (potentially large) directory copy off the event loop.
+                await asyncio.to_thread(
+                    shutil.copytree,
+                    str(src), str(pre_dir / dname), dirs_exist_ok=True,
+                )
             except Exception:
                 pass
     pre_meta = {
@@ -5928,7 +5944,11 @@ async def rollback_checkpoint(checkpoint_id: str):
         dest = loki_dir / item.name
         try:
             if item.is_dir():
-                shutil.copytree(str(item), str(dest), dirs_exist_ok=True)
+                # Offload the (potentially large) directory copy off the event loop.
+                await asyncio.to_thread(
+                    shutil.copytree,
+                    str(item), str(dest), dirs_exist_ok=True,
+                )
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(item), str(dest))
@@ -6246,10 +6266,14 @@ async def get_github_status(token: Optional[dict] = Depends(auth.get_current_tok
     # Detect repo from git
     try:
         import subprocess
-        url = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=5,
-            cwd=str(loki_dir.parent) if loki_dir.name == ".loki" else None
+        # Offload the blocking git call so it does not stall the single-worker
+        # uvicorn event loop.
+        url = await asyncio.to_thread(
+            lambda: subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True, text=True, timeout=5,
+                cwd=str(loki_dir.parent) if loki_dir.name == ".loki" else None,
+            )
         )
         if url.returncode == 0:
             repo = url.stdout.strip()
@@ -8365,11 +8389,19 @@ async def post_wiki_ask(req: WikiAskRequest):
     if not ask_script.is_file():
         raise HTTPException(status_code=503, detail="wiki-ask backend missing")
     try:
-        proc = subprocess.run(
-            ["python3", str(ask_script), "--root", str(project_root),
-             "--question", req.question, "--k", str(req.k), "--json"],
-            capture_output=True, text=True, timeout=180,
-            cwd=str(project_root),
+        # Offload the blocking subprocess to a thread so the single-worker
+        # uvicorn event loop stays responsive (liveness, status, WS heartbeat)
+        # while wiki-ask runs (up to 180s). A direct subprocess.run here would
+        # freeze the whole server; this read-scoped endpoint is reachable by any
+        # reader. Mirrors the await asyncio.to_thread(...) pattern used by the
+        # stop endpoints.
+        proc = await asyncio.to_thread(
+            lambda: subprocess.run(
+                ["python3", str(ask_script), "--root", str(project_root),
+                 "--question", req.question, "--k", str(req.k), "--json"],
+                capture_output=True, text=True, timeout=180,
+                cwd=str(project_root),
+            )
         )
     except (OSError, subprocess.SubprocessError) as e:
         raise HTTPException(status_code=503, detail=f"wiki ask failed: {e}")

@@ -151,8 +151,19 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
     fi
 
     # Step 6: Calibration tracking
+    # Compute threshold using ceiling(2/3) formula, consistent with
+    # completion-council.sh (council_should_stop, council_aggregate_votes,
+    # council_evaluate). An explicit operator override via LOKI_COUNCIL_THRESHOLD
+    # is honored; otherwise scale with council_size instead of a flat default of 2.
+    local effective_threshold
+    if [ -n "${LOKI_COUNCIL_THRESHOLD:-}" ]; then
+        effective_threshold="$LOKI_COUNCIL_THRESHOLD"
+    else
+        effective_threshold=$(( (council_size * 2 + 2) / 3 ))
+    fi
+
     local final_decision
-    if [ "$approve_count" -ge "${COUNCIL_THRESHOLD:-2}" ]; then
+    if [ "$approve_count" -ge "$effective_threshold" ]; then
         final_decision="approve"
     else
         final_decision="reject"
@@ -194,7 +205,7 @@ SUMMARY_EOF
         "iteration=$iteration" \
         "approve=$approve_count" \
         "reject=$reject_count" \
-        "threshold=${COUNCIL_THRESHOLD:-2}" \
+        "threshold=$effective_threshold" \
         "sycophancy_score=$sycophancy_score" \
         "result=$(echo "$final_decision" | tr '[:lower:]' '[:upper:]')" 2>/dev/null || true
 
