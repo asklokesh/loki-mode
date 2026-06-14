@@ -516,18 +516,27 @@ export function cavemanEnabled(): boolean {
 
 // Compression-level rank (higher = more aggressive). Used by the no-raise guard
 // so Loki never RAISES a user's lower global caveman level. Mirrors the bash
-// _loki_caveman_level_rank. Unknown levels rank 0 (treated as conservative).
+// _loki_caveman_level_rank (claude-flags.sh:613-621) BYTE-FOR-BYTE: the wenyan-*
+// variants rank with their plain counterparts, and unknown / empty modes rank -1
+// ("no opinion", so they never win the no-raise comparison via the >= 0 guard).
 function cavemanLevelRank(level: string): number {
   switch (level) {
+    case "off":
+      return 0;
     case "lite":
+    case "wenyan-lite":
       return 1;
     case "full":
+    case "wenyan":
+    case "wenyan-full":
       return 2;
     case "ultra":
+    case "wenyan-ultra":
       return 3;
     default:
-      // wenyan* and unknowns: treat as not-higher so we never raise toward them.
-      return 0;
+      // Unknown / empty: rank -1 so the no-raise guard ignores it (matches the
+      // bash sentinel + its `-ge 0` checks at claude-flags.sh:725).
+      return -1;
   }
 }
 
@@ -553,17 +562,27 @@ export function cavemanActivateEnv(tier?: string): string | null {
   if (!cavemanSupported()) return null;
   if (!cavemanEnabled()) return null;
   // Explicit user value overrides inference; else infer from the RARV tier.
-  const lokiLevel = process.env["LOKI_CAVEMAN_LEVEL"]
-    ? cavemanLevel()
-    : cavemanInferLevel(tier);
+  // Branch on SET-ness, not truthiness: the bash route captures
+  // LOKI_CAVEMAN_LEVEL_USERSET="${LOKI_CAVEMAN_LEVEL+set}" (claude-flags.sh:543-544),
+  // which is "set" even for an exported-empty LOKI_CAVEMAN_LEVEL="" -> bash uses
+  // the override branch (level="${LOKI_CAVEMAN_LEVEL:-full}" -> "full"). A
+  // truthiness check would treat "" as falsy and infer instead, diverging from
+  // bash. cavemanLevel() already falls back to "full" for empty, matching :-full.
+  const userSet = process.env["LOKI_CAVEMAN_LEVEL"] !== undefined;
+  const lokiLevel = userSet ? cavemanLevel() : cavemanInferLevel(tier);
   const userMode = process.env["LOKI_CAVEMAN_USER_MODE"];
   // A user global "off" means opt-out: no activation (parity with the bash
   // loki_caveman_activate_env, which returns empty here -- previously the TS
   // route fell through and compressed anyway, ignoring the user's opt-out).
   if (userMode === "off") return null;
-  if (userMode && userMode !== "off") {
-    // Never raise: if the user's level ranks lower than Loki's, honor theirs.
-    if (cavemanLevelRank(userMode) > 0 && cavemanLevelRank(userMode) < cavemanLevelRank(lokiLevel)) {
+  if (userMode) {
+    // Never raise: defer to the user only when their mode is a recognized level
+    // that ranks LOWER than Loki's. Both ranks must be >= 0 (recognized) so an
+    // unknown user mode (rank -1) is ignored -- byte-for-byte the bash guard at
+    // claude-flags.sh:725 (`user_rank -ge 0 && level_rank -ge 0 && user_rank -lt level_rank`).
+    const userRank = cavemanLevelRank(userMode);
+    const levelRank = cavemanLevelRank(lokiLevel);
+    if (userRank >= 0 && levelRank >= 0 && userRank < levelRank) {
       return userMode;
     }
   }

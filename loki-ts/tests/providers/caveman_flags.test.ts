@@ -176,6 +176,81 @@ describe("caveman_flags predicates", () => {
     process.env["LOKI_CAVEMAN_USER_MODE"] = "off";
     expect(cavemanActivateEnv("planning")).toBeNull();
   });
+
+  // ---- v7.41.4 parity-drift fixes ---------------------------------------
+
+  // BUG 1 (set-but-empty): branch on SET-ness, not truthiness. The bash route
+  // captures LOKI_CAVEMAN_LEVEL_USERSET="${LOKI_CAVEMAN_LEVEL+set}"
+  // (claude-flags.sh:543-544), so an exported-empty LOKI_CAVEMAN_LEVEL="" still
+  // takes the override branch (level :-full -> "full"). The DISCRIMINATING tier
+  // is planning: pre-fix the empty string was falsy -> inferred "lite"; post-fix
+  // it is treated as SET -> overrides to "full". On a development tier both paths
+  // would yield "full" and prove nothing, so the assertion MUST use planning.
+  it("BUG1: LOKI_CAVEMAN_LEVEL=\"\" (set-but-empty) uses full, NOT lite (planning tier)", () => {
+    process.env["LOKI_CAVEMAN_LEVEL"] = "";
+    // Sanity: planning would INFER lite if the var were treated as unset.
+    expect(cavemanInferLevel("planning")).toBe("lite");
+    // But an exported-empty level is SET -> override branch -> full (bash :-full).
+    expect(cavemanActivateEnv("planning")).toBe("full");
+  });
+
+  it("BUG1: truly-unset LOKI_CAVEMAN_LEVEL still INFERS (planning -> lite)", () => {
+    // Control for BUG1: with the var genuinely absent, inference fires as before,
+    // so the set-vs-truthy fix did not break the unset path.
+    delete process.env["LOKI_CAVEMAN_LEVEL"];
+    expect(cavemanActivateEnv("planning")).toBe("lite");
+  });
+
+  // BUG 2 (no-raise wenyan): wenyan-lite must rank 1 (mirroring the bash
+  // _loki_caveman_level_rank at claude-flags.sh:613-621) so a user who globally
+  // chose wenyan-lite is NOT RAISED to Loki's full. DISCRIMINATING setup: Loki
+  // level = full (rank 2), user global = wenyan-lite (rank 1) -> defer to the
+  // user. Pre-fix wenyan-lite ranked 0 and the `> 0` guard skipped it, so Loki
+  // RAISED the user to full (no-raise violation). Use the development tier (or an
+  // explicit full) so lokiLevel ranks 2 > wenyan-lite's 1; a planning tier would
+  // infer lite (rank 1) and tie, making the assertion meaningless.
+  it("BUG2: user global wenyan-lite is NOT raised to full (no-raise honored)", () => {
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full"; // Loki configured at full (rank 2).
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "wenyan-lite"; // user lower (rank 1).
+    expect(cavemanActivateEnv("development")).toBe("wenyan-lite");
+  });
+
+  it("BUG2: wenyan ranks mirror bash (wenyan-full=full=2 -> not lowered)", () => {
+    // wenyan-full ranks equal to Loki's full (rank 2): NOT lower, so no deferral,
+    // Loki keeps its own level. Proves the rank table mirrors bash for the equal
+    // case too, not just wenyan-lite.
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full";
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "wenyan-full";
+    expect(cavemanActivateEnv("development")).toBe("full");
+  });
+
+  it("BUG2: wenyan-ultra ranks above full (3 > 2) -> not raised toward, Loki keeps full", () => {
+    // The user's wenyan-ultra is HIGHER than Loki's full: no-raise only ever
+    // LOWERS toward the user, never raises Loki up to them, so Loki keeps full.
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full";
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "wenyan-ultra";
+    expect(cavemanActivateEnv("development")).toBe("full");
+  });
+
+  it("BUG2: unknown user mode is ignored (rank -1, parity with bash >= 0 guard)", () => {
+    // A malformed/unknown user mode must NOT suppress or alter activation: the
+    // bash guard requires user_rank >= 0, so rank -1 is skipped and Loki keeps
+    // its own configured level.
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full";
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "bogus-mode";
+    expect(cavemanActivateEnv("development")).toBe("full");
+  });
+
+  // SUPPRESS moat: userMode "off" still suppresses (opt-out preserved through the
+  // BUG1/BUG2 rewrite of cavemanActivateEnv).
+  it("SUPPRESS moat: userMode off still returns null (opt-out preserved)", () => {
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full";
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "off";
+    expect(cavemanActivateEnv("development")).toBeNull();
+    // Even with an exported-empty level (the BUG1 path) the off opt-out wins.
+    process.env["LOKI_CAVEMAN_LEVEL"] = "";
+    expect(cavemanActivateEnv("planning")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

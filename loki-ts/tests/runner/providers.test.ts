@@ -249,6 +249,21 @@ describe("codexProvider invocation", () => {
     expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("xhigh");
   });
 
+  // v7.41.4 parity guard (deliberate deviation lock): unlike claude.sh:352,
+  // codex.sh:163-171 does NOT trim/lowercase LOKI_MAX_TIER -- it switches on the
+  // RAW value. applyCodexMaxTier was therefore left switching on the raw env var
+  // too. Normalizing the Bun codex side alone would CREATE drift with bash codex
+  // (mixed-case "Haiku" would cap to low on Bun but stay xhigh on bash). This
+  // asserts the non-normalized contract holds: "Haiku" matches no arm -> no cap.
+  it("LOKI_MAX_TIER='Haiku' (mixed case) does NOT cap effort -- codex is raw (codex.sh:163-171)", async () => {
+    process.env["LOKI_MAX_TIER"] = "Haiku";
+    writeCodexStub();
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", tier: "planning" }));
+    // planning -> xhigh; raw "Haiku" matches no case arm -> no cap -> stays xhigh.
+    expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("xhigh");
+  });
+
   it("propagates non-zero exit code", async () => {
     writeCodexStub({ exitCode: 9, stderr: "boom" });
     const p = codexProvider();
@@ -336,6 +351,28 @@ describe("claudeProvider invocation", () => {
     expect(argv).not.toContain("planning");
   });
 
+  it("applies LOKI_MAX_TIER=sonnet ceiling to a fable tier (claude.sh:358-362)", async () => {
+    // A "fable" session tier reaches applyMaxTierCeiling via the SessionTier
+    // string fallback. Bash caps planning OR fable down to development under a
+    // sonnet ceiling (claude.sh:358-362); the TS sonnet arm now caps both. With
+    // LOKI_ALLOW_HAIKU=true the cap is OBSERVABLE in the dispatched --model:
+    // claudeTierToModel("fable") collapses to opus, and the fable arm re-resolves
+    // it to development == sonnet (haiku-on dev tier), so --model is sonnet not
+    // opus. Without the fable arm the model would stay opus -- this asserts the
+    // capped sonnet appears as the --model value.
+    process.env["LOKI_MAX_TIER"] = "sonnet";
+    process.env["LOKI_ALLOW_HAIKU"] = "true";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "fable" }));
+    const argv = readArgv(argvLog);
+    // --model immediately follows the flag; assert the dispatched model (not the
+    // --fallback-model token) is the capped sonnet.
+    const modelIdx = argv.indexOf("--model");
+    expect(modelIdx).toBeGreaterThanOrEqual(0);
+    expect(argv[modelIdx + 1]).toBe("sonnet");
+  });
+
   // Phase I (v7.5.25) regression tests for ANTHROPIC_BASE_URL +
   // LOKI_MODEL_OVERRIDE alt-provider routing. Added per Opus #2 reviewer
   // CONCERN that the bash and Bun routes had bash-only test coverage; this
@@ -413,6 +450,61 @@ describe("claudeProvider invocation", () => {
       delete process.env["LOKI_TRUST_RUN_ID"];
       _resetClaudeHelpCacheForTest(null);
     }
+  });
+
+  // v7.41.4 parity (BUG 1): the LOKI_MAX_TIER ceiling must normalize (trim +
+  // lowercase) before the case match, mirroring loki_apply_max_tier_clamp at
+  // claude.sh:352 (`tr | sed`). Pre-fix, the Bun route switched on the RAW env
+  // value, so a user-typed cap like "Haiku" or " haiku " missed the "haiku" arm
+  // and dispatched opus -- blowing past the ceiling the quote claimed enforced.
+  it("BUG1: LOKI_MAX_TIER='Haiku' (mixed case) caps like 'haiku' (claude.sh:352)", async () => {
+    process.env["LOKI_MAX_TIER"] = "Haiku";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "development" }));
+    const argv = readArgv(argvLog);
+    // haiku ceiling re-resolves from the fast tier; default haiku-off mapping
+    // sends fast -> sonnet (claude.sh:172-175 + provider_get_tier_param).
+    expect(argv).toContain("--model");
+    expect(argv).toContain("sonnet");
+    // Pre-fix this would have fallen through to the raw default and dispatched
+    // opus -- the exact ceiling-bypass drift this fix closes.
+    expect(argv).not.toContain("opus");
+  });
+
+  it("BUG1: LOKI_MAX_TIER=' haiku ' (padded) caps like 'haiku' (claude.sh:352)", async () => {
+    process.env["LOKI_MAX_TIER"] = " haiku ";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "planning" }));
+    const argv = readArgv(argvLog);
+    expect(argv).toContain("--model");
+    expect(argv).toContain("sonnet");
+    expect(argv).not.toContain("opus");
+  });
+
+  // v7.41.4 parity (BUG 2): LOKI_ALLOW_HAIKU is gated on an EXACT "true" string
+  // by bash (claude.sh:294, claude-flags.sh:104) and by the Bun fallbackForPrimary
+  // (claude_flags.ts:101). A permissive value like "1" must NOT enable haiku.
+  it("BUG2: LOKI_ALLOW_HAIKU=1 does NOT enable haiku (exact 'true' only)", async () => {
+    process.env["LOKI_ALLOW_HAIKU"] = "1";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "fast" }));
+    const argv = readArgv(argvLog);
+    // Default haiku-off mapping: fast -> sonnet (claude.sh:135-141). Pre-fix,
+    // truthy("1") flipped the allow-haiku branch and returned haiku.
+    expect(argv).toContain("sonnet");
+    expect(argv).not.toContain("haiku");
+  });
+
+  it("BUG2: only LOKI_ALLOW_HAIKU='true' enables haiku (fast -> haiku)", async () => {
+    process.env["LOKI_ALLOW_HAIKU"] = "true";
+    const argvLog = writeStub();
+    const p = claudeProvider();
+    await p.invoke(makeCall({ tier: "fast" }));
+    const argv = readArgv(argvLog);
+    expect(argv).toContain("haiku");
   });
 });
 

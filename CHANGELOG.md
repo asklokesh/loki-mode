@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.41.4] - 2026-06-14
+
+Bun-route parity hardening. The autonomous live route is bash today, so these
+are dormant in production, but the Bun route must agree with bash byte-for-byte
+before the Phase 6 bash sunset wires it in, and the cross-route parity matrix is
+an enforced gate. All fixes mirror the bash source of truth exactly.
+
+### Fixed
+- Bun `applyMaxTierCeiling` normalizes `LOKI_MAX_TIER` (lowercase + trim, empty
+  means no ceiling) before comparing, matching claude.sh:352. A user-typed
+  `LOKI_MAX_TIER="Sonnet"` / `" haiku "` is now honored instead of silently
+  blown past. The sonnet ceiling now also caps a `fable` session tier down to
+  development (claude.sh:358-362), not only `planning`.
+- Bun `claudeTierToModel` reads `LOKI_ALLOW_HAIKU` with exact `=== "true"`,
+  matching bash (claude.sh:294, claude-flags.sh:104) and Bun's own
+  `fallbackForPrimary`. `LOKI_ALLOW_HAIKU=1` no longer dispatches haiku on one
+  path while bash and the rest of the Bun route resolve sonnet.
+- Bun caveman `cavemanActivateEnv` branches on whether `LOKI_CAVEMAN_LEVEL` is
+  SET (not merely truthy), so an exported-empty `LOKI_CAVEMAN_LEVEL=""` resolves
+  to the `full` override like bash (claude-flags.sh:543/709) instead of inferring
+  `lite`. The wenyan-* compression ranks now mirror bash exactly so a user's
+  global `CAVEMAN_DEFAULT_MODE=wenyan-lite` is honored (no-raise), not raised to
+  full.
+
+### Notes
+- `applyCodexMaxTier` is intentionally left raw (no normalization): codex.sh
+  also compares `LOKI_MAX_TIER` raw, so normalizing only the Bun codex side
+  would create drift. Locked with a guard test.
+- `getProviderTierParam` (rarv.ts) is unchanged: it mirrors bash's legacy
+  fallback table, which applies no max-tier clamp; the clamp lives in
+  `applyMaxTierCeiling` on the dispatch path.
+
 ## [7.41.3] - 2026-06-14
 
 Accuracy + autonomy hardening from a 10-agent adversarial bug-hunt across the
