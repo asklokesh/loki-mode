@@ -134,6 +134,10 @@ BR="$(python3 -c "import json;print(json.load(open('$REPO1/.loki/state/completio
 { [ -n "$BR" ] && [ "$BR" != "unknown" ]; } && ok "complete: branch=$BR" || bad "complete: branch missing ($BR)"
 RC="$(python3 -c "import json;print(json.load(open('$REPO1/.loki/state/completion.json'))['review_cmd'])" 2>/dev/null || echo "")"
 case "$RC" in
+    # v7.41.1 (#596): review_cmd now carries the .loki/-excluding pathspec so
+    # the user pastes the same filtered diff the reviewers scored. Match the
+    # start-sha window with the pathspec suffix.
+    git\ diff\ *..HEAD\ --\ *) ok "complete: review_cmd uses start-sha window + pathspec" ;;
     git\ diff\ *..HEAD) ok "complete: review_cmd uses start-sha window" ;;
     *) bad "complete: review_cmd=$RC" ;;
 esac

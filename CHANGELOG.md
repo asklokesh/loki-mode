@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.41.2] - 2026-06-14
+
+CI integrity patch. The v7.41.1 release shipped to npm but its Tests workflow
+went red on two test-only defects (the runtime code was unaffected). This patch
+makes the suite green again and adds a permanent guard for the class of
+regression that v7.41.1 introduced.
+
+### Fixed
+- Shell tests: `tests/test-completion-summary.sh` now accepts the v7.41.1
+  pathspec-filtered `review_cmd` (`git diff <sha>..HEAD -- . ':(exclude).loki/'`);
+  the glob previously required the command to end at `..HEAD`.
+- ShellCheck: `_loki_caveman_infer_level` in `autonomy/lib/claude-flags.sh` is
+  annotated `# shellcheck disable=SC2120` (its `$1` is intentionally optional with
+  a global fallback). Older shellcheck on CI flagged SC2120 as a warning and
+  failed the lint gate; newer shellcheck does not.
+
+### Added
+- `tests/test-plan-json-smoke.sh`: a fast direct regression guard asserting
+  `loki plan --json` exits 0, emits valid JSON with a populated
+  `cost.iterations_by_model`, and never prints "unbound variable" (the v7.41.1
+  heredoc `$5`-unbound regression). Wired into `tests/run-all-tests.sh`.
+
 ## [7.41.1] - 2026-06-14
 
 Accuracy + autonomy hardening. A real first-time-user E2E (published CLI, haiku,

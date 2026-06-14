@@ -149,6 +149,7 @@ run_test "Caveman Compressor Gates (activate/suppress + determinism)" "$SCRIPT_D
 # and suppresses the desktop ping when LOKI_NOTIFICATIONS=0 while still writing
 # the files (state, not a notification).
 run_test "Completion Summary (delegate-then-notify files)" "$SCRIPT_DIR/test-completion-summary.sh"
+run_test "Plan JSON Smoke (--json unbound-var regression guard)" "$SCRIPT_DIR/test-plan-json-smoke.sh"
 
 # Dynamic resource-aware session concurrency (Release 3, slice 3): effective_session_cap
 # default-off byte-identical, scales the session cap down under CPU/memory pressure,

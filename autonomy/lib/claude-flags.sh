@@ -597,6 +597,7 @@ export CAVEMAN_DEFAULT_MODE=off
 # "lite" on planning protects the highest-nuance output (architecture/design);
 # everything else stays at the established "full" default. When the tier is
 # unknown we pick the SAFER (established) "full", never something more aggressive.
+# shellcheck disable=SC2120  # $1 is optional; callers rely on the global fallback
 _loki_caveman_infer_level() {
     local tier="${1:-${LOKI_CURRENT_TIER:-}}"
     case "$tier" in
