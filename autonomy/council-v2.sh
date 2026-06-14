@@ -276,7 +276,16 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                 if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
                     _c2_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
                 fi
-                result=$(echo "$full_prompt" | claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
+                # caveman HARD-SUPPRESS (parsed output, v7.41.0): this reviewer
+                # verdict is captured and parsed for the JSON "verdict" field. A
+                # globally-active caveman would compress/reword that JSON and
+                # silently flip the verdict to the REJECT fallback. The tree-wide
+                # default-off export in claude-flags.sh already covers this (the
+                # whole subprocess tree inherits CAVEMAN_DEFAULT_MODE=off); the
+                # inline prefix here is belt-and-suspenders so the carve-out is
+                # self-documenting and robust to sourcing order. No-op when caveman
+                # is absent.
+                result=$(echo "$full_prompt" | CAVEMAN_DEFAULT_MODE=off claude "${_c2_argv[@]}" -p 2>/dev/null || echo '{"verdict":"REJECT","reasoning":"review execution failed","issues":[]}')
             else
                 result='{"verdict":"REJECT","reasoning":"reviewer CLI unavailable","issues":[]}'
             fi

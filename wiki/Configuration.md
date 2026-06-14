@@ -386,6 +386,27 @@ export LOKI_PARALLEL_ENABLED=true
 export LOKI_GITHUB_IMPORT=true
 ```
 
+## Output-token compressor (caveman)
+
+Loki integrates [caveman](https://github.com/JuliusBrussee/caveman), an optional
+Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
+technical substance). It is ACTIVATED on free-form generation (the main RARV dev
+loop) and HARD-SUPPRESSED on every trust-gate subcall (council votes, code-review
+verdict, evidence parses), so it can never change a verdict or completion
+decision. Claude-provider-only; on Codex / Cline / Aider the run is unaffected.
+
+```bash
+export LOKI_CAVEMAN=0                 # opt out (default on)
+export LOKI_CAVEMAN_LEVEL=full        # lite | full (default) | ultra | wenyan*
+export LOKI_CAVEMAN_VERSION=1.9.0     # pinned version (vendor-less; upgrade by bumping)
+export LOKI_CAVEMAN_AUTO_BOOTSTRAP=0  # disable the on-demand pinned install
+```
+
+Savings are output-token-only and bounded; Loki discloses the savings class and
+never quotes a dollar figure. When `LOKI_LEGACY_COMPLETION_MATCH=true`, main-loop
+activation is auto-disabled so compression cannot mangle the prose
+completion-promise grep.
+
 ---
 
 ## Security Considerations

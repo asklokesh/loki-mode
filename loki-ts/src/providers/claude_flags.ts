@@ -446,6 +446,106 @@ export function workflowsEnabled(): boolean {
   return process.env["LOKI_USE_CLAUDE_WORKFLOWS"] === "1";
 }
 
+// ---------------------------------------------------------------------------
+// v7.x caveman output-token compressor -- Bun-route parity predicates.
+//
+// Mirror of the loki_caveman_* block in autonomy/lib/claude-flags.sh. caveman
+// is a Claude Code SKILL + SessionStart hook that compresses OUTPUT tokens only
+// (env CAVEMAN_DEFAULT_MODE: lite|full|ultra|wenyan*; "off" suppresses). The
+// activate hook reads CAVEMAN_DEFAULT_MODE > repo config > user config > "full".
+//
+// MOAT RISK + DESIGN (kept byte-identical in intent to the bash route):
+//   - ACTIVATE compression on FREE-FORM generation only (main RARV dev loop +
+//     read-only analysis): the runner sets CAVEMAN_DEFAULT_MODE=<level> on the
+//     claude spawn env for those calls.
+//   - HARD-SUPPRESS on EVERY parsed-output subcall (council vote, ^VERDICT:
+//     review, completion, evidence gate): the runner sets CAVEMAN_DEFAULT_MODE=
+//     "off". Suppression is UNCONDITIONAL/UNGATED (caveman must be off on a
+//     trust gate even when a user has it globally on but LOKI_CAVEMAN=0).
+//
+// Disclosure: output-token-only savings, bounded, no price API -> savings CLASS
+// only, never a dollar figure (same posture as workflows/ultrareview).
+// ---------------------------------------------------------------------------
+
+// Version pin (vendor-less). Mirrors LOKI_CAVEMAN_VERSION default in bash.
+export const CAVEMAN_PINNED_VERSION =
+  process.env["LOKI_CAVEMAN_VERSION"] || "1.9.0";
+
+// Default compression level for free-form activation. Mirrors LOKI_CAVEMAN_LEVEL.
+export function cavemanLevel(): string {
+  return process.env["LOKI_CAVEMAN_LEVEL"] || "full";
+}
+
+// Capability gate: provider is Claude AND the opt-out knob is not set. (The bash
+// route additionally checks `claude` on PATH + installed/bootstrappable; on the
+// Bun route the CLI presence is established by the runner before this is reached,
+// so this predicate is the env-policy surface, matching the workflowsEnabled
+// convention of a pure env check with the provider gate enforced at the call.)
+export function cavemanSupported(): boolean {
+  if ((process.env["LOKI_PROVIDER"] || "claude") !== "claude") return false;
+  if (process.env["LOKI_CAVEMAN"] === "0") return false;
+  return true;
+}
+
+// Activation knob: default ON (LOKI_CAVEMAN unset or != "0"). Disabled when the
+// legacy completion-prose match is active (compressing the main loop would break
+// the run.sh:9641 grep), mirroring loki_caveman_enabled's cross-coupling guard.
+export function cavemanEnabled(): boolean {
+  if (process.env["LOKI_CAVEMAN"] === "0") return false;
+  if (process.env["LOKI_LEGACY_COMPLETION_MATCH"] === "true") return false;
+  return true;
+}
+
+// Compression-level rank (higher = more aggressive). Used by the no-raise guard
+// so Loki never RAISES a user's lower global caveman level. Mirrors the bash
+// _loki_caveman_level_rank. Unknown levels rank 0 (treated as conservative).
+function cavemanLevelRank(level: string): number {
+  switch (level) {
+    case "lite":
+      return 1;
+    case "full":
+      return 2;
+    case "ultra":
+      return 3;
+    default:
+      // wenyan* and unknowns: treat as not-higher so we never raise toward them.
+      return 0;
+  }
+}
+
+// The activation env VALUE for a free-form subcall: the configured level, or
+// null when activation is not warranted. The runner sets CAVEMAN_DEFAULT_MODE to
+// this on the claude spawn env ONLY when non-null (an EMPTY value is NOT inert --
+// caveman treats empty as unset and falls back to the user default, so the
+// runner must omit the var entirely when this returns null).
+//
+// No-raise guard (parity with bash loki_caveman_activate_env): if the user set a
+// global caveman level LOWER than Loki's configured level, activate at the user's
+// lower level rather than raising it. The bash orchestrator captures the user's
+// pre-existing mode into LOKI_CAVEMAN_USER_MODE before exporting the default-off,
+// and the Bun runner inherits it. A user "off" means opt-out: no activation.
+export function cavemanActivateEnv(): string | null {
+  if (!cavemanSupported()) return null;
+  if (!cavemanEnabled()) return null;
+  const lokiLevel = cavemanLevel();
+  const userMode = process.env["LOKI_CAVEMAN_USER_MODE"];
+  if (userMode && userMode !== "off") {
+    // Never raise: if the user's level ranks lower than Loki's, honor theirs.
+    if (cavemanLevelRank(userMode) > 0 && cavemanLevelRank(userMode) < cavemanLevelRank(lokiLevel)) {
+      return userMode;
+    }
+  }
+  return lokiLevel;
+}
+
+// The suppression env VALUE for a parsed-output subcall: ALWAYS "off",
+// UNCONDITIONALLY (not gated on supported/enabled). The runner sets
+// CAVEMAN_DEFAULT_MODE="off" on every trust-gate claude spawn. Harmless no-op
+// when caveman is absent; essential when it is globally present.
+export function cavemanSuppressEnv(): string {
+  return "off";
+}
+
 // Test-only reset. Not exported in production typings.
 export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
   _claudeHelpCache = text;

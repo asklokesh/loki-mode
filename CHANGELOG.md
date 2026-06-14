@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.41.0] - 2026-06-14
+
+### Added
+- Optional output-token compressor integration (caveman). caveman
+  (https://github.com/JuliusBrussee/caveman, MIT, vendor-less pin) is a Claude
+  Code skill + SessionStart hook that instructs the model to compress its OUTPUT
+  tokens only (prose style), keeping all technical substance. Loki ACTIVATES it
+  on free-form generation (the main RARV development loop and parallel dev
+  streams) to cut output-token cost, and HARD-SUPPRESSES it on every
+  parsed-output trust-gate subcall so determinism is never affected: the
+  completion-council votes (VOTE:), the code-review verdict (^VERDICT:), the
+  adversarial probe, the merge-conflict resolver, and the USAGE.md regen all run
+  with compression OFF (CAVEMAN_DEFAULT_MODE=off). The carve-out is DEFAULT-SUPPRESS
+  by construction: a single `export CAVEMAN_DEFAULT_MODE=off` in
+  `autonomy/lib/claude-flags.sh` (the one module every Loki process tree sources)
+  makes EVERY claude subcall inherit suppression, so any parsed trust-gate call --
+  existing or future, in any tree (run.sh, completion-council, council-v2,
+  voter-agents, grill) -- is suppressed unless a site explicitly opts into
+  compression. Activation (the compression level) is then set per-invocation ONLY
+  at the known free-form generation sites (main RARV loop, parallel dev stream).
+  This fails safe: a missed activation site only loses token savings, never
+  corrupts a verdict. A tree-wide audit test asserts no parsed claude subcall is
+  left unsuppressed.
+  - Claude-provider-only. On Codex / Cline / Aider, caveman is unavailable and
+    the run is byte-identical to before (clean degrade, honest stderr).
+  - Default-on, opt out with `LOKI_CAVEMAN=0`. Level via `LOKI_CAVEMAN_LEVEL`
+    (default `full`; also `lite`, `ultra`, `wenyan*`). Version pin via
+    `LOKI_CAVEMAN_VERSION` (default `1.9.0`); vendor-less -- Loki ships no copy of
+    caveman and bootstraps the pinned version on demand (idempotent, cached
+    marker under `.loki/`, opt out with `LOKI_CAVEMAN_AUTO_BOOTSTRAP=0`).
+  - NEVER applied to trust gates. When the legacy completion-prose match is in
+    use (`LOKI_LEGACY_COMPLETION_MATCH=true`), main-loop activation is disabled so
+    compression can never mangle the prose completion-promise grep. The default
+    completion path (the `loki_complete_task` MCP tool / completion signal file)
+    is immune to compression and keeps caveman on.
+  - Savings are real but bounded (output tokens only, not input/thinking). There
+    is no price API, so Loki discloses the savings CLASS, never a dollar figure.
+  - Parity-locked across both routes (autonomy/lib/claude-flags.sh predicates and
+    loki-ts/src/providers/claude_flags.ts mirror), with a determinism / moat
+    carve-out proof in tests/test-caveman-flags.sh and
+    loki-ts/tests/providers/caveman_flags.test.ts.
+
 ## [7.40.0] - 2026-06-14
 
 ### Added

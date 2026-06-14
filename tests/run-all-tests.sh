@@ -138,6 +138,12 @@ run_test "AGENTS.md Doc Walker (precedence + fallback)" "$SCRIPT_DIR/test-agents
 run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-agents-md-build-prompt.sh"
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
 
+# caveman output-token compressor gates: ACTIVATE on free-form generation,
+# HARD-SUPPRESS (CAVEMAN_DEFAULT_MODE=off) on every parsed trust-gate subcall.
+# Includes the determinism / moat carve-out proof (suppression is unconditional)
+# and cross-route parity with loki-ts/src/providers/claude_flags.ts.
+run_test "Caveman Compressor Gates (activate/suppress + determinism)" "$SCRIPT_DIR/test-caveman-flags.sh"
+
 # Delegate-then-notify (Release 2): build_completion_summary writes the durable
 # .loki/COMPLETION.txt + .loki/state/completion.json for every terminal state
 # and suppresses the desktop ping when LOKI_NOTIFICATIONS=0 while still writing

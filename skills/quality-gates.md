@@ -128,6 +128,39 @@ LOKI_CODE_INDEX_AUTOREINDEX=1    # auto incremental re-index of the semantic
                                  # Hybrid Codebase Search)
 ```
 
+## Output-token compressor (caveman, default-on, Claude-only)
+
+[caveman](https://github.com/JuliusBrussee/caveman) is a Claude Code skill that
+instructs the model to compress its OUTPUT tokens only (prose style), keeping all
+technical substance. Loki ACTIVATES it on free-form generation (the main RARV dev
+loop) and HARD-SUPPRESSES it on every parsed-output trust-gate subcall (council
+votes, the code-review `^VERDICT:`, the adversarial probe, the merge-conflict
+resolver, the USAGE.md regen). The suppression is by construction (one shared
+helper sets `CAVEMAN_DEFAULT_MODE=off` on every parsed call site), so compression
+can NEVER flip a verdict or completion decision.
+
+Claude-provider-only: on Codex / Cline / Aider the run is byte-identical to
+before. Vendor-less: Loki ships no copy of caveman and bootstraps the pinned
+version on demand (idempotent, cached under `.loki/`). Savings are real but
+bounded (output tokens only); there is no price API, so Loki discloses the
+savings CLASS, never a dollar figure.
+
+```bash
+LOKI_CAVEMAN=0                  # opt out (default on). Disables activation; the
+                                # parsed-subcall suppression still runs (it is a
+                                # harmless no-op when caveman is absent).
+LOKI_CAVEMAN_LEVEL=full         # compression level: lite | full (default) |
+                                # ultra | wenyan | wenyan-lite|full|ultra
+LOKI_CAVEMAN_VERSION=1.9.0      # pinned caveman version (upgrade by bumping)
+LOKI_CAVEMAN_AUTO_BOOTSTRAP=0   # disable the on-demand pinned install
+```
+
+Note: when `LOKI_LEGACY_COMPLETION_MATCH=true` (the legacy prose-grep completion
+path), main-loop activation is automatically disabled so compression cannot
+mangle the prose completion-promise. The default completion path (the
+`loki_complete_task` MCP tool / completion signal file) is immune to compression
+and keeps caveman on.
+
 ## Verified-completion evidence gate (v7.19.1, default-on)
 
 The completion council will not accept a "done" claim without evidence. Before

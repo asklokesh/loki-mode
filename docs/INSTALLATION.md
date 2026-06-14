@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.40.0
+**Version:** v7.41.0
 
 ---
 
@@ -29,6 +29,20 @@ setting any flag to `0`.
   learnings, or escalations exist (added v7.5.5; see the `phase1` block
   in `loki status --json`).
 - See `skills/quality-gates.md` for full schema and reachability notes.
+
+### Output-token compressor (caveman, default-on, Claude-only)
+Loki integrates [caveman](https://github.com/JuliusBrussee/caveman), an optional
+Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
+technical substance). It activates on free-form generation (the main RARV dev
+loop) and is HARD-SUPPRESSED on every trust-gate subcall (council votes, code
+review verdict, evidence-related parses) so determinism is never affected.
+- Claude-provider-only; runs are byte-identical on Codex / Cline / Aider.
+- Default on; opt out with `LOKI_CAVEMAN=0`.
+- Level: `LOKI_CAVEMAN_LEVEL` (default `full`; also `lite`, `ultra`, `wenyan*`).
+- Pinned + vendor-less: `LOKI_CAVEMAN_VERSION` (default `1.9.0`); Loki bootstraps
+  the pinned version on demand (opt out `LOKI_CAVEMAN_AUTO_BOOTSTRAP=0`).
+- Savings are output-token-only and bounded; Loki never quotes a dollar figure.
+- See `skills/quality-gates.md` (Output-token compressor) for details.
 
 ### Earlier highlights still in scope
 - Bash-to-Bun runtime migration in progress (see `UPGRADING.md`)

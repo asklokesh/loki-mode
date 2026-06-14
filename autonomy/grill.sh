@@ -204,8 +204,16 @@ grill_invoke_provider() {
             if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
                 _gr_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
             fi
+            # caveman HARD-SUPPRESS (parsed output, v7.41.0): the grill output is
+            # parsed downstream by loki-grill (and written to report.md as the
+            # hardest spec questions). Treat it as parsed: a globally-active
+            # caveman would compress/reword the questions. The tree-wide default-off
+            # export in claude-flags.sh (sourced at grill.sh:45) already covers
+            # this; the inline `env` prefix is belt-and-suspenders. `env` is used
+            # (not a bare VAR=val prefix) because the call goes through
+            # _grill_with_timeout, where the first token is exec'd as the command.
             out="$(printf '%s' "$prompt" \
-                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" claude "${_gr_argv[@]}" -p - 2>/dev/null)"
+                | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" env CAVEMAN_DEFAULT_MODE=off claude "${_gr_argv[@]}" -p - 2>/dev/null)"
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output (timeout or invocation error)"
                 return $GRILL_EXIT_ERROR

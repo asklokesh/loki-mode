@@ -3050,9 +3050,24 @@ spawn_worktree_session() {
         # Provider-specific invocation for parallel sessions
         case "${PROVIDER_NAME:-claude}" in
             claude)
-                claude --dangerously-skip-permissions \
-                    -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
-                    >> "$log_file" 2>&1 || _wt_exit=$?
+                # caveman ACTIVATION (free-form): a parallel worktree dev stream
+                # is free-form generation; its output goes to a log, not a parsed
+                # sentinel. Activate compression at the configured level when
+                # warranted (empty -> bare invocation, byte-identical to before).
+                # Type-guarded; inlined per-invocation (not exported).
+                local _loki_wt_cm=""
+                if type loki_caveman_activate_env >/dev/null 2>&1; then
+                    _loki_wt_cm="$(loki_caveman_activate_env)"
+                fi
+                if [ -n "$_loki_wt_cm" ]; then
+                    CAVEMAN_DEFAULT_MODE="$_loki_wt_cm" claude --dangerously-skip-permissions \
+                        -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
+                        >> "$log_file" 2>&1 || _wt_exit=$?
+                else
+                    claude --dangerously-skip-permissions \
+                        -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
+                        >> "$log_file" 2>&1 || _wt_exit=$?
+                fi
                 ;;
             codex)
                 codex exec --full-auto --skip-git-repo-check \
@@ -3264,7 +3279,11 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _cr_argv+=("--bare")
                 fi
-                resolution=$(claude "${_cr_argv[@]}" -p "$conflict_prompt" --output-format text 2>/dev/null)
+                # caveman HARD-SUPPRESS (parsed output): the output is captured as
+                # the EXACT resolved file content (the shell writes it verbatim).
+                # Compressing prose into the merged source would corrupt the file,
+                # so disable caveman unconditionally here. No-op when absent.
+                resolution=$(CAVEMAN_DEFAULT_MODE=off claude "${_cr_argv[@]}" -p "$conflict_prompt" --output-format text 2>/dev/null)
                 ;;
             codex)
                 resolution=$(codex exec --full-auto --skip-git-repo-check "$conflict_prompt" 2>/dev/null)
@@ -7912,6 +7931,15 @@ BUILD_PROMPT
                     if type loki_review_allowlist_enabled >/dev/null 2>&1 && loki_review_allowlist_enabled; then
                         _rv_argv+=("--allowedTools" "$(loki_review_allowlist)")
                     fi
+                    # caveman HARD-SUPPRESS (parsed output): this is a trust-gate
+                    # subcall whose output is parsed for "^VERDICT:" + findings. A
+                    # globally-active caveman would compress/reword that line and
+                    # silently flip the verdict, so we UNCONDITIONALLY disable
+                    # caveman here with CAVEMAN_DEFAULT_MODE=off (the activate hook
+                    # then deletes its flag and emits nothing). Set inline, not via
+                    # the helper, so the carve-out holds even when the helper is
+                    # out of scope. No-op when caveman is absent.
+                    CAVEMAN_DEFAULT_MODE=off \
                     claude "${_rv_argv[@]}" -p "$prompt_text" \
                         --output-format text > "$review_output" 2>/dev/null
                     ;;
@@ -8151,6 +8179,11 @@ ADVERSARIAL_EOF
                 if type loki_review_allowlist_enabled >/dev/null 2>&1 && loki_review_allowlist_enabled; then
                     _adv_argv+=("--allowedTools" "$(loki_review_allowlist)")
                 fi
+                # caveman HARD-SUPPRESS (parsed output): the adversarial probe's
+                # output is parsed for findings/severity. Disable caveman
+                # unconditionally (CAVEMAN_DEFAULT_MODE=off) so compression cannot
+                # drop or reword a finding. No-op when caveman is absent.
+                CAVEMAN_DEFAULT_MODE=off \
                 claude "${_adv_argv[@]}" -p "$adversarial_prompt" \
                     --output-format text > "$result_file" 2>/dev/null || true
             fi
@@ -10188,9 +10221,14 @@ ${_commits}"
         _ic_argv+=("--bare")
     fi
     _ic_argv+=("--model" "haiku")
+    # caveman HARD-SUPPRESS (parsed output): the regen output is validated to be
+    # Markdown (grep '^#') and written verbatim to USAGE.md. Compressed prose
+    # would fail that check or produce caveman-style USAGE text, so disable
+    # caveman unconditionally. Inlined on `claude` only (does not cross the pipe
+    # to head). No-op when caveman is absent.
     local _ic_out
     _ic_out=$(printf '%s' "$_ic_prompt" \
-        | timeout 60 claude "${_ic_argv[@]}" -p - 2>/dev/null \
+        | timeout 60 env CAVEMAN_DEFAULT_MODE=off claude "${_ic_argv[@]}" -p - 2>/dev/null \
         | head -200)
     # Sanity check: response must look like Markdown (starts with # or ##).
     if [ -z "$_ic_out" ] || ! printf '%s' "$_ic_out" | head -1 | grep -qE '^#'; then
@@ -13049,9 +13087,40 @@ except Exception as exc:
                 # result-cost file under the correct iteration index.
                 export LOKI_CURRENT_MODEL="$tier_param"
                 export LOKI_ITERATION="$ITERATION_COUNT"
+                # caveman ACTIVATION (free-form): the main RARV dev loop is
+                # free-form generation, so we ask caveman to compress its OUTPUT
+                # tokens at the configured level. Inlined as a per-invocation env
+                # prefix (NOT exported) so it applies ONLY to `claude` (and the
+                # SessionStart hook it spawns inherits it) and never bleeds into
+                # later parsed subcalls. Empty when caveman is unsupported /
+                # disabled / the legacy completion-prose match is active, in which
+                # case the invocation is byte-identical to before. Type-guarded so
+                # an older runtime without the helper degrades cleanly.
+                local _loki_cm_level=""
+                if type loki_caveman_activate_env >/dev/null 2>&1; then
+                    _loki_cm_level="$(loki_caveman_activate_env)"
+                fi
+                # Best-effort one-time bootstrap when activation is warranted but
+                # caveman is not yet installed (idempotent, non-blocking, clean
+                # degrade). The level stays usable next run even if this run is
+                # uncompressed.
+                if [ -n "$_loki_cm_level" ] && type loki_caveman_bootstrap >/dev/null 2>&1; then
+                    loki_caveman_bootstrap || true
+                fi
+                # NOTE: an EMPTY CAVEMAN_DEFAULT_MODE is NOT inert -- caveman's
+                # getDefaultMode() treats empty as unset and falls back to the
+                # user's global default (often "full"). So when activation is not
+                # warranted we must NOT set the var at all (the bare branch),
+                # keeping the invocation byte-identical to pre-caveman behavior.
                 { \
+                if [ -n "$_loki_cm_level" ]; then
+                CAVEMAN_DEFAULT_MODE="$_loki_cm_level" \
                 claude "${_loki_claude_argv[@]}" -p "$prompt" \
-            --output-format stream-json --verbose 2>&1 | \
+            --output-format stream-json --verbose 2>&1
+                else
+                claude "${_loki_claude_argv[@]}" -p "$prompt" \
+            --output-format stream-json --verbose 2>&1
+                fi | \
             tee -a "$log_file" "$agent_log" "$iter_output" | \
             python3 -u -c '
 import sys

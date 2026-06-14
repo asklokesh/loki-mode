@@ -482,6 +482,275 @@ loki_workflows_enabled() {
     [ "${LOKI_USE_CLAUDE_WORKFLOWS:-0}" = "1" ]
 }
 
+# ---------- v7.x caveman output-token compressor gates ----------
+# caveman (https://github.com/JuliusBrussee/caveman, MIT, vendor-less pin) is a
+# Claude Code SKILL + SessionStart hook that instructs the model to compress its
+# OUTPUT TOKENS only (prose style: lite / full / ultra / wenyan), keeping all
+# technical substance. It wraps NO API, needs NO key, has NO network of its own.
+# Once installed it activates GLOBALLY in Claude Code via a SessionStart hook
+# that reads getDefaultMode() (env CAVEMAN_DEFAULT_MODE > repo .caveman config >
+# user config > "full") and, unless the mode is "off", injects its ruleset.
+#
+# THE MOAT RISK (central, why this is wired the way it is): Loki's trust gates
+# parse EXACT model prose -- council "VOTE: APPROVE|REJECT|CANNOT_VALIDATE", code
+# review "^VERDICT:", the legacy completion-promise grep, the evidence-gate
+# sentinels. A globally-active caveman would compress those subcall outputs and
+# silently flip a verdict to the default (REJECT / not-complete), corrupting the
+# loop. This is the same failure class as the --bare OAuth footgun documented at
+# claude-flags.sh:152-161.
+#
+# THE DESIGN (off by construction, not by convention):
+#   - ACTIVATE compression only on FREE-FORM generation (main RARV dev loop +
+#     read-only codebase-analysis): inline `CAVEMAN_DEFAULT_MODE=<level> claude`.
+#   - HARD-SUPPRESS on EVERY parsed-output subcall (council vote, ^VERDICT:
+#     review, adversarial probe, conflict-merge, USAGE regen): inline
+#     `CAVEMAN_DEFAULT_MODE=off claude`. The activate hook then deletes its flag
+#     and emits nothing (verified: `CAVEMAN_DEFAULT_MODE=off node
+#     caveman-activate.js` prints "OK" with no ruleset).
+#
+# Suppression is UNCONDITIONAL and UNGATED (see loki_caveman_suppress_env): it is
+# a harmless no-op env value when caveman is absent and the essential carve-out
+# when caveman is globally present (surface b, or a user's own install) even with
+# LOKI_CAVEMAN=0. NEVER gate suppression on supported/enabled -- that would leave
+# the trust gates unprotected exactly when a user has caveman on but Loki off.
+#
+# Disclosure (honest, no fabricated figures): caveman compresses OUTPUT tokens
+# only, not input/thinking; savings are real but bounded. There is no price API,
+# so we disclose the savings CLASS, never a dollar amount (same posture as the
+# ultrareview/workflows gates).
+
+# Version pin (vendor-less). Upgrade by bumping this. The upstream installer pins
+# its hook downloads to PINNED_REF = CAVEMAN_REF || 'v1.9.0' (a git tag), and the
+# curl|bash path delegates to `npx -y github:JuliusBrussee/caveman#<ref>`. We
+# default to 1.9.0 and derive the `v`-prefixed tag in the bootstrap helper.
+LOKI_CAVEMAN_VERSION="${LOKI_CAVEMAN_VERSION:-1.9.0}"
+
+# The compression level for free-form activation. Maps directly to caveman's
+# CAVEMAN_DEFAULT_MODE values: lite | full | ultra | wenyan | wenyan-lite |
+# wenyan-full | wenyan-ultra. Default "full" (the founder-locked global default).
+# Never "off" here -- "off" is the suppression value, not an activation level.
+LOKI_CAVEMAN_LEVEL="${LOKI_CAVEMAN_LEVEL:-full}"
+
+# ---------- DEFAULT-SUPPRESS: off by construction, tree-wide ----------
+# THE MOAT GUARANTEE (v7.41.0 council fix): instead of hand-enumerating every
+# parsed-output trust-gate subcall and remembering to prefix each with
+# CAVEMAN_DEFAULT_MODE=off (a missed site silently corrupts a verdict -- caveman
+# exits 0 with mangled prose and the `|| REJECT` fallback never fires), we flip
+# the ENTIRE process tree to suppressed at the one module every tree sources.
+#
+# claude-flags.sh is sourced by EVERY tree that can spawn a parsed claude
+# subcall: the run.sh orchestrator (via providers/claude.sh), grill.sh (standalone
+# `loki grill`), lib/voter-agents.sh (Phase C agent-dispatch voters), and the
+# loki standalone review/workflows commands (on-demand). council-v2.sh carries no
+# source of its own but only ever runs inside completion-council.sh, which is in
+# the run.sh tree, so it inherits this export too. Exporting off HERE makes the
+# whole spawned subprocess tree inherit suppression -- caveman's SessionStart
+# hook reads process.env CAVEMAN_DEFAULT_MODE -- closing council-v2.sh,
+# voter-agents.sh, grill.sh, every existing parsed subcall, and any FUTURE one by
+# construction. ACTIVATION on the handful of free-form generation sites overrides
+# this per-invocation (CAVEMAN_DEFAULT_MODE=<level> claude ...).
+#
+# Capture the user's pre-existing global CAVEMAN_DEFAULT_MODE BEFORE we clobber
+# it, so the activation path can respect (never RAISE) a user's lower level (see
+# loki_caveman_activate_env). Guarded on UNSET (not empty): a child process that
+# inherits our exported LOKI_CAVEMAN_USER_MODE="" (user had no global mode) and
+# re-sources this file must NOT recapture the now-exported CAVEMAN_DEFAULT_MODE=off
+# as the user mode. ${var+x} is empty only when var is genuinely unset, so the
+# capture runs exactly once across the whole process tree, never recapturing "off".
+if [ -z "${LOKI_CAVEMAN_USER_MODE+x}" ]; then
+    LOKI_CAVEMAN_USER_MODE="${CAVEMAN_DEFAULT_MODE:-}"
+fi
+export LOKI_CAVEMAN_USER_MODE
+export CAVEMAN_DEFAULT_MODE=off
+
+# Rank a caveman mode by compression aggressiveness for the no-raise comparison.
+# Higher number = more aggressive (drops more nuance). "off" is the floor; unknown
+# or empty modes rank as -1 (treated as "no opinion", so they never win a min()).
+# The wenyan-* variants mirror their plain counterparts' aggressiveness.
+_loki_caveman_level_rank() {
+    case "${1:-}" in
+        off)                      printf '0' ;;
+        lite|wenyan-lite)         printf '1' ;;
+        full|wenyan|wenyan-full)  printf '2' ;;
+        ultra|wenyan-ultra)       printf '3' ;;
+        *)                        printf '%s' '-1' ;;
+    esac
+}
+
+# Caveman config dir resolution mirrors caveman-config.js getConfigDir(): honors
+# CLAUDE_CONFIG_DIR for the flag file location used to detect an existing install.
+_loki_caveman_claude_dir() {
+    printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+}
+
+# True (0) when caveman appears installed: its SessionStart hook file exists in
+# the resolved Claude config dir. Best-effort, read-only. We check the hook the
+# upstream installer writes to ~/.claude/hooks/caveman-activate.js (standalone)
+# OR a plugin install marker. Either presence means activation will fire.
+_loki_caveman_installed() {
+    local dir
+    dir="$(_loki_caveman_claude_dir)"
+    [ -f "$dir/hooks/caveman-activate.js" ] && return 0
+    # Plugin install: the activate hook lives under a plugin root; the flag file
+    # path is stable. Treat a prior-session flag file as a weaker install signal.
+    [ -f "$dir/.caveman-active" ] && return 0
+    return 1
+}
+
+# Capability gate: can caveman compression be USED on this run? Provider is
+# Claude AND the claude CLI is present AND caveman is installed-or-bootstrappable
+# AND it is not disabled by the LOKI_CAVEMAN knob. Returns 0 when usable, 1
+# otherwise (callers emit an honest message + degrade to an uncompressed run).
+# Mirrors loki_workflows_supported's shape (provider + CLI + not-disabled).
+loki_caveman_supported() {
+    # Provider must be Claude (Tier 1). caveman is Claude-Code-only.
+    [ "${LOKI_PROVIDER:-claude}" = "claude" ] || return 1
+    command -v claude >/dev/null 2>&1 || return 1
+    # Opt-out knob also suppresses the capability (no activation when off).
+    [ "${LOKI_CAVEMAN:-1}" = "0" ] && return 1
+    # Installed now, OR bootstrappable (node + npx present so the pin can install
+    # on demand). Either way activation can take effect this run or the next.
+    if _loki_caveman_installed; then
+        return 0
+    fi
+    command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1 && return 0
+    return 1
+}
+
+# Activation knob: is caveman compression ENABLED for free-form subcalls?
+# DEFAULT ON (LOKI_CAVEMAN unset or 1). Opt out with LOKI_CAVEMAN=0.
+#
+# CROSS-COUPLING GUARD (moat safety): when LOKI_LEGACY_COMPLETION_MATCH=true the
+# runner detects completion by grepping the MAIN-loop prose for the completion
+# promise (run.sh:9641). Compressing the main loop would mangle that prose and
+# break the legacy detector, so caveman activation is DISABLED whenever the
+# legacy prose-match path is in use. The default completion path (the
+# loki_complete_task MCP tool / COMPLETION_REQUESTED signal file) is immune to
+# compression, so the default config keeps caveman on.
+loki_caveman_enabled() {
+    [ "${LOKI_CAVEMAN:-1}" = "0" ] && return 1
+    [ "${LOKI_LEGACY_COMPLETION_MATCH:-false}" = "true" ] && return 1
+    return 0
+}
+
+# The activation env VALUE for a free-form subcall: the configured level, or
+# empty when activation is not warranted (caveman unsupported or disabled). The
+# caller inlines it as a per-invocation env prefix (NEVER `export` -- a persisted
+# export would bleed into later parsed subcalls and defeat the carve-out):
+#   _cm_lvl="$(loki_caveman_activate_env)"
+#   if [ -n "$_cm_lvl" ]; then
+#       CAVEMAN_DEFAULT_MODE="$_cm_lvl" claude ...   # free-form only
+#   else
+#       claude ...
+#   fi
+#
+# NO-RAISE (v7.41.0 R2 finding 4): the level returned is the configured Loki
+# level, EXCEPT we never silently RAISE a user who set a LOWER global caveman
+# level. If the user globally chose "lite" (less aggressive, preserves more
+# nuance) we honor "lite" rather than forcing "full" on their free-form output.
+# We only ever lower toward the user's preference, never above it; the activation
+# level itself is the conservative-for-accuracy ceiling. The user's global mode is
+# captured at source time into LOKI_CAVEMAN_USER_MODE before the default-off
+# export clobbers CAVEMAN_DEFAULT_MODE. Unknown / empty user modes (rank -1) are
+# ignored so a malformed value can never accidentally suppress activation.
+loki_caveman_activate_env() {
+    loki_caveman_supported || return 0
+    loki_caveman_enabled   || return 0
+    local level="${LOKI_CAVEMAN_LEVEL:-full}"
+    # Respect (never exceed) a user's explicitly-lower global level. A user who
+    # globally set CAVEMAN_DEFAULT_MODE=off opted OUT of compression entirely;
+    # honor that by activating nothing (empty -> bare claude invocation).
+    local user_mode="${LOKI_CAVEMAN_USER_MODE:-}"
+    if [ "$user_mode" = "off" ]; then
+        return 0
+    fi
+    if [ -n "$user_mode" ]; then
+        local user_rank level_rank
+        user_rank="$(_loki_caveman_level_rank "$user_mode")"
+        level_rank="$(_loki_caveman_level_rank "$level")"
+        # Only defer to the user when their mode is a recognized, lower level.
+        if [ "$user_rank" -ge 0 ] && [ "$level_rank" -ge 0 ] && [ "$user_rank" -lt "$level_rank" ]; then
+            level="$user_mode"
+        fi
+    fi
+    printf '%s' "$level"
+}
+
+# The suppression env VALUE for a parsed-output subcall: ALWAYS "off",
+# UNCONDITIONALLY. Not gated on supported/enabled (see the design note above):
+# it must hard-disable caveman on a trust-gate subcall even when a user has
+# caveman globally on but LOKI_CAVEMAN=0, and it is a harmless no-op env value
+# when caveman is absent. Every parsed-output call site uses this ONE helper so
+# the carve-out is uniform:
+#   CAVEMAN_DEFAULT_MODE="$(loki_caveman_suppress_env)" claude ...
+loki_caveman_suppress_env() {
+    printf '%s' "off"
+}
+
+# Idempotent on-demand bootstrap of caveman at the pinned version. Best-effort:
+# installs once per machine, caches a marker under .loki/ so repeat runs are a
+# no-op, degrades cleanly (run proceeds UNCOMPRESSED) with an honest stderr line
+# if anything is missing or the upstream installer is unreachable. NEVER blocks
+# or fails the run. Returns 0 if caveman is (now) installed, 1 on clean degrade.
+#
+# Opt out with LOKI_CAVEMAN_AUTO_BOOTSTRAP=0. Only attempts when provider==claude
+# and the LOKI_CAVEMAN knob is on.
+#
+# GLOBAL SIDE EFFECT (disclosed): caveman installs GLOBALLY -- the upstream
+# installer adds a SessionStart hook to ~/.claude/settings.json (or
+# $CLAUDE_CONFIG_DIR) that affects EVERY Claude Code session on this machine, not
+# only Loki runs. This is caveman's only install mode. The bootstrap therefore
+# runs the upstream installer exactly as a user's own `curl|bash` would; we do
+# not author or vendor any caveman file. The one-time stderr line below names
+# this so the operator is never surprised.
+#
+# HARDENING: the npx call is forced non-interactive (--non-interactive, plus
+# </dev/null so no stdin read can ever block) and time-bounded (timeout when
+# available) so a stalled network or an unexpected prompt can never hang a user's
+# first `loki start`. caveman's installer is already auto-non-interactive without
+# a TTY, but we belt-and-suspenders it.
+loki_caveman_bootstrap() {
+    [ "${LOKI_CAVEMAN:-1}" = "0" ] && return 1
+    [ "${LOKI_CAVEMAN_AUTO_BOOTSTRAP:-1}" = "0" ] && return 1
+    [ "${LOKI_PROVIDER:-claude}" = "claude" ] || return 1
+    # Already installed -> nothing to do.
+    if _loki_caveman_installed; then
+        return 0
+    fi
+    local ver="${LOKI_CAVEMAN_VERSION:-1.9.0}"
+    local marker_dir=".loki/state"
+    local marker="$marker_dir/caveman-bootstrap-${ver}.done"
+    # Cached attempt marker: do not re-attempt a failed install over and over
+    # within the same project tree (idempotent one-shot per pinned version).
+    if [ -f "$marker" ]; then
+        _loki_caveman_installed && return 0 || return 1
+    fi
+    if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then
+        printf '%s\n' "[caveman] node>=18 + npx required to bootstrap; skipping (run proceeds uncompressed). Install Node or set LOKI_CAVEMAN=0 to silence." >&2
+        mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s\n' "[caveman] bootstrapping output-token compressor v${ver} (one-time, pinned). NOTE: caveman installs GLOBALLY (a Claude Code SessionStart hook in ~/.claude affecting every Claude Code session). Loki applies it only to free-form generation, NEVER to trust-gate subcalls. Opt out: LOKI_CAVEMAN=0." >&2
+    # Pin via the git tag (v-prefixed) on the npx ref AND CAVEMAN_REF so the
+    # downloaded hooks match the pinned release. Default install (no --all) wires
+    # the Claude Code hook for the detected `claude` CLI. A timeout backstops a
+    # network stall; </dev/null guarantees no interactive stdin read blocks.
+    local _cm_runner="npx"
+    if command -v timeout >/dev/null 2>&1; then
+        _cm_runner="timeout 120 npx"
+    fi
+    if CAVEMAN_REF="v${ver}" $_cm_runner -y "github:JuliusBrussee/caveman#v${ver}" -- --non-interactive >/dev/null 2>&1 </dev/null; then
+        mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
+        if _loki_caveman_installed; then
+            printf '%s\n' "[caveman] installed v${ver}." >&2
+            return 0
+        fi
+    fi
+    printf '%s\n' "[caveman] bootstrap unavailable (upstream unreachable, timed out, or install failed); run proceeds uncompressed." >&2
+    mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Session-continuity Phase 2 (GitHub #165) -- LOKI_RESUME_SESSION recovery resume
 #

@@ -250,7 +250,13 @@ loki_council_dispatch_agents() {
     local rc=0
     local stderr_log="$COUNCIL_STATE_DIR/votes/dispatch-stderr-${iteration}.log"
     mkdir -p "$(dirname "$stderr_log")" 2>/dev/null || true
-    response=$(claude --dangerously-skip-permissions \
+    # caveman HARD-SUPPRESS (parsed output, v7.41.0): the response is parsed for
+    # findings[].vote against the JSON Schema. A globally-active caveman would
+    # compress/reword it and break the schema match or flip a vote. The tree-wide
+    # default-off export in claude-flags.sh (sourced above) already covers this;
+    # the inline prefix is belt-and-suspenders, self-documenting, and a no-op when
+    # caveman is absent.
+    response=$(CAVEMAN_DEFAULT_MODE=off claude --dangerously-skip-permissions \
                       -p "$prompt" \
                       --agents "$agents_json" \
                       --json-schema "$schema_path" 2>"$stderr_log") || rc=$?

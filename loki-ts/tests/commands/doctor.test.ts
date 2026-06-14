@@ -13,15 +13,47 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  _setPythonImportOkForTest,
   buildDoctorJson,
   checkDisk,
   checkSkills,
   checkTool,
   httpReachable,
+  pythonImportOk,
   runDoctor,
   type DoctorJson,
   type ToolCheck,
 } from "../../src/commands/doctor.ts";
+
+// Text-mode runDoctor([]) renders the Integrations section, which probes three
+// python modules (mcp, numpy, sentence_transformers). The ML probes carry a 30s
+// timeout each (BUG-23: cold sentence_transformers imports under load), so a
+// single runDoctor([]) spawns three python interpreters and, under concurrent
+// CI load, can stall a suite on the 30s ML timeout. Suites that assert section
+// rendering / exit codes / network branches (MiroFish, OTEL, ChromaDB) do not
+// care whether numpy is pip-installed -- they only need a deterministic, cheap
+// Integrations result. stubPythonImportOk() injects a no-spawn stub via the
+// existing _setPythonImportOkForTest seam so those suites stay fast and never
+// touch the 30s ML timeout. Production behavior and the network probe (which
+// already aborts at 2s via AbortSignal.timeout) are unchanged. Suites that
+// genuinely exercise the python path (MCP PASS import, BUG-002 version string,
+// the v7.5.8 parallelism probe) intentionally do NOT use this stub.
+function stubPythonImportOk(): void {
+  _setPythonImportOkForTest(async (): Promise<boolean> => false);
+}
+// Variant for suites that genuinely exercise the `mcp` import (MCP SDK PASS):
+// delegate "mcp" to the real probe so the chdir-stub assertion stays honest,
+// but short-circuit the two ML probes (numpy, sentence_transformers) so the
+// suite never touches their 30s timeout. checkPython312's version line uses a
+// separate run() path, so the BUG-002 suite uses the plain stub above.
+function stubMlPythonImportOk(): void {
+  _setPythonImportOkForTest(async (module: string): Promise<boolean> =>
+    module === "mcp" ? pythonImportOk("mcp") : false,
+  );
+}
+function restorePythonImportOk(): void {
+  _setPythonImportOkForTest(null);
+}
 
 // ---- stdout capture helper ---------------------------------------------------
 
@@ -274,6 +306,9 @@ describe("doctor.buildDoctorJson", () => {
 // ---- runDoctor end-to-end ----------------------------------------------------
 
 describe("doctor.runDoctor (end-to-end)", () => {
+  beforeEach(stubPythonImportOk);
+  afterEach(restorePythonImportOk);
+
   it("--json emits parseable JSON and exits 0", async () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--json"]));
     expect(result).toBe(0);
@@ -334,6 +369,8 @@ describe("doctor exit-code parity", () => {
   // (cmd_doctor_json only checks tools + disk, line 6534+). So the two exit
   // semantics are necessarily decoupled. We assert each one's invariant
   // independently rather than tying them together.
+  beforeEach(stubPythonImportOk);
+  afterEach(restorePythonImportOk);
 
   it("text mode exit code is 0 or 1", async () => {
     const { result } = await captureStdio(() => runDoctor([]));
@@ -392,7 +429,9 @@ describe("doctor.runDoctor MiroFish PASS branch", () => {
   let server: Server | null = null;
   const prevUrl = process.env["LOKI_MIROFISH_URL"];
 
+  beforeEach(stubPythonImportOk);
   afterEach(async () => {
+    restorePythonImportOk();
     if (server) {
       await stopServer(server);
       server = null;
@@ -419,7 +458,9 @@ describe("doctor.runDoctor MiroFish PASS branch", () => {
 describe("doctor.runDoctor OTEL PASS branch", () => {
   const prev = process.env["LOKI_OTEL_ENDPOINT"];
 
+  beforeEach(stubPythonImportOk);
   afterEach(() => {
+    restorePythonImportOk();
     if (prev === undefined) delete process.env["LOKI_OTEL_ENDPOINT"];
     else process.env["LOKI_OTEL_ENDPOINT"] = prev;
   });
@@ -443,7 +484,9 @@ describe("doctor.runDoctor MCP PASS branch", () => {
   let tmpDir: string | null = null;
   let prevCwd: string | null = null;
 
+  beforeEach(stubMlPythonImportOk);
   afterEach(() => {
+    restorePythonImportOk();
     if (prevCwd) {
       process.chdir(prevCwd);
       prevCwd = null;
@@ -475,7 +518,9 @@ describe("doctor.runDoctor ChromaDB PASS branch", () => {
   // loudly -- preferable to silently skipping coverage.
   let server: Server | null = null;
 
+  beforeEach(stubPythonImportOk);
   afterEach(async () => {
+    restorePythonImportOk();
     if (server) {
       await stopServer(server);
       server = null;
@@ -617,6 +662,13 @@ describe("doctor v7.5.8 byCmd non-null fallback", () => {
 // patch component when Python 3.12 is available on this host.
 
 describe("doctor BUG-002 Python 3.12 patch-version parity", () => {
+  // The version line asserted here comes from checkPython312's own run() path,
+  // not pyImpl.fn, so stubbing the integration probes does not weaken the
+  // assertion -- it only avoids the unrelated 30s numpy/sentence_transformers
+  // probes that runDoctor([]) would otherwise fire.
+  beforeEach(stubPythonImportOk);
+  afterEach(restorePythonImportOk);
+
   it("displays full major.minor.micro version for Python 3.12 when available", async () => {
     // Detect whether Python 3.12 is reachable via the same priority list used
     // by findPython3(): /opt/homebrew/bin/python3.12 first, then PATH.

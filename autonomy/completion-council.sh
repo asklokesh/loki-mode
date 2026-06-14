@@ -1775,7 +1775,15 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
                     _cm_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
                 fi
-                verdict=$(echo "$prompt" | claude "${_cm_argv[@]}" -p 2>/dev/null | tail -20)
+                # caveman HARD-SUPPRESS (parsed output): this council vote is
+                # parsed for "VOTE: APPROVE|REJECT|CANNOT_VALIDATE". A globally-
+                # active caveman would compress/reword that line and silently flip
+                # the vote to the default REJECT, corrupting completion detection.
+                # Disable caveman UNCONDITIONALLY with CAVEMAN_DEFAULT_MODE=off.
+                # Set inline (not via a helper) so the carve-out holds even when
+                # this file is sourced standalone and the helpers are out of scope.
+                # Inlined on `claude` only (does not cross the pipe). No-op absent.
+                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)
@@ -1870,7 +1878,11 @@ REASON: your reasoning"
                 if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
                     _co_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
                 fi
-                verdict=$(echo "$prompt" | claude "${_co_argv[@]}" -p 2>/dev/null | tail -20)
+                # caveman HARD-SUPPRESS (parsed output): the devil's-advocate
+                # (contrarian) vote is parsed for "VOTE:". Disable caveman
+                # unconditionally so compression cannot flip the contrarian vote.
+                # Inlined on `claude` only (does not cross the pipe). No-op absent.
+                verdict=$(echo "$prompt" | env CAVEMAN_DEFAULT_MODE=off claude "${_co_argv[@]}" -p 2>/dev/null | tail -20)
             fi
             ;;
         codex)

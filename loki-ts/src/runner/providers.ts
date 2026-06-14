@@ -28,6 +28,8 @@ import {
   ensureClaudeHelpCache,
   sessionStampArgv,
   sessionResumeArgv,
+  cavemanActivateEnv,
+  cavemanSuppressEnv,
 } from "../providers/claude_flags.ts";
 import type {
   ProviderInvocation,
@@ -255,7 +257,22 @@ export function claudeProvider(): ProviderInvoker {
         call.prompt,
       ];
 
-      const r = await shellRun(argv, { cwd: call.cwd });
+      // caveman output-token compression. Mirrors the run.sh main-loop wiring.
+      // The MAIN RARV loop (call.mainLoop) is FREE-FORM generation -> ACTIVATE
+      // at the configured level (when warranted). Every OTHER claudeProvider
+      // call is a parsed-output subcall (council judge, etc.) -> HARD-SUPPRESS
+      // with "off". An EMPTY value is NOT inert (caveman treats it as unset and
+      // falls back to the user default), so we set the var ONLY when we have a
+      // concrete level, and unconditionally set "off" on the suppress path.
+      let cavemanEnv: Record<string, string> | undefined;
+      if (call.mainLoop) {
+        const lvl = cavemanActivateEnv();
+        if (lvl) cavemanEnv = { CAVEMAN_DEFAULT_MODE: lvl };
+      } else {
+        cavemanEnv = { CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() };
+      }
+
+      const r = await shellRun(argv, { cwd: call.cwd, env: cavemanEnv });
       await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
 
       return {

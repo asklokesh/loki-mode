@@ -38,6 +38,7 @@ import {
   effortForTier,
   ensureClaudeHelpCache,
   reviewAllowlistArgv,
+  cavemanSuppressEnv,
 } from "../providers/claude_flags.ts";
 
 export type AgentSpec = {
@@ -188,8 +189,18 @@ export function buildDevilsAdvocateAgent(
 }
 
 // Default runner: spawns claude via Bun.spawn. Test code injects a fake.
+//
+// caveman HARD-SUPPRESS (parsed output): council votes are a trust gate parsed
+// for VOTE/findings. A globally-active caveman would compress/reword the verdict
+// and silently flip it, so this spawn UNCONDITIONALLY disables caveman with
+// CAVEMAN_DEFAULT_MODE=off (mirrors the bash council subcalls in
+// completion-council.sh). No-op when caveman is absent.
 async function defaultClaudeRunner(argv: string[]): Promise<{ stdout: string; exitCode: number }> {
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(argv, {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() },
+  });
   const stdout = await new Response(proc.stdout).text();
   const exitCode = await proc.exited;
   return { stdout, exitCode };
