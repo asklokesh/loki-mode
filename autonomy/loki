@@ -77,6 +77,35 @@ if [ -f "$_LOKI_SCRIPT_DIR/provider-offer.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/provider-offer.sh"
 fi
 
+# caveman ACTIVATION level for FREE-FORM (narration) claude subcalls in this CLI
+# (migration phase exec, migration docs-gen, heal execution). Prints the level to
+# pass as CAVEMAN_DEFAULT_MODE when activation is warranted, else nothing. autonomy/
+# loki does NOT source claude-flags.sh globally, so this lazily sources it on demand
+# (same pattern as the ultrareview/workflows gates and autonomy/lib/voter-agents.sh).
+# The gate (provider==claude, claude on PATH, opt-in, no legacy-completion-match,
+# no-raise of a user's lower global level) lives entirely in loki_caveman_activate_env;
+# this is just the lazy-source wrapper. Degrades to empty (bare invocation, byte-
+# identical to pre-caveman) when the lib is missing or the helper is unavailable.
+# NEVER use this for captured-output / parsed subcalls -- those HARD-SUPPRESS with
+# CAVEMAN_DEFAULT_MODE=off (see _docs_invoke_provider and run.sh:3286).
+_loki_caveman_narration_level() {
+    if ! declare -F loki_caveman_activate_env >/dev/null 2>&1; then
+        local _cm_lib=""
+        if [ -f "${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh" ]; then
+            _cm_lib="${_LOKI_SCRIPT_DIR}/lib/claude-flags.sh"
+        elif [ -f "$(dirname "$0")/lib/claude-flags.sh" ]; then
+            _cm_lib="$(dirname "$0")/lib/claude-flags.sh"
+        fi
+        if [ -n "$_cm_lib" ]; then
+            # shellcheck source=autonomy/lib/claude-flags.sh
+            . "$_cm_lib" 2>/dev/null || true
+        fi
+    fi
+    if declare -F loki_caveman_activate_env >/dev/null 2>&1; then
+        loki_caveman_activate_env
+    fi
+}
+
 # Quickstart guided interview (v7.29.0): provides cmd_quickstart and its
 # deterministic offline template matcher. Functions-only file (no top-level
 # command), sourced here so the dispatch case can call cmd_quickstart. Composes
@@ -11499,9 +11528,19 @@ Tasks:
         local phase_exit=0
         if [ -n "$phase_prompt" ]; then
             local provider_name="${LOKI_PROVIDER:-claude}"
+            # caveman ACTIVATION (free-form narration): the phase exec writes its
+            # deliverables via tools; stdout is piped to python and only DISPLAYED,
+            # never captured/parsed for a verdict. So compress the narration tokens
+            # at the configured level when warranted (mirrors run.sh:13167 main loop).
+            # An EMPTY CAVEMAN_DEFAULT_MODE is NOT inert (caveman falls back to the
+            # user global default), so when activation is not warranted we must NOT
+            # set the var at all (bare branch), keeping the call byte-identical to
+            # pre-caveman. No-op when caveman is absent.
+            local _loki_mig_cm=""
+            _loki_mig_cm="$(_loki_caveman_narration_level)"
             case "$provider_name" in
                 claude)
-                    { (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1) | \
+                    { (cd "$codebase_path" && if [ -n "$_loki_mig_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_mig_cm" claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$phase_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                         while IFS= read -r line; do
                             # Extract text from stream-json
                             if echo "$line" | python3 -c "
@@ -11667,9 +11706,15 @@ IMPORTANT RULES:
 
         local doc_exit=0
         local provider_name="${LOKI_PROVIDER:-claude}"
+        # caveman ACTIVATION (free-form narration): docs-gen writes the docs via
+        # tools; stdout is piped to python and only DISPLAYED, never captured/parsed.
+        # Compress narration at the configured level when warranted; empty -> bare
+        # branch, byte-identical to pre-caveman (empty mode is NOT inert). No-op absent.
+        local _loki_doc_cm=""
+        _loki_doc_cm="$(_loki_caveman_narration_level)"
         case "$provider_name" in
             claude)
-                { (cd "$codebase_path" && claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1) | \
+                { (cd "$codebase_path" && if [ -n "$_loki_doc_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_doc_cm" claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; else claude --dangerously-skip-permissions -p "$doc_prompt" --output-format stream-json --verbose 2>&1; fi) | \
                     while IFS= read -r line; do
                         if echo "$line" | python3 -c "
 import sys, json
@@ -12290,10 +12335,17 @@ Begin healing now. Follow the RARV cycle for each action."
 
     # Execute with the appropriate provider
     local heal_exit=0
+    # caveman ACTIVATION (free-form narration): heal execution writes its artifacts
+    # (.loki/healing/*, characterization tests) via tools; stdout is piped to python
+    # and only DISPLAYED, never captured/parsed for a verdict. Compress narration at
+    # the configured level when warranted; empty -> bare branch, byte-identical to
+    # pre-caveman (empty mode is NOT inert). No-op when caveman is absent.
+    local _loki_heal_cm=""
+    _loki_heal_cm="$(_loki_caveman_narration_level)"
     case "$provider" in
         claude)
             local run_args=(--dangerously-skip-permissions -p "$heal_prompt" --output-format stream-json --verbose)
-            (cd "$codebase_path" && claude "${run_args[@]}" 2>&1) | \
+            (cd "$codebase_path" && if [ -n "$_loki_heal_cm" ]; then CAVEMAN_DEFAULT_MODE="$_loki_heal_cm" claude "${run_args[@]}" 2>&1; else claude "${run_args[@]}" 2>&1; fi) | \
                 while IFS= read -r line; do
                     if echo "$line" | python3 -c "
 import sys, json
@@ -13719,8 +13771,11 @@ tokens_per_tier = {
 # row from a stale \$0.25/\$1.25 (Haiku 3.5) to the published Claude Haiku 4.5
 # price of \$1/\$5 (anthropic.com/news/claude-haiku-4-5), so all four rows now
 # match the three canonical model-keyed tables (run.sh pricing.json, run.sh
-# check_budget_limit, dashboard _DEFAULT_PRICING) and a fable-forced quote
-# honestly shows MORE than Opus, not less.
+# check_budget_limit, dashboard _DEFAULT_PRICING). The Fable row (\$10/\$50) is
+# kept as the reference price, but since v7.39.1 fable is unavailable at the API
+# and a fable pin RESOLVES to Opus everywhere -- so a fable-pinned run both
+# dispatches AND quotes Opus (\$5/\$25), matching the runner. The Fable price row
+# is only reachable as an explicit advisory reference, not via a session pin.
 pricing = {
     'Fable':  {'input': 10.00, 'output': 50.00},
     'Opus':   {'input': 5.00, 'output': 25.00},
@@ -23691,7 +23746,16 @@ _docs_invoke_provider() {
 
     case "$provider" in
         claude)
-            result=$($t_prefix claude -p "$prompt" 2>/dev/null) || exit_code=$?
+            # caveman HARD-SUPPRESS (captured deliverable): the claude stdout IS
+            # the generated doc -- it is captured here and written verbatim to a
+            # markdown file by both callers (loki:23869, loki:24239). A globally
+            # active caveman would compress this stdout, corrupting the generated
+            # CLAUDE.md / DECISIONS.md / README into caveman-speak. So disable
+            # caveman unconditionally on this site (mirrors run.sh:3286, the
+            # structurally identical captured `claude -p` resolution subcall).
+            # env-prefix form because of the optional $t_prefix timeout wrapper.
+            # No-op when caveman is absent.
+            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         codex)
             result=$($t_prefix codex exec --full-auto "$prompt" 2>/dev/null) || exit_code=$?

@@ -476,6 +476,24 @@ export function cavemanLevel(): string {
   return process.env["LOKI_CAVEMAN_LEVEL"] || "full";
 }
 
+// #593 intelligent compression-level inference. Mirror of
+// _loki_caveman_infer_level in autonomy/lib/claude-flags.sh. Infer the caveman
+// level from the run's existing RARV-tier signal (planning|development|fast) so
+// the level is DECIDED by inspecting the work, not asked of the user.
+//
+// INFERENCE RULE (deterministic, conservative-for-accuracy):
+//   planning    (Reason -- architecture / design / nuanced reasoning) -> lite
+//   development (Act / Reflect -- implementation, the prior default)   -> full
+//   fast        (Verify -- testing / validation, more routine)         -> full
+//   unknown / empty tier                                               -> full
+// The auto ceiling is "full": inference NEVER selects ultra; ultra is reachable
+// only via an explicit LOKI_CAVEMAN_LEVEL override. "lite" on planning protects
+// the highest-nuance output; unknown tiers fall back to the SAFER "full".
+export function cavemanInferLevel(tier?: string): string {
+  const t = tier ?? process.env["LOKI_CURRENT_TIER"] ?? "";
+  return t === "planning" ? "lite" : "full";
+}
+
 // Capability gate: provider is Claude AND the opt-out knob is not set. (The bash
 // route additionally checks `claude` on PATH + installed/bootstrappable; on the
 // Bun route the CLI presence is established by the runner before this is reached,
@@ -524,11 +542,25 @@ function cavemanLevelRank(level: string): number {
 // lower level rather than raising it. The bash orchestrator captures the user's
 // pre-existing mode into LOKI_CAVEMAN_USER_MODE before exporting the default-off,
 // and the Bun runner inherits it. A user "off" means opt-out: no activation.
-export function cavemanActivateEnv(): string | null {
+//
+// #593 intelligent inference (parity with bash loki_caveman_activate_env): when
+// the user did NOT set LOKI_CAVEMAN_LEVEL explicitly, the level is INFERRED from
+// the run's RARV tier (cavemanInferLevel); when the user DID set it, that value
+// overrides the inference (opt-out escape hatch). The no-raise guard then runs
+// unchanged on whichever base was chosen. The runner passes call.tier here so
+// both routes infer from the identical tier vocabulary.
+export function cavemanActivateEnv(tier?: string): string | null {
   if (!cavemanSupported()) return null;
   if (!cavemanEnabled()) return null;
-  const lokiLevel = cavemanLevel();
+  // Explicit user value overrides inference; else infer from the RARV tier.
+  const lokiLevel = process.env["LOKI_CAVEMAN_LEVEL"]
+    ? cavemanLevel()
+    : cavemanInferLevel(tier);
   const userMode = process.env["LOKI_CAVEMAN_USER_MODE"];
+  // A user global "off" means opt-out: no activation (parity with the bash
+  // loki_caveman_activate_env, which returns empty here -- previously the TS
+  // route fell through and compressed anyway, ignoring the user's opt-out).
+  if (userMode === "off") return null;
   if (userMode && userMode !== "off") {
     // Never raise: if the user's level ranks lower than Loki's, honor theirs.
     if (cavemanLevelRank(userMode) > 0 && cavemanLevelRank(userMode) < cavemanLevelRank(lokiLevel)) {

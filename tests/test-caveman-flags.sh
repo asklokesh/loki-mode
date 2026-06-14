@@ -125,7 +125,13 @@ else ok "LOKI_LEGACY_COMPLETION_MATCH=true -> activation disabled (moat guard)";
 av="$(loki_caveman_activate_env)"
 [ "$av" = "full" ] && ok "activate_env = full when warranted" || bad "activate_env warranted" "got [$av]"
 
-av="$(LOKI_CAVEMAN_LEVEL=ultra loki_caveman_activate_env)"
+# Explicit LOKI_CAVEMAN_LEVEL is captured at SOURCE time (#593), so model a real
+# process: set the var, then source, then call (the production path -- run.sh
+# sources claude-flags.sh once at startup with the user's env already present).
+av="$(LOKI_CAVEMAN_LEVEL=ultra bash -c '
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
 [ "$av" = "ultra" ] && ok "activate_env honors LOKI_CAVEMAN_LEVEL=ultra" || bad "activate_env level" "got [$av]"
 
 av="$(LOKI_CAVEMAN=0 loki_caveman_activate_env)"
@@ -148,8 +154,12 @@ sup="$(LOKI_CAVEMAN=1 LOKI_CAVEMAN_LEVEL=ultra LOKI_PROVIDER=claude loki_caveman
 [ "$sup" = "off" ] \
   && ok "suppress_env stays off when activation forced ON (determinism)" \
   || bad "suppress under forced-on" "got [$sup]"
-# Non-vacuity: under the SAME mutation, activation DID change.
-av="$(LOKI_CAVEMAN=1 LOKI_CAVEMAN_LEVEL=ultra LOKI_PROVIDER=claude loki_caveman_activate_env)"
+# Non-vacuity: under the SAME mutation, activation DID change (source-time capture
+# of the explicit level, mirroring the production path).
+av="$(LOKI_CAVEMAN=1 LOKI_CAVEMAN_LEVEL=ultra LOKI_PROVIDER=claude bash -c '
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
 [ "$av" = "ultra" ] \
   && ok "non-vacuity: activate_env = ultra under the same mutation" \
   || bad "non-vacuity" "activate_env did not change, got [$av]"
@@ -167,30 +177,131 @@ sup="$(LOKI_PROVIDER=codex loki_caveman_suppress_env)"
 # 5b. NO-RAISE level fix (R2 finding 4): never silently RAISE a user's lower
 #     global caveman level up to full. activate_env honors LOKI_CAVEMAN_USER_MODE.
 # ---------------------------------------------------------------------------
+# The explicit Loki level is captured at SOURCE time (#593), so model the real
+# process for these no-raise cases too (set + source + call). This proves an
+# EXPLICIT level still respects no-raise -- explicit overrides the inference, not
+# the no-raise guard.
+_cm_no_raise() { # $1=user_mode $2=loki_level -> emits activate_env result
+  LOKI_CAVEMAN_USER_MODE="$1" LOKI_CAVEMAN_LEVEL="$2" bash -c '
+    export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+    source "'"$FLAGS_SH"'"
+    loki_caveman_activate_env'
+}
 # User globally set a LOWER level (lite) -> activation must NOT raise it to full.
-av="$(LOKI_CAVEMAN_USER_MODE=lite LOKI_CAVEMAN_LEVEL=full loki_caveman_activate_env)"
+av="$(_cm_no_raise lite full)"
 [ "$av" = "lite" ] \
   && ok "no-raise: user lite + Loki full -> activate at lite (respect user)" \
   || bad "no-raise lower" "expected lite, got [$av]"
 
 # User globally set a HIGHER level (ultra) -> we do NOT exceed our own ceiling
 # (full); a higher user level cannot push us above the configured Loki level.
-av="$(LOKI_CAVEMAN_USER_MODE=ultra LOKI_CAVEMAN_LEVEL=full loki_caveman_activate_env)"
+av="$(_cm_no_raise ultra full)"
 [ "$av" = "full" ] \
   && ok "no-raise: user ultra + Loki full -> stays at full (ceiling honored)" \
   || bad "no-raise ceiling" "expected full, got [$av]"
 
 # User globally set off -> opted out entirely; activation produces nothing.
-av="$(LOKI_CAVEMAN_USER_MODE=off LOKI_CAVEMAN_LEVEL=full loki_caveman_activate_env)"
+av="$(_cm_no_raise off full)"
 [ -z "$av" ] \
   && ok "no-raise: user off -> activation empty (opt-out respected)" \
   || bad "no-raise user-off" "expected empty, got [$av]"
 
 # Unknown / malformed user mode -> ignored (rank -1); falls back to Loki level.
-av="$(LOKI_CAVEMAN_USER_MODE=bogus LOKI_CAVEMAN_LEVEL=full loki_caveman_activate_env)"
+av="$(_cm_no_raise bogus full)"
 [ "$av" = "full" ] \
   && ok "no-raise: malformed user mode ignored -> Loki level (full)" \
   || bad "no-raise malformed" "expected full, got [$av]"
+
+# ---------------------------------------------------------------------------
+# 5c. #593 INTELLIGENT AUTO-SELECTION: with LOKI_CAVEMAN_LEVEL UNSET, the level
+#     is INFERRED from the RARV tier (LOKI_CURRENT_TIER). Explicit
+#     LOKI_CAVEMAN_LEVEL overrides inference. Inference is deterministic +
+#     conservative (auto ceiling = full; ultra only via explicit override).
+#
+#     NOTE: explicit-vs-inferred is decided by LOKI_CAVEMAN_LEVEL_USERSET, captured
+#     at SOURCE time (before the ":-full" default fills the var). The module was
+#     sourced at the top of this file WITHOUT LOKI_CAVEMAN_LEVEL, so USERSET="" in
+#     the parent shell and inference is active -- exactly the production default
+#     (run.sh calls loki_caveman_activate_env bare; the user's env var is present
+#     at startup source time). To model an EXPLICIT user level faithfully we set
+#     the var, then source, then call in a SUBSHELL (a fresh process), instead of
+#     a per-call env prefix that the source-time capture cannot observe.
+# ---------------------------------------------------------------------------
+# Inference fires: planning tier -> lite (protect architecture/design nuance).
+av="$(LOKI_CURRENT_TIER=planning bash -c '
+  unset LOKI_CAVEMAN_LEVEL
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "lite" ] \
+  && ok "#593 infer: planning tier -> lite (inference fires, protects nuance)" \
+  || bad "#593 infer planning" "expected lite, got [$av]"
+
+# Inference: development tier -> full (implementation, the prior default).
+av="$(LOKI_CURRENT_TIER=development bash -c '
+  unset LOKI_CAVEMAN_LEVEL
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "full" ] \
+  && ok "#593 infer: development tier -> full" \
+  || bad "#593 infer development" "expected full, got [$av]"
+
+# Inference: fast tier -> full (verify/testing is routine but kept conservative).
+av="$(LOKI_CURRENT_TIER=fast bash -c '
+  unset LOKI_CAVEMAN_LEVEL
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "full" ] \
+  && ok "#593 infer: fast tier -> full (conservative)" \
+  || bad "#593 infer fast" "expected full, got [$av]"
+
+# Inference: unknown / empty tier -> full (SAFER established default).
+av="$(LOKI_CURRENT_TIER=bogus bash -c '
+  unset LOKI_CAVEMAN_LEVEL
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "full" ] \
+  && ok "#593 infer: unknown tier -> full (conservative fallback)" \
+  || bad "#593 infer unknown" "expected full, got [$av]"
+
+av="$(bash -c '
+  unset LOKI_CAVEMAN_LEVEL LOKI_CURRENT_TIER
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "full" ] \
+  && ok "#593 infer: no tier at all -> full (conservative fallback)" \
+  || bad "#593 infer no-tier" "expected full, got [$av]"
+
+# Explicit LOKI_CAVEMAN_LEVEL overrides inference: ultra wins even on planning,
+# where inference would pick lite. Proves the opt-out escape hatch beats the rule.
+av="$(LOKI_CURRENT_TIER=planning LOKI_CAVEMAN_LEVEL=ultra bash -c '
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "ultra" ] \
+  && ok "#593 override: explicit ultra beats inferred lite on planning" \
+  || bad "#593 override" "expected ultra, got [$av]"
+
+# Explicit level still respects no-raise: user global lite + explicit full -> lite
+# (explicit overrides the INFERENCE, not the no-raise guard).
+av="$(LOKI_CURRENT_TIER=development LOKI_CAVEMAN_USER_MODE=lite LOKI_CAVEMAN_LEVEL=full bash -c '
+  export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"
+  source "'"$FLAGS_SH"'"
+  loki_caveman_activate_env')"
+[ "$av" = "lite" ] \
+  && ok "#593 explicit + no-raise: user lite + explicit full -> lite (no-raise still holds)" \
+  || bad "#593 explicit no-raise" "expected lite, got [$av]"
+
+# Inference determinism: same signal -> same level across repeated calls.
+av1="$(LOKI_CURRENT_TIER=planning bash -c 'unset LOKI_CAVEMAN_LEVEL; export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"; source "'"$FLAGS_SH"'"; loki_caveman_activate_env')"
+av2="$(LOKI_CURRENT_TIER=planning bash -c 'unset LOKI_CAVEMAN_LEVEL; export PATH="'"$STUB_BIN"':$PATH" CLAUDE_CONFIG_DIR="'"$CLAUDE_DIR"'"; source "'"$FLAGS_SH"'"; loki_caveman_activate_env')"
+[ "$av1" = "$av2" ] && [ "$av1" = "lite" ] \
+  && ok "#593 determinism: planning -> lite on repeated calls" \
+  || bad "#593 determinism" "got [$av1] then [$av2]"
 
 # ---------------------------------------------------------------------------
 # 6. THE MOAT GUARANTEE: tree-wide default-suppress + completeness audit

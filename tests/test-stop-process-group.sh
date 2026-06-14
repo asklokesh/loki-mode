@@ -52,6 +52,10 @@ grep -q 'LOKI-AUTONOMY-AGENT' "$REPO_ROOT/providers/claude.sh" \
 # both stop endpoints call group-kill
 [ "$(grep -c '_killpg_project, _p' "$REPO_ROOT/dashboard/server.py")" -ge 2 ] \
   && ok "both stop endpoints invoke group-kill" || bad "group-kill not wired into both endpoints"
+# completion path self-reaps its own process group (orphan-on-completion fix)
+grep -q 'reap_own_process_group' "$REPO_ROOT/autonomy/run.sh" \
+  && ok "run.sh defines+calls reap_own_process_group (completion self-reap)" \
+  || bad "run.sh missing completion self-reap"
 
 bash -n "$REPO_ROOT/autonomy/loki" && ok "autonomy/loki passes bash -n" || bad "loki syntax error"
 bash -n "$REPO_ROOT/autonomy/run.sh" && ok "autonomy/run.sh passes bash -n" || bad "run.sh syntax error"
@@ -220,6 +224,67 @@ print("GUARD_OK" if all(checks) else f"GUARD_FAIL: {checks}")
 PYEOF
 )
 [ "$GRES" = "GUARD_OK" ] && ok "_killpg_project refuses empty/0/1/negative/own-group pgids (no suicide)" || bad "kill guards: $GRES"
+
+# --- F: completion self-reap (orphan-on-completion regression) ----------------
+# A NORMAL completion (council stop / max-iterations / completion promise) must
+# reap THIS run's process group the same way the STOP signal does. Before the
+# fix, the completion exit reaped the app-runner but left the provider agent
+# (claude) and any reparented subagent alive -- the ~27-minute orphan reported
+# in brownfield E2E. This drives the actual reap_own_process_group() function
+# (sourced from run.sh) against a real SIGTERM-ignoring in-group survivor, the
+# orchestrator itself, and a FOREIGN run (separate .loki, separate group).
+if command -v perl >/dev/null 2>&1; then
+    FWORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-pgtest-reap-XXXXXX")
+    mkdir -p "$FWORK/.loki/pids"
+    cat > "$FWORK/leader.sh" <<LEADEOF
+#!/usr/bin/env bash
+set -u
+cd "$FWORK"
+export LOKI_OWN_SESSION=1
+export TARGET_DIR="$FWORK"
+perl -e '\$0="claude --dangerously-skip-permissions [LOKI-AUTONOMY-AGENT]"; \$SIG{TERM}="IGNORE"; sleep 120;' &
+echo \$! > "$FWORK/.loki/agent.pid"
+ps -o pgid= -p \$\$ | tr -d ' ' > "$FWORK/.loki/loki.pgid"
+echo \$\$ > "$FWORK/.loki/leader.pid"
+source "$REPO_ROOT/autonomy/run.sh" >/dev/null 2>&1 || true
+reap_own_process_group
+echo done > "$FWORK/.loki/reap.done"
+sleep 30
+LEADEOF
+    chmod +x "$FWORK/leader.sh"
+    # FOREIGN run: separate .loki, its OWN session/group, TERM-ignoring claude.
+    perl -e '$0="claude --dangerously-skip-permissions [LOKI-AUTONOMY-AGENT] foreign"; $SIG{TERM}="IGNORE"; sleep 120;' &
+    FREIGN_PID=$!
+    disown 2>/dev/null || true
+    launch_session_leader bash "$FWORK/leader.sh"
+    _t=0; while [ "$_t" -lt 120 ] && [ ! -f "$FWORK/.loki/reap.done" ]; do sleep 0.1; _t=$((_t+1)); done
+    F_AGENT=$(cat "$FWORK/.loki/agent.pid" 2>/dev/null)
+    F_LEADER=$(cat "$FWORK/.loki/leader.pid" 2>/dev/null)
+    sleep 1
+    if [ -f "$FWORK/.loki/reap.done" ] && [ -n "$F_AGENT" ] && ! kill -0 "$F_AGENT" 2>/dev/null; then
+        ok "completion reap kills the in-group SIGTERM-ignoring agent (no orphan)"
+    else
+        bad "completion reap left the agent alive (orphan-on-completion bug)"
+    fi
+    if [ -n "$F_LEADER" ] && kill -0 "$F_LEADER" 2>/dev/null; then
+        ok "completion reap spares the orchestrator (\$\$) so it can exit cleanly"
+    else
+        bad "completion reap killed the orchestrator itself"
+    fi
+    if kill -0 "$FREIGN_PID" 2>/dev/null; then
+        ok "completion reap is foreign-safe (different .loki/pgid agent untouched)"
+    else
+        bad "completion reap killed a FOREIGN run -- foreign-safety violation"
+    fi
+    kill -KILL "$F_AGENT" "$F_LEADER" "$FREIGN_PID" 2>/dev/null || true
+    if [ -n "$F_LEADER" ]; then
+        _flpg=$(ps -o pgid= -p "$F_LEADER" 2>/dev/null | tr -d ' ')
+        [ -n "$_flpg" ] && kill -KILL -- -"$_flpg" 2>/dev/null || true
+    fi
+    rm -rf "$FWORK" 2>/dev/null || true
+else
+    ok "completion self-reap behavioral test skipped (perl unavailable)"
+fi
 
 # --- no em dashes in changed files -------------------------------------------
 if grep -lP '\xe2\x80\x94' "$REPO_ROOT/autonomy/loki" "$REPO_ROOT/autonomy/run.sh" \

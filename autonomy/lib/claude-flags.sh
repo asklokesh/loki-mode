@@ -527,8 +527,22 @@ LOKI_CAVEMAN_VERSION="${LOKI_CAVEMAN_VERSION:-1.9.0}"
 
 # The compression level for free-form activation. Maps directly to caveman's
 # CAVEMAN_DEFAULT_MODE values: lite | full | ultra | wenyan | wenyan-lite |
-# wenyan-full | wenyan-ultra. Default "full" (the founder-locked global default).
-# Never "off" here -- "off" is the suppression value, not an activation level.
+# wenyan-full | wenyan-ultra. Never "off" here -- "off" is the suppression value,
+# not an activation level.
+#
+# v7.x #593 -- INTELLIGENT AUTO-SELECTION (no new user knob): when the user does
+# NOT set LOKI_CAVEMAN_LEVEL explicitly, the level is INFERRED per-invocation from
+# the run's existing RARV-tier signal (see _loki_caveman_infer_level). When the
+# user DOES set it, that value overrides the inference entirely (opt-out escape
+# hatch). Capture set-ness BEFORE the ":-full" default clobbers it -- once the
+# default fills the var, "user set full" and "defaulted to full" are
+# indistinguishable, so the inference would silently never fire. ${var+set} is
+# non-empty only when the var was genuinely set (even to empty). The "full"
+# default is kept so the public var still reads "full" for external readers and
+# so a child re-source re-derives USERSET correctly (unexported default).
+if [ -z "${LOKI_CAVEMAN_LEVEL_USERSET+x}" ]; then
+    LOKI_CAVEMAN_LEVEL_USERSET="${LOKI_CAVEMAN_LEVEL+set}"
+fi
 LOKI_CAVEMAN_LEVEL="${LOKI_CAVEMAN_LEVEL:-full}"
 
 # ---------- DEFAULT-SUPPRESS: off by construction, tree-wide ----------
@@ -562,6 +576,34 @@ if [ -z "${LOKI_CAVEMAN_USER_MODE+x}" ]; then
 fi
 export LOKI_CAVEMAN_USER_MODE
 export CAVEMAN_DEFAULT_MODE=off
+
+# ---------- v7.x #593 intelligent compression-level inference ----------
+# Infer the caveman compression level from the run's existing RARV-tier signal,
+# so the level is DECIDED by inspecting the work rather than asked of the user.
+# No new user input is introduced: the tier already drives effort/model selection
+# (loki_effort_for_tier, get_rarv_tier). On the bash route the tier is read from
+# LOKI_CURRENT_TIER (exported by run_autonomous each iteration); the TS mirror
+# (cavemanActivateEnv) receives the same tier vocabulary (planning|development|
+# fast) via call.tier, so both routes infer identically from the same signal.
+#
+# INFERENCE RULE (deterministic, conservative-for-accuracy):
+#   planning    (Reason phase -- architecture / design / nuanced reasoning) -> lite
+#   development (Act / Reflect -- implementation, the prior default)         -> full
+#   fast        (Verify phase -- testing / validation, more routine)         -> full
+#   unknown / empty tier                                                     -> full
+# The auto ceiling is "full": inference NEVER selects ultra. ultra is reachable
+# only via an explicit LOKI_CAVEMAN_LEVEL override (the opt-out escape hatch), so
+# the autonomous path can never compress hard enough to lose technical nuance.
+# "lite" on planning protects the highest-nuance output (architecture/design);
+# everything else stays at the established "full" default. When the tier is
+# unknown we pick the SAFER (established) "full", never something more aggressive.
+_loki_caveman_infer_level() {
+    local tier="${1:-${LOKI_CURRENT_TIER:-}}"
+    case "$tier" in
+        planning) printf '%s' "lite" ;;
+        *)        printf '%s' "full" ;;
+    esac
+}
 
 # Rank a caveman mode by compression aggressiveness for the no-raise comparison.
 # Higher number = more aggressive (drops more nuance). "off" is the floor; unknown
@@ -656,7 +698,17 @@ loki_caveman_enabled() {
 loki_caveman_activate_env() {
     loki_caveman_supported || return 0
     loki_caveman_enabled   || return 0
-    local level="${LOKI_CAVEMAN_LEVEL:-full}"
+    # #593: the level is the EXPLICIT user value when LOKI_CAVEMAN_LEVEL was set
+    # (override / opt-out escape hatch), else the INFERRED level from the RARV
+    # tier. The no-raise guard below then runs unchanged on this base, so an
+    # explicit level is still lowered toward a user's lower global mode exactly
+    # as before -- "override" means override the inference, not the no-raise.
+    local level
+    if [ -n "${LOKI_CAVEMAN_LEVEL_USERSET:-}" ]; then
+        level="${LOKI_CAVEMAN_LEVEL:-full}"
+    else
+        level="$(_loki_caveman_infer_level)"
+    fi
     # Respect (never exceed) a user's explicitly-lower global level. A user who
     # globally set CAVEMAN_DEFAULT_MODE=off opted OUT of compression entirely;
     # honor that by activating nothing (empty -> bare claude invocation).

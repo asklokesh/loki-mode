@@ -21,6 +21,7 @@ import {
   cavemanEnabled,
   cavemanLevel,
   cavemanActivateEnv,
+  cavemanInferLevel,
   cavemanSuppressEnv,
   CAVEMAN_PINNED_VERSION,
 } from "../../src/providers/claude_flags.ts";
@@ -30,6 +31,8 @@ const KNOBS = [
   "LOKI_CAVEMAN_LEVEL",
   "LOKI_PROVIDER",
   "LOKI_LEGACY_COMPLETION_MATCH",
+  "LOKI_CURRENT_TIER",
+  "LOKI_CAVEMAN_USER_MODE",
 ] as const;
 
 describe("caveman_flags predicates", () => {
@@ -112,6 +115,66 @@ describe("caveman_flags predicates", () => {
 
     process.env["LOKI_LEGACY_COMPLETION_MATCH"] = "true";
     expect(cavemanActivateEnv()).toBeNull();
+  });
+
+  // ---- #593 intelligent compression-level inference ----------------------
+  it("#593 infer rule: planning -> lite, development/fast/unknown -> full", () => {
+    // Deterministic table. planning protects nuance (lite); everything else and
+    // the unknown/empty fallback stay at the conservative established full.
+    expect(cavemanInferLevel("planning")).toBe("lite");
+    expect(cavemanInferLevel("development")).toBe("full");
+    expect(cavemanInferLevel("fast")).toBe("full");
+    expect(cavemanInferLevel("bogus")).toBe("full");
+    expect(cavemanInferLevel("")).toBe("full");
+    expect(cavemanInferLevel(undefined)).toBe("full");
+  });
+
+  it("#593 infer is deterministic (same tier -> same level repeatedly)", () => {
+    expect(cavemanInferLevel("planning")).toBe(cavemanInferLevel("planning"));
+    expect(cavemanInferLevel("development")).toBe(cavemanInferLevel("development"));
+  });
+
+  it("#593 activate INFERS from the passed tier when LOKI_CAVEMAN_LEVEL unset", () => {
+    // No explicit level set -> inference fires from the tier argument.
+    expect(cavemanActivateEnv("planning")).toBe("lite");
+    expect(cavemanActivateEnv("development")).toBe("full");
+    expect(cavemanActivateEnv("fast")).toBe("full");
+    // Unknown / no tier -> conservative full (matches the bash route + line 99).
+    expect(cavemanActivateEnv("bogus")).toBe("full");
+    expect(cavemanActivateEnv()).toBe("full");
+  });
+
+  it("#593 activate reads LOKI_CURRENT_TIER when no tier arg is passed (env fallback)", () => {
+    // Parity with the bash route, which reads LOKI_CURRENT_TIER from the env.
+    process.env["LOKI_CURRENT_TIER"] = "planning";
+    expect(cavemanActivateEnv()).toBe("lite");
+    process.env["LOKI_CURRENT_TIER"] = "development";
+    expect(cavemanActivateEnv()).toBe("full");
+  });
+
+  it("#593 explicit LOKI_CAVEMAN_LEVEL overrides the inference (opt-out hatch)", () => {
+    // Explicit ultra wins even on a planning tier where inference picks lite.
+    process.env["LOKI_CAVEMAN_LEVEL"] = "ultra";
+    expect(cavemanActivateEnv("planning")).toBe("ultra");
+    process.env["LOKI_CURRENT_TIER"] = "planning";
+    expect(cavemanActivateEnv()).toBe("ultra");
+  });
+
+  it("#593 explicit level still respects no-raise (override is of inference, not no-raise)", () => {
+    // User global lite + explicit full on a development tier -> lite (no-raise).
+    process.env["LOKI_CAVEMAN_LEVEL"] = "full";
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "lite";
+    expect(cavemanActivateEnv("development")).toBe("lite");
+  });
+
+  it("#593 inferred level also respects no-raise", () => {
+    // No explicit level (infer development -> full); user global lite -> lite.
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "lite";
+    expect(cavemanActivateEnv("development")).toBe("lite");
+    // Inferred lite on planning + user global off -> opt-out, null.
+    delete process.env["LOKI_CAVEMAN_USER_MODE"];
+    process.env["LOKI_CAVEMAN_USER_MODE"] = "off";
+    expect(cavemanActivateEnv("planning")).toBeNull();
   });
 });
 

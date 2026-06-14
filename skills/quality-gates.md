@@ -110,6 +110,34 @@ LOKI_HANDOFF_MD=1          # write a structured handoff doc to
 Optional: `LOKI_AUTO_LEARNINGS_EPISODE=1` also writes the learning into
 the Python episodic memory layer via `memory.engine.save_episode`.
 
+## Default-on verification-integrity gates (v7.41.1)
+
+These three gates are default-ON accuracy guards (opt-out, never opt-in).
+They close "verification theater" gaps where a gate could pass without
+actually verifying. Set each to its off value only to restore the older
+half-blind behavior.
+
+```bash
+LOKI_REVIEW_INCONCLUSIVE_BLOCK=1  # default 1. Treat a code-review round that
+                                  # produced no parseable VERDICT (NO_OUTPUT
+                                  # or zero real verdicts) as a BLOCK instead
+                                  # of a silent pass. Set 0 to disable.
+
+LOKI_COMPLETION_TEST_CAPTURE=1    # default 1. The verified-completion gate
+                                  # captures fresh test evidence when
+                                  # test-results.json is absent, instead of
+                                  # passing half-blind. Set 0 to disable.
+
+LOKI_AUTO_DOCS=true               # default true. Auto-generate the .loki/docs/
+                                  # suite in the loop before the documentation
+                                  # gate scores, instead of nagging the user to
+                                  # run 'loki docs generate'. Set false to disable.
+```
+
+The code-review diff also excludes `.loki/` and `.git/` (top-level and
+nested `**/.loki/**`) so reviewers score real source changes, not runtime
+state bloat. This is unconditional, not gated.
+
 ## Other opt-in environment flags (Release 3)
 
 Two more default-off flags added for hybrid search and parallel concurrency.
@@ -139,6 +167,13 @@ resolver, the USAGE.md regen). The suppression is by construction (one shared
 helper sets `CAVEMAN_DEFAULT_MODE=off` on every parsed call site), so compression
 can NEVER flip a verdict or completion decision.
 
+The compression level is auto-selected per iteration from the run's RARV tier
+(no user knob): planning iterations (architecture / design) compress at `lite` to
+protect nuance; development / fast / unknown iterations stay at the conservative
+`full`. Inference never picks `ultra` (auto ceiling = `full`); an explicit
+`LOKI_CAVEMAN_LEVEL` overrides the inference entirely, and the never-raise-a-
+user's-lower-global-level guard still applies.
+
 Claude-provider-only: on Codex / Cline / Aider the run is byte-identical to
 before. Vendor-less: Loki ships no copy of caveman and bootstraps the pinned
 version on demand (idempotent, cached under `.loki/`). Savings are real but
@@ -149,8 +184,10 @@ savings CLASS, never a dollar figure.
 LOKI_CAVEMAN=0                  # opt out (default on). Disables activation; the
                                 # parsed-subcall suppression still runs (it is a
                                 # harmless no-op when caveman is absent).
-LOKI_CAVEMAN_LEVEL=full         # compression level: lite | full (default) |
-                                # ultra | wenyan | wenyan-lite|full|ultra
+LOKI_CAVEMAN_LEVEL=full         # explicit override (default: auto-inferred from
+                                # the RARV tier). lite | full | ultra | wenyan |
+                                # wenyan-lite|full|ultra. Set it to opt out of
+                                # inference and pin one level.
 LOKI_CAVEMAN_VERSION=1.9.0      # pinned caveman version (upgrade by bumping)
 LOKI_CAVEMAN_AUTO_BOOTSTRAP=0   # disable the on-demand pinned install
 ```

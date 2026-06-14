@@ -136,6 +136,121 @@ HEALTH_EOF
     mv "$tmp_file" "$_APP_RUNNER_DIR/health.json"
 }
 
+# Re-derive a detection.json field (type/command) so we can rewrite it after a
+# port reconcile without threading those values through globals. Echoes the raw
+# string value (empty on miss). Mirrors the grep-based read style used by
+# app_runner_status.
+_read_detection_field() {
+    local field="$1"
+    [ -f "$_APP_RUNNER_DIR/detection.json" ] || return 0
+    grep -o "\"${field}\": *\"[^\"]*\"" "$_APP_RUNNER_DIR/detection.json" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+}
+
+# Rewrite detection.json with the reconciled port, preserving type/command.
+_rewrite_detection_port() {
+    local d_type d_command
+    d_type=$(_read_detection_field "type")
+    d_command=$(_read_detection_field "command")
+    [ -n "$d_type" ] || return 0
+    _write_detection "$d_type" "$d_command"
+}
+
+# Fix #2 (finding #597): reconcile the recorded port with the port the app
+# ACTUALLY bound, using the listen line in app.log as the source of truth. This
+# corrects the dashboard Live Preview even when the app ignores PORT and picks
+# its own port. Bounded poll: returns as soon as a listen line is found, and
+# never runs for docker (compose URLs come from published-port mapping) or when
+# no port was recorded. Default window LOKI_APP_PORT_RECONCILE_SECS (default 12)
+# at 0.5s intervals. On no match within the window the recorded port is kept (no
+# regression). Stdout: nothing; mutates _APP_RUNNER_PORT / _APP_RUNNER_URL and
+# rewrites state.json + detection.json only when the real port differs.
+_app_runner_reconcile_port() {
+    [ "$_APP_RUNNER_IS_DOCKER" != true ] || return 0
+    [ -n "$_APP_RUNNER_PORT" ] && [ "$_APP_RUNNER_PORT" -gt 0 ] 2>/dev/null || return 0
+    local log_file="$_APP_RUNNER_DIR/app.log"
+
+    # Fast path: if the recorded port already serves HTTP, the app honored our
+    # chosen port (fix #1 worked) or otherwise bound it -- nothing to reconcile,
+    # and we avoid the poll latency entirely. Covers quiet-but-serving apps that
+    # never log a recognizable listen line.
+    if command -v curl >/dev/null 2>&1 && \
+       curl -sf -o /dev/null -m 2 "http://localhost:${_APP_RUNNER_PORT}/" 2>/dev/null; then
+        return 0
+    fi
+
+    local max_secs="${LOKI_APP_PORT_RECONCILE_SECS:-12}"
+    [[ "$max_secs" =~ ^[0-9]+$ ]] || max_secs=12
+    local max_iter=$(( max_secs * 2 ))
+    [ "$max_iter" -gt 0 ] || max_iter=1
+
+    local real_port="" iter=0
+    while [ "$iter" -lt "$max_iter" ]; do
+        if [ -f "$log_file" ]; then
+            real_port=$(_parse_listen_port "$log_file")
+            [ -n "$real_port" ] && break
+        fi
+        # Stop early if the process already died (failed start): nothing to wait for.
+        if [ -n "$_APP_RUNNER_PID" ] && ! kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+            break
+        fi
+        sleep 0.5
+        iter=$(( iter + 1 ))
+    done
+
+    [ -n "$real_port" ] || return 0
+    if [ "$real_port" != "$_APP_RUNNER_PORT" ]; then
+        log_info "App Runner: reconciled port $_APP_RUNNER_PORT -> $real_port (from app.log listen line)"
+        _APP_RUNNER_PORT="$real_port"
+        _APP_RUNNER_URL="http://localhost:${real_port}"
+        _rewrite_detection_port
+    fi
+    return 0
+}
+
+# Parse the actual bound port from an app log file. Scans known listen-line
+# shapes in priority order and returns the LAST (most recent) plausible port,
+# tolerating ANSI color codes that dev servers emit. Validates 1-65535. Echoes
+# the port or nothing.
+_parse_listen_port() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    # Strip ANSI SGR sequences (\e[...m) so color-wrapped URLs still match.
+    local clean
+    clean=$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$file" 2>/dev/null) || clean=$(cat "$file" 2>/dev/null)
+    [ -n "$clean" ] || return 0
+
+    local candidate=""
+    # 1) Explicit URL with a port: http://host:PORT  (most reliable).
+    candidate=$(printf '%s\n' "$clean" \
+        | grep -oiE 'https?://[a-z0-9.\-]+:[0-9]{1,5}' \
+        | grep -oE ':[0-9]{1,5}' | tr -d ':' | tail -1)
+    # 2) A number anchored to the literal word "port": "port 8080", "port=3000",
+    #    "port: 5000". This runs BEFORE the bare host:port scan so a clock-style
+    #    timestamp on the same line (e.g. "12:30:45 ... port 8080") cannot win.
+    if [ -z "$candidate" ]; then
+        candidate=$(printf '%s\n' "$clean" \
+            | grep -ioE 'port[ =:]+[0-9]{1,5}' \
+            | grep -oE '[0-9]{1,5}' | tail -1)
+    fi
+    # 3) Keyword listen lines with a real host token before the colon:
+    #    "localhost:5173", "0.0.0.0:8080", "127.0.0.1:3000". Requiring a letter
+    #    or a dot immediately left of the colon excludes "HH:MM" timestamps,
+    #    which have a digit there.
+    if [ -z "$candidate" ]; then
+        candidate=$(printf '%s\n' "$clean" \
+            | grep -iE 'listen|running on|ready|started|serving|server' \
+            | grep -oiE '[a-z.][a-z0-9.\-]*:[0-9]{1,5}' \
+            | grep -oE ':[0-9]{1,5}' | tr -d ':' | tail -1)
+    fi
+
+    [ -n "$candidate" ] || return 0
+    # Validate range 1-65535.
+    if [ "$candidate" -ge 1 ] 2>/dev/null && [ "$candidate" -le 65535 ] 2>/dev/null; then
+        printf '%s\n' "$candidate"
+    fi
+}
+
 # Rotate app.log if it exceeds max lines
 _rotate_app_log() {
     local log_file="$_APP_RUNNER_DIR/app.log"
@@ -606,6 +721,21 @@ app_runner_start() {
     log_step "App Runner: starting application ($_APP_RUNNER_METHOD on port $_APP_RUNNER_PORT)..."
     _rotate_app_log
 
+    # Fix #1 (finding #597): pass Loki's chosen port to the app via the env so the
+    # app honors it instead of binding its own default (e.g. a Node app reading
+    # `process.env.PORT || 4000` would otherwise bind 4000 while Loki recorded the
+    # guessed 3000, leaving the dashboard Live Preview pointed at a dead port).
+    # We export PORT plus the common ecosystem aliases. An app that ignores these
+    # vars is unaffected; an ignored env var is harmless by definition. We do NOT
+    # set HOST/BIND -- changing the bind address can break apps. For docker (which
+    # gets its port via published-port mapping, not the child env) this is a no-op
+    # at the binary boundary, so we only export for the direct-exec path.
+    local _port_env_prefix=""
+    if [ "$_APP_RUNNER_IS_DOCKER" != true ] && \
+       [ -n "$_APP_RUNNER_PORT" ] && [ "$_APP_RUNNER_PORT" -gt 0 ] 2>/dev/null; then
+        _port_env_prefix="export PORT=$_APP_RUNNER_PORT HTTP_PORT=$_APP_RUNNER_PORT SERVER_PORT=$_APP_RUNNER_PORT APP_PORT=$_APP_RUNNER_PORT; "
+    fi
+
     # Start the process in a new process group
     if command -v setsid >/dev/null 2>&1; then
         _APP_RUNNER_HAS_SETSID=true
@@ -615,7 +745,7 @@ app_runner_start() {
         # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
         # The `--` after `bash -lc` prevents flag injection if the assembled
         # script string ever begins with a `-`.
-        (cd "$dir" && setsid bash -lc -- 'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        (cd "$dir" && setsid bash -lc -- "$_port_env_prefix"'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         local _subshell_pid=$!
         # Wait briefly for the pgid file to appear, then read the real PGID
         local _pgid_wait=0
@@ -633,7 +763,7 @@ app_runner_start() {
         _APP_RUNNER_HAS_SETSID=false
         # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
         # The `--` after `bash -lc` prevents flag injection.
-        (cd "$dir" && bash -lc -- "$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        (cd "$dir" && bash -lc -- "${_port_env_prefix}exec $_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         _APP_RUNNER_PID=$!
     fi
     # Register with central PID registry if available
@@ -675,8 +805,13 @@ app_runner_start() {
             return 1
         fi
     elif kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+        # Reconcile recorded port with the port the app actually bound (finding
+        # #597), so state.json / detection.json / the preview URL point at the
+        # live port even when the app ignored PORT. Mutates globals before the
+        # state write below. Bounded; no-op when the app honored the chosen port.
+        _app_runner_reconcile_port
         _write_app_state "running"
-        log_info "App Runner: application started (PID: $_APP_RUNNER_PID)"
+        log_info "App Runner: application started (PID: $_APP_RUNNER_PID) on port $_APP_RUNNER_PORT"
         return 0
     else
         log_error "App Runner: application failed to start"

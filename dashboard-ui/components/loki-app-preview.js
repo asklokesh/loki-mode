@@ -54,6 +54,13 @@ export class LokiAppPreview extends LokiElement {
     this._error = null;
     this._lastDataHash = null;
     this._detailsOpen = false;
+    // Iframe load-failure detection. The running app is cross-origin, so the
+    // browser cannot read its errors; the only honest in-page signal we have is
+    // "did the iframe ever fire load within a few seconds". When it does not we
+    // surface a reachable failure state instead of a silent blank frame.
+    this._iframeFailed = false;
+    this._iframeLoadTimer = null;
+    this._IFRAME_LOAD_TIMEOUT_MS = 6000;
   }
 
   connectedCallback() {
@@ -67,6 +74,14 @@ export class LokiAppPreview extends LokiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._stopPolling();
+    this._clearIframeLoadTimer();
+  }
+
+  _clearIframeLoadTimer() {
+    if (this._iframeLoadTimer) {
+      clearTimeout(this._iframeLoadTimer);
+      this._iframeLoadTimer = null;
+    }
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
@@ -139,13 +154,26 @@ export class LokiAppPreview extends LokiElement {
         // status was already "running" and nothing else in the hash changed.
         // Observed on a real compose stack: docker compose up -d returns
         // seconds before the web service answers HTTP.
-        healthOk: status?.last_health?.ok === true,
+        //
+        // Capture the health signal as a tri-state (true / false / unknown),
+        // not just "=== true". The amber "running but not responding yet" state
+        // (last_health.ok === false) must trigger a re-render too, otherwise a
+        // run that comes up unhealthy would keep showing the previous surface.
+        healthOk: status?.last_health?.ok === true
+          ? 'ok'
+          : status?.last_health?.ok === false
+            ? 'down'
+            : 'unknown',
       });
       // A prior poll may have set a transient read error. Clear it on any
       // successful read, even when the data itself is unchanged, so a recovered
       // read never leaves a false error banner on screen (honesty constraint).
       const hadError = this._error !== null;
       if (dataHash === this._lastDataHash && !hadError) return;
+      // A real state transition (url/status/health change) means the iframe is
+      // about to be re-rendered with a fresh src, so clear any prior load
+      // failure -- the previous failure no longer describes the new attempt.
+      this._iframeFailed = false;
       this._lastDataHash = dataHash;
       this._status = status;
       this._errors = errors;
@@ -186,9 +214,22 @@ export class LokiAppPreview extends LokiElement {
     const frame = s.querySelector('iframe.preview-frame');
     const st = this._status;
     if (frame && st && this._isValidUrl(st.url)) {
+      this._iframeFailed = false;
+      this._clearIframeLoadTimer();
       const bust = (st.url.includes('?') ? '&' : '?') + '_t=' + Date.now();
       frame.src = st.url + bust;
+      this._armIframeLoadDetection();
     }
+  }
+
+  _handleRetryFrame() {
+    // Clear the failure flag, force a fresh status read, and re-render. If the
+    // app is now reachable the iframe path renders again; if not, the load
+    // detection re-arms and we fall back to the honest failure surface.
+    this._iframeFailed = false;
+    this._lastDataHash = null;
+    this.render();
+    this._loadData();
   }
 
   _handleOpenExternal() {
@@ -239,15 +280,57 @@ export class LokiAppPreview extends LokiElement {
     `;
   }
 
+  /**
+   * Map the raw app-runner status plus the truthful last_health.ok signal to
+   * the badge/surface the panel should actually show. This keeps the green
+   * "Running" badge honest: a process that is up but not yet answering HTTP
+   * (last_health.ok === false) is shown as amber "Starting / not responding
+   * yet", not green, and the embed iframe is withheld until health is ok.
+   *
+   * Returns { view, healthOk } where view is the effective status key into
+   * STATUS_CONFIG and healthOk is the tri-state (true | false | null/unknown).
+   */
+  _effectiveView(status, urlValid) {
+    const st = this._status;
+    const health = st?.last_health;
+    const healthOk = (health && typeof health.ok === 'boolean') ? health.ok : null;
+
+    if (status === 'running' && urlValid) {
+      if (healthOk === false) {
+        // Up but not responding yet: amber, no iframe, no embed-blame hint.
+        return { view: 'starting', healthOk };
+      }
+      if (healthOk === true) {
+        return { view: 'running', healthOk };
+      }
+      // Health unknown during the boot grace window: treat as running so the
+      // iframe gets a chance to load (rare in practice -- the runner writes
+      // {"ok": false} by default -- but avoids a false amber on first paint).
+      const startedAt = st?.started_at ? Date.parse(st.started_at) : NaN;
+      const withinGrace = Number.isFinite(startedAt) && (Date.now() - startedAt) < 15000;
+      return { view: withinGrace ? 'running' : 'starting', healthOk };
+    }
+    return { view: status, healthOk };
+  }
+
   render() {
     const s = this.shadowRoot;
     if (!s) return;
+    // Clear any in-flight load timer before re-rendering so a stale timer can
+    // never fire against an iframe that no longer exists (or a surface we have
+    // since switched away from). It is re-armed below only on the iframe path.
+    this._clearIframeLoadTimer();
 
     const st = this._status;
-    const status = st?.status || 'not_initialized';
-    const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.not_initialized;
-    const port = st?.port ? this._escapeHtml(String(st.port)) : '?';
+    const rawStatus = st?.status || 'not_initialized';
     const urlValid = this._isValidUrl(st?.url);
+    const { view, healthOk } = this._effectiveView(rawStatus, urlValid);
+    const cfg = STATUS_CONFIG[view] || STATUS_CONFIG.not_initialized;
+    // Honest amber label when up-but-unreachable (overrides the generic
+    // "Starting" copy so the user knows the process is up but not answering).
+    const label = (rawStatus === 'running' && healthOk === false)
+      ? 'Starting / not responding yet'
+      : cfg.label;
 
     s.innerHTML = `
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
@@ -257,38 +340,90 @@ export class LokiAppPreview extends LokiElement {
             <h2 class="title">Live App</h2>
             <span class="status-badge" style="background: color-mix(in srgb, ${cfg.color} 15%, transparent); color: ${cfg.color}">
               <span class="status-dot ${cfg.pulse ? 'pulse' : ''}" style="background: ${cfg.color}"></span>
-              ${this._escapeHtml(cfg.label)}
+              ${this._escapeHtml(label)}
             </span>
           </div>
-          ${this._renderToolbar(status, urlValid)}
+          ${this._renderToolbar(view, urlValid)}
         </div>
-        ${status === 'running' && urlValid ? `
+        ${view === 'running' && urlValid ? `
           <p class="transport">Running locally - <a href="${this._escapeHtml(st.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(st.url)}</a></p>
         ` : ''}
-        ${this._renderSurface(status, urlValid)}
-        ${this._renderErrorBanner(status)}
+        ${this._renderSurface(view, urlValid, healthOk)}
+        ${this._renderErrorBanner(rawStatus)}
         ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
       </div>
     `;
 
     this._attachEventListeners();
+    this._armIframeLoadDetection();
+  }
+
+  /**
+   * When the iframe is on screen, wire its load/error events and start a
+   * timeout. If the iframe neither loads nor errors within the window we flip
+   * to an honest "not reachable yet" surface (Retry + Open in browser) rather
+   * than leaving a silent blank frame.
+   */
+  _armIframeLoadDetection() {
+    const s = this.shadowRoot;
+    if (!s) return;
+    const frame = s.querySelector('iframe.preview-frame');
+    if (!frame) return;
+    const onLoaded = () => {
+      this._clearIframeLoadTimer();
+    };
+    frame.addEventListener('load', onLoaded);
+    frame.addEventListener('error', () => {
+      this._clearIframeLoadTimer();
+      if (!this._iframeFailed) {
+        this._iframeFailed = true;
+        this.render();
+      }
+    });
+    this._iframeLoadTimer = setTimeout(() => {
+      this._iframeLoadTimer = null;
+      if (!this._iframeFailed) {
+        this._iframeFailed = true;
+        this.render();
+      }
+    }, this._IFRAME_LOAD_TIMEOUT_MS);
   }
 
   _renderToolbar(status, urlValid) {
-    const running = status === 'running' && urlValid;
-    const canRestart = status === 'running' || status === 'crashed' || status === 'stopped' || status === 'failed';
+    // Refresh / Open-in-browser are useful whenever we have a valid URL and the
+    // app is meant to be up (running, or amber starting, or stale), so the user
+    // can poke an unreachable app without waiting for the next poll.
+    const hasLiveUrl = urlValid && (status === 'running' || status === 'starting' || status === 'stale');
+    const canRestart = status === 'running' || status === 'starting' || status === 'stale'
+      || status === 'crashed' || status === 'stopped' || status === 'failed';
     return `
       <div class="toolbar">
-        <button class="btn" data-action="refresh" ${running ? '' : 'disabled'}>Refresh</button>
-        <button class="btn btn-primary" data-action="open-external" ${running ? '' : 'disabled'}>Open in browser</button>
+        <button class="btn" data-action="refresh" ${hasLiveUrl ? '' : 'disabled'}>Refresh</button>
+        <button class="btn btn-primary" data-action="open-external" ${hasLiveUrl ? '' : 'disabled'}>Open in browser</button>
         <button class="btn" data-action="restart" ${canRestart ? '' : 'disabled'}>Restart</button>
       </div>
     `;
   }
 
-  _renderSurface(status, urlValid) {
+  _renderSurface(status, urlValid, healthOk) {
     if (status === 'running' && urlValid) {
       const st = this._status;
+      if (this._iframeFailed) {
+        // Health is ok (we only reach the running view when last_health.ok is
+        // true or unknown-in-grace) but the iframe still did not render. The
+        // most likely cause is the app refusing to be embedded, so the
+        // embed-blame copy belongs HERE, not on a healthy frame.
+        return `
+          <div class="state-block">
+            <h3>Could not show the app here</h3>
+            <p>The app started but did not render in this preview. Some apps block being embedded in a frame. Open it in your browser to use it.</p>
+            <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+              <button class="btn btn-primary" data-action="open-external">Open in browser</button>
+              <button class="btn" data-action="retry-frame">Retry</button>
+            </div>
+          </div>
+        `;
+      }
       return `
         <div class="frame-wrap">
           <iframe
@@ -302,11 +437,40 @@ export class LokiAppPreview extends LokiElement {
       `;
     }
     if (status === 'starting') {
+      // Covers both the genuine startup window and the "process up but not
+      // answering HTTP yet" case (last_health.ok === false on a running pid).
+      const notResponding = healthOk === false;
+      const heading = notResponding ? 'App is up but not responding yet' : 'Starting your app...';
+      const body = notResponding
+        ? 'The process started but is not answering requests yet. This can take a few seconds, or it may mean the app is still booting or failing to bind its port.'
+        : 'Waiting for the app to respond. This usually takes a few seconds.';
+      const actions = urlValid ? `
+        <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+          <button class="btn" data-action="open-external">Open in browser</button>
+          <button class="btn" data-action="retry-frame">Retry</button>
+        </div>
+      ` : '';
       return `
         <div class="state-block">
           <div class="spinner"></div>
-          <h3>Starting your app...</h3>
-          <p>Waiting for the app to respond. This usually takes a few seconds.</p>
+          <h3>${this._escapeHtml(heading)}</h3>
+          <p>${this._escapeHtml(body)}</p>
+          ${actions}
+        </div>
+      `;
+    }
+    if (status === 'stale') {
+      const actions = `
+        <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+          <button class="btn" data-action="restart">Restart</button>
+          ${urlValid ? '<button class="btn" data-action="open-external">Open in browser</button>' : ''}
+        </div>
+      `;
+      return `
+        <div class="state-block">
+          <h3>App may no longer be running</h3>
+          <p>Loki has not had a fresh health signal from this app recently and could not confirm it is still alive. Restart it, or open it in your browser to check.</p>
+          ${actions}
         </div>
       `;
     }
@@ -373,11 +537,16 @@ export class LokiAppPreview extends LokiElement {
       const el = s.querySelector(sel);
       if (el) el.addEventListener('click', fn);
     };
-    // restart may appear in toolbar AND banner; bind all.
+    // restart and open-external can each appear in BOTH the toolbar AND a
+    // surface/banner (e.g. the iframe-failed surface uses Open-in-browser as its
+    // primary CTA), so bind every instance, not just the first match.
     s.querySelectorAll('[data-action="restart"]').forEach(el =>
       el.addEventListener('click', () => this._handleRestart()));
+    s.querySelectorAll('[data-action="open-external"]').forEach(el =>
+      el.addEventListener('click', () => this._handleOpenExternal()));
+    s.querySelectorAll('[data-action="retry-frame"]').forEach(el =>
+      el.addEventListener('click', () => this._handleRetryFrame()));
     bind('[data-action="refresh"]', () => this._handleRefresh());
-    bind('[data-action="open-external"]', () => this._handleOpenExternal());
     bind('[data-action="toggle-details"]', () => this._toggleDetails());
   }
 

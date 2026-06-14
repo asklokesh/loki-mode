@@ -6973,17 +6973,110 @@ async def get_council_gate():
 # App Runner Endpoints (v5.45.0)
 # =============================================================================
 
+# Health checkpoints are written once per autonomous iteration (the app-runner
+# watchdog fires from the run.sh iteration loop, not a fixed timer), so a single
+# long healthy iteration can legitimately leave last_health.checked_at minutes
+# old. The staleness threshold below is therefore deliberately generous and is
+# used ONLY when we cannot verify liveness from a real OS pid (e.g. docker
+# compose, whose main_pid is a short-lived `up -d` subshell). When a real pid is
+# present, pid liveness -- not the timestamp -- is the authoritative signal, so a
+# live run is never reported as dead just because a health beat was missed.
+_APP_RUNNER_STALE_HEALTH_SECONDS = 600
+
+
+def _pid_is_alive(pid):
+    """Return True if pid refers to a live process, False if it is gone.
+
+    Uses signal 0 (no signal sent, just an existence/permission probe). Guards
+    against the pid<=0 footgun: kill(0, 0) targets the caller's own process
+    group and would falsely report "alive". A PermissionError means the process
+    exists but is owned by another user (still alive). Any other error is
+    treated as indeterminate (None) so the caller can fall back safely.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+
+
+def _health_checked_age_seconds(state):
+    """Seconds since last_health.checked_at, or None if unparseable/absent."""
+    health = state.get("last_health")
+    if not isinstance(health, dict):
+        return None
+    checked_at = health.get("checked_at")
+    if not checked_at:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(checked_at).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def _reconcile_app_runner_liveness(state):
+    """Correct a frozen state.json so a dead run is not reported as running.
+
+    state.json is written by the app-runner and is not updated once the app or
+    the orchestrator dies, so a crashed run leaves status frozen at "running".
+    Here we cross-check the recorded main_pid against the real OS before
+    returning, and only ever downgrade -- never upgrade -- the status:
+      - recorded running/starting + pid genuinely gone   -> "stopped"
+      - recorded running/starting + pid not verifiable    +
+        last_health.checked_at older than the threshold   -> "stale"
+    Any failure falls back to the raw recorded status (fail open to the writer's
+    own claim rather than fabricating a state). Returns the (possibly modified)
+    state dict.
+    """
+    if not isinstance(state, dict):
+        return state
+    status = state.get("status")
+    if status not in ("running", "starting"):
+        return state
+    try:
+        alive = _pid_is_alive(state.get("main_pid"))
+        if alive is False:
+            state["status"] = "stopped"
+            state["liveness"] = "pid_gone"
+            return state
+        if alive is None:
+            # Cannot verify via pid (e.g. compose subshell pid). Fall back to
+            # the health-beat freshness with a generous threshold.
+            age = _health_checked_age_seconds(state)
+            if age is not None and age > _APP_RUNNER_STALE_HEALTH_SECONDS:
+                state["status"] = "stale"
+                state["liveness"] = "health_stale"
+    except Exception:
+        # Never let a liveness probe break the status endpoint.
+        return state
+    return state
+
+
 @app.get("/api/app-runner/status")
 async def get_app_runner_status():
-    """Get app runner current status."""
+    """Get app runner current status (with dead-run liveness reconciliation)."""
     loki_dir = _get_loki_dir()
     state_file = loki_dir / "app-runner" / "state.json"
     if not state_file.exists():
         return {"status": "not_initialized"}
     try:
-        return json.loads(state_file.read_text())
+        state = json.loads(state_file.read_text())
     except (json.JSONDecodeError, OSError):
         return {"status": "error"}
+    return _reconcile_app_runner_liveness(state)
 
 
 def _get_log_redactor():

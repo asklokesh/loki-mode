@@ -266,7 +266,10 @@ export function claudeProvider(): ProviderInvoker {
       // concrete level, and unconditionally set "off" on the suppress path.
       let cavemanEnv: Record<string, string> | undefined;
       if (call.mainLoop) {
-        const lvl = cavemanActivateEnv();
+        // #593: pass the RARV tier so the level is inferred from the work (the
+        // same signal the bash route reads from LOKI_CURRENT_TIER). Keeps both
+        // routes inferring identically; an explicit LOKI_CAVEMAN_LEVEL overrides.
+        const lvl = cavemanActivateEnv(call.tier);
         if (lvl) cavemanEnv = { CAVEMAN_DEFAULT_MODE: lvl };
       } else {
         cavemanEnv = { CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() };

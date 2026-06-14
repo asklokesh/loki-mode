@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.41.1] - 2026-06-14
+
+Accuracy + autonomy hardening. A real first-time-user E2E (published CLI, haiku,
+greenfield + brownfield fullstack builds) confirmed both flows produce working,
+tested apps, but surfaced verification-machinery gaps that are now closed. Every
+fix makes Loki more accurate and more autonomous; all are intelligent defaults
+with opt-out env knobs, never a required user decision.
+
+### Fixed
+- Code-review gate no longer runs blind on .loki/ churn. The reviewer-prompt diff
+  (run_code_review) now excludes .loki/ and .git/ via git pathspec, mirroring the
+  evidence gate. Previously, when .loki/ was git-tracked, the diff could balloon
+  (observed 2.18 MB), the reviewer model returned empty, all reviewers recorded
+  NO_OUTPUT, and the gate passed with zero real review. Additionally, a review
+  that yields zero real verdicts (all NO_OUTPUT / unparseable) is now treated as
+  INCONCLUSIVE and BLOCKS (bounded one-shot retry first; opt out with
+  LOKI_REVIEW_INCONCLUSIVE_BLOCK=0). APPROVE / PASS-with-concerns still pass.
+- Verified-completion gate no longer half-blind on missing test evidence. Loki
+  now runs the project's own tests and persists .loki/quality/test-results.json
+  before the completion evidence gate reads it, so absent test evidence can no
+  longer silently pass the test axis. Default-on, opt out with
+  LOKI_COMPLETION_TEST_CAPTURE=0; reuses the quality-ladder run (no double test
+  execution per iteration).
+- App-runner port accuracy. The app child now receives PORT (and HTTP_PORT /
+  SERVER_PORT / APP_PORT) so it honors Loki's chosen port, AND Loki reconciles
+  the actual bound port from the app's listen line in app.log, updating
+  state.json / detection.json / the dashboard preview URL to the real port.
+  Previously a guessed port could leave the dashboard Live Preview pointing at a
+  dead URL while the app served elsewhere.
+- Orchestrator no longer orphans on completion. A normal finish (council stop /
+  max-iterations / completion promise) now authoritatively reaps this run's own
+  process group (pgid-scoped to .loki/loki.pgid), matching the external `loki
+  stop` path, so the orchestrator and its agent terminate cleanly instead of
+  lingering. Foreign loki runs (different pgid / .loki) are structurally
+  unreachable and untouched.
+- Dashboard Live App Preview honesty. A running-but-unreachable app now shows an
+  amber "Starting / not responding yet" state instead of a false green "Running"
+  badge over a dead iframe; an iframe load failure surfaces an honest
+  "could not show the app here" with Open-in-browser + Retry; and a run whose
+  process is gone is reconciled to stopped/stale by /api/app-runner/status
+  instead of frozen at "running".
+- Documentation quality gate now auto-generates docs in the autonomous loop
+  (LOKI_AUTO_DOCS=true default) instead of scoring the run down and telling the
+  user to run a separate command.
+- Cost-estimator comment corrected to reflect that a fable pin resolves to and
+  quotes Opus (v7.39.1 behavior), and a narrow test-evidence freshness-marker
+  ordering window was closed.
+
+### Changed
+- Caveman compression level is now inferred from the RARV tier instead of a fixed
+  default: planning (architecture / design, highest nuance) -> lite; development /
+  fast -> full; auto-inference never selects ultra. Conservative for accuracy
+  (protects design nuance). LOKI_CAVEMAN_LEVEL still overrides as an opt-out, and
+  the no-raise guard (never raise a user's lower global level) is preserved.
+  Parity across the bash and Bun routes; also fixed a Bun-route case where a
+  user's global "off" did not opt out of activation.
+- Caveman moat coverage extended to the loki CLI surface: a new tree-wide audit
+  (tests/test-caveman-loki-coverage.sh) asserts no captured-output subcall in
+  autonomy/loki is left uncompressed-unsafe; free-form narration sites activate,
+  the captured docs deliverable hard-suppresses (so generated docs are never
+  compressed into terse output).
+
 ## [7.41.0] - 2026-06-14
 
 ### Added

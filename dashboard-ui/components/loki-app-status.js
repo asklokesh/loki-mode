@@ -439,8 +439,8 @@ export class LokiAppStatus extends LokiElement {
   }
 
   _renderActions(st) {
-    const canRestart = st.status === 'running' || st.status === 'crashed' || st.status === 'stopped';
-    const canStop = st.status === 'running' || st.status === 'starting';
+    const canRestart = st.status === 'running' || st.status === 'crashed' || st.status === 'stopped' || st.status === 'stale';
+    const canStop = st.status === 'running' || st.status === 'starting' || st.status === 'stale';
     return `
       <div class="actions">
         <button class="btn" data-action="restart" ${canRestart ? '' : 'disabled'}>Restart</button>
