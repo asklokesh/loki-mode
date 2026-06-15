@@ -1,56 +1,57 @@
 /* Loki Dashboard UI - IIFE Bundle (VS Code Webview) */
 
-var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnPropertyDescriptor;var ue=Object.getOwnPropertyNames;var ge=Object.prototype.hasOwnProperty;var he=(d,e,t)=>e in d?K(d,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):d[e]=t;var ve=(d,e)=>{for(var t in e)K(d,t,{get:e[t],enumerable:!0})},me=(d,e,t,a)=>{if(e&&typeof e=="object"||typeof e=="function")for(let i of ue(e))!ge.call(d,i)&&i!==t&&K(d,i,{get:()=>e[i],enumerable:!(a=pe(e,i))||a.enumerable});return d};var be=d=>me(K({},"__esModule",{value:!0}),d);var k=(d,e,t)=>he(d,typeof e!="symbol"?e+"":e,t);var Se={};ve(Se,{ANIMATION:()=>w,ARIA_PATTERNS:()=>W,ApiEvents:()=>n,BASE_STYLES:()=>M,BREAKPOINTS:()=>V,COMMON_STYLES:()=>te,KEYBOARD_SHORTCUTS:()=>Y,KeyboardHandler:()=>L,LokiApiClient:()=>I,LokiCheckpointViewer:()=>q,LokiContextTracker:()=>G,LokiCostDashboard:()=>N,LokiCouncilDashboard:()=>O,LokiElement:()=>c,LokiLearningDashboard:()=>F,LokiLogStream:()=>U,LokiMemoryBrowser:()=>j,LokiNotificationCenter:()=>J,LokiOverview:()=>z,LokiSessionControl:()=>B,LokiState:()=>R,LokiTaskBoard:()=>H,LokiTheme:()=>S,RADIUS:()=>y,SPACING:()=>x,STATE_CHANGE_EVENT:()=>Q,THEMES:()=>b,THEME_VARIABLES:()=>X,TYPOGRAPHY:()=>v,UnifiedThemeManager:()=>h,VERSION:()=>Te,Z_INDEX:()=>$,createApiClient:()=>se,createStore:()=>re,generateThemeCSS:()=>m,generateTokensCSS:()=>P,getApiClient:()=>u,getState:()=>C,init:()=>Ee});var b={light:{"--loki-bg-primary":"#fafafa","--loki-bg-secondary":"#f4f4f5","--loki-bg-tertiary":"#e4e4e7","--loki-bg-card":"#ffffff","--loki-bg-hover":"#f0f0f3","--loki-bg-active":"#e8e8ec","--loki-bg-overlay":"rgba(0, 0, 0, 0.5)","--loki-accent":"#7c3aed","--loki-accent-hover":"#6d28d9","--loki-accent-active":"#5b21b6","--loki-accent-light":"#8b5cf6","--loki-accent-muted":"rgba(124, 58, 237, 0.12)","--loki-text-primary":"#18181b","--loki-text-secondary":"#52525b","--loki-text-muted":"#a1a1aa","--loki-text-disabled":"#d4d4d8","--loki-text-inverse":"#ffffff","--loki-border":"#e4e4e7","--loki-border-light":"#d4d4d8","--loki-border-focus":"#7c3aed","--loki-success":"#16a34a","--loki-success-muted":"rgba(22, 163, 74, 0.12)","--loki-warning":"#ca8a04","--loki-warning-muted":"rgba(202, 138, 4, 0.12)","--loki-error":"#dc2626","--loki-error-muted":"rgba(220, 38, 38, 0.12)","--loki-info":"#2563eb","--loki-info-muted":"rgba(37, 99, 235, 0.12)","--loki-green":"#16a34a","--loki-green-muted":"rgba(22, 163, 74, 0.12)","--loki-yellow":"#ca8a04","--loki-yellow-muted":"rgba(202, 138, 4, 0.12)","--loki-red":"#dc2626","--loki-red-muted":"rgba(220, 38, 38, 0.12)","--loki-blue":"#2563eb","--loki-blue-muted":"rgba(37, 99, 235, 0.12)","--loki-purple":"#9333ea","--loki-purple-muted":"rgba(147, 51, 234, 0.12)","--loki-opus":"#d97706","--loki-sonnet":"#4f46e5","--loki-haiku":"#059669","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.05)","--loki-shadow-md":"0 4px 6px rgba(0, 0, 0, 0.07)","--loki-shadow-lg":"0 10px 15px rgba(0, 0, 0, 0.1)","--loki-shadow-focus":"0 0 0 3px rgba(124, 58, 237, 0.3)"},dark:{"--loki-bg-primary":"#09090b","--loki-bg-secondary":"#0c0c0f","--loki-bg-tertiary":"#111114","--loki-bg-card":"#18181b","--loki-bg-hover":"#1f1f23","--loki-bg-active":"#27272a","--loki-bg-overlay":"rgba(0, 0, 0, 0.8)","--loki-accent":"#8b5cf6","--loki-accent-hover":"#a78bfa","--loki-accent-active":"#7c3aed","--loki-accent-light":"#a78bfa","--loki-accent-muted":"rgba(139, 92, 246, 0.15)","--loki-text-primary":"#fafafa","--loki-text-secondary":"#a1a1aa","--loki-text-muted":"#52525b","--loki-text-disabled":"#3f3f46","--loki-text-inverse":"#09090b","--loki-border":"rgba(255, 255, 255, 0.06)","--loki-border-light":"rgba(255, 255, 255, 0.1)","--loki-border-focus":"#8b5cf6","--loki-success":"#22c55e","--loki-success-muted":"rgba(34, 197, 94, 0.15)","--loki-warning":"#eab308","--loki-warning-muted":"rgba(234, 179, 8, 0.15)","--loki-error":"#ef4444","--loki-error-muted":"rgba(239, 68, 68, 0.15)","--loki-info":"#3b82f6","--loki-info-muted":"rgba(59, 130, 246, 0.15)","--loki-green":"#22c55e","--loki-green-muted":"rgba(34, 197, 94, 0.15)","--loki-yellow":"#eab308","--loki-yellow-muted":"rgba(234, 179, 8, 0.15)","--loki-red":"#ef4444","--loki-red-muted":"rgba(239, 68, 68, 0.15)","--loki-blue":"#3b82f6","--loki-blue-muted":"rgba(59, 130, 246, 0.15)","--loki-purple":"#a78bfa","--loki-purple-muted":"rgba(167, 139, 250, 0.15)","--loki-opus":"#f59e0b","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.4)","--loki-shadow-md":"0 4px 12px rgba(0, 0, 0, 0.5)","--loki-shadow-lg":"0 10px 25px rgba(0, 0, 0, 0.6)","--loki-shadow-focus":"0 0 0 3px rgba(139, 92, 246, 0.25)"},"high-contrast":{"--loki-bg-primary":"#000000","--loki-bg-secondary":"#0a0a0a","--loki-bg-tertiary":"#141414","--loki-bg-card":"#0a0a0a","--loki-bg-hover":"#1a1a1a","--loki-bg-active":"#242424","--loki-bg-overlay":"rgba(0, 0, 0, 0.9)","--loki-accent":"#c084fc","--loki-accent-hover":"#d8b4fe","--loki-accent-active":"#e9d5ff","--loki-accent-light":"#d8b4fe","--loki-accent-muted":"rgba(192, 132, 252, 0.25)","--loki-text-primary":"#ffffff","--loki-text-secondary":"#e0e0e0","--loki-text-muted":"#b0b0b0","--loki-text-disabled":"#666666","--loki-text-inverse":"#000000","--loki-border":"#ffffff","--loki-border-light":"#cccccc","--loki-border-focus":"#c084fc","--loki-success":"#4ade80","--loki-success-muted":"rgba(74, 222, 128, 0.25)","--loki-warning":"#fde047","--loki-warning-muted":"rgba(253, 224, 71, 0.25)","--loki-error":"#f87171","--loki-error-muted":"rgba(248, 113, 113, 0.25)","--loki-info":"#60a5fa","--loki-info-muted":"rgba(96, 165, 250, 0.25)","--loki-green":"#4ade80","--loki-green-muted":"rgba(74, 222, 128, 0.25)","--loki-yellow":"#fde047","--loki-yellow-muted":"rgba(253, 224, 71, 0.25)","--loki-red":"#f87171","--loki-red-muted":"rgba(248, 113, 113, 0.25)","--loki-blue":"#60a5fa","--loki-blue-muted":"rgba(96, 165, 250, 0.25)","--loki-purple":"#c084fc","--loki-purple-muted":"rgba(192, 132, 252, 0.25)","--loki-opus":"#fbbf24","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-shadow-sm":"none","--loki-shadow-md":"none","--loki-shadow-lg":"none","--loki-shadow-focus":"0 0 0 3px #c084fc"},"vscode-light":{"--loki-bg-primary":"var(--vscode-editor-background, #ffffff)","--loki-bg-secondary":"var(--vscode-sideBar-background, #f3f3f3)","--loki-bg-tertiary":"var(--vscode-input-background, #ffffff)","--loki-bg-card":"var(--vscode-editor-background, #ffffff)","--loki-bg-hover":"var(--vscode-list-hoverBackground, #e8e8e8)","--loki-bg-active":"var(--vscode-list-activeSelectionBackground, #0060c0)","--loki-bg-overlay":"rgba(0, 0, 0, 0.4)","--loki-accent":"var(--vscode-focusBorder, #0066cc)","--loki-accent-hover":"var(--vscode-button-hoverBackground, #0055aa)","--loki-accent-active":"var(--vscode-button-background, #007acc)","--loki-accent-light":"var(--vscode-focusBorder, #0066cc)","--loki-accent-muted":"var(--vscode-editor-selectionBackground, rgba(0, 102, 204, 0.2))","--loki-text-primary":"var(--vscode-foreground, #333333)","--loki-text-secondary":"var(--vscode-descriptionForeground, #717171)","--loki-text-muted":"var(--vscode-disabledForeground, #a0a0a0)","--loki-text-disabled":"var(--vscode-disabledForeground, #cccccc)","--loki-text-inverse":"var(--vscode-button-foreground, #ffffff)","--loki-border":"var(--vscode-widget-border, #c8c8c8)","--loki-border-light":"var(--vscode-widget-border, #e0e0e0)","--loki-border-focus":"var(--vscode-focusBorder, #0066cc)","--loki-success":"var(--vscode-testing-iconPassed, #388a34)","--loki-success-muted":"rgba(56, 138, 52, 0.15)","--loki-warning":"var(--vscode-editorWarning-foreground, #bf8803)","--loki-warning-muted":"rgba(191, 136, 3, 0.15)","--loki-error":"var(--vscode-errorForeground, #e51400)","--loki-error-muted":"rgba(229, 20, 0, 0.15)","--loki-info":"var(--vscode-editorInfo-foreground, #1a85ff)","--loki-info-muted":"rgba(26, 133, 255, 0.15)","--loki-green":"var(--vscode-testing-iconPassed, #388a34)","--loki-green-muted":"rgba(56, 138, 52, 0.15)","--loki-yellow":"var(--vscode-editorWarning-foreground, #bf8803)","--loki-yellow-muted":"rgba(191, 136, 3, 0.15)","--loki-red":"var(--vscode-errorForeground, #e51400)","--loki-red-muted":"rgba(229, 20, 0, 0.15)","--loki-blue":"var(--vscode-editorInfo-foreground, #1a85ff)","--loki-blue-muted":"rgba(26, 133, 255, 0.15)","--loki-purple":"#9333ea","--loki-purple-muted":"rgba(147, 51, 234, 0.15)","--loki-opus":"#d97706","--loki-sonnet":"#4f46e5","--loki-haiku":"#059669","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.05)","--loki-shadow-md":"0 2px 4px rgba(0, 0, 0, 0.1)","--loki-shadow-lg":"0 4px 8px rgba(0, 0, 0, 0.15)","--loki-shadow-focus":"0 0 0 2px var(--vscode-focusBorder, #0066cc)"},"vscode-dark":{"--loki-bg-primary":"var(--vscode-editor-background, #1e1e1e)","--loki-bg-secondary":"var(--vscode-sideBar-background, #252526)","--loki-bg-tertiary":"var(--vscode-input-background, #3c3c3c)","--loki-bg-card":"var(--vscode-editor-background, #1e1e1e)","--loki-bg-hover":"var(--vscode-list-hoverBackground, #2a2d2e)","--loki-bg-active":"var(--vscode-list-activeSelectionBackground, #094771)","--loki-bg-overlay":"rgba(0, 0, 0, 0.6)","--loki-accent":"var(--vscode-focusBorder, #007fd4)","--loki-accent-hover":"var(--vscode-button-hoverBackground, #1177bb)","--loki-accent-active":"var(--vscode-button-background, #0e639c)","--loki-accent-light":"var(--vscode-focusBorder, #007fd4)","--loki-accent-muted":"var(--vscode-editor-selectionBackground, rgba(0, 127, 212, 0.25))","--loki-text-primary":"var(--vscode-foreground, #cccccc)","--loki-text-secondary":"var(--vscode-descriptionForeground, #9d9d9d)","--loki-text-muted":"var(--vscode-disabledForeground, #6b6b6b)","--loki-text-disabled":"var(--vscode-disabledForeground, #4d4d4d)","--loki-text-inverse":"var(--vscode-button-foreground, #ffffff)","--loki-border":"var(--vscode-widget-border, #454545)","--loki-border-light":"var(--vscode-widget-border, #5a5a5a)","--loki-border-focus":"var(--vscode-focusBorder, #007fd4)","--loki-success":"var(--vscode-testing-iconPassed, #89d185)","--loki-success-muted":"rgba(137, 209, 133, 0.2)","--loki-warning":"var(--vscode-editorWarning-foreground, #cca700)","--loki-warning-muted":"rgba(204, 167, 0, 0.2)","--loki-error":"var(--vscode-errorForeground, #f48771)","--loki-error-muted":"rgba(244, 135, 113, 0.2)","--loki-info":"var(--vscode-editorInfo-foreground, #75beff)","--loki-info-muted":"rgba(117, 190, 255, 0.2)","--loki-green":"var(--vscode-testing-iconPassed, #89d185)","--loki-green-muted":"rgba(137, 209, 133, 0.2)","--loki-yellow":"var(--vscode-editorWarning-foreground, #cca700)","--loki-yellow-muted":"rgba(204, 167, 0, 0.2)","--loki-red":"var(--vscode-errorForeground, #f48771)","--loki-red-muted":"rgba(244, 135, 113, 0.2)","--loki-blue":"var(--vscode-editorInfo-foreground, #75beff)","--loki-blue-muted":"rgba(117, 190, 255, 0.2)","--loki-purple":"#c084fc","--loki-purple-muted":"rgba(192, 132, 252, 0.2)","--loki-opus":"#f59e0b","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.3)","--loki-shadow-md":"0 2px 4px rgba(0, 0, 0, 0.4)","--loki-shadow-lg":"0 4px 8px rgba(0, 0, 0, 0.5)","--loki-shadow-focus":"0 0 0 2px var(--vscode-focusBorder, #007fd4)"}},x={xs:"4px",sm:"8px",md:"12px",lg:"16px",xl:"24px","2xl":"32px","3xl":"48px"},y={none:"0",sm:"4px",md:"6px",lg:"8px",xl:"10px",full:"9999px"},v={fontFamily:{sans:"'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",mono:"'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace"},fontSize:{xs:"10px",sm:"11px",base:"12px",md:"13px",lg:"14px",xl:"16px","2xl":"18px","3xl":"24px"},fontWeight:{normal:"400",medium:"500",semibold:"600",bold:"700"},lineHeight:{tight:"1.25",normal:"1.5",relaxed:"1.75"}},w={duration:{fast:"100ms",normal:"200ms",slow:"300ms",slower:"500ms"},easing:{default:"cubic-bezier(0.4, 0, 0.2, 1)",in:"cubic-bezier(0.4, 0, 1, 1)",out:"cubic-bezier(0, 0, 0.2, 1)",bounce:"cubic-bezier(0.68, -0.55, 0.265, 1.55)"}},V={sm:"640px",md:"768px",lg:"1024px",xl:"1280px","2xl":"1536px"},$={base:"0",dropdown:"100",sticky:"200",modal:"300",popover:"400",tooltip:"500",toast:"600"},Y={"navigation.nextItem":{key:"ArrowDown",modifiers:[]},"navigation.prevItem":{key:"ArrowUp",modifiers:[]},"navigation.nextSection":{key:"Tab",modifiers:[]},"navigation.prevSection":{key:"Tab",modifiers:["Shift"]},"navigation.confirm":{key:"Enter",modifiers:[]},"navigation.cancel":{key:"Escape",modifiers:[]},"action.refresh":{key:"r",modifiers:["Meta"]},"action.search":{key:"k",modifiers:["Meta"]},"action.save":{key:"s",modifiers:["Meta"]},"action.close":{key:"w",modifiers:["Meta"]},"theme.toggle":{key:"d",modifiers:["Meta","Shift"]},"task.create":{key:"n",modifiers:["Meta"]},"task.complete":{key:"Enter",modifiers:["Meta"]},"view.toggleLogs":{key:"l",modifiers:["Meta","Shift"]},"view.toggleMemory":{key:"m",modifiers:["Meta","Shift"]}},W={button:{role:"button",tabIndex:0},tablist:{role:"tablist"},tab:{role:"tab",ariaSelected:!1,tabIndex:-1},tabpanel:{role:"tabpanel",tabIndex:0},list:{role:"list"},listitem:{role:"listitem"},livePolite:{ariaLive:"polite",ariaAtomic:!0},liveAssertive:{ariaLive:"assertive",ariaAtomic:!0},dialog:{role:"dialog",ariaModal:!0},alertdialog:{role:"alertdialog",ariaModal:!0},status:{role:"status",ariaLive:"polite"},alert:{role:"alert",ariaLive:"assertive"},log:{role:"log",ariaLive:"polite",ariaRelevant:"additions"}};function m(d){let e=b[d];return e?Object.entries(e).map(([t,a])=>`${t}: ${a};`).join(`
-    `):""}function P(){return`
+var LokiDashboard=(()=>{var Ee=Object.defineProperty;var rt=Object.getOwnPropertyDescriptor;var ot=Object.getOwnPropertyNames;var nt=Object.prototype.hasOwnProperty;var lt=(d,e,t)=>e in d?Ee(d,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):d[e]=t;var dt=(d,e)=>{for(var t in e)Ee(d,t,{get:e[t],enumerable:!0})},ct=(d,e,t,i)=>{if(e&&typeof e=="object"||typeof e=="function")for(let a of ot(e))!nt.call(d,a)&&a!==t&&Ee(d,a,{get:()=>e[a],enumerable:!(i=rt(e,a))||i.enumerable});return d};var pt=d=>ct(Ee({},"__esModule",{value:!0}),d);var C=(d,e,t)=>lt(d,typeof e!="symbol"?e+"":e,t);var jt={};dt(jt,{ANIMATION:()=>I,ARIA_PATTERNS:()=>Te,ApiEvents:()=>v,BASE_STYLES:()=>U,BREAKPOINTS:()=>Ce,COMMON_STYLES:()=>Fe,KEYBOARD_SHORTCUTS:()=>Se,KeyboardHandler:()=>M,LokiActivityStream:()=>ge,LokiAgentLeaderboard:()=>xe,LokiAnalytics:()=>ne,LokiApiClient:()=>P,LokiApiKeys:()=>he,LokiAppPreview:()=>X,LokiAppStatus:()=>Q,LokiAuditViewer:()=>pe,LokiChecklistViewer:()=>W,LokiCheckpointViewer:()=>ee,LokiContextTracker:()=>te,LokiCostDashboard:()=>Z,LokiCostWaterfall:()=>ke,LokiCouncilDashboard:()=>Y,LokiCouncilTranscripts:()=>we,LokiElement:()=>h,LokiEscalations:()=>ye,LokiLearningDashboard:()=>V,LokiLogStream:()=>G,LokiManagedMemoryPanel:()=>_e,LokiMemoryBrowser:()=>K,LokiMemoryGraph:()=>fe,LokiMigrationDashboard:()=>oe,LokiNotificationCenter:()=>ie,LokiOverview:()=>O,LokiPipelineView:()=>ve,LokiPromptOptimizer:()=>se,LokiProviderHealth:()=>me,LokiQualityGates:()=>le,LokiQualityScore:()=>re,LokiRarvTimeline:()=>de,LokiRunManager:()=>ce,LokiSessionControl:()=>J,LokiSessionDiff:()=>ae,LokiState:()=>N,LokiTaskBoard:()=>q,LokiTenantSwitcher:()=>ue,LokiTheme:()=>R,LokiWikiBrowser:()=>$e,RADIUS:()=>L,SPACING:()=>T,STATE_CHANGE_EVENT:()=>Ie,THEMES:()=>E,THEME_VARIABLES:()=>Ae,TYPOGRAPHY:()=>y,UnifiedThemeManager:()=>_,VERSION:()=>Pt,Z_INDEX:()=>D,createApiClient:()=>Ne,createStore:()=>Oe,generateThemeCSS:()=>$,generateTokensCSS:()=>j,getApiClient:()=>g,getState:()=>B,init:()=>Ft});var E={light:{"--loki-bg-primary":"#FFFEFB","--loki-bg-secondary":"#F8F4F0","--loki-bg-tertiary":"#ECEAE3","--loki-bg-card":"#ffffff","--loki-bg-hover":"#F3EFE9","--loki-bg-active":"#E6E2DA","--loki-bg-overlay":"rgba(32, 21, 21, 0.5)","--loki-accent":"#553DE9","--loki-accent-hover":"#4432c4","--loki-accent-active":"#3828a0","--loki-accent-light":"#7B6BF0","--loki-accent-muted":"rgba(85, 61, 233, 0.10)","--loki-text-primary":"#201515","--loki-text-secondary":"#36342E","--loki-text-muted":"#939084","--loki-text-disabled":"#C5C0B1","--loki-text-inverse":"#ffffff","--loki-border":"#ECEAE3","--loki-border-light":"#C5C0B1","--loki-border-focus":"#553DE9","--loki-success":"#1FC5A8","--loki-success-muted":"rgba(31, 197, 168, 0.12)","--loki-warning":"#D4A03C","--loki-warning-muted":"rgba(212, 160, 60, 0.12)","--loki-error":"#C45B5B","--loki-error-muted":"rgba(196, 91, 91, 0.12)","--loki-info":"#2F71E3","--loki-info-muted":"rgba(47, 113, 227, 0.12)","--loki-green":"#1FC5A8","--loki-green-muted":"rgba(31, 197, 168, 0.12)","--loki-yellow":"#D4A03C","--loki-yellow-muted":"rgba(212, 160, 60, 0.12)","--loki-red":"#C45B5B","--loki-red-muted":"rgba(196, 91, 91, 0.12)","--loki-blue":"#2F71E3","--loki-blue-muted":"rgba(47, 113, 227, 0.12)","--loki-purple":"#553DE9","--loki-purple-muted":"rgba(85, 61, 233, 0.10)","--loki-opus":"#d97706","--loki-sonnet":"#553DE9","--loki-haiku":"#1FC5A8","--loki-shadow-sm":"0 1px 2px rgba(32, 21, 21, 0.04)","--loki-shadow-md":"0 4px 6px rgba(32, 21, 21, 0.06)","--loki-shadow-lg":"0 10px 15px rgba(32, 21, 21, 0.08)","--loki-shadow-focus":"0 0 0 3px rgba(85, 61, 233, 0.25)"},dark:{"--loki-bg-primary":"#1A0F2E","--loki-bg-secondary":"#140B24","--loki-bg-tertiary":"#251842","--loki-bg-card":"#1F1338","--loki-bg-hover":"#2A1F4A","--loki-bg-active":"#352A55","--loki-bg-overlay":"rgba(20, 11, 36, 0.85)","--loki-accent":"#7B6BF0","--loki-accent-hover":"#9488F5","--loki-accent-active":"#6258D0","--loki-accent-light":"#9488F5","--loki-accent-muted":"rgba(123, 107, 240, 0.18)","--loki-text-primary":"#F0ECF8","--loki-text-secondary":"#C0B8D0","--loki-text-muted":"#8B7FA8","--loki-text-disabled":"#5A4E78","--loki-text-inverse":"#1A0F2E","--loki-border":"#2A1F3E","--loki-border-light":"#3D3060","--loki-border-focus":"#7B6BF0","--loki-success":"#2ED8B6","--loki-success-muted":"rgba(46, 216, 182, 0.18)","--loki-warning":"#E8B84A","--loki-warning-muted":"rgba(232, 184, 74, 0.18)","--loki-error":"#E07070","--loki-error-muted":"rgba(224, 112, 112, 0.18)","--loki-info":"#5A9CF5","--loki-info-muted":"rgba(90, 156, 245, 0.18)","--loki-green":"#2ED8B6","--loki-green-muted":"rgba(46, 216, 182, 0.18)","--loki-yellow":"#E8B84A","--loki-yellow-muted":"rgba(232, 184, 74, 0.18)","--loki-red":"#E07070","--loki-red-muted":"rgba(224, 112, 112, 0.18)","--loki-blue":"#5A9CF5","--loki-blue-muted":"rgba(90, 156, 245, 0.18)","--loki-purple":"#9488F5","--loki-purple-muted":"rgba(148, 136, 245, 0.18)","--loki-opus":"#f59e0b","--loki-sonnet":"#7B6BF0","--loki-haiku":"#2ED8B6","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.4)","--loki-shadow-md":"0 4px 12px rgba(0, 0, 0, 0.5)","--loki-shadow-lg":"0 10px 25px rgba(0, 0, 0, 0.6)","--loki-shadow-focus":"0 0 0 3px rgba(123, 107, 240, 0.30)"},"high-contrast":{"--loki-bg-primary":"#000000","--loki-bg-secondary":"#0a0a0a","--loki-bg-tertiary":"#141414","--loki-bg-card":"#0a0a0a","--loki-bg-hover":"#1a1a1a","--loki-bg-active":"#242424","--loki-bg-overlay":"rgba(0, 0, 0, 0.9)","--loki-accent":"#c084fc","--loki-accent-hover":"#d8b4fe","--loki-accent-active":"#e9d5ff","--loki-accent-light":"#d8b4fe","--loki-accent-muted":"rgba(192, 132, 252, 0.25)","--loki-text-primary":"#ffffff","--loki-text-secondary":"#e0e0e0","--loki-text-muted":"#b0b0b0","--loki-text-disabled":"#666666","--loki-text-inverse":"#000000","--loki-border":"#ffffff","--loki-border-light":"#cccccc","--loki-border-focus":"#c084fc","--loki-success":"#4ade80","--loki-success-muted":"rgba(74, 222, 128, 0.25)","--loki-warning":"#fde047","--loki-warning-muted":"rgba(253, 224, 71, 0.25)","--loki-error":"#f87171","--loki-error-muted":"rgba(248, 113, 113, 0.25)","--loki-info":"#60a5fa","--loki-info-muted":"rgba(96, 165, 250, 0.25)","--loki-green":"#4ade80","--loki-green-muted":"rgba(74, 222, 128, 0.25)","--loki-yellow":"#fde047","--loki-yellow-muted":"rgba(253, 224, 71, 0.25)","--loki-red":"#f87171","--loki-red-muted":"rgba(248, 113, 113, 0.25)","--loki-blue":"#60a5fa","--loki-blue-muted":"rgba(96, 165, 250, 0.25)","--loki-purple":"#c084fc","--loki-purple-muted":"rgba(192, 132, 252, 0.25)","--loki-opus":"#fbbf24","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-shadow-sm":"none","--loki-shadow-md":"none","--loki-shadow-lg":"none","--loki-shadow-focus":"0 0 0 3px #c084fc"},"vscode-light":{"--loki-bg-primary":"var(--vscode-editor-background, #ffffff)","--loki-bg-secondary":"var(--vscode-sideBar-background, #f3f3f3)","--loki-bg-tertiary":"var(--vscode-input-background, #ffffff)","--loki-bg-card":"var(--vscode-editor-background, #ffffff)","--loki-bg-hover":"var(--vscode-list-hoverBackground, #e8e8e8)","--loki-bg-active":"var(--vscode-list-activeSelectionBackground, #0060c0)","--loki-bg-overlay":"rgba(0, 0, 0, 0.4)","--loki-accent":"var(--vscode-focusBorder, #0066cc)","--loki-accent-hover":"var(--vscode-button-hoverBackground, #0055aa)","--loki-accent-active":"var(--vscode-button-background, #007acc)","--loki-accent-light":"var(--vscode-focusBorder, #0066cc)","--loki-accent-muted":"var(--vscode-editor-selectionBackground, rgba(0, 102, 204, 0.2))","--loki-text-primary":"var(--vscode-foreground, #333333)","--loki-text-secondary":"var(--vscode-descriptionForeground, #717171)","--loki-text-muted":"var(--vscode-disabledForeground, #a0a0a0)","--loki-text-disabled":"var(--vscode-disabledForeground, #cccccc)","--loki-text-inverse":"var(--vscode-button-foreground, #ffffff)","--loki-border":"var(--vscode-widget-border, #c8c8c8)","--loki-border-light":"var(--vscode-widget-border, #e0e0e0)","--loki-border-focus":"var(--vscode-focusBorder, #0066cc)","--loki-success":"var(--vscode-testing-iconPassed, #388a34)","--loki-success-muted":"rgba(56, 138, 52, 0.15)","--loki-warning":"var(--vscode-editorWarning-foreground, #bf8803)","--loki-warning-muted":"rgba(191, 136, 3, 0.15)","--loki-error":"var(--vscode-errorForeground, #e51400)","--loki-error-muted":"rgba(229, 20, 0, 0.15)","--loki-info":"var(--vscode-editorInfo-foreground, #1a85ff)","--loki-info-muted":"rgba(26, 133, 255, 0.15)","--loki-green":"var(--vscode-testing-iconPassed, #388a34)","--loki-green-muted":"rgba(56, 138, 52, 0.15)","--loki-yellow":"var(--vscode-editorWarning-foreground, #bf8803)","--loki-yellow-muted":"rgba(191, 136, 3, 0.15)","--loki-red":"var(--vscode-errorForeground, #e51400)","--loki-red-muted":"rgba(229, 20, 0, 0.15)","--loki-blue":"var(--vscode-editorInfo-foreground, #1a85ff)","--loki-blue-muted":"rgba(26, 133, 255, 0.15)","--loki-purple":"#9333ea","--loki-purple-muted":"rgba(147, 51, 234, 0.15)","--loki-opus":"#d97706","--loki-sonnet":"#4f46e5","--loki-haiku":"#059669","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.05)","--loki-shadow-md":"0 2px 4px rgba(0, 0, 0, 0.1)","--loki-shadow-lg":"0 4px 8px rgba(0, 0, 0, 0.15)","--loki-shadow-focus":"0 0 0 2px var(--vscode-focusBorder, #0066cc)"},"vscode-dark":{"--loki-bg-primary":"var(--vscode-editor-background, #1e1e1e)","--loki-bg-secondary":"var(--vscode-sideBar-background, #252526)","--loki-bg-tertiary":"var(--vscode-input-background, #3c3c3c)","--loki-bg-card":"var(--vscode-editor-background, #1e1e1e)","--loki-bg-hover":"var(--vscode-list-hoverBackground, #2a2d2e)","--loki-bg-active":"var(--vscode-list-activeSelectionBackground, #094771)","--loki-bg-overlay":"rgba(0, 0, 0, 0.6)","--loki-accent":"var(--vscode-focusBorder, #007fd4)","--loki-accent-hover":"var(--vscode-button-hoverBackground, #1177bb)","--loki-accent-active":"var(--vscode-button-background, #0e639c)","--loki-accent-light":"var(--vscode-focusBorder, #007fd4)","--loki-accent-muted":"var(--vscode-editor-selectionBackground, rgba(0, 127, 212, 0.25))","--loki-text-primary":"var(--vscode-foreground, #cccccc)","--loki-text-secondary":"var(--vscode-descriptionForeground, #9d9d9d)","--loki-text-muted":"var(--vscode-disabledForeground, #6b6b6b)","--loki-text-disabled":"var(--vscode-disabledForeground, #4d4d4d)","--loki-text-inverse":"var(--vscode-button-foreground, #ffffff)","--loki-border":"var(--vscode-widget-border, #454545)","--loki-border-light":"var(--vscode-widget-border, #5a5a5a)","--loki-border-focus":"var(--vscode-focusBorder, #007fd4)","--loki-success":"var(--vscode-testing-iconPassed, #89d185)","--loki-success-muted":"rgba(137, 209, 133, 0.2)","--loki-warning":"var(--vscode-editorWarning-foreground, #cca700)","--loki-warning-muted":"rgba(204, 167, 0, 0.2)","--loki-error":"var(--vscode-errorForeground, #f48771)","--loki-error-muted":"rgba(244, 135, 113, 0.2)","--loki-info":"var(--vscode-editorInfo-foreground, #75beff)","--loki-info-muted":"rgba(117, 190, 255, 0.2)","--loki-green":"var(--vscode-testing-iconPassed, #89d185)","--loki-green-muted":"rgba(137, 209, 133, 0.2)","--loki-yellow":"var(--vscode-editorWarning-foreground, #cca700)","--loki-yellow-muted":"rgba(204, 167, 0, 0.2)","--loki-red":"var(--vscode-errorForeground, #f48771)","--loki-red-muted":"rgba(244, 135, 113, 0.2)","--loki-blue":"var(--vscode-editorInfo-foreground, #75beff)","--loki-blue-muted":"rgba(117, 190, 255, 0.2)","--loki-purple":"#c084fc","--loki-purple-muted":"rgba(192, 132, 252, 0.2)","--loki-opus":"#f59e0b","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-shadow-sm":"0 1px 2px rgba(0, 0, 0, 0.3)","--loki-shadow-md":"0 2px 4px rgba(0, 0, 0, 0.4)","--loki-shadow-lg":"0 4px 8px rgba(0, 0, 0, 0.5)","--loki-shadow-focus":"0 0 0 2px var(--vscode-focusBorder, #007fd4)"}},T={xs:"4px",sm:"8px",md:"12px",lg:"16px",xl:"24px","2xl":"32px","3xl":"48px"},L={none:"0",sm:"2px",md:"4px",lg:"5px",xl:"5px",full:"9999px"},y={fontFamily:{sans:"'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",serif:"'DM Serif Display', Georgia, 'Times New Roman', serif",mono:"'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace"},fontSize:{xs:"10px",sm:"11px",base:"12px",md:"13px",lg:"14px",xl:"16px","2xl":"18px","3xl":"24px"},fontWeight:{normal:"400",medium:"500",semibold:"600",bold:"700"},lineHeight:{tight:"1.25",normal:"1.5",relaxed:"1.75"}},I={duration:{fast:"100ms",normal:"200ms",slow:"300ms",slower:"500ms"},easing:{default:"cubic-bezier(0.4, 0, 0.2, 1)",in:"cubic-bezier(0.4, 0, 1, 1)",out:"cubic-bezier(0, 0, 0.2, 1)",bounce:"cubic-bezier(0.68, -0.55, 0.265, 1.55)"}},Ce={sm:"640px",md:"768px",lg:"1024px",xl:"1280px","2xl":"1536px"},D={base:"0",dropdown:"100",sticky:"200",modal:"300",popover:"400",tooltip:"500",toast:"600"},Se={"navigation.nextItem":{key:"ArrowDown",modifiers:[]},"navigation.prevItem":{key:"ArrowUp",modifiers:[]},"navigation.nextSection":{key:"Tab",modifiers:[]},"navigation.prevSection":{key:"Tab",modifiers:["Shift"]},"navigation.confirm":{key:"Enter",modifiers:[]},"navigation.cancel":{key:"Escape",modifiers:[]},"action.refresh":{key:"r",modifiers:["Meta"]},"action.search":{key:"k",modifiers:["Meta"]},"action.save":{key:"s",modifiers:["Meta"]},"action.close":{key:"w",modifiers:["Meta"]},"theme.toggle":{key:"d",modifiers:["Meta","Shift"]},"task.create":{key:"n",modifiers:["Meta"]},"task.complete":{key:"Enter",modifiers:["Meta"]},"view.toggleLogs":{key:"l",modifiers:["Meta","Shift"]},"view.toggleMemory":{key:"m",modifiers:["Meta","Shift"]}},Te={button:{role:"button",tabIndex:0},tablist:{role:"tablist"},tab:{role:"tab",ariaSelected:!1,tabIndex:-1},tabpanel:{role:"tabpanel",tabIndex:0},list:{role:"list"},listitem:{role:"listitem"},livePolite:{ariaLive:"polite",ariaAtomic:!0},liveAssertive:{ariaLive:"assertive",ariaAtomic:!0},dialog:{role:"dialog",ariaModal:!0},alertdialog:{role:"alertdialog",ariaModal:!0},status:{role:"status",ariaLive:"polite"},alert:{role:"alert",ariaLive:"assertive"},log:{role:"log",ariaLive:"polite",ariaRelevant:"additions"}};function $(d){let e=E[d];return e?Object.entries(e).map(([t,i])=>`${t}: ${i};`).join(`
+    `):""}function j(){return`
     /* Spacing */
-    --loki-space-xs: ${x.xs};
-    --loki-space-sm: ${x.sm};
-    --loki-space-md: ${x.md};
-    --loki-space-lg: ${x.lg};
-    --loki-space-xl: ${x.xl};
-    --loki-space-2xl: ${x["2xl"]};
-    --loki-space-3xl: ${x["3xl"]};
+    --loki-space-xs: ${T.xs};
+    --loki-space-sm: ${T.sm};
+    --loki-space-md: ${T.md};
+    --loki-space-lg: ${T.lg};
+    --loki-space-xl: ${T.xl};
+    --loki-space-2xl: ${T["2xl"]};
+    --loki-space-3xl: ${T["3xl"]};
 
     /* Border Radius */
-    --loki-radius-none: ${y.none};
-    --loki-radius-sm: ${y.sm};
-    --loki-radius-md: ${y.md};
-    --loki-radius-lg: ${y.lg};
-    --loki-radius-xl: ${y.xl};
-    --loki-radius-full: ${y.full};
+    --loki-radius-none: ${L.none};
+    --loki-radius-sm: ${L.sm};
+    --loki-radius-md: ${L.md};
+    --loki-radius-lg: ${L.lg};
+    --loki-radius-xl: ${L.xl};
+    --loki-radius-full: ${L.full};
 
     /* Typography */
-    --loki-font-sans: ${v.fontFamily.sans};
-    --loki-font-mono: ${v.fontFamily.mono};
-    --loki-text-xs: ${v.fontSize.xs};
-    --loki-text-sm: ${v.fontSize.sm};
-    --loki-text-base: ${v.fontSize.base};
-    --loki-text-md: ${v.fontSize.md};
-    --loki-text-lg: ${v.fontSize.lg};
-    --loki-text-xl: ${v.fontSize.xl};
-    --loki-text-2xl: ${v.fontSize["2xl"]};
-    --loki-text-3xl: ${v.fontSize["3xl"]};
+    --loki-font-sans: ${y.fontFamily.sans};
+    --loki-font-serif: ${y.fontFamily.serif};
+    --loki-font-mono: ${y.fontFamily.mono};
+    --loki-text-xs: ${y.fontSize.xs};
+    --loki-text-sm: ${y.fontSize.sm};
+    --loki-text-base: ${y.fontSize.base};
+    --loki-text-md: ${y.fontSize.md};
+    --loki-text-lg: ${y.fontSize.lg};
+    --loki-text-xl: ${y.fontSize.xl};
+    --loki-text-2xl: ${y.fontSize["2xl"]};
+    --loki-text-3xl: ${y.fontSize["3xl"]};
 
     /* Animation */
-    --loki-duration-fast: ${w.duration.fast};
-    --loki-duration-normal: ${w.duration.normal};
-    --loki-duration-slow: ${w.duration.slow};
-    --loki-easing-default: ${w.easing.default};
-    --loki-transition: ${w.duration.normal} ${w.easing.default};
+    --loki-duration-fast: ${I.duration.fast};
+    --loki-duration-normal: ${I.duration.normal};
+    --loki-duration-slow: ${I.duration.slow};
+    --loki-easing-default: ${I.easing.default};
+    --loki-transition: ${I.duration.normal} ${I.easing.default};
 
     /* Z-Index */
-    --loki-z-dropdown: ${$.dropdown};
-    --loki-z-sticky: ${$.sticky};
-    --loki-z-modal: ${$.modal};
-    --loki-z-popover: ${$.popover};
-    --loki-z-tooltip: ${$.tooltip};
-    --loki-z-toast: ${$.toast};
+    --loki-z-dropdown: ${D.dropdown};
+    --loki-z-sticky: ${D.sticky};
+    --loki-z-modal: ${D.modal};
+    --loki-z-popover: ${D.popover};
+    --loki-z-tooltip: ${D.tooltip};
+    --loki-z-toast: ${D.toast};
 
     /* Glass effect */
     --loki-glass-bg: rgba(255, 255, 255, 0.03);
     --loki-glass-border: rgba(255, 255, 255, 0.06);
     --loki-glass-blur: blur(12px);
-  `}var M=`
+  `}var U=`
   /* Reset and base */
   :host {
     font-family: var(--loki-font-sans);
@@ -157,11 +158,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
     font-size: var(--loki-text-lg);
   }
 
-  /* Status indicators */
+  /* Status indicators (rectangle style) */
   .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: var(--loki-radius-full);
+    width: 12px;
+    height: 6px;
+    border-radius: 2px;
     flex-shrink: 0;
   }
 
@@ -326,22 +327,22 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
   }
 
   /* Responsive utilities */
-  @media (max-width: ${V.md}) {
+  @media (max-width: ${Ce.md}) {
     .hide-mobile { display: none !important; }
   }
 
-  @media (min-width: ${V.md}) {
+  @media (min-width: ${Ce.md}) {
     .hide-desktop { display: none !important; }
   }
-`,g=class g{static detectContext(){return typeof acquireVsCodeApi<"u"||document.body.classList.contains("vscode-body")||getComputedStyle(document.documentElement).getPropertyValue("--vscode-editor-background")?"vscode":document.documentElement.dataset.lokiContext==="cli"?"cli":"browser"}static detectVSCodeTheme(){let e=document.body;if(e.classList.contains("vscode-high-contrast"))return"high-contrast";if(e.classList.contains("vscode-dark"))return"dark";if(e.classList.contains("vscode-light"))return"light";let t=getComputedStyle(document.documentElement).getPropertyValue("--vscode-editor-background");if(t){let a=t.match(/\d+/g);if(a)return(parseInt(a[0])*299+parseInt(a[1])*587+parseInt(a[2])*114)/1e3>128?"light":"dark"}return null}static getTheme(){if(g.detectContext()==="vscode"){let a=g.detectVSCodeTheme();return a==="high-contrast"?"high-contrast":a==="dark"?"vscode-dark":"vscode-light"}let t=localStorage.getItem(g.STORAGE_KEY);return t&&b[t]?t:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}static setTheme(e){if(!b[e]){console.warn(`Unknown theme: ${e}`);return}localStorage.setItem(g.STORAGE_KEY,e),document.documentElement.setAttribute("data-loki-theme",e),window.dispatchEvent(new CustomEvent("loki-theme-change",{detail:{theme:e,context:g.detectContext()}}))}static toggle(){let e=g.getTheme(),t;return e.includes("dark")||e==="high-contrast"?t=e.startsWith("vscode")?"vscode-light":"light":t=e.startsWith("vscode")?"vscode-dark":"dark",g.setTheme(t),t}static getVariables(e=null){let t=e||g.getTheme();return b[t]||b.light}static generateCSS(e=null){let t=e||g.getTheme();return`
+`,k=class k{static detectContext(){return typeof acquireVsCodeApi<"u"||document.body.classList.contains("vscode-body")||getComputedStyle(document.documentElement).getPropertyValue("--vscode-editor-background")?"vscode":document.documentElement.dataset.lokiContext==="cli"?"cli":"browser"}static detectVSCodeTheme(){let e=document.body;if(e.classList.contains("vscode-high-contrast"))return"high-contrast";if(e.classList.contains("vscode-dark"))return"dark";if(e.classList.contains("vscode-light"))return"light";let t=getComputedStyle(document.documentElement).getPropertyValue("--vscode-editor-background");if(t){let i=t.match(/\d+/g);if(i)return(parseInt(i[0])*299+parseInt(i[1])*587+parseInt(i[2])*114)/1e3>128?"light":"dark"}return null}static getTheme(){if(k.detectContext()==="vscode"){let i=k.detectVSCodeTheme();return i==="high-contrast"?"high-contrast":i==="dark"?"vscode-dark":"vscode-light"}let t=localStorage.getItem(k.STORAGE_KEY);return t&&E[t]?t:window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}static setTheme(e){if(!E[e]){console.warn(`Unknown theme: ${e}`);return}localStorage.setItem(k.STORAGE_KEY,e),document.documentElement.setAttribute("data-loki-theme",e),window.dispatchEvent(new CustomEvent("loki-theme-change",{detail:{theme:e,context:k.detectContext()}}))}static toggle(){let e=k.getTheme(),t;return e.includes("dark")||e==="high-contrast"?t=e.startsWith("vscode")?"vscode-light":"light":t=e.startsWith("vscode")?"vscode-dark":"dark",k.setTheme(t),t}static getVariables(e=null){let t=e||k.getTheme();return E[t]||E.light}static generateCSS(e=null){let t=e||k.getTheme();return`
       :host {
-        ${m(t)}
-        ${P()}
+        ${$(t)}
+        ${j()}
       }
-      ${M}
-    `}static init(){let e=g.getTheme();document.documentElement.setAttribute("data-loki-theme",e),window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{localStorage.getItem(g.STORAGE_KEY)||g.setTheme(g.getTheme())}),g.detectContext()==="vscode"&&new MutationObserver(()=>{let a=g.getTheme();document.documentElement.setAttribute("data-loki-theme",a),window.dispatchEvent(new CustomEvent("loki-theme-change",{detail:{theme:a,context:"vscode"}}))}).observe(document.body,{attributes:!0,attributeFilter:["class"]})}};k(g,"STORAGE_KEY","loki-theme"),k(g,"CONTEXT_KEY","loki-context");var h=g,L=class{constructor(){this._handlers=new Map,this._enabled=!0}register(e,t){let a=Y[e];if(!a){console.warn(`Unknown keyboard action: ${e}`);return}this._handlers.set(e,{shortcut:a,handler:t})}unregister(e){this._handlers.delete(e)}setEnabled(e){this._enabled=e}handleEvent(e){if(!this._enabled)return!1;for(let[t,{shortcut:a,handler:i}]of this._handlers)if(this._matchesShortcut(e,a))return e.preventDefault(),e.stopPropagation(),i(e),!0;return!1}_matchesShortcut(e,t){let a=e.key.toLowerCase(),i=t.modifiers||[];if(a!==t.key.toLowerCase())return!1;let s=i.includes("Ctrl")||i.includes("Meta"),r=i.includes("Shift"),o=i.includes("Alt"),l=(e.ctrlKey||e.metaKey)===s,p=e.shiftKey===r,A=e.altKey===o;return l&&p&&A}attach(e){this._boundHandler||(this._boundHandler=t=>this.handleEvent(t)),e.addEventListener("keydown",this._boundHandler)}detach(e){this._boundHandler&&e.removeEventListener("keydown",this._boundHandler)}};var X={light:{"--loki-bg-primary":"#fafafa","--loki-bg-secondary":"#f4f4f5","--loki-bg-tertiary":"#e4e4e7","--loki-bg-card":"#ffffff","--loki-bg-hover":"#f0f0f3","--loki-accent":"#7c3aed","--loki-accent-light":"#8b5cf6","--loki-accent-muted":"rgba(124, 58, 237, 0.12)","--loki-text-primary":"#18181b","--loki-text-secondary":"#52525b","--loki-text-muted":"#a1a1aa","--loki-border":"#e4e4e7","--loki-border-light":"#d4d4d8","--loki-green":"#16a34a","--loki-green-muted":"rgba(22, 163, 74, 0.12)","--loki-yellow":"#ca8a04","--loki-yellow-muted":"rgba(202, 138, 4, 0.12)","--loki-red":"#dc2626","--loki-red-muted":"rgba(220, 38, 38, 0.12)","--loki-blue":"#2563eb","--loki-blue-muted":"rgba(37, 99, 235, 0.12)","--loki-purple":"#9333ea","--loki-purple-muted":"rgba(147, 51, 234, 0.12)","--loki-opus":"#d97706","--loki-sonnet":"#4f46e5","--loki-haiku":"#059669","--loki-transition":"0.2s cubic-bezier(0.4, 0, 0.2, 1)"},dark:{"--loki-bg-primary":"#09090b","--loki-bg-secondary":"#0c0c0f","--loki-bg-tertiary":"#111114","--loki-bg-card":"#18181b","--loki-bg-hover":"#1f1f23","--loki-accent":"#8b5cf6","--loki-accent-light":"#a78bfa","--loki-accent-muted":"rgba(139, 92, 246, 0.15)","--loki-text-primary":"#fafafa","--loki-text-secondary":"#a1a1aa","--loki-text-muted":"#52525b","--loki-border":"rgba(255, 255, 255, 0.06)","--loki-border-light":"rgba(255, 255, 255, 0.1)","--loki-green":"#22c55e","--loki-green-muted":"rgba(34, 197, 94, 0.15)","--loki-yellow":"#eab308","--loki-yellow-muted":"rgba(234, 179, 8, 0.15)","--loki-red":"#ef4444","--loki-red-muted":"rgba(239, 68, 68, 0.15)","--loki-blue":"#3b82f6","--loki-blue-muted":"rgba(59, 130, 246, 0.15)","--loki-purple":"#a78bfa","--loki-purple-muted":"rgba(167, 139, 250, 0.15)","--loki-opus":"#f59e0b","--loki-sonnet":"#818cf8","--loki-haiku":"#34d399","--loki-transition":"0.2s cubic-bezier(0.4, 0, 0.2, 1)"}},te=`
+      ${U}
+    `}static init(){let e=k.getTheme();document.documentElement.setAttribute("data-loki-theme",e),window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{localStorage.getItem(k.STORAGE_KEY)||k.setTheme(k.getTheme())}),k.detectContext()==="vscode"&&new MutationObserver(()=>{let i=k.getTheme();document.documentElement.setAttribute("data-loki-theme",i),window.dispatchEvent(new CustomEvent("loki-theme-change",{detail:{theme:i,context:"vscode"}}))}).observe(document.body,{attributes:!0,attributeFilter:["class"]})}};C(k,"STORAGE_KEY","loki-theme"),C(k,"CONTEXT_KEY","loki-context");var _=k,M=class{constructor(){this._handlers=new Map,this._enabled=!0}register(e,t){let i=Se[e];if(!i){console.warn(`Unknown keyboard action: ${e}`);return}this._handlers.set(e,{shortcut:i,handler:t})}unregister(e){this._handlers.delete(e)}setEnabled(e){this._enabled=e}handleEvent(e){if(!this._enabled)return!1;for(let[t,{shortcut:i,handler:a}]of this._handlers)if(this._matchesShortcut(e,i))return e.preventDefault(),e.stopPropagation(),a(e),!0;return!1}_matchesShortcut(e,t){let i=e.key.toLowerCase(),a=t.modifiers||[];if(i!==t.key.toLowerCase())return!1;let s=a.includes("Ctrl")||a.includes("Meta"),r=a.includes("Shift"),o=a.includes("Alt"),n=(e.ctrlKey||e.metaKey)===s,l=e.shiftKey===r,c=e.altKey===o;return n&&l&&c}attach(e){this._boundHandler||(this._boundHandler=t=>this.handleEvent(t)),e.addEventListener("keydown",this._boundHandler)}detach(e){this._boundHandler&&e.removeEventListener("keydown",this._boundHandler)}};var Ae={light:{"--loki-bg-primary":"#FFFEFB","--loki-bg-secondary":"#F8F4F0","--loki-bg-tertiary":"#ECEAE3","--loki-bg-card":"#ffffff","--loki-bg-hover":"#F3EFE9","--loki-accent":"#553DE9","--loki-accent-light":"#7B6BF0","--loki-accent-muted":"rgba(85, 61, 233, 0.10)","--loki-text-primary":"#201515","--loki-text-secondary":"#36342E","--loki-text-muted":"#939084","--loki-border":"#ECEAE3","--loki-border-light":"#C5C0B1","--loki-green":"#1FC5A8","--loki-green-muted":"rgba(31, 197, 168, 0.12)","--loki-yellow":"#D4A03C","--loki-yellow-muted":"rgba(212, 160, 60, 0.12)","--loki-red":"#C45B5B","--loki-red-muted":"rgba(196, 91, 91, 0.12)","--loki-blue":"#2F71E3","--loki-blue-muted":"rgba(47, 113, 227, 0.12)","--loki-purple":"#553DE9","--loki-purple-muted":"rgba(85, 61, 233, 0.10)","--loki-opus":"#d97706","--loki-sonnet":"#553DE9","--loki-haiku":"#1FC5A8","--loki-transition":"0.2s cubic-bezier(0.4, 0, 0.2, 1)"},dark:{"--loki-bg-primary":"#1A0F2E","--loki-bg-secondary":"#140B24","--loki-bg-tertiary":"#251842","--loki-bg-card":"#1F1338","--loki-bg-hover":"#2A1F4A","--loki-accent":"#7B6BF0","--loki-accent-light":"#9488F5","--loki-accent-muted":"rgba(123, 107, 240, 0.18)","--loki-text-primary":"#F0ECF8","--loki-text-secondary":"#C0B8D0","--loki-text-muted":"#8B7FA8","--loki-border":"#2A1F3E","--loki-border-light":"#3D3060","--loki-green":"#2ED8B6","--loki-green-muted":"rgba(46, 216, 182, 0.18)","--loki-yellow":"#E8B84A","--loki-yellow-muted":"rgba(232, 184, 74, 0.18)","--loki-red":"#E07070","--loki-red-muted":"rgba(224, 112, 112, 0.18)","--loki-blue":"#5A9CF5","--loki-blue-muted":"rgba(90, 156, 245, 0.18)","--loki-purple":"#9488F5","--loki-purple-muted":"rgba(148, 136, 245, 0.18)","--loki-opus":"#f59e0b","--loki-sonnet":"#7B6BF0","--loki-haiku":"#2ED8B6","--loki-transition":"0.2s cubic-bezier(0.4, 0, 0.2, 1)"}},Fe=`
   :host {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     box-sizing: border-box;
@@ -358,7 +359,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
   /* Button base styles */
   .btn {
     padding: 8px 14px;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -388,11 +389,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
     background: var(--loki-bg-hover);
   }
 
-  /* Status dot */
+  /* Status indicator (rectangle) */
   .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+    width: 12px;
+    height: 6px;
+    border-radius: 2px;
   }
 
   .status-dot.active {
@@ -413,7 +414,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
   .card {
     background: var(--loki-bg-card);
     border: 1px solid var(--loki-border);
-    border-radius: 10px;
+    border-radius: 5px;
     padding: 16px;
     transition: all var(--loki-transition);
   }
@@ -435,49 +436,49 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
   ::-webkit-scrollbar-track { background: var(--loki-bg-primary); }
   ::-webkit-scrollbar-thumb { background: var(--loki-border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--loki-border-light); }
-`,E=class E{static getTheme(){return h.getTheme()}static setTheme(e){h.setTheme(e)}static toggle(){return h.toggle()}static getVariables(e=null){let t=e||E.getTheme();return b[t]||X[t]||X.light}static toCSSString(e=null){let t=e||E.getTheme();if(b[t])return m(t);let a=E.getVariables(t);return Object.entries(a).map(([i,s])=>`${i}: ${s};`).join(`
-`)}static applyToElement(e,t=null){let a=E.getVariables(t);for(let[i,s]of Object.entries(a))e.style.setProperty(i,s)}static init(){h.init()}static detectContext(){return h.detectContext()}static getAvailableThemes(){return Object.keys(b)}};k(E,"STORAGE_KEY","loki-theme");var S=E,c=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._theme=S.getTheme(),this._themeChangeHandler=this._onThemeChange.bind(this),this._keyboardHandler=new L}connectedCallback(){window.addEventListener("loki-theme-change",this._themeChangeHandler),this._applyTheme(),this._setupKeyboardHandling(),this.render()}disconnectedCallback(){window.removeEventListener("loki-theme-change",this._themeChangeHandler),this._keyboardHandler.detach(this)}_onThemeChange(e){this._theme=e.detail.theme,this._applyTheme(),this.onThemeChange&&this.onThemeChange(this._theme)}_applyTheme(){S.applyToElement(this.shadowRoot.host,this._theme),this.setAttribute("data-loki-theme",this._theme)}_setupKeyboardHandling(){this._keyboardHandler.attach(this)}registerShortcut(e,t){this._keyboardHandler.register(e,t)}getBaseStyles(){return`
+`,H=class H{static getTheme(){return _.getTheme()}static setTheme(e){_.setTheme(e)}static toggle(){return _.toggle()}static getVariables(e=null){let t=e||H.getTheme();return E[t]||Ae[t]||Ae.light}static toCSSString(e=null){let t=e||H.getTheme();if(E[t])return $(t);let i=H.getVariables(t);return Object.entries(i).map(([a,s])=>`${a}: ${s};`).join(`
+`)}static applyToElement(e,t=null){let i=H.getVariables(t);for(let[a,s]of Object.entries(i))e.style.setProperty(a,s)}static init(){_.init()}static detectContext(){return _.detectContext()}static getAvailableThemes(){return Object.keys(E)}};C(H,"STORAGE_KEY","loki-theme");var R=H,h=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._theme=R.getTheme(),this._themeChangeHandler=this._onThemeChange.bind(this),this._keyboardHandler=new M}connectedCallback(){window.addEventListener("loki-theme-change",this._themeChangeHandler),this._applyTheme(),this._setupKeyboardHandling(),this.render()}disconnectedCallback(){window.removeEventListener("loki-theme-change",this._themeChangeHandler),this._keyboardHandler.detach(this)}_onThemeChange(e){this._theme=e.detail.theme,this._applyTheme(),this.onThemeChange&&this.onThemeChange(this._theme)}_applyTheme(){R.applyToElement(this.shadowRoot.host,this._theme),this.setAttribute("data-loki-theme",this._theme)}_setupKeyboardHandling(){this._keyboardHandler.attach(this)}registerShortcut(e,t){this._keyboardHandler.register(e,t)}getBaseStyles(){return`
       /* Design tokens */
       :host {
-        ${P()}
+        ${j()}
       }
 
       /* Light theme (default) */
       :host {
-        ${m("light")}
+        ${$("light")}
       }
 
       /* Dark theme via system preference */
       @media (prefers-color-scheme: dark) {
         :host {
-          ${m("dark")}
+          ${$("dark")}
         }
       }
 
       /* Explicit theme attributes */
       :host([theme="dark"]),
       :host([data-loki-theme="dark"]) {
-        ${m("dark")}
+        ${$("dark")}
       }
 
       :host([theme="light"]),
       :host([data-loki-theme="light"]) {
-        ${m("light")}
+        ${$("light")}
       }
 
       :host([theme="high-contrast"]),
       :host([data-loki-theme="high-contrast"]) {
-        ${m("high-contrast")}
+        ${$("high-contrast")}
       }
 
       :host([theme="vscode-light"]),
       :host([data-loki-theme="vscode-light"]) {
-        ${m("vscode-light")}
+        ${$("vscode-light")}
       }
 
       :host([theme="vscode-dark"]),
       :host([data-loki-theme="vscode-dark"]) {
-        ${m("vscode-dark")}
+        ${$("vscode-dark")}
       }
 
       /* Reduced motion preference */
@@ -491,8 +492,83 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
       }
 
-      ${M}
-    `}getAriaPattern(e){return W[e]||{}}applyAriaPattern(e,t){let a=this.getAriaPattern(t);for(let[i,s]of Object.entries(a))if(i==="role")e.setAttribute("role",s);else{let r=i.replace(/([A-Z])/g,"-$1").toLowerCase();e.setAttribute(r,s)}}render(){}};var T={realtime:1e3,normal:2e3,background:5e3,offline:1e4},ae={vscode:T.normal,browser:T.realtime,cli:T.background},ie={baseUrl:typeof window<"u"?window.location.origin:"http://localhost:57374",wsUrl:typeof window<"u"?`${window.location.protocol==="https:"?"wss:":"ws:"}//${window.location.host}/ws`:"ws://localhost:57374/ws",pollInterval:2e3,timeout:1e4,retryAttempts:3,retryDelay:1e3},n={CONNECTED:"api:connected",DISCONNECTED:"api:disconnected",ERROR:"api:error",STATUS_UPDATE:"api:status-update",TASK_CREATED:"api:task-created",TASK_UPDATED:"api:task-updated",TASK_DELETED:"api:task-deleted",PROJECT_CREATED:"api:project-created",PROJECT_UPDATED:"api:project-updated",AGENT_UPDATE:"api:agent-update",LOG_MESSAGE:"api:log-message",MEMORY_UPDATE:"api:memory-update"},_=class _ extends EventTarget{static getInstance(e={}){let t=e.baseUrl||ie.baseUrl;return _._instances.has(t)||_._instances.set(t,new _(e)),_._instances.get(t)}static clearInstances(){_._instances.forEach(e=>e.disconnect()),_._instances.clear()}constructor(e={}){super(),this.config={...ie,...e},this._ws=null,this._connected=!1,this._pollInterval=null,this._reconnectTimeout=null,this._cache=new Map,this._cacheTimeout=5e3,this._vscodeApi=null,this._context=this._detectContext(),this._currentPollInterval=ae[this._context]||T.normal,this._visibilityChangeHandler=null,this._messageHandler=null,this._setupAdaptivePolling(),this._setupVSCodeBridge()}_detectContext(){return typeof acquireVsCodeApi<"u"?"vscode":typeof window<"u"&&window.location?"browser":"cli"}get context(){return this._context}static get POLL_INTERVALS(){return T}_setupAdaptivePolling(){typeof document>"u"||(this._visibilityChangeHandler=()=>{document.hidden?this._setPollInterval(T.background):this._setPollInterval(ae[this._context]||T.normal)},document.addEventListener("visibilitychange",this._visibilityChangeHandler))}_setPollInterval(e){this._currentPollInterval=e,this._pollInterval&&(this.stopPolling(),this.startPolling(null,e))}setPollMode(e){let t=T[e];t&&this._setPollInterval(t)}_setupVSCodeBridge(){if(!(typeof acquireVsCodeApi>"u")){try{this._vscodeApi=acquireVsCodeApi()}catch{console.warn("VS Code API already acquired or unavailable");return}this._messageHandler=e=>{let t=e.data;if(!(!t||!t.type))switch(t.type){case"updateStatus":this._emit(n.STATUS_UPDATE,t.data);break;case"updateTasks":this._emit(n.TASK_UPDATED,t.data);break;case"taskCreated":this._emit(n.TASK_CREATED,t.data);break;case"taskDeleted":this._emit(n.TASK_DELETED,t.data);break;case"projectCreated":this._emit(n.PROJECT_CREATED,t.data);break;case"projectUpdated":this._emit(n.PROJECT_UPDATED,t.data);break;case"agentUpdate":this._emit(n.AGENT_UPDATE,t.data);break;case"logMessage":this._emit(n.LOG_MESSAGE,t.data);break;case"memoryUpdate":this._emit(n.MEMORY_UPDATE,t.data);break;case"connected":this._connected=!0,this._emit(n.CONNECTED,t.data);break;case"disconnected":this._connected=!1,this._emit(n.DISCONNECTED,t.data);break;case"error":this._emit(n.ERROR,t.data);break;case"setPollMode":this.setPollMode(t.data.mode);break;default:this._emit(`api:${t.type}`,t.data)}},window.addEventListener("message",this._messageHandler)}}get isVSCode(){return this._context==="vscode"}postToVSCode(e,t={}){this._vscodeApi&&this._vscodeApi.postMessage({type:e,data:t})}requestRefresh(){this.postToVSCode("requestRefresh")}notifyVSCode(e,t={}){this.postToVSCode("userAction",{action:e,...t})}get baseUrl(){return this.config.baseUrl}set baseUrl(e){this.config.baseUrl=e,this.config.wsUrl=e.replace(/^http/,"ws")+"/ws"}get isConnected(){return this._connected}async connect(){if(!(this._ws&&this._ws.readyState===WebSocket.OPEN))return new Promise((e,t)=>{try{this._ws=new WebSocket(this.config.wsUrl),this._ws.onopen=()=>{this._connected=!0,this._emit(n.CONNECTED),e()},this._ws.onclose=()=>{this._connected=!1,this._emit(n.DISCONNECTED),this._scheduleReconnect()},this._ws.onerror=a=>{this._emit(n.ERROR,{error:a}),t(a)},this._ws.onmessage=a=>{try{let i=JSON.parse(a.data);this._handleMessage(i)}catch(i){console.error("Failed to parse WebSocket message:",i)}}}catch(a){t(a)}})}disconnect(){this._ws&&(this._ws.close(),this._ws=null),this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._reconnectTimeout&&(clearTimeout(this._reconnectTimeout),this._reconnectTimeout=null),this._connected=!1,this._cleanupGlobalListeners()}_cleanupGlobalListeners(){this._visibilityChangeHandler&&typeof document<"u"&&(document.removeEventListener("visibilitychange",this._visibilityChangeHandler),this._visibilityChangeHandler=null),this._messageHandler&&typeof window<"u"&&(window.removeEventListener("message",this._messageHandler),this._messageHandler=null)}destroy(){this.disconnect()}_scheduleReconnect(){this._reconnectTimeout||(this._reconnectTimeout=setTimeout(()=>{this._reconnectTimeout=null,this.connect().catch(()=>{})},this.config.retryDelay))}_handleMessage(e){let a={connected:n.CONNECTED,status_update:n.STATUS_UPDATE,task_created:n.TASK_CREATED,task_updated:n.TASK_UPDATED,task_deleted:n.TASK_DELETED,task_moved:n.TASK_UPDATED,project_created:n.PROJECT_CREATED,project_updated:n.PROJECT_UPDATED,agent_update:n.AGENT_UPDATE,log:n.LOG_MESSAGE}[e.type]||`api:${e.type}`;this._emit(a,e.data)}_emit(e,t={}){this.dispatchEvent(new CustomEvent(e,{detail:t}))}async _request(e,t={}){let a=`${this.config.baseUrl}${e}`,i=new AbortController,s=setTimeout(()=>i.abort(),this.config.timeout);try{let r=await fetch(a,{...t,signal:i.signal,headers:{"Content-Type":"application/json",...t.headers}});if(clearTimeout(s),!r.ok){let o=await r.json().catch(()=>({detail:r.statusText}));throw new Error(o.detail||`HTTP ${r.status}`)}return r.status===204?null:await r.json()}catch(r){throw clearTimeout(s),r.name==="AbortError"?new Error("Request timeout"):r}}async _get(e,t=!1){if(t&&this._cache.has(e)){let i=this._cache.get(e);if(Date.now()-i.timestamp<this._cacheTimeout)return i.data}let a=await this._request(e);return t&&this._cache.set(e,{data:a,timestamp:Date.now()}),a}async _post(e,t){return this._request(e,{method:"POST",body:JSON.stringify(t)})}async _put(e,t){return this._request(e,{method:"PUT",body:JSON.stringify(t)})}async _delete(e){return this._request(e,{method:"DELETE"})}async getStatus(){return this._get("/api/status")}async healthCheck(){return this._get("/health")}async listProjects(e=null){let t=e?`?status=${e}`:"";return this._get(`/api/projects${t}`)}async getProject(e){return this._get(`/api/projects/${e}`)}async createProject(e){return this._post("/api/projects",e)}async updateProject(e,t){return this._put(`/api/projects/${e}`,t)}async deleteProject(e){return this._delete(`/api/projects/${e}`)}async listTasks(e={}){let t=new URLSearchParams;e.projectId&&t.append("project_id",e.projectId),e.status&&t.append("status",e.status),e.priority&&t.append("priority",e.priority);let a=t.toString()?`?${t}`:"";return this._get(`/api/tasks${a}`)}async getTask(e){return this._get(`/api/tasks/${e}`)}async createTask(e){return this._post("/api/tasks",e)}async updateTask(e,t){return this._put(`/api/tasks/${e}`,t)}async moveTask(e,t,a){return this._post(`/api/tasks/${e}/move`,{status:t,position:a})}async deleteTask(e){return this._delete(`/api/tasks/${e}`)}async getMemorySummary(){return this._get("/api/memory/summary",!0)}async getMemoryIndex(){return this._get("/api/memory/index",!0)}async getMemoryTimeline(){return this._get("/api/memory/timeline")}async listEpisodes(e={}){let t=new URLSearchParams(e).toString();return this._get(`/api/memory/episodes${t?"?"+t:""}`)}async getEpisode(e){return this._get(`/api/memory/episodes/${e}`)}async listPatterns(e={}){let t=new URLSearchParams(e).toString();return this._get(`/api/memory/patterns${t?"?"+t:""}`)}async getPattern(e){return this._get(`/api/memory/patterns/${e}`)}async listSkills(){return this._get("/api/memory/skills")}async getSkill(e){return this._get(`/api/memory/skills/${e}`)}async retrieveMemories(e,t=null,a=5){return this._post("/api/memory/retrieve",{query:e,taskType:t,topK:a})}async consolidateMemory(e=24){return this._post("/api/memory/consolidate",{sinceHours:e})}async getTokenEconomics(){return this._get("/api/memory/economics")}async listRegisteredProjects(e=!1){return this._get(`/api/registry/projects?include_inactive=${e}`)}async registerProject(e,t=null,a=null){return this._post("/api/registry/projects",{path:e,name:t,alias:a})}async discoverProjects(e=3){return this._get(`/api/registry/discover?max_depth=${e}`)}async syncRegistry(){return this._post("/api/registry/sync",{})}async getCrossProjectTasks(e=null){let t=e?`?project_ids=${e.join(",")}`:"";return this._get(`/api/registry/tasks${t}`)}async getLearningMetrics(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source);let a=t.toString()?`?${t}`:"";return this._get(`/api/learning/metrics${a}`)}async getLearningTrends(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source);let a=t.toString()?`?${t}`:"";return this._get(`/api/learning/trends${a}`)}async getLearningSignals(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source),e.limit&&t.append("limit",String(e.limit)),e.offset&&t.append("offset",String(e.offset));let a=t.toString()?`?${t}`:"";return this._get(`/api/learning/signals${a}`)}async getLatestAggregation(){return this._get("/api/learning/aggregation")}async triggerAggregation(e={}){return this._post("/api/learning/aggregate",e)}async getAggregatedPreferences(e=20){return this._get(`/api/learning/preferences?limit=${e}`)}async getAggregatedErrors(e=20){return this._get(`/api/learning/errors?limit=${e}`)}async getAggregatedSuccessPatterns(e=20){return this._get(`/api/learning/success?limit=${e}`)}async getToolEfficiency(e=20){return this._get(`/api/learning/tools?limit=${e}`)}async getCost(){return this._get("/api/cost")}async getPricing(){return this._get("/api/pricing")}async getContext(){return this._get("/api/context")}async getNotifications(e,t){let a=new URLSearchParams;e&&a.set("severity",e),t&&a.set("unread_only","true");let i=a.toString();return this._get("/api/notifications"+(i?"?"+i:""))}async getNotificationTriggers(){return this._get("/api/notifications/triggers")}async updateNotificationTriggers(e){return this._put("/api/notifications/triggers",{triggers:e})}async acknowledgeNotification(e){return this._post("/api/notifications/"+encodeURIComponent(e)+"/acknowledge",{})}async pauseSession(){return this._post("/api/control/pause",{})}async resumeSession(){return this._post("/api/control/resume",{})}async stopSession(){return this._post("/api/control/stop",{})}async getLogs(e=100){return this._get(`/api/logs?lines=${e}`)}startPolling(e,t=null){if(this._pollInterval)return;this._pollCallback=e;let a=async()=>{try{let s=await this.getStatus();this._connected=!0,this._pollCallback&&this._pollCallback(s),this._emit(n.STATUS_UPDATE,s),this._vscodeApi&&this.postToVSCode("pollSuccess",{timestamp:Date.now()})}catch(s){this._connected=!1,this._emit(n.ERROR,{error:s}),this._vscodeApi&&this.postToVSCode("pollError",{error:s.message})}};a();let i=t||this._currentPollInterval||this.config.pollInterval;this._pollInterval=setInterval(a,i)}stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}};k(_,"_instances",new Map);var I=_;function se(d={}){return new I(d)}function u(d={}){return I.getInstance(d)}var Q="loki-state-change",Z={ui:{theme:"light",sidebarCollapsed:!1,activeSection:"kanban",terminalAutoScroll:!0},session:{connected:!1,lastSync:null,mode:"offline",phase:null,iteration:null},localTasks:[],cache:{projects:[],tasks:[],agents:[],memory:null,lastFetch:null},preferences:{pollInterval:2e3,notifications:!0,soundEnabled:!1}},f=class f extends EventTarget{static getInstance(){return f._instance||(f._instance=new f),f._instance}constructor(){super(),this._state=this._loadState(),this._subscribers=new Map,this._batchUpdates=[],this._batchTimeout=null}_loadState(){try{let e=localStorage.getItem(f.STORAGE_KEY);if(e){let t=JSON.parse(e);return this._mergeState(Z,t)}}catch(e){console.warn("Failed to load state from localStorage:",e)}return{...Z}}_mergeState(e,t){let a={...e};for(let i of Object.keys(t))i in e&&typeof e[i]=="object"&&!Array.isArray(e[i])?a[i]=this._mergeState(e[i],t[i]):a[i]=t[i];return a}_saveState(){try{let e={ui:this._state.ui,localTasks:this._state.localTasks,preferences:this._state.preferences};localStorage.setItem(f.STORAGE_KEY,JSON.stringify(e))}catch(e){console.warn("Failed to save state to localStorage:",e)}}get(e=null){if(!e)return{...this._state};let t=e.split("."),a=this._state;for(let i of t){if(a==null)return;a=a[i]}return a}set(e,t,a=!0){let i=e.split("."),s=i.pop(),r=this._state;for(let l of i)l in r||(r[l]={}),r=r[l];let o=r[s];r[s]=t,a&&this._saveState(),this._notifyChange(e,t,o)}update(e,t=!0){let a=[];for(let[i,s]of Object.entries(e)){let r=this.get(i);this.set(i,s,!1),a.push({path:i,value:s,oldValue:r})}t&&this._saveState();for(let i of a)this._notifyChange(i.path,i.value,i.oldValue)}_notifyChange(e,t,a){this.dispatchEvent(new CustomEvent(Q,{detail:{path:e,value:t,oldValue:a}}));let i=this._subscribers.get(e)||[];for(let r of i)try{r(t,a,e)}catch(o){console.error("State subscriber error:",o)}let s=e.split(".");for(;s.length>1;){s.pop();let r=s.join("."),o=this._subscribers.get(r)||[];for(let l of o)try{l(this.get(r),null,r)}catch(p){console.error("State subscriber error:",p)}}}subscribe(e,t){return this._subscribers.has(e)||this._subscribers.set(e,[]),this._subscribers.get(e).push(t),()=>{let a=this._subscribers.get(e),i=a.indexOf(t);i>-1&&a.splice(i,1)}}reset(e=null){if(e){let t=e.split("."),a=Z;for(let i of t)a=a?.[i];this.set(e,a)}else this._state={...Z},this._saveState(),this.dispatchEvent(new CustomEvent(Q,{detail:{path:null,value:this._state,oldValue:null}}))}addLocalTask(e){let t=this.get("localTasks")||[],a={id:`local-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,createdAt:new Date().toISOString(),status:"pending",...e};return this.set("localTasks",[...t,a]),a}updateLocalTask(e,t){let a=this.get("localTasks")||[],i=a.findIndex(r=>r.id===e);if(i===-1)return null;let s={...a[i],...t,updatedAt:new Date().toISOString()};return a[i]=s,this.set("localTasks",[...a]),s}deleteLocalTask(e){let t=this.get("localTasks")||[];this.set("localTasks",t.filter(a=>a.id!==e))}moveLocalTask(e,t,a=null){let s=(this.get("localTasks")||[]).find(r=>r.id===e);return s?this.updateLocalTask(e,{status:t,position:a??s.position}):null}updateSession(e){this.update(Object.fromEntries(Object.entries(e).map(([t,a])=>[`session.${t}`,a])),!1)}updateCache(e){this.update({"cache.projects":e.projects??this.get("cache.projects"),"cache.tasks":e.tasks??this.get("cache.tasks"),"cache.agents":e.agents??this.get("cache.agents"),"cache.memory":e.memory??this.get("cache.memory"),"cache.lastFetch":new Date().toISOString()},!1)}getMergedTasks(){let e=this.get("cache.tasks")||[],a=(this.get("localTasks")||[]).map(i=>({...i,isLocal:!0}));return[...e,...a]}getTasksByStatus(e){return this.getMergedTasks().filter(t=>t.status===e)}};k(f,"STORAGE_KEY","loki-dashboard-state"),k(f,"_instance",null);var R=f;function C(){return R.getInstance()}function re(d){let e=C();return{get:()=>e.get(d),set:t=>e.set(d,t),subscribe:t=>e.subscribe(d,t)}}var z=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data={status:"offline",phase:null,iteration:null,provider:null,running_agents:0,pending_tasks:null,uptime_seconds:0,complexity:null,connected:!1},this._api=null,this._pollInterval=null,this._statusUpdateHandler=null,this._connectedHandler=null,this._disconnectedHandler=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadStatus(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling(),this._api&&(this._statusUpdateHandler&&this._api.removeEventListener(n.STATUS_UPDATE,this._statusUpdateHandler),this._connectedHandler&&this._api.removeEventListener(n.CONNECTED,this._connectedHandler),this._disconnectedHandler&&this._api.removeEventListener(n.DISCONNECTED,this._disconnectedHandler))}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadStatus()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e}),this._statusUpdateHandler=t=>this._updateFromStatus(t.detail),this._connectedHandler=()=>{this._data.connected=!0,this.render()},this._disconnectedHandler=()=>{this._data.connected=!1,this._data.status="offline",this.render()},this._api.addEventListener(n.STATUS_UPDATE,this._statusUpdateHandler),this._api.addEventListener(n.CONNECTED,this._connectedHandler),this._api.addEventListener(n.DISCONNECTED,this._disconnectedHandler)}async _loadStatus(){try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._data.connected=!1,this._data.status="offline",this.render()}}_updateFromStatus(e){e&&(this._data={...this._data,connected:!0,status:e.status||"offline",phase:e.phase||null,iteration:e.iteration!=null?e.iteration:null,provider:e.provider||null,running_agents:e.running_agents||0,pending_tasks:e.pending_tasks!=null?e.pending_tasks:null,uptime_seconds:e.uptime_seconds||0,complexity:e.complexity||null},this.render())}_startPolling(){this._pollInterval=setInterval(async()=>{try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._data.connected=!1,this._data.status="offline",this.render()}},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_formatUptime(e){if(!e||e<0)return"--";let t=Math.floor(e/3600),a=Math.floor(e%3600/60),i=Math.floor(e%60);return t>0?`${t}h ${a}m`:a>0?`${a}m ${i}s`:`${i}s`}_getStatusDotClass(){switch(this._data.status){case"running":case"autonomous":return"active";case"paused":return"paused";case"stopped":return"stopped";case"error":return"error";default:return"offline"}}render(){let e=this._getStatusDotClass(),t=(this._data.status||"OFFLINE").toUpperCase(),a=this._data.phase||"--",i=this._data.iteration!=null?String(this._data.iteration):"0",s=(this._data.provider||"CLAUDE").toUpperCase(),r=String(this._data.running_agents||0),o=this._data.pending_tasks!=null?`${this._data.pending_tasks} pending`:"--",l=this._formatUptime(this._data.uptime_seconds),p=(this._data.complexity||"STANDARD").toUpperCase();this.shadowRoot.innerHTML=`
+      ${U}
+    `}getAriaPattern(e){return Te[e]||{}}applyAriaPattern(e,t){let i=this.getAriaPattern(t);for(let[a,s]of Object.entries(i))if(a==="role")e.setAttribute("role",s);else{let r=a.replace(/([A-Z])/g,"-$1").toLowerCase();e.setAttribute(r,s)}}render(){}};var z={realtime:1e3,normal:2e3,background:5e3,offline:1e4},je={vscode:z.normal,browser:z.realtime,cli:z.background},Ue={baseUrl:typeof window<"u"?window.location.origin:"http://localhost:57374",wsUrl:typeof window<"u"?`${window.location.protocol==="https:"?"wss:":"ws:"}//${window.location.host}/ws`:"ws://localhost:57374/ws",pollInterval:2e3,timeout:1e4,retryAttempts:3,retryDelay:1e3},v={CONNECTED:"api:connected",DISCONNECTED:"api:disconnected",ERROR:"api:error",STATUS_UPDATE:"api:status-update",TASK_CREATED:"api:task-created",TASK_UPDATED:"api:task-updated",TASK_DELETED:"api:task-deleted",PROJECT_CREATED:"api:project-created",PROJECT_UPDATED:"api:project-updated",AGENT_UPDATE:"api:agent-update",LOG_MESSAGE:"api:log-message",MEMORY_UPDATE:"api:memory-update",CHECKLIST_UPDATE:"api:checklist-update"},A=class A extends EventTarget{static getInstance(e={}){let t=e.baseUrl||Ue.baseUrl;return A._instances.has(t)||A._instances.set(t,new A(e)),A._instances.get(t)}static clearInstances(){A._instances.forEach(e=>e.disconnect()),A._instances.clear()}constructor(e={}){super(),this.config={...Ue,...e},this._ws=null,this._connected=!1,this._pollInterval=null,this._reconnectTimeout=null,this._reconnectAttempts=0,this._maxReconnectAttempts=20,this._cache=new Map,this._cacheTimeout=5e3,this._vscodeApi=null,this._context=this._detectContext(),this._currentPollInterval=je[this._context]||z.normal,this._visibilityChangeHandler=null,this._messageHandler=null,this._setupAdaptivePolling(),this._setupVSCodeBridge()}_detectContext(){return typeof acquireVsCodeApi<"u"?"vscode":typeof window<"u"&&window.location?"browser":"cli"}get context(){return this._context}static get POLL_INTERVALS(){return z}_setupAdaptivePolling(){typeof document>"u"||(this._visibilityChangeHandler=()=>{document.hidden?this._setPollInterval(z.background):this._setPollInterval(je[this._context]||z.normal)},document.addEventListener("visibilitychange",this._visibilityChangeHandler))}_setPollInterval(e){this._currentPollInterval=e,this._pollInterval&&(this.stopPolling(),this.startPolling(null,e))}setPollMode(e){let t=z[e];t&&this._setPollInterval(t)}_setupVSCodeBridge(){if(!(typeof acquireVsCodeApi>"u")){try{this._vscodeApi=acquireVsCodeApi()}catch{console.warn("VS Code API already acquired or unavailable");return}this._messageHandler=e=>{let t=e.data;if(!(!t||!t.type))switch(t.type){case"updateStatus":this._emit(v.STATUS_UPDATE,t.data);break;case"updateTasks":this._emit(v.TASK_UPDATED,t.data);break;case"taskCreated":this._emit(v.TASK_CREATED,t.data);break;case"taskDeleted":this._emit(v.TASK_DELETED,t.data);break;case"projectCreated":this._emit(v.PROJECT_CREATED,t.data);break;case"projectUpdated":this._emit(v.PROJECT_UPDATED,t.data);break;case"agentUpdate":this._emit(v.AGENT_UPDATE,t.data);break;case"logMessage":this._emit(v.LOG_MESSAGE,t.data);break;case"memoryUpdate":this._emit(v.MEMORY_UPDATE,t.data);break;case"connected":this._connected=!0,this._emit(v.CONNECTED,t.data);break;case"disconnected":this._connected=!1,this._emit(v.DISCONNECTED,t.data);break;case"error":this._emit(v.ERROR,t.data);break;case"setPollMode":this.setPollMode(t.data.mode);break;default:this._emit(`api:${t.type}`,t.data)}},window.addEventListener("message",this._messageHandler)}}get isVSCode(){return this._context==="vscode"}postToVSCode(e,t={}){this._vscodeApi&&this._vscodeApi.postMessage({type:e,data:t})}requestRefresh(){this.postToVSCode("requestRefresh")}notifyVSCode(e,t={}){this.postToVSCode("userAction",{action:e,...t})}get baseUrl(){return this.config.baseUrl}set baseUrl(e){this.config.baseUrl=e,this.config.wsUrl=e.replace(/^http/,"ws")+"/ws"}get isConnected(){return this._connected}async connect(){if(!(this._ws&&this._ws.readyState===WebSocket.OPEN))return new Promise((e,t)=>{try{this._ws=new WebSocket(this.config.wsUrl),this._ws.onopen=()=>{this._connected=!0,this._reconnectAttempts=0,this._emit(v.CONNECTED),e()},this._ws.onclose=()=>{this._connected=!1,this._emit(v.DISCONNECTED),this._scheduleReconnect()},this._ws.onerror=i=>{this._emit(v.ERROR,{error:i}),t(i)},this._ws.onmessage=i=>{try{let a=JSON.parse(i.data);this._handleMessage(a)}catch(a){console.error("Failed to parse WebSocket message:",a)}}}catch(i){t(i)}})}disconnect(){this._ws&&(this._ws.close(),this._ws=null),this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._reconnectTimeout&&(clearTimeout(this._reconnectTimeout),this._reconnectTimeout=null),this._connected=!1,this._cleanupGlobalListeners()}_cleanupGlobalListeners(){this._visibilityChangeHandler&&typeof document<"u"&&(document.removeEventListener("visibilitychange",this._visibilityChangeHandler),this._visibilityChangeHandler=null),this._messageHandler&&typeof window<"u"&&(window.removeEventListener("message",this._messageHandler),this._messageHandler=null)}destroy(){this.disconnect()}_scheduleReconnect(){if(this._reconnectTimeout)return;if(this._reconnectAttempts>=this._maxReconnectAttempts){console.warn("WebSocket max reconnect attempts reached, giving up"),this._emit(v.ERROR,{error:"Max reconnect attempts reached"});return}let e=Math.min(this.config.retryDelay*Math.pow(2,this._reconnectAttempts),3e4);this._reconnectAttempts++,this._reconnectTimeout=setTimeout(()=>{this._reconnectTimeout=null,this.connect().catch(()=>{})},e)}_handleMessage(e){if(e.type==="ping"){this._ws&&this._ws.readyState===WebSocket.OPEN&&this._ws.send(JSON.stringify({type:"pong"}));return}let i={connected:v.CONNECTED,status_update:v.STATUS_UPDATE,task_created:v.TASK_CREATED,task_updated:v.TASK_UPDATED,task_deleted:v.TASK_DELETED,task_moved:v.TASK_UPDATED,project_created:v.PROJECT_CREATED,project_updated:v.PROJECT_UPDATED,agent_update:v.AGENT_UPDATE,log:v.LOG_MESSAGE}[e.type]||`api:${e.type}`;this._emit(i,e.data)}_emit(e,t={}){this.dispatchEvent(new CustomEvent(e,{detail:t}))}async _request(e,t={}){let i=`${this.config.baseUrl}${e}`,a=new AbortController,s=t&&typeof t.timeout=="number"?t.timeout:this.config.timeout,r=setTimeout(()=>a.abort(),s);try{let o=await fetch(i,{...t,signal:a.signal,credentials:"include",headers:{"Content-Type":"application/json",...t.headers}});if(clearTimeout(r),!o.ok){let n=await o.text().catch(()=>""),l=o.statusText||`HTTP ${o.status}`;if(n)try{let c=JSON.parse(n);l=c.detail||c.error||c.message||l}catch{l=n.length>200?n.slice(0,200)+"...":n}throw new Error(l)}return o.status===204?null:await o.json()}catch(o){throw clearTimeout(r),o.name==="AbortError"?new Error("Request timeout"):o}}async _get(e,t=!1){if(t&&this._cache.has(e)){let a=this._cache.get(e);if(Date.now()-a.timestamp<this._cacheTimeout)return a.data}let i=await this._request(e);return t&&this._cache.set(e,{data:i,timestamp:Date.now()}),i}async _post(e,t,i={}){return this._request(e,{method:"POST",body:JSON.stringify(t),...i})}async _put(e,t){return this._request(e,{method:"PUT",body:JSON.stringify(t)})}async _delete(e){return this._request(e,{method:"DELETE"})}async get(e){return this._get(e)}async getStatus(){return this._get("/api/status")}async healthCheck(){return this._get("/health")}async listProjects(e=null){let t=e?`?status=${e}`:"";return this._get(`/api/projects${t}`)}async getProject(e){return this._get(`/api/projects/${e}`)}async createProject(e){return this._post("/api/projects",e)}async updateProject(e,t){return this._put(`/api/projects/${e}`,t)}async deleteProject(e){return this._delete(`/api/projects/${e}`)}async listTasks(e={}){let t=new URLSearchParams;e.projectId&&t.append("project_id",e.projectId),e.status&&t.append("status",e.status),e.priority&&t.append("priority",e.priority);let i=t.toString()?`?${t}`:"";return this._get(`/api/tasks${i}`)}async getTask(e){return this._get(`/api/tasks/${e}`)}async createTask(e){return this._post("/api/tasks",e)}async updateTask(e,t){return this._put(`/api/tasks/${e}`,t)}async moveTask(e,t,i){return this._post(`/api/tasks/${e}/move`,{status:t,position:i})}async deleteTask(e){return this._delete(`/api/tasks/${e}`)}async getMemorySummary(){return this._get("/api/memory/summary",!0)}async getMemoryIndex(){return this._get("/api/memory/index",!0)}async getMemoryTimeline(){return this._get("/api/memory/timeline")}async listEpisodes(e={}){let t=new URLSearchParams(e).toString();return this._get(`/api/memory/episodes${t?"?"+t:""}`)}async getEpisode(e){return this._get(`/api/memory/episodes/${e}`)}async listPatterns(e={}){let t=new URLSearchParams(e).toString();return this._get(`/api/memory/patterns${t?"?"+t:""}`)}async getPattern(e){return this._get(`/api/memory/patterns/${e}`)}async listSkills(){return this._get("/api/memory/skills")}async getSkill(e){return this._get(`/api/memory/skills/${e}`)}async retrieveMemories(e,t=null,i=5){return this._post("/api/memory/retrieve",{query:e,taskType:t,topK:i},{timeout:3e4})}async consolidateMemory(e=24){return this._post("/api/memory/consolidate",{sinceHours:e},{timeout:12e4})}async getTokenEconomics(){return this._get("/api/memory/economics")}async searchMemory(e,t="all",i=20){let a=new URLSearchParams({q:e,collection:t,limit:String(i)});return this._get(`/api/memory/search?${a}`)}async getMemoryStats(){return this._get("/api/memory/stats",!0)}async listRegisteredProjects(e=!1){return this._get(`/api/registry/projects?include_inactive=${e}`)}async registerProject(e,t=null,i=null){return this._post("/api/registry/projects",{path:e,name:t,alias:i})}async discoverProjects(e=3){return this._get(`/api/registry/discover?max_depth=${e}`)}async syncRegistry(){return this._post("/api/registry/sync",{},{timeout:45e3})}async getCrossProjectTasks(e=null){let t=e?`?project_ids=${e.join(",")}`:"";return this._get(`/api/registry/tasks${t}`)}async getLearningMetrics(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source);let i=t.toString()?`?${t}`:"";return this._get(`/api/learning/metrics${i}`)}async getLearningTrends(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source);let i=t.toString()?`?${t}`:"";return this._get(`/api/learning/trends${i}`)}async getLearningSignals(e={}){let t=new URLSearchParams;e.timeRange&&t.append("timeRange",e.timeRange),e.signalType&&t.append("signalType",e.signalType),e.source&&t.append("source",e.source),e.limit&&t.append("limit",String(e.limit)),e.offset&&t.append("offset",String(e.offset));let i=t.toString()?`?${t}`:"";return this._get(`/api/learning/signals${i}`)}async getLatestAggregation(){return this._get("/api/learning/aggregation")}async triggerAggregation(e={}){return this._post("/api/learning/aggregate",e,{timeout:6e4})}async getAggregatedPreferences(e=20){return this._get(`/api/learning/preferences?limit=${e}`)}async getAggregatedErrors(e=20){return this._get(`/api/learning/errors?limit=${e}`)}async getAggregatedSuccessPatterns(e=20){return this._get(`/api/learning/success?limit=${e}`)}async getToolEfficiency(e=20){return this._get(`/api/learning/tools?limit=${e}`)}async getCost(){return this._get("/api/cost")}async getPricing(){return this._get("/api/pricing")}async getCouncilState(){return this._get("/api/council/state")}async getCouncilVerdicts(e=20){return this._get(`/api/council/verdicts?limit=${e}`)}async getCouncilConvergence(){return this._get("/api/council/convergence")}async getCouncilReport(){return this._get("/api/council/report")}async forceCouncilReview(){return this._post("/api/council/force-review",{})}async getContext(){return this._get("/api/context")}async getNotifications(e,t){let i=new URLSearchParams;e&&i.set("severity",e),t&&i.set("unread_only","true");let a=i.toString();return this._get("/api/notifications"+(a?"?"+a:""))}async getNotificationTriggers(){return this._get("/api/notifications/triggers")}async updateNotificationTriggers(e){return this._put("/api/notifications/triggers",{triggers:e})}async acknowledgeNotification(e){return this._post("/api/notifications/"+encodeURIComponent(e)+"/acknowledge",{})}async startSession(e,t={}){let i={provider:t.provider||"claude",parallel:!!t.parallel};return t.prdPath?i.prd_path=t.prdPath:i.prd_text=e||"",this._post("/api/control/start",i)}async pauseSession(){return this._post("/api/control/pause",{})}async resumeSession(){return this._post("/api/control/resume",{})}async stopSession(){return this._post("/api/control/stop",{})}async getSessionModel(){return this._get("/api/session/model")}async setSessionModel(e){return this._post("/api/session/model",{model:e||null})}async getLogs(e=100){return this._get(`/api/logs?lines=${e}`)}async getChecklist(){return this._get("/api/checklist")}async getChecklistSummary(){return this._get("/api/checklist/summary")}async getPrdObservations(){let e=await fetch(`${this.baseUrl}/api/prd-observations`,{credentials:"include"});if(!e.ok)throw new Error(`HTTP ${e.status}`);return e.text()}async getChecklistWaivers(){return this._get("/api/checklist/waivers")}async addChecklistWaiver(e,t,i="dashboard"){return this._post("/api/checklist/waivers",{item_id:e,reason:t,waived_by:i})}async removeChecklistWaiver(e){return this._delete(`/api/checklist/waivers/${encodeURIComponent(e)}`)}async getCouncilGate(){return this._get("/api/council/gate")}async getAppRunnerStatus(){return this._get("/api/app-runner/status")}async getAppRunnerLogs(e=100){return this._get(`/api/app-runner/logs?lines=${e}`)}async getAppRunnerErrors(e=50){return this._get(`/api/app-runner/errors?lines=${e}`)}async restartApp(){return this._post("/api/control/app-restart",{})}async stopApp(){return this._post("/api/control/app-stop",{})}async getPlaywrightResults(){return this._get("/api/playwright/results")}async getPlaywrightScreenshot(){return this._get("/api/playwright/screenshot")}startPolling(e,t=null){if(this._pollInterval)return;this._pollCallback=e;let i=async()=>{try{let s=await this.getStatus();this._connected=!0,this._pollCallback&&this._pollCallback(s),this._emit(v.STATUS_UPDATE,s),this._vscodeApi&&this.postToVSCode("pollSuccess",{timestamp:Date.now()})}catch(s){this._connected=!1,this._emit(v.ERROR,{error:s}),this._vscodeApi&&this.postToVSCode("pollError",{error:s.message})}};i();let a=t||this._currentPollInterval||this.config.pollInterval;this._pollInterval=setInterval(i,a)}stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}};C(A,"_instances",new Map);var P=A;function Ne(d={}){return new P(d)}function g(d={}){return P.getInstance(d)}var Ie="loki-state-change",Le={ui:{theme:"light",sidebarCollapsed:!1,activeSection:"kanban",terminalAutoScroll:!0},session:{connected:!1,lastSync:null,mode:"offline",phase:null,iteration:null},localTasks:[],cache:{projects:[],tasks:[],agents:[],memory:null,lastFetch:null},preferences:{pollInterval:2e3,notifications:!0,soundEnabled:!1}},S=class S extends EventTarget{static getInstance(){return S._instance||(S._instance=new S),S._instance}constructor(){super(),this._state=this._loadState(),this._subscribers=new Map,this._batchUpdates=[],this._batchTimeout=null}_loadState(){try{let e=localStorage.getItem(S.STORAGE_KEY);if(e){let t=JSON.parse(e);return this._mergeState(Le,t)}}catch(e){console.warn("Failed to load state from localStorage:",e)}return{...Le}}_mergeState(e,t){let i={...e};for(let a of Object.keys(t))a in e&&typeof e[a]=="object"&&!Array.isArray(e[a])?i[a]=this._mergeState(e[a],t[a]):i[a]=t[a];return i}_saveState(){try{let e={ui:this._state.ui,localTasks:this._state.localTasks,preferences:this._state.preferences};localStorage.setItem(S.STORAGE_KEY,JSON.stringify(e))}catch(e){console.warn("Failed to save state to localStorage:",e)}}get(e=null){if(!e)return{...this._state};let t=e.split("."),i=this._state;for(let a of t){if(i==null)return;i=i[a]}return i}set(e,t,i=!0){let a=e.split("."),s=a.pop(),r=this._state;for(let n of a)n in r||(r[n]={}),r=r[n];let o=r[s];r[s]=t,i&&this._saveState(),this._notifyChange(e,t,o)}update(e,t=!0){let i=[];for(let[a,s]of Object.entries(e)){let r=this.get(a);this.set(a,s,!1),i.push({path:a,value:s,oldValue:r})}t&&this._saveState();for(let a of i)this._notifyChange(a.path,a.value,a.oldValue)}_notifyChange(e,t,i){this.dispatchEvent(new CustomEvent(Ie,{detail:{path:e,value:t,oldValue:i}}));let a=this._subscribers.get(e)||[];for(let r of a)try{r(t,i,e)}catch(o){console.error("State subscriber error:",o)}let s=e.split(".");for(;s.length>1;){s.pop();let r=s.join("."),o=this._subscribers.get(r)||[];for(let n of o)try{n(this.get(r),null,r)}catch(l){console.error("State subscriber error:",l)}}}subscribe(e,t){return this._subscribers.has(e)||this._subscribers.set(e,[]),this._subscribers.get(e).push(t),()=>{let i=this._subscribers.get(e),a=i.indexOf(t);a>-1&&i.splice(a,1)}}reset(e=null){if(e){let t=e.split("."),i=Le;for(let a of t)i=i?.[a];this.set(e,i)}else this._state={...Le},this._saveState(),this.dispatchEvent(new CustomEvent(Ie,{detail:{path:null,value:this._state,oldValue:null}}))}addLocalTask(e){let t=this.get("localTasks")||[],i={id:`local-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,createdAt:new Date().toISOString(),status:"pending",...e};return this.set("localTasks",[...t,i]),i}updateLocalTask(e,t){let i=this.get("localTasks")||[],a=i.findIndex(r=>r.id===e);if(a===-1)return null;let s={...i[a],...t,updatedAt:new Date().toISOString()};return i[a]=s,this.set("localTasks",[...i]),s}deleteLocalTask(e){let t=this.get("localTasks")||[];this.set("localTasks",t.filter(i=>i.id!==e))}moveLocalTask(e,t,i=null){let s=(this.get("localTasks")||[]).find(r=>r.id===e);return s?this.updateLocalTask(e,{status:t,position:i??s.position}):null}updateSession(e){this.update(Object.fromEntries(Object.entries(e).map(([t,i])=>[`session.${t}`,i])),!1)}updateCache(e){this.update({"cache.projects":e.projects??this.get("cache.projects"),"cache.tasks":e.tasks??this.get("cache.tasks"),"cache.agents":e.agents??this.get("cache.agents"),"cache.memory":e.memory??this.get("cache.memory"),"cache.lastFetch":new Date().toISOString()},!1)}getMergedTasks(){let e=this.get("cache.tasks")||[],i=(this.get("localTasks")||[]).map(a=>({...a,isLocal:!0}));return[...e,...i]}getTasksByStatus(e){return this.getMergedTasks().filter(t=>t.status===e)}};C(S,"STORAGE_KEY","loki-dashboard-state"),C(S,"_instance",null);var N=S;function B(){return N.getInstance()}function Oe(d){let e=B();return{get:()=>e.get(d),set:t=>e.set(d,t),subscribe:t=>e.subscribe(d,t)}}var O=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data={status:"offline",phase:null,iteration:null,provider:null,running_agents:0,pending_tasks:null,uptime_seconds:0,complexity:null,connected:!1},this._api=null,this._pollInterval=null,this._statusUpdateHandler=null,this._connectedHandler=null,this._disconnectedHandler=null,this._checklistSummary=null,this._appRunnerStatus=null,this._playwrightResults=null,this._gateStatus=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadStatus(),this._startPolling(),this._api.connect().catch(()=>{})}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling(),this._loadAbortController&&(this._loadAbortController.abort(),this._loadAbortController=null),this._api&&(this._statusUpdateHandler&&this._api.removeEventListener(v.STATUS_UPDATE,this._statusUpdateHandler),this._connectedHandler&&this._api.removeEventListener(v.CONNECTED,this._connectedHandler),this._disconnectedHandler&&this._api.removeEventListener(v.DISCONNECTED,this._disconnectedHandler))}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadStatus()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e}),this._statusUpdateHandler=t=>this._updateFromStatus(t.detail),this._connectedHandler=()=>{this._data.connected=!0,this.render()},this._disconnectedHandler=()=>{this._data.connected=!1,this._data.status="offline",this.render()},this._api.addEventListener(v.STATUS_UPDATE,this._statusUpdateHandler),this._api.addEventListener(v.CONNECTED,this._connectedHandler),this._api.addEventListener(v.DISCONNECTED,this._disconnectedHandler)}async _loadStatus(){this._loadAbortController&&this._loadAbortController.abort(),this._loadAbortController=new AbortController;let{signal:e}=this._loadAbortController;try{let[t,i,a,s,r]=await Promise.allSettled([this._api.getStatus(),this._api.getChecklistSummary(),this._api.getAppRunnerStatus(),this._api.getPlaywrightResults(),this._api.getCouncilGate()]);if(e.aborted)return;t.status==="fulfilled"?this._updateFromStatus(t.value):(this._data.connected=!1,this._data.status="offline"),i.status==="fulfilled"&&(this._checklistSummary=i.value?.summary||null),a.status==="fulfilled"&&(this._appRunnerStatus=a.value),s.status==="fulfilled"&&(this._playwrightResults=s.value),r.status==="fulfilled"&&(this._gateStatus=r.value),this.render()}catch{if(e.aborted)return;this._data.connected=!1,this._data.status="offline",this.render()}}_updateFromStatus(e){e&&(this._data={...this._data,connected:!0,status:e.status||"offline",phase:e.phase||null,iteration:e.iteration!=null?e.iteration:null,provider:e.provider||null,running_agents:e.running_agents||0,pending_tasks:e.pending_tasks!=null?e.pending_tasks:null,uptime_seconds:e.uptime_seconds||0,complexity:e.complexity||null})}_startPolling(){this._pollInterval=setInterval(async()=>{try{await this._loadStatus()}catch{this._data.connected=!1,this._data.status="offline",this.render()}},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_formatUptime(e){if(!e||e<0)return"--";let t=Math.floor(e/3600),i=Math.floor(e%3600/60),a=Math.floor(e%60);return t>0?`${t}h ${i}m`:i>0?`${i}m ${a}s`:`${a}s`}_getStatusDotClass(){switch(this._data.status){case"running":case"autonomous":return"active";case"paused":return"paused";case"stopped":return"stopped";case"error":return"error";default:return"offline"}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_renderAppRunnerCard(){let e=this._appRunnerStatus;if(!e||e.status==="not_initialized")return`
+        <div class="overview-card">
+          <div class="card-label">App Runner</div>
+          <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Waiting...":"Not started"}</div>
+        </div>
+      `;let i={running:"var(--loki-green, #22c55e)",starting:"var(--loki-yellow, #f59e0b)",crashed:"var(--loki-red, #ef4444)",stopped:"var(--loki-text-muted, #a1a1aa)"}[e.status]||"var(--loki-text-muted)",a=e.status==="running"?"active":e.status==="crashed"?"error":"offline",s=(e.status||"unknown").toUpperCase(),r=e.port?`:${e.port}`:"",o=e.url&&typeof e.url=="string"?e.url:null;!o&&e.port&&e.status==="running"&&(o=`http://localhost:${e.port}`);let n=`
+      <div class="card-label">App Runner${o?' <span style="font-size:10px;color:var(--loki-text-muted);">(click to open)</span>':""}</div>
+      <div class="card-value small-text">
+        <span class="status-dot ${a}"></span>
+        ${s}${r}
+      </div>
+      ${e.method?`<div style="font-size:10px;color:var(--loki-text-muted);margin-top:2px;">${this._escapeHtml(e.method)}</div>`:""}
+    `;return o?`
+        <a class="overview-card overview-card-link" href="${this._escapeHtml(o)}" target="_blank" rel="noopener noreferrer"
+           style="text-decoration:none;color:inherit;display:block;cursor:pointer;"
+           title="Open ${this._escapeHtml(o)} in new tab">
+          ${n}
+        </a>
+      `:`
+      <div class="overview-card">
+        ${n}
+      </div>
+    `}_renderPlaywrightCard(){let e=this._playwrightResults;if(!e||e==="null"||!e.verified_at)return`
+        <div class="overview-card">
+          <div class="card-label">Verification</div>
+          <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Pending":"Not run"}</div>
+        </div>
+      `;let t=e.passed===!0,i=t?"var(--loki-green, #22c55e)":"var(--loki-red, #ef4444)",a=t?"PASSED":"FAILED",s=t?"active":"error",r=e.checks||{},o=Object.values(r).filter(n=>!n).length;return`
+      <div class="overview-card">
+        <div class="card-label">Verification</div>
+        <div class="card-value small-text">
+          <span class="status-dot ${s}"></span>
+          ${a}
+        </div>
+        ${!t&&o>0?`<div style="font-size:10px;color:var(--loki-red,#ef4444);margin-top:2px;">${o} check(s) failed</div>`:""}
+      </div>
+    `}_renderChecklistCard(){let e=this._checklistSummary;if(!e||!e.total)return`
+        <div class="overview-card">
+          <div class="card-label">Spec Progress</div>
+          <div class="card-value small-text">${this._data.status==="running"||this._data.status==="autonomous"?"Analyzing spec...":"No checklist"}</div>
+        </div>
+      `;let t=Math.round(e.verified/e.total*100),i=e.failing>0?"var(--loki-yellow, #f59e0b)":"var(--loki-green, #22c55e)";return`
+      <div class="overview-card">
+        <div class="card-label">Spec Progress</div>
+        <div class="card-value small-text">${e.verified}/${e.total} (${t}%)</div>
+        <div class="mini-progress" style="margin-top:4px;height:4px;background:var(--loki-bg-secondary,#e4e4e7);border-radius:2px;overflow:hidden;">
+          <div style="width:${t}%;height:100%;background:${i};transition:width 0.3s;"></div>
+        </div>
+        ${e.failing?`<div style="font-size:10px;color:var(--loki-red,#ef4444);margin-top:2px;">${e.failing} failing</div>`:""}
+      </div>
+    `}_renderCouncilGateCard(){let e=this._gateStatus;if(!e||!e.status){let t=this._data.status==="running"||this._data.status==="autonomous";return`
+        <div class="overview-card">
+          <div class="card-label">Council Gate</div>
+          <div class="card-value small-text">
+            <span class="status-dot ${t?"paused":"offline"}"></span>
+            ${t?"Pending review":"Not evaluated"}
+          </div>
+        </div>
+      `}if(e.status==="blocked"){let t=e.critical_failures||0;return`
+        <div class="overview-card">
+          <div class="card-label">Council Gate</div>
+          <div class="card-value small-text">
+            <span class="status-dot error"></span>
+            BLOCKED
+          </div>
+          ${t>0?`<div style="font-size:10px;color:var(--loki-red,#ef4444);margin-top:2px;">${t} critical failure${t!==1?"s":""}</div>`:""}
+        </div>
+      `}return`
+      <div class="overview-card">
+        <div class="card-label">Council Gate</div>
+        <div class="card-value small-text">
+          <span class="status-dot active"></span>
+          PASSED
+        </div>
+      </div>
+    `}render(){let e=this._getStatusDotClass(),t=this._escapeHtml((this._data.status||"OFFLINE").toUpperCase()),i=this._escapeHtml(this._data.phase||"--"),a=this._escapeHtml(this._data.iteration!=null?String(this._data.iteration):"0"),s=this._escapeHtml((this._data.provider||"CLAUDE").toUpperCase()),r=this._data.status==="running"||this._data.status==="autonomous",o=this._data.running_agents||0,n=r&&o===0?"Sequential":this._escapeHtml(String(o)),l=this._escapeHtml(this._data.pending_tasks!=null?`${this._data.pending_tasks} pending`:r?"Inline":"--"),c=this._escapeHtml(this._formatUptime(this._data.uptime_seconds)),p=this._escapeHtml((this._data.complexity||"STANDARD").toUpperCase());this.shadowRoot.innerHTML=`
       <style>
         ${this.getBaseStyles()}
 
@@ -503,7 +579,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .overview-container {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 16px;
           transition: all var(--loki-transition);
         }
@@ -526,7 +602,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 12px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
         }
 
@@ -537,8 +613,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .overview-card {
-          background: var(--loki-bg-tertiary);
-          border-radius: 8px;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 5px;
           padding: 12px 14px;
           transition: background var(--loki-transition);
         }
@@ -551,7 +628,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           margin-bottom: 6px;
         }
@@ -560,7 +637,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 18px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
-          color: var(--loki-text-primary);
+          color: var(--loki-accent);
           display: flex;
           align-items: center;
           gap: 8px;
@@ -572,9 +649,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .status-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
+          width: 12px;
+          height: 6px;
+          border-radius: 2px;
           flex-shrink: 0;
         }
 
@@ -625,12 +702,12 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
           <div class="overview-card">
             <div class="card-label">Phase</div>
-            <div class="card-value small-text">${a}</div>
+            <div class="card-value small-text">${i}</div>
           </div>
 
           <div class="overview-card">
             <div class="card-label">Iteration</div>
-            <div class="card-value">${i}</div>
+            <div class="card-value">${a}</div>
           </div>
 
           <div class="overview-card">
@@ -640,17 +717,25 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
           <div class="overview-card">
             <div class="card-label">Agents</div>
-            <div class="card-value">${r}</div>
+            <div class="card-value">${n}</div>
           </div>
 
           <div class="overview-card">
             <div class="card-label">Tasks</div>
-            <div class="card-value small-text">${o}</div>
+            <div class="card-value small-text">${l}</div>
           </div>
+
+          ${this._renderChecklistCard()}
+
+          ${this._renderAppRunnerCard()}
+
+          ${this._renderPlaywrightCard()}
+
+          ${this._renderCouncilGateCard()}
 
           <div class="overview-card">
             <div class="card-label">Uptime</div>
-            <div class="card-value small-text">${l}</div>
+            <div class="card-value small-text">${c}</div>
           </div>
 
           <div class="overview-card">
@@ -659,7 +744,130 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         </div>
       </div>
-    `}};customElements.get("loki-overview")||customElements.define("loki-overview",z);var ke=[{id:"pending",label:"Pending",status:"pending",color:"var(--loki-text-muted)"},{id:"in_progress",label:"In Progress",status:"in_progress",color:"var(--loki-blue)"},{id:"review",label:"In Review",status:"review",color:"var(--loki-purple)"},{id:"done",label:"Completed",status:"done",color:"var(--loki-green)"}];var H=class extends c{static get observedAttributes(){return["api-url","project-id","theme","readonly"]}constructor(){super(),this._tasks=[],this._loading=!0,this._error=null,this._draggedTask=null,this._api=null,this._state=C()}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadTasks()}disconnectedCallback(){super.disconnectedCallback(),this._api&&(this._api.removeEventListener(n.TASK_CREATED,this._onTaskEvent),this._api.removeEventListener(n.TASK_UPDATED,this._onTaskEvent),this._api.removeEventListener(n.TASK_DELETED,this._onTaskEvent))}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadTasks()),e==="project-id"&&this._loadTasks(),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e}),this._onTaskEvent=()=>this._loadTasks(),this._api.addEventListener(n.TASK_CREATED,this._onTaskEvent),this._api.addEventListener(n.TASK_UPDATED,this._onTaskEvent),this._api.addEventListener(n.TASK_DELETED,this._onTaskEvent)}async _loadTasks(){this._loading=!0,this._error=null,this.render();try{let e=this.getAttribute("project-id"),t=e?{projectId:parseInt(e)}:{};this._tasks=await this._api.listTasks(t);let a=this._state.get("localTasks")||[];a.length>0&&(this._tasks=[...this._tasks,...a.map(i=>({...i,isLocal:!0}))]),this._state.update({"cache.tasks":this._tasks},!1)}catch(e){this._error=e.message,this._tasks=(this._state.get("localTasks")||[]).map(t=>({...t,isLocal:!0}))}this._loading=!1,this.render()}_getTasksByStatus(e){return this._tasks.filter(t=>t.status?.toLowerCase().replace(/-/g,"_")===e)}_handleDragStart(e,t){this.hasAttribute("readonly")||(this._draggedTask=t,e.target.classList.add("dragging"),e.dataTransfer.effectAllowed="move",e.dataTransfer.setData("text/plain",t.id.toString()))}_handleDragEnd(e){e.target.classList.remove("dragging"),this._draggedTask=null,this.shadowRoot.querySelectorAll(".kanban-tasks").forEach(t=>{t.classList.remove("drag-over")})}_handleDragOver(e){e.preventDefault(),e.dataTransfer.dropEffect="move"}_handleDragEnter(e){e.preventDefault(),e.currentTarget.classList.add("drag-over")}_handleDragLeave(e){e.currentTarget.contains(e.relatedTarget)||e.currentTarget.classList.remove("drag-over")}async _handleDrop(e,t){if(e.preventDefault(),e.currentTarget.classList.remove("drag-over"),!this._draggedTask||this.hasAttribute("readonly"))return;let a=this._draggedTask.id,i=this._tasks.find(r=>r.id===a);if(!i)return;let s=i.status;if(s!==t){i.status=t,this.render();try{i.isLocal?this._state.moveLocalTask(a,t):await this._api.moveTask(a,t,0),this.dispatchEvent(new CustomEvent("task-moved",{detail:{taskId:a,oldStatus:s,newStatus:t}}))}catch(r){i.status=s,this.render(),console.error("Failed to move task:",r)}}}_openAddTaskModal(e="pending"){this.dispatchEvent(new CustomEvent("add-task",{detail:{status:e}}))}_openTaskDetail(e){this.dispatchEvent(new CustomEvent("task-click",{detail:{task:e}}))}render(){let e=`
+    `}};customElements.get("loki-overview")||customElements.define("loki-overview",O);var ht=[{id:"pending",label:"Pending",status:"pending",color:"var(--loki-text-muted)"},{id:"in_progress",label:"In Progress",status:"in_progress",color:"var(--loki-blue)"},{id:"review",label:"In Review",status:"review",color:"var(--loki-purple)"},{id:"done",label:"Completed",status:"done",color:"var(--loki-green)"}],q=class extends h{static get observedAttributes(){return["api-url","project-id","theme","readonly"]}constructor(){super(),this._tasks=[],this._loading=!0,this._error=null,this._draggedTask=null,this._selectedTask=null,this._expandedCards=new Set,this._selectedTasks=new Set,this._bulkMode=!1,this._activeFilter="all",this._api=null,this._state=B()}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadTasks()}disconnectedCallback(){super.disconnectedCallback(),this._api&&(this._api.removeEventListener(v.TASK_CREATED,this._onTaskEvent),this._api.removeEventListener(v.TASK_UPDATED,this._onTaskEvent),this._api.removeEventListener(v.TASK_DELETED,this._onTaskEvent))}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadTasks()),e==="project-id"&&this._loadTasks(),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e}),this._onTaskEvent&&(this._api.removeEventListener(v.TASK_CREATED,this._onTaskEvent),this._api.removeEventListener(v.TASK_UPDATED,this._onTaskEvent),this._api.removeEventListener(v.TASK_DELETED,this._onTaskEvent)),this._onTaskEvent=()=>this._loadTasks(),this._api.addEventListener(v.TASK_CREATED,this._onTaskEvent),this._api.addEventListener(v.TASK_UPDATED,this._onTaskEvent),this._api.addEventListener(v.TASK_DELETED,this._onTaskEvent)}async _loadTasks(){this._loading=!0,this._error=null,this.render();try{let e=this.getAttribute("project-id"),t=e?{projectId:parseInt(e)}:{};this._tasks=await this._api.listTasks(t);let i=this._state.get("localTasks")||[];i.length>0&&(this._tasks=[...this._tasks,...i.map(a=>({...a,isLocal:!0}))]),this._state.update({"cache.tasks":this._tasks},!1)}catch(e){this._error=e.message,this._tasks=(this._state.get("localTasks")||[]).map(t=>({...t,isLocal:!0}))}this._loading=!1,this.render()}_getTasksByStatus(e){return this._getFilteredTasks().filter(i=>i.status?.toLowerCase().replace(/-/g,"_")===e)}_handleDragStart(e,t){this.hasAttribute("readonly")||(this._draggedTask=t,e.target.classList.add("dragging"),e.dataTransfer.effectAllowed="move",e.dataTransfer.setData("text/plain",t.id.toString()))}_handleDragEnd(e){e.target.classList.remove("dragging"),this._draggedTask=null,this.shadowRoot.querySelectorAll(".kanban-tasks").forEach(t=>{t.classList.remove("drag-over")})}_handleDragOver(e){e.preventDefault(),e.dataTransfer.dropEffect="move"}_handleDragEnter(e){e.preventDefault(),e.currentTarget.classList.add("drag-over")}_handleDragLeave(e){e.currentTarget.contains(e.relatedTarget)||e.currentTarget.classList.remove("drag-over")}async _handleDrop(e,t){if(e.preventDefault(),e.currentTarget.classList.remove("drag-over"),!this._draggedTask||this.hasAttribute("readonly"))return;let i=this._draggedTask.id,a=this._tasks.find(r=>r.id===i);if(!a)return;let s=a.status;if(s!==t){a.status=t,this.render();try{a.isLocal?this._state.moveLocalTask(i,t):await this._api.moveTask(i,t,0),this.dispatchEvent(new CustomEvent("task-moved",{detail:{taskId:i,oldStatus:s,newStatus:t}}))}catch(r){a.status=s,this.render(),console.error("Failed to move task:",r)}}}_toggleCardExpand(e){this._expandedCards.has(e)?this._expandedCards.delete(e):this._expandedCards.add(e),this.render()}_toggleTaskSelection(e,t){t&&t.stopPropagation(),this._selectedTasks.has(e)?this._selectedTasks.delete(e):this._selectedTasks.add(e),this.render()}_toggleBulkMode(){this._bulkMode=!this._bulkMode,this._bulkMode||this._selectedTasks.clear(),this.render()}async _bulkMove(e){let t=[...this._selectedTasks];for(let i of t){let a=this._tasks.find(s=>String(s.id)===String(i));if(a&&a.status!==e)try{a.isLocal?this._state.moveLocalTask(i,e):await this._api.moveTask(i,e,0),a.status=e}catch(s){console.error("Failed to bulk move task:",i,s)}}this._selectedTasks.clear(),this._bulkMode=!1,this.render(),this._loadTasks()}async _bulkDelete(){let e=[...this._selectedTasks];for(let t of e)try{await this._api.deleteTask(t)}catch(i){console.error("Failed to delete task:",t,i)}this._selectedTasks.clear(),this._bulkMode=!1,this._loadTasks()}_setFilter(e){this._activeFilter=e,this.render()}_getFilteredTasks(){let e=[...this._tasks],t=new Date,i=new Date(t.getFullYear(),t.getMonth(),t.getDate()),a=new Date(i.getTime()-7*24*60*60*1e3);switch(this._activeFilter){case"today":e=e.filter(s=>{let r=s.created_at?new Date(s.created_at):null;return r&&r>=i});break;case"this-week":e=e.filter(s=>{let r=s.created_at?new Date(s.created_at):null;return r&&r>=a});break;case"running":e=e.filter(s=>s.status==="in_progress");break;case"failed":e=e.filter(s=>s.status==="failed"||s.status==="error");break;default:break}return e}_openAddTaskModal(e="pending"){this.dispatchEvent(new CustomEvent("add-task",{detail:{status:e}}))}_openTaskDetail(e){this._selectedTask=e,this.render(),this.dispatchEvent(new CustomEvent("task-click",{detail:{task:e}}))}_closeTaskDetail(){this._selectedTask=null,this.render()}_renderMarkdown(e){if(!e)return"";let t=this._escapeHtml(String(e));return t=t.replace(/```([\s\S]*?)```/g,(i,a)=>`<pre class="md-code">${a.trim()}</pre>`),t=t.replace(/`([^`\n]+)`/g,'<code class="md-inline-code">$1</code>'),t=t.replace(/^###\s+(.+)$/gm,'<h4 class="md-h4">$1</h4>'),t=t.replace(/^##\s+(.+)$/gm,'<h3 class="md-h3">$1</h3>'),t=t.replace(/^#\s+(.+)$/gm,'<h2 class="md-h2">$1</h2>'),t=t.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>"),t=t.replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>"),t=t.replace(/(?:^|\n)((?:[-*]\s+.+(?:\n|$))+)/g,(i,a)=>`
+<ul class="md-list">${a.trim().split(/\n/).map(r=>r.replace(/^[-*]\s+/,"")).map(r=>`<li>${r}</li>`).join("")}</ul>`),t=t.split(/\n{2,}/).map(i=>/^<(h\d|ul|ol|pre)/.test(i.trim())?i:`<p class="md-p">${i.replace(/\n/g,"<br>")}</p>`).join(""),t}_formatTimestamp(e){if(!e)return"";try{let t=new Date(e);return isNaN(t.getTime())?this._escapeHtml(String(e)):t.toLocaleString()}catch{return this._escapeHtml(String(e))}}_phaseClass(e){let t=String(e||"").toLowerCase();return["reason","plan","planning"].includes(t)?"phase-reason":["act","execute","execution","implement"].includes(t)?"phase-act":["reflect","review"].includes(t)?"phase-reflect":["verify","test","gate"].includes(t)?"phase-verify":"phase-default"}_logLevelClass(e){let t=String(e||"info").toLowerCase();return t==="error"||t==="fatal"?"log-error":t==="warn"||t==="warning"?"log-warn":t==="debug"||t==="trace"?"log-debug":"log-info"}_renderTaskDetailModal(e){if(!e)return"";let t=(e.priority||"medium").toLowerCase(),i=t.charAt(0).toUpperCase()+t.slice(1),a=e.status||"pending",s=a.replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase()),r=e.metadata||{},o=e.acceptance_criteria||[],n=e.context_files||[],l=e.specification||"",c=e.description||"",p=Array.isArray(e.notes)?e.notes:[],u=Array.isArray(e.logs)?e.logs:[],b=e.full_content||"";return`
+      <div class="modal-overlay" id="task-detail-overlay">
+        <div class="modal-container">
+          <div class="modal-header">
+            <div class="modal-header-left">
+              <span class="task-id">${e.isLocal?"LOCAL":"#"+this._escapeHtml(String(e.id))}</span>
+              <span class="task-priority ${t}">${i}</span>
+              <span class="task-status-badge ${a}">${s}</span>
+            </div>
+            <button class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
+          </div>
+          <h2 class="modal-title">${this._escapeHtml(e.title||"Untitled")}</h2>
+
+          ${Object.keys(r).length>0?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Metadata</h3>
+              <div class="meta-grid">
+                ${Object.entries(r).map(([m,f])=>`
+                  <div class="meta-cell">
+                    <span class="meta-label">${this._escapeHtml(m.replace(/_/g," "))}</span>
+                    <span class="meta-value">${this._escapeHtml(String(f))}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          `:""}
+
+          ${c?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Description</h3>
+              <div class="modal-prose md-body">${this._renderMarkdown(c)}</div>
+            </div>
+          `:""}
+
+          ${l?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Specification</h3>
+              <div class="modal-prose">${this._escapeHtml(l)}</div>
+            </div>
+          `:""}
+
+          ${o.length>0?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Acceptance Criteria</h3>
+              <ul class="criteria-checklist" role="list">
+                ${o.map(m=>{let f=m&&typeof m=="object",x=f?m.text||m.title||"":m,w=f?!!m.done:!1;return`<li class="criteria-item">
+                    <span class="criteria-checkbox ${w?"checked":""}" aria-hidden="true">${w?"&#10003;":""}</span>
+                    <span class="criteria-text ${w?"done":""}">${this._escapeHtml(String(x))}</span>
+                  </li>`}).join("")}
+              </ul>
+            </div>
+          `:""}
+
+          ${p.length>0?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Notes</h3>
+              <ul class="notes-timeline" role="list">
+                ${p.map(m=>{let f=this._formatTimestamp(m&&m.timestamp),x=m&&m.author?this._escapeHtml(String(m.author)):"unknown",w=m&&m.body?this._escapeHtml(String(m.body)):"";return`<li class="note-entry">
+                    <div class="note-meta">
+                      <span class="note-author">${x}</span>
+                      ${f?`<span class="note-time">${f}</span>`:""}
+                    </div>
+                    <div class="note-body">${w}</div>
+                  </li>`}).join("")}
+              </ul>
+            </div>
+          `:""}
+
+          ${u.length>0?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Logs</h3>
+              <div class="logs-scroll">
+                <ul class="logs-timeline" role="list">
+                  ${u.map(m=>{let f=this._formatTimestamp(m&&m.timestamp),x=m&&m.iteration!==void 0&&m.iteration!==null?`i${this._escapeHtml(String(m.iteration))}`:"",w=m&&m.phase?String(m.phase):"",it=this._phaseClass(w),at=this._logLevelClass(m&&m.level),st=m&&m.message?this._escapeHtml(String(m.message)):"";return`<li class="log-entry ${at}">
+                      ${f?`<span class="log-time">${f}</span>`:""}
+                      ${x?`<span class="log-iter">${x}</span>`:""}
+                      ${w?`<span class="log-phase ${it}">${this._escapeHtml(w)}</span>`:""}
+                      <span class="log-message">${st}</span>
+                    </li>`}).join("")}
+                </ul>
+              </div>
+            </div>
+          `:""}
+
+          ${n.length>0?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Context Files</h3>
+              <ul class="context-files-list">
+                ${n.map(m=>`<li class="mono">${this._escapeHtml(m)}</li>`).join("")}
+              </ul>
+            </div>
+          `:""}
+
+          ${b&&!l?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Full Content</h3>
+              <pre class="modal-pre">${this._escapeHtml(b)}</pre>
+            </div>
+          `:""}
+
+          ${e.user_story?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">User Story</h3>
+              <div class="modal-prose">${this._escapeHtml(e.user_story)}</div>
+            </div>
+          `:""}
+
+          ${e.source?`
+            <div class="modal-section">
+              <h3 class="modal-section-title">Source</h3>
+              <div class="modal-prose"><code>${this._escapeHtml(e.source)}</code></div>
+            </div>
+          `:""}
+
+          ${e.type?`
+            <div class="modal-footer">
+              <span class="task-type">${this._escapeHtml(e.type)}</span>
+              ${e.assigned_agent_id?`<span class="meta-value">Agent #${e.assigned_agent_id}</span>`:""}
+            </div>
+          `:""}
+        </div>
+      </div>
+    `}render(){let e=`
       <style>
         ${this.getBaseStyles()}
 
@@ -716,7 +924,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .kanban-column {
           background: var(--loki-bg-secondary);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 12px;
           display: flex;
           flex-direction: column;
@@ -749,7 +957,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .kanban-column-count {
           background: var(--loki-bg-tertiary);
           padding: 2px 8px;
-          border-radius: 10px;
+          border-radius: 5px;
           font-size: 11px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
@@ -763,7 +971,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 8px;
           min-height: 80px;
           transition: background var(--loki-transition);
-          border-radius: 6px;
+          border-radius: 4px;
           padding: 4px;
         }
 
@@ -774,10 +982,16 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .task-card {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 6px;
+          border-radius: 4px;
           padding: 10px;
           cursor: pointer;
-          transition: all var(--loki-transition);
+          transition: transform 0.3s ease, opacity 0.3s ease, box-shadow 0.3s ease, border-color 0.2s ease;
+          animation: cardFadeIn 0.3s ease;
+        }
+
+        @keyframes cardFadeIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         .task-card:hover {
@@ -791,12 +1005,22 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .task-card.dragging {
-          opacity: 0.5;
+          opacity: 0.4;
+          transform: scale(0.95);
           cursor: grabbing;
         }
 
         .task-card.local {
           border-left: 3px solid var(--loki-accent);
+        }
+
+        .task-card.selected {
+          border-color: var(--loki-accent);
+          box-shadow: 0 0 0 2px var(--loki-accent-muted);
+        }
+
+        .task-card.expanded {
+          background: var(--loki-bg-secondary);
         }
 
         .task-card-header {
@@ -844,6 +1068,13 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           color: var(--loki-text-primary);
         }
 
+        .task-desc {
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          line-height: 1.4;
+          margin-bottom: 6px;
+        }
+
         .task-meta {
           display: flex;
           justify-content: space-between;
@@ -861,7 +1092,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .add-task-btn {
           background: transparent;
           border: 1px dashed var(--loki-border);
-          border-radius: 6px;
+          border-radius: 4px;
           padding: 10px;
           color: var(--loki-text-muted);
           font-size: 12px;
@@ -895,43 +1126,656 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           stroke-width: 2;
           fill: none;
         }
+
+        /* Task Detail Modal */
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+        }
+
+        .modal-container {
+          background: var(--loki-bg-card);
+          border: 1px solid var(--loki-border);
+          border-radius: 8px;
+          width: 100%;
+          max-width: 640px;
+          max-height: 80vh;
+          overflow-y: auto;
+          padding: 24px;
+          box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+
+        .modal-header-left {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .modal-close {
+          background: none;
+          border: none;
+          font-size: 22px;
+          color: var(--loki-text-muted);
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 4px;
+          line-height: 1;
+        }
+
+        .modal-close:hover {
+          background: var(--loki-bg-hover);
+          color: var(--loki-text-primary);
+        }
+
+        .modal-title {
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--loki-text-primary);
+          margin: 0 0 16px 0;
+          line-height: 1.3;
+        }
+
+        .task-status-badge {
+          font-size: 10px;
+          font-weight: 500;
+          padding: 2px 8px;
+          border-radius: 3px;
+          text-transform: capitalize;
+          background: var(--loki-bg-tertiary);
+          color: var(--loki-text-secondary);
+        }
+
+        .task-status-badge.in_progress { background: var(--loki-blue-muted, rgba(47,113,227,0.15)); color: var(--loki-blue); }
+        .task-status-badge.review { background: var(--loki-purple-muted, rgba(123,107,240,0.15)); color: var(--loki-purple); }
+        .task-status-badge.done { background: var(--loki-green-muted, rgba(31,197,168,0.15)); color: var(--loki-green); }
+
+        .modal-section {
+          margin-bottom: 16px;
+          padding-top: 12px;
+          border-top: 1px solid var(--loki-border);
+        }
+
+        .modal-section-title {
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--loki-text-muted);
+          margin: 0 0 8px 0;
+        }
+
+        .modal-prose {
+          font-size: 13px;
+          line-height: 1.6;
+          color: var(--loki-text-primary);
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        .meta-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+          gap: 8px;
+        }
+
+        .meta-cell {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .meta-label {
+          font-size: 10px;
+          font-weight: 500;
+          text-transform: capitalize;
+          color: var(--loki-text-muted);
+        }
+
+        .meta-value {
+          font-size: 12px;
+          color: var(--loki-text-primary);
+        }
+
+        .criteria-list {
+          margin: 0;
+          padding-left: 20px;
+          font-size: 13px;
+          line-height: 1.6;
+          color: var(--loki-text-primary);
+        }
+
+        .criteria-list li {
+          margin-bottom: 4px;
+        }
+
+        .context-files-list {
+          margin: 0;
+          padding-left: 16px;
+          font-size: 12px;
+          line-height: 1.8;
+          color: var(--loki-text-secondary);
+          list-style: disc;
+        }
+
+        .mono {
+          font-family: 'JetBrains Mono', monospace;
+        }
+
+        .modal-pre {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          line-height: 1.5;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 12px;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+          max-height: 300px;
+          overflow-y: auto;
+          color: var(--loki-text-primary);
+        }
+
+        .modal-footer {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding-top: 12px;
+          border-top: 1px solid var(--loki-border);
+          font-size: 11px;
+          color: var(--loki-text-muted);
+        }
+
+        /* Markdown body inside Description section */
+        .md-body .md-h2 { font-size: 14px; margin: 8px 0 4px; color: var(--loki-text-primary); }
+        .md-body .md-h3 { font-size: 13px; margin: 8px 0 4px; color: var(--loki-text-primary); }
+        .md-body .md-h4 { font-size: 12px; margin: 6px 0 2px; color: var(--loki-text-primary); }
+        .md-body .md-p { margin: 6px 0; }
+        .md-body .md-list { margin: 6px 0; padding-left: 20px; }
+        .md-body .md-list li { margin-bottom: 2px; }
+        .md-body .md-inline-code {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          background: var(--loki-bg-secondary);
+          padding: 1px 4px;
+          border-radius: 3px;
+        }
+        .md-body .md-code {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 8px;
+          overflow-x: auto;
+          white-space: pre;
+        }
+
+        /* Acceptance criteria checklist */
+        .criteria-checklist {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .criteria-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--loki-text-primary);
+        }
+        .criteria-checkbox {
+          flex: 0 0 14px;
+          width: 14px;
+          height: 14px;
+          margin-top: 2px;
+          border: 1px solid var(--loki-border);
+          border-radius: 3px;
+          background: var(--loki-bg-secondary);
+          font-size: 10px;
+          line-height: 12px;
+          text-align: center;
+          color: var(--loki-green, #22c55e);
+        }
+        .criteria-checkbox.checked {
+          background: var(--loki-green, #22c55e);
+          border-color: var(--loki-green, #22c55e);
+          color: #fff;
+        }
+        .criteria-text.done {
+          text-decoration: line-through;
+          color: var(--loki-text-muted);
+        }
+
+        /* Notes timeline */
+        .notes-timeline {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .note-entry {
+          padding: 8px 10px;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-left: 2px solid var(--loki-blue, #3b82f6);
+          border-radius: 4px;
+        }
+        .note-meta {
+          display: flex;
+          gap: 8px;
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          margin-bottom: 4px;
+        }
+        .note-author { font-weight: 600; color: var(--loki-text-secondary); }
+        .note-body {
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--loki-text-primary);
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        /* Logs timeline */
+        .logs-scroll {
+          max-height: 400px;
+          overflow-y: auto;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+        }
+        .logs-timeline {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+        .log-entry {
+          display: grid;
+          grid-template-columns: auto auto auto 1fr;
+          gap: 8px;
+          padding: 4px 8px;
+          border-bottom: 1px solid var(--loki-border);
+          color: var(--loki-text-primary);
+          align-items: baseline;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: var(--loki-text-muted); white-space: nowrap; }
+        .log-iter {
+          color: var(--loki-text-secondary);
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .log-phase {
+          padding: 1px 6px;
+          border-radius: 3px;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
+        }
+        .log-phase.phase-reason   { background: rgba(59,130,246,0.15);  color: var(--loki-blue,   #3b82f6); }
+        .log-phase.phase-act      { background: rgba(34,197,94,0.15);   color: var(--loki-green,  #22c55e); }
+        .log-phase.phase-reflect  { background: rgba(168,85,247,0.15);  color: var(--loki-purple, #a855f7); }
+        .log-phase.phase-verify   { background: rgba(245,158,11,0.15);  color: var(--loki-amber,  #f59e0b); }
+        .log-phase.phase-default  { background: var(--loki-bg-primary); color: var(--loki-text-muted); }
+        .log-message { word-break: break-word; white-space: pre-wrap; }
+        .log-entry.log-error   .log-message { color: var(--loki-red,   #ef4444); }
+        .log-entry.log-warn    .log-message { color: var(--loki-amber, #f59e0b); }
+        .log-entry.log-debug   .log-message { color: var(--loki-text-muted); }
+
+        /* G72: Smooth transition when cards move */
+        .kanban-tasks {
+          position: relative;
+        }
+
+        /* G73: Expanded card content */
+        .card-expanded-content {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border);
+          animation: expandIn 0.25s ease;
+        }
+
+        @keyframes expandIn {
+          from { opacity: 0; max-height: 0; }
+          to { opacity: 1; max-height: 400px; }
+        }
+
+        .card-expanded-desc {
+          font-size: 11px;
+          line-height: 1.6;
+          color: var(--loki-text-secondary);
+          margin-bottom: 6px;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        .card-expanded-meta {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 4px;
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .card-expanded-meta dt {
+          font-weight: 500;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .card-expanded-meta dd {
+          margin: 0;
+          color: var(--loki-text-secondary);
+          font-family: 'JetBrains Mono', monospace;
+        }
+
+        .expand-toggle {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          font-size: 10px;
+          color: var(--loki-text-muted);
+          cursor: pointer;
+          padding: 2px 0;
+        }
+
+        .expand-toggle:hover {
+          color: var(--loki-accent);
+        }
+
+        .expand-toggle svg {
+          width: 12px;
+          height: 12px;
+        }
+
+        /* G74: Bulk selection checkbox */
+        .task-checkbox {
+          width: 14px;
+          height: 14px;
+          border-radius: 3px;
+          border: 1.5px solid var(--loki-border-light);
+          background: var(--loki-bg-card);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          transition: all var(--loki-transition);
+        }
+
+        .task-checkbox:hover {
+          border-color: var(--loki-accent);
+        }
+
+        .task-checkbox.checked {
+          background: var(--loki-accent);
+          border-color: var(--loki-accent);
+        }
+
+        .task-checkbox.checked::after {
+          content: '';
+          width: 8px;
+          height: 8px;
+          background: white;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+          -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+          mask-size: contain;
+          -webkit-mask-size: contain;
+        }
+
+        .bulk-actions-bar {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          background: var(--loki-accent-muted);
+          border: 1px solid var(--loki-accent);
+          border-radius: 4px;
+          margin-bottom: 12px;
+          font-size: 12px;
+          color: var(--loki-text-primary);
+          animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .bulk-count {
+          font-weight: 600;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--loki-accent);
+        }
+
+        .bulk-btn {
+          padding: 4px 10px;
+          font-size: 11px;
+          font-weight: 500;
+          border-radius: 3px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-card);
+          color: var(--loki-text-secondary);
+          cursor: pointer;
+          transition: all var(--loki-transition);
+        }
+
+        .bulk-btn:hover {
+          background: var(--loki-bg-hover);
+          border-color: var(--loki-border-light);
+        }
+
+        .bulk-btn.danger {
+          color: var(--loki-red);
+          border-color: var(--loki-red-muted);
+        }
+
+        .bulk-btn.danger:hover {
+          background: var(--loki-red-muted);
+        }
+
+        /* G75: Quick filter dropdown */
+        .filter-bar {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 12px;
+        }
+
+        .filter-label {
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          font-weight: 500;
+        }
+
+        .filter-pill {
+          padding: 4px 10px;
+          font-size: 11px;
+          font-weight: 500;
+          border-radius: 9999px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-secondary);
+          cursor: pointer;
+          transition: all var(--loki-transition);
+        }
+
+        .filter-pill:hover {
+          border-color: var(--loki-border-light);
+          background: var(--loki-bg-hover);
+        }
+
+        .filter-pill.active {
+          background: var(--loki-accent);
+          border-color: var(--loki-accent);
+          color: white;
+        }
+
+        /* G71: Agent Avatars */
+        .agent-avatar {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 8px;
+          font-weight: 700;
+          color: white;
+          flex-shrink: 0;
+          position: relative;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .agent-avatar.architect { background: var(--loki-blue); }
+        .agent-avatar.developer { background: var(--loki-purple); }
+        .agent-avatar.tester { background: var(--loki-green); }
+        .agent-avatar.reviewer { background: var(--loki-yellow); }
+        .agent-avatar.default { background: var(--loki-text-muted); }
+
+        .agent-status-dot {
+          position: absolute;
+          bottom: -1px;
+          right: -1px;
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          border: 1.5px solid var(--loki-bg-card);
+        }
+
+        .agent-status-dot.active { background: var(--loki-green); }
+        .agent-status-dot.idle { background: var(--loki-text-muted); }
+        .agent-status-dot.failed { background: var(--loki-red); }
+
+        .agent-tooltip {
+          display: none;
+          position: absolute;
+          bottom: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          margin-bottom: 6px;
+          padding: 4px 8px;
+          background: var(--loki-bg-card);
+          border: 1px solid var(--loki-border);
+          border-radius: 3px;
+          font-size: 10px;
+          color: var(--loki-text-primary);
+          white-space: nowrap;
+          z-index: 10;
+          box-shadow: var(--loki-shadow-md);
+        }
+
+        .agent-avatar:hover .agent-tooltip {
+          display: block;
+        }
       </style>
-    `,t=i=>{switch(i){case"pending":return'<circle cx="12" cy="12" r="10"/>';case"in_progress":return'<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>';case"review":return'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';case"done":return'<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';default:return'<circle cx="12" cy="12" r="10"/>'}},a;if(this._loading)a='<div class="loading">Loading tasks...</div>';else if(this._error&&this._tasks.length===0)a=`<div class="error">Error: ${this._error}</div>`;else{let i=this.hasAttribute("readonly");a=`
+    `,t=a=>{switch(a){case"pending":return'<circle cx="12" cy="12" r="10"/>';case"in_progress":return'<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>';case"review":return'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';case"done":return'<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';default:return'<circle cx="12" cy="12" r="10"/>'}},i;if(this._loading)i='<div class="loading">Loading tasks...</div>';else if(this._error&&this._tasks.length===0)i=`<div class="error">Error: ${this._escapeHtml(this._error)}</div>`;else{let a=this.hasAttribute("readonly"),s=[{id:"all",label:"All"},{id:"today",label:"Today"},{id:"this-week",label:"This Week"},{id:"running",label:"Running"},{id:"failed",label:"Failed"}],r=o=>{if(!o.assigned_agent_id&&!o.agent_type)return"";let n=(o.agent_type||"").toLowerCase(),l="AG",c="default",p="idle",u=`Agent #${o.assigned_agent_id||"?"}`;return n.includes("architect")||n==="ar"?(l="AR",c="architect",u="Architect"):n.includes("develop")||n==="dv"?(l="DV",c="developer",u="Developer"):n.includes("test")||n==="ts"?(l="TS",c="tester",u="Tester"):(n.includes("review")||n==="rv")&&(l="RV",c="reviewer",u="Reviewer"),o.status==="in_progress"&&(p="active"),(o.status==="failed"||o.status==="error")&&(p="failed"),`
+          <div class="agent-avatar ${c}">
+            ${l}
+            <span class="agent-status-dot ${p}"></span>
+            <span class="agent-tooltip">${this._escapeHtml(u)}</span>
+          </div>
+        `};i=`
+        <div class="filter-bar">
+          <span class="filter-label">Filter:</span>
+          ${s.map(o=>`
+            <button class="filter-pill ${this._activeFilter===o.id?"active":""}" data-filter="${o.id}">${o.label}</button>
+          `).join("")}
+        </div>
+
+        ${this._bulkMode&&this._selectedTasks.size>0?`
+          <div class="bulk-actions-bar">
+            <span class="bulk-count">${this._selectedTasks.size}</span> selected
+            <button class="bulk-btn" data-bulk-action="in_progress">Move to In Progress</button>
+            <button class="bulk-btn" data-bulk-action="done">Mark Done</button>
+            <button class="bulk-btn danger" data-bulk-action="delete">Delete</button>
+          </div>
+        `:""}
+
         <div class="kanban-board">
-          ${ke.map(s=>{let r=this._getTasksByStatus(s.status);return`
-              <div class="kanban-column" data-status="${s.status}">
+          ${ht.map(o=>{let n=this._getTasksByStatus(o.status);return`
+              <div class="kanban-column" data-status="${o.status}">
                 <div class="kanban-column-header">
                   <span class="kanban-column-title">
-                    <svg class="column-icon" viewBox="0 0 24 24" style="color: ${s.color}">
-                      ${t(s.status)}
+                    <svg class="column-icon" viewBox="0 0 24 24" style="color: ${o.color}">
+                      ${t(o.status)}
                     </svg>
-                    ${s.label}
+                    ${o.label}
                   </span>
-                  <span class="kanban-column-count">${r.length}</span>
+                  <span class="kanban-column-count">${n.length}</span>
                 </div>
-                <div class="kanban-tasks" data-status="${s.status}">
-                  ${r.length===0?'<div class="empty-column">No tasks</div>':""}
-                  ${r.map(o=>`
-                    <div class="task-card ${!i&&!o.fromServer?"draggable":""} ${o.isLocal?"local":""}"
-                         data-task-id="${o.id}"
+                <div class="kanban-tasks" data-status="${o.status}">
+                  ${n.length===0?'<div class="empty-column">No tasks</div>':""}
+                  ${n.map(l=>{let c=String(l.id||""),p=this._expandedCards.has(c),u=this._selectedTasks.has(c);return`
+                    <div class="task-card ${!a&&!l.fromServer?"draggable":""} ${l.isLocal?"local":""} ${p?"expanded":""} ${u?"selected":""}"
+                         data-task-id="${this._escapeHtml(c)}"
                          tabindex="0"
                          role="button"
-                         aria-label="Task: ${this._escapeHtml(o.title||"Untitled")}, ${o.priority||"medium"} priority"
-                         ${!i&&!o.fromServer?'draggable="true"':""}>
+                         aria-label="Task: ${this._escapeHtml(l.title||"Untitled")}, ${this._escapeHtml(String(l.priority||"medium"))} priority"
+                         ${!a&&!l.fromServer?'draggable="true"':""}>
                       <div class="task-card-header">
-                        <span class="task-id">${o.isLocal?"LOCAL":"#"+o.id}</span>
-                        <span class="task-priority ${(o.priority||"medium").toLowerCase()}">${o.priority||"medium"}</span>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                          ${this._bulkMode?`<div class="task-checkbox ${u?"checked":""}" data-check-id="${this._escapeHtml(c)}"></div>`:""}
+                          <span class="task-id">${l.isLocal?"LOCAL":"#"+this._escapeHtml(c)}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                          ${r(l)}
+                          <span class="task-priority ${this._escapeHtml(String(l.priority||"medium").toLowerCase())}">${this._escapeHtml(String(l.priority||"medium"))}</span>
+                        </div>
                       </div>
-                      <div class="task-title">${this._escapeHtml(o.title||"Untitled")}</div>
+                      <div class="task-title">${this._escapeHtml(l.title||"Untitled")}</div>
+                      ${!p&&l.description?`<div class="task-desc">${this._escapeHtml(String(l.description??"").substring(0,80))}${String(l.description??"").length>80?"...":""}</div>`:""}
                       <div class="task-meta">
-                        <span class="task-type">${o.type||"task"}</span>
-                        ${o.assigned_agent_id?`<span>Agent #${o.assigned_agent_id}</span>`:""}
+                        <span class="task-type">${this._escapeHtml(String(l.type||"task"))}</span>
+                        <span class="expand-toggle" data-expand-id="${this._escapeHtml(c)}">
+                          ${p?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg> Less':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg> More'}
+                        </span>
                       </div>
+                      ${p?`
+                        <div class="card-expanded-content">
+                          ${l.description?`<div class="card-expanded-desc">${this._escapeHtml(l.description)}</div>`:""}
+                          <dl class="card-expanded-meta">
+                            ${l.assigned_agent_id?`<dt>Agent</dt><dd>#${this._escapeHtml(String(l.assigned_agent_id))}</dd>`:""}
+                            ${l.created_at?`<dt>Created</dt><dd>${this._escapeHtml(new Date(l.created_at).toLocaleString())}</dd>`:""}
+                            ${l.updated_at?`<dt>Updated</dt><dd>${this._escapeHtml(new Date(l.updated_at).toLocaleString())}</dd>`:""}
+                            ${l.acceptance_criteria?.length?`<dt>Criteria</dt><dd>${l.acceptance_criteria.length} items</dd>`:""}
+                          </dl>
+                        </div>
+                      `:""}
                     </div>
-                  `).join("")}
+                  `}).join("")}
                 </div>
-                ${!i&&s.status==="pending"?`
-                  <button class="add-task-btn" data-status="${s.status}" aria-label="Add new task to ${s.label}">+ Add Task</button>
+                ${!a&&o.status==="pending"?`
+                  <button class="add-task-btn" data-status="${o.status}" aria-label="Add new task to ${o.label}">+ Add Task</button>
                 `:""}
               </div>
             `}).join("")}
@@ -942,6 +1786,13 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="board-header">
           <h2 class="board-title">Task Queue</h2>
           <div class="board-actions">
+            <button class="btn btn-secondary" id="bulk-toggle-btn" aria-label="Toggle bulk selection">
+              <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+              </svg>
+              ${this._bulkMode?"Cancel":"Select"}
+            </button>
             <button class="btn btn-secondary" id="refresh-btn" aria-label="Refresh task board">
               <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
                 <polyline points="23 4 23 10 17 10"/>
@@ -952,9 +1803,38 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             </button>
           </div>
         </div>
-        ${a}
+        ${i}
       </div>
-    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("refresh-btn");e&&e.addEventListener("click",()=>this._loadTasks()),this.shadowRoot.querySelectorAll(".add-task-btn").forEach(t=>{t.addEventListener("click",()=>{this._openAddTaskModal(t.dataset.status)})}),this.shadowRoot.querySelectorAll(".task-card").forEach(t=>{let a=t.dataset.taskId,i=this._tasks.find(s=>s.id.toString()===a);i&&(t.addEventListener("click",()=>this._openTaskDetail(i)),t.addEventListener("keydown",s=>{s.key==="Enter"||s.key===" "?(s.preventDefault(),this._openTaskDetail(i)):(s.key==="ArrowDown"||s.key==="ArrowUp")&&(s.preventDefault(),this._navigateTaskCards(t,s.key==="ArrowDown"?"next":"prev"))}),t.classList.contains("draggable")&&(t.addEventListener("dragstart",s=>this._handleDragStart(s,i)),t.addEventListener("dragend",s=>this._handleDragEnd(s))))}),this.shadowRoot.querySelectorAll(".kanban-tasks").forEach(t=>{t.addEventListener("dragover",a=>this._handleDragOver(a)),t.addEventListener("dragenter",a=>this._handleDragEnter(a)),t.addEventListener("dragleave",a=>this._handleDragLeave(a)),t.addEventListener("drop",a=>this._handleDrop(a,t.dataset.status))})}_escapeHtml(e){let t=document.createElement("div");return t.textContent=e,t.innerHTML}_navigateTaskCards(e,t){let a=Array.from(this.shadowRoot.querySelectorAll(".task-card")),i=a.indexOf(e);if(i===-1)return;let s=t==="next"?i+1:i-1;s>=0&&s<a.length&&a[s].focus()}};customElements.get("loki-task-board")||customElements.define("loki-task-board",H);var B=class extends c{static get observedAttributes(){return["api-url","theme","compact"]}constructor(){super(),this._status={mode:"offline",phase:null,iteration:null,complexity:null,connected:!1,version:null,uptime:0,activeAgents:0,pendingTasks:0},this._api=null,this._state=C(),this._statusUpdateHandler=null,this._connectedHandler=null,this._disconnectedHandler=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadStatus(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling(),this._api&&(this._statusUpdateHandler&&this._api.removeEventListener(n.STATUS_UPDATE,this._statusUpdateHandler),this._connectedHandler&&this._api.removeEventListener(n.CONNECTED,this._connectedHandler),this._disconnectedHandler&&this._api.removeEventListener(n.DISCONNECTED,this._disconnectedHandler))}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadStatus()),e==="theme"&&this._applyTheme(),e==="compact"&&this.render())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e}),this._statusUpdateHandler=t=>this._updateFromStatus(t.detail),this._connectedHandler=()=>{this._status.connected=!0,this.render()},this._disconnectedHandler=()=>{this._status.connected=!1,this._status.mode="offline",this.render()},this._api.addEventListener(n.STATUS_UPDATE,this._statusUpdateHandler),this._api.addEventListener(n.CONNECTED,this._connectedHandler),this._api.addEventListener(n.DISCONNECTED,this._disconnectedHandler)}async _loadStatus(){try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._status.connected=!1,this._status.mode="offline",this.render()}}_updateFromStatus(e){e&&(this._status={...this._status,connected:!0,mode:e.status||"running",version:e.version,uptime:e.uptime_seconds||0,activeAgents:e.running_agents||0,pendingTasks:e.pending_tasks||0,phase:e.phase,iteration:e.iteration,complexity:e.complexity},this._state.updateSession({connected:!0,mode:this._status.mode,lastSync:new Date().toISOString()}),this.render())}_startPolling(){this._ownPollInterval=setInterval(async()=>{try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._status.connected=!1,this._status.mode="offline",this.render()}},3e3)}_stopPolling(){this._ownPollInterval&&(clearInterval(this._ownPollInterval),this._ownPollInterval=null)}_formatUptime(e){if(!e||e<0)return"--";let t=Math.floor(e/3600),a=Math.floor(e%3600/60),i=Math.floor(e%60);return t>0?`${t}h ${a}m`:a>0?`${a}m ${i}s`:`${i}s`}_getStatusClass(){switch(this._status.mode){case"running":case"autonomous":return"active";case"paused":return"paused";case"stopped":return"stopped";case"error":return"error";default:return"offline"}}_getStatusLabel(){switch(this._status.mode){case"running":case"autonomous":return"AUTONOMOUS";case"paused":return"PAUSED";case"stopped":return"STOPPED";case"error":return"ERROR";default:return"OFFLINE"}}_triggerStart(){this.dispatchEvent(new CustomEvent("session-start",{detail:this._status}))}async _triggerPause(){try{await this._api.pauseSession(),this._status.mode="paused",this.render()}catch(e){console.error("Failed to pause session:",e)}this.dispatchEvent(new CustomEvent("session-pause",{detail:this._status}))}async _triggerResume(){try{await this._api.resumeSession(),this._status.mode="running",this.render()}catch(e){console.error("Failed to resume session:",e)}this.dispatchEvent(new CustomEvent("session-resume",{detail:this._status}))}async _triggerStop(){try{await this._api.stopSession(),this._status.mode="stopped",this.render()}catch(e){console.error("Failed to stop session:",e)}this.dispatchEvent(new CustomEvent("session-stop",{detail:this._status}))}render(){let e=this.hasAttribute("compact"),t=this._getStatusClass(),a=this._getStatusLabel(),i=["running","autonomous"].includes(this._status.mode),s=this._status.mode==="paused",r=`
+      ${this._selectedTask?this._renderTaskDetailModal(this._selectedTask):""}
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("refresh-btn");e&&e.addEventListener("click",()=>this._loadTasks());let t=this.shadowRoot.getElementById("bulk-toggle-btn");t&&t.addEventListener("click",()=>this._toggleBulkMode()),this.shadowRoot.querySelectorAll(".filter-pill").forEach(s=>{s.addEventListener("click",()=>this._setFilter(s.dataset.filter))}),this.shadowRoot.querySelectorAll(".bulk-btn").forEach(s=>{s.addEventListener("click",()=>{let r=s.dataset.bulkAction;r==="delete"?this._bulkDelete():this._bulkMove(r)})}),this.shadowRoot.querySelectorAll(".add-task-btn").forEach(s=>{s.addEventListener("click",()=>{this._openAddTaskModal(s.dataset.status)})}),this.shadowRoot.querySelectorAll(".task-checkbox").forEach(s=>{s.addEventListener("click",r=>{r.stopPropagation(),this._toggleTaskSelection(s.dataset.checkId,r)})}),this.shadowRoot.querySelectorAll(".expand-toggle").forEach(s=>{s.addEventListener("click",r=>{r.stopPropagation(),this._toggleCardExpand(s.dataset.expandId)})}),this.shadowRoot.querySelectorAll(".task-card").forEach(s=>{let r=s.dataset.taskId,o=this._tasks.find(n=>n.id.toString()===r);o&&(s.addEventListener("click",n=>{if(this._bulkMode){this._toggleTaskSelection(r,n);return}this._openTaskDetail(o)}),s.addEventListener("keydown",n=>{n.key==="Enter"||n.key===" "?(n.preventDefault(),this._bulkMode?this._toggleTaskSelection(r,n):this._openTaskDetail(o)):(n.key==="ArrowDown"||n.key==="ArrowUp")&&(n.preventDefault(),this._navigateTaskCards(s,n.key==="ArrowDown"?"next":"prev"))}),s.classList.contains("draggable")&&(s.addEventListener("dragstart",n=>this._handleDragStart(n,o)),s.addEventListener("dragend",n=>this._handleDragEnd(n))))}),this.shadowRoot.querySelectorAll(".kanban-tasks").forEach(s=>{s.addEventListener("dragover",r=>this._handleDragOver(r)),s.addEventListener("dragenter",r=>this._handleDragEnter(r)),s.addEventListener("dragleave",r=>this._handleDragLeave(r)),s.addEventListener("drop",r=>this._handleDrop(r,s.dataset.status))});let i=this.shadowRoot.getElementById("modal-close-btn");i&&i.addEventListener("click",()=>this._closeTaskDetail());let a=this.shadowRoot.getElementById("task-detail-overlay");a&&a.addEventListener("click",s=>{s.target===a&&this._closeTaskDetail()})}_escapeHtml(e){let t=document.createElement("div");return t.textContent=e,t.innerHTML}_navigateTaskCards(e,t){let i=Array.from(this.shadowRoot.querySelectorAll(".task-card")),a=i.indexOf(e);if(a===-1)return;let s=t==="next"?a+1:a-1;s>=0&&s<i.length&&i[s].focus()}};customElements.get("loki-task-board")||customElements.define("loki-task-board",q);var J=class extends h{static get observedAttributes(){return["api-url","theme","compact"]}constructor(){super(),this._status={mode:"offline",phase:null,iteration:null,complexity:null,connected:!1,version:null,uptime:0,activeAgents:0,pendingTasks:0},this._model={override:null,default:"sonnet",effective:"sonnet",notice:""},this._modelBusy=!1,this._startBusy=!1,this._startNotice="",this._specText="",this._api=null,this._state=B(),this._statusUpdateHandler=null,this._connectedHandler=null,this._disconnectedHandler=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadStatus(),this._loadModel(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling(),this._api&&(this._statusUpdateHandler&&this._api.removeEventListener(v.STATUS_UPDATE,this._statusUpdateHandler),this._connectedHandler&&this._api.removeEventListener(v.CONNECTED,this._connectedHandler),this._disconnectedHandler&&this._api.removeEventListener(v.DISCONNECTED,this._disconnectedHandler))}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadStatus()),e==="theme"&&this._applyTheme(),e==="compact"&&this.render())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e}),this._statusUpdateHandler=t=>this._updateFromStatus(t.detail),this._connectedHandler=()=>{this._status.connected=!0,this.render()},this._disconnectedHandler=()=>{this._status.connected=!1,this._status.mode="offline",this.render()},this._api.addEventListener(v.STATUS_UPDATE,this._statusUpdateHandler),this._api.addEventListener(v.CONNECTED,this._connectedHandler),this._api.addEventListener(v.DISCONNECTED,this._disconnectedHandler)}async _loadStatus(){try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._status.connected=!1,this._status.mode="offline",this.render()}}_updateFromStatus(e){e&&(this._status={...this._status,connected:!0,mode:e.status||"running",version:e.version,uptime:e.uptime_seconds||0,activeAgents:e.running_agents||0,pendingTasks:e.pending_tasks||0,phase:e.phase,iteration:e.iteration,complexity:e.complexity},this._state.updateSession({connected:!0,mode:this._status.mode,lastSync:new Date().toISOString()}),this.render())}_startPolling(){this._ownPollInterval=setInterval(async()=>{try{let e=await this._api.getStatus();this._updateFromStatus(e)}catch{this._status.connected=!1,this._status.mode="offline",this.render()}},3e3)}_stopPolling(){this._ownPollInterval&&(clearInterval(this._ownPollInterval),this._ownPollInterval=null)}_formatUptime(e){if(!e||e<0)return"--";let t=Math.floor(e/3600),i=Math.floor(e%3600/60),a=Math.floor(e%60);return t>0?`${t}h ${i}m`:i>0?`${i}m ${a}s`:`${a}s`}_escapeHtml(e){let t=document.createElement("div");return t.textContent=String(e??""),t.innerHTML}_getStatusClass(){switch(this._status.mode){case"running":case"autonomous":return"active";case"paused":return"paused";case"stopped":return"stopped";case"error":return"error";default:return"offline"}}_getStatusLabel(){switch(this._status.mode){case"running":case"autonomous":return"AUTONOMOUS";case"paused":return"PAUSED";case"stopped":return"STOPPED";case"error":return"ERROR";default:return"OFFLINE"}}async _triggerStart(){if(this._startBusy)return;let e=(this._specText||"").trim();if(!e){this._startNotice="Enter a spec or one-line brief to start a build.",this.render();return}if(!this._api||typeof this._api.startSession!="function"){this._startNotice="Start is not available on this server.",this.render();return}this._startBusy=!0,this._startNotice="Starting build...",this.render();try{let t=await this._api.startSession(e,{provider:this._status.provider||"claude"});if(t&&t.error)throw new Error(t.error);this._startBusy=!1,this._startNotice="",this._specText="",this._status.mode="running",this._status.connected=!0,this.render(),this._loadStatus(),this.dispatchEvent(new CustomEvent("session-start",{detail:{...this._status,pid:t&&t.pid,spec:t&&t.spec}}))}catch(t){console.error("Failed to start build:",t),this._startBusy=!1,this._startNotice=t&&t.message?`Could not start: ${t.message}`:"Could not start the build. Try again.",this.render()}}_onSpecInput(e){this._specText=e}async _triggerPause(){try{let e=await this._api.pauseSession();if(e&&e.error)throw new Error(e.error);this._status.mode="paused",this.render(),this.dispatchEvent(new CustomEvent("session-pause",{detail:this._status}))}catch(e){console.error("Failed to pause session:",e),this.render()}}async _triggerResume(){try{let e=await this._api.resumeSession();if(e&&e.error)throw new Error(e.error);this._status.mode="running",this.render(),this.dispatchEvent(new CustomEvent("session-resume",{detail:this._status}))}catch(e){console.error("Failed to resume session:",e),this.render()}}async _triggerStop(){try{let e=await this._api.stopSession();if(e&&e.error)throw new Error(e.error);this._status.mode="stopped",this.render(),this.dispatchEvent(new CustomEvent("session-stop",{detail:this._status}))}catch(e){console.error("Failed to stop session:",e),this.render()}}async _loadModel(){if(!(!this._api||typeof this._api.getSessionModel!="function"))try{let e=await this._api.getSessionModel();e&&!e.error&&(this._model={...this._model,override:e.override??null,default:e.default||"sonnet",effective:e.effective||e.default||"sonnet"},this.render())}catch{}}async _onModelChange(e){if(this._modelBusy)return;this._modelBusy=!0;let t=e===""?null:e;try{let i=await this._api.setSessionModel(t);if(i&&i.error)throw new Error(i.error);this._model.override=t,this._model.notice=t?`Switching to ${t}. Applies from the next iteration, for the current run only.`:"Override cleared. Reverts to the tier mapping from the next iteration.",this._modelBusy=!1,await this._loadModel()}catch(i){console.error("Failed to set session model:",i),this._model.notice="Could not change the model. Try again.",this._modelBusy=!1,this.render()}}_renderModelControl(){let e=this._model.override||"",i=[{value:"",label:`Default (tier: ${this._escapeHtml(this._model.default)})`},{value:"haiku",label:"Haiku (fastest, cheapest)"},{value:"sonnet",label:"Sonnet (balanced)"},{value:"opus",label:"Opus (top coding)"},{value:"fable",label:"Fable 5 (2x Opus cost: $10/$50 per MTok)"}].map(s=>{let r=s.value===e?" selected":"";return`<option value="${this._escapeHtml(s.value)}"${r}>${this._escapeHtml(s.label)}</option>`}).join(""),a=this._model.effective==="fable";return`
+      <div class="model-control">
+        <div class="model-row">
+          <label for="model-select">Model</label>
+          <select class="model-select" id="model-select" aria-label="Run model"${this._modelBusy?" disabled":""}>
+            ${i}
+          </select>
+        </div>
+        ${a?'<div class="model-cost-note">Fable 5 costs 2x Opus per token ($10/$50 per MTok).</div>':""}
+        <div class="model-disclosure">Model changes apply from the next iteration, for the current run only.</div>
+        ${this._model.notice?`<div class="model-notice">${this._escapeHtml(this._model.notice)}</div>`:""}
+      </div>
+    `}_renderStartControl(){return`
+      <div class="start-control">
+        <label class="start-label" for="spec-input">Start a build from a spec</label>
+        <textarea
+          class="spec-input"
+          id="spec-input"
+          rows="3"
+          placeholder="Paste a PRD or type a one-line brief (e.g. 'a CLI todo app in Go with JSON storage')"
+          aria-label="Spec or one-line brief"
+          ${this._startBusy?"disabled":""}>${this._escapeHtml(this._specText)}</textarea>
+        <button class="control-btn start" id="start-btn" aria-label="Start build" ${this._startBusy?"disabled":""}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          ${this._startBusy?"Starting...":"Start Build"}
+        </button>
+        ${this._startNotice?`<div class="start-notice">${this._escapeHtml(this._startNotice)}</div>`:""}
+      </div>
+    `}render(){let e=this.hasAttribute("compact"),t=this._getStatusClass(),i=this._getStatusLabel(),a=["running","autonomous"].includes(this._status.mode),s=this._status.mode==="paused",r=!a&&!s,o=`
       <style>
         ${this.getBaseStyles()}
 
@@ -964,7 +1844,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .control-panel {
           background: var(--loki-bg-tertiary);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 14px;
           display: flex;
           flex-direction: column;
@@ -981,7 +1861,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           margin-bottom: 4px;
         }
@@ -1006,9 +1886,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .status-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
+          width: 12px;
+          height: 6px;
+          border-radius: 2px;
         }
 
         .status-dot.active {
@@ -1035,7 +1915,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .control-btn {
           flex: 1;
           padding: 6px 10px;
-          border-radius: 6px;
+          border-radius: 4px;
           border: 1px solid var(--loki-border);
           background: var(--loki-bg-card);
           color: var(--loki-text-secondary);
@@ -1095,16 +1975,16 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 6px;
           padding: 6px 12px;
           background: var(--loki-bg-tertiary);
-          border-radius: 6px;
+          border-radius: 4px;
           font-size: 11px;
           color: var(--loki-text-muted);
           margin-top: 4px;
         }
 
         .connection-dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
+          width: 10px;
+          height: 5px;
+          border-radius: 2px;
           background: var(--loki-red);
         }
 
@@ -1129,20 +2009,110 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 16px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
-          color: var(--loki-text-primary);
+          color: var(--loki-accent);
         }
 
         .stat-label {
           font-size: 10px;
           color: var(--loki-text-muted);
         }
+
+        .model-control {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .model-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .model-row label {
+          font-size: 11px;
+          color: var(--loki-text-secondary);
+          white-space: nowrap;
+        }
+
+        .model-select {
+          flex: 1;
+          padding: 5px 8px;
+          border-radius: 4px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-card);
+          color: var(--loki-text-primary);
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .model-select:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .model-cost-note {
+          font-size: 10px;
+          color: var(--loki-yellow);
+        }
+
+        .model-disclosure {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .model-notice {
+          font-size: 10px;
+          color: var(--loki-accent);
+        }
+
+        .start-control {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .start-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--loki-text-secondary);
+        }
+
+        .spec-input {
+          width: 100%;
+          box-sizing: border-box;
+          resize: vertical;
+          padding: 6px 8px;
+          border-radius: 4px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-card);
+          color: var(--loki-text-primary);
+          font-size: 11px;
+          font-family: inherit;
+        }
+
+        .spec-input:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .start-notice {
+          font-size: 10px;
+          color: var(--loki-accent);
+        }
       </style>
-    `,o=`
+    `,n=`
       <div class="control-panel compact">
         <div class="status-row">
           <span class="status-value">
             <span class="status-dot ${t}"></span>
-            ${a}
+            ${i}
           </span>
         </div>
         <div class="control-buttons" role="group" aria-label="Session controls">
@@ -1152,16 +2122,17 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
               Resume
             </button>
           `:`
-            <button class="control-btn pause" id="pause-btn" aria-label="Pause session" ${i?"":"disabled"}>
+            <button class="control-btn pause" id="pause-btn" aria-label="Pause session" ${a?"":"disabled"}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               Pause
             </button>
           `}
-          <button class="control-btn stop" id="stop-btn" aria-label="Stop session" ${!i&&!s?"disabled":""}>
+          <button class="control-btn stop" id="stop-btn" aria-label="Stop session" ${!a&&!s?"disabled":""}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
             Stop
           </button>
         </div>
+        ${r?this._renderStartControl():""}
       </div>
     `,l=`
       <div class="control-panel">
@@ -1171,23 +2142,23 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           <span class="status-label">Mode</span>
           <span class="status-value">
             <span class="status-dot ${t}"></span>
-            ${a}
+            ${i}
           </span>
         </div>
 
         <div class="status-row">
           <span class="status-label">Phase</span>
-          <span class="status-value">${this._status.phase||"--"}</span>
+          <span class="status-value">${this._escapeHtml(this._status.phase||"--")}</span>
         </div>
 
         <div class="status-row">
           <span class="status-label">Complexity</span>
-          <span class="status-value">${String(this._status.complexity||"--").toUpperCase()}</span>
+          <span class="status-value">${this._escapeHtml(String(this._status.complexity||"--").toUpperCase())}</span>
         </div>
 
         <div class="status-row">
           <span class="status-label">Iteration</span>
-          <span class="status-value">${this._status.iteration||"--"}</span>
+          <span class="status-value">${this._escapeHtml(this._status.iteration||"--")}</span>
         </div>
 
         <div class="status-row">
@@ -1202,16 +2173,20 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
               Resume
             </button>
           `:`
-            <button class="control-btn pause" id="pause-btn" aria-label="Pause session" ${i?"":"disabled"}>
+            <button class="control-btn pause" id="pause-btn" aria-label="Pause session" ${a?"":"disabled"}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               Pause
             </button>
           `}
-          <button class="control-btn stop" id="stop-btn" aria-label="Stop session" ${!i&&!s?"disabled":""}>
+          <button class="control-btn stop" id="stop-btn" aria-label="Stop session" ${!a&&!s?"disabled":""}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
             Stop
           </button>
         </div>
+
+        ${r?this._renderStartControl():""}
+
+        ${this._renderModelControl()}
 
         <div class="connection-status">
           <span class="connection-dot ${this._status.connected?"connected":""}"></span>
@@ -1231,15 +2206,15 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
       </div>
     `;this.shadowRoot.innerHTML=`
-      ${r}
-      ${e?o:l}
-    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("pause-btn"),t=this.shadowRoot.getElementById("resume-btn"),a=this.shadowRoot.getElementById("stop-btn"),i=this.shadowRoot.getElementById("start-btn");e&&e.addEventListener("click",()=>this._triggerPause()),t&&t.addEventListener("click",()=>this._triggerResume()),a&&a.addEventListener("click",()=>this._triggerStop()),i&&i.addEventListener("click",()=>this._triggerStart())}};customElements.get("loki-session-control")||customElements.define("loki-session-control",B);var oe={info:{color:"var(--loki-blue)",label:"INFO"},success:{color:"var(--loki-green)",label:"SUCCESS"},warning:{color:"var(--loki-yellow)",label:"WARN"},error:{color:"var(--loki-red)",label:"ERROR"},step:{color:"var(--loki-purple)",label:"STEP"},agent:{color:"var(--loki-accent)",label:"AGENT"},debug:{color:"var(--loki-text-muted)",label:"DEBUG"}},U=class extends c{static get observedAttributes(){return["api-url","max-lines","auto-scroll","theme","log-file"]}constructor(){super(),this._logs=[],this._maxLines=500,this._autoScroll=!0,this._filter="",this._levelFilter="all",this._api=null,this._pollInterval=null,this._logMessageHandler=null}connectedCallback(){super.connectedCallback(),this._maxLines=parseInt(this.getAttribute("max-lines"))||500,this._autoScroll=this.hasAttribute("auto-scroll"),this._setupApi(),this._startLogPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopLogPolling(),this._api&&this._logMessageHandler&&this._api.removeEventListener(n.LOG_MESSAGE,this._logMessageHandler)}attributeChangedCallback(e,t,a){if(t!==a)switch(e){case"api-url":this._api&&(this._api.baseUrl=a);break;case"max-lines":this._maxLines=parseInt(a)||500,this._trimLogs(),this.render();break;case"auto-scroll":this._autoScroll=this.hasAttribute("auto-scroll"),this.render();break;case"theme":this._applyTheme();break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e}),this._logMessageHandler=t=>this._addLog(t.detail),this._api.addEventListener(n.LOG_MESSAGE,this._logMessageHandler)}_startLogPolling(){let e=this.getAttribute("log-file");e?this._pollLogFile(e):this._pollApiLogs()}async _pollApiLogs(){let e=0,t=async()=>{try{let a=await this._api.getLogs(200);if(Array.isArray(a)&&a.length>e){let i=a.slice(e);for(let s of i)s.message&&s.message.trim()&&this._addLog({message:s.message,level:s.level||"info",timestamp:s.timestamp||new Date().toLocaleTimeString()});e=a.length}}catch{}};t(),this._apiPollInterval=setInterval(t,2e3)}async _pollLogFile(e){let t=0,a=async()=>{try{let i=await fetch(`${e}?t=${Date.now()}`);if(!i.ok)return;let r=(await i.text()).split(`
-`);if(r.length>t){let o=r.slice(t);for(let l of o)l.trim()&&this._addLog(this._parseLine(l));t=r.length}}catch{}};a(),this._pollInterval=setInterval(a,1e3)}_stopLogPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._apiPollInterval&&(clearInterval(this._apiPollInterval),this._apiPollInterval=null)}_parseLine(e){let t=e.match(/^\[([^\]]+)\]\s*\[([^\]]+)\]\s*(.+)$/);if(t)return{timestamp:t[1],level:t[2].toLowerCase(),message:t[3]};let a=e.match(/^(\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.+)$/);return a?{timestamp:a[1],level:a[2].toLowerCase(),message:a[3]}:{timestamp:new Date().toLocaleTimeString(),level:"info",message:e}}_addLog(e){if(!e)return;let t={id:Date.now()+Math.random(),timestamp:e.timestamp||new Date().toLocaleTimeString(),level:(e.level||"info").toLowerCase(),message:e.message||e};this._logs.push(t),this._trimLogs(),this.dispatchEvent(new CustomEvent("log-received",{detail:t})),this._renderLogs(),this._autoScroll&&this._scrollToBottom()}_trimLogs(){this._logs.length>this._maxLines&&(this._logs=this._logs.slice(-this._maxLines))}_clearLogs(){this._logs=[],this.dispatchEvent(new CustomEvent("logs-cleared")),this._renderLogs()}_toggleAutoScroll(){this._autoScroll=!this._autoScroll,this.render(),this._autoScroll&&this._scrollToBottom()}_scrollToBottom(){requestAnimationFrame(()=>{let e=this.shadowRoot.getElementById("log-output");e&&(e.scrollTop=e.scrollHeight)})}_downloadLogs(){let e=this._logs.map(s=>`[${s.timestamp}] [${s.level.toUpperCase()}] ${s.message}`).join(`
-`),t=new Blob([e],{type:"text/plain"}),a=URL.createObjectURL(t),i=document.createElement("a");i.href=a,i.download=`loki-logs-${new Date().toISOString().split("T")[0]}.txt`,i.click(),URL.revokeObjectURL(a)}_setFilter(e){this._filter=e.toLowerCase(),this._renderLogs()}_setLevelFilter(e){this._levelFilter=e,this._renderLogs()}_getFilteredLogs(){return this._logs.filter(e=>!(this._levelFilter!=="all"&&e.level!==this._levelFilter||this._filter&&!e.message.toLowerCase().includes(this._filter)))}_renderLogs(){let e=this.shadowRoot.getElementById("log-output");if(!e)return;let t=this._getFilteredLogs();if(t.length===0){e.innerHTML='<div class="log-empty">No log output yet. Terminal will update when Loki Mode is running.</div>';return}e.innerHTML=t.map(a=>{let i=oe[a.level]||oe.info;return`
+      ${o}
+      ${e?n:l}
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("pause-btn"),t=this.shadowRoot.getElementById("resume-btn"),i=this.shadowRoot.getElementById("stop-btn"),a=this.shadowRoot.getElementById("start-btn");e&&e.addEventListener("click",()=>this._triggerPause()),t&&t.addEventListener("click",()=>this._triggerResume()),i&&i.addEventListener("click",()=>this._triggerStop()),a&&a.addEventListener("click",()=>this._triggerStart());let s=this.shadowRoot.getElementById("model-select");s&&s.addEventListener("change",o=>this._onModelChange(o.target.value));let r=this.shadowRoot.getElementById("spec-input");r&&r.addEventListener("input",o=>this._onSpecInput(o.target.value))}};customElements.get("loki-session-control")||customElements.define("loki-session-control",J);var qe={info:{color:"var(--loki-blue)",label:"INFO"},success:{color:"var(--loki-green)",label:"SUCCESS"},warning:{color:"var(--loki-yellow)",label:"WARN"},error:{color:"var(--loki-red)",label:"ERROR"},step:{color:"var(--loki-purple)",label:"STEP"},agent:{color:"var(--loki-accent)",label:"AGENT"},debug:{color:"var(--loki-text-muted)",label:"DEBUG"}},G=class extends h{static get observedAttributes(){return["api-url","max-lines","auto-scroll","theme","log-file"]}constructor(){super(),this._logs=[],this._maxLines=500,this._autoScroll=!0,this._filter="",this._levelFilter="all",this._api=null,this._pollInterval=null,this._logMessageHandler=null}connectedCallback(){super.connectedCallback(),this._maxLines=parseInt(this.getAttribute("max-lines"))||500,this._autoScroll=this.hasAttribute("auto-scroll"),this._setupApi(),this._startLogPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopLogPolling(),this._api&&this._logMessageHandler&&this._api.removeEventListener(v.LOG_MESSAGE,this._logMessageHandler)}attributeChangedCallback(e,t,i){if(t!==i)switch(e){case"api-url":this._api&&(this._api.baseUrl=i);break;case"max-lines":this._maxLines=parseInt(i)||500,this._trimLogs(),this.render();break;case"auto-scroll":this._autoScroll=this.hasAttribute("auto-scroll"),this.render();break;case"theme":this._applyTheme();break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e}),this._logMessageHandler=t=>this._addLog(t.detail),this._api.addEventListener(v.LOG_MESSAGE,this._logMessageHandler)}_startLogPolling(){let e=this.getAttribute("log-file");e?this._pollLogFile(e):this._pollApiLogs()}async _pollApiLogs(){let e=0,t=async()=>{try{let i=await this._api.getLogs(200);if(Array.isArray(i)&&i.length>e){let a=i.slice(e);for(let s of a)s.message&&s.message.trim()&&this._addLog({message:s.message,level:s.level||"info",timestamp:s.timestamp||new Date().toLocaleTimeString()});e=i.length}}catch{}};t(),this._apiPollInterval=setInterval(t,2e3)}async _pollLogFile(e){let t=0,i=async()=>{try{let a=await fetch(`${e}?t=${Date.now()}`,{credentials:"include"});if(!a.ok)return;let r=(await a.text()).split(`
+`);if(r.length>t){let o=r.slice(t);for(let n of o)n.trim()&&this._addLog(this._parseLine(n));t=r.length}}catch{}};i(),this._pollInterval=setInterval(i,1e3)}_stopLogPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._apiPollInterval&&(clearInterval(this._apiPollInterval),this._apiPollInterval=null)}_parseLine(e){let t=e.match(/^\[([^\]]+)\]\s*\[([^\]]+)\]\s*(.+)$/);if(t)return{timestamp:t[1],level:t[2].toLowerCase(),message:t[3]};let i=e.match(/^(\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.+)$/);return i?{timestamp:i[1],level:i[2].toLowerCase(),message:i[3]}:{timestamp:new Date().toLocaleTimeString(),level:"info",message:e}}_addLog(e){if(!e)return;let t={id:Date.now()+Math.random(),timestamp:e.timestamp||new Date().toLocaleTimeString(),level:(e.level||"info").toLowerCase(),message:e.message||e};this._logs.push(t),this._trimLogs(),this.dispatchEvent(new CustomEvent("log-received",{detail:t})),this._renderLogs(),this._autoScroll&&this._scrollToBottom()}_trimLogs(){this._logs.length>this._maxLines&&(this._logs=this._logs.slice(-this._maxLines))}_clearLogs(){this._logs=[],this.dispatchEvent(new CustomEvent("logs-cleared")),this._renderLogs()}_toggleAutoScroll(){this._autoScroll=!this._autoScroll,this.render(),this._autoScroll&&this._scrollToBottom()}_scrollToBottom(){requestAnimationFrame(()=>{let e=this.shadowRoot.getElementById("log-output");e&&(e.scrollTop=e.scrollHeight)})}_downloadLogs(){let e=this._logs.map(s=>`[${s.timestamp}] [${s.level.toUpperCase()}] ${s.message}`).join(`
+`),t=new Blob([e],{type:"text/plain"}),i=URL.createObjectURL(t),a=document.createElement("a");a.href=i,a.download=`loki-logs-${new Date().toISOString().split("T")[0]}.txt`,a.click(),URL.revokeObjectURL(i)}_setFilter(e){this._filter=e.toLowerCase(),this._renderLogs()}_setLevelFilter(e){this._levelFilter=e,this._renderLogs()}_getFilteredLogs(){return this._logs.filter(e=>!(this._levelFilter!=="all"&&e.level!==this._levelFilter||this._filter&&!e.message.toLowerCase().includes(this._filter)))}_renderLogs(){let e=this.shadowRoot.getElementById("log-output");if(!e)return;let t=this._getFilteredLogs();if(t.length===0){e.innerHTML='<div class="log-empty">No log output yet. Terminal will update when Loki Mode is running.</div>';return}e.innerHTML=t.map(i=>{let a=qe[i.level]||qe.info;return`
         <div class="log-line">
-          <span class="timestamp">${this._escapeHtml(a.timestamp)}</span>
-          <span class="level" style="color: ${i.color}">[${this._escapeHtml(i.label)}]</span>
-          <span class="message">${this._escapeHtml(a.message)}</span>
+          <span class="timestamp">${this._escapeHtml(i.timestamp)}</span>
+          <span class="level" style="color: ${a.color}">[${this._escapeHtml(a.label)}]</span>
+          <span class="message">${this._escapeHtml(i.message)}</span>
         </div>
       `}).join(""),this._autoScroll&&this._scrollToBottom()}_escapeHtml(e){let t=document.createElement("div");return t.textContent=e,t.innerHTML}render(){let e=`
       <style>
@@ -1250,9 +2225,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .terminal-container {
-          background: var(--loki-bg-secondary);
-          border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          background: #1A0F2E;
+          border: 1px solid #2A1F3E;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -1261,8 +2236,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           justify-content: space-between;
           align-items: center;
           padding: 10px 14px;
-          background: var(--loki-bg-tertiary);
-          border-bottom: 1px solid var(--loki-border);
+          background: #140B24;
+          border-bottom: 1px solid #2A1F3E;
         }
 
         .terminal-title {
@@ -1271,7 +2246,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 8px;
           font-size: 12px;
           font-weight: 600;
-          color: var(--loki-text-secondary);
+          color: #C0B8D0;
         }
 
         .terminal-dots {
@@ -1297,51 +2272,51 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .terminal-btn {
           padding: 4px 10px;
-          background: var(--loki-bg-hover);
-          border: 1px solid var(--loki-border-light);
+          background: #2A1F4A;
+          border: 1px solid #3D3060;
           border-radius: 4px;
-          color: var(--loki-text-secondary);
+          color: #C0B8D0;
           font-size: 11px;
           cursor: pointer;
           transition: all var(--loki-transition);
         }
 
         .terminal-btn:hover {
-          background: var(--loki-border-light);
-          color: var(--loki-text-primary);
+          background: #3D3060;
+          color: #F0ECF8;
         }
 
         .terminal-btn.active {
-          background: var(--loki-accent);
-          border-color: var(--loki-accent);
+          background: #7B6BF0;
+          border-color: #7B6BF0;
           color: white;
         }
 
         .filter-input {
           padding: 4px 10px;
-          background: var(--loki-bg-hover);
-          border: 1px solid var(--loki-border-light);
+          background: #2A1F4A;
+          border: 1px solid #3D3060;
           border-radius: 4px;
-          color: var(--loki-text-primary);
+          color: #F0ECF8;
           font-size: 11px;
           width: 120px;
         }
 
         .filter-input:focus {
           outline: none;
-          border-color: var(--loki-accent);
+          border-color: #7B6BF0;
         }
 
         .filter-input::placeholder {
-          color: var(--loki-text-muted);
+          color: #8B7FA8;
         }
 
         .level-select {
           padding: 4px 10px;
-          background: var(--loki-bg-hover);
-          border: 1px solid var(--loki-border-light);
+          background: #2A1F4A;
+          border: 1px solid #3D3060;
           border-radius: 4px;
-          color: var(--loki-text-secondary);
+          color: #C0B8D0;
           font-size: 11px;
           cursor: pointer;
         }
@@ -1353,8 +2328,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-family: 'JetBrains Mono', monospace;
           font-size: 12px;
           line-height: 1.6;
-          color: var(--loki-text-primary);
-          background: var(--loki-bg-secondary);
+          color: #F0ECF8;
+          background: #1A0F2E;
         }
 
         .log-line {
@@ -1434,10 +2409,49 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           ${this._logs.length} lines (${this._getFilteredLogs().length} shown)
         </div>
       </div>
-    `,this._attachEventListeners(),this._renderLogs()}_attachEventListeners(){let e=this.shadowRoot.getElementById("filter-input"),t=this.shadowRoot.getElementById("level-select"),a=this.shadowRoot.getElementById("auto-scroll-btn"),i=this.shadowRoot.getElementById("clear-btn"),s=this.shadowRoot.getElementById("download-btn");e&&(e.value=this._filter,e.addEventListener("input",r=>this._setFilter(r.target.value))),t&&(t.value=this._levelFilter,t.addEventListener("change",r=>this._setLevelFilter(r.target.value))),a&&a.addEventListener("click",()=>this._toggleAutoScroll()),i&&i.addEventListener("click",()=>this._clearLogs()),s&&s.addEventListener("click",()=>this._downloadLogs())}addLog(e,t="info"){this._addLog({message:e,level:t,timestamp:new Date().toLocaleTimeString()})}clear(){this._clearLogs()}};customElements.get("loki-log-stream")||customElements.define("loki-log-stream",U);var fe=[{id:"summary",label:"Summary",icon:"M4 6h16M4 12h16M4 18h16"},{id:"episodes",label:"Episodes",icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"},{id:"patterns",label:"Patterns",icon:"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"},{id:"skills",label:"Skills",icon:"M13 10V3L4 14h7v7l9-11h-7z"}],j=class extends c{static get observedAttributes(){return["api-url","theme","tab"]}constructor(){super(),this._activeTab="summary",this._loading=!1,this._error=null,this._api=null,this._summary=null,this._episodes=[],this._patterns=[],this._skills=[],this._tokenEconomics=null,this._selectedItem=null,this._lastFocusedElement=null}connectedCallback(){super.connectedCallback(),this._activeTab=this.getAttribute("tab")||"summary",this._setupApi(),this._loadData()}attributeChangedCallback(e,t,a){if(t!==a)switch(e){case"api-url":this._api&&(this._api.baseUrl=a,this._loadData());break;case"theme":this._applyTheme();break;case"tab":this._setTab(a);break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}async _loadData(){this._loading=!0,this._error=null,this.render();try{this._summary=await this._api.getMemorySummary().catch(()=>null),this._tokenEconomics=await this._api.getTokenEconomics().catch(()=>null),await this._loadTabData()}catch(e){this._error=e.message||"Failed to load memory data"}this._loading=!1,this.render()}async _loadTabData(){switch(this._activeTab){case"episodes":this._episodes=await this._api.listEpisodes({limit:50}).catch(()=>[]);break;case"patterns":this._patterns=await this._api.listPatterns().catch(()=>[]);break;case"skills":this._skills=await this._api.listSkills().catch(()=>[]);break}}_setTab(e){this._activeTab!==e&&(this._activeTab=e,this._selectedItem=null,this._loadTabData().then(()=>this.render()))}async _selectEpisode(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getEpisode(e),this.dispatchEvent(new CustomEvent("episode-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load episode:",t)}}async _selectPattern(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getPattern(e),this.dispatchEvent(new CustomEvent("pattern-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load pattern:",t)}}async _selectSkill(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getSkill(e),this.dispatchEvent(new CustomEvent("skill-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load skill:",t)}}_focusDetailPanel(){requestAnimationFrame(()=>{let e=this.shadowRoot.getElementById("close-detail");e&&e.focus()})}_closeDetail(){this._selectedItem=null,this.render(),this._lastFocusedElement&&requestAnimationFrame(()=>{this._lastFocusedElement.focus(),this._lastFocusedElement=null})}async _triggerConsolidation(){try{let e=await this._api.consolidateMemory(24);alert(`Consolidation complete:
+    `,this._attachEventListeners(),this._renderLogs()}_attachEventListeners(){let e=this.shadowRoot.getElementById("filter-input"),t=this.shadowRoot.getElementById("level-select"),i=this.shadowRoot.getElementById("auto-scroll-btn"),a=this.shadowRoot.getElementById("clear-btn"),s=this.shadowRoot.getElementById("download-btn");e&&(e.value=this._filter,e.addEventListener("input",r=>this._setFilter(r.target.value))),t&&(t.value=this._levelFilter,t.addEventListener("change",r=>this._setLevelFilter(r.target.value))),i&&i.addEventListener("click",()=>this._toggleAutoScroll()),a&&a.addEventListener("click",()=>this._clearLogs()),s&&s.addEventListener("click",()=>this._downloadLogs())}addLog(e,t="info"){this._addLog({message:e,level:t,timestamp:new Date().toLocaleTimeString()})}clear(){this._clearLogs()}};customElements.get("loki-log-stream")||customElements.define("loki-log-stream",G);var ut=[{id:"summary",label:"Summary",icon:"M4 6h16M4 12h16M4 18h16"},{id:"search",label:"Search",icon:"M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"},{id:"episodes",label:"Episodes",icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"},{id:"patterns",label:"Patterns",icon:"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"},{id:"skills",label:"Skills",icon:"M13 10V3L4 14h7v7l9-11h-7z"}],K=class extends h{static get observedAttributes(){return["api-url","theme","tab"]}constructor(){super(),this._activeTab="summary",this._loading=!1,this._error=null,this._api=null,this._summary=null,this._stats=null,this._episodes=[],this._patterns=[],this._skills=[],this._tokenEconomics=null,this._selectedItem=null,this._lastFocusedElement=null,this._searchQuery="",this._searchCollection="all",this._searchResults=[],this._searchLoading=!1,this._searchError=null}connectedCallback(){super.connectedCallback(),this._activeTab=this.getAttribute("tab")||"summary",this._setupApi(),this._loadData()}attributeChangedCallback(e,t,i){if(t!==i)switch(e){case"api-url":this._api&&(this._api.baseUrl=i,this._loadData());break;case"theme":this._applyTheme();break;case"tab":this._setTab(i);break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){this._loading=!0,this._error=null,this.render();try{let[e,t,i]=await Promise.allSettled([this._api.getMemorySummary(),this._api.getTokenEconomics(),this._api.getMemoryStats()]);this._summary=e.status==="fulfilled"?e.value:null,this._tokenEconomics=t.status==="fulfilled"?t.value:null,this._stats=i.status==="fulfilled"?i.value:null,await this._loadTabData()}catch(e){this._error=e.message||"Failed to load memory data"}this._loading=!1,this.render()}async _loadTabData(){switch(this._activeTab){case"episodes":this._episodes=await this._api.listEpisodes({limit:50}).catch(()=>[]);break;case"patterns":this._patterns=await this._api.listPatterns().catch(()=>[]);break;case"skills":this._skills=await this._api.listSkills().catch(()=>[]);break}}_setTab(e){this._activeTab!==e&&(this._activeTab=e,this._selectedItem=null,this._loadTabData().then(()=>this.render()))}async _selectEpisode(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getEpisode(e),this.dispatchEvent(new CustomEvent("episode-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load episode:",t)}}async _selectPattern(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getPattern(e),this.dispatchEvent(new CustomEvent("pattern-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load pattern:",t)}}async _selectSkill(e){try{this._lastFocusedElement=this.shadowRoot.activeElement,this._selectedItem=await this._api.getSkill(e),this.dispatchEvent(new CustomEvent("skill-select",{detail:this._selectedItem})),this.render(),this._focusDetailPanel()}catch(t){console.error("Failed to load skill:",t)}}_focusDetailPanel(){requestAnimationFrame(()=>{let e=this.shadowRoot.getElementById("close-detail");e&&e.focus()})}_closeDetail(){this._selectedItem=null,this.render(),this._lastFocusedElement&&requestAnimationFrame(()=>{this._lastFocusedElement.focus(),this._lastFocusedElement=null})}async _triggerConsolidation(){try{let e=await this._api.consolidateMemory(24);alert(`Consolidation complete:
 - Patterns created: ${e.patternsCreated}
 - Patterns merged: ${e.patternsMerged}
-- Episodes processed: ${e.episodesProcessed}`),this._loadData()}catch(e){alert("Consolidation failed: "+e.message)}}_renderSummary(){if(!this._summary)return'<div class="empty-state">No memory data available</div>';let{episodic:e,semantic:t,procedural:a,tokenEconomics:i}=this._summary;return`
+- Episodes processed: ${e.episodesProcessed}`),this._loadData()}catch(e){alert("Consolidation failed: "+e.message)}}async _executeSearch(){let e=this._searchQuery.trim();if(e){this._searchLoading=!0,this._searchError=null,this.render();try{let t=await this._api.searchMemory(e,this._searchCollection,20);this._searchResults=t.results||[]}catch(t){this._searchError=t.message||"Search failed",this._searchResults=[]}this._searchLoading=!1,this.render(),requestAnimationFrame(()=>{let t=this.shadowRoot.getElementById("memory-search-input");t&&t.focus()})}}_renderSearch(){let e=["all","episodes","patterns","skills"];return`
+      <div class="search-panel">
+        <div class="search-bar">
+          <input type="text" id="memory-search-input" class="search-input"
+                 placeholder="Search memory (FTS5)..."
+                 value="${this._escapeHtml(this._searchQuery)}"
+                 aria-label="Search memory">
+          <select id="memory-search-collection" class="search-select" aria-label="Collection filter">
+            ${e.map(t=>`<option value="${t}" ${this._searchCollection===t?"selected":""}>${t}</option>`).join("")}
+          </select>
+          <button class="btn btn-primary" id="search-btn" ${this._searchLoading?"disabled":""}>
+            ${this._searchLoading?"Searching...":"Search"}
+          </button>
+        </div>
+        ${this._searchError?`<div class="search-error">Error: ${this._escapeHtml(this._searchError)}</div>`:""}
+        ${this._searchResults.length>0?`
+          <div class="search-results-header">
+            <span>${this._searchResults.length} result${this._searchResults.length!==1?"s":""} for "${this._escapeHtml(this._searchQuery)}"</span>
+          </div>
+          <div class="item-list" role="list" aria-label="Search results">
+            ${this._searchResults.map(t=>`
+              <div class="item-card search-result" tabindex="0" role="listitem"
+                   aria-label="${this._escapeHtml(t.collection||"unknown")}: ${this._escapeHtml(t.snippet||t.id)}">
+                <div class="item-header">
+                  <span class="item-category">${this._escapeHtml(t.collection||"unknown")}</span>
+                  <span class="item-id mono">${this._escapeHtml(t.id||"")}</span>
+                </div>
+                <div class="item-title">${this._escapeHtml(t.snippet||t.id||"")}</div>
+                <div class="item-meta">
+                  ${t.rank!=null?`<span>Rank: ${t.rank}</span>`:""}
+                  ${t.category?`<span>${this._escapeHtml(t.category)}</span>`:""}
+                  ${t.timestamp?`<span>${new Date(t.timestamp).toLocaleString()}</span>`:""}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `:!this._searchLoading&&this._searchQuery?'<div class="empty-state">No results found</div>':""}
+        ${this._searchQuery?"":'<div class="empty-state">Enter a query to search across all memory layers using full-text search</div>'}
+      </div>
+    `}_renderSummary(){if(!this._summary)return'<div class="empty-state">No memory data available</div>';let{episodic:e,semantic:t,procedural:i,tokenEconomics:a}=this._summary;return`
       <div class="summary-grid">
         <div class="summary-card">
           <div class="summary-card-header">
@@ -1470,13 +2484,13 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="summary-card">
           <div class="summary-card-header">
             <span class="summary-card-title">Procedural Memory</span>
-            <span class="summary-card-count">${a?.skills||0}</span>
+            <span class="summary-card-count">${i?.skills||0}</span>
           </div>
           <div class="summary-card-detail">
             Learned skills and procedures
           </div>
           <div class="memory-bar">
-            <div class="memory-bar-fill procedural" style="width: ${Math.min((a?.skills||0)/100*100,100)}%"></div>
+            <div class="memory-bar-fill procedural" style="width: ${Math.min((i?.skills||0)/100*100,100)}%"></div>
           </div>
         </div>
 
@@ -1502,6 +2516,54 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         `:""}
       </div>
+
+      ${this._stats?`
+        <div class="stats-section">
+          <div class="stats-header">Storage Backend</div>
+          <div class="stats-grid">
+            <div class="stats-item">
+              <span class="stats-label">Backend</span>
+              <span class="stats-value mono">${this._escapeHtml(this._stats.backend||this._stats.storage_type||"unknown")}</span>
+            </div>
+            ${this._stats.total_entries!=null?`
+              <div class="stats-item">
+                <span class="stats-label">Total Entries</span>
+                <span class="stats-value mono">${(this._stats.total_entries??0).toLocaleString()}</span>
+              </div>
+            `:""}
+            ${this._stats.db_size_bytes!=null?`
+              <div class="stats-item">
+                <span class="stats-label">DB Size</span>
+                <span class="stats-value mono">${(this._stats.db_size_bytes/1024).toFixed(1)} KB</span>
+              </div>
+            `:""}
+            ${this._stats.fts_enabled!=null?`
+              <div class="stats-item">
+                <span class="stats-label">FTS5 Search</span>
+                <span class="stats-value ${this._stats.fts_enabled?"enabled":"disabled"}">${this._stats.fts_enabled?"Enabled":"Disabled"}</span>
+              </div>
+            `:""}
+            ${this._stats.episodes_count!=null?`
+              <div class="stats-item">
+                <span class="stats-label">Episodes</span>
+                <span class="stats-value mono">${this._stats.episodes_count}</span>
+              </div>
+            `:""}
+            ${this._stats.patterns_count!=null?`
+              <div class="stats-item">
+                <span class="stats-label">Patterns</span>
+                <span class="stats-value mono">${this._stats.patterns_count}</span>
+              </div>
+            `:""}
+            ${this._stats.skills_count!=null?`
+              <div class="stats-item">
+                <span class="stats-label">Skills</span>
+                <span class="stats-value mono">${this._stats.skills_count}</span>
+              </div>
+            `:""}
+          </div>
+        </div>
+      `:""}
 
       <div class="summary-actions">
         <button class="btn btn-secondary" id="consolidate-btn">
@@ -1665,7 +2727,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       `:e.steps!==void 0?`
         <div class="detail-panel">
           <div class="detail-header">
-            <h3>Skill: ${e.name}</h3>
+            <h3>Skill: ${this._escapeHtml(e.name)}</h3>
             <button class="close-btn" id="close-detail">&times;</button>
           </div>
           <div class="detail-body">
@@ -1710,7 +2772,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .memory-browser {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -1730,12 +2792,15 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .tabs {
           display: flex;
-          border-bottom: 1px solid var(--loki-border);
+          gap: 4px;
+          padding: 4px;
           background: var(--loki-bg-secondary);
+          border-radius: 5px;
+          border: 1px solid var(--loki-border);
         }
 
         .tab {
-          padding: 10px 16px;
+          padding: 7px 14px;
           font-size: 12px;
           font-weight: 500;
           color: var(--loki-text-secondary);
@@ -1746,8 +2811,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           align-items: center;
           gap: 6px;
           transition: all var(--loki-transition);
-          border-bottom: 2px solid transparent;
-          margin-bottom: -1px;
+          border-radius: 4px;
         }
 
         .tab:hover {
@@ -1756,8 +2820,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .tab.active {
-          color: var(--loki-accent);
-          border-bottom-color: var(--loki-accent);
+          color: white;
+          background: var(--loki-accent);
         }
 
         .tab svg {
@@ -1800,7 +2864,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .summary-card {
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 14px;
         }
 
@@ -1896,7 +2960,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .item-card {
           background: var(--loki-bg-secondary);
           border: 1px solid var(--loki-border);
-          border-radius: 6px;
+          border-radius: 4px;
           padding: 12px;
           cursor: pointer;
           transition: all var(--loki-transition);
@@ -2032,7 +3096,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .detail-content {
           background: var(--loki-bg-tertiary);
           padding: 10px;
-          border-radius: 6px;
+          border-radius: 4px;
           font-size: 12px;
           color: var(--loki-text-primary);
         }
@@ -2057,7 +3121,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .action-log {
           background: var(--loki-bg-tertiary);
-          border-radius: 6px;
+          border-radius: 4px;
           padding: 8px;
           max-height: 200px;
           overflow-y: auto;
@@ -2093,6 +3157,112 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           white-space: nowrap;
         }
 
+        /* Search styles */
+        .search-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .search-bar {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .search-input {
+          flex: 1;
+          padding: 8px 12px;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          font-size: 12px;
+          font-family: inherit;
+        }
+
+        .search-input:focus {
+          outline: none;
+          border-color: var(--loki-accent);
+          box-shadow: 0 0 0 2px rgba(85, 61, 233, 0.15);
+        }
+
+        .search-select {
+          padding: 8px 10px;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          font-size: 12px;
+          font-family: inherit;
+          cursor: pointer;
+        }
+
+        .search-error {
+          color: var(--loki-red, var(--loki-error));
+          font-size: 11px;
+          padding: 6px 10px;
+          background: var(--loki-bg-secondary);
+          border-radius: 4px;
+          border-left: 3px solid var(--loki-red, var(--loki-error));
+        }
+
+        .search-results-header {
+          font-size: 11px;
+          color: var(--loki-text-secondary);
+          font-weight: 500;
+        }
+
+        .search-result .item-category {
+          text-transform: capitalize;
+        }
+
+        /* Stats styles */
+        .stats-section {
+          margin-top: 16px;
+          background: var(--loki-bg-secondary);
+          border-radius: 5px;
+          padding: 14px;
+        }
+
+        .stats-header {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--loki-text-primary);
+          margin-bottom: 10px;
+        }
+
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          gap: 10px;
+        }
+
+        .stats-item {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .stats-label {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .stats-value {
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--loki-text-primary);
+        }
+
+        .stats-value.enabled {
+          color: var(--loki-green, var(--loki-success));
+        }
+
+        .stats-value.disabled {
+          color: var(--loki-text-muted);
+        }
+
         .empty-state {
           text-align: center;
           padding: 40px;
@@ -2100,8 +3270,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 12px;
         }
       </style>
-    `,t;if(this._loading)t='<div class="loading">Loading memory data...</div>';else if(this._error)t=`<div class="error-state">Error: ${this._error}</div>`;else{let a;switch(this._activeTab){case"summary":a=this._renderSummary();break;case"episodes":a=this._renderEpisodes();break;case"patterns":a=this._renderPatterns();break;case"skills":a=this._renderSkills();break;default:a=this._renderSummary()}t=`
-        <div class="content-main">${a}</div>
+    `,t;if(this._loading)t='<div class="loading">Loading memory data...</div>';else if(this._error)t=`<div class="error-state">Error: ${this._escapeHtml(this._error)}</div>`;else{let i;switch(this._activeTab){case"summary":i=this._renderSummary();break;case"search":i=this._renderSearch();break;case"episodes":i=this._renderEpisodes();break;case"patterns":i=this._renderPatterns();break;case"skills":i=this._renderSkills();break;default:i=this._renderSummary()}t=`
+        <div class="content-main">${i}</div>
         ${this._renderDetail()}
       `}this.shadowRoot.innerHTML=`
       ${e}
@@ -2110,16 +3280,16 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           <span class="browser-title">Memory System</span>
         </div>
         <div class="tabs" role="tablist" aria-label="Memory browser sections">
-          ${fe.map((a,i)=>`
-            <button class="tab ${this._activeTab===a.id?"active":""}"
-                    data-tab="${a.id}"
+          ${ut.map((i,a)=>`
+            <button class="tab ${this._activeTab===i.id?"active":""}"
+                    data-tab="${i.id}"
                     role="tab"
-                    id="tab-${a.id}"
-                    aria-selected="${this._activeTab===a.id}"
-                    aria-controls="tabpanel-${a.id}"
-                    tabindex="${this._activeTab===a.id?"0":"-1"}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${a.icon}"/></svg>
-              ${a.label}
+                    id="tab-${i.id}"
+                    aria-selected="${this._activeTab===i.id}"
+                    aria-controls="tabpanel-${i.id}"
+                    tabindex="${this._activeTab===i.id?"0":"-1"}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${i.icon}"/></svg>
+              ${i.label}
             </button>
           `).join("")}
         </div>
@@ -2127,12 +3297,12 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           ${t}
         </div>
       </div>
-    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.querySelectorAll(".tab");e.forEach((s,r)=>{s.addEventListener("click",()=>this._setTab(s.dataset.tab)),s.addEventListener("keydown",o=>{if(o.key==="ArrowRight"||o.key==="ArrowLeft"){o.preventDefault();let l=Array.from(e),p=o.key==="ArrowRight"?(r+1)%l.length:(r-1+l.length)%l.length;l[p].focus(),this._setTab(l[p].dataset.tab)}})}),this.shadowRoot.querySelectorAll(".item-card").forEach(s=>{s.addEventListener("click",()=>this._handleItemClick(s)),s.addEventListener("keydown",r=>{r.key==="Enter"||r.key===" "?(r.preventDefault(),this._handleItemClick(s)):(r.key==="ArrowDown"||r.key==="ArrowUp")&&(r.preventDefault(),this._navigateItemCards(s,r.key==="ArrowDown"?"next":"prev"))})});let t=this.shadowRoot.getElementById("close-detail");t&&t.addEventListener("click",()=>this._closeDetail());let a=this.shadowRoot.getElementById("consolidate-btn");a&&a.addEventListener("click",()=>this._triggerConsolidation());let i=this.shadowRoot.getElementById("refresh-btn");i&&i.addEventListener("click",()=>this._loadData())}_handleItemClick(e){let t=e.dataset.id;switch(e.dataset.type){case"episode":this._selectEpisode(t);break;case"pattern":this._selectPattern(t);break;case"skill":this._selectSkill(t);break}}_navigateItemCards(e,t){let a=Array.from(this.shadowRoot.querySelectorAll(".item-card")),i=a.indexOf(e);if(i===-1)return;let s=t==="next"?i+1:i-1;s>=0&&s<a.length&&a[s].focus()}};customElements.get("loki-memory-browser")||customElements.define("loki-memory-browser",j);var xe=[{id:"1h",label:"1 Hour",hours:1},{id:"24h",label:"24 Hours",hours:24},{id:"7d",label:"7 Days",hours:168},{id:"30d",label:"30 Days",hours:720}],_e=[{id:"all",label:"All Signals"},{id:"user_preference",label:"User Preferences"},{id:"error_pattern",label:"Error Patterns"},{id:"success_pattern",label:"Success Patterns"},{id:"tool_efficiency",label:"Tool Efficiency"},{id:"context_relevance",label:"Context Relevance"}],ye=[{id:"all",label:"All Sources"},{id:"cli",label:"CLI"},{id:"api",label:"API"},{id:"vscode",label:"VS Code"},{id:"mcp",label:"MCP"},{id:"dashboard",label:"Dashboard"}],F=class extends c{static get observedAttributes(){return["api-url","theme","time-range","signal-type","source"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._timeRange="7d",this._signalType="all",this._source="all",this._metrics=null,this._trends=null,this._signals=[],this._selectedMetric=null}connectedCallback(){super.connectedCallback(),this._timeRange=this.getAttribute("time-range")||"7d",this._signalType=this.getAttribute("signal-type")||"all",this._source=this.getAttribute("source")||"all",this._setupApi(),this._loadData()}attributeChangedCallback(e,t,a){if(t!==a)switch(e){case"api-url":this._api&&(this._api.baseUrl=a,this._loadData());break;case"theme":this._applyTheme();break;case"time-range":this._timeRange=a,this._loadData();break;case"signal-type":this._signalType=a,this._loadData();break;case"source":this._source=a,this._loadData();break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}async _loadData(){this._loading=!0,this._error=null,this.render();try{let e={timeRange:this._timeRange,signalType:this._signalType!=="all"?this._signalType:void 0,source:this._source!=="all"?this._source:void 0},[t,a,i]=await Promise.all([this._api.getLearningMetrics(e).catch(()=>null),this._api.getLearningTrends(e).catch(()=>null),this._api.getLearningSignals({...e,limit:50}).catch(()=>[])]);this._metrics=t,this._trends=a,this._signals=i||[]}catch(e){this._error=e.message||"Failed to load learning data"}this._loading=!1,this.render()}_setFilter(e,t){switch(e){case"timeRange":this._timeRange=t,this.setAttribute("time-range",t);break;case"signalType":this._signalType=t,this.setAttribute("signal-type",t);break;case"source":this._source=t,this.setAttribute("source",t);break}this.dispatchEvent(new CustomEvent("filter-change",{detail:{timeRange:this._timeRange,signalType:this._signalType,source:this._source}})),this._loadData()}_selectMetric(e,t){this._selectedMetric={type:e,item:t},this.dispatchEvent(new CustomEvent("metric-select",{detail:{type:e,item:t}})),this.render()}_closeDetail(){this._selectedMetric=null,this.render()}_formatNumber(e){return e>=1e6?(e/1e6).toFixed(1)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":e?.toString()||"0"}_formatPercent(e){return(e*100).toFixed(1)+"%"}_formatDuration(e){return e<60?e.toFixed(0)+"s":e<3600?(e/60).toFixed(1)+"m":(e/3600).toFixed(1)+"h"}_escapeHtml(e){if(!e)return"";let t=document.createElement("div");return t.textContent=e,t.innerHTML}_renderFilters(){return`
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.querySelectorAll(".tab");e.forEach((n,l)=>{n.addEventListener("click",()=>this._setTab(n.dataset.tab)),n.addEventListener("keydown",c=>{if(c.key==="ArrowRight"||c.key==="ArrowLeft"){c.preventDefault();let p=Array.from(e),u=c.key==="ArrowRight"?(l+1)%p.length:(l-1+p.length)%p.length;p[u].focus(),this._setTab(p[u].dataset.tab)}})}),this.shadowRoot.querySelectorAll(".item-card").forEach(n=>{n.addEventListener("click",()=>this._handleItemClick(n)),n.addEventListener("keydown",l=>{l.key==="Enter"||l.key===" "?(l.preventDefault(),this._handleItemClick(n)):(l.key==="ArrowDown"||l.key==="ArrowUp")&&(l.preventDefault(),this._navigateItemCards(n,l.key==="ArrowDown"?"next":"prev"))})});let t=this.shadowRoot.getElementById("close-detail");t&&t.addEventListener("click",()=>this._closeDetail());let i=this.shadowRoot.getElementById("consolidate-btn");i&&i.addEventListener("click",()=>this._triggerConsolidation());let a=this.shadowRoot.getElementById("refresh-btn");a&&a.addEventListener("click",()=>this._loadData());let s=this.shadowRoot.getElementById("memory-search-input"),r=this.shadowRoot.getElementById("search-btn"),o=this.shadowRoot.getElementById("memory-search-collection");s&&(s.addEventListener("keydown",n=>{n.key==="Enter"&&(n.preventDefault(),this._searchQuery=s.value,this._executeSearch())}),s.addEventListener("input",n=>{this._searchQuery=n.target.value})),r&&r.addEventListener("click",()=>{let n=this.shadowRoot.getElementById("memory-search-input");n&&(this._searchQuery=n.value),this._executeSearch()}),o&&o.addEventListener("change",n=>{this._searchCollection=n.target.value})}_handleItemClick(e){let t=e.dataset.id;switch(e.dataset.type){case"episode":this._selectEpisode(t);break;case"pattern":this._selectPattern(t);break;case"skill":this._selectSkill(t);break}}_navigateItemCards(e,t){let i=Array.from(this.shadowRoot.querySelectorAll(".item-card")),a=i.indexOf(e);if(a===-1)return;let s=t==="next"?a+1:a-1;s>=0&&s<i.length&&i[s].focus()}};customElements.get("loki-memory-browser")||customElements.define("loki-memory-browser",K);var gt=[{id:"1h",label:"1 Hour",hours:1},{id:"24h",label:"24 Hours",hours:24},{id:"7d",label:"7 Days",hours:168},{id:"30d",label:"30 Days",hours:720}],mt=[{id:"all",label:"All Signals"},{id:"user_preference",label:"User Preferences"},{id:"error_pattern",label:"Error Patterns"},{id:"success_pattern",label:"Success Patterns"},{id:"tool_efficiency",label:"Tool Efficiency"},{id:"context_relevance",label:"Context Relevance"}],vt=[{id:"all",label:"All Sources"},{id:"cli",label:"CLI"},{id:"api",label:"API"},{id:"vscode",label:"VS Code"},{id:"mcp",label:"MCP"},{id:"dashboard",label:"Dashboard"}],V=class extends h{static get observedAttributes(){return["api-url","theme","time-range","signal-type","source"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._timeRange="7d",this._signalType="all",this._source="all",this._metrics=null,this._trends=null,this._signals=[],this._selectedMetric=null}connectedCallback(){super.connectedCallback(),this._timeRange=this.getAttribute("time-range")||"7d",this._signalType=this.getAttribute("signal-type")||"all",this._source=this.getAttribute("source")||"all",this._setupApi(),this._loadData()}attributeChangedCallback(e,t,i){if(t!==i)switch(e){case"api-url":this._api&&(this._api.baseUrl=i,this._loadData());break;case"theme":this._applyTheme();break;case"time-range":this._timeRange=i,this._loadData();break;case"signal-type":this._signalType=i,this._loadData();break;case"source":this._source=i,this._loadData();break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){this._loading=!0,this._error=null,this.render();try{let e={timeRange:this._timeRange,signalType:this._signalType!=="all"?this._signalType:void 0,source:this._source!=="all"?this._source:void 0},[t,i,a]=await Promise.all([this._api.getLearningMetrics(e).catch(()=>null),this._api.getLearningTrends(e).catch(()=>null),this._api.getLearningSignals({...e,limit:50}).catch(()=>[])]);this._metrics=t,this._trends=i,this._signals=a||[]}catch(e){this._error=e.message||"Failed to load learning data"}this._loading=!1,this.render()}_setFilter(e,t){switch(e){case"timeRange":this._timeRange=t,this.setAttribute("time-range",t);break;case"signalType":this._signalType=t,this.setAttribute("signal-type",t);break;case"source":this._source=t,this.setAttribute("source",t);break}this.dispatchEvent(new CustomEvent("filter-change",{detail:{timeRange:this._timeRange,signalType:this._signalType,source:this._source}})),this._loadData()}_selectMetric(e,t){this._selectedMetric={type:e,item:t},this.dispatchEvent(new CustomEvent("metric-select",{detail:{type:e,item:t}})),this.render()}_closeDetail(){this._selectedMetric=null,this.render()}_formatNumber(e){return e>=1e6?(e/1e6).toFixed(1)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":e?.toString()||"0"}_formatPercent(e){return(e*100).toFixed(1)+"%"}_formatDuration(e){return e<60?e.toFixed(0)+"s":e<3600?(e/60).toFixed(1)+"m":(e/3600).toFixed(1)+"h"}_escapeHtml(e){if(!e)return"";let t=document.createElement("div");return t.textContent=e,t.innerHTML}_renderFilters(){return`
       <div class="filters">
         <div class="filter-group">
           <label>Time Range</label>
           <select id="time-range-select" class="filter-select">
-            ${xe.map(e=>`
+            ${gt.map(e=>`
               <option value="${e.id}" ${this._timeRange===e.id?"selected":""}>${e.label}</option>
             `).join("")}
           </select>
@@ -2140,7 +3310,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="filter-group">
           <label>Signal Type</label>
           <select id="signal-type-select" class="filter-select">
-            ${_e.map(e=>`
+            ${mt.map(e=>`
               <option value="${e.id}" ${this._signalType===e.id?"selected":""}>${e.label}</option>
             `).join("")}
           </select>
@@ -2148,7 +3318,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="filter-group">
           <label>Source</label>
           <select id="source-select" class="filter-select">
-            ${ye.map(e=>`
+            ${vt.map(e=>`
               <option value="${e.id}" ${this._source===e.id?"selected":""}>${e.label}</option>
             `).join("")}
           </select>
@@ -2161,7 +3331,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           Refresh
         </button>
       </div>
-    `}_renderSummaryCards(){if(!this._metrics)return'<div class="empty-state">No metrics available</div>';let{totalSignals:e,signalsByType:t,signalsBySource:a,aggregation:i}=this._metrics;return`
+    `}_renderSummaryCards(){if(!this._metrics)return'<div class="empty-state">No metrics available</div>';let{totalSignals:e,signalsByType:t,signalsBySource:i,aggregation:a}=this._metrics;return`
       <div class="summary-cards">
         <div class="summary-card">
           <div class="summary-card-header">
@@ -2182,11 +3352,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="summary-card">
           <div class="summary-card-header">
             <span class="summary-card-title">Sources</span>
-            <span class="summary-card-count">${Object.keys(a||{}).length}</span>
+            <span class="summary-card-count">${Object.keys(i||{}).length}</span>
           </div>
           <div class="summary-card-detail">Signal sources active</div>
           <div class="signal-breakdown">
-            ${Object.entries(a||{}).map(([s,r])=>`
+            ${Object.entries(i||{}).map(([s,r])=>`
               <div class="breakdown-item">
                 <span class="breakdown-label source-badge ${s}">${s}</span>
                 <span class="breakdown-value">${this._formatNumber(r)}</span>
@@ -2198,21 +3368,21 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="summary-card">
           <div class="summary-card-header">
             <span class="summary-card-title">Patterns Found</span>
-            <span class="summary-card-count">${this._formatNumber((i?.preferences?.length||0)+(i?.error_patterns?.length||0)+(i?.success_patterns?.length||0))}</span>
+            <span class="summary-card-count">${this._formatNumber((a?.preferences?.length||0)+(a?.error_patterns?.length||0)+(a?.success_patterns?.length||0))}</span>
           </div>
           <div class="summary-card-detail">Aggregated learnings</div>
           <div class="pattern-counts">
             <div class="pattern-count">
               <span class="pattern-icon preferences">P</span>
-              <span>${i?.preferences?.length||0} Preferences</span>
+              <span>${a?.preferences?.length||0} Preferences</span>
             </div>
             <div class="pattern-count">
               <span class="pattern-icon errors">E</span>
-              <span>${i?.error_patterns?.length||0} Errors</span>
+              <span>${a?.error_patterns?.length||0} Errors</span>
             </div>
             <div class="pattern-count">
               <span class="pattern-icon success">S</span>
-              <span>${i?.success_patterns?.length||0} Success</span>
+              <span>${a?.success_patterns?.length||0} Success</span>
             </div>
           </div>
         </div>
@@ -2230,16 +3400,16 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         </div>
       </div>
-    `}_renderTrendChart(){if(!this._trends||!this._trends.dataPoints||this._trends.dataPoints.length===0)return'<div class="chart-empty">No trend data available</div>';let{dataPoints:e,maxValue:t}=this._trends,a=120,i=400,s=20,r=e.map((l,p)=>{let A=s+p/(e.length-1||1)*(i-s*2),D=a-s-l.count/(t||1)*(a-s*2);return`${A},${D}`}).join(" "),o=`${s},${a-s} ${r} ${i-s},${a-s}`;return`
+    `}_renderTrendChart(){if(!this._trends||!this._trends.dataPoints||this._trends.dataPoints.length===0)return'<div class="chart-empty">No trend data available</div>';let{dataPoints:e,maxValue:t}=this._trends,i=120,a=400,s=20,r=e.map((n,l)=>{let c=s+l/(e.length-1||1)*(a-s*2),p=i-s-n.count/(t||1)*(i-s*2);return`${c},${p}`}).join(" "),o=`${s},${i-s} ${r} ${a-s},${i-s}`;return`
       <div class="trend-chart">
         <div class="chart-header">
           <span class="chart-title">Signal Volume Over Time</span>
           <span class="chart-subtitle">${this._trends.period}</span>
         </div>
-        <svg class="chart-svg" viewBox="0 0 ${i} ${a}">
+        <svg class="chart-svg" viewBox="0 0 ${a} ${i}">
           <!-- Grid lines -->
-          <line x1="${s}" y1="${s}" x2="${s}" y2="${a-s}" stroke="var(--loki-border)" stroke-width="1"/>
-          <line x1="${s}" y1="${a-s}" x2="${i-s}" y2="${a-s}" stroke="var(--loki-border)" stroke-width="1"/>
+          <line x1="${s}" y1="${s}" x2="${s}" y2="${i-s}" stroke="var(--loki-border)" stroke-width="1"/>
+          <line x1="${s}" y1="${i-s}" x2="${a-s}" y2="${i-s}" stroke="var(--loki-border)" stroke-width="1"/>
 
           <!-- Area fill -->
           <polygon points="${o}" fill="var(--loki-accent-muted)" />
@@ -2248,7 +3418,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           <polyline points="${r}" fill="none" stroke="var(--loki-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 
           <!-- Data points -->
-          ${e.map((l,p)=>{let A=s+p/(e.length-1||1)*(i-s*2),D=a-s-l.count/(t||1)*(a-s*2);return`<circle cx="${A}" cy="${D}" r="3" fill="var(--loki-accent)" />`}).join("")}
+          ${e.map((n,l)=>{let c=s+l/(e.length-1||1)*(a-s*2),p=i-s-n.count/(t||1)*(i-s*2);return`<circle cx="${c}" cy="${p}" r="3" fill="var(--loki-accent)" />`}).join("")}
         </svg>
         <div class="chart-labels">
           ${e.length>0?`
@@ -2257,7 +3427,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           `:""}
         </div>
       </div>
-    `}_renderTopLists(){if(!this._metrics?.aggregation)return"";let{preferences:e,error_patterns:t,success_patterns:a,tool_efficiencies:i}=this._metrics.aggregation;return`
+    `}_renderTopLists(){if(!this._metrics?.aggregation)return"";let{preferences:e,error_patterns:t,success_patterns:i,tool_efficiencies:a}=this._metrics.aggregation;return`
       <div class="top-lists">
         <!-- User Preferences -->
         <div class="top-list">
@@ -2307,10 +3477,10 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="top-list">
           <div class="list-header">
             <span class="list-title">Success Patterns</span>
-            <span class="list-count">${a?.length||0}</span>
+            <span class="list-count">${i?.length||0}</span>
           </div>
           <div class="list-items" role="list">
-            ${(a||[]).slice(0,5).map(s=>`
+            ${(i||[]).slice(0,5).map(s=>`
               <div class="list-item success-item" data-type="success_pattern" data-id="${s.pattern_name}" tabindex="0" role="listitem">
                 <div class="item-main">
                   <span class="item-key">${this._escapeHtml(s.pattern_name)}</span>
@@ -2329,10 +3499,10 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="top-list">
           <div class="list-header">
             <span class="list-title">Tool Efficiency Rankings</span>
-            <span class="list-count">${i?.length||0}</span>
+            <span class="list-count">${a?.length||0}</span>
           </div>
           <div class="list-items" role="list">
-            ${(i||[]).slice(0,5).map((s,r)=>`
+            ${(a||[]).slice(0,5).map((s,r)=>`
               <div class="list-item tool-item" data-type="tool_efficiency" data-id="${s.tool_name}" tabindex="0" role="listitem">
                 <div class="item-rank">#${r+1}</div>
                 <div class="item-main">
@@ -2341,7 +3511,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
                 </div>
                 <div class="item-meta">
                   <span class="success-rate ${s.success_rate>.8?"good":""}">${this._formatPercent(s.success_rate)}</span>
-                  <span class="item-time">${s.avg_execution_time_ms.toFixed(0)}ms</span>
+                  <span class="item-time">${Number(s.avg_execution_time_ms??0).toFixed(0)}ms</span>
                 </div>
               </div>
             `).join("")||'<div class="list-empty">No tool data found</div>'}
@@ -2355,11 +3525,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           <span class="signals-count">${this._signals.length}</span>
         </div>
         <div class="signals-list">
-          ${this._signals.slice(0,10).map(e=>{let t=e.data||{},a=e.type||"unknown",i=t.action||e.action||a,s=t.source||e.source||"-",r=t.outcome||e.outcome||"-",o=e.timestamp?new Date(e.timestamp).toLocaleTimeString():"-";return`
+          ${this._signals.slice(0,10).map(e=>{let t=e.data||{},i=e.type||"unknown",a=t.action||e.action||i,s=t.source||e.source||"-",r=t.outcome||e.outcome||"-",o=e.timestamp?new Date(e.timestamp).toLocaleTimeString():"-";return`
             <div class="signal-item">
-              <div class="signal-type ${a}">${a.replace("_"," ")}</div>
+              <div class="signal-type ${i}">${i.replace("_"," ")}</div>
               <div class="signal-content">
-                <span class="signal-action">${this._escapeHtml(i)}</span>
+                <span class="signal-action">${this._escapeHtml(a)}</span>
                 <span class="signal-source">${s}</span>
               </div>
               <div class="signal-meta">
@@ -2369,7 +3539,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             </div>`}).join("")}
         </div>
       </div>
-    `}_renderDetailPanel(){if(!this._selectedMetric)return"";let{type:e,item:t}=this._selectedMetric,a="";switch(e){case"preference":a=`
+    `}_renderDetailPanel(){if(!this._selectedMetric)return"";let{type:e,item:t}=this._selectedMetric,i="";switch(e){case"preference":i=`
           <div class="detail-row">
             <span class="detail-label">Preference Key</span>
             <span class="detail-value">${this._escapeHtml(t.preference_key)}</span>
@@ -2390,11 +3560,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             <div class="detail-section">
               <div class="detail-label">Alternatives Rejected</div>
               <ul class="detail-list">
-                ${t.alternatives_rejected.map(i=>`<li>${this._escapeHtml(i)}</li>`).join("")}
+                ${t.alternatives_rejected.map(a=>`<li>${this._escapeHtml(a)}</li>`).join("")}
               </ul>
             </div>
           `:""}
-        `;break;case"error_pattern":a=`
+        `;break;case"error_pattern":i=`
           <div class="detail-row">
             <span class="detail-label">Error Type</span>
             <span class="detail-value">${this._escapeHtml(t.error_type)}</span>
@@ -2407,7 +3577,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             <div class="detail-section">
               <div class="detail-label">Common Messages</div>
               <ul class="detail-list">
-                ${t.common_messages.map(i=>`<li>${this._escapeHtml(i)}</li>`).join("")}
+                ${t.common_messages.map(a=>`<li>${this._escapeHtml(a)}</li>`).join("")}
               </ul>
             </div>
           `:""}
@@ -2415,11 +3585,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             <div class="detail-section">
               <div class="detail-label">Known Resolutions</div>
               <ul class="detail-list success">
-                ${t.resolutions.map(i=>`<li>${this._escapeHtml(i)}</li>`).join("")}
+                ${t.resolutions.map(a=>`<li>${this._escapeHtml(a)}</li>`).join("")}
               </ul>
             </div>
           `:""}
-        `;break;case"success_pattern":a=`
+        `;break;case"success_pattern":i=`
           <div class="detail-row">
             <span class="detail-label">Pattern Name</span>
             <span class="detail-value">${this._escapeHtml(t.pattern_name)}</span>
@@ -2432,11 +3602,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             <div class="detail-section">
               <div class="detail-label">Common Actions</div>
               <ol class="detail-list numbered">
-                ${t.common_actions.map(i=>`<li>${this._escapeHtml(i)}</li>`).join("")}
+                ${t.common_actions.map(a=>`<li>${this._escapeHtml(a)}</li>`).join("")}
               </ol>
             </div>
           `:""}
-        `;break;case"tool_efficiency":a=`
+        `;break;case"tool_efficiency":i=`
           <div class="detail-row">
             <span class="detail-label">Tool Name</span>
             <span class="detail-value">${this._escapeHtml(t.tool_name)}</span>
@@ -2451,7 +3621,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
           <div class="detail-row">
             <span class="detail-label">Avg Execution Time</span>
-            <span class="detail-value">${t.avg_execution_time_ms.toFixed(0)}ms</span>
+            <span class="detail-value">${Number(t.avg_execution_time_ms??0).toFixed(0)}ms</span>
           </div>
           <div class="detail-row">
             <span class="detail-label">Total Tokens</span>
@@ -2461,22 +3631,22 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             <div class="detail-section">
               <div class="detail-label">Alternative Tools</div>
               <div class="tag-list">
-                ${t.alternative_tools.map(i=>`<span class="tag">${this._escapeHtml(i)}</span>`).join("")}
+                ${t.alternative_tools.map(a=>`<span class="tag">${this._escapeHtml(a)}</span>`).join("")}
               </div>
             </div>
           `:""}
         `;break}return`
       <div class="detail-panel">
         <div class="detail-header">
-          <h3>${e.replace("_"," ").replace(/\b\w/g,i=>i.toUpperCase())}</h3>
+          <h3>${e.replace("_"," ").replace(/\b\w/g,a=>a.toUpperCase())}</h3>
           <button class="close-btn" id="close-detail">&times;</button>
         </div>
         <div class="detail-body">
-          ${a}
+          ${i}
           <div class="detail-row">
             <span class="detail-label">Sources</span>
             <div class="source-tags">
-              ${(t.sources||[]).map(i=>`<span class="source-badge ${i}">${i}</span>`).join("")}
+              ${(t.sources||[]).map(a=>`<span class="source-badge ${a}">${a}</span>`).join("")}
             </div>
           </div>
           <div class="detail-row">
@@ -2500,7 +3670,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .learning-dashboard {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -2597,7 +3767,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .summary-card {
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 14px;
         }
 
@@ -2713,7 +3883,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         /* Trend Chart */
         .trend-chart {
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 14px;
           margin-bottom: 20px;
         }
@@ -2755,7 +3925,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           color: var(--loki-text-muted);
           font-size: 12px;
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           margin-bottom: 20px;
         }
 
@@ -2769,7 +3939,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .top-list {
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -2791,7 +3961,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           padding: 2px 6px;
           background: var(--loki-bg-card);
-          border-radius: 10px;
+          border-radius: 5px;
           color: var(--loki-text-muted);
         }
 
@@ -2902,7 +4072,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         /* Recent Signals */
         .recent-signals {
           background: var(--loki-bg-secondary);
-          border-radius: 8px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -2924,7 +4094,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           padding: 2px 6px;
           background: var(--loki-bg-card);
-          border-radius: 10px;
+          border-radius: 5px;
           color: var(--loki-text-muted);
         }
 
@@ -3139,7 +4309,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           ${t}
         </div>
       </div>
-    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("time-range-select");e&&e.addEventListener("change",r=>this._setFilter("timeRange",r.target.value));let t=this.shadowRoot.getElementById("signal-type-select");t&&t.addEventListener("change",r=>this._setFilter("signalType",r.target.value));let a=this.shadowRoot.getElementById("source-select");a&&a.addEventListener("change",r=>this._setFilter("source",r.target.value));let i=this.shadowRoot.getElementById("refresh-btn");i&&i.addEventListener("click",()=>this._loadData());let s=this.shadowRoot.getElementById("close-detail");s&&s.addEventListener("click",()=>this._closeDetail()),this.shadowRoot.querySelectorAll(".list-item").forEach(r=>{r.addEventListener("click",()=>{let o=r.dataset.type,l=r.dataset.id,p=this._findItemData(o,l);p&&this._selectMetric(o,p)}),r.addEventListener("keydown",o=>{(o.key==="Enter"||o.key===" ")&&(o.preventDefault(),r.click())})})}_findItemData(e,t){if(!this._metrics?.aggregation)return null;switch(e){case"preference":return this._metrics.aggregation.preferences?.find(a=>a.preference_key===t);case"error_pattern":return this._metrics.aggregation.error_patterns?.find(a=>a.error_type===t);case"success_pattern":return this._metrics.aggregation.success_patterns?.find(a=>a.pattern_name===t);case"tool_efficiency":return this._metrics.aggregation.tool_efficiencies?.find(a=>a.tool_name===t);default:return null}}};customElements.get("loki-learning-dashboard")||customElements.define("loki-learning-dashboard",F);var we=[{id:"overview",label:"Overview"},{id:"decisions",label:"Decision Log"},{id:"convergence",label:"Convergence"},{id:"agents",label:"Agents"}],O=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._activeTab="overview",this._pollInterval=null,this._councilState=null,this._verdicts=[],this._convergence=[],this._agents=[],this._selectedAgent=null,this._lastDataHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null),this._pendingRaf&&(cancelAnimationFrame(this._pendingRaf),this._pendingRaf=null)}async _loadData(){try{let[t,a,i,s]=await Promise.allSettled([this._api._get("/api/council/state"),this._api._get("/api/council/verdicts"),this._api._get("/api/council/convergence"),this._api._get("/api/agents")]);t.status==="fulfilled"&&(this._councilState=t.value),a.status==="fulfilled"&&(this._verdicts=a.value.verdicts||[]),i.status==="fulfilled"&&(this._convergence=i.value.dataPoints||[]),s.status==="fulfilled"&&(this._agents=Array.isArray(s.value)?s.value:[]),this._error=null}catch(t){this._error=t.message}let e=JSON.stringify({s:this._councilState,v:this._verdicts,c:this._convergence,a:this._agents,e:this._error});e!==this._lastDataHash&&(this._lastDataHash=e,this.render())}async _forceReview(){try{await this._api._post("/api/council/force-review"),this.dispatchEvent(new CustomEvent("council-action",{detail:{action:"force-review"},bubbles:!0}))}catch(e){this._error=`Failed to force review: ${e.message}`,this.render()}}async _killAgent(e){if(confirm(`Kill agent ${e}?`))try{await this._api._post(`/api/agents/${e}/kill`),this.dispatchEvent(new CustomEvent("council-action",{detail:{action:"kill-agent",agentId:e},bubbles:!0})),await this._loadData()}catch(t){this._error=`Failed to kill agent: ${t.message}`,this.render()}}async _pauseAgent(e){try{await this._api._post(`/api/agents/${e}/pause`),await this._loadData()}catch(t){this._error=`Failed to pause agent: ${t.message}`,this.render()}}async _resumeAgent(e){try{await this._api._post(`/api/agents/${e}/resume`),await this._loadData()}catch(t){this._error=`Failed to resume agent: ${t.message}`,this.render()}}_setTab(e){this._activeTab=e,this.render()}_selectAgent(e){this._selectedAgent=this._selectedAgent?.id===e.id?null:e,this.render()}render(){let e=this.shadowRoot;e&&(this._pendingRaf&&(cancelAnimationFrame(this._pendingRaf),this._pendingRaf=null),e.innerHTML=`
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot.getElementById("time-range-select");e&&e.addEventListener("change",r=>this._setFilter("timeRange",r.target.value));let t=this.shadowRoot.getElementById("signal-type-select");t&&t.addEventListener("change",r=>this._setFilter("signalType",r.target.value));let i=this.shadowRoot.getElementById("source-select");i&&i.addEventListener("change",r=>this._setFilter("source",r.target.value));let a=this.shadowRoot.getElementById("refresh-btn");a&&a.addEventListener("click",()=>this._loadData());let s=this.shadowRoot.getElementById("close-detail");s&&s.addEventListener("click",()=>this._closeDetail()),this.shadowRoot.querySelectorAll(".list-item").forEach(r=>{r.addEventListener("click",()=>{let o=r.dataset.type,n=r.dataset.id,l=this._findItemData(o,n);l&&this._selectMetric(o,l)}),r.addEventListener("keydown",o=>{(o.key==="Enter"||o.key===" ")&&(o.preventDefault(),r.click())})})}_findItemData(e,t){if(!this._metrics?.aggregation)return null;switch(e){case"preference":return this._metrics.aggregation.preferences?.find(i=>i.preference_key===t);case"error_pattern":return this._metrics.aggregation.error_patterns?.find(i=>i.error_type===t);case"success_pattern":return this._metrics.aggregation.success_patterns?.find(i=>i.pattern_name===t);case"tool_efficiency":return this._metrics.aggregation.tool_efficiencies?.find(i=>i.tool_name===t);default:return null}}};customElements.get("loki-learning-dashboard")||customElements.define("loki-learning-dashboard",V);var bt=[{id:"overview",label:"Overview"},{id:"decisions",label:"Decision Log"},{id:"convergence",label:"Convergence"},{id:"agents",label:"Agents"}],Y=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._activeTab="overview",this._pollInterval=null,this._councilState=null,this._verdicts=[],this._convergence=[],this._agents=[],this._selectedAgent=null,this._lastDataHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null),this._pendingRaf&&(cancelAnimationFrame(this._pendingRaf),this._pendingRaf=null)}async _loadData(){try{let[t,i,a,s]=await Promise.allSettled([this._api._get("/api/council/state"),this._api._get("/api/council/verdicts"),this._api._get("/api/council/convergence"),this._api._get("/api/agents")]);t.status==="fulfilled"&&(this._councilState=t.value),i.status==="fulfilled"&&(this._verdicts=i.value.verdicts||[]),a.status==="fulfilled"&&(this._convergence=a.value.dataPoints||[]),s.status==="fulfilled"&&(this._agents=Array.isArray(s.value)?s.value:[]),this._error=null}catch(t){this._error=t.message}let e=JSON.stringify({s:this._councilState,v:this._verdicts,c:this._convergence,a:this._agents,e:this._error});e!==this._lastDataHash&&(this._lastDataHash=e,this.render())}async _forceReview(){try{await this._api._post("/api/council/force-review"),this.dispatchEvent(new CustomEvent("council-action",{detail:{action:"force-review"},bubbles:!0}))}catch(e){this._error=`Failed to force review: ${e.message}`,this.render()}}async _killAgent(e){if(confirm(`Kill agent ${e}?`))try{await this._api._post(`/api/agents/${e}/kill`),this.dispatchEvent(new CustomEvent("council-action",{detail:{action:"kill-agent",agentId:e},bubbles:!0})),await this._loadData()}catch(t){this._error=`Failed to kill agent: ${t.message}`,this.render()}}async _pauseAgent(e){try{await this._api._post(`/api/agents/${e}/pause`),await this._loadData()}catch(t){this._error=`Failed to pause agent: ${t.message}`,this.render()}}async _resumeAgent(e){try{await this._api._post(`/api/agents/${e}/resume`),await this._loadData()}catch(t){this._error=`Failed to resume agent: ${t.message}`,this.render()}}_setTab(e){this._activeTab=e,this.render()}_selectAgent(e){this._selectedAgent=this._selectedAgent?.id===e.id?null:e,this.render()}render(){let e=this.shadowRoot;e&&(this._pendingRaf&&(cancelAnimationFrame(this._pendingRaf),this._pendingRaf=null),e.innerHTML=`
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
       <div class="council-dashboard">
         <div class="council-header">
@@ -3153,7 +4323,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
 
         <div class="tabs">
-          ${we.map(t=>`
+          ${bt.map(t=>`
             <button
               class="tab ${this._activeTab===t.id?"active":""}"
               data-tab="${t.id}"
@@ -3165,9 +4335,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           ${this._renderTabContent()}
         </div>
 
-        ${this._error?`<div class="error-banner">${this._error}</div>`:""}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
       </div>
-    `,this._attachEventListeners())}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("force-review-btn");t&&t.addEventListener("click",()=>this._forceReview()),e.querySelectorAll(".tab[data-tab]").forEach(a=>{a.addEventListener("click",()=>this._setTab(a.dataset.tab))})}_renderTabContent(){switch(this._activeTab){case"overview":return this._renderOverview();case"decisions":return this._renderDecisions();case"convergence":return this._renderConvergence();case"agents":return this._renderAgents();default:return""}}_renderOverview(){let e=this._councilState||{},t=e.consecutive_no_change||0,a=e.done_signals||0,i=e.total_votes||0,s=e.approve_votes||0,r=this._verdicts.length>0?this._verdicts[this._verdicts.length-1]:null,o=this._agents.filter(l=>l.alive).length;return`
+    `,this._attachEventListeners())}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("force-review-btn");t&&t.addEventListener("click",()=>this._forceReview()),e.querySelectorAll(".tab[data-tab]").forEach(i=>{i.addEventListener("click",()=>this._setTab(i.dataset.tab))})}_renderTabContent(){switch(this._activeTab){case"overview":return this._renderOverview();case"decisions":return this._renderDecisions();case"convergence":return this._renderConvergence();case"agents":return this._renderAgents();default:return""}}_renderOverview(){let e=this._councilState||{},t=e.consecutive_no_change||0,i=e.done_signals||0,a=e.total_votes||0,s=e.approve_votes||0,r=this._verdicts.length>0?this._verdicts[this._verdicts.length-1]:null,o=this._agents.filter(n=>n.alive).length;return`
       <div class="overview-grid">
         <div class="stat-card">
           <div class="stat-label">Council Status</div>
@@ -3177,7 +4347,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
         <div class="stat-card">
           <div class="stat-label">Total Votes Cast</div>
-          <div class="stat-value">${i}</div>
+          <div class="stat-value">${a}</div>
           <div class="stat-sub">${s} approved</div>
         </div>
         <div class="stat-card">
@@ -3187,7 +4357,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
         <div class="stat-card">
           <div class="stat-label">Done Signals</div>
-          <div class="stat-value ${a>=2?"text-green":""}">${a}</div>
+          <div class="stat-value ${i>=2?"text-green":""}">${i}</div>
           <div class="stat-sub">from agent output</div>
         </div>
         <div class="stat-card">
@@ -3212,12 +4382,12 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         </div>
       `:""}
-    `}_renderConvergenceBar(){let e=this._convergence.slice(-20);if(e.length===0)return'<span class="text-muted">No data</span>';let t=Math.max(...e.map(a=>a.files_changed),1);return`
+    `}_renderConvergenceBar(){let e=this._convergence.slice(-20);if(e.length===0)return'<span class="text-muted">No data</span>';let t=Math.max(...e.map(i=>i.files_changed),1);return`
       <div class="bar-chart">
-        ${e.map(a=>{let i=Math.max(4,a.files_changed/t*60),s=a.no_change_streak>0;return`
-            <div class="bar-wrapper" title="Iter ${a.iteration}: ${a.files_changed} files changed">
-              <div class="bar ${s?"bar-stagnant":"bar-active"}" style="height: ${i}px"></div>
-              <div class="bar-label">${a.iteration}</div>
+        ${e.map(i=>{let a=Math.max(4,i.files_changed/t*60),s=i.no_change_streak>0;return`
+            <div class="bar-wrapper" title="Iter ${i.iteration}: ${i.files_changed} files changed">
+              <div class="bar ${s?"bar-stagnant":"bar-active"}" style="height: ${a}px"></div>
+              <div class="bar-label">${i.iteration}</div>
             </div>
           `}).join("")}
       </div>
@@ -3274,31 +4444,31 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       </div>
     `}_renderAgents(){if(this._agents.length===0)return'<div class="empty-state">No agents registered.</div>';let e=`
       <div class="agents-list">
-        ${this._agents.map((t,a)=>`
+        ${this._agents.map((t,i)=>`
           <div class="agent-card ${this._selectedAgent?.id===t.id?"agent-selected":""}"
-               data-agent-index="${a}">
+               data-agent-index="${i}">
             <div class="agent-header">
-              <span class="agent-name">${t.name||t.id||"Unknown"}</span>
+              <span class="agent-name">${this._escapeHtml(t.name||t.id||"Unknown")}</span>
               <span class="agent-status ${t.alive?"status-alive":"status-dead"}">
                 ${t.alive?"Running":"Stopped"}
               </span>
             </div>
             <div class="agent-meta">
-              ${t.type?`<span class="agent-type">${t.type}</span>`:""}
+              ${t.type?`<span class="agent-type">${this._escapeHtml(t.type)}</span>`:""}
               ${t.pid?`<span class="agent-pid">PID: ${t.pid}</span>`:""}
-              ${t.task?`<span class="agent-task">Task: ${t.task}</span>`:""}
+              ${t.task?`<span class="agent-task">Task: ${this._escapeHtml(t.task)}</span>`:""}
             </div>
             ${this._selectedAgent?.id===t.id?`
               <div class="agent-actions">
                 ${t.alive?`
-                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Pause
                   </button>
-                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Kill
                   </button>
                 `:`
-                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Resume
                   </button>
                 `}
@@ -3307,7 +4477,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         `).join("")}
       </div>
-    `;return this._pendingRaf=requestAnimationFrame(()=>{this._pendingRaf=null;let t=this.shadowRoot;t&&t.querySelectorAll(".agent-card[data-agent-index]").forEach(a=>{let i=parseInt(a.dataset.agentIndex,10),s=this._agents[i];s&&(a.addEventListener("click",()=>this._selectAgent(s)),a.querySelectorAll("[data-action]").forEach(r=>{r.addEventListener("click",o=>{o.stopPropagation();let l=r.dataset.action,p=r.dataset.agentId;l==="pause"?this._pauseAgent(p):l==="kill"?this._killAgent(p):l==="resume"&&this._resumeAgent(p)})}))})}),e}_formatTime(e){if(!e)return"";try{return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}catch{return e}}_getStyles(){return`
+    `;return this._pendingRaf=requestAnimationFrame(()=>{this._pendingRaf=null;let t=this.shadowRoot;t&&t.querySelectorAll(".agent-card[data-agent-index]").forEach(i=>{let a=parseInt(i.dataset.agentIndex,10),s=this._agents[a];s&&(i.addEventListener("click",()=>this._selectAgent(s)),i.querySelectorAll("[data-action]").forEach(r=>{r.addEventListener("click",o=>{o.stopPropagation();let n=r.dataset.action,l=r.dataset.agentId;n==="pause"?this._pauseAgent(l):n==="kill"?this._killAgent(l):n==="resume"&&this._resumeAgent(l)})}))})}),e}_formatTime(e){if(!e)return"";try{return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}catch{return e}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
       :host {
         display: block;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -3341,9 +4511,9 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-size: 11px;
         font-weight: 500;
         padding: 2px 8px;
-        border-radius: 10px;
+        border-radius: 4px;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.05em;
       }
 
       .badge-active {
@@ -3360,36 +4530,40 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
       .tabs {
         display: flex;
-        gap: 2px;
-        border-bottom: 1px solid var(--loki-border);
+        gap: 4px;
+        padding: 4px;
+        background: var(--loki-bg-secondary);
+        border-radius: 5px;
+        border: 1px solid var(--loki-border);
         margin-bottom: 16px;
       }
 
       .tab {
-        padding: 8px 16px;
+        padding: 7px 14px;
         background: none;
         border: none;
         color: var(--loki-text-muted);
         cursor: pointer;
         font-size: 13px;
         font-weight: 500;
-        border-bottom: 2px solid transparent;
+        border-radius: 4px;
         transition: all 0.15s ease;
       }
 
       .tab:hover {
         color: var(--loki-text-primary);
+        background: var(--loki-bg-hover);
       }
 
       .tab.active {
-        color: var(--loki-accent);
-        border-bottom-color: var(--loki-accent);
+        color: white;
+        background: var(--loki-accent);
       }
 
       .btn {
         padding: 6px 14px;
         border: 1px solid var(--loki-border);
-        border-radius: 6px;
+        border-radius: 4px;
         background: var(--loki-bg-tertiary);
         color: var(--loki-text-primary);
         cursor: pointer;
@@ -3452,7 +4626,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .stat-card {
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
         padding: 14px;
       }
 
@@ -3461,7 +4635,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-weight: 500;
         color: var(--loki-text-muted);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.05em;
         margin-bottom: 6px;
       }
 
@@ -3469,6 +4643,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-size: 24px;
         font-weight: 600;
         line-height: 1.2;
+        color: var(--loki-accent);
+        font-family: 'JetBrains Mono', monospace;
       }
 
       .stat-sub {
@@ -3502,7 +4678,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         padding: 8px;
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
       }
 
       .bar-wrapper {
@@ -3544,7 +4720,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .decision-card {
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
         padding: 12px 16px;
         border-left: 3px solid transparent;
       }
@@ -3598,7 +4774,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .convergence-table {
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
         overflow: hidden;
       }
 
@@ -3614,7 +4790,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.05em;
         color: var(--loki-text-muted);
         border-bottom: 1px solid var(--loki-border);
         background: var(--loki-bg-tertiary);
@@ -3643,7 +4819,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .agent-card {
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
         padding: 12px 16px;
         cursor: pointer;
         transition: all 0.15s ease;
@@ -3674,7 +4850,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-size: 11px;
         font-weight: 500;
         padding: 2px 8px;
-        border-radius: 10px;
+        border-radius: 5px;
       }
 
       .status-alive {
@@ -3716,21 +4892,680 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         padding: 10px 14px;
         background: var(--loki-error-muted);
         border: 1px solid var(--loki-error-muted);
-        border-radius: 6px;
+        border-radius: 4px;
         color: var(--loki-error);
         font-size: 12px;
       }
-    `}};customElements.get("loki-council-dashboard")||customElements.define("loki-council-dashboard",O);var $e={opus:{input:5,output:25,label:"Opus 4.6",provider:"claude"},sonnet:{input:3,output:15,label:"Sonnet 4.5",provider:"claude"},haiku:{input:1,output:5,label:"Haiku 4.5",provider:"claude"},"gpt-5.3-codex":{input:1.5,output:12,label:"GPT-5.3 Codex",provider:"codex"},"gemini-3-pro":{input:1.25,output:10,label:"Gemini 3 Pro",provider:"gemini"},"gemini-3-flash":{input:.1,output:.4,label:"Gemini 3 Flash",provider:"gemini"}},ne={...$e},N=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data={total_input_tokens:0,total_output_tokens:0,estimated_cost_usd:0,by_phase:{},by_model:{},budget_limit:null,budget_used:0,budget_remaining:null,connected:!1},this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadPricing(),this._loadCost(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadCost()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}async _loadPricing(){try{let e=await this._api.getPricing();if(e&&e.models){let t={};for(let[a,i]of Object.entries(e.models))t[a]={input:i.input,output:i.output,label:i.label||a,provider:i.provider||"unknown"};ne=t,this._pricingSource=e.source||"api",this._pricingDate=e.updated||"",this._activeProvider=e.provider||"claude",this.render()}}catch{}}async _loadCost(){try{let e=await this._api.getCost();this._updateFromCost(e)}catch{this._data.connected=!1,this.render()}}_updateFromCost(e){e&&(this._data={...this._data,connected:!0,total_input_tokens:e.total_input_tokens||0,total_output_tokens:e.total_output_tokens||0,estimated_cost_usd:e.estimated_cost_usd||0,by_phase:e.by_phase||{},by_model:e.by_model||{},budget_limit:e.budget_limit,budget_used:e.budget_used||0,budget_remaining:e.budget_remaining},this.render())}_startPolling(){this._pollInterval=setInterval(async()=>{try{let e=await this._api.getCost();this._updateFromCost(e)}catch{this._data.connected=!1,this.render()}},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_formatTokens(e){return!e||e===0?"0":e>=1e6?(e/1e6).toFixed(2)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":String(e)}_formatUSD(e){return!e||e===0?"$0.00":e<.01?"<$0.01":"$"+e.toFixed(2)}_getBudgetPercent(){return!this._data.budget_limit||this._data.budget_limit<=0?0:Math.min(100,this._data.budget_used/this._data.budget_limit*100)}_getBudgetStatusClass(){let e=this._getBudgetPercent();return e>=90?"critical":e>=70?"warning":"ok"}_renderPhaseRows(){let e=this._data.by_phase;return!e||Object.keys(e).length===0?'<tr><td colspan="4" class="empty-cell">No phase data yet</td></tr>':Object.entries(e).map(([t,a])=>{let i=a.input_tokens||0,s=a.output_tokens||0,r=a.cost_usd||0;return`
+    `}};customElements.get("loki-council-dashboard")||customElements.define("loki-council-dashboard",Y);var Je={critical:0,major:1,minor:2},ft={critical:"var(--loki-status-error, #ef4444)",major:"var(--loki-status-warning, #f59e0b)",minor:"var(--loki-text-muted, #71717a)"},W=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._pollInterval=null,this._checklist=null,this._waivers=[],this._expandedCategories=new Set,this._lastDataHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),5e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),5e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let[e,t]=await Promise.all([this._api.getChecklist(),this._api.getChecklistWaivers().catch(()=>null)]),i=JSON.stringify(t),a=JSON.stringify(e)+i;if(a===this._lastDataHash)return;this._lastDataHash=a,this._checklist=e,this._waivers=t&&t.waivers?t.waivers.filter(s=>s.active):[],this._error=null,this.render()}catch(e){this._error=`Failed to load checklist: ${e.message}`,this.render()}}_isItemWaived(e){return this._waivers.some(t=>t.item_id===e)}_getWaiverForItem(e){return this._waivers.find(t=>t.item_id===e)||null}async _waiveItem(e){let t=window.prompt("Enter reason for waiving this item:");if(t)try{await this._api.addChecklistWaiver(e,t),this._lastDataHash=null,await this._loadData()}catch(i){this._error=`Failed to add waiver: ${i.message}`,this.render()}}async _unwaiveItem(e){try{await this._api.removeChecklistWaiver(e),this._lastDataHash=null,await this._loadData()}catch(t){this._error=`Failed to remove waiver: ${t.message}`,this.render()}}_toggleCategory(e){this._expandedCategories.has(e)?this._expandedCategories.delete(e):this._expandedCategories.add(e),this.render()}_getStyles(){return`
+      .checklist-viewer {
+        padding: 16px;
+        font-family: var(--loki-font-family, system-ui, -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+      .checklist-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+      .summary-badges {
+        display: flex;
+        gap: 8px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .badge-verified {
+        background: color-mix(in srgb, var(--loki-status-success, #22c55e) 15%, transparent);
+        color: var(--loki-status-success, #22c55e);
+      }
+      .badge-failing {
+        background: color-mix(in srgb, var(--loki-status-error, #ef4444) 15%, transparent);
+        color: var(--loki-status-error, #ef4444);
+      }
+      .badge-pending {
+        background: color-mix(in srgb, var(--loki-text-muted, #71717a) 15%, transparent);
+        color: var(--loki-text-muted, #71717a);
+      }
+
+      /* Progress bar */
+      .progress-container {
+        margin-bottom: 20px;
+      }
+      .progress-bar {
+        height: 8px;
+        background: var(--loki-bg-tertiary, #e4e4e7);
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+      }
+      .progress-verified {
+        background: var(--loki-status-success, #22c55e);
+        transition: width 0.3s ease;
+      }
+      .progress-failing {
+        background: var(--loki-status-error, #ef4444);
+        transition: width 0.3s ease;
+      }
+      .progress-label {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--loki-text-secondary, #52525b);
+      }
+
+      /* Category accordions */
+      .category {
+        border: 1px solid var(--loki-border, #e4e4e7);
+        border-radius: 5px;
+        margin-bottom: 8px;
+        overflow: hidden;
+      }
+      .category-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        cursor: pointer;
+        background: var(--loki-bg-secondary, #f4f4f5);
+        user-select: none;
+        transition: background 0.15s;
+      }
+      .category-header:hover {
+        background: var(--loki-bg-hover, #f0f0f3);
+      }
+      .category-name {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .category-stats {
+        font-size: 12px;
+        color: var(--loki-text-secondary, #52525b);
+      }
+      .category-arrow {
+        font-size: 12px;
+        transition: transform 0.2s;
+      }
+      .category-arrow.expanded {
+        transform: rotate(90deg);
+      }
+      .category-body {
+        padding: 0;
+      }
+
+      /* Checklist items */
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        border-top: 1px solid var(--loki-border, #e4e4e7);
+        font-size: 13px;
+      }
+      .item-status {
+        width: 12px;
+        height: 6px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+      .status-verified {
+        background: var(--loki-status-success, #22c55e);
+      }
+      .status-failing {
+        background: var(--loki-status-error, #ef4444);
+      }
+      .status-pending {
+        background: var(--loki-text-muted, #a1a1aa);
+      }
+      .item-title {
+        flex: 1;
+        min-width: 0;
+      }
+      .item-priority {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 1px 6px;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+      .verification-dots {
+        display: flex;
+        gap: 3px;
+        flex-shrink: 0;
+      }
+      .v-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+      .v-dot-pass { background: var(--loki-status-success, #22c55e); }
+      .v-dot-fail { background: var(--loki-status-error, #ef4444); }
+      .v-dot-pending { background: var(--loki-text-muted, #a1a1aa); }
+
+      /* Empty state */
+      .empty-state {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--loki-text-secondary, #52525b);
+      }
+      .empty-state p {
+        margin: 8px 0;
+        font-size: 14px;
+      }
+      .empty-state .hint {
+        font-size: 12px;
+        color: var(--loki-text-muted, #71717a);
+      }
+
+      /* Waiver badge */
+      .badge-waived {
+        background: #92400e;
+        color: #fbbf24;
+      }
+      .item-waived-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: #92400e;
+        color: #fbbf24;
+        flex-shrink: 0;
+        cursor: default;
+      }
+
+      /* Waive/Unwaive buttons */
+      .waiver-btn {
+        padding: 2px 8px;
+        border: 1px solid var(--loki-border, #e4e4e7);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 500;
+        cursor: pointer;
+        background: transparent;
+        color: var(--loki-text-secondary, #52525b);
+        flex-shrink: 0;
+        transition: background 0.15s, color 0.15s;
+      }
+      .waiver-btn:hover {
+        background: var(--loki-bg-hover, #f0f0f3);
+        color: var(--loki-text-primary, #201515);
+      }
+      .waiver-btn-unwaive {
+        border-color: #92400e;
+        color: #fbbf24;
+      }
+      .waiver-btn-unwaive:hover {
+        background: #92400e;
+        color: #fbbf24;
+      }
+
+      /* Council gate banner */
+      .gate-banner {
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .gate-blocked {
+        background: rgba(239, 68, 68, 0.1);
+        border-left: 3px solid #ef4444;
+        color: #fca5a5;
+      }
+      .gate-passed {
+        background: rgba(34, 197, 94, 0.1);
+        border-left: 3px solid #22c55e;
+        color: #86efac;
+      }
+
+      /* Error */
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: color-mix(in srgb, var(--loki-status-error, #ef4444) 10%, transparent);
+        color: var(--loki-status-error, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+    `}_getUnwaivedCriticalFailures(){if(!this._checklist?.categories)return[];let e=[];for(let t of this._checklist.categories)for(let i of t.items||[])i.status==="failing"&&i.priority==="critical"&&!this._isItemWaived(i.id)&&e.push(i);return e}_renderGateBanner(){let e=this._getUnwaivedCriticalFailures();return e.length>0?`<div class="gate-banner gate-blocked">COUNCIL GATE: BLOCKED - ${e.length} critical item${e.length!==1?"s":""} must be verified or waived before completion</div>`:'<div class="gate-banner gate-passed">COUNCIL GATE: PASSED - No blocking critical failures</div>'}render(){let e=this.shadowRoot;if(!e)return;let t=this._checklist,i=t&&t.status!=="not_initialized"&&t.categories?.length>0;e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="checklist-viewer">
+        <div class="checklist-header">
+          <h2 class="title">Spec Checklist</h2>
+          ${i?this._renderBadges(t.summary):""}
+        </div>
+        ${i?this._renderGateBanner():""}
+        ${i?this._renderProgress(t.summary):""}
+        ${i?this._renderCategories(t.categories):this._renderEmpty()}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners()}_renderBadges(e){if(!e)return"";let t=this._waivers.length;return`
+      <div class="summary-badges">
+        ${e.verified?`<span class="badge badge-verified">${e.verified} verified</span>`:""}
+        ${e.failing?`<span class="badge badge-failing">${e.failing} failing</span>`:""}
+        ${t?`<span class="badge badge-waived">${t} waived</span>`:""}
+        ${e.pending?`<span class="badge badge-pending">${e.pending} pending</span>`:""}
+      </div>
+    `}_renderProgress(e){if(!e||!e.total)return"";let t=e.verified/e.total*100,i=e.failing/e.total*100;return`
+      <div class="progress-container">
+        <div class="progress-bar">
+          <div class="progress-verified" style="width: ${t}%"></div>
+          <div class="progress-failing" style="width: ${i}%"></div>
+        </div>
+        <div class="progress-label">
+          <span>${e.verified}/${e.total} verified | ${e.failing||0} failing | ${this._waivers.length} waived | ${e.pending||0} pending</span>
+          <span>${Math.round(t)}%</span>
+        </div>
+      </div>
+    `}_renderCategories(e){return e?.length?e.map(t=>{let i=this._expandedCategories.has(t.name),a=t.items||[],s=a.filter(o=>o.status==="verified").length,r=a.filter(o=>o.status==="failing").length;return`
+        <div class="category">
+          <div class="category-header" data-category="${this._escapeHtml(t.name)}">
+            <div>
+              <span class="category-name">${this._escapeHtml(t.name)}</span>
+              <span class="category-stats">${s}/${a.length} verified${r?`, ${r} failing`:""}</span>
+            </div>
+            <span class="category-arrow ${i?"expanded":""}">&#9654;</span>
+          </div>
+          ${i?`<div class="category-body">${this._renderItems(a)}</div>`:""}
+        </div>
+      `}).join(""):this._renderEmpty()}_renderItems(e){return e?.length?[...e].sort((i,a)=>(Je[i.priority]??2)-(Je[a.priority]??2)).map(i=>{let a=i.status==="verified"?"status-verified":i.status==="failing"?"status-failing":"status-pending",s=["critical","major","minor"].includes(i.priority)?i.priority:"minor",r=ft[s],o=i.verification||[],n=this._getWaiverForItem(i.id),l=!!n,c=i.status==="failing"&&(s==="critical"||s==="major"),p=l?`<span class="item-waived-badge" title="${this._escapeHtml(n.reason||"No reason provided")}">WAIVED</span>`:"",u="";return c&&(l?u=`<button class="waiver-btn waiver-btn-unwaive" data-unwaive-id="${this._escapeHtml(i.id)}">Unwaive</button>`:u=`<button class="waiver-btn" data-waive-id="${this._escapeHtml(i.id)}">Waive</button>`),`
+        <div class="item">
+          <div class="item-status ${a}"></div>
+          <div class="item-title">${this._escapeHtml(i.title||i.id||"?")}</div>
+          <span class="item-priority" style="color:${r};border:1px solid ${r}">${s}</span>
+          ${p}
+          ${u}
+          <div class="verification-dots">
+            ${o.map(b=>`<div class="v-dot ${b.passed===!0?"v-dot-pass":b.passed===!1?"v-dot-fail":"v-dot-pending"}" title="${this._escapeHtml(b.type||"")}"></div>`).join("")}
+          </div>
+        </div>
+      `}).join(""):'<div class="item" style="color:var(--loki-text-muted)">No items</div>'}_renderEmpty(){return`
+      <div class="empty-state">
+        <p><strong>No checklist data yet.</strong></p>
+        <p class="hint">The spec checklist is generated during the first iteration. Start a session with <code>loki start ./spec.md</code> (PRD files also accepted) -- groups and items will appear here as the session progresses and can be expanded for details.</p>
+      </div>
+    `}_attachEventListeners(){let e=this.shadowRoot;e&&(e.querySelectorAll(".category-header[data-category]").forEach(t=>{t.addEventListener("click",()=>this._toggleCategory(t.dataset.category))}),e.querySelectorAll("button[data-waive-id]").forEach(t=>{t.addEventListener("click",i=>{i.stopPropagation(),this._waiveItem(t.dataset.waiveId)})}),e.querySelectorAll("button[data-unwaive-id]").forEach(t=>{t.addEventListener("click",i=>{i.stopPropagation(),this._unwaiveItem(t.dataset.unwaiveId)})}))}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}};customElements.define("loki-checklist-viewer",W);var Ge={not_initialized:{color:"var(--loki-text-muted, #71717a)",label:"Not Started",pulse:!1},starting:{color:"var(--loki-yellow, #ca8a04)",label:"Starting...",pulse:!0},running:{color:"var(--loki-green, #16a34a)",label:"Running",pulse:!0},stale:{color:"var(--loki-yellow, #ca8a04)",label:"Stale",pulse:!1},completed:{color:"var(--loki-text-muted, #a1a1aa)",label:"Completed",pulse:!1},failed:{color:"var(--loki-red, #dc2626)",label:"Failed",pulse:!1},crashed:{color:"var(--loki-red, #dc2626)",label:"Crashed",pulse:!1},stopped:{color:"var(--loki-text-muted, #a1a1aa)",label:"Stopped",pulse:!1},unknown:{color:"var(--loki-text-muted, #71717a)",label:"Unknown",pulse:!1}},Q=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._pollInterval=null,this._status=null,this._logs=[],this._lastDataHash=null,this._lastLogsHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let[e,t]=await Promise.all([this._api.getAppRunnerStatus(),this._api.getAppRunnerLogs()]),i=JSON.stringify({status:e?.status,port:e?.port,restarts:e?.restart_count,url:e?.url}),a=JSON.stringify(t?.lines?.slice(-5)||[]),s=a!==this._lastLogsHash;if(i===this._lastDataHash&&!s)return;this._lastDataHash=i,this._lastLogsHash=a,this._status=e,this._logs=t?.lines||[],this._error=null,this.render(),this._scrollLogsToBottom()}catch(e){this._error||(this._error=`Failed to load app status: ${e.message}`,this.render())}}_scrollLogsToBottom(){let e=this.shadowRoot;if(!e)return;let t=e.querySelector(".log-area");t&&(t.scrollTop=t.scrollHeight)}async _handleRestart(){try{await this._api.restartApp(),this._loadData()}catch(e){this._error=`Restart failed: ${e.message}`,this.render()}}async _handleStop(){try{await this._api.stopApp(),this._loadData()}catch(e){this._error=`Stop failed: ${e.message}`,this.render()}}_formatUptime(e){if(!e)return"--";let t=new Date(e),a=Math.floor((new Date-t)/1e3);if(a<60)return`${a}s`;if(a<3600)return`${Math.floor(a/60)}m ${a%60}s`;let s=Math.floor(a/3600),r=Math.floor(a%3600/60);return`${s}h ${r}m`}_isValidUrl(e){if(!e)return!1;try{let t=new URL(e);return t.protocol==="http:"||t.protocol==="https:"}catch{return!1}}_getStyles(){return`
+      .app-status {
+        padding: 16px;
+        font-family: var(--loki-font-family, system-ui, -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      /* Status indicator */
+      .status-dot {
+        width: 12px;
+        height: 6px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+      .status-dot.pulse {
+        animation: dot-pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes dot-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      /* Status card */
+      .status-card {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #e4e4e7);
+        border-radius: 5px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      .status-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        font-size: 13px;
+      }
+      .status-label {
+        color: var(--loki-text-secondary, #52525b);
+      }
+      .status-value {
+        font-weight: 500;
+      }
+      .status-value a {
+        color: var(--loki-accent, #553DE9);
+        text-decoration: none;
+      }
+      .status-value a:hover {
+        text-decoration: underline;
+      }
+
+      /* Log viewer */
+      .log-section {
+        margin-bottom: 12px;
+      }
+      .log-header {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: var(--loki-text-secondary, #52525b);
+      }
+      .log-area {
+        background: var(--loki-bg-tertiary, #1a1a2e);
+        border: 1px solid var(--loki-border, #e4e4e7);
+        border-radius: 4px;
+        padding: 10px;
+        max-height: 300px;
+        overflow-y: auto;
+        font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--loki-text-muted, #a1a1aa);
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .log-empty {
+        color: var(--loki-text-muted, #71717a);
+        font-style: italic;
+      }
+
+      /* Action buttons */
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      .btn {
+        padding: 5px 14px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        border: 1px solid var(--loki-border, #e4e4e7);
+        background: var(--loki-bg-secondary, #f4f4f5);
+        color: var(--loki-text-primary, #201515);
+        transition: background 0.15s;
+      }
+      .btn:hover {
+        background: var(--loki-bg-hover, #f0f0f3);
+      }
+      .btn-danger {
+        border-color: var(--loki-red, #dc2626);
+        color: var(--loki-red, #dc2626);
+      }
+      .btn-danger:hover {
+        background: var(--loki-red-muted, rgba(220, 38, 38, 0.12));
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* Empty state */
+      .empty-state {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--loki-text-secondary, #52525b);
+      }
+      .empty-state p {
+        margin: 8px 0;
+        font-size: 14px;
+      }
+      .empty-state .hint {
+        font-size: 12px;
+        color: var(--loki-text-muted, #71717a);
+      }
+
+      /* Error */
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: color-mix(in srgb, var(--loki-status-error, #ef4444) 10%, transparent);
+        color: var(--loki-status-error, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._status,i=t&&t.status&&t.status!=="not_initialized";e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="app-status">
+        <div class="header">
+          <div class="header-left">
+            <h2 class="title">App Runner</h2>
+            ${this._renderStatusBadge(t)}
+          </div>
+          ${i?this._renderActions(t):""}
+        </div>
+        ${i?this._renderStatusCard(t):""}
+        ${i&&this._logs.length>0?this._renderLogs():""}
+        ${i?"":this._renderEmpty()}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners()}_renderStatusBadge(e){let t=e?.status||"not_initialized",i=Ge[t]||Ge.not_initialized;return`
+      <span class="status-badge" style="background: color-mix(in srgb, ${i.color} 15%, transparent); color: ${i.color}">
+        <span class="status-dot ${i.pulse?"pulse":""}" style="background: ${i.color}"></span>
+        ${this._escapeHtml(i.label)}
+      </span>
+    `}_renderStatusCard(e){let i=this._isValidUrl(e.url)?`<a href="${this._escapeHtml(e.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(e.url)}</a>`:this._escapeHtml(e.url||"--");return`
+      <div class="status-card">
+        <div class="status-row">
+          <span class="status-label">Method</span>
+          <span class="status-value">${this._escapeHtml(e.method||"--")}</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Port</span>
+          <span class="status-value">${e.port?this._escapeHtml(String(e.port)):"--"}</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">URL</span>
+          <span class="status-value">${i}</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Restarts</span>
+          <span class="status-value">${e.restart_count!=null?e.restart_count:"--"}</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Uptime</span>
+          <span class="status-value">${e.status==="running"||e.status==="stale"?this._formatUptime(e.started_at):"--"}</span>
+        </div>
+        ${e.status==="crashed"&&e.error?`
+          <div class="status-row" style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--loki-border, #e4e4e7);">
+            <span class="status-label" style="color: var(--loki-red, #dc2626)">Error</span>
+            <span class="status-value" style="color: var(--loki-red, #dc2626); max-width: 70%; text-align: right;">${this._escapeHtml(e.error)}</span>
+          </div>
+        `:""}
+      </div>
+    `}_renderLogs(){let e=this._logs.slice(-20);return`
+      <div class="log-section">
+        <div class="log-header">Application Logs</div>
+        <div class="log-area">${e.length>0?e.map(t=>this._escapeHtml(t)).join(`
+`):'<span class="log-empty">No log output yet</span>'}</div>
+      </div>
+    `}_renderActions(e){let t=e.status==="running"||e.status==="crashed"||e.status==="stopped"||e.status==="stale",i=e.status==="running"||e.status==="starting"||e.status==="stale";return`
+      <div class="actions">
+        <button class="btn" data-action="restart" ${t?"":"disabled"}>Restart</button>
+        <button class="btn btn-danger" data-action="stop" ${i?"":"disabled"}>Stop</button>
+      </div>
+    `}_renderEmpty(){return`
+      <div class="empty-state">
+        <p>App runner not started</p>
+        <p class="hint">App runner will start after the first successful build iteration.</p>
+      </div>
+    `}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.querySelector('[data-action="restart"]'),i=e.querySelector('[data-action="stop"]');t&&t.addEventListener("click",()=>this._handleRestart()),i&&i.addEventListener("click",()=>this._handleStop())}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}};customElements.define("loki-app-status",Q);var Ke={not_initialized:{color:"var(--loki-text-muted, #71717a)",label:"No app yet",pulse:!1},starting:{color:"var(--loki-yellow, #ca8a04)",label:"Starting",pulse:!0},running:{color:"var(--loki-green, #16a34a)",label:"Running",pulse:!0},stale:{color:"var(--loki-yellow, #ca8a04)",label:"Stale",pulse:!1},completed:{color:"var(--loki-text-muted, #a1a1aa)",label:"Completed",pulse:!1},failed:{color:"var(--loki-red, #dc2626)",label:"Could not start",pulse:!1},crashed:{color:"var(--loki-red, #dc2626)",label:"Crashed",pulse:!1},stopped:{color:"var(--loki-text-muted, #a1a1aa)",label:"Stopped",pulse:!1},error:{color:"var(--loki-text-muted, #71717a)",label:"Status unavailable",pulse:!1},unknown:{color:"var(--loki-text-muted, #71717a)",label:"Unknown",pulse:!1}},X=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._api=null,this._pollInterval=null,this._visibilityHandler=null,this._status=null,this._errors=null,this._error=null,this._lastDataHash=null,this._detailsOpen=!1,this._iframeFailed=!1,this._iframeLoadTimer=null,this._IFRAME_LOAD_TIMEOUT_MS=6e3}connectedCallback(){super.connectedCallback(),this._setupApi(),this.render(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling(),this._clearIframeLoadTimer()}_clearIframeLoadTimer(){this._iframeLoadTimer&&(clearTimeout(this._iframeLoadTimer),this._iframeLoadTimer=null)}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let e=await this._api.getAppRunnerStatus(),t=e?.status||"not_initialized",i=null;if(t==="crashed"||t==="failed")try{i=await this._api.getAppRunnerErrors(50)}catch{i=null}let a=JSON.stringify({status:t,port:e?.port,url:e?.url,crash:e?.crash_count,errLen:i?.lines?.length||0,healthOk:e?.last_health?.ok===!0?"ok":e?.last_health?.ok===!1?"down":"unknown"}),s=this._error!==null;if(a===this._lastDataHash&&!s)return;this._iframeFailed=!1,this._lastDataHash=a,this._status=e,this._errors=i,this._error=null,this.render()}catch(e){this._error||(this._error=`Could not read app status: ${e.message}`,this.render())}}_isValidUrl(e){if(!e)return!1;try{let t=new URL(e);return t.protocol==="http:"||t.protocol==="https:"}catch{return!1}}async _handleRestart(){try{await this._api.restartApp(),this._loadData()}catch(e){this._error=`Restart failed: ${e.message}`,this.render()}}_handleRefresh(){let e=this.shadowRoot;if(!e)return;let t=e.querySelector("iframe.preview-frame"),i=this._status;if(t&&i&&this._isValidUrl(i.url)){this._iframeFailed=!1,this._clearIframeLoadTimer();let a=(i.url.includes("?")?"&":"?")+"_t="+Date.now();t.src=i.url+a,this._armIframeLoadDetection()}}_handleRetryFrame(){this._iframeFailed=!1,this._lastDataHash=null,this.render(),this._loadData()}_handleOpenExternal(){let e=this._status;e&&this._isValidUrl(e.url)&&window.open(e.url,"_blank","noopener")}_toggleDetails(){this._detailsOpen=!this._detailsOpen,this.render()}_getStyles(){return`
+      .preview { padding: 16px; font-family: var(--loki-font-family, system-ui, -apple-system, sans-serif); color: var(--loki-text-primary, #201515); }
+      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+      .header-left { display: flex; align-items: center; gap: 10px; }
+      .title { font-size: 18px; font-weight: 600; margin: 0; }
+      .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+      .status-dot.pulse { animation: dot-pulse 1.5s ease-in-out infinite; }
+      @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+      .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+      .transport { font-size: 12px; color: var(--loki-text-muted, #71717a); margin: 0 0 12px 0; }
+      .transport a { color: var(--loki-accent, #2563eb); text-decoration: none; }
+      .transport a:hover { text-decoration: underline; }
+      .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+      .btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; border: 1px solid var(--loki-border, #e4e4e7); background: var(--loki-bg-subtle, #f4f4f5); color: var(--loki-text-primary, #201515); cursor: pointer; }
+      .btn:hover:not(:disabled) { background: var(--loki-bg-hover, #e4e4e7); }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-primary { background: var(--loki-accent, #2563eb); color: #fff; border-color: var(--loki-accent, #2563eb); }
+      .frame-wrap { margin-top: 12px; border: 1px solid var(--loki-border, #e4e4e7); border-radius: 8px; overflow: hidden; background: #fff; }
+      .preview-frame { width: 100%; height: 480px; border: 0; display: block; background: #fff; }
+      .state-block { margin-top: 12px; padding: 32px 16px; text-align: center; border: 1px dashed var(--loki-border, #e4e4e7); border-radius: 8px; color: var(--loki-text-muted, #71717a); }
+      .state-block h3 { margin: 0 0 6px 0; font-size: 15px; font-weight: 600; color: var(--loki-text-primary, #201515); }
+      .state-block p { margin: 0; font-size: 13px; }
+      .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--loki-border, #e4e4e7); border-top-color: var(--loki-accent, #2563eb); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 8px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .err-banner { margin-top: 12px; border: 1px solid var(--loki-red, #dc2626); border-radius: 8px; background: color-mix(in srgb, var(--loki-red, #dc2626) 8%, transparent); padding: 12px 14px; }
+      .err-head { font-weight: 600; color: var(--loki-red, #dc2626); margin: 0 0 4px 0; font-size: 14px; }
+      .err-body { font-size: 13px; margin: 0 0 10px 0; }
+      .err-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .details-toggle { margin-top: 10px; font-size: 12px; color: var(--loki-text-muted, #71717a); cursor: pointer; user-select: none; background: none; border: none; padding: 0; }
+      .details-toggle:hover { text-decoration: underline; }
+      .details-body { margin-top: 8px; background: var(--loki-bg-code, #1e1e1e); color: #d4d4d4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 10px; border-radius: 6px; max-height: 200px; overflow: auto; white-space: pre-wrap; }
+      .error-banner { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: color-mix(in srgb, var(--loki-red, #dc2626) 10%, transparent); color: var(--loki-red, #dc2626); font-size: 13px; }
+    `}_effectiveView(e,t){let i=this._status,a=i?.last_health,s=a&&typeof a.ok=="boolean"?a.ok:null;if(e==="running"&&t){if(s===!1)return{view:"starting",healthOk:s};if(s===!0)return{view:"running",healthOk:s};let r=i?.started_at?Date.parse(i.started_at):NaN;return{view:Number.isFinite(r)&&Date.now()-r<15e3?"running":"starting",healthOk:s}}return{view:e,healthOk:s}}render(){let e=this.shadowRoot;if(!e)return;this._clearIframeLoadTimer();let t=this._status,i=t?.status||"not_initialized",a=this._isValidUrl(t?.url),{view:s,healthOk:r}=this._effectiveView(i,a),o=Ke[s]||Ke.not_initialized,n=i==="running"&&r===!1?"Starting / not responding yet":o.label;e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="preview">
+        <div class="header">
+          <div class="header-left">
+            <h2 class="title">Live App</h2>
+            <span class="status-badge" style="background: color-mix(in srgb, ${o.color} 15%, transparent); color: ${o.color}">
+              <span class="status-dot ${o.pulse?"pulse":""}" style="background: ${o.color}"></span>
+              ${this._escapeHtml(n)}
+            </span>
+          </div>
+          ${this._renderToolbar(s,a)}
+        </div>
+        ${s==="running"&&a?`
+          <p class="transport">Running locally - <a href="${this._escapeHtml(t.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(t.url)}</a></p>
+        `:""}
+        ${this._renderSurface(s,a,r)}
+        ${this._renderErrorBanner(i)}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners(),this._armIframeLoadDetection()}_armIframeLoadDetection(){let e=this.shadowRoot;if(!e)return;let t=e.querySelector("iframe.preview-frame");if(!t)return;let i=()=>{this._clearIframeLoadTimer()};t.addEventListener("load",i),t.addEventListener("error",()=>{this._clearIframeLoadTimer(),this._iframeFailed||(this._iframeFailed=!0,this.render())}),this._iframeLoadTimer=setTimeout(()=>{this._iframeLoadTimer=null,this._iframeFailed||(this._iframeFailed=!0,this.render())},this._IFRAME_LOAD_TIMEOUT_MS)}_renderToolbar(e,t){let i=t&&(e==="running"||e==="starting"||e==="stale");return`
+      <div class="toolbar">
+        <button class="btn" data-action="refresh" ${i?"":"disabled"}>Refresh</button>
+        <button class="btn btn-primary" data-action="open-external" ${i?"":"disabled"}>Open in browser</button>
+        <button class="btn" data-action="restart" ${e==="running"||e==="starting"||e==="stale"||e==="crashed"||e==="stopped"||e==="failed"?"":"disabled"}>Restart</button>
+      </div>
+    `}_renderSurface(e,t,i){if(e==="running"&&t){let a=this._status;return this._iframeFailed?`
+          <div class="state-block">
+            <h3>Could not show the app here</h3>
+            <p>The app started but did not render in this preview. Some apps block being embedded in a frame. Open it in your browser to use it.</p>
+            <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+              <button class="btn btn-primary" data-action="open-external">Open in browser</button>
+              <button class="btn" data-action="retry-frame">Retry</button>
+            </div>
+          </div>
+        `:`
+        <div class="frame-wrap">
+          <iframe
+            class="preview-frame"
+            src="${this._escapeHtml(a.url)}"
+            sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+            referrerpolicy="no-referrer"
+            title="Live preview of the running app"></iframe>
+        </div>
+        <p class="transport" style="margin-top: 8px;">Not rendering? Some apps block being embedded. Use "Open in browser" above.</p>
+      `}if(e==="starting"){let a=i===!1,s=a?"App is up but not responding yet":"Starting your app...",r=a?"The process started but is not answering requests yet. This can take a few seconds, or it may mean the app is still booting or failing to bind its port.":"Waiting for the app to respond. This usually takes a few seconds.",o=t?`
+        <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+          <button class="btn" data-action="open-external">Open in browser</button>
+          <button class="btn" data-action="retry-frame">Retry</button>
+        </div>
+      `:"";return`
+        <div class="state-block">
+          <div class="spinner"></div>
+          <h3>${this._escapeHtml(s)}</h3>
+          <p>${this._escapeHtml(r)}</p>
+          ${o}
+        </div>
+      `}return e==="stale"?`
+        <div class="state-block">
+          <h3>App may no longer be running</h3>
+          <p>Loki has not had a fresh health signal from this app recently and could not confirm it is still alive. Restart it, or open it in your browser to check.</p>
+          ${`
+        <div class="err-actions" style="justify-content: center; margin-top: 12px;">
+          <button class="btn" data-action="restart">Restart</button>
+          ${t?'<button class="btn" data-action="open-external">Open in browser</button>':""}
+        </div>
+      `}
+        </div>
+      `:e==="stopped"?`
+        <div class="state-block">
+          <h3>App is stopped</h3>
+          <p>Your app is not running right now. Use Restart to start it again.</p>
+        </div>
+      `:e==="crashed"||e==="failed"?"":e==="error"?`
+        <div class="state-block">
+          <h3>Status unavailable</h3>
+          <p>Could not read the app status. Try refreshing.</p>
+        </div>
+      `:`
+      <div class="state-block">
+        <h3>No app running yet</h3>
+        <p>Loki has not started your app yet. It will appear here automatically once the build is running.</p>
+      </div>
+    `}_renderErrorBanner(e){if(e!=="crashed"&&e!=="failed")return"";let t=e==="crashed"?"Your app stopped after an error":"Loki could not start your app",i=e==="crashed"?"Loki detected a crash in the running app.":"The app did not start.",a=this._errors&&Array.isArray(this._errors.lines)?this._errors.lines:[],s=a.length>0?a.map(r=>this._escapeHtml(r)).join(`
+`):"No error output captured yet.";return`
+      <div class="err-banner">
+        <p class="err-head">${this._escapeHtml(t)}</p>
+        <p class="err-body">${this._escapeHtml(i)}</p>
+        <div class="err-actions">
+          <button class="btn" data-action="restart">Restart</button>
+        </div>
+        <button class="details-toggle" data-action="toggle-details">
+          ${this._detailsOpen?"Hide technical details":"Technical details"}
+        </button>
+        ${this._detailsOpen?`<div class="details-body">${s}</div>`:""}
+      </div>
+    `}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=(i,a)=>{let s=e.querySelector(i);s&&s.addEventListener("click",a)};e.querySelectorAll('[data-action="restart"]').forEach(i=>i.addEventListener("click",()=>this._handleRestart())),e.querySelectorAll('[data-action="open-external"]').forEach(i=>i.addEventListener("click",()=>this._handleOpenExternal())),e.querySelectorAll('[data-action="retry-frame"]').forEach(i=>i.addEventListener("click",()=>this._handleRetryFrame())),t('[data-action="refresh"]',()=>this._handleRefresh()),t('[data-action="toggle-details"]',()=>this._toggleDetails())}_escapeHtml(e){return e==null?"":String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}};customElements.define("loki-app-preview",X);var kt={opus:{input:5,output:25,label:"Opus 4.6",provider:"claude"},sonnet:{input:3,output:15,label:"Sonnet 4.5",provider:"claude"},haiku:{input:1,output:5,label:"Haiku 4.5",provider:"claude"},"gpt-5.3-codex":{input:1.5,output:12,label:"GPT-5.3 Codex",provider:"codex"}},Z=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data={total_input_tokens:0,total_output_tokens:0,estimated_cost_usd:0,by_phase:{},by_model:{},budget_limit:null,budget_used:0,budget_remaining:null,connected:!1},this._api=null,this._pollInterval=null,this._modelPricing={...kt}}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadPricing(),this._loadCost(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadCost()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadPricing(){try{let e=await this._api.getPricing();if(e&&e.models){let t={};for(let[i,a]of Object.entries(e.models))t[i]={input:a.input,output:a.output,label:a.label||i,provider:a.provider||"unknown"};this._modelPricing=t,this._pricingSource=e.source||"api",this._pricingDate=e.updated||"",this._activeProvider=e.provider||"claude",this.render()}}catch{}}async _loadCost(){try{let e=await this._api.getCost();this._updateFromCost(e)}catch{this._data.connected=!1,this.render()}}_updateFromCost(e){e&&(this._data={...this._data,connected:!0,total_input_tokens:e.total_input_tokens||0,total_output_tokens:e.total_output_tokens||0,estimated_cost_usd:e.estimated_cost_usd||0,by_phase:e.by_phase||{},by_model:e.by_model||{},budget_limit:e.budget_limit,budget_used:e.budget_used||0,budget_remaining:e.budget_remaining},this.render())}_startPolling(){this._pollInterval=setInterval(async()=>{try{let e=await this._api.getCost();this._updateFromCost(e)}catch{this._data.connected=!1,this.render()}},5e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadCost(),this._pollInterval=setInterval(async()=>{try{let e=await this._api.getCost();this._updateFromCost(e)}catch{this._data.connected=!1,this.render()}},5e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}_formatTokens(e){return!e||e===0?"0":e>=1e6?(e/1e6).toFixed(2)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":String(e)}_formatUSD(e){return!e||e===0?"$0.00":e<.01?"<$0.01":"$"+e.toFixed(2)}_getBudgetPercent(){return!this._data.budget_limit||this._data.budget_limit<=0?0:Math.min(100,this._data.budget_used/this._data.budget_limit*100)}_getBudgetStatusClass(){let e=this._getBudgetPercent();return e>=90?"critical":e>=70?"warning":"ok"}_renderPhaseRows(){let e=this._data.by_phase;return!e||Object.keys(e).length===0?'<tr><td colspan="4" class="empty-cell">No phase data yet</td></tr>':Object.entries(e).map(([t,i])=>{let a=i.input_tokens||0,s=i.output_tokens||0,r=i.cost_usd||0;return`
         <tr>
           <td class="phase-name">${this._escapeHTML(t)}</td>
-          <td class="mono-cell">${this._formatTokens(i)}</td>
+          <td class="mono-cell">${this._formatTokens(a)}</td>
           <td class="mono-cell">${this._formatTokens(s)}</td>
           <td class="mono-cell cost-cell">${this._formatUSD(r)}</td>
         </tr>
-      `}).join("")}_renderModelRows(){let e=this._data.by_model;return!e||Object.keys(e).length===0?'<tr><td colspan="4" class="empty-cell">No model data yet</td></tr>':Object.entries(e).map(([t,a])=>{let i=a.input_tokens||0,s=a.output_tokens||0,r=a.cost_usd||0;return`
+      `}).join("")}_renderModelRows(){let e=this._data.by_model;return!e||Object.keys(e).length===0?'<tr><td colspan="4" class="empty-cell">No model data yet</td></tr>':Object.entries(e).map(([t,i])=>{let a=i.input_tokens||0,s=i.output_tokens||0,r=i.cost_usd||0;return`
         <tr>
           <td class="model-name">${this._escapeHTML(t)}</td>
-          <td class="mono-cell">${this._formatTokens(i)}</td>
+          <td class="mono-cell">${this._formatTokens(a)}</td>
           <td class="mono-cell">${this._formatTokens(s)}</td>
           <td class="mono-cell cost-cell">${this._formatUSD(r)}</td>
         </tr>
@@ -3744,7 +5579,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
           <div class="budget-not-set">No budget configured</div>
         </div>
-      `;let e=this._getBudgetPercent(),t=this._getBudgetStatusClass(),a=this._data.budget_remaining!=null?this._formatUSD(this._data.budget_remaining):this._formatUSD(this._data.budget_limit-this._data.budget_used);return`
+      `;let e=this._getBudgetPercent(),t=this._getBudgetStatusClass(),i=this._data.budget_remaining!=null?this._formatUSD(this._data.budget_remaining):this._formatUSD(this._data.budget_limit-this._data.budget_used);return`
       <div class="budget-section">
         <div class="section-header">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3757,11 +5592,11 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
         <div class="budget-details">
           <span class="budget-used">${this._formatUSD(this._data.budget_used)} used</span>
-          <span class="budget-remaining">${a} remaining</span>
+          <span class="budget-remaining">${i} remaining</span>
           <span class="budget-limit">of ${this._formatUSD(this._data.budget_limit)}</span>
         </div>
       </div>
-    `}_getPricingColorClass(e,t){return e==="opus"||e.includes("opus")?"opus":e==="sonnet"||e.includes("sonnet")?"sonnet":e==="haiku"||e.includes("haiku")?"haiku":t.provider==="codex"?"codex":t.provider==="gemini"?"gemini":""}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}render(){let e=this._data.total_input_tokens+this._data.total_output_tokens;this.shadowRoot.innerHTML=`
+    `}_getRARVTier(e){if(e==null)return null;switch(e%4){case 0:return"opus";case 1:return"sonnet";case 2:return"sonnet";case 3:return"haiku";default:return"sonnet"}}_getPricingColorClass(e,t){if(t.tier==="planning")return"opus";if(t.tier==="development")return"sonnet";if(t.tier==="fast")return"haiku";if(t.iteration!=null)return this._getRARVTier(t.iteration)||"";let i=(e||"").toLowerCase();return i.includes("opus")?"opus":i.includes("sonnet")?"sonnet":i.includes("haiku")?"haiku":t.provider==="codex"||i.includes("gpt")||i.includes("codex")?"codex":""}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}render(){let e=this._data.total_input_tokens+this._data.total_output_tokens;this.shadowRoot.innerHTML=`
       <style>
         ${this.getBaseStyles()}
 
@@ -3785,7 +5620,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .summary-card {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 14px 16px;
           transition: all var(--loki-transition);
         }
@@ -3798,7 +5633,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           margin-bottom: 6px;
         }
@@ -3807,7 +5642,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 22px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
-          color: var(--loki-text-primary);
+          color: var(--loki-accent);
           line-height: 1.2;
         }
 
@@ -3841,7 +5676,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 12px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
         }
 
@@ -3849,7 +5684,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .data-table-container {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 16px;
           overflow-x: auto;
         }
@@ -3866,7 +5701,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           border-bottom: 1px solid var(--loki-border);
         }
@@ -3912,7 +5747,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .budget-section {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 16px;
         }
 
@@ -3974,7 +5809,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .pricing-ref {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 16px;
         }
 
@@ -3987,7 +5822,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         .pricing-item {
           background: var(--loki-bg-tertiary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 10px 12px;
         }
 
@@ -4002,7 +5837,6 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .pricing-model.sonnet { color: var(--loki-sonnet); }
         .pricing-model.haiku { color: var(--loki-haiku); }
         .pricing-model.codex { color: var(--loki-blue); }
-        .pricing-model.gemini { color: var(--loki-green); }
 
         .pricing-meta {
           font-size: 10px;
@@ -4115,15 +5949,15 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
             ${this._pricingDate?`<span class="pricing-meta">Updated: ${this._escapeHTML(this._pricingDate)}</span>`:""}
           </div>
           <div class="pricing-grid">
-            ${Object.entries(ne).map(([t,a])=>`
+            ${Object.entries(this._modelPricing).map(([t,i])=>`
             <div class="pricing-item">
-              <div class="pricing-model ${this._getPricingColorClass(t,a)}">${a.label||t}</div>
-              <div class="pricing-rates">In: $${a.input.toFixed(2)} / Out: $${a.output.toFixed(2)}</div>
+              <div class="pricing-model ${this._getPricingColorClass(t,i)}">${i.label||t}</div>
+              <div class="pricing-rates">In: $${Number(i.input??0).toFixed(2)} / Out: $${Number(i.output??0).toFixed(2)}</div>
             </div>`).join("")}
           </div>
         </div>
       </div>
-    `}};customElements.get("loki-cost-dashboard")||customElements.define("loki-cost-dashboard",N);var q=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._checkpoints=[],this._pollInterval=null,this._lastDataHash=null,this._showCreateForm=!1,this._creating=!1,this._rollingBack=!1,this._rollbackTarget=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let[t]=await Promise.allSettled([this._api._get("/api/checkpoints?limit=50")]);t.status==="fulfilled"&&(this._checkpoints=Array.isArray(t.value)?t.value:t.value?.checkpoints||[]),this._error=null}catch(t){this._error=t.message}let e=JSON.stringify({c:this._checkpoints,e:this._error});e!==this._lastDataHash&&(this._lastDataHash=e,this.render())}async _createCheckpoint(){let e=this.shadowRoot.getElementById("checkpoint-message"),t=e?e.value.trim():"";if(t){this._creating=!0,this.render();try{await this._api._post("/api/checkpoints",{message:t}),this._showCreateForm=!1,this._creating=!1,this.dispatchEvent(new CustomEvent("checkpoint-action",{detail:{action:"create",message:t},bubbles:!0})),this._lastDataHash=null,await this._loadData()}catch(a){this._creating=!1,this._error=`Failed to create checkpoint: ${a.message}`,this.render()}}}async _rollbackCheckpoint(e){if(!this._rollingBack){this._rollingBack=!0,this.render();try{await this._api._post(`/api/checkpoints/${e}/rollback`),this._rollbackTarget=null,this.dispatchEvent(new CustomEvent("checkpoint-action",{detail:{action:"rollback",checkpointId:e},bubbles:!0})),this._lastDataHash=null,await this._loadData()}catch(t){this._rollbackTarget=null,this._error=`Failed to rollback: ${t.message}`}finally{this._rollingBack=!1,this.render()}}}_toggleCreateForm(){this._showCreateForm=!this._showCreateForm,this._rollbackTarget=null,this.render()}_confirmRollback(e){this._rollbackTarget=e,this.render()}_cancelRollback(){this._rollbackTarget=null,this.render()}_formatRelativeTime(e){if(!e)return"";try{let t=Date.now(),a=new Date(e).getTime(),i=Math.floor((t-a)/1e3);return i<60?`${i}s ago`:i<3600?`${Math.floor(i/60)}m ago`:i<86400?`${Math.floor(i/3600)}h ago`:`${Math.floor(i/86400)}d ago`}catch{return this._escapeHTML(e)}}render(){let e=this.shadowRoot;if(!e)return;let t=this._checkpoints.length;e.innerHTML=`
+    `}};customElements.get("loki-cost-dashboard")||customElements.define("loki-cost-dashboard",Z);var ee=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._checkpoints=[],this._pollInterval=null,this._lastDataHash=null,this._showCreateForm=!1,this._creating=!1,this._rollingBack=!1,this._rollbackTarget=null,this._notice=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let[t]=await Promise.allSettled([this._api._get("/api/checkpoints?limit=50")]);t.status==="fulfilled"&&(this._checkpoints=Array.isArray(t.value)?t.value:t.value?.checkpoints||[]),this._error=null}catch(t){this._error=t.message}let e=JSON.stringify({c:this._checkpoints,e:this._error});e!==this._lastDataHash&&(this._lastDataHash=e,this.render())}async _createCheckpoint(){let e=this.shadowRoot.getElementById("checkpoint-message"),t=e?e.value.trim():"";if(t){this._creating=!0,this.render();try{await this._api._post("/api/checkpoints",{message:t}),this._showCreateForm=!1,this._creating=!1,this.dispatchEvent(new CustomEvent("checkpoint-action",{detail:{action:"create",message:t},bubbles:!0})),this._lastDataHash=null,await this._loadData()}catch(i){this._creating=!1,this._error=`Failed to create checkpoint: ${i.message}`,this.render()}}}async _rollbackCheckpoint(e){if(!this._rollingBack){this._rollingBack=!0,this._notice=null,this.render();try{let t=await this._api._post(`/api/checkpoints/${e}/rollback`);this._rollbackTarget=null;let i=t&&t.pre_rollback_snapshot;this._notice=i?`Rolled back to ${e}. Undo this with checkpoint ${i}`:`Rolled back to ${e}.`,this.dispatchEvent(new CustomEvent("checkpoint-action",{detail:{action:"rollback",checkpointId:e,preRollbackSnapshot:i||null},bubbles:!0})),this._lastDataHash=null,await this._loadData()}catch(t){this._rollbackTarget=null,this._error=`Failed to rollback: ${t.message}`}finally{this._rollingBack=!1,this.render()}}}_toggleCreateForm(){this._showCreateForm=!this._showCreateForm,this._rollbackTarget=null,this._notice=null,this.render()}_confirmRollback(e){this._rollbackTarget=e,this.render()}_cancelRollback(){this._rollbackTarget=null,this._notice=null,this.render()}_formatRelativeTime(e){if(!e)return"";try{let t=Date.now(),i=new Date(e).getTime(),a=Math.floor((t-i)/1e3);return a<60?`${a}s ago`:a<3600?`${Math.floor(a/60)}m ago`:a<86400?`${Math.floor(a/3600)}h ago`:`${Math.floor(a/86400)}d ago`}catch{return this._escapeHTML(e)}}render(){let e=this.shadowRoot;if(!e)return;let t=this._checkpoints.length;e.innerHTML=`
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
       <div class="checkpoint-viewer">
         <div class="checkpoint-header">
@@ -4141,9 +5975,10 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         <div class="checkpoint-list">
           ${this._loading?'<div class="loading-state">Loading checkpoints...</div>':""}
           ${!this._loading&&t===0?'<div class="empty-state">No checkpoints yet. Create one to save the current state.</div>':""}
-          ${this._checkpoints.map(a=>this._renderCheckpointCard(a)).join("")}
+          ${this._checkpoints.map(i=>this._renderCheckpointCard(i)).join("")}
         </div>
 
+        ${this._notice?`<div class="notice-banner">${this._escapeHTML(this._notice)}</div>`:""}
         ${this._error?`<div class="error-banner">${this._escapeHTML(this._error)}</div>`:""}
       </div>
     `,this._attachEventListeners()}_renderCreateForm(){return`
@@ -4160,21 +5995,25 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           ${this._creating?"Creating...":"Save"}
         </button>
       </div>
-    `}_renderCheckpointCard(e){let t=e.git_sha?e.git_sha.substring(0,7):"unknown",a=Array.isArray(e.files)?e.files.length:e.files_count||0,i=this._rollbackTarget===e.id;return`
+    `}_renderCheckpointCard(e){let t=e.git_sha?e.git_sha.substring(0,7):"",i=e.files_count||(Array.isArray(e.files)?e.files.length:0),a=this._rollbackTarget===e.id,s=e.iteration!=null?`Iter ${e.iteration}`:"",r=e.provider||"",o=e.phase||"",n=e.git_branch||"",l=[s,r,o].filter(Boolean);return`
       <div class="checkpoint-card" data-checkpoint-id="${this._escapeHTML(e.id)}">
         <div class="card-header">
-          <span class="checkpoint-sha mono">${this._escapeHTML(t)}</span>
+          <div class="header-tags">
+            ${t?`<span class="checkpoint-sha mono">${this._escapeHTML(t)}</span>`:""}
+            ${l.map(c=>`<span class="checkpoint-tag">${this._escapeHTML(c)}</span>`).join("")}
+          </div>
           <span class="checkpoint-time">${this._formatRelativeTime(e.created_at)}</span>
         </div>
         <div class="card-body">
-          <p class="checkpoint-message">${this._escapeHTML(e.message||"No message")}</p>
+          <p class="checkpoint-message">${this._escapeHTML(e.message||"Checkpoint")}</p>
           <div class="card-meta">
-            <span class="meta-item">${a} file${a!==1?"s":""}</span>
-            <span class="meta-item mono">ID: ${this._escapeHTML(e.id)}</span>
+            ${i>0?`<span class="meta-item">${i} file${i!==1?"s":""}</span>`:""}
+            ${n?`<span class="meta-item mono">${this._escapeHTML(n)}</span>`:""}
+            <span class="meta-item mono">${this._escapeHTML(e.id)}</span>
           </div>
         </div>
         <div class="card-actions">
-          ${i?`
+          ${a?`
             <span class="rollback-confirm-text">Rollback to this checkpoint?</span>
             <button class="btn btn-sm btn-danger" data-action="confirm-rollback" data-id="${this._escapeHTML(e.id)}">Confirm</button>
             <button class="btn btn-sm" data-action="cancel-rollback">Cancel</button>
@@ -4183,7 +6022,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           `}
         </div>
       </div>
-    `}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("create-btn");t&&t.addEventListener("click",()=>this._toggleCreateForm());let a=e.getElementById("submit-create-btn");a&&a.addEventListener("click",()=>this._createCheckpoint());let i=e.getElementById("checkpoint-message");i&&(i.addEventListener("keydown",s=>{s.key==="Enter"&&!this._creating&&(s.preventDefault(),this._createCheckpoint())}),requestAnimationFrame(()=>i.focus())),e.querySelectorAll("[data-action]").forEach(s=>{s.addEventListener("click",r=>{r.stopPropagation();let o=s.dataset.action,l=s.dataset.id;o==="rollback"?this._confirmRollback(l):o==="confirm-rollback"?this._rollbackCheckpoint(l):o==="cancel-rollback"&&this._cancelRollback()})})}_getStyles(){return`
+    `}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("create-btn");t&&t.addEventListener("click",()=>this._toggleCreateForm());let i=e.getElementById("submit-create-btn");i&&i.addEventListener("click",()=>this._createCheckpoint());let a=e.getElementById("checkpoint-message");a&&(a.addEventListener("keydown",s=>{s.key==="Enter"&&!this._creating&&(s.preventDefault(),this._createCheckpoint())}),requestAnimationFrame(()=>a.focus())),e.querySelectorAll("[data-action]").forEach(s=>{s.addEventListener("click",r=>{r.stopPropagation();let o=s.dataset.action,n=s.dataset.id;o==="rollback"?this._confirmRollback(n):o==="confirm-rollback"?this._rollbackCheckpoint(n):o==="cancel-rollback"&&this._cancelRollback()})})}_getStyles(){return`
       :host {
         display: block;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -4217,7 +6056,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         font-size: 11px;
         font-weight: 600;
         padding: 2px 8px;
-        border-radius: 10px;
+        border-radius: 5px;
         background: var(--loki-accent-muted);
         color: var(--loki-accent);
       }
@@ -4225,7 +6064,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .btn {
         padding: 6px 14px;
         border: 1px solid var(--loki-border);
-        border-radius: 6px;
+        border-radius: 4px;
         background: var(--loki-bg-tertiary);
         color: var(--loki-text-primary);
         cursor: pointer;
@@ -4276,7 +6115,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         padding: 12px;
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
       }
 
       .form-input {
@@ -4284,7 +6123,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         padding: 8px 12px;
         background: var(--loki-bg-primary);
         border: 1px solid var(--loki-border);
-        border-radius: 6px;
+        border-radius: 4px;
         color: var(--loki-text-primary);
         font-size: 13px;
         font-family: inherit;
@@ -4314,7 +6153,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       .checkpoint-card {
         background: var(--loki-bg-card);
         border: 1px solid var(--loki-border);
-        border-radius: 8px;
+        border-radius: 5px;
         padding: 12px 16px;
         transition: all 0.15s ease;
       }
@@ -4328,6 +6167,23 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         justify-content: space-between;
         align-items: center;
         margin-bottom: 6px;
+      }
+
+      .header-tags {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .checkpoint-tag {
+        font-size: 10px;
+        font-weight: 500;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: var(--loki-bg-tertiary);
+        color: var(--loki-text-secondary);
+        text-transform: capitalize;
       }
 
       .checkpoint-sha {
@@ -4406,14 +6262,24 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         padding: 10px 14px;
         background: var(--loki-red-muted);
         border: 1px solid var(--loki-red-muted);
-        border-radius: 6px;
+        border-radius: 4px;
         color: var(--loki-red);
         font-size: 12px;
       }
-    `}};customElements.get("loki-checkpoint-viewer")||customElements.define("loki-checkpoint-viewer",q);var G=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data=null,this._connected=!1,this._activeTab="gauge",this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadContext(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&this._api&&(this._api.baseUrl=a,this._loadContext()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=u({baseUrl:e})}async _loadContext(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/context");t.ok&&(this._data=await t.json(),this._connected=!0)}catch{this._connected=!1}this.render()}_startPolling(){this._pollInterval=setInterval(()=>{this._loadContext()},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_setTab(e){this._activeTab=e,this.render()}_formatTokens(e){return!e||e===0?"0":e>=1e6?(e/1e6).toFixed(2)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":String(e)}_formatUSD(e){return!e||e===0?"$0.00":e<.01?"<$0.01":"$"+e.toFixed(2)}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getGaugeColor(e){return e>80?"var(--loki-red)":e>=60?"var(--loki-yellow)":"var(--loki-green)"}_getGaugeColorClass(e){return e>80?"gauge-red":e>=60?"gauge-yellow":"gauge-green"}_renderGaugeTab(){let e=this._data?.current||{},t=this._data?.totals||{},a=e.context_window_pct||0,i=this._getGaugeColor(a),s=this._getGaugeColorClass(a),r=70,o=2*Math.PI*r,l=o-a/100*o;return`
+
+      .notice-banner {
+        margin-top: 12px;
+        padding: 10px 14px;
+        background: var(--loki-green-muted, rgba(34, 197, 94, 0.12));
+        border: 1px solid var(--loki-green-muted, rgba(34, 197, 94, 0.3));
+        border-radius: 4px;
+        color: var(--loki-green, #22c55e);
+        font-size: 12px;
+      }
+    `}};customElements.get("loki-checkpoint-viewer")||customElements.define("loki-checkpoint-viewer",ee);var te=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data=null,this._connected=!1,this._activeTab="gauge",this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadContext(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadContext()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadContext(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/context");t.ok&&(this._data=await t.json(),this._connected=!0)}catch{this._connected=!1}this.render()}_startPolling(){this._pollInterval=setInterval(()=>{this._loadContext()},5e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadContext(),this._pollInterval=setInterval(()=>this._loadContext(),5e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}_setTab(e){this._activeTab=e,this.render()}_formatTokens(e){return!e||e===0?"0":e>=1e6?(e/1e6).toFixed(2)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":String(e)}_formatUSD(e){return!e||e===0?"$0.00":e<.01?"<$0.01":"$"+e.toFixed(2)}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getGaugeColor(e){return e>80?"var(--loki-red)":e>=60?"var(--loki-yellow)":"var(--loki-green)"}_getGaugeColorClass(e){return e>80?"gauge-red":e>=60?"gauge-yellow":"gauge-green"}_renderGaugeTab(){let e=this._data?.current||{},t=this._data?.totals||{},i=e.context_window_pct||0,a=this._getGaugeColor(i),s=this._getGaugeColorClass(i),r=70,o=2*Math.PI*r,n=o-i/100*o;return`
       <div class="gauge-tab">
         <div class="gauge-container">
-          <svg class="gauge-svg" viewBox="0 0 180 180" aria-label="Context window usage: ${a.toFixed(1)}%">
+          <svg class="gauge-svg" viewBox="0 0 180 180" aria-label="Context window usage: ${i.toFixed(1)}%">
             <circle
               class="gauge-bg"
               cx="90" cy="90" r="${r}"
@@ -4425,17 +6291,17 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
               class="gauge-ring ${s}"
               cx="90" cy="90" r="${r}"
               fill="none"
-              stroke="${i}"
+              stroke="${a}"
               stroke-width="12"
               stroke-linecap="round"
               stroke-dasharray="${o}"
-              stroke-dashoffset="${l}"
+              stroke-dashoffset="${n}"
               transform="rotate(-90 90 90)"
             />
             <text class="gauge-pct" x="90" y="85" text-anchor="middle"
                   fill="var(--loki-text-primary)" font-size="28" font-weight="600"
                   font-family="'JetBrains Mono', monospace">
-              ${a.toFixed(1)}%
+              ${i.toFixed(1)}%
             </text>
             <text class="gauge-label" x="90" y="108" text-anchor="middle"
                   fill="var(--loki-text-muted)" font-size="11">
@@ -4485,17 +6351,17 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
         </div>
       </div>
-    `}_renderTimelineTab(){let e=this._data?.per_iteration||[],t=this._data?.compactions||[];if(e.length===0)return'<div class="empty-state">No iteration data yet</div>';let a=Math.max(...e.map(r=>(r.input_tokens||0)+(r.output_tokens||0)+(r.cache_read_tokens||0)+(r.cache_creation_tokens||0))),i=new Set(t.map(r=>r.at_iteration)),s="";for(let r of e){let o=(r.input_tokens||0)+(r.output_tokens||0)+(r.cache_read_tokens||0)+(r.cache_creation_tokens||0),l=a>0?o/a*100:0,p=r.compacted===!0;i.has(r.iteration)&&(s+=`
+    `}_renderTimelineTab(){let e=this._data?.per_iteration||[],t=this._data?.compactions||[];if(e.length===0)return'<div class="empty-state">No iteration data yet</div>';let i=Math.max(...e.map(r=>(r.input_tokens||0)+(r.output_tokens||0)+(r.cache_read_tokens||0)+(r.cache_creation_tokens||0))),a=new Set(t.map(r=>r.at_iteration)),s="";for(let r of e){let o=(r.input_tokens||0)+(r.output_tokens||0)+(r.cache_read_tokens||0)+(r.cache_creation_tokens||0),n=i>0?o/i*100:0,l=r.compacted===!0;a.has(r.iteration)&&(s+=`
           <div class="timeline-compaction-row">
             <div class="compaction-line"></div>
             <span class="compaction-label">Context Compacted</span>
             <div class="compaction-line"></div>
           </div>
         `),s+=`
-        <div class="timeline-row ${p?"compacted":""}">
+        <div class="timeline-row ${l?"compacted":""}">
           <div class="timeline-iter">#${r.iteration}</div>
           <div class="timeline-bar-container">
-            <div class="timeline-bar" style="width: ${l.toFixed(1)}%"></div>
+            <div class="timeline-bar" style="width: ${n.toFixed(1)}%"></div>
           </div>
           <div class="timeline-tokens">${this._formatTokens(o)}</div>
           <div class="timeline-cost">${this._formatUSD(r.cost_usd)}</div>
@@ -4516,21 +6382,21 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         </div>
         ${s}
       </div>
-    `}_renderBreakdownTab(){let e=this._data?.per_iteration||[];if(e.length===0)return'<div class="empty-state">No iteration data yet</div>';let t=Math.max(...e.map(s=>(s.input_tokens||0)+(s.output_tokens||0)+(s.cache_read_tokens||0)+(s.cache_creation_tokens||0))),a=`
+    `}_renderBreakdownTab(){let e=this._data?.per_iteration||[];if(e.length===0)return'<div class="empty-state">No iteration data yet</div>';let t=Math.max(...e.map(s=>(s.input_tokens||0)+(s.output_tokens||0)+(s.cache_read_tokens||0)+(s.cache_creation_tokens||0))),i=`
       <div class="breakdown-legend">
         <div class="legend-item"><span class="legend-swatch swatch-input"></span> Input</div>
         <div class="legend-item"><span class="legend-swatch swatch-output"></span> Output</div>
         <div class="legend-item"><span class="legend-swatch swatch-cache-read"></span> Cache Read</div>
         <div class="legend-item"><span class="legend-swatch swatch-cache-create"></span> Cache Creation</div>
       </div>
-    `,i="";for(let s of e){let r=s.input_tokens||0,o=s.output_tokens||0,l=s.cache_read_tokens||0,p=s.cache_creation_tokens||0,A=r+o+l+p,D=t>0?r/t*100:0,le=t>0?o/t*100:0,de=t>0?l/t*100:0,ce=t>0?p/t*100:0;i+=`
+    `,a="";for(let s of e){let r=s.input_tokens||0,o=s.output_tokens||0,n=s.cache_read_tokens||0,l=s.cache_creation_tokens||0,c=r+o+n+l,p=t>0?r/t*100:0,u=t>0?o/t*100:0,b=t>0?n/t*100:0,m=t>0?l/t*100:0;a+=`
         <div class="breakdown-row">
           <div class="breakdown-iter">#${s.iteration}</div>
           <div class="breakdown-bar-container">
-            <div class="breakdown-bar bar-input" style="width: ${D.toFixed(1)}%"></div>
-            <div class="breakdown-bar bar-output" style="width: ${le.toFixed(1)}%"></div>
-            <div class="breakdown-bar bar-cache-read" style="width: ${de.toFixed(1)}%"></div>
-            <div class="breakdown-bar bar-cache-create" style="width: ${ce.toFixed(1)}%"></div>
+            <div class="breakdown-bar bar-input" style="width: ${p.toFixed(1)}%"></div>
+            <div class="breakdown-bar bar-output" style="width: ${u.toFixed(1)}%"></div>
+            <div class="breakdown-bar bar-cache-read" style="width: ${b.toFixed(1)}%"></div>
+            <div class="breakdown-bar bar-cache-create" style="width: ${m.toFixed(1)}%"></div>
           </div>
           <div class="breakdown-cost">${this._formatUSD(s.cost_usd)}</div>
         </div>
@@ -4544,8 +6410,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </svg>
           <span class="section-title">Token Type Breakdown</span>
         </div>
-        ${a}
         ${i}
+        ${a}
       </div>
     `}render(){let e=this._activeTab==="gauge"?this._renderGaugeTab():this._activeTab==="timeline"?this._renderTimelineTab():this._renderBreakdownTab();this.shadowRoot.innerHTML=`
       <style>
@@ -4567,7 +6433,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 2px;
           margin-bottom: 16px;
           background: var(--loki-bg-tertiary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 2px;
         }
 
@@ -4578,7 +6444,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           background: none;
           color: var(--loki-text-muted);
           cursor: pointer;
-          border-radius: 6px;
+          border-radius: 4px;
           font-size: 12px;
           font-weight: 500;
           transition: all 0.2s;
@@ -4590,9 +6456,8 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .tab.active {
-          background: var(--loki-bg-card);
-          color: var(--loki-text-primary);
-          box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          background: var(--loki-accent);
+          color: white;
         }
 
         /* Summary Cards */
@@ -4605,7 +6470,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .summary-card {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 14px 16px;
           transition: all var(--loki-transition);
         }
@@ -4618,7 +6483,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           margin-bottom: 6px;
         }
@@ -4627,7 +6492,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 22px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
-          color: var(--loki-text-primary);
+          color: var(--loki-accent);
           line-height: 1.2;
         }
 
@@ -4661,7 +6526,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 12px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
         }
 
@@ -4690,7 +6555,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .cache-info {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 16px;
         }
 
@@ -4734,7 +6599,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           border-bottom: 1px solid var(--loki-border);
           margin-bottom: 4px;
@@ -4746,7 +6611,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 8px;
           align-items: center;
           padding: 6px 8px;
-          border-radius: 6px;
+          border-radius: 4px;
           transition: background 0.15s;
         }
 
@@ -4814,7 +6679,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-yellow);
           white-space: nowrap;
         }
@@ -4834,7 +6699,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           padding: 10px 12px;
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 8px;
+          border-radius: 5px;
         }
 
         .legend-item {
@@ -4863,7 +6728,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 8px;
           align-items: center;
           padding: 6px 8px;
-          border-radius: 6px;
+          border-radius: 4px;
           transition: background 0.15s;
         }
 
@@ -4934,7 +6799,17 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
 
         ${e}
       </div>
-    `,this.shadowRoot.querySelectorAll(".tab").forEach(t=>{t.addEventListener("click",()=>{this._setTab(t.dataset.tab)})})}};customElements.get("loki-context-tracker")||customElements.define("loki-context-tracker",G);var ee={critical:"var(--loki-red, #ef4444)",warning:"var(--loki-yellow, #eab308)",info:"var(--loki-blue, #3b82f6)"},J=class extends c{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._notifications=[],this._triggers=[],this._summary={},this._connected=!1,this._activeTab="feed",this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._loadNotifications(),this._loadTriggers(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,a){t!==a&&(e==="api-url"&&(this._loadNotifications(),this._loadTriggers()),e==="theme"&&this._applyTheme())}async _loadNotifications(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/notifications");if(t.ok){let a=await t.json();this._notifications=a.notifications||[],this._summary=a.summary||{},this._connected=!0}}catch{this._connected=!1}this.render()}async _loadTriggers(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/notifications/triggers");if(t.ok){let a=await t.json();this._triggers=a.triggers||[]}}catch{}}async _acknowledgeNotification(e){let t=this.getAttribute("api-url")||window.location.origin;await fetch(t+"/api/notifications/"+encodeURIComponent(e)+"/acknowledge",{method:"POST"}),this._loadNotifications()}async _acknowledgeAll(){let e=this.getAttribute("api-url")||window.location.origin,t=this._notifications.filter(a=>!a.acknowledged);for(let a of t)await fetch(e+"/api/notifications/"+encodeURIComponent(a.id)+"/acknowledge",{method:"POST"});this._loadNotifications()}async _toggleTrigger(e,t){let a=this.getAttribute("api-url")||window.location.origin,i=this._triggers.map(s=>s.id===e?{...s,enabled:t}:s);await fetch(a+"/api/notifications/triggers",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({triggers:i})}),this._triggers=i,this.render()}_startPolling(){this._pollInterval=setInterval(()=>{this._loadNotifications(),this._loadTriggers()},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_formatTime(e){if(!e)return"";try{let t=new Date(e),i=new Date-t,s=Math.floor(i/1e3),r=Math.floor(s/60),o=Math.floor(r/60),l=Math.floor(o/24);return s<60?s+"s ago":r<60?r+"m ago":o<24?o+"h ago":l<7?l+"d ago":t.toLocaleDateString()}catch{return String(e)}}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getSeverityColor(e){return ee[e]||ee.info}_switchTab(e){this._activeTab=e,this.render()}_bindEvents(){let e=this.shadowRoot;e.querySelectorAll(".tab").forEach(a=>{a.addEventListener("click",()=>{this._switchTab(a.dataset.tab)})}),e.querySelectorAll(".ack-btn").forEach(a=>{a.addEventListener("click",()=>{this._acknowledgeNotification(a.dataset.id)})});let t=e.querySelector(".ack-all-btn");t&&t.addEventListener("click",()=>{this._acknowledgeAll()}),e.querySelectorAll(".toggle input").forEach(a=>{a.addEventListener("change",()=>{this._toggleTrigger(a.dataset.triggerId,a.checked)})})}_renderSummaryBar(){let e=this._summary.total||0,t=this._summary.unacknowledged||0,a=this._summary.critical||0;return`
+    `,this.shadowRoot.querySelectorAll(".tab").forEach(t=>{t.addEventListener("click",()=>{this._setTab(t.dataset.tab)})})}};customElements.get("loki-context-tracker")||customElements.define("loki-context-tracker",te);var ze={critical:"var(--loki-red, #ef4444)",warning:"var(--loki-yellow, #eab308)",info:"var(--loki-blue, #3b82f6)",success:"var(--loki-green, #1FC5A8)"},Ve={build:{label:"Build",icon:"B"},quality:{label:"Quality",icon:"Q"},system:{label:"System",icon:"S"},security:{label:"Security",icon:"!"}},ie=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._notifications=[],this._triggers=[],this._summary={},this._connected=!1,this._activeTab="feed",this._categoryFilter="all",this._panelOpen=!0,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._loadNotifications(),this._loadTriggers(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&(this._loadNotifications(),this._loadTriggers()),e==="theme"&&this._applyTheme())}async _loadNotifications(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/notifications");if(t.ok){let i=await t.json();this._notifications=i.notifications||[],this._summary=i.summary||{},this._connected=!0}}catch{this._connected=!1}this.render()}async _loadTriggers(){try{let e=this.getAttribute("api-url")||window.location.origin,t=await fetch(e+"/api/notifications/triggers");if(t.ok){let i=await t.json();this._triggers=i.triggers||[]}}catch{}}async _acknowledgeNotification(e){let t=this.getAttribute("api-url")||window.location.origin;try{await fetch(t+"/api/notifications/"+encodeURIComponent(e)+"/acknowledge",{method:"POST"})}catch{}this._loadNotifications()}async _unacknowledgeNotification(e){let t=this.getAttribute("api-url")||window.location.origin;await fetch(t+"/api/notifications/"+encodeURIComponent(e)+"/unacknowledge",{method:"POST"}),this._loadNotifications()}async _acknowledgeAll(){let e=this.getAttribute("api-url")||window.location.origin,t=this._notifications.filter(i=>!i.acknowledged);for(let i of t)await fetch(e+"/api/notifications/"+encodeURIComponent(i.id)+"/acknowledge",{method:"POST"});this._loadNotifications()}async _toggleTrigger(e,t){let i=this.getAttribute("api-url")||window.location.origin,a=this._triggers.map(s=>s.id===e?{...s,enabled:t}:s);await fetch(i+"/api/notifications/triggers",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({triggers:a})}),this._triggers=a,this.render()}_startPolling(){this._pollInterval=setInterval(()=>{this._loadNotifications(),this._loadTriggers()},5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_formatTime(e){if(!e)return"";try{let t=new Date(e),a=new Date-t,s=Math.floor(a/1e3),r=Math.floor(s/60),o=Math.floor(r/60),n=Math.floor(o/24);return s<60?s+"s ago":r<60?r+"m ago":o<24?o+"h ago":n<7?n+"d ago":t.toLocaleDateString()}catch{return String(e)}}_getTimeGroup(e){if(!e)return"Other";try{let t=new Date(e),i=new Date,a=new Date(i.getFullYear(),i.getMonth(),i.getDate()),s=new Date(a);s.setDate(s.getDate()-1);let r=new Date(a);return r.setDate(r.getDate()-7),t>=a?"Today":t>=s?"Yesterday":t>=r?"This Week":"Earlier"}catch{return"Other"}}_escapeHTML(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getSeverityColor(e){return ze[e]||ze.info}_getCategory(e){return e.category||e.type||"system"}_switchTab(e){this._activeTab=e,this.render()}_setCategoryFilter(e){this._categoryFilter=e,this.render()}_togglePanel(){this._panelOpen=!this._panelOpen,this.render()}_bindEvents(){let e=this.shadowRoot;e.querySelectorAll(".tab").forEach(a=>{a.addEventListener("click",()=>{this._switchTab(a.dataset.tab)})}),e.querySelectorAll(".cat-btn").forEach(a=>{a.addEventListener("click",()=>{this._setCategoryFilter(a.dataset.cat)})}),e.querySelectorAll(".ack-btn").forEach(a=>{a.addEventListener("click",s=>{s.stopPropagation(),this._acknowledgeNotification(a.dataset.id)})}),e.querySelectorAll(".unread-btn").forEach(a=>{a.addEventListener("click",s=>{s.stopPropagation(),this._unacknowledgeNotification(a.dataset.id)})});let t=e.querySelector(".ack-all-btn");t&&t.addEventListener("click",()=>{this._acknowledgeAll()});let i=e.querySelector(".bell-icon");i&&i.addEventListener("click",()=>{this._togglePanel()}),e.querySelectorAll(".toggle input").forEach(a=>{a.addEventListener("change",()=>{this._toggleTrigger(a.dataset.triggerId,a.checked)})}),e.querySelectorAll(".dismiss-btn").forEach(a=>{a.addEventListener("click",s=>{s.stopPropagation(),this._acknowledgeNotification(a.dataset.id)})})}_renderBellIcon(){let e=this._summary.unacknowledged||0;return`
+      <div class="bell-container">
+        <button class="bell-icon" title="${e} unread notifications">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          ${e>0?`<span class="badge">${e>99?"99+":e}</span>`:""}
+        </button>
+      </div>
+    `}_renderSummaryBar(){let e=this._summary.total||0,t=this._summary.unacknowledged||0,i=this._summary.critical||0;return`
       <div class="summary-row">
         <div class="summary-grid">
           <div class="summary-card">
@@ -4947,22 +6822,30 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           </div>
           <div class="summary-card">
             <div class="card-label">Critical</div>
-            <div class="card-value" style="color: ${ee.critical}">${a}</div>
+            <div class="card-value" style="color: ${ze.critical}">${i}</div>
           </div>
         </div>
         ${t>0?`
-          <button class="ack-all-btn">Acknowledge All</button>
+          <button class="ack-all-btn">Mark All as Read</button>
         `:""}
       </div>
-    `}_renderNotificationList(){return this._notifications.length===0?'<div class="empty-state">No notifications</div>':[...this._notifications].sort((t,a)=>new Date(a.timestamp)-new Date(t.timestamp)).map(t=>{let a=t.acknowledged,i=this._getSeverityColor(t.severity);return`
-        <div class="notif-row ${a?"acknowledged":""}">
-          <span class="severity-dot" style="background: ${i};" title="${this._escapeHTML(t.severity)}"></span>
-          <span class="notif-time">${this._formatTime(t.timestamp)}</span>
-          <span class="notif-message">${this._escapeHTML(t.message)}</span>
-          ${t.iteration!=null?`<span class="notif-iteration">iter ${t.iteration}</span>`:""}
-          ${a?"":`<button class="ack-btn" data-id="${this._escapeHTML(t.id)}">Ack</button>`}
-        </div>
-      `}).join("")}_renderTriggerList(){return this._triggers.length===0?'<div class="empty-state">No triggers configured</div>':this._triggers.map(e=>{let t=this._getSeverityColor(e.severity),a=e.threshold_pct!=null?`Threshold: ${e.threshold_pct}%`:e.pattern||"";return`
+    `}_renderCategoryFilter(){return`
+      <div class="category-bar">
+        ${["all","build","quality","system","security"].map(t=>{let i=this._categoryFilter===t,a=t==="all"?"All":Ve[t]?.label||t;return`<button class="cat-btn ${i?"active":""}" data-cat="${t}">${a}</button>`}).join("")}
+      </div>
+    `}_renderNotificationList(){let e=[...this._notifications].sort((s,r)=>new Date(r.timestamp)-new Date(s.timestamp));if(this._categoryFilter!=="all"&&(e=e.filter(s=>this._getCategory(s)===this._categoryFilter)),e.length===0)return'<div class="empty-state">No notifications</div>';let t={};for(let s of e){let r=this._getTimeGroup(s.timestamp);t[r]||(t[r]=[]),t[r].push(s)}let i=["Today","Yesterday","This Week","Earlier","Other"],a="";for(let s of i)!t[s]||t[s].length===0||(a+=`<div class="time-group-label">${s}</div>`,a+=t[s].map(r=>{let o=r.acknowledged,n=this._getSeverityColor(r.severity),l=this._getCategory(r),c=Ve[l]||{label:l,icon:"?"};return`
+          <div class="notif-row ${o?"acknowledged":""}">
+            <span class="severity-dot" style="background: ${n};" title="${this._escapeHTML(r.severity)}"></span>
+            <span class="cat-icon" title="${c.label}">${c.icon}</span>
+            <span class="notif-time">${this._formatTime(r.timestamp)}</span>
+            <span class="notif-message">${this._escapeHTML(r.message)}</span>
+            ${r.iteration!=null?`<span class="notif-iteration">iter ${r.iteration}</span>`:""}
+            <span class="notif-actions">
+              ${o?`<button class="unread-btn" data-id="${this._escapeHTML(r.id)}" title="Mark as unread">Unread</button>`:`<button class="ack-btn" data-id="${this._escapeHTML(r.id)}" title="Mark as read">Read</button>`}
+              <button class="dismiss-btn" data-id="${this._escapeHTML(r.id)}" title="Dismiss">&#10005;</button>
+            </span>
+          </div>
+        `}).join(""));return a}_renderTriggerList(){return this._triggers.length===0?'<div class="empty-state">No triggers configured</div>':this._triggers.map(e=>{let t=this._getSeverityColor(e.severity),i=e.threshold_pct!=null?`Threshold: ${e.threshold_pct}%`:e.pattern||"";return`
         <div class="trigger-row">
           <label class="toggle">
             <input type="checkbox" data-trigger-id="${this._escapeHTML(e.id)}" ${e.enabled?"checked":""}>
@@ -4971,7 +6854,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           <span class="trigger-name">${this._escapeHTML(e.id)}</span>
           <span class="trigger-badge type-badge">${this._escapeHTML(e.type||"custom")}</span>
           <span class="trigger-badge severity-badge" style="background: ${t}; color: #fff;">${this._escapeHTML(e.severity||"info")}</span>
-          ${a?`<span class="trigger-info">${this._escapeHTML(a)}</span>`:""}
+          ${i?`<span class="trigger-info">${this._escapeHTML(i)}</span>`:""}
         </div>
       `}).join("")}render(){this.shadowRoot.innerHTML=`
       <style>
@@ -4987,13 +6870,58 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           gap: 16px;
         }
 
+        /* Bell icon */
+        .bell-container {
+          display: flex;
+          justify-content: flex-end;
+          margin-bottom: 8px;
+        }
+
+        .bell-icon {
+          position: relative;
+          background: none;
+          border: 1px solid var(--loki-border);
+          border-radius: 5px;
+          padding: 8px 10px;
+          cursor: pointer;
+          color: var(--loki-text-secondary);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s;
+          font-family: inherit;
+        }
+
+        .bell-icon:hover {
+          border-color: var(--loki-accent);
+          color: var(--loki-accent);
+        }
+
+        .badge {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          background: var(--loki-red, #C45B5B);
+          color: white;
+          font-size: 10px;
+          font-weight: 700;
+          min-width: 18px;
+          height: 18px;
+          border-radius: 9px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 4px;
+          font-family: 'JetBrains Mono', monospace;
+        }
+
         /* Tabs */
         .tabs {
           display: flex;
           gap: 2px;
-          margin-bottom: 16px;
+          margin-bottom: 12px;
           background: var(--loki-bg-tertiary);
-          border-radius: 8px;
+          border-radius: 5px;
           padding: 2px;
         }
 
@@ -5004,7 +6932,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           background: none;
           color: var(--loki-text-muted);
           cursor: pointer;
-          border-radius: 6px;
+          border-radius: 4px;
           font-size: 12px;
           font-weight: 500;
           transition: all 0.2s;
@@ -5016,9 +6944,40 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .tab.active {
-          background: var(--loki-bg-card);
-          color: var(--loki-text-primary);
-          box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+          background: var(--loki-accent);
+          color: white;
+        }
+
+        /* Category filter bar */
+        .category-bar {
+          display: flex;
+          gap: 4px;
+          margin-bottom: 12px;
+          flex-wrap: wrap;
+        }
+
+        .cat-btn {
+          padding: 4px 10px;
+          border: 1px solid var(--loki-border);
+          background: none;
+          color: var(--loki-text-muted);
+          cursor: pointer;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 500;
+          transition: all 0.2s;
+          font-family: inherit;
+        }
+
+        .cat-btn:hover {
+          border-color: var(--loki-border-light);
+          color: var(--loki-text-secondary);
+        }
+
+        .cat-btn.active {
+          background: var(--loki-accent-muted);
+          border-color: var(--loki-accent);
+          color: var(--loki-accent);
         }
 
         /* Summary bar */
@@ -5039,7 +6998,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         .summary-card {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           padding: 14px 16px;
           transition: all var(--loki-transition);
         }
@@ -5052,7 +7011,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 10px;
           font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.05em;
           color: var(--loki-text-muted);
           margin-bottom: 6px;
         }
@@ -5061,16 +7020,16 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 22px;
           font-weight: 600;
           font-family: 'JetBrains Mono', monospace;
-          color: var(--loki-text-primary);
+          color: var(--loki-accent);
           line-height: 1.2;
         }
 
-        /* Acknowledge All button */
+        /* Mark All as Read button */
         .ack-all-btn {
           padding: 8px 16px;
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 8px;
+          border-radius: 5px;
           color: var(--loki-text-primary);
           font-size: 12px;
           font-weight: 500;
@@ -5086,11 +7045,22 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           color: var(--loki-accent);
         }
 
+        /* Time group labels */
+        .time-group-label {
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--loki-text-muted);
+          padding: 10px 14px 4px;
+          background: var(--loki-bg-secondary);
+        }
+
         /* Notification list */
         .notif-list {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -5116,10 +7086,25 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
         }
 
         .severity-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
+          width: 12px;
+          height: 6px;
+          border-radius: 2px;
           flex-shrink: 0;
+        }
+
+        .cat-icon {
+          width: 22px;
+          height: 22px;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: 700;
+          background: var(--loki-bg-tertiary);
+          color: var(--loki-text-secondary);
+          flex-shrink: 0;
+          font-family: 'JetBrains Mono', monospace;
         }
 
         .notif-time {
@@ -5143,15 +7128,21 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           color: var(--loki-text-muted);
           background: var(--loki-bg-tertiary);
           padding: 2px 8px;
-          border-radius: 10px;
+          border-radius: 5px;
           white-space: nowrap;
         }
 
-        .ack-btn {
+        .notif-actions {
+          display: flex;
+          gap: 4px;
+          flex-shrink: 0;
+        }
+
+        .ack-btn, .unread-btn, .dismiss-btn {
           padding: 4px 10px;
           background: none;
           border: 1px solid var(--loki-border);
-          border-radius: 6px;
+          border-radius: 4px;
           color: var(--loki-text-secondary);
           font-size: 11px;
           cursor: pointer;
@@ -5160,16 +7151,26 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-family: inherit;
         }
 
-        .ack-btn:hover {
+        .ack-btn:hover, .unread-btn:hover {
           border-color: var(--loki-accent);
           color: var(--loki-accent);
+        }
+
+        .dismiss-btn {
+          padding: 4px 6px;
+          font-size: 12px;
+        }
+
+        .dismiss-btn:hover {
+          border-color: var(--loki-red);
+          color: var(--loki-red);
         }
 
         /* Trigger list */
         .trigger-list {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
           overflow: hidden;
         }
 
@@ -5202,7 +7203,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           text-transform: uppercase;
           letter-spacing: 0.3px;
           padding: 3px 8px;
-          border-radius: 10px;
+          border-radius: 5px;
           white-space: nowrap;
         }
 
@@ -5240,7 +7241,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           position: absolute;
           inset: 0;
           background: var(--loki-bg-tertiary);
-          border-radius: 10px;
+          border-radius: 5px;
           cursor: pointer;
           transition: 0.2s;
         }
@@ -5274,7 +7275,7 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
           font-size: 13px;
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
-          border-radius: 10px;
+          border-radius: 5px;
         }
 
         /* Offline notice */
@@ -5287,30 +7288,5366 @@ var LokiDashboard=(()=>{var K=Object.defineProperty;var pe=Object.getOwnProperty
       </style>
 
       <div class="notif-container">
+        ${this._renderBellIcon()}
+
         ${this._connected?"":'<div class="offline-notice">Connecting to notifications API...</div>'}
 
-        <!-- Tabs -->
-        <div class="tabs">
-          <button class="tab ${this._activeTab==="feed"?"active":""}" data-tab="feed">Feed</button>
-          <button class="tab ${this._activeTab==="triggers"?"active":""}" data-tab="triggers">Triggers</button>
+        ${this._panelOpen?`
+          <!-- Tabs -->
+          <div class="tabs">
+            <button class="tab ${this._activeTab==="feed"?"active":""}" data-tab="feed">Feed</button>
+            <button class="tab ${this._activeTab==="triggers"?"active":""}" data-tab="triggers">Triggers</button>
+          </div>
+
+          <!-- Feed Tab -->
+          ${this._activeTab==="feed"?`
+            ${this._renderSummaryBar()}
+            ${this._renderCategoryFilter()}
+            <div class="notif-list">
+              ${this._renderNotificationList()}
+            </div>
+          `:""}
+
+          <!-- Triggers Tab -->
+          ${this._activeTab==="triggers"?`
+            <div class="trigger-list">
+              ${this._renderTriggerList()}
+            </div>
+          `:""}
+        `:""}
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-notification-center")||customElements.define("loki-notification-center",ie);var ae=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data=null,this._error=null,this._loading=!0,this._api=null,this._pollInterval=null,this._expandedDecisions=new Set}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{this._data=await this._api._get("/api/session-diff"),this._error=null}catch(e){this._error=e.message,this._data=null}this._loading=!1,this.render()}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_toggleDecision(e){this._expandedDecisions.has(e)?this._expandedDecisions.delete(e):this._expandedDecisions.add(e),this.render()}render(){let e=`
+      ${this.getBaseStyles()}
+
+      :host {
+        display: block;
+      }
+
+      .diff-container {
+        background: var(--loki-bg-card);
+        border: 1px solid var(--loki-glass-border);
+        border-radius: 5px;
+        padding: 16px;
+        margin-top: 16px;
+        transition: all var(--loki-transition);
+      }
+
+      .diff-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .diff-header svg {
+        width: 16px;
+        height: 16px;
+        color: var(--loki-text-muted);
+        flex-shrink: 0;
+      }
+
+      .diff-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+      }
+
+      .diff-period {
+        font-size: 11px;
+        color: var(--loki-text-muted);
+        margin-left: auto;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .summary-item {
+        background: var(--loki-bg-secondary);
+        border: 1px solid var(--loki-border);
+        border-radius: 5px;
+        padding: 10px 12px;
+        text-align: center;
+      }
+
+      .summary-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 4px;
+      }
+
+      .summary-value {
+        font-size: 18px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-accent);
+      }
+
+      .summary-value.error-count {
+        color: var(--loki-red);
+      }
+
+      .highlights-section {
+        margin-bottom: 14px;
+      }
+
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 8px;
+      }
+
+      .highlight-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .highlight-item {
+        font-size: 12px;
+        color: var(--loki-text-secondary);
+        padding: 6px 10px;
+        background: var(--loki-bg-secondary);
+        border-radius: 4px;
+        border-left: 3px solid var(--loki-accent);
+      }
+
+      .decisions-section {
+        margin-top: 14px;
+      }
+
+      .decision-item {
+        border: 1px solid var(--loki-border);
+        border-radius: 5px;
+        margin-bottom: 6px;
+        overflow: hidden;
+      }
+
+      .decision-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        background: var(--loki-bg-secondary);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--loki-text-primary);
+        transition: background var(--loki-transition);
+        border: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+      }
+
+      .decision-header:hover {
+        background: var(--loki-bg-hover);
+      }
+
+      .decision-arrow {
+        font-size: 10px;
+        color: var(--loki-text-muted);
+        transition: transform 0.15s ease;
+      }
+
+      .decision-arrow.expanded {
+        transform: rotate(90deg);
+      }
+
+      .decision-reasoning {
+        padding: 8px 12px;
+        font-size: 11px;
+        color: var(--loki-text-secondary);
+        border-top: 1px solid var(--loki-border);
+        line-height: 1.5;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 20px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .error-state {
+        text-align: center;
+        padding: 16px;
+        color: var(--loki-red);
+        font-size: 12px;
+      }
+
+      .loading-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        gap: 8px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--loki-border);
+        border-top-color: var(--loki-accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    `;if(this._loading){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="diff-container">
+          <div class="loading-state"><div class="spinner"></div> Loading session diff...</div>
+        </div>
+      `;return}if(this._error){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="diff-container">
+          <div class="diff-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            <span class="diff-title">Session Resume</span>
+          </div>
+          <div class="empty-state">No session diff available</div>
+        </div>
+      `;return}let t=this._data||{},i=this._escapeHtml(t.period||"--"),a=t.counts||{},s=t.highlights||[],r=t.decisions||[],o="";s.length>0&&(o=`
+        <div class="highlights-section">
+          <div class="section-label">Highlights</div>
+          <ul class="highlight-list">
+            ${s.map(l=>`<li class="highlight-item">${this._escapeHtml(l)}</li>`).join("")}
+          </ul>
+        </div>
+      `);let n="";r.length>0&&(n=`
+        <div class="decisions-section">
+          <div class="section-label">Decisions</div>
+          ${r.map((l,c)=>{let p=this._expandedDecisions.has(c);return`
+              <div class="decision-item">
+                <button class="decision-header" data-index="${c}">
+                  <span class="decision-arrow ${p?"expanded":""}">&#9654;</span>
+                  ${this._escapeHtml(l.title||l.decision||"Decision")}
+                </button>
+                ${p?`<div class="decision-reasoning">${this._escapeHtml(l.reasoning||l.rationale||"No reasoning provided")}</div>`:""}
+              </div>
+            `}).join("")}
+        </div>
+      `),this.shadowRoot.innerHTML=`
+      <style>${e}</style>
+      <div class="diff-container">
+        <div class="diff-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          <span class="diff-title">Session Resume</span>
+          <span class="diff-period">${i}</span>
         </div>
 
-        <!-- Feed Tab -->
-        ${this._activeTab==="feed"?`
-          ${this._renderSummaryBar()}
-          <div class="notif-list">
-            ${this._renderNotificationList()}
+        <div class="summary-grid">
+          <div class="summary-item">
+            <div class="summary-label">Created</div>
+            <div class="summary-value">${a.tasks_created!=null?a.tasks_created:"--"}</div>
           </div>
-        `:""}
+          <div class="summary-item">
+            <div class="summary-label">Completed</div>
+            <div class="summary-value">${a.tasks_completed!=null?a.tasks_completed:"--"}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Blocked</div>
+            <div class="summary-value">${a.tasks_blocked!=null?a.tasks_blocked:"--"}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Errors</div>
+            <div class="summary-value ${(a.errors||0)>0?"error-count":""}">${a.errors!=null?a.errors:"--"}</div>
+          </div>
+        </div>
 
-        <!-- Triggers Tab -->
-        ${this._activeTab==="triggers"?`
-          <div class="trigger-list">
-            ${this._renderTriggerList()}
+        ${o}
+        ${n}
+      </div>
+    `,this.shadowRoot.querySelectorAll(".decision-header").forEach(l=>{l.addEventListener("click",()=>{this._toggleDecision(parseInt(l.dataset.index))})})}};customElements.get("loki-session-diff")||customElements.define("loki-session-diff",ae);var se=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data=null,this._error=null,this._loading=!0,this._optimizing=!1,this._api=null,this._pollInterval=null,this._expandedChanges=new Set}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{this._data=await this._api._get("/api/prompt-versions"),this._error=null}catch(e){this._error=e.message,this._data=null}this._loading=!1,this.render()}async _triggerOptimize(){if(!this._optimizing){this._optimizing=!0,this.render();try{await this._api._post("/api/prompt-optimize?dry_run=false",{}),await this._loadData()}catch(e){this._error=e.message}this._optimizing=!1,this.render()}}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),6e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_formatTime(e){if(!e)return"--";try{let t=new Date(e),a=new Date-t,s=Math.floor(a/6e4);if(s<1)return"Just now";if(s<60)return`${s}m ago`;let r=Math.floor(s/60);return r<24?`${r}h ago`:`${Math.floor(r/24)}d ago`}catch{return"--"}}_toggleChange(e){this._expandedChanges.has(e)?this._expandedChanges.delete(e):this._expandedChanges.add(e),this.render()}render(){let e=`
+      ${this.getBaseStyles()}
+
+      :host {
+        display: block;
+      }
+
+      .optimizer-container {
+        background: var(--loki-bg-card);
+        border: 1px solid var(--loki-glass-border);
+        border-radius: 5px;
+        padding: 16px;
+        transition: all var(--loki-transition);
+      }
+
+      .optimizer-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .optimizer-header svg {
+        width: 16px;
+        height: 16px;
+        color: var(--loki-text-muted);
+        flex-shrink: 0;
+      }
+
+      .optimizer-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+      }
+
+      .optimize-btn {
+        margin-left: auto;
+        padding: 4px 12px;
+        background: var(--loki-accent);
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all var(--loki-transition);
+        font-family: inherit;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .optimize-btn:hover:not(:disabled) {
+        background: var(--loki-accent-hover);
+      }
+
+      .optimize-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .info-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .info-item {
+        background: var(--loki-bg-secondary);
+        border: 1px solid var(--loki-border);
+        border-radius: 5px;
+        padding: 10px 12px;
+        text-align: center;
+      }
+
+      .info-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 4px;
+      }
+
+      .info-value {
+        font-size: 16px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-accent);
+      }
+
+      .info-value.muted {
+        font-size: 12px;
+        color: var(--loki-text-secondary);
+      }
+
+      .changes-section {
+        margin-top: 14px;
+      }
+
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 8px;
+      }
+
+      .change-item {
+        border: 1px solid var(--loki-border);
+        border-radius: 5px;
+        margin-bottom: 6px;
+        overflow: hidden;
+      }
+
+      .change-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        background: var(--loki-bg-secondary);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--loki-text-primary);
+        transition: background var(--loki-transition);
+        border: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+      }
+
+      .change-header:hover {
+        background: var(--loki-bg-hover);
+      }
+
+      .change-arrow {
+        font-size: 10px;
+        color: var(--loki-text-muted);
+        transition: transform 0.15s ease;
+      }
+
+      .change-arrow.expanded {
+        transform: rotate(90deg);
+      }
+
+      .change-rationale {
+        padding: 8px 12px;
+        font-size: 11px;
+        color: var(--loki-text-secondary);
+        border-top: 1px solid var(--loki-border);
+        line-height: 1.5;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 20px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .loading-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        gap: 8px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--loki-border);
+        border-top-color: var(--loki-accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      .spinner-sm {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    `;if(this._loading){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="optimizer-container">
+          <div class="loading-state"><div class="spinner"></div> Loading prompt data...</div>
+        </div>
+      `;return}if(this._error&&!this._data){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="optimizer-container">
+          <div class="optimizer-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            <span class="optimizer-title">Prompt Optimizer</span>
+          </div>
+          <div class="empty-state">No prompt optimization data available</div>
+        </div>
+      `;return}let t=this._data||{},i=t.version!=null?t.version:"--",a=this._formatTime(t.last_optimized),s=t.failures_analyzed!=null?t.failures_analyzed:"--",r=t.changes||[],o="";r.length>0&&(o=`
+        <div class="changes-section">
+          <div class="section-label">Changes</div>
+          ${r.map((l,c)=>{let p=this._expandedChanges.has(c);return`
+              <div class="change-item">
+                <button class="change-header" data-index="${c}">
+                  <span class="change-arrow ${p?"expanded":""}">&#9654;</span>
+                  ${this._escapeHtml(l.description||l.title||"Change")}
+                </button>
+                ${p?`<div class="change-rationale">${this._escapeHtml(l.rationale||l.reasoning||"No rationale provided")}</div>`:""}
+              </div>
+            `}).join("")}
+        </div>
+      `),this.shadowRoot.innerHTML=`
+      <style>${e}</style>
+      <div class="optimizer-container">
+        <div class="optimizer-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <span class="optimizer-title">Prompt Optimizer</span>
+          <button class="optimize-btn" id="optimize-btn" ${this._optimizing?"disabled":""}>
+            ${this._optimizing?'<div class="spinner-sm"></div> Optimizing...':"Optimize Now"}
+          </button>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="info-label">Version</div>
+            <div class="info-value">v${this._escapeHtml(String(i))}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Last Optimized</div>
+            <div class="info-value muted">${this._escapeHtml(a)}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Failures Analyzed</div>
+            <div class="info-value">${s}</div>
+          </div>
+        </div>
+
+        ${o}
+      </div>
+    `;let n=this.shadowRoot.getElementById("optimize-btn");n&&n.addEventListener("click",()=>this._triggerOptimize()),this.shadowRoot.querySelectorAll(".change-header").forEach(l=>{l.addEventListener("click",()=>{this._toggleChange(parseInt(l.dataset.index))})})}};customElements.get("loki-prompt-optimizer")||customElements.define("loki-prompt-optimizer",se);var re=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._data=null,this._history=[],this._error=null,this._loading=!0,this._scanning=!1,this._rigourAvailable=!0,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{let[e,t]=await Promise.allSettled([this._api._get("/api/quality-score"),this._api._get("/api/quality-score/history")]);if(e.status==="fulfilled"){let i=e.value;i&&i.error&&i.error.includes("not installed")?(this._rigourAvailable=!1,this._data=null):(this._rigourAvailable=!0,this._data=i),this._error=null}else(e.reason?.message||"").includes("404")?(this._rigourAvailable=!1,this._data=null,this._error=null):(this._error="Failed to load quality score",this._data=null);if(t.status==="fulfilled"){let i=t.value;this._history=Array.isArray(i)?i.slice(-10):(i.scores||[]).slice(-10)}}catch(e){this._error=e.message,this._data=null}this._loading=!1,this.render()}async _triggerScan(){if(!this._scanning){this._scanning=!0,this.render();try{await this._api._post("/api/quality-scan",{},{timeout:3e5}),await this._loadData()}catch(e){this._error=e.message}this._scanning=!1,this.render()}}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),6e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getGrade(e){return e>=90?{grade:"A",color:"var(--loki-success)"}:e>=80?{grade:"B",color:"var(--loki-success)"}:e>=70?{grade:"C",color:"var(--loki-warning)"}:e>=60?{grade:"D",color:"var(--loki-warning)"}:{grade:"F",color:"var(--loki-error)"}}_renderSparkline(e){if(!e||e.length<2)return"";let t=e.map(c=>typeof c=="number"?c:c.score||0),i=Math.min(...t),s=Math.max(...t)-i||1,r=120,o=32,n=2,l=t.map((c,p)=>{let u=n+p/(t.length-1)*(r-n*2),b=n+(1-(c-i)/s)*(o-n*2);return`${u},${b}`}).join(" ");return`
+      <svg width="${r}" height="${o}" viewBox="0 0 ${r} ${o}" class="sparkline">
+        <polyline points="${l}" fill="none" stroke="var(--loki-accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${l.split(" ").pop().split(",")[0]}" cy="${l.split(" ").pop().split(",")[1]}" r="2.5" fill="var(--loki-accent)"/>
+      </svg>
+    `}render(){let e=`
+      ${this.getBaseStyles()}
+
+      :host {
+        display: block;
+      }
+
+      .quality-container {
+        background: var(--loki-bg-card);
+        border: 1px solid var(--loki-glass-border);
+        border-radius: 5px;
+        padding: 16px;
+        transition: all var(--loki-transition);
+      }
+
+      .quality-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .quality-header svg {
+        width: 16px;
+        height: 16px;
+        color: var(--loki-text-muted);
+        flex-shrink: 0;
+      }
+
+      .quality-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+      }
+
+      .scan-btn {
+        margin-left: auto;
+        padding: 4px 12px;
+        background: var(--loki-accent);
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all var(--loki-transition);
+        font-family: inherit;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .scan-btn:hover:not(:disabled) {
+        background: var(--loki-accent-hover);
+      }
+
+      .scan-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .score-section {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .score-display {
+        text-align: center;
+        min-width: 80px;
+      }
+
+      .score-number {
+        font-size: 36px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        line-height: 1;
+        color: var(--loki-text-primary);
+      }
+
+      .grade-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        margin-top: 4px;
+      }
+
+      .sparkline-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+
+      .sparkline-label {
+        font-size: 10px;
+        color: var(--loki-text-muted);
+        margin-bottom: 4px;
+      }
+
+      .sparkline {
+        display: block;
+      }
+
+      .categories-section {
+        margin-bottom: 14px;
+      }
+
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 8px;
+      }
+
+      .category-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
+      .category-name {
+        font-size: 11px;
+        color: var(--loki-text-secondary);
+        min-width: 100px;
+        text-transform: capitalize;
+      }
+
+      .progress-bar {
+        flex: 1;
+        height: 6px;
+        background: var(--loki-bg-tertiary);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+      }
+
+      .category-score {
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-secondary);
+        min-width: 28px;
+        text-align: right;
+      }
+
+      .findings-section {
+        margin-top: 14px;
+      }
+
+      .findings-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .finding-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .finding-critical {
+        background: rgba(224, 112, 112, 0.15);
+        color: var(--loki-error);
+      }
+
+      .finding-major {
+        background: rgba(232, 184, 74, 0.15);
+        color: var(--loki-warning);
+      }
+
+      .finding-minor {
+        background: rgba(232, 184, 74, 0.10);
+        color: var(--loki-warning);
+      }
+
+      .finding-info {
+        background: var(--loki-bg-tertiary);
+        color: var(--loki-text-muted);
+      }
+
+      .not-installed {
+        text-align: center;
+        padding: 24px 16px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .not-installed-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--loki-text-secondary);
+        margin-bottom: 6px;
+      }
+
+      .install-cmd {
+        display: inline-block;
+        padding: 4px 10px;
+        background: var(--loki-bg-secondary);
+        border: 1px solid var(--loki-border);
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--loki-accent);
+        margin-top: 8px;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 20px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .loading-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        gap: 8px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--loki-border);
+        border-top-color: var(--loki-accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      .spinner-sm {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    `;if(this._loading){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="quality-container">
+          <div class="loading-state"><div class="spinner"></div> Loading quality score...</div>
+        </div>
+      `;return}if(!this._rigourAvailable){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="quality-container">
+          <div class="quality-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="quality-title">Quality Score</span>
+          </div>
+          <div class="not-installed">
+            <div class="not-installed-title">Rigour not installed</div>
+            <div>Quality scoring requires the Rigour analysis engine.</div>
+            <div class="install-cmd">pip install rigour</div>
+          </div>
+        </div>
+      `;return}if(this._error&&!this._data){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="quality-container">
+          <div class="quality-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="quality-title">Quality Score</span>
+          </div>
+          <div class="empty-state">No quality data available</div>
+        </div>
+      `;return}let t=this._data||{},i=t.score!=null?Math.round(t.score):0,{grade:a,color:s}=this._getGrade(i),r=t.categories||{},o=t.findings||{},n=["security","code_quality","compliance","best_practices"],l={security:"Security",code_quality:"Code Quality",compliance:"Compliance",best_practices:"Best Practices"},c=n.map(f=>{let x=r[f]!=null?Math.round(r[f]):0,w=x>=80?"var(--loki-success)":x>=60?"var(--loki-warning)":"var(--loki-error)";return`
+        <div class="category-item">
+          <span class="category-name">${l[f]||f}</span>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${x}%;background:${w};"></div>
+          </div>
+          <span class="category-score">${x}</span>
+        </div>
+      `}).join(""),u=[{key:"critical",cls:"finding-critical",label:"Critical"},{key:"major",cls:"finding-major",label:"Major"},{key:"minor",cls:"finding-minor",label:"Minor"},{key:"info",cls:"finding-info",label:"Info"}].filter(f=>(o[f.key]||0)>0).map(f=>`<span class="finding-badge ${f.cls}">${f.label}: ${o[f.key]}</span>`).join(""),b=this._renderSparkline(this._history);this.shadowRoot.innerHTML=`
+      <style>${e}</style>
+      <div class="quality-container">
+        <div class="quality-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span class="quality-title">Quality Score</span>
+          <button class="scan-btn" id="scan-btn" ${this._scanning?"disabled":""}>
+            ${this._scanning?'<div class="spinner-sm"></div> Scanning...':"Run Scan"}
+          </button>
+        </div>
+
+        <div class="score-section">
+          <div class="score-display">
+            <div class="score-number">${i}</div>
+            <span class="grade-badge" style="background:${s};color:#fff;">${a}</span>
+          </div>
+          ${b?`
+            <div class="sparkline-container">
+              <span class="sparkline-label">Trend (last ${this._history.length})</span>
+              ${b}
+            </div>
+          `:""}
+        </div>
+
+        <div class="categories-section">
+          <div class="section-label">Categories</div>
+          ${c}
+        </div>
+
+        ${u?`
+          <div class="findings-section">
+            <div class="section-label">Findings</div>
+            <div class="findings-row">${u}</div>
           </div>
         `:""}
       </div>
-    `,this._bindEvents()}};customElements.get("loki-notification-center")||customElements.define("loki-notification-center",J);var Te="1.3.0";function Ee(d={}){return d.theme?h.setTheme(d.theme):d.autoDetectContext!==!1?h.init():S.init(),d.apiUrl&&u({baseUrl:d.apiUrl}),{theme:h.getTheme(),context:h.detectContext()}}return be(Se);})();
+    `;let m=this.shadowRoot.getElementById("scan-btn");m&&m.addEventListener("click",()=>this._triggerScan())}};customElements.get("loki-quality-score")||customElements.define("loki-quality-score",re);var Ye=["understand","guardrail","migrate","verify"],We={understand:"Understand",guardrail:"Guardrail",migrate:"Migrate",verify:"Verify"},xt={understand:"#5b9bd5",guardrail:"#e8b84a",migrate:"#5bb870",verify:"#5bc8c8"},oe=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._migration=null,this._migrations=[],this._loading=!0,this._error=null,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._fetchMigrations(),this._pollInterval=setInterval(()=>this._fetchData(),15e3)}disconnectedCallback(){super.disconnectedCallback(),this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._fetchMigrations()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _fetchMigrations(){try{let e=await this._api._get("/api/migration/list");this._migrations=Array.isArray(e)?e:e.migrations||[],this._error=null;let t=this._migrations.find(i=>i.status==="in_progress"||i.status==="active");t?await this._fetchStatus(t.migration_id||t.id):this._migration=null}catch(e){this._error=e.message,this._migrations=[],this._migration=null}this._loading=!1,this.render()}async _fetchStatus(e){try{this._migration=await this._api._get(`/api/migration/${encodeURIComponent(e)}/status`),this._error=null}catch(t){this._error=t.message}}async _fetchData(){let e=this._migration&&(this._migration.migration_id||this._migration.id);e?(await this._fetchStatus(e),this.render()):await this._fetchMigrations()}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"):""}_getPhaseIcon(e,t,i){return(i||[]).includes(e)?"[x]":e===t?"[>]":"[ ]"}_getPhaseIndex(e){let t=Ye.indexOf(e);return t>=0?t:0}_renderPhaseBar(e,t){let i=t||[];return Ye.map(a=>{let s=i.includes(a),r=a===e,o=xt[a],n=s?"1":r?"0.7":"0.2",l=this._getPhaseIcon(a,e,t);return`
+        <div class="phase-segment">
+          <div class="phase-bar-fill" style="background:${o};opacity:${n};"></div>
+          <div class="phase-label">
+            <span class="phase-icon">${l}</span>
+            ${We[a]}
+          </div>
+        </div>
+      `}).join("")}_renderFeatureStats(e){if(!e)return"";let t=e.passing||0,i=e.total||0,a=i>0?Math.round(t/i*100):0,s=a>=80?"var(--loki-success)":a>=50?"var(--loki-warning)":"var(--loki-error)";return`
+      <div class="stat-card">
+        <div class="stat-header">Feature Tracking</div>
+        <div class="stat-value">${t} / ${i}</div>
+        <div class="stat-pct">${a}% passing</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:${a}%;background:${s};"></div>
+        </div>
+      </div>
+    `}_renderStepProgress(e){if(!e)return"";let t=e.current||0,i=e.total||0,a=i>0?Math.round(t/i*100):0;return`
+      <div class="stat-card">
+        <div class="stat-header">Step Progress</div>
+        <div class="stat-value">${t} / ${i}</div>
+        <div class="stat-pct">${a}% complete</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:${a}%;background:var(--loki-accent);"></div>
+        </div>
+      </div>
+    `}_renderSeamSummary(e){if(!e)return"";let t=e.total||0,i=e.high||0,a=e.medium||0,s=e.low||0;return`
+      <div class="stat-card">
+        <div class="stat-header">Seam Summary</div>
+        <div class="stat-value">${t} seams</div>
+        <div class="seam-breakdown">
+          <span class="seam-badge seam-high">High: ${i}</span>
+          <span class="seam-badge seam-medium">Med: ${a}</span>
+          <span class="seam-badge seam-low">Low: ${s}</span>
+        </div>
+      </div>
+    `}_renderCheckpoint(e){if(!e)return"";let t=e.timestamp?new Date(e.timestamp).toLocaleString():"--",i=this._escapeHtml(e.step_id||e.stepId||"--");return`
+      <div class="checkpoint-section">
+        <div class="section-label">Last Checkpoint</div>
+        <div class="checkpoint-row">
+          <span class="checkpoint-label">Time:</span>
+          <span class="checkpoint-value">${this._escapeHtml(t)}</span>
+        </div>
+        <div class="checkpoint-row">
+          <span class="checkpoint-label">Step:</span>
+          <span class="checkpoint-value mono">${i}</span>
+        </div>
+      </div>
+    `}_renderMigrationList(){return this._migrations.length===0?'<div class="empty-state">No migrations found</div>':`
+      <table class="migration-table">
+        <thead>
+          <tr><th>ID</th><th>Migration</th><th>Status</th></tr>
+        </thead>
+        <tbody>${this._migrations.map(t=>{let i=this._escapeHtml(t.migration_id||t.id||"--"),a=this._escapeHtml(t.source||"--"),s=this._escapeHtml(t.target||"--"),r=this._escapeHtml(t.status||"--"),o=t.status==="completed"?"status-done":t.status==="failed"?"status-failed":"status-pending";return`
+        <tr>
+          <td class="mono">${i}</td>
+          <td>${a} -> ${s}</td>
+          <td><span class="status-badge ${o}">${r}</span></td>
+        </tr>
+      `}).join("")}</tbody>
+      </table>
+    `}render(){let e=`
+      ${this.getBaseStyles()}
+
+      :host { display: block; }
+
+      .migration-container {
+        background: var(--loki-bg-card);
+        border: 1px solid var(--loki-glass-border);
+        border-radius: 5px;
+        padding: 16px;
+        transition: all var(--loki-transition);
+      }
+
+      .migration-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .migration-header svg {
+        width: 16px;
+        height: 16px;
+        color: var(--loki-text-muted);
+        flex-shrink: 0;
+      }
+
+      .migration-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+      }
+
+      .migration-id {
+        margin-left: auto;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted);
+      }
+
+      .meta-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+      }
+
+      .meta-item {
+        font-size: 12px;
+        color: var(--loki-text-secondary);
+      }
+
+      .meta-label {
+        font-weight: 600;
+        color: var(--loki-text-muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        display: block;
+        margin-bottom: 2px;
+      }
+
+      .mono {
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .phase-bar-container {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        margin-bottom: 16px;
+      }
+
+      .phase-segment {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .phase-bar-fill {
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        transition: opacity 0.3s ease;
+      }
+
+      .phase-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--loki-text-muted);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .phase-icon {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 9px;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .stat-card {
+        background: var(--loki-bg-secondary);
+        border: 1px solid var(--loki-border);
+        border-radius: 5px;
+        padding: 10px 12px;
+      }
+
+      .stat-header {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 6px;
+      }
+
+      .stat-value {
+        font-size: 20px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-primary);
+        line-height: 1;
+        margin-bottom: 4px;
+      }
+
+      .stat-pct {
+        font-size: 11px;
+        color: var(--loki-text-muted);
+        margin-bottom: 6px;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 6px;
+        background: var(--loki-bg-tertiary);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+      }
+
+      .seam-breakdown {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+        flex-wrap: wrap;
+      }
+
+      .seam-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 500;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .seam-high {
+        background: rgba(224, 112, 112, 0.15);
+        color: var(--loki-error);
+      }
+
+      .seam-medium {
+        background: rgba(232, 184, 74, 0.15);
+        color: var(--loki-warning);
+      }
+
+      .seam-low {
+        background: var(--loki-bg-tertiary);
+        color: var(--loki-text-muted);
+      }
+
+      .checkpoint-section {
+        margin-bottom: 14px;
+      }
+
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        margin-bottom: 8px;
+      }
+
+      .checkpoint-row {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+
+      .checkpoint-label {
+        color: var(--loki-text-muted);
+        min-width: 40px;
+      }
+
+      .checkpoint-value {
+        color: var(--loki-text-secondary);
+      }
+
+      .migration-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .migration-table th {
+        text-align: left;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted);
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--loki-border);
+      }
+
+      .migration-table td {
+        padding: 8px 10px;
+        color: var(--loki-text-secondary);
+        border-bottom: 1px solid var(--loki-border);
+      }
+
+      .migration-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+
+      .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 500;
+      }
+
+      .status-done {
+        background: rgba(91, 184, 112, 0.15);
+        color: var(--loki-success);
+      }
+
+      .status-failed {
+        background: rgba(224, 112, 112, 0.15);
+        color: var(--loki-error);
+      }
+
+      .status-pending {
+        background: var(--loki-bg-tertiary);
+        color: var(--loki-text-muted);
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 20px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .loading-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        gap: 8px;
+        color: var(--loki-text-muted);
+        font-size: 12px;
+      }
+
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid var(--loki-border);
+        border-top-color: var(--loki-accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    `,t='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>';if(this._loading){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="migration-container">
+          <div class="loading-state"><div class="spinner"></div> Loading migrations...</div>
+        </div>
+      `;return}if(this._error&&!this._migration&&this._migrations.length===0){this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="migration-container">
+          <div class="migration-header">
+            ${t}
+            <span class="migration-title">Migration Dashboard</span>
+          </div>
+          <div class="empty-state">No migration data available</div>
+        </div>
+      `;return}if(this._migration){let i=this._migration,a=this._escapeHtml(i.migration_id||i.id||"--"),s=this._escapeHtml(i.source||"--"),r=this._escapeHtml(i.target||"--"),o=i.current_phase||i.phase||"understand",n=i.completed_phases||[];this.shadowRoot.innerHTML=`
+        <style>${e}</style>
+        <div class="migration-container">
+          <div class="migration-header">
+            ${t}
+            <span class="migration-title">Migration Dashboard</span>
+            <span class="migration-id">${a}</span>
+          </div>
+
+          <div class="meta-row">
+            <div class="meta-item">
+              <span class="meta-label">Source</span>
+              <span class="mono">${s}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">-></span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Target</span>
+              <span class="mono">${r}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Phase</span>
+              <span>${We[o]||this._escapeHtml(o)}</span>
+            </div>
+          </div>
+
+          <div class="section-label">Phase Progress</div>
+          <div class="phase-bar-container">
+            ${this._renderPhaseBar(o,n)}
+          </div>
+
+          <div class="stats-grid">
+            ${this._renderFeatureStats(i.features)}
+            ${this._renderStepProgress(i.steps)}
+            ${this._renderSeamSummary(i.seams)}
+          </div>
+
+          ${this._renderCheckpoint(i.last_checkpoint||i.checkpoint)}
+        </div>
+      `;return}this.shadowRoot.innerHTML=`
+      <style>${e}</style>
+      <div class="migration-container">
+        <div class="migration-header">
+          ${t}
+          <span class="migration-title">Migration Dashboard</span>
+        </div>
+        <div class="section-label">Migrations</div>
+        ${this._renderMigrationList()}
+      </div>
+    `}};customElements.get("loki-migration-dashboard")||customElements.define("loki-migration-dashboard",oe);var _t=[["claude-opus","claude"],["claude-sonnet","claude"],["claude-haiku","claude"],["opus","claude"],["sonnet","claude"],["haiku","claude"],["claude","claude"],["gpt-4","codex"],["gpt-5","codex"],["gpt","codex"],["codex","codex"],["o1","codex"],["o3","codex"],["cline","cline"],["aider","aider"]];function yt(d){if(d==null)return null;switch(d%4){case 0:return{tier:"planning",model:"opus",provider:"claude"};case 1:return{tier:"development",model:"sonnet",provider:"claude"};case 2:return{tier:"development",model:"sonnet",provider:"claude"};case 3:return{tier:"fast",model:"haiku",provider:"claude"};default:return{tier:"development",model:"sonnet",provider:"claude"}}}function wt(d,e){if(e!=null){let i=yt(e);if(i)return i.provider}let t=(d||"").toLowerCase();for(let[i,a]of _t)if(t.includes(i))return a;return"unknown"}var ne=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._api=null,this._pollInterval=null,this._activeTab="heatmap",this._activity=[],this._tools=[],this._cost={},this._context={},this._trends=[],this._toolTimeRange="7d",this._connected=!1,this._loading=!1}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _fetchActivity(){let e=this._api.baseUrl||window.location.origin,t=new AbortController,i=setTimeout(()=>t.abort(),1e4);try{let a=await fetch(`${e}/api/activity?limit=1000`,{signal:t.signal});if(clearTimeout(i),!a.ok)throw new Error(`Activity API ${a.status}`);return a.json()}catch(a){throw clearTimeout(i),a}}async _loadData(){if(!(!this.isConnected||this._loading)){this._loading=!0;try{let e=await Promise.allSettled([this._fetchActivity(),this._api.getToolEfficiency(50),this._api.getCost(),this._api.getContext(),this._api.getLearningTrends({timeRange:this._toolTimeRange})]);if(e[0].status==="fulfilled"&&(this._activity=e[0].value||[]),e[1].status==="fulfilled"&&(this._tools=e[1].value||[]),e[2].status==="fulfilled"&&(this._cost=e[2].value||{}),e[3].status==="fulfilled"&&(this._context=e[3].value||{}),e[4].status==="fulfilled"){let t=e[4].value||{};this._trends=Array.isArray(t)?t:t.dataPoints||[]}this._connected=e.some(t=>t.status==="fulfilled"),this.render()}finally{this._loading=!1}}}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e4),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e4))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}_computeHeatmap(){let e={},t=Array.isArray(this._activity)?this._activity:[];for(let c of t){let p=c.timestamp||c.ts||c.created_at;if(!p)continue;let u=new Date(p);if(isNaN(u.getTime()))continue;let b=this._localDateKey(u);e[b]=(e[b]||0)+1}let i=new Date;i.setHours(0,0,0,0);let a=i.getDay(),s=new Date(i),r=new Date(i);r.setDate(r.getDate()-(52*7+a));let o=[],n=new Date(r),l=0;for(;n<=s;){let c=this._localDateKey(n),p=e[c]||0;p>l&&(l=p),o.push({date:c,count:p,day:n.getDay()}),n.setDate(n.getDate()+1)}return{cells:o,maxCount:l}}_getHeatmapLevel(e,t){if(e===0||t===0)return 0;let i=e/t;return i<=.25?1:i<=.5?2:i<=.75?3:4}_renderHeatmap(){let{cells:e,maxCount:t}=this._computeHeatmap(),i=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],a=["","Mon","","Wed","","Fri",""],s=[],r=-1,o=-1;for(let p=0;p<e.length;p++){e[p].day===0&&o++;let u=new Date(e[p].date).getMonth();u!==r&&(s.push({month:i[u],col:Math.max(o,1)}),r=u)}let n=s.map(p=>`<span class="heatmap-month" style="grid-column: ${p.col}">${p.month}</span>`).join(""),l=e.map(p=>`<div class="heatmap-cell level-${this._getHeatmapLevel(p.count,t)}" title="${p.date}: ${p.count} activities"></div>`).join(""),c=a.map(p=>`<span class="heatmap-day-label">${p}</span>`).join("");return`
+      <div class="heatmap-container">
+        <div class="heatmap-months">${n}</div>
+        <div class="heatmap-body">
+          <div class="heatmap-day-labels">${c}</div>
+          <div class="heatmap-grid">${l}</div>
+        </div>
+        <div class="heatmap-legend">
+          <span class="heatmap-legend-label">Less</span>
+          <div class="heatmap-cell level-0"></div>
+          <div class="heatmap-cell level-1"></div>
+          <div class="heatmap-cell level-2"></div>
+          <div class="heatmap-cell level-3"></div>
+          <div class="heatmap-cell level-4"></div>
+          <span class="heatmap-legend-label">More</span>
+        </div>
+      </div>
+    `}_computeToolUsage(){let e=Array.isArray(this._tools)?this._tools:[],t={};for(let i of e){let a=i.tool||i.name||i.tool_name||i.data&&i.data.tool_name||"unknown",s=i.count??i.calls??i.frequency??(i.data&&i.data.count)??1;t[a]=(t[a]||0)+s}return Object.entries(t).sort((i,a)=>a[1]-i[1]).slice(0,15)}_renderToolUsage(){let e=this._computeToolUsage(),t=e.length>0?e[0][1]:0;return e.length===0?'<div class="empty-state">No tool usage data available</div>':'<div class="tool-bars">'+e.map(([a,s])=>{let r=t>0?s/t*100:0;return`
+        <div class="tool-row">
+          <span class="tool-name" title="${this._esc(a)}">${this._esc(a)}</span>
+          <div class="tool-bar-track">
+            <div class="tool-bar-fill" style="width: ${r.toFixed(1)}%"></div>
+          </div>
+          <span class="tool-count">${s}</span>
+        </div>
+      `}).join("")+"</div>"}_computeVelocity(){let e=this._context||{},t=e.per_iteration||e.iterations||[],i=Array.isArray(t)&&t.length>0?t.length:e.totals&&e.totals.iterations_tracked||e.total_iterations||0,a=0;if(Array.isArray(t)&&t.length>=2){let o=t.map(n=>new Date(n.timestamp||n.started_at||n.ts).getTime()).filter(n=>!isNaN(n)).sort((n,l)=>n-l);if(o.length>=2){let n=(o[o.length-1]-o[0])/36e5;n>0&&(a=Math.max(o.length-1,1)/n)}}let s=[],r=Array.isArray(this._trends)?this._trends:[];if(r.length>0)for(let o of r.slice(-24))s.push(o.count??o.value??0);else if(Array.isArray(t)&&t.length>0){let o={};for(let l of t){let c=l.timestamp||l.started_at||l.ts;if(!c)continue;let u=new Date(c).toISOString().slice(0,13);o[u]=(o[u]||0)+1}let n=Object.keys(o).sort().slice(-24);for(let l of n)s.push(o[l])}return{iterPerHour:a,totalIterations:i,hourlyBuckets:s}}_renderVelocity(){let{iterPerHour:e,totalIterations:t,hourlyBuckets:i}=this._computeVelocity(),a=Math.max(1,...i),s=i.length>0?i.map(o=>{let n=o/a*100;return`<div class="spark-bar" style="height: ${Math.max(2,n)}%" title="${o}"></div>`}).join(""):'<div class="empty-state" style="padding: 12px">No trend data</div>';return`
+      ${`
+      <div class="tool-filter">
+        <select class="tool-time-select" id="tool-time-range">
+          <option value="1h" ${this._toolTimeRange==="1h"?"selected":""}>Trend: Last hour</option>
+          <option value="24h" ${this._toolTimeRange==="24h"?"selected":""}>Trend: Last 24h</option>
+          <option value="7d" ${this._toolTimeRange==="7d"?"selected":""}>Trend: Last 7 days</option>
+          <option value="30d" ${this._toolTimeRange==="30d"?"selected":""}>Trend: Last 30 days</option>
+        </select>
+      </div>
+    `}
+      <div class="velocity-cards">
+        <div class="velocity-card">
+          <div class="velocity-label">Iterations / Hour</div>
+          <div class="velocity-value">${e.toFixed(1)}</div>
+        </div>
+        <div class="velocity-card">
+          <div class="velocity-label">Total Iterations</div>
+          <div class="velocity-value">${t}</div>
+        </div>
+      </div>
+      <div class="sparkline-container">
+        <div class="sparkline-label">Activity Trend (hourly)</div>
+        <div class="sparkline">${s}</div>
+      </div>
+    `}_computeProviders(){let e=this._cost.by_model||{},t={};for(let[r,o]of Object.entries(e)){let n=wt(r);t[n]||(t[n]={cost:0,tokens:0,iterations:0,models:[]});let l=o.cost_usd||0,c=(o.input_tokens||0)+(o.output_tokens||0);t[n].cost+=l,t[n].tokens+=c,t[n].models.push(r)}let a=(this._context.totals||{}).iterations_tracked||this._context.total_iterations||this._context.iteration||0,s=this._cost.estimated_cost_usd||0;for(let r of Object.values(t))if(s>0&&a>0){let o=r.cost/s;r.iterations=Math.round(o*a)}return t}_renderProviders(){let e=this._computeProviders(),t={claude:{label:"Claude",color:"var(--loki-accent)"},codex:{label:"Codex",color:"var(--loki-success)"},cline:{label:"Cline",color:"var(--loki-info)"},aider:{label:"Aider",color:"var(--loki-blue)"},unknown:{label:"Other",color:"var(--loki-text-muted)"}},i=Object.entries(e);return i.length===0?'<div class="empty-state">No provider data available. Start a session to see cross-provider comparison.</div>':`
+      <div class="provider-grid">
+        ${i.map(([a,s])=>{let r=t[a]||t.unknown,o=s.iterations>0?(s.cost/s.iterations).toFixed(4):"--",n=s.iterations>0?Math.round(s.tokens/s.iterations).toLocaleString():"--";return`
+            <div class="provider-card">
+              <div class="provider-accent" style="background: ${r.color}"></div>
+              <div class="provider-body">
+                <div class="provider-name">${r.label}</div>
+                <div class="provider-stat">
+                  <span class="provider-stat-label">Total Cost</span>
+                  <span class="provider-stat-value">${s.cost>0?"$"+s.cost.toFixed(2):"$0.00"}</span>
+                </div>
+                <div class="provider-stat">
+                  <span class="provider-stat-label">Cost / Iteration</span>
+                  <span class="provider-stat-value">${o!=="--"?"$"+o:o}</span>
+                </div>
+                <div class="provider-stat">
+                  <span class="provider-stat-label">Tokens / Iteration</span>
+                  <span class="provider-stat-value">${n}</span>
+                </div>
+                <div class="provider-stat">
+                  <span class="provider-stat-label">Total Tokens</span>
+                  <span class="provider-stat-value">${(s.tokens??0).toLocaleString()}</span>
+                </div>
+                <div class="provider-models">${s.models.map(l=>this._esc(l)).join(", ")}</div>
+              </div>
+            </div>
+          `}).join("")}
+      </div>
+    `}_esc(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;"):""}_localDateKey(e){return`${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,"0")}-${String(e.getDate()).padStart(2,"0")}`}_handleTabClick(e){let t=e.target.closest("[data-tab]");t&&(this._activeTab=t.dataset.tab,this.render())}_handleTimeRangeChange(e){this._toolTimeRange=e.target.value,this._loadData()}render(){let e=[{id:"heatmap",label:"Activity",icon:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'},{id:"tools",label:"Tools",icon:'<svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>'},{id:"velocity",label:"Velocity",icon:'<svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>'},{id:"providers",label:"Providers",icon:'<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'}],t="";switch(this._activeTab){case"heatmap":t=this._renderHeatmap();break;case"tools":t=this._renderToolUsage();break;case"velocity":t=this._renderVelocity();break;case"providers":t=this._renderProviders();break}this.shadowRoot.innerHTML=`
+      <style>
+        ${this.getBaseStyles()}
+
+        :host { display: block; }
+
+        .analytics-container {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        /* Tab bar */
+        .tab-bar {
+          display: flex;
+          gap: 2px;
+          background: var(--loki-bg-secondary);
+          border-radius: 8px;
+          padding: 3px;
+        }
+
+        .tab-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border: none;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--loki-text-muted);
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tab-btn:hover {
+          color: var(--loki-text-primary);
+          background: var(--loki-bg-hover);
+        }
+
+        .tab-btn.active {
+          color: var(--loki-accent);
+          background: var(--loki-bg-card);
+          box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+
+        .tab-btn svg {
+          width: 14px;
+          height: 14px;
+          stroke: currentColor;
+          stroke-width: 2;
+          fill: none;
+          flex-shrink: 0;
+        }
+
+        .tab-content {
+          background: var(--loki-bg-card);
+          border: 1px solid var(--loki-border);
+          border-radius: 8px;
+          padding: 20px;
+          min-height: 200px;
+        }
+
+        .empty-state {
+          text-align: center;
+          padding: 32px 16px;
+          color: var(--loki-text-muted);
+          font-size: 13px;
+        }
+
+        .offline-notice {
+          text-align: center;
+          padding: 20px;
+          color: var(--loki-text-muted);
+          font-size: 12px;
+        }
+
+        /* ---------- Heatmap ---------- */
+        .heatmap-container {
+          overflow-x: auto;
+        }
+
+        .heatmap-months {
+          display: grid;
+          grid-auto-flow: column;
+          grid-auto-columns: 14px;
+          gap: 2px;
+          margin-left: 34px;
+          margin-bottom: 4px;
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        .heatmap-body {
+          display: flex;
+          gap: 4px;
+        }
+
+        .heatmap-day-labels {
+          display: grid;
+          grid-template-rows: repeat(7, 14px);
+          gap: 2px;
+          font-size: 10px;
+          color: var(--loki-text-muted);
+          line-height: 14px;
+          text-align: right;
+          width: 30px;
+          flex-shrink: 0;
+        }
+
+        .heatmap-grid {
+          display: grid;
+          grid-template-rows: repeat(7, 14px);
+          grid-auto-flow: column;
+          grid-auto-columns: 14px;
+          gap: 2px;
+        }
+
+        .heatmap-cell {
+          width: 12px;
+          height: 12px;
+          border-radius: 2px;
+          transition: opacity 0.15s;
+        }
+
+        .heatmap-cell.level-0 { background: var(--loki-bg-tertiary); }
+        .heatmap-cell.level-1 { background: var(--loki-accent); opacity: 0.25; }
+        .heatmap-cell.level-2 { background: var(--loki-accent); opacity: 0.50; }
+        .heatmap-cell.level-3 { background: var(--loki-accent); opacity: 0.75; }
+        .heatmap-cell.level-4 { background: var(--loki-accent); opacity: 1.0; }
+
+        .heatmap-legend {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          margin-top: 10px;
+          margin-left: 34px;
+        }
+
+        .heatmap-legend .heatmap-cell {
+          width: 12px;
+          height: 12px;
+        }
+
+        .heatmap-legend-label {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+        }
+
+        /* ---------- Tool Usage ---------- */
+        .tool-filter {
+          margin-bottom: 12px;
+        }
+
+        .tool-time-select {
+          padding: 5px 10px;
+          background: var(--loki-bg-tertiary);
+          border: 1px solid var(--loki-border);
+          border-radius: 6px;
+          font-size: 12px;
+          font-family: inherit;
+          color: var(--loki-text-primary);
+          cursor: pointer;
+        }
+
+        .tool-bars {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .tool-row {
+          display: grid;
+          grid-template-columns: 140px 1fr 50px;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .tool-name {
+          font-size: 12px;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--loki-text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .tool-bar-track {
+          height: 8px;
+          background: var(--loki-bg-tertiary);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+
+        .tool-bar-fill {
+          height: 100%;
+          background: var(--loki-accent);
+          border-radius: 4px;
+          transition: width 0.3s ease;
+        }
+
+        .tool-count {
+          font-size: 12px;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--loki-text-muted);
+          text-align: right;
+        }
+
+        /* ---------- Velocity ---------- */
+        .velocity-cards {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        .velocity-card {
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border-light);
+          border-radius: 6px;
+          padding: 16px;
+        }
+
+        .velocity-label {
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--loki-text-muted);
+          margin-bottom: 6px;
+        }
+
+        .velocity-value {
+          font-size: 28px;
+          font-weight: 600;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--loki-accent);
+          line-height: 1.2;
+        }
+
+        .sparkline-container {
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border-light);
+          border-radius: 6px;
+          padding: 16px;
+        }
+
+        .sparkline-label {
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--loki-text-muted);
+          margin-bottom: 10px;
+        }
+
+        .sparkline {
+          display: flex;
+          align-items: flex-end;
+          gap: 2px;
+          height: 60px;
+        }
+
+        .spark-bar {
+          flex: 1;
+          min-width: 4px;
+          background: var(--loki-accent);
+          border-radius: 2px 2px 0 0;
+          opacity: 0.7;
+          transition: opacity 0.15s;
+        }
+
+        .spark-bar:hover {
+          opacity: 1;
+        }
+
+        /* ---------- Provider Comparison ---------- */
+        .provider-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 12px;
+        }
+
+        .provider-card {
+          background: var(--loki-glass-bg);
+          backdrop-filter: blur(12px) saturate(1.3);
+          -webkit-backdrop-filter: blur(12px) saturate(1.3);
+          border: 1px solid var(--loki-glass-border);
+          border-radius: 8px;
+          overflow: hidden;
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .provider-card:hover {
+          transform: translateY(-2px);
+          box-shadow: var(--loki-glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.15));
+        }
+
+        .provider-accent {
+          height: 3px;
+          width: 100%;
+        }
+
+        .provider-body {
+          padding: 16px;
+        }
+
+        .provider-name {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--loki-text-primary);
+          margin-bottom: 12px;
+        }
+
+        .provider-stat {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 4px 0;
+        }
+
+        .provider-stat-label {
+          font-size: 11px;
+          color: var(--loki-text-muted);
+        }
+
+        .provider-stat-value {
+          font-size: 12px;
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 500;
+          color: var(--loki-text-primary);
+        }
+
+        .provider-models {
+          margin-top: 10px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border-light);
+          font-size: 10px;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--loki-text-muted);
+        }
+
+        @media (max-width: 600px) {
+          .tool-row {
+            grid-template-columns: 100px 1fr 40px;
+          }
+          .velocity-cards {
+            grid-template-columns: 1fr;
+          }
+          .tab-btn span { display: none; }
+        }
+      </style>
+
+      <div class="analytics-container">
+        ${this._connected?"":'<div class="offline-notice">Connecting to analytics API...</div>'}
+
+        <div class="tab-bar">
+          ${e.map(a=>`
+            <button class="tab-btn ${this._activeTab===a.id?"active":""}" data-tab="${a.id}" aria-label="${a.label}">
+              ${a.icon}<span>${a.label}</span>
+            </button>
+          `).join("")}
+        </div>
+
+        <div class="tab-content">
+          ${t}
+        </div>
+      </div>
+    `,this.shadowRoot.querySelectorAll("[data-tab]").forEach(a=>{a.addEventListener("click",s=>this._handleTabClick(s))});let i=this.shadowRoot.getElementById("tool-time-range");i&&i.addEventListener("change",a=>this._handleTimeRangeChange(a))}};customElements.get("loki-analytics")||customElements.define("loki-analytics",ne);var Qe={pass:{color:"var(--loki-green, #22c55e)",bg:"var(--loki-green-muted, rgba(34, 197, 94, 0.15))",label:"PASS"},fail:{color:"var(--loki-red, #ef4444)",bg:"var(--loki-red-muted, rgba(239, 68, 68, 0.15))",label:"FAIL"},pending:{color:"var(--loki-yellow, #eab308)",bg:"var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))",label:"PENDING"}};function $t(d){if(!d)return"Never";try{return new Date(d).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}catch{return"Unknown"}}function Et(d){if(!d||d.length===0)return{pass:0,fail:0,pending:0,total:0};let e={pass:0,fail:0,pending:0,total:d.length};for(let t of d){let i=(t.status||"pending").toLowerCase();i==="pass"?e.pass++:i==="fail"?e.fail++:e.pending++}return e}var le=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._gates=[],this._evidence={blocked:!1},this._pollInterval=null,this._lastDataHash=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e4),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),3e4))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{this._loading=!0;let e=await this._api._get("/api/council/gate"),t=e?.gates||e||[],i=e?.evidence||{blocked:!1},a=JSON.stringify({gates:t,evidence:i});if(a===this._lastDataHash)return;this._lastDataHash=a,this._gates=Array.isArray(t)?t:[],this._evidence=i,this._error=null}catch(e){this._error||(this._error=`Failed to load quality gates: ${e.message}`)}finally{this._loading=!1}this.render()}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .quality-gates {
+        padding: 16px;
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .evidence-banner {
+        border: 1px solid var(--loki-red, #ef4444);
+        background: var(--loki-red-bg, rgba(239, 68, 68, 0.08));
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 16px;
+      }
+
+      .evidence-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--loki-red, #ef4444);
+        margin-bottom: 4px;
+      }
+
+      .evidence-reason {
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+
+      .evidence-failures {
+        margin: 6px 0;
+        padding-left: 18px;
+        font-size: 12px;
+      }
+
+      .evidence-hint {
+        font-size: 11px;
+        opacity: 0.75;
+      }
+
+      .evidence-hint code {
+        font-family: var(--loki-font-mono, monospace);
+        background: var(--loki-code-bg, rgba(0, 0, 0, 0.06));
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .summary {
+        display: flex;
+        gap: 12px;
+        font-size: 12px;
+      }
+
+      .summary-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 500;
+      }
+
+      .summary-dot {
+        width: 12px;
+        height: 6px;
+        border-radius: 2px;
+      }
+
+      .gates-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+      }
+
+      .gate-card {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        padding: 14px;
+        border-left: 3px solid transparent;
+        transition: all 0.15s ease;
+      }
+
+      .gate-card:hover {
+        border-color: var(--loki-border-light, #C5C0B1);
+      }
+
+      .gate-card.status-pass {
+        border-left-color: var(--loki-green, #22c55e);
+      }
+
+      .gate-card.status-fail {
+        border-left-color: var(--loki-red, #ef4444);
+      }
+
+      .gate-card.status-pending {
+        border-left-color: var(--loki-yellow, #eab308);
+      }
+
+      .gate-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 8px;
+      }
+
+      .gate-name {
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+
+      .gate-badge {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        flex-shrink: 0;
+      }
+
+      .gate-meta {
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .gate-description {
+        font-size: 12px;
+        color: var(--loki-text-secondary, #36342E);
+        margin-top: 6px;
+        line-height: 1.4;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 24px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._gates,i=Et(t),a;this._loading&&t.length===0?a='<div class="loading">Loading quality gates...</div>':t.length===0?a='<div class="empty-state"><strong>No gate results yet.</strong> Quality gates run automatically between RARV iterations during an active session. Start a session with <code>loki start ./prd.md</code> to see results here. You can also run gates manually with <code>loki review</code>.</div>':a=`<div class="gates-grid">${t.map(l=>{let c=(l.status||"pending").toLowerCase(),p=Qe[c]||Qe.pending;return`
+          <div class="gate-card status-${c}">
+            <div class="gate-header">
+              <span class="gate-name">${this._escapeHtml(l.name||"Unnamed Gate")}</span>
+              <span class="gate-badge" style="background: ${p.bg}; color: ${p.color};">${p.label}</span>
+            </div>
+            ${l.description?`<div class="gate-description">${this._escapeHtml(l.description)}</div>`:""}
+            <div class="gate-meta">Last checked: ${$t(l.last_checked||l.lastChecked)}</div>
+          </div>
+        `}).join("")}</div>`;let s="",r=this._evidence||{};if(r.blocked){let n={empty_diff:"No changes were shipped (empty diff vs run start).",tests_red:"Tests ran and were red.",empty_diff_and_tests_red:"No changes shipped and tests were red.",no_evidence_of_completion:"No evidence of completion."},l=r.error?this._escapeHtml(r.error):n[r.reason]||this._escapeHtml(r.reason||"Completion blocked."),c=Array.isArray(r.failures)?r.failures:[],p=c.length?`<ul class="evidence-failures">${c.map(u=>`<li>${this._escapeHtml(u)}</li>`).join("")}</ul>`:"";s=`
+        <div class="evidence-banner">
+          <div class="evidence-title">Verified completion blocked</div>
+          <div class="evidence-reason">${l}</div>
+          ${p}
+          <div class="evidence-hint">The run will keep iterating until there is real evidence of completion. Set <code>LOKI_EVIDENCE_GATE=0</code> to opt out.</div>
+        </div>
+      `}let o=i.total>0?`
+      <div class="summary">
+        <span class="summary-item">
+          <span class="summary-dot" style="background: var(--loki-green, #22c55e)"></span>
+          ${i.pass} Pass
+        </span>
+        <span class="summary-item">
+          <span class="summary-dot" style="background: var(--loki-red, #ef4444)"></span>
+          ${i.fail} Fail
+        </span>
+        <span class="summary-item">
+          <span class="summary-dot" style="background: var(--loki-yellow, #eab308)"></span>
+          ${i.pending} Pending
+        </span>
+      </div>
+    `:"";e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="quality-gates">
+        <div class="header">
+          <h2 class="title">Quality Gates</h2>
+          ${o}
+        </div>
+        ${s}
+        ${a}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `}};customElements.get("loki-quality-gates")||customElements.define("loki-quality-gates",le);var F={reason:{color:"var(--loki-blue, #3b82f6)",label:"Reason",description:"Analyzing requirements and planning approach"},act:{color:"var(--loki-green, #22c55e)",label:"Act",description:"Implementing changes and executing tasks"},reflect:{color:"var(--loki-purple, #a78bfa)",label:"Reflect",description:"Reviewing results and evaluating quality"},verify:{color:"var(--loki-yellow, #eab308)",label:"Verify",description:"Running tests and validating correctness"}},He=["reason","act","reflect","verify"];function De(d){if(d==null||d<0)return"--";if(d<1e3)return`${d}ms`;let e=Math.floor(d/1e3);if(e<60)return`${e}s`;let t=Math.floor(e/60),i=e%60;if(t<60)return`${t}m ${i}s`;let a=Math.floor(t/60),s=t%60;return`${a}h ${s}m`}function Ct(d){if(!d||d.length===0)return[];let e=d.reduce((t,i)=>t+(i.duration_ms||0),0);return e===0?d.map(t=>({phase:t.phase,pct:100/d.length,duration:0})):d.map(t=>({phase:t.phase,pct:(t.duration_ms||0)/e*100,duration:t.duration_ms||0}))}function St(d){return d==null?"--":d>=1e6?(d/1e6).toFixed(1)+"M":d>=1e3?(d/1e3).toFixed(1)+"K":String(d)}var de=class extends h{static get observedAttributes(){return["run-id","api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._timeline=null,this._pollInterval=null,this._selectedPhase=null,this._cycleHistory=[]}get runId(){let e=this.getAttribute("run-id");return e?parseInt(e,10):null}set runId(e){e!=null?this.setAttribute("run-id",String(e)):this.removeAttribute("run-id")}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="run-id"&&this._loadData(),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),5e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),5e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){let e=this.runId;if(e==null){this._timeline=null,this.render();return}try{this._loading=!0;let t=await this._api._get(`/api/v2/runs/${e}/timeline`);this._timeline=t,this._cycleHistory=t.history||[],this._error=null}catch(t){t.message&&(t.message.includes("404")||t.message.includes("Not Found"))?(this._timeline=null,this._error=null):this._error=`Failed to load timeline: ${t.message}`}finally{this._loading=!1}this.render()}_selectPhase(e){this._selectedPhase=this._selectedPhase===e?null:e,this.render()}_bindEvents(){let e=this.shadowRoot;e.querySelectorAll(".phase-segment-interactive").forEach(t=>{t.addEventListener("click",()=>{this._selectPhase(t.dataset.phase)})}),e.querySelectorAll(".legend-item-interactive").forEach(t=>{t.addEventListener("click",()=>{this._selectPhase(t.dataset.phase)})}),e.querySelectorAll(".close-detail").forEach(t=>{t.addEventListener("click",i=>{i.stopPropagation(),this._selectedPhase=null,this.render()})})}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .timeline-container {
+        padding: 16px;
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .run-label {
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .timeline-bar {
+        display: flex;
+        width: 100%;
+        height: 40px;
+        border-radius: 5px;
+        overflow: hidden;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        margin-bottom: 12px;
+      }
+
+      .phase-segment-interactive {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+        transition: all 0.3s ease;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 0 6px;
+        cursor: pointer;
+        position: relative;
+      }
+
+      .phase-segment-interactive:hover {
+        filter: brightness(1.15);
+      }
+
+      .phase-segment-interactive.selected {
+        filter: brightness(1.2);
+        outline: 2px solid white;
+        outline-offset: -2px;
+      }
+
+      .phase-segment-interactive.current {
+        animation: phase-glow 2s ease-in-out infinite;
+      }
+
+      @keyframes phase-glow {
+        0%, 100% { opacity: 1; filter: brightness(1); }
+        50% { opacity: 0.85; filter: brightness(1.2); }
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 8px;
+      }
+
+      .legend-item-interactive {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.2s;
+      }
+
+      .legend-item-interactive:hover {
+        background: var(--loki-bg-hover, #F3EFE9);
+      }
+
+      .legend-item-interactive.selected {
+        background: var(--loki-bg-tertiary, #ECEAE3);
+      }
+
+      .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+
+      .legend-label {
+        font-weight: 500;
+        color: var(--loki-text-secondary, #36342E);
+      }
+
+      .legend-duration {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .phase-current-tag {
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        background: var(--loki-accent-muted, rgba(139, 92, 246, 0.15));
+        color: var(--loki-accent, #553DE9);
+        font-weight: 500;
+        margin-left: 4px;
+      }
+
+      /* Phase detail panel */
+      .phase-detail {
+        margin-top: 12px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        padding: 16px;
+        animation: detailSlideIn 0.2s ease-out;
+      }
+
+      @keyframes detailSlideIn {
+        from { opacity: 0; transform: translateY(-8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .detail-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .detail-title {
+        font-size: 14px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .detail-title-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+      }
+
+      .detail-description {
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+        margin-bottom: 14px;
+      }
+
+      .close-detail {
+        background: none;
+        border: none;
+        font-size: 14px;
+        color: var(--loki-text-muted, #939084);
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: inherit;
+      }
+
+      .close-detail:hover {
+        background: var(--loki-bg-hover, #F3EFE9);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .detail-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+
+      .detail-metric {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .detail-metric-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .detail-metric-value {
+        font-size: 16px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-primary, #201515);
+      }
+
+      /* Cycle history */
+      .cycle-history {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--loki-border, #ECEAE3);
+      }
+
+      .history-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+        margin-bottom: 10px;
+      }
+
+      .history-cycles {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .history-cycle {
+        display: flex;
+        gap: 2px;
+      }
+
+      .history-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+
+      .history-dot:hover {
+        opacity: 1;
+      }
+
+      .history-separator {
+        width: 1px;
+        height: 14px;
+        background: var(--loki-border, #ECEAE3);
+        margin: 0 4px;
+        align-self: center;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 24px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}_renderPlaceholderTimeline(){let e=He.map(i=>{let a=F[i];return`<div class="phase-segment-interactive"
+                   data-phase="${i}"
+                   style="width: 25%; background: ${a.color}; opacity: 0.3;"
+                   title="${a.label}: awaiting data">
+                ${a.label}
+              </div>`}).join(""),t=He.map(i=>{let a=F[i];return`<div class="legend-item-interactive" data-phase="${i}">
+                <span class="legend-dot" style="background: ${a.color}; opacity: 0.4;"></span>
+                <span class="legend-label">${a.label}</span>
+                <span class="legend-duration">--</span>
+              </div>`}).join("");return`
+      <div class="empty-state" style="padding: 0; text-align: left;">
+        <div class="timeline-bar" style="opacity: 0.5;">${e}</div>
+        <div class="legend">${t}</div>
+        <div style="text-align: center; margin-top: 12px; font-size: 12px; color: var(--loki-text-muted, #939084);">
+          RARV phases will populate as the session progresses
+        </div>
+      </div>
+    `}_renderPhaseDetail(e){let t=F[e];if(!t)return"";let a=(this._timeline?.phases||[]).find(s=>s.phase===e);return`
+      <div class="phase-detail">
+        <div class="detail-header">
+          <div class="detail-title">
+            <div class="detail-title-dot" style="background: ${t.color};"></div>
+            ${t.label} Phase
+          </div>
+          <button class="close-detail" title="Close">&#10005;</button>
+        </div>
+        <div class="detail-description">${t.description}</div>
+        <div class="detail-metrics">
+          <div class="detail-metric">
+            <span class="detail-metric-label">Time Spent</span>
+            <span class="detail-metric-value">${De(a?.duration_ms)}</span>
+          </div>
+          <div class="detail-metric">
+            <span class="detail-metric-label">Tokens Used</span>
+            <span class="detail-metric-value">${St(a?.tokens_used)}</span>
+          </div>
+          <div class="detail-metric">
+            <span class="detail-metric-label">Quality</span>
+            <span class="detail-metric-value">${a?.quality_score!=null?a.quality_score.toFixed(1):"--"}</span>
+          </div>
+          <div class="detail-metric">
+            <span class="detail-metric-label">Actions</span>
+            <span class="detail-metric-value">${a?.action_count!=null?a.action_count:"--"}</span>
+          </div>
+        </div>
+      </div>
+    `}_renderCycleHistory(){if(this._cycleHistory.length===0)return"";let t=this._cycleHistory.slice(-8).map((i,a)=>`<div class="history-cycle">${He.map(r=>{let o=i.phases?.find(p=>p.phase===r),n=F[r],l=o?.status||"pending",c=l==="complete"?"0.8":l==="active"?"1":"0.3";return`<div class="history-dot" style="background: ${n.color}; opacity: ${c};"
+                  title="Cycle ${a+1}: ${n.label} - ${De(o?.duration_ms)}"></div>`}).join("")}</div>`).join('<div class="history-separator"></div>');return`
+      <div class="cycle-history">
+        <div class="history-label">Past Cycles (${this._cycleHistory.length} total)</div>
+        <div class="history-cycles">${t}</div>
+      </div>
+    `}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}render(){let e=this.shadowRoot;if(!e)return;let t=this.runId,i=this._timeline,a=i?.phases||[],s=i?.current_phase||null,r=Ct(a),o;if(this._loading&&!i)o='<div class="loading">Loading timeline...</div>';else if(t==null)o=this._renderPlaceholderTimeline();else if(a.length===0)o=this._renderPlaceholderTimeline();else{let n=r.map(u=>{let b=F[u.phase]||{color:"var(--loki-text-muted)",label:u.phase},m=s===u.phase,f=this._selectedPhase===u.phase;return`<div class="phase-segment-interactive ${m?"current":""} ${f?"selected":""}"
+                     data-phase="${u.phase}"
+                     style="width: ${Math.max(u.pct,2)}%; background: ${b.color};"
+                     title="${b.label}: ${De(u.duration)}">
+                  ${u.pct>12?b.label:""}
+                </div>`}).join(""),l=a.map(u=>{let b=F[u.phase]||{color:"var(--loki-text-muted)",label:u.phase},m=s===u.phase;return`<div class="legend-item-interactive ${this._selectedPhase===u.phase?"selected":""}" data-phase="${u.phase}">
+                  <span class="legend-dot" style="background: ${b.color}"></span>
+                  <span class="legend-label">${b.label}</span>
+                  <span class="legend-duration">${De(u.duration_ms)}</span>
+                  ${m?'<span class="phase-current-tag">ACTIVE</span>':""}
+                </div>`}).join(""),c=this._selectedPhase?this._renderPhaseDetail(this._selectedPhase):"",p=this._renderCycleHistory();o=`
+        <div class="timeline-bar">${n}</div>
+        <div class="legend">${l}</div>
+        ${c}
+        ${p}
+      `}e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="timeline-container">
+        <div class="header">
+          <h3 class="title">RARV Timeline</h3>
+          ${t!=null?`<span class="run-label">Run #${t}</span>`:""}
+        </div>
+        ${o}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-rarv-timeline")||customElements.define("loki-rarv-timeline",de);var Xe={running:{color:"var(--loki-green, #22c55e)",bg:"var(--loki-green-muted, rgba(34, 197, 94, 0.15))",label:"Running"},completed:{color:"var(--loki-blue, #3b82f6)",bg:"var(--loki-blue-muted, rgba(59, 130, 246, 0.15))",label:"Completed"},failed:{color:"var(--loki-red, #ef4444)",bg:"var(--loki-red-muted, rgba(239, 68, 68, 0.15))",label:"Failed"},cancelled:{color:"var(--loki-yellow, #eab308)",bg:"var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))",label:"Cancelled"},pending:{color:"var(--loki-text-muted, #939084)",bg:"var(--loki-bg-tertiary, #ECEAE3)",label:"Pending"},queued:{color:"var(--loki-text-muted, #939084)",bg:"var(--loki-bg-tertiary, #ECEAE3)",label:"Queued"}};function Tt(d,e,t){let i=d;if(i==null&&e){let l=new Date(e).getTime();i=(t?new Date(t).getTime():Date.now())-l}if(i==null||i<0)return"--";if(i<1e3)return`${i}ms`;let a=Math.floor(i/1e3);if(a<60)return`${a}s`;let s=Math.floor(a/60),r=a%60;if(s<60)return`${s}m ${r}s`;let o=Math.floor(s/60),n=s%60;return`${o}h ${n}m`}function At(d){if(!d)return"--";try{return new Date(d).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}catch{return String(d)}}var ce=class extends h{static get observedAttributes(){return["api-url","project-id","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._runs=[],this._pollInterval=null,this._lastDataHash=null}get projectId(){let e=this.getAttribute("project-id");return e?parseInt(e,10):null}set projectId(e){e!=null?this.setAttribute("project-id",String(e)):this.removeAttribute("project-id")}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="project-id"&&this._loadData(),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),5e3),this._visibilityHandler=()=>{document.hidden?this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null):this._pollInterval||(this._loadData(),this._pollInterval=setInterval(()=>this._loadData(),5e3))},document.addEventListener("visibilitychange",this._visibilityHandler)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null),this._visibilityHandler&&(document.removeEventListener("visibilitychange",this._visibilityHandler),this._visibilityHandler=null)}async _loadData(){try{let e=this.projectId,t=e!=null?`?project_id=${e}`:"",i=await this._api._get(`/api/v2/runs${t}`),a=i?.runs||i||[],s=JSON.stringify(a);if(s===this._lastDataHash)return;this._lastDataHash=s,this._runs=Array.isArray(a)?a:[],this._error=null}catch(e){this._error||(this._error=`Failed to load runs: ${e.message}`)}finally{this._loading=!1}this.render()}async _cancelRun(e){try{await this._api._post(`/api/v2/runs/${e}/cancel`),await this._loadData()}catch(t){this._error=`Cancel failed: ${t.message}`,this.render()}}async _replayRun(e){try{await this._api._post(`/api/v2/runs/${e}/replay`),await this._loadData()}catch(t){this._error=`Replay failed: ${t.message}`,this.render()}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .run-manager {
+        padding: 16px;
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .btn {
+        padding: 4px 10px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 500;
+        transition: all 0.15s ease;
+      }
+
+      .btn:hover {
+        background: var(--loki-bg-hover, #1f1f23);
+        border-color: var(--loki-border-light, #C5C0B1);
+      }
+
+      .btn-cancel {
+        border-color: var(--loki-red, #ef4444);
+        color: var(--loki-red, #ef4444);
+      }
+
+      .btn-cancel:hover {
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+      }
+
+      .btn-replay {
+        border-color: var(--loki-accent, #553DE9);
+        color: var(--loki-accent, #553DE9);
+      }
+
+      .btn-replay:hover {
+        background: var(--loki-accent-muted, rgba(139, 92, 246, 0.15));
+      }
+
+      .btn-refresh {
+        padding: 6px 14px;
+        font-size: 12px;
+      }
+
+      .runs-table-wrapper {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th {
+        text-align: left;
+        padding: 10px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        white-space: nowrap;
+      }
+
+      td {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        white-space: nowrap;
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      tr:hover td {
+        background: var(--loki-bg-hover, #1f1f23);
+      }
+
+      .run-id {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+        color: var(--loki-accent, #553DE9);
+        font-size: 12px;
+      }
+
+      .status-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 5px;
+        text-transform: uppercase;
+      }
+
+      .actions-cell {
+        display: flex;
+        gap: 6px;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 24px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .run-count {
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+        margin-bottom: 8px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._runs,i;if(this._loading&&t.length===0)i='<div class="loading">Loading runs...</div>';else if(t.length===0)i='<div class="empty-state">No runs found.</div>';else{let a=t.map(s=>{let r=(s.status||"pending").toLowerCase(),o=Xe[r]||Xe.pending,n=r==="running",l=r==="completed"||r==="failed"||r==="cancelled",c=Tt(s.duration_ms,s.started_at,s.ended_at);return`
+          <tr>
+            <td><span class="run-id">#${s.id}</span></td>
+            <td>${this._escapeHtml(s.project_name||s.project||(s.project_id?`Project #${s.project_id}`:"--"))}</td>
+            <td><span class="status-badge" style="background: ${o.bg}; color: ${o.color};">${o.label}</span></td>
+            <td>${this._escapeHtml(s.trigger||s.trigger_type||"--")}</td>
+            <td>${At(s.started_at)}</td>
+            <td>${c}</td>
+            <td>
+              <div class="actions-cell">
+                ${n?`<button class="btn btn-cancel" data-action="cancel" data-run-id="${s.id}">Cancel</button>`:""}
+                ${l?`<button class="btn btn-replay" data-action="replay" data-run-id="${s.id}">Replay</button>`:""}
+              </div>
+            </td>
+          </tr>
+        `}).join("");i=`
+        <div class="run-count">${t.length} runs</div>
+        <div class="runs-table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Trigger</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${a}</tbody>
+          </table>
+        </div>
+      `}e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="run-manager">
+        <div class="header">
+          <h2 class="title">Run Manager</h2>
+          <button class="btn btn-refresh" id="refresh-btn">Refresh</button>
+        </div>
+        ${i}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("refresh-btn");t&&t.addEventListener("click",()=>this._loadData()),e.querySelectorAll('[data-action="cancel"]').forEach(i=>{i.addEventListener("click",()=>this._cancelRun(i.dataset.runId))}),e.querySelectorAll('[data-action="replay"]').forEach(i=>{i.addEventListener("click",()=>this._replayRun(i.dataset.runId))})}};customElements.get("loki-run-manager")||customElements.define("loki-run-manager",ce);function Lt(d){if(!d)return"--";try{return new Date(d).toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})}catch{return String(d)}}function It(d){let e=new URLSearchParams;for(let[i,a]of Object.entries(d))a!=null&&a!==""&&e.set(i,String(a));let t=e.toString();return t?`?${t}`:""}var pe=class extends h{static get observedAttributes(){return["api-url","limit","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._entries=[],this._verifyResult=null,this._verifying=!1,this._filters={action:"",resource:"",dateFrom:"",dateTo:""}}get limit(){let e=this.getAttribute("limit");return e?parseInt(e,10):50}set limit(e){this.setAttribute("limit",String(e))}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData()}disconnectedCallback(){super.disconnectedCallback()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="limit"&&this._loadData(),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{this._loading=!0,this.render();let e={limit:this.limit,action:this._filters.action,resource:this._filters.resource,date_from:this._filters.dateFrom,date_to:this._filters.dateTo},t=It(e),i=await this._api._get(`/api/v2/audit${t}`);this._entries=i?.entries||i||[],this._error=null}catch(e){this._error=`Failed to load audit log: ${e.message}`}finally{this._loading=!1}this.render()}async _verifyIntegrity(){try{this._verifying=!0,this._verifyResult=null,this.render();let e=await this._api._get("/api/v2/audit/verify");this._verifyResult=e}catch(e){this._verifyResult={valid:!1,error:e.message}}finally{this._verifying=!1}this.render()}_onFilterChange(e,t){this._filters[e]=t,this._loadData()}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .audit-viewer {
+        padding: 16px;
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .btn {
+        padding: 6px 14px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        transition: all 0.15s ease;
+      }
+
+      .btn:hover {
+        background: var(--loki-accent, #553DE9);
+        border-color: var(--loki-accent, #553DE9);
+        color: white;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: var(--loki-accent, #553DE9);
+        border-color: var(--loki-accent, #553DE9);
+        color: white;
+      }
+
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+      }
+
+      .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .filter-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .filter-input {
+        padding: 5px 10px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        font-size: 12px;
+        min-width: 140px;
+      }
+
+      .filter-input:focus {
+        outline: none;
+        border-color: var(--loki-accent, #553DE9);
+      }
+
+      .verify-result {
+        margin-bottom: 12px;
+        padding: 10px 14px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .verify-valid {
+        background: var(--loki-green-muted, rgba(34, 197, 94, 0.15));
+        color: var(--loki-green, #22c55e);
+        border: 1px solid var(--loki-green-muted, rgba(34, 197, 94, 0.15));
+      }
+
+      .verify-invalid {
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border: 1px solid var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+      }
+
+      .audit-table-wrapper {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th {
+        text-align: left;
+        padding: 10px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        white-space: nowrap;
+      }
+
+      td {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        white-space: nowrap;
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      tr:hover td {
+        background: var(--loki-bg-hover, #1f1f23);
+      }
+
+      .status-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 5px;
+        text-transform: uppercase;
+      }
+
+      .status-success {
+        background: var(--loki-green-muted, rgba(34, 197, 94, 0.15));
+        color: var(--loki-green, #22c55e);
+      }
+
+      .status-failure {
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+      }
+
+      .status-warning {
+        background: var(--loki-yellow-muted, rgba(234, 179, 8, 0.15));
+        color: var(--loki-yellow, #eab308);
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 24px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .entry-count {
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+        margin-bottom: 8px;
+      }
+    `}_getStatusClass(e){if(!e)return"status-warning";let t=e.toLowerCase();return t==="success"||t==="ok"||t==="pass"?"status-success":t==="failure"||t==="error"||t==="fail"?"status-failure":"status-warning"}render(){let e=this.shadowRoot;if(!e)return;let t=this._entries,i="";if(this._verifyResult){let s=this._verifyResult.valid!==!1;i=`
+        <div class="verify-result ${s?"verify-valid":"verify-invalid"}">
+          ${s?"[VALID] Audit chain integrity verified.":`[TAMPERED] ${this._escapeHtml(this._verifyResult.error||"Integrity check failed.")}`}
+        </div>
+      `}let a;if(this._loading&&t.length===0)a='<div class="loading">Loading audit log...</div>';else if(t.length===0)a='<div class="empty-state">No audit entries found matching filters.</div>';else{let s=t.map(r=>`
+        <tr>
+          <td>${Lt(r.timestamp)}</td>
+          <td>${this._escapeHtml(r.action||"--")}</td>
+          <td>${this._escapeHtml(r.resource||r.resource_type||"--")}</td>
+          <td>${this._escapeHtml(r.user||r.actor||"--")}</td>
+          <td><span class="status-badge ${this._getStatusClass(r.status)}">${this._escapeHtml(r.status||"unknown")}</span></td>
+        </tr>
+      `).join("");a=`
+        <div class="entry-count">${t.length} entries</div>
+        <div class="audit-table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Resource</th>
+                <th>User</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>${s}</tbody>
+          </table>
+        </div>
+      `}e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="audit-viewer">
+        <div class="header">
+          <h2 class="title">Audit Log</h2>
+          <div class="header-actions">
+            <button class="btn" id="verify-btn" ${this._verifying?"disabled":""}>
+              ${this._verifying?"Verifying...":"Verify Integrity"}
+            </button>
+            <button class="btn" id="refresh-btn">Refresh</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="filter-group">
+            <label class="filter-label">Action Type</label>
+            <input type="text" class="filter-input" id="filter-action"
+                   placeholder="e.g. create, delete"
+                   value="${this._escapeHtml(this._filters.action)}">
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Resource Type</label>
+            <input type="text" class="filter-input" id="filter-resource"
+                   placeholder="e.g. run, project"
+                   value="${this._escapeHtml(this._filters.resource)}">
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Date From</label>
+            <input type="date" class="filter-input" id="filter-date-from"
+                   value="${this._filters.dateFrom}">
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Date To</label>
+            <input type="date" class="filter-input" id="filter-date-to"
+                   value="${this._filters.dateTo}">
+          </div>
+        </div>
+
+        ${i}
+        ${a}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("verify-btn");t&&t.addEventListener("click",()=>this._verifyIntegrity());let i=e.getElementById("refresh-btn");i&&i.addEventListener("click",()=>this._loadData());let a=e.getElementById("filter-action");a&&a.addEventListener("change",n=>this._onFilterChange("action",n.target.value));let s=e.getElementById("filter-resource");s&&s.addEventListener("change",n=>this._onFilterChange("resource",n.target.value));let r=e.getElementById("filter-date-from");r&&r.addEventListener("change",n=>this._onFilterChange("dateFrom",n.target.value));let o=e.getElementById("filter-date-to");o&&o.addEventListener("change",n=>this._onFilterChange("dateTo",n.target.value))}};customElements.get("loki-audit-viewer")||customElements.define("loki-audit-viewer",pe);function Ze(d){if(!d)return"Never";try{return new Date(d).toLocaleString([],{month:"short",day:"numeric",year:"numeric",hour:"2-digit",minute:"2-digit"})}catch{return String(d)}}var he=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._keys=[],this._showCreateForm=!1,this._newToken=null,this._confirmDeleteId=null,this._rotateKeyId=null,this._rotateGracePeriod="24",this._createName="",this._createRole="read",this._createExpiration=""}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData()}disconnectedCallback(){super.disconnectedCallback()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{this._loading=!0,this.render();let e=await this._api._get("/api/v2/api-keys");this._keys=Array.isArray(e)?e:e?.keys||[],this._error=null}catch(e){this._error=`Failed to load API keys: ${e.message}`}finally{this._loading=!1}this.render()}async _createKey(){if(!this._createName.trim()){this._error="Key name is required.",this.render();return}try{let e={name:this._createName.trim(),role:this._createRole};this._createExpiration&&(e.expiration=this._createExpiration);let t=await this._api._post("/api/v2/api-keys",e);this._newToken=t?.token||t?.key||null,this._showCreateForm=!1,this._createName="",this._createRole="read",this._createExpiration="",this._error=null,await this._loadData()}catch(e){this._error=`Create failed: ${e.message}`,this.render()}}async _rotateKey(e){try{let t={grace_period_hours:parseInt(this._rotateGracePeriod,10)||24},i=await this._api._post(`/api/v2/api-keys/${e}/rotate`,t);this._newToken=i?.token||i?.key||null,this._rotateKeyId=null,this._error=null,await this._loadData()}catch(t){this._error=`Rotate failed: ${t.message}`,this.render()}}async _deleteKey(e){try{await this._api._delete(`/api/v2/api-keys/${e}`),this._confirmDeleteId=null,this._error=null,await this._loadData()}catch(t){this._error=`Delete failed: ${t.message}`,this._confirmDeleteId=null,this.render()}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .api-keys {
+        padding: 16px;
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .btn {
+        padding: 6px 14px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        transition: all 0.15s ease;
+      }
+
+      .btn:hover {
+        background: var(--loki-bg-hover, #1f1f23);
+        border-color: var(--loki-border-light, #C5C0B1);
+      }
+
+      .btn-sm {
+        padding: 4px 10px;
+        font-size: 11px;
+      }
+
+      .btn-primary {
+        background: var(--loki-accent, #553DE9);
+        border-color: var(--loki-accent, #553DE9);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        opacity: 0.9;
+      }
+
+      .btn-danger {
+        border-color: var(--loki-red, #ef4444);
+        color: var(--loki-red, #ef4444);
+      }
+
+      .btn-danger:hover {
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+      }
+
+      .btn-warn {
+        border-color: var(--loki-yellow, #eab308);
+        color: var(--loki-yellow, #eab308);
+      }
+
+      .btn-warn:hover {
+        background: var(--loki-yellow-muted, rgba(234, 179, 8, 0.15));
+      }
+
+      /* New token reveal */
+      .new-token-banner {
+        margin-bottom: 16px;
+        padding: 14px;
+        background: var(--loki-green-muted, rgba(34, 197, 94, 0.15));
+        border: 1px solid var(--loki-green, #22c55e);
+        border-radius: 5px;
+      }
+
+      .new-token-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--loki-green, #22c55e);
+        margin-bottom: 8px;
+      }
+
+      .new-token-warning {
+        font-size: 11px;
+        color: var(--loki-text-secondary, #36342E);
+        margin-bottom: 8px;
+      }
+
+      .new-token-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px;
+        padding: 8px 12px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        word-break: break-all;
+        user-select: all;
+        margin-bottom: 8px;
+      }
+
+      .new-token-dismiss {
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--loki-text-muted, #939084);
+        background: none;
+        border: none;
+        text-decoration: underline;
+      }
+
+      /* Create form */
+      .create-form {
+        margin-bottom: 16px;
+        padding: 14px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+      }
+
+      .form-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+
+      .form-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+        min-width: 140px;
+      }
+
+      .form-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .form-input, .form-select {
+        padding: 6px 10px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        font-size: 12px;
+      }
+
+      .form-input:focus, .form-select:focus {
+        outline: none;
+        border-color: var(--loki-accent, #553DE9);
+      }
+
+      .form-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      /* Rotate inline */
+      .rotate-inline {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .rotate-input {
+        width: 60px;
+        padding: 3px 6px;
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        color: var(--loki-text-primary, #201515);
+        font-size: 11px;
+      }
+
+      .rotate-label {
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      /* Table */
+      .keys-table-wrapper {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th {
+        text-align: left;
+        padding: 10px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        white-space: nowrap;
+      }
+
+      td {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        vertical-align: top;
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      tr:hover td {
+        background: var(--loki-bg-hover, #1f1f23);
+      }
+
+      .key-name {
+        font-weight: 600;
+      }
+
+      .key-role {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 5px;
+        text-transform: uppercase;
+        background: var(--loki-accent-muted, rgba(139, 92, 246, 0.15));
+        color: var(--loki-accent, #553DE9);
+      }
+
+      .key-status-active {
+        color: var(--loki-green, #22c55e);
+      }
+
+      .key-status-expired {
+        color: var(--loki-red, #ef4444);
+      }
+
+      .key-status-revoked {
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .actions-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .action-row {
+        display: flex;
+        gap: 6px;
+      }
+
+      .confirm-delete {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--loki-red, #ef4444);
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .error-banner {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+        color: var(--loki-red, #ef4444);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 24px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._keys,i="";this._newToken&&(i=`
+        <div class="new-token-banner">
+          <div class="new-token-label">API Key Created</div>
+          <div class="new-token-warning">Copy this token now. It will not be shown again.</div>
+          <div class="new-token-value">${this._escapeHtml(this._newToken)}</div>
+          <button class="new-token-dismiss" id="dismiss-token">Dismiss</button>
+        </div>
+      `);let a="";this._showCreateForm&&(a=`
+        <div class="create-form">
+          <div class="form-title">Create New API Key</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input type="text" class="form-input" id="create-name"
+                     placeholder="e.g. CI/CD Pipeline"
+                     value="${this._escapeHtml(this._createName)}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Role</label>
+              <select class="form-select" id="create-role">
+                <option value="read" ${this._createRole==="read"?"selected":""}>Read</option>
+                <option value="write" ${this._createRole==="write"?"selected":""}>Write</option>
+                <option value="admin" ${this._createRole==="admin"?"selected":""}>Admin</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Expiration (optional)</label>
+              <input type="date" class="form-input" id="create-expiration"
+                     value="${this._createExpiration}">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="submit-create">Create Key</button>
+            <button class="btn" id="cancel-create">Cancel</button>
+          </div>
+        </div>
+      `);let s;this._loading&&t.length===0?s='<div class="loading">Loading API keys...</div>':t.length===0?s='<div class="empty-state">No API keys configured. Create one to get started.</div>':s=`
+        <div class="keys-table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Role</th>
+                <th>Created</th>
+                <th>Last Used</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${t.map(o=>{let n=o.id||o.key_id,l=(o.status||"active").toLowerCase(),c=l==="active"?"key-status-active":l==="expired"?"key-status-expired":"key-status-revoked",p=this._confirmDeleteId===n,u=this._rotateKeyId===n,b;return p?b=`
+            <div class="confirm-delete">
+              <span>Delete this key?</span>
+              <button class="btn btn-sm btn-danger" data-action="confirm-delete" data-key-id="${n}">Yes</button>
+              <button class="btn btn-sm" data-action="cancel-delete">No</button>
+            </div>
+          `:b=`
+            <div class="action-row">
+              <button class="btn btn-sm btn-warn" data-action="rotate" data-key-id="${n}">Rotate</button>
+              <button class="btn btn-sm btn-danger" data-action="delete" data-key-id="${n}">Delete</button>
+            </div>
+            ${u?`
+              <div class="rotate-inline">
+                <span class="rotate-label">Grace period:</span>
+                <input type="number" class="rotate-input" id="rotate-grace-${n}" value="${this._rotateGracePeriod}" min="0">
+                <span class="rotate-label">hrs</span>
+                <button class="btn btn-sm btn-primary" data-action="confirm-rotate" data-key-id="${n}">Go</button>
+                <button class="btn btn-sm" data-action="cancel-rotate">Cancel</button>
+              </div>
+            `:""}
+          `,`
+          <tr>
+            <td><span class="key-name">${this._escapeHtml(o.name||"Unnamed")}</span></td>
+            <td><span class="key-role">${this._escapeHtml(o.role||o.scopes||"--")}</span></td>
+            <td>${Ze(o.created_at||o.created)}</td>
+            <td>${Ze(o.last_used_at||o.last_used)}</td>
+            <td><span class="${c}">${this._escapeHtml(l)}</span></td>
+            <td><div class="actions-cell">${b}</div></td>
+          </tr>
+        `}).join("")}</tbody>
+          </table>
+        </div>
+      `,e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="api-keys">
+        <div class="header">
+          <h2 class="title">API Keys</h2>
+          ${this._showCreateForm?"":'<button class="btn btn-primary" id="show-create">Create Key</button>'}
+        </div>
+        ${i}
+        ${a}
+        ${s}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
+      </div>
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("show-create");t&&t.addEventListener("click",()=>{this._showCreateForm=!0,this.render()});let i=e.getElementById("dismiss-token");i&&i.addEventListener("click",()=>{this._newToken=null,this.render()});let a=e.getElementById("submit-create");a&&a.addEventListener("click",()=>{let r=e.getElementById("create-name"),o=e.getElementById("create-role"),n=e.getElementById("create-expiration");this._createName=r?.value||"",this._createRole=o?.value||"read",this._createExpiration=n?.value||"",this._createKey()});let s=e.getElementById("cancel-create");s&&s.addEventListener("click",()=>{this._showCreateForm=!1,this.render()}),e.querySelectorAll('[data-action="delete"]').forEach(r=>{r.addEventListener("click",()=>{this._confirmDeleteId=r.dataset.keyId,this.render()})}),e.querySelectorAll('[data-action="confirm-delete"]').forEach(r=>{r.addEventListener("click",()=>{this._deleteKey(r.dataset.keyId)})}),e.querySelectorAll('[data-action="cancel-delete"]').forEach(r=>{r.addEventListener("click",()=>{this._confirmDeleteId=null,this.render()})}),e.querySelectorAll('[data-action="rotate"]').forEach(r=>{r.addEventListener("click",()=>{this._rotateKeyId=r.dataset.keyId,this.render()})}),e.querySelectorAll('[data-action="confirm-rotate"]').forEach(r=>{r.addEventListener("click",()=>{let o=e.getElementById(`rotate-grace-${r.dataset.keyId}`);this._rotateGracePeriod=o?.value||"24",this._rotateKey(r.dataset.keyId)})}),e.querySelectorAll('[data-action="cancel-rotate"]').forEach(r=>{r.addEventListener("click",()=>{this._rotateKeyId=null,this.render()})})}};customElements.get("loki-api-keys")||customElements.define("loki-api-keys",he);function Dt(d){return d?d.slug&&d.name?`${d.name} (${d.slug})`:d.name||d.slug||"Unknown":"Unknown"}var ue=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._loading=!1,this._error=null,this._api=null,this._tenants=[],this._selectedTenantId=null,this._dropdownOpen=!1}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._outsideClickHandler=e=>{this._dropdownOpen&&!this.contains(e.target)&&(this._dropdownOpen=!1,this.render())},document.addEventListener("click",this._outsideClickHandler)}disconnectedCallback(){super.disconnectedCallback(),this._outsideClickHandler&&(document.removeEventListener("click",this._outsideClickHandler),this._outsideClickHandler=null)}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadData(){try{this._loading=!0;let e=await this._api._get("/api/v2/tenants");this._tenants=Array.isArray(e)?e:e?.tenants||[],this._error=null}catch(e){this._error=`Failed to load tenants: ${e.message}`}finally{this._loading=!1}this.render()}_toggleDropdown(){this._dropdownOpen=!this._dropdownOpen,this.render()}_selectTenant(e,t){this._selectedTenantId=e,this._dropdownOpen=!1,this.render(),this.dispatchEvent(new CustomEvent("tenant-changed",{detail:{tenantId:e,tenantName:t},bubbles:!0,composed:!0}))}_getSelectedTenant(){return this._selectedTenantId==null?null:this._tenants.find(e=>(e.id||e.slug)===this._selectedTenantId)||null}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
+      :host {
+        display: inline-block;
+        position: relative;
+      }
+
+      .tenant-switcher {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+        position: relative;
+      }
+
+      .trigger {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--loki-text-primary, #201515);
+        transition: all 0.15s ease;
+        min-width: 180px;
+        justify-content: space-between;
+      }
+
+      .trigger:hover {
+        border-color: var(--loki-border-light, #C5C0B1);
+      }
+
+      .trigger.open {
+        border-color: var(--loki-accent, #553DE9);
+      }
+
+      .trigger-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .trigger-icon {
+        flex-shrink: 0;
+        font-size: 10px;
+        color: var(--loki-text-muted, #939084);
+        transition: transform 0.15s ease;
+      }
+
+      .trigger-icon.open {
+        transform: rotate(180deg);
+      }
+
+      .dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        min-width: 220px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+        z-index: 100;
+        overflow: hidden;
+      }
+
+      .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.1s ease;
+        color: var(--loki-text-primary, #201515);
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+      }
+
+      .dropdown-item:hover {
+        background: var(--loki-bg-hover, #1f1f23);
+      }
+
+      .dropdown-item.selected {
+        background: var(--loki-accent-muted, rgba(139, 92, 246, 0.15));
+        color: var(--loki-accent, #553DE9);
+      }
+
+      .dropdown-item.all-tenants {
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        font-weight: 500;
+      }
+
+      .tenant-slug {
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .tenant-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        overflow: hidden;
+      }
+
+      .tenant-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .check-mark {
+        margin-left: auto;
+        color: var(--loki-accent, #553DE9);
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+
+      .error-text {
+        padding: 8px 14px;
+        color: var(--loki-red, #ef4444);
+        font-size: 12px;
+      }
+
+      .loading-text {
+        padding: 8px 14px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 12px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._getSelectedTenant(),i=t?Dt(t):"All Tenants",a=this._dropdownOpen,s="";if(a){let r;if(this._loading)r='<div class="loading-text">Loading tenants...</div>';else if(this._error)r=`<div class="error-text">${this._escapeHtml(this._error)}</div>`;else{let o=this._selectedTenantId==null;r=`
+          <button class="dropdown-item all-tenants ${o?"selected":""}" data-tenant-id="">
+            <span class="tenant-name">All Tenants</span>
+            ${o?'<span class="check-mark">*</span>':""}
+          </button>
+          ${this._tenants.map(n=>{let l=n.id||n.slug,c=this._selectedTenantId===l;return`
+              <button class="dropdown-item ${c?"selected":""}"
+                      data-tenant-id="${this._escapeHtml(String(l))}"
+                      data-tenant-name="${this._escapeHtml(n.name||"")}">
+                <div class="tenant-info">
+                  <span class="tenant-name">${this._escapeHtml(n.name||"Unnamed")}</span>
+                  ${n.slug?`<span class="tenant-slug">${this._escapeHtml(n.slug)}</span>`:""}
+                </div>
+                ${c?'<span class="check-mark">*</span>':""}
+              </button>
+            `}).join("")}
+        `}s=`<div class="dropdown">${r}</div>`}e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="tenant-switcher">
+        <button class="trigger ${a?"open":""}" id="trigger-btn">
+          <span class="trigger-label">${this._escapeHtml(i)}</span>
+          <span class="trigger-icon ${a?"open":""}">&#9660;</span>
+        </button>
+        ${s}
+      </div>
+    `,this._attachEventListeners()}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("trigger-btn");t&&t.addEventListener("click",i=>{i.stopPropagation(),this._toggleDropdown()}),e.querySelectorAll(".dropdown-item").forEach(i=>{i.addEventListener("click",a=>{a.stopPropagation();let s=i.dataset.tenantId||null,r=i.dataset.tenantName||null;this._selectTenant(s||null,r||"All Tenants")})})}};customElements.get("loki-tenant-switcher")||customElements.define("loki-tenant-switcher",ue);var Re={info:{color:"var(--loki-blue, #2F71E3)",label:"INFO",icon:"i"},success:{color:"var(--loki-green, #1FC5A8)",label:"OK",icon:"+"},warning:{color:"var(--loki-yellow, #D4A03C)",label:"WARN",icon:"!"},error:{color:"var(--loki-red, #C45B5B)",label:"ERR",icon:"x"}},zt=100,ge=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._items=[],this._filter="all",this._api=null,this._pollInterval=null,this._paused=!1,this._lastTimestamp=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),3e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let e=await this._api._get("/api/v2/activity"),t=e.events||e.activities||[];if(t.length>0){let i=t.filter(a=>!this._lastTimestamp||new Date(a.timestamp)>new Date(this._lastTimestamp)).map(a=>({id:a.id||crypto.randomUUID(),timestamp:a.timestamp||new Date().toISOString(),message:a.message||a.description||"",severity:a.severity||a.level||"info",source:a.source||a.component||"",isNew:!0}));i.length>0&&(this._items=[...i,...this._items].slice(0,zt),this._lastTimestamp=i[0].timestamp,setTimeout(()=>{this._items.forEach(a=>a.isNew=!1)},600))}}catch{this._items.length===0&&(this._items=this._getDemoItems())}this.render()}_getDemoItems(){let e=Date.now();return[{id:"1",timestamp:new Date(e-2e3).toISOString(),message:"Build iteration #12 started",severity:"info",source:"runner"},{id:"2",timestamp:new Date(e-5e3).toISOString(),message:"Code review passed (3/3 reviewers)",severity:"success",source:"review"},{id:"3",timestamp:new Date(e-8e3).toISOString(),message:"Context window at 78% capacity",severity:"warning",source:"context"},{id:"4",timestamp:new Date(e-12e3).toISOString(),message:"Test suite completed: 42/42 passed",severity:"success",source:"testing"},{id:"5",timestamp:new Date(e-15e3).toISOString(),message:"RARV cycle: Verify phase complete",severity:"info",source:"rarv"}]}_formatTime(e){if(!e)return"";try{return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}catch{return""}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getFilteredItems(){return this._filter==="all"?this._items:this._items.filter(e=>e.severity===this._filter)}_setFilter(e){this._filter=e,this.render()}_bindEvents(){let e=this.shadowRoot;e.querySelectorAll(".filter-btn").forEach(i=>{i.addEventListener("click",()=>{this._setFilter(i.dataset.filter)})});let t=e.querySelector(".activity-feed");t&&(t.addEventListener("mouseenter",()=>{this._paused=!0}),t.addEventListener("mouseleave",()=>{this._paused=!1}))}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .stream-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .filter-bar {
+        display: flex;
+        gap: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        border-radius: 5px;
+        padding: 2px;
+      }
+
+      .filter-btn {
+        padding: 4px 10px;
+        border: none;
+        background: none;
+        color: var(--loki-text-muted, #939084);
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        transition: all 0.2s;
+        font-family: inherit;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .filter-btn:hover {
+        color: var(--loki-text-secondary, #36342E);
+      }
+
+      .filter-btn.active {
+        background: var(--loki-accent, #553DE9);
+        color: white;
+      }
+
+      .activity-feed {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        max-height: 400px;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      .activity-item {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        transition: background 0.2s, opacity 0.3s;
+        animation: slideIn 0.3s ease-out;
+      }
+
+      .activity-item:last-child {
+        border-bottom: none;
+      }
+
+      .activity-item:hover {
+        background: var(--loki-bg-hover, #F3EFE9);
+      }
+
+      .activity-item.new-item {
+        animation: slideInFromRight 0.4s ease-out;
+      }
+
+      @keyframes slideInFromRight {
+        from {
+          transform: translateX(30px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+
+      @keyframes slideIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      .severity-band {
+        width: 4px;
+        flex-shrink: 0;
+      }
+
+      .item-content {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .severity-icon {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .item-time {
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+        white-space: nowrap;
+        min-width: 70px;
+      }
+
+      .item-message {
+        flex: 1;
+        font-size: 13px;
+        color: var(--loki-text-primary, #201515);
+        line-height: 1.4;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .item-source {
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        padding: 2px 8px;
+        border-radius: 5px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+
+      .count-badge {
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+        margin-left: 4px;
+      }
+
+      .pause-indicator {
+        font-size: 10px;
+        color: var(--loki-text-muted, #939084);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        border-radius: 4px;
+      }
+
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--loki-bg-primary, #FFFEFB); }
+      ::-webkit-scrollbar-thumb { background: var(--loki-border, #ECEAE3); border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--loki-border-light, #C5C0B1); }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=this._getFilteredItems(),a=["all","info","success","warning","error"].map(r=>{let o=this._filter===r,n=r==="all"?"All":Re[r]?.label||r;return`<button class="filter-btn ${o?"active":""}" data-filter="${r}">${n}</button>`}).join(""),s;if(t.length===0?s='<div class="empty-state">No activity to display</div>':s=t.map(r=>{let o=Re[r.severity]||Re.info;return`
+          <div class="activity-item ${r.isNew?"new-item":""}">
+            <div class="severity-band" style="background: ${o.color};"></div>
+            <div class="item-content">
+              <div class="severity-icon" style="background: ${o.color};">${o.icon}</div>
+              <span class="item-time">${this._formatTime(r.timestamp)}</span>
+              <span class="item-message">${this._escapeHtml(r.message)}</span>
+              ${r.source?`<span class="item-source">${this._escapeHtml(r.source)}</span>`:""}
+            </div>
+          </div>
+        `}).join(""),e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="stream-container">
+        <div class="header">
+          <h3 class="title">Activity Stream <span class="count-badge">${this._items.length}</span></h3>
+          <div class="filter-bar">${a}</div>
+        </div>
+        <div class="activity-feed">
+          ${s}
+        </div>
+      </div>
+    `,this._bindEvents(),!this._paused){let r=e.querySelector(".activity-feed");r&&(r.scrollTop=0)}}};customElements.get("loki-activity-stream")||customElements.define("loki-activity-stream",ge);var Ht={claude:{initial:"C",color:"#553DE9",bgColor:"rgba(85, 61, 233, 0.12)"},codex:{initial:"X",color:"#1FC5A8",bgColor:"rgba(31, 197, 168, 0.12)"},cline:{initial:"L",color:"#D4A03C",bgColor:"rgba(212, 160, 60, 0.12)"},aider:{initial:"A",color:"#C45B5B",bgColor:"rgba(196, 91, 91, 0.12)"}},et={healthy:"var(--loki-green, #1FC5A8)",degraded:"var(--loki-yellow, #D4A03C)",down:"var(--loki-red, #C45B5B)",unknown:"var(--loki-text-muted, #939084)"},me=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._providers=[],this._expandedProvider=null,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),1e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let e=await this._api._get("/api/v2/providers/health");this._providers=e.providers||[]}catch{this._providers.length===0&&(this._providers=this._getDemoData())}this.render()}_getDemoData(){return[{name:"claude",status:"healthy",latency_ms:245,tokens_used:125400,model:"claude-opus-4-7",api_version:"v1",rate_limit:{remaining:45,limit:50},cost_usd:3.42},{name:"codex",status:"degraded",latency_ms:890,tokens_used:45200,model:"gpt-5.3-codex",api_version:"v1",rate_limit:{remaining:12,limit:60},cost_usd:.87},{name:"cline",status:"healthy",latency_ms:320,tokens_used:78600,model:"cline-default",api_version:"v1",rate_limit:{remaining:55,limit:60},cost_usd:1.15}]}_formatTokens(e){return e==null?"--":e>=1e6?(e/1e6).toFixed(1)+"M":e>=1e3?(e/1e3).toFixed(1)+"K":String(e)}_formatLatency(e){return e==null?"--":e<1e3?e+"ms":(e/1e3).toFixed(1)+"s"}_formatCost(e){return e==null?"--":"$"+e.toFixed(2)}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_toggleExpand(e){this._expandedProvider=this._expandedProvider===e?null:e,this.render()}_bindEvents(){this.shadowRoot.querySelectorAll(".provider-card").forEach(t=>{t.addEventListener("click",()=>{this._toggleExpand(t.dataset.provider)})})}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .health-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .refresh-label {
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 12px;
+      }
+
+      .provider-card {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        padding: 16px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .provider-card:hover {
+        border-color: var(--loki-border-light, #C5C0B1);
+      }
+
+      .provider-card.expanded {
+        border-color: var(--loki-accent, #553DE9);
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .provider-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 15px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .provider-name {
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: capitalize;
+        flex: 1;
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .status-dot.pulse {
+        animation: statusPulse 2s infinite;
+      }
+
+      @keyframes statusPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
+      .card-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .metric {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .metric-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .metric-value {
+        font-size: 15px;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .expand-details {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--loki-border, #ECEAE3);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        animation: expandIn 0.2s ease-out;
+      }
+
+      @keyframes expandIn {
+        from { opacity: 0; max-height: 0; }
+        to { opacity: 1; max-height: 200px; }
+      }
+
+      .detail-row {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .detail-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .detail-value {
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-secondary, #36342E);
+      }
+
+      .rate-limit-bar {
+        width: 100%;
+        height: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+
+      .rate-limit-fill {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.3s ease;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t;this._providers.length===0?t='<div class="empty-state">No provider data available</div>':t=`<div class="provider-grid">${this._providers.map(i=>{let a=Ht[i.name]||{initial:(i.name??"?").charAt(0).toUpperCase(),color:"#939084",bgColor:"rgba(147, 144, 132, 0.12)"},s=et[i.status]||et.unknown,r=this._expandedProvider===i.name,o=i.rate_limit?i.rate_limit.remaining/i.rate_limit.limit*100:100,n=o>50?"var(--loki-green)":o>20?"var(--loki-yellow)":"var(--loki-red)";return`
+          <div class="provider-card ${r?"expanded":""}" data-provider="${this._escapeHtml(i.name)}">
+            <div class="card-header">
+              <div class="provider-icon" style="background: ${a.bgColor}; color: ${a.color};">${a.initial}</div>
+              <span class="provider-name">${this._escapeHtml(i.name)}</span>
+              <div class="status-dot ${i.status==="healthy"?"pulse":""}" style="background: ${s};" title="${this._escapeHtml(i.status)}"></div>
+            </div>
+            <div class="card-metrics">
+              <div class="metric">
+                <span class="metric-label">Latency</span>
+                <span class="metric-value">${this._formatLatency(i.latency_ms)}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Tokens</span>
+                <span class="metric-value">${this._formatTokens(i.tokens_used)}</span>
+              </div>
+            </div>
+            ${r?`
+              <div class="expand-details">
+                <div class="detail-row">
+                  <span class="detail-label">Model</span>
+                  <span class="detail-value">${this._escapeHtml(i.model||"--")}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">API Version</span>
+                  <span class="detail-value">${this._escapeHtml(i.api_version||"--")}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Cost</span>
+                  <span class="detail-value">${this._formatCost(i.cost_usd)}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Rate Limit</span>
+                  <span class="detail-value">${i.rate_limit?i.rate_limit.remaining+"/"+i.rate_limit.limit:"--"}</span>
+                  ${i.rate_limit?`
+                    <div class="rate-limit-bar">
+                      <div class="rate-limit-fill" style="width: ${o}%; background: ${n};"></div>
+                    </div>
+                  `:""}
+                </div>
+              </div>
+            `:""}
+          </div>
+        `}).join("")}</div>`,e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="health-container">
+        <div class="header">
+          <h3 class="title">Provider Health</h3>
+          <span class="refresh-label">Auto-refresh: 10s</span>
+        </div>
+        ${t}
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-provider-health")||customElements.define("loki-provider-health",me);var Be=[{id:"planning",label:"Planning",icon:"P"},{id:"scaffolding",label:"Scaffolding",icon:"S"},{id:"implementation",label:"Implementation",icon:"I"},{id:"testing",label:"Testing",icon:"T"},{id:"review",label:"Review",icon:"R"},{id:"deploy",label:"Deploy",icon:"D"}],Me={waiting:{color:"var(--loki-text-muted, #939084)",bgColor:"var(--loki-bg-tertiary, #ECEAE3)",label:"Waiting"},active:{color:"var(--loki-accent, #553DE9)",bgColor:"var(--loki-accent-muted, rgba(85, 61, 233, 0.10))",label:"Active"},complete:{color:"var(--loki-green, #1FC5A8)",bgColor:"var(--loki-green-muted, rgba(31, 197, 168, 0.12))",label:"Complete"},failed:{color:"var(--loki-red, #C45B5B)",bgColor:"var(--loki-red-muted, rgba(196, 91, 91, 0.12))",label:"Failed"}},ve=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._stages=[],this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),5e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let e=await this._api._get("/api/v2/pipeline/status");this._stages=e.stages||[]}catch{this._stages.length===0&&(this._stages=this._getDemoData())}this.render()}_getDemoData(){return[{id:"planning",status:"complete",errors:0,duration_ms:12500},{id:"scaffolding",status:"complete",errors:0,duration_ms:8300},{id:"implementation",status:"active",errors:0,duration_ms:45e3},{id:"testing",status:"waiting",errors:0,duration_ms:null},{id:"review",status:"waiting",errors:0,duration_ms:null},{id:"deploy",status:"waiting",errors:0,duration_ms:null}]}_getStageData(e){return this._stages.find(t=>t.id===e)||{id:e,status:"waiting",errors:0}}_formatDuration(e){if(e==null||e<0)return"";if(e<1e3)return e+"ms";let t=Math.floor(e/1e3);if(t<60)return t+"s";let i=Math.floor(t/60),a=t%60;return i+"m "+a+"s"}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .pipeline-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .pipeline-track {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        padding: 20px 12px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow-x: auto;
+      }
+
+      .stage-node {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        min-width: 90px;
+        flex-shrink: 0;
+      }
+
+      .stage-circle {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        font-weight: 700;
+        transition: all 0.3s;
+        position: relative;
+      }
+
+      .stage-circle.active {
+        animation: stagePulse 2s ease-in-out infinite;
+      }
+
+      @keyframes stagePulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(85, 61, 233, 0.3); }
+        50% { box-shadow: 0 0 0 10px rgba(85, 61, 233, 0); }
+      }
+
+      .stage-check {
+        font-size: 18px;
+        line-height: 1;
+      }
+
+      .stage-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--loki-text-secondary, #36342E);
+        text-align: center;
+        max-width: 90px;
+      }
+
+      .stage-duration {
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .stage-error-count {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--loki-red, #C45B5B);
+        background: var(--loki-red-muted, rgba(196, 91, 91, 0.12));
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+
+      .connector {
+        flex: 1;
+        height: 3px;
+        min-width: 24px;
+        position: relative;
+        overflow: hidden;
+        margin: 0 -2px;
+        align-self: center;
+        margin-bottom: 36px;
+      }
+
+      .connector-line {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        border-radius: 2px;
+      }
+
+      .connector-line.completed {
+        background: var(--loki-green, #1FC5A8);
+      }
+
+      .connector-line.pending {
+        background: var(--loki-border, #ECEAE3);
+      }
+
+      .connector-line.active {
+        background: var(--loki-border, #ECEAE3);
+      }
+
+      .flow-dot {
+        position: absolute;
+        top: -1px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--loki-accent, #553DE9);
+        animation: flowDot 1.5s linear infinite;
+      }
+
+      @keyframes flowDot {
+        0% { left: 0; opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { left: 100%; opacity: 0; }
+      }
+
+      .status-legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 14px;
+        flex-wrap: wrap;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .legend-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;let t=Be.map((a,s)=>{let r=this._getStageData(a.id),o=Me[r.status]||Me.waiting,n=r.status==="complete",l=r.status==="active",c=r.status==="failed",p=n?'<span class="stage-check">&#10003;</span>':c?'<span class="stage-check">&#10007;</span>':a.icon,u=`
+        <div class="stage-node">
+          <div class="stage-circle ${l?"active":""}"
+               style="background: ${o.bgColor}; color: ${o.color}; border: 2px solid ${o.color};">
+            ${p}
+          </div>
+          <span class="stage-label">${a.label}</span>
+          ${r.duration_ms?`<span class="stage-duration">${this._formatDuration(r.duration_ms)}</span>`:""}
+          ${r.errors>0?`<span class="stage-error-count">${r.errors} error${r.errors>1?"s":""}</span>`:""}
+        </div>
+      `;if(s<Be.length-1){let b=this._getStageData(Be[s+1].id),m=n,f=l||n&&(b.status==="active"||b.status==="waiting");return u+`
+          <div class="connector">
+            <div class="connector-line ${m?"completed":l?"active":"pending"}"></div>
+            ${l?'<div class="flow-dot"></div>':""}
+          </div>
+        `}return u}).join(""),i=Object.entries(Me).map(([a,s])=>`<div class="legend-item">
+        <div class="legend-dot" style="background: ${s.color};"></div>
+        <span>${s.label}</span>
+      </div>`).join("");e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="pipeline-container">
+        <div class="header">
+          <h3 class="title">Build Pipeline</h3>
+        </div>
+        <div class="pipeline-track">
+          ${t}
+        </div>
+        <div class="status-legend">
+          ${i}
+        </div>
+      </div>
+    `}};customElements.get("loki-pipeline-view")||customElements.define("loki-pipeline-view",ve);var be={episode:{color:"var(--loki-blue, #2F71E3)",shape:"circle",label:"Episode"},pattern:{color:"var(--loki-green, #1FC5A8)",shape:"square",label:"Pattern"},skill:{color:"var(--loki-purple, #553DE9)",shape:"diamond",label:"Skill"}};function Rt(d,e,t){let i=e/2,a=t/2,s=Math.min(i,a)*.65,r=d.length;return d.map((o,n)=>{let l=2*Math.PI*n/r-Math.PI/2,c=o.importance||.5,p=s*(.5+c*.5);return{...o,x:i+p*Math.cos(l),y:a+p*Math.sin(l)}})}var fe=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._nodes=[],this._edges=[],this._selectedNode=null,this._api=null,this._pollInterval=null,this._graphWidth=600,this._graphHeight=400}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),15e3)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let e=await this._api._get("/api/v2/memory/graph");this._nodes=e.nodes||[],this._edges=e.edges||[]}catch{if(this._nodes.length===0){let e=this._getDemoData();this._nodes=e.nodes,this._edges=e.edges}}this.render()}_getDemoData(){return{nodes:[{id:"ep1",type:"episode",label:"Build iteration #12",importance:.8,details:"Completed scaffolding and initial implementation"},{id:"ep2",type:"episode",label:"Code review #5",importance:.6,details:"Quality gate passed with 3/3 approval"},{id:"ep3",type:"episode",label:"Test failure #3",importance:.7,details:"Integration test timeout resolved"},{id:"pt1",type:"pattern",label:"Error recovery",importance:.9,details:"Retry with exponential backoff pattern"},{id:"pt2",type:"pattern",label:"API design",importance:.7,details:"REST endpoint naming conventions"},{id:"pt3",type:"pattern",label:"Test structure",importance:.5,details:"Arrange-Act-Assert with setup helpers"},{id:"sk1",type:"skill",label:"Playwright E2E",importance:.85,details:"Browser automation test writing"},{id:"sk2",type:"skill",label:"FastAPI routing",importance:.6,details:"Python API server development"}],edges:[{source:"ep1",target:"pt1",strength:.8},{source:"ep1",target:"sk1",strength:.6},{source:"ep2",target:"pt2",strength:.9},{source:"ep3",target:"pt1",strength:.7},{source:"ep3",target:"pt3",strength:.5},{source:"pt1",target:"sk2",strength:.4},{source:"pt2",target:"sk2",strength:.7},{source:"pt3",target:"sk1",strength:.6}]}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_selectNode(e){this._selectedNode=this._selectedNode===e?null:e,this.render()}_bindEvents(){let e=this.shadowRoot;e.querySelectorAll(".graph-node").forEach(t=>{t.addEventListener("click",()=>{this._selectNode(t.dataset.nodeId)})}),e.querySelectorAll(".close-detail").forEach(t=>{t.addEventListener("click",()=>{this._selectedNode=null,this.render()})})}_renderNodeShape(e,t,i){let a=be[e.type]||be.episode,s=10+(e.importance||.5)*16,r=this._selectedNode===e.id,o=r?"var(--loki-accent, #553DE9)":a.color,n=r?3:1.5,l=this._selectedNode&&!r?.4:1,c;switch(a.shape){case"square":c=`<rect x="${t-s/2}" y="${i-s/2}" width="${s}" height="${s}"
+                  rx="3" fill="${a.color}" fill-opacity="0.2" stroke="${o}" stroke-width="${n}" opacity="${l}" />`;break;case"diamond":{let u=s/2;c=`<polygon points="${t},${i-u} ${t+u},${i} ${t},${i+u} ${t-u},${i}"
+                  fill="${a.color}" fill-opacity="0.2" stroke="${o}" stroke-width="${n}" opacity="${l}" />`;break}default:c=`<circle cx="${t}" cy="${i}" r="${s/2}" fill="${a.color}" fill-opacity="0.2"
+                  stroke="${o}" stroke-width="${n}" opacity="${l}" />`}let p=`<text x="${t}" y="${i+s/2+14}" text-anchor="middle" font-size="10"
+                    font-family="Inter, sans-serif" fill="var(--loki-text-secondary, #36342E)" opacity="${l}">${this._escapeHtml(e.label)}</text>`;return`<g class="graph-node" data-node-id="${this._escapeHtml(e.id)}" style="cursor: pointer;">
+      ${c}${p}
+    </g>`}_renderEdge(e,t){let i=t.find(n=>n.id===e.source),a=t.find(n=>n.id===e.target);if(!i||!a)return"";let s=(e.strength||1)<.6,r=this._selectedNode?e.source===this._selectedNode||e.target===this._selectedNode?.8:.15:.4,o=s?'stroke-dasharray="4 4"':"";return`<line x1="${i.x}" y1="${i.y}" x2="${a.x}" y2="${a.y}"
+      stroke="var(--loki-border-light, #C5C0B1)" stroke-width="1.5" opacity="${r}" ${o} />`}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .graph-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .graph-wrap {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .graph-svg {
+        display: block;
+        width: 100%;
+        height: 400px;
+      }
+
+      .legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .legend-shape {
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .legend-circle {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid;
+      }
+
+      .legend-square {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        border: 2px solid;
+      }
+
+      .legend-diamond {
+        width: 10px;
+        height: 10px;
+        border: 2px solid;
+        transform: rotate(45deg);
+      }
+
+      .detail-panel {
+        position: absolute;
+        bottom: 12px;
+        left: 12px;
+        right: 12px;
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        padding: 14px;
+        box-shadow: var(--loki-shadow-md, 0 4px 6px rgba(32, 21, 21, 0.06));
+        animation: slideUp 0.2s ease-out;
+      }
+
+      @keyframes slideUp {
+        from { transform: translateY(10px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+
+      .detail-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .detail-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .detail-type {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 4px;
+      }
+
+      .close-detail {
+        background: none;
+        border: none;
+        font-size: 16px;
+        color: var(--loki-text-muted, #939084);
+        cursor: pointer;
+        padding: 0 4px;
+        font-family: inherit;
+      }
+
+      .close-detail:hover {
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .detail-body {
+        font-size: 13px;
+        color: var(--loki-text-secondary, #36342E);
+        line-height: 1.5;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;if(this._nodes.length===0){e.innerHTML=`
+        <style>${this.getBaseStyles()}${this._getStyles()}</style>
+        <div class="graph-container">
+          <div class="header">
+            <h3 class="title">Memory Network</h3>
+          </div>
+          <div class="empty-state">No memory entries to visualize</div>
+        </div>
+      `;return}let t=this._graphWidth,i=this._graphHeight,a=Rt(this._nodes,t,i),s=this._edges.map(l=>this._renderEdge(l,a)).join(""),r=a.map(l=>this._renderNodeShape(l,l.x,l.y)).join(""),o="";if(this._selectedNode){let l=this._nodes.find(c=>c.id===this._selectedNode);if(l){let c=be[l.type]||be.episode;o=`
+          <div class="detail-panel">
+            <div class="detail-header">
+              <span class="detail-title">${this._escapeHtml(l.label)}</span>
+              <span class="detail-type" style="background: ${c.color}; color: white;">${c.label}</span>
+              <button class="close-detail" title="Close">&#10005;</button>
+            </div>
+            <div class="detail-body">${this._escapeHtml(l.details||"No details available")}</div>
+          </div>
+        `}}let n=Object.entries(be).map(([,l])=>{let c;return l.shape==="circle"?c=`<div class="legend-circle" style="border-color: ${l.color};"></div>`:l.shape==="square"?c=`<div class="legend-square" style="border-color: ${l.color};"></div>`:c=`<div class="legend-diamond" style="border-color: ${l.color};"></div>`,`<div class="legend-item">
+        <div class="legend-shape">${c}</div>
+        <span>${l.label}</span>
+      </div>`}).join("");e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="graph-container">
+        <div class="header">
+          <h3 class="title">Memory Network</h3>
+        </div>
+        <div class="graph-wrap">
+          <svg class="graph-svg" viewBox="0 0 ${t} ${i}" xmlns="http://www.w3.org/2000/svg">
+            ${s}
+            ${r}
+          </svg>
+          ${o}
+        </div>
+        <div class="legend">${n}</div>
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-memory-graph")||customElements.define("loki-memory-graph",fe);var Pe={planning:{color:"var(--loki-blue, #2F71E3)",label:"Planning"},building:{color:"var(--loki-green, #1FC5A8)",label:"Building"},implementation:{color:"var(--loki-green, #1FC5A8)",label:"Building"},testing:{color:"var(--loki-purple, #553DE9)",label:"Testing"},review:{color:"var(--loki-yellow, #D4A03C)",label:"Review"},overhead:{color:"var(--loki-text-muted, #939084)",label:"Overhead"}},ke=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._phases=[],this._budget=null,this._totalCost=0,this._hoveredPhase=null,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),1e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let e=await this._api._get("/api/v2/cost/breakdown");this._phases=e.phases||[],this._budget=e.budget_usd||null,this._totalCost=e.total_usd||this._phases.reduce((t,i)=>t+(i.cost_usd||0),0)}catch{this._phases.length===0&&(this._phases=this._getDemoData(),this._budget=10,this._totalCost=this._phases.reduce((e,t)=>e+t.cost_usd,0))}this.render()}_getDemoData(){return[{phase:"planning",cost_usd:.85,tokens:12400},{phase:"building",cost_usd:3.2,tokens:68500},{phase:"testing",cost_usd:1.45,tokens:31200},{phase:"review",cost_usd:.9,tokens:18800},{phase:"overhead",cost_usd:.35,tokens:5600}]}_formatCost(e){return e==null?"--":"$"+e.toFixed(2)}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_bindEvents(){this.shadowRoot.querySelectorAll(".waterfall-bar").forEach(t=>{t.addEventListener("mouseenter",()=>{this._hoveredPhase=t.dataset.phase,this._updateTooltip(t)}),t.addEventListener("mouseleave",()=>{this._hoveredPhase=null,this._hideTooltip()})})}_updateTooltip(e){let t=this.shadowRoot.querySelector(".tooltip");if(!t)return;let i=this._phases.find(o=>o.phase===this._hoveredPhase);if(!i)return;let a=Pe[i.phase]||{label:i.phase};t.innerHTML=`<strong>${a.label}</strong>: ${this._formatCost(i.cost_usd)}`,t.style.display="block";let s=e.getBoundingClientRect(),r=this.shadowRoot.querySelector(".chart-area").getBoundingClientRect();t.style.left=s.left-r.left+s.width/2+"px",t.style.top=s.top-r.top-30+"px"}_hideTooltip(){let e=this.shadowRoot.querySelector(".tooltip");e&&(e.style.display="none")}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .waterfall-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .total-cost {
+        font-size: 14px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+        color: var(--loki-accent, #553DE9);
+      }
+
+      .chart-card {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        padding: 20px;
+      }
+
+      .chart-area {
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        height: 200px;
+        padding-bottom: 40px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+      }
+
+      .bar-group {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+        justify-content: flex-end;
+        position: relative;
+      }
+
+      .waterfall-bar {
+        width: 100%;
+        max-width: 60px;
+        border-radius: 4px 4px 0 0;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        min-height: 4px;
+        position: relative;
+      }
+
+      .waterfall-bar:hover {
+        opacity: 0.85;
+        transform: scaleY(1.03);
+        transform-origin: bottom;
+      }
+
+      .bar-label {
+        position: absolute;
+        bottom: -32px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--loki-text-muted, #939084);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+      }
+
+      .bar-value {
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-secondary, #36342E);
+        white-space: nowrap;
+      }
+
+      .budget-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        border-top: 2px dashed var(--loki-red, #C45B5B);
+        z-index: 1;
+      }
+
+      .budget-label {
+        position: absolute;
+        right: 0;
+        top: -16px;
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-red, #C45B5B);
+        font-weight: 600;
+      }
+
+      .running-total-line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 40px;
+        height: calc(100% - 40px);
+        pointer-events: none;
+      }
+
+      .running-total-line svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .tooltip {
+        display: none;
+        position: absolute;
+        background: var(--loki-bg-primary, #FFFEFB);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 12px;
+        box-shadow: var(--loki-shadow-md, 0 4px 6px rgba(32, 21, 21, 0.06));
+        white-space: nowrap;
+        z-index: 10;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .summary-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+
+      .summary-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+      }
+
+      .summary-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+
+      .summary-label {
+        color: var(--loki-text-secondary, #36342E);
+        font-weight: 500;
+      }
+
+      .summary-value {
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+        font-size: 11px;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;if(this._phases.length===0){e.innerHTML=`
+        <style>${this.getBaseStyles()}${this._getStyles()}</style>
+        <div class="waterfall-container">
+          <div class="header">
+            <h3 class="title">Cost Breakdown</h3>
+          </div>
+          <div class="empty-state">No cost data available</div>
+        </div>
+      `;return}let t=Math.max(...this._phases.map(l=>l.cost_usd||0),.01),i=160,a=this._budget?Math.max(t,this._budget):t,s=this._budget?this._budget/a*i:null,r=this._phases.map(l=>{let c=Pe[l.phase]||{color:"var(--loki-text-muted)",label:l.phase},p=(l.cost_usd||0)/a*i,u=this._hoveredPhase===l.phase;return`
+        <div class="bar-group">
+          <span class="bar-value">${this._formatCost(l.cost_usd)}</span>
+          <div class="waterfall-bar" data-phase="${this._escapeHtml(l.phase)}"
+               style="height: ${Math.max(p,4)}px; background: ${c.color}; ${u?"opacity: 0.85;":""}">
+          </div>
+          <span class="bar-label">${c.label}</span>
+        </div>
+      `}).join(""),o=s!=null?`
+      <div class="budget-line" style="bottom: ${s+40}px;">
+        <span class="budget-label">Budget: ${this._formatCost(this._budget)}</span>
+      </div>
+    `:"",n=this._phases.map(l=>{let c=Pe[l.phase]||{color:"var(--loki-text-muted)",label:l.phase},p=this._totalCost>0?(l.cost_usd/this._totalCost*100).toFixed(0):0;return`<div class="summary-item">
+        <div class="summary-dot" style="background: ${c.color};"></div>
+        <span class="summary-label">${c.label}</span>
+        <span class="summary-value">${this._formatCost(l.cost_usd)} (${p}%)</span>
+      </div>`}).join("");e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="waterfall-container">
+        <div class="header">
+          <h3 class="title">Cost Breakdown</h3>
+          <span class="total-cost">Total: ${this._formatCost(this._totalCost)}</span>
+        </div>
+        <div class="chart-card">
+          <div class="chart-area">
+            ${r}
+            ${o}
+            <div class="tooltip"></div>
+          </div>
+          <div class="summary-row">
+            ${n}
+          </div>
+        </div>
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-cost-waterfall")||customElements.define("loki-cost-waterfall",ke);var Bt={1:{bg:"rgba(212, 160, 60, 0.15)",border:"#D4A03C",label:"1st"},2:{bg:"rgba(147, 144, 132, 0.15)",border:"#939084",label:"2nd"},3:{bg:"rgba(196, 130, 91, 0.15)",border:"#C4825B",label:"3rd"}},xe=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._agents=[],this._expandedAgent=null,this._api=null,this._pollInterval=null,this._previousRanks={}}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadData(),this._startPolling()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadData()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_startPolling(){this._pollInterval=setInterval(()=>this._loadData(),1e4)}_stopPolling(){this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}async _loadData(){try{let t=(await this._api._get("/api/v2/agents/leaderboard")).agents||[],i={};t.forEach((a,s)=>{i[a.type||a.name]=s+1}),this._previousRanks={...this._currentRanks||{}},this._currentRanks=i,this._agents=t}catch{this._agents.length===0&&(this._agents=this._getDemoData(),this._currentRanks={},this._agents.forEach((e,t)=>{this._currentRanks[e.type]=t+1}),this._previousRanks={})}this.render()}_getDemoData(){return[{type:"code-generator",name:"Code Generator",tasks:24,quality:9.2,speed:"fast",cost_usd:2.4},{type:"test-writer",name:"Test Writer",tasks:18,quality:9,speed:"fast",cost_usd:1.2},{type:"code-reviewer",name:"Code Reviewer",tasks:15,quality:8.8,speed:"medium",cost_usd:1.8},{type:"architect",name:"Architect",tasks:8,quality:9.5,speed:"slow",cost_usd:3.1},{type:"debugger",name:"Debugger",tasks:12,quality:8.5,speed:"fast",cost_usd:.95},{type:"doc-writer",name:"Documentation",tasks:10,quality:8.3,speed:"fast",cost_usd:.6}]}_getRankChange(e){let t=this._currentRanks?.[e],i=this._previousRanks?.[e];return t==null||i==null?0:i-t}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_toggleAgent(e){this._expandedAgent=this._expandedAgent===e?null:e,this.render()}_bindEvents(){this.shadowRoot.querySelectorAll(".agent-row").forEach(t=>{t.addEventListener("click",()=>{this._toggleAgent(t.dataset.agent)})})}_getQualityColor(e){return e>=9?"var(--loki-green, #1FC5A8)":e>=8?"var(--loki-blue, #2F71E3)":e>=7?"var(--loki-yellow, #D4A03C)":"var(--loki-red, #C45B5B)"}_getSpeedLabel(e){return e==="fast"?{label:"Fast",color:"var(--loki-green, #1FC5A8)"}:e==="medium"?{label:"Medium",color:"var(--loki-yellow, #D4A03C)"}:{label:"Slow",color:"var(--loki-red, #C45B5B)"}}_getStyles(){return`
+      :host {
+        display: block;
+      }
+
+      .leaderboard-container {
+        font-family: var(--loki-font-family, 'Inter', -apple-system, sans-serif);
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .agent-count {
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .leaderboard-table {
+        background: var(--loki-bg-card, #ffffff);
+        border: 1px solid var(--loki-border, #ECEAE3);
+        border-radius: 5px;
+        overflow: hidden;
+      }
+
+      .table-header {
+        display: grid;
+        grid-template-columns: 48px 1fr 80px 80px 80px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        background: var(--loki-bg-secondary, #F8F4F0);
+      }
+
+      .table-header span {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .agent-row {
+        display: grid;
+        grid-template-columns: 48px 1fr 80px 80px 80px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--loki-border, #ECEAE3);
+        cursor: pointer;
+        transition: all 0.2s;
+        align-items: center;
+      }
+
+      .agent-row:last-child {
+        border-bottom: none;
+      }
+
+      .agent-row:hover {
+        background: var(--loki-bg-hover, #F3EFE9);
+      }
+
+      .agent-row.top-3 {
+        border-left: 3px solid transparent;
+      }
+
+      .rank-cell {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .rank-number {
+        font-size: 15px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        min-width: 20px;
+      }
+
+      .rank-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .rank-change {
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .rank-up {
+        color: var(--loki-green, #1FC5A8);
+      }
+
+      .rank-down {
+        color: var(--loki-red, #C45B5B);
+      }
+
+      .agent-name-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .agent-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .agent-type {
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .metric-cell {
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 600;
+      }
+
+      .quality-score {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .quality-bar {
+        width: 40px;
+        height: 4px;
+        background: var(--loki-bg-tertiary, #ECEAE3);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .quality-fill {
+        height: 100%;
+        border-radius: 2px;
+      }
+
+      .speed-badge {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .agent-detail {
+        grid-column: 1 / -1;
+        padding: 12px 14px;
+        background: var(--loki-bg-secondary, #F8F4F0);
+        border-top: 1px solid var(--loki-border, #ECEAE3);
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+        animation: expandDetail 0.2s ease-out;
+      }
+
+      @keyframes expandDetail {
+        from { opacity: 0; max-height: 0; }
+        to { opacity: 1; max-height: 100px; }
+      }
+
+      .detail-metric {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .detail-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      .detail-value {
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-primary, #201515);
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 32px 16px;
+        color: var(--loki-text-muted, #939084);
+        font-size: 13px;
+      }
+    `}render(){let e=this.shadowRoot;if(!e)return;if(this._agents.length===0){e.innerHTML=`
+        <style>${this.getBaseStyles()}${this._getStyles()}</style>
+        <div class="leaderboard-container">
+          <div class="header">
+            <h3 class="title">Agent Leaderboard</h3>
+          </div>
+          <div class="empty-state">No agent performance data available</div>
+        </div>
+      `;return}let t=this._agents.map((i,a)=>{let s=a+1,r=Bt[s],o=i.type||i.name,n=this._getRankChange(o),l=this._expandedAgent===o,c=this._getQualityColor(i.quality),p=this._getSpeedLabel(i.speed),u=(i.quality||0)/10*100,b;r?b=`<div class="rank-badge" style="background: ${r.bg}; color: ${r.border};">${s}</div>`:b=`<span class="rank-number" style="color: var(--loki-text-muted);">${s}</span>`;let m="";n>0?m=`<span class="rank-change rank-up">+${n}</span>`:n<0&&(m=`<span class="rank-change rank-down">${n}</span>`);let f=l?`
+        <div class="agent-detail">
+          <div class="detail-metric">
+            <span class="detail-label">Total Cost</span>
+            <span class="detail-value">$${(i.cost_usd||0).toFixed(2)}</span>
+          </div>
+          <div class="detail-metric">
+            <span class="detail-label">Avg Time/Task</span>
+            <span class="detail-value">${i.avg_time||"--"}</span>
+          </div>
+          <div class="detail-metric">
+            <span class="detail-label">Success Rate</span>
+            <span class="detail-value">${i.success_rate!=null?i.success_rate+"%":"--"}</span>
+          </div>
+        </div>
+      `:"";return`
+        <div class="agent-row ${s<=3?"top-3":""}" data-agent="${this._escapeHtml(o)}"
+             style="${r?"border-left-color: "+r.border+";":""}">
+          <div class="rank-cell">${b}${m}</div>
+          <div class="agent-name-cell">
+            <span class="agent-name">${this._escapeHtml(i.name||i.type)}</span>
+            <span class="agent-type">${this._escapeHtml(i.type||"")}</span>
+          </div>
+          <div class="metric-cell">${i.tasks||0}</div>
+          <div class="metric-cell">
+            <div class="quality-score">
+              <span style="color: ${c};">${(i.quality||0).toFixed(1)}</span>
+              <div class="quality-bar"><div class="quality-fill" style="width: ${u}%; background: ${c};"></div></div>
+            </div>
+          </div>
+          <div class="metric-cell">
+            <span class="speed-badge" style="background: ${p.color}15; color: ${p.color};">${p.label}</span>
+          </div>
+        </div>
+        ${f}
+      `}).join("");e.innerHTML=`
+      <style>${this.getBaseStyles()}${this._getStyles()}</style>
+      <div class="leaderboard-container">
+        <div class="header">
+          <h3 class="title">Agent Leaderboard</h3>
+          <span class="agent-count">${this._agents.length} agents</span>
+        </div>
+        <div class="leaderboard-table">
+          <div class="table-header">
+            <span>Rank</span>
+            <span>Agent</span>
+            <span>Tasks</span>
+            <span>Quality</span>
+            <span>Speed</span>
+          </div>
+          ${t}
+        </div>
+      </div>
+    `,this._bindEvents()}};customElements.get("loki-agent-leaderboard")||customElements.define("loki-agent-leaderboard",xe);var tt=50,_e=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._api=null,this._statusLoading=!1,this._statusError=null,this._status=null,this._eventsLoading=!1,this._eventsError=null,this._events=[],this._eventsSource=null,this._eventsCount=0,this._lookupId="",this._lookupLoading=!1,this._lookupError=null,this._lookupResult=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadStatus()}disconnectedCallback(){super.disconnectedCallback(),this._stopPolling()}attributeChangedCallback(e,t,i){if(t!==i)switch(e){case"api-url":this._api&&(this._api.baseUrl=i,this._loadStatus());break;case"theme":this._applyTheme(),this.render();break}}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}_stopPolling(){}async _loadStatus(){this._statusLoading=!0,this._statusError=null,this.render();try{this._status=await this._api.get("/api/managed/status")}catch(e){this._statusError=e&&e.message?e.message:"Failed to load managed status",this._status=null}finally{this._statusLoading=!1}this._status&&this._status.enabled?await this._loadEvents():this.render()}async _loadEvents(e=tt){this._eventsLoading=!0,this._eventsError=null,this.render();try{let t=await this._api.get("/api/managed/events?limit="+encodeURIComponent(e));Array.isArray(t)?(this._events=t,this._eventsCount=t.length,this._eventsSource=null):t&&typeof t=="object"?(this._events=Array.isArray(t.events)?t.events:[],this._eventsCount=typeof t.count=="number"?t.count:this._events.length,this._eventsSource=t.source||null):(this._events=[],this._eventsCount=0,this._eventsSource=null)}catch(t){this._eventsError=t&&t.message?t.message:"Failed to load managed events",this._events=[],this._eventsCount=0,this._eventsSource=null}finally{this._eventsLoading=!1,this.render()}}async _lookupMemoryVersion(){let e=(this._lookupId||"").trim();if(!e){this._lookupError="Enter a memory ID to look up",this._lookupResult=null,this.render();return}this._lookupLoading=!0,this._lookupError=null,this._lookupResult=null,this.render();try{let t="/api/managed/memory_versions/"+encodeURIComponent(e);this._lookupResult=await this._api.get(t)}catch(t){this._lookupError=t&&t.message?t.message:"Failed to load memory versions",this._lookupResult=null}finally{this._lookupLoading=!1,this.render()}}_onLookupInput(e){this._lookupId=e&&e.target?e.target.value:""}_onLookupKeyDown(e){e&&e.key==="Enter"&&(e.preventDefault(),this._lookupMemoryVersion())}_attachEventHandlers(){let e=this.shadowRoot;if(!e)return;let t=e.querySelector("#refresh-status-btn");t&&t.addEventListener("click",()=>this._loadStatus());let i=e.querySelector("#refresh-events-btn");i&&i.addEventListener("click",()=>this._loadEvents());let a=e.querySelector("#lookup-input");a&&(a.addEventListener("input",r=>this._onLookupInput(r)),a.addEventListener("keydown",r=>this._onLookupKeyDown(r)));let s=e.querySelector("#lookup-btn");s&&s.addEventListener("click",()=>this._lookupMemoryVersion())}_escapeHtml(e){return e==null?"":String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")}_formatTimestamp(e){if(!e)return"";let t;return typeof e=="number"?t=new Date(e>1e12?e:e*1e3):t=new Date(e),Number.isNaN(t.getTime())?String(e):t.toISOString().replace("T"," ").replace(/\.\d+Z$/,"Z")}_renderStatusSection(){if(this._statusLoading)return'<div class="status-row muted">Loading managed memory status...</div>';if(this._statusError)return`
+        <div class="error-banner" role="alert">
+          <strong>Status error:</strong>
+          <span>${this._escapeHtml(this._statusError)}</span>
+        </div>
+      `;if(!this._status)return'<div class="status-row muted">No managed memory status available.</div>';let e=!!this._status.enabled,t=this._status.parent_flag,i=this._status.child_flags,a=this._status.beta_header,s=this._status.last_fallback_ts,r=i&&typeof i=="object"?Object.entries(i).map(([o,n])=>`${this._escapeHtml(o)}=${this._escapeHtml(n)}`).join(", "):i==null?"":String(i);return`
+      <div class="status-grid">
+        <div class="status-cell">
+          <div class="status-label">Enabled</div>
+          <div class="status-value ${e?"on":"off"}">${e?"true":"false"}</div>
+        </div>
+        <div class="status-cell">
+          <div class="status-label">Parent flag</div>
+          <div class="status-value">${this._escapeHtml(t===void 0?"-":t)}</div>
+        </div>
+        <div class="status-cell">
+          <div class="status-label">Child flags</div>
+          <div class="status-value">${this._escapeHtml(r||"-")}</div>
+        </div>
+        <div class="status-cell">
+          <div class="status-label">Beta header</div>
+          <div class="status-value mono">${this._escapeHtml(a||"-")}</div>
+        </div>
+        <div class="status-cell">
+          <div class="status-label">Last fallback</div>
+          <div class="status-value mono">${this._escapeHtml(this._formatTimestamp(s)||"-")}</div>
+        </div>
+      </div>
+    `}_renderDisabledNotice(){return`
+      <div class="disabled-notice" role="status">
+        <div class="disabled-title">Managed memory is disabled</div>
+        <div class="disabled-body">
+          The managed memory beta surface is not active for this session.
+          Enable it via the parent feature flag and reload to view events
+          and memory versions.
+        </div>
+      </div>
+    `}_renderEventsSection(){if(this._eventsLoading)return'<div class="events-empty muted">Loading events...</div>';if(this._eventsError)return`
+        <div class="error-banner" role="alert">
+          <strong>Events error:</strong>
+          <span>${this._escapeHtml(this._eventsError)}</span>
+        </div>
+      `;if(!this._events.length)return'<div class="events-empty muted">No managed memory events recorded yet.</div>';let e=this._events.map(i=>{let a=this._formatTimestamp(i&&(i.ts||i.timestamp||i.time)),s=i&&(i.type||i.event_type||i.kind||"event"),r=i&&(i.memory_id||i.memoryId||i.id||""),o=i&&(i.summary||i.message||i.detail||""),n=typeof o=="string"?o:JSON.stringify(o);return`
+        <tr>
+          <td class="mono nowrap">${this._escapeHtml(a)}</td>
+          <td><span class="badge">${this._escapeHtml(s)}</span></td>
+          <td class="mono">${this._escapeHtml(r)}</td>
+          <td>${this._escapeHtml(n)}</td>
+        </tr>
+      `}).join(""),t=this._eventsSource?`<span class="source-tag">source: ${this._escapeHtml(this._eventsSource)}</span>`:"";return`
+      <div class="events-meta">
+        <span class="muted">${this._eventsCount} event(s)</span>
+        ${t}
+      </div>
+      <div class="events-table-wrap">
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Type</th>
+              <th>Memory ID</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>${e}</tbody>
+        </table>
+      </div>
+    `}_renderLookupSection(){let e="";if(this._lookupLoading)e='<div class="lookup-result muted">Loading memory versions...</div>';else if(this._lookupError)e=`
+        <div class="error-banner" role="alert">
+          <strong>Lookup error:</strong>
+          <span>${this._escapeHtml(this._lookupError)}</span>
+        </div>
+      `;else if(this._lookupResult!==null&&this._lookupResult!==void 0){let i;try{i=JSON.stringify(this._lookupResult,null,2)}catch{i=String(this._lookupResult)}e=`<pre class="lookup-result mono">${this._escapeHtml(i)}</pre>`}return`
+      <div class="lookup-controls">
+        <input
+          id="lookup-input"
+          type="text"
+          class="lookup-input"
+          placeholder="Memory ID (e.g. mem_abc123)"
+          value="${this._escapeHtml(this._lookupId||"")}"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="lookup-btn" class="btn btn-primary" type="button">
+          Look up versions
+        </button>
+      </div>
+      ${e}
+    `}render(){if(!this.shadowRoot)return;let t=!!(this._status&&this._status.enabled)&&!this._statusError;this.shadowRoot.innerHTML=`
+      <style>
+        ${this.getBaseStyles()}
+
+        :host {
+          display: block;
+          color: var(--loki-text-primary);
+          font-family: var(--loki-font-sans, system-ui, sans-serif);
+        }
+
+        .panel {
+          background: var(--loki-bg-card);
+          border: 1px solid var(--loki-border);
+          border-radius: 6px;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .panel-title {
+          font-size: 14px;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          color: var(--loki-text-primary);
+          margin: 0;
+        }
+
+        .panel-subtitle {
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+
+        .section {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .section-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--loki-text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin: 0;
+        }
+
+        .status-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 8px;
+        }
+
+        .status-cell {
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 8px 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .status-label {
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--loki-text-muted);
+        }
+
+        .status-value {
+          font-size: 13px;
+          color: var(--loki-text-primary);
+          word-break: break-word;
+        }
+
+        .status-value.on { color: var(--loki-green); font-weight: 600; }
+        .status-value.off { color: var(--loki-text-muted); }
+        .status-value.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; }
+
+        .status-row {
+          padding: 12px 0;
+        }
+
+        .muted {
+          color: var(--loki-text-muted);
+          font-size: 12px;
+        }
+
+        .btn {
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 6px 12px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all var(--loki-transition);
+        }
+
+        .btn:hover {
+          background: var(--loki-bg-hover);
+          border-color: var(--loki-border-light);
+        }
+
+        .btn-primary {
+          background: var(--loki-accent);
+          color: #ffffff;
+          border-color: var(--loki-accent);
+        }
+
+        .btn-primary:hover {
+          background: var(--loki-accent-light);
+          border-color: var(--loki-accent-light);
+        }
+
+        .disabled-notice {
+          background: var(--loki-bg-secondary);
+          border: 1px dashed var(--loki-border-light);
+          border-radius: 4px;
+          padding: 16px;
+          text-align: left;
+        }
+
+        .disabled-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--loki-text-secondary);
+          margin-bottom: 6px;
+        }
+
+        .disabled-body {
+          font-size: 12px;
+          color: var(--loki-text-muted);
+          line-height: 1.5;
+        }
+
+        .error-banner {
+          background: var(--loki-red-muted);
+          color: var(--loki-red);
+          border: 1px solid var(--loki-red);
+          border-radius: 4px;
+          padding: 8px 10px;
+          font-size: 12px;
+          display: flex;
+          gap: 6px;
+          align-items: baseline;
+          flex-wrap: wrap;
+        }
+
+        .events-meta {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .source-tag {
+          font-size: 11px;
+          color: var(--loki-text-muted);
+          background: var(--loki-bg-tertiary);
+          padding: 2px 6px;
+          border-radius: 3px;
+        }
+
+        .events-table-wrap {
+          overflow-x: auto;
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+        }
+
+        .events-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+        }
+
+        .events-table th,
+        .events-table td {
+          text-align: left;
+          padding: 6px 10px;
+          border-bottom: 1px solid var(--loki-border);
+          vertical-align: top;
+        }
+
+        .events-table th {
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-secondary);
+          font-weight: 600;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .events-table tr:last-child td {
+          border-bottom: none;
+        }
+
+        .events-empty {
+          padding: 16px;
+          text-align: center;
+          background: var(--loki-bg-secondary);
+          border-radius: 4px;
+        }
+
+        .badge {
+          display: inline-block;
+          padding: 1px 6px;
+          font-size: 11px;
+          background: var(--loki-accent-muted);
+          color: var(--loki-accent);
+          border-radius: 3px;
+          font-weight: 500;
+        }
+
+        .mono {
+          font-family: 'JetBrains Mono', ui-monospace, monospace;
+        }
+
+        .nowrap {
+          white-space: nowrap;
+        }
+
+        .lookup-controls {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+
+        .lookup-input {
+          flex: 1 1 240px;
+          min-width: 200px;
+          padding: 6px 10px;
+          font-size: 12px;
+          font-family: 'JetBrains Mono', ui-monospace, monospace;
+          background: var(--loki-bg-primary);
+          color: var(--loki-text-primary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+        }
+
+        .lookup-input:focus {
+          outline: none;
+          border-color: var(--loki-accent);
+          box-shadow: 0 0 0 2px var(--loki-accent-muted);
+        }
+
+        .lookup-result {
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: 4px;
+          padding: 10px;
+          font-size: 12px;
+          max-height: 320px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          color: var(--loki-text-primary);
+        }
+      </style>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Managed Memory</h2>
+            <div class="panel-subtitle">Anthropic managed memory beta</div>
+          </div>
+          <button id="refresh-status-btn" class="btn" type="button">Refresh status</button>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Status</h3>
+          ${this._renderStatusSection()}
+        </div>
+
+        ${t?`
+          <div class="section">
+            <div class="panel-header">
+              <h3 class="section-title">Recent events (limit ${tt})</h3>
+              <button id="refresh-events-btn" class="btn" type="button">Refresh events</button>
+            </div>
+            ${this._renderEventsSection()}
+          </div>
+
+          <div class="section">
+            <h3 class="section-title">Memory version lookup</h3>
+            ${this._renderLookupSection()}
+          </div>
+        `:this._statusError?"":this._renderDisabledNotice()}
+      </div>
+    `,this._attachEventHandlers()}};customElements.get("loki-managed-memory-panel")||customElements.define("loki-managed-memory-panel",_e);var ye=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._items=[],this._loading=!1,this._error=null,this._activeFile=null,this._activeBody=null,this._activeBodyError=null,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadList(),this._pollInterval=setInterval(()=>this._loadList(),1e4)}disconnectedCallback(){super.disconnectedCallback(),this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._loadList()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||(typeof window<"u"?window.location.origin:"");this._api=g({baseUrl:e})}async _loadList(){this._loading=!0,this._error=null;try{let e=await this._api.get("/api/escalations");this._items=Array.isArray(e&&e.escalations)?e.escalations:[]}catch(e){this._error=e&&e.message?e.message:String(e),this._items=[]}finally{this._loading=!1,this.render()}}async _openFile(e){this._activeFile=e,this._activeBody=null,this._activeBodyError=null,this.render();try{let t=(this._api.baseUrl||"")+"/api/escalations/"+encodeURIComponent(e),i=await fetch(t,{credentials:"include"});if(!i.ok)throw new Error("HTTP "+i.status);this._activeBody=await i.text()}catch(t){this._activeBodyError=t&&t.message?t.message:String(t)}this.render()}_closeFile(){this._activeFile=null,this._activeBody=null,this._activeBodyError=null,this.render()}_formatSize(e){return typeof e!="number"?"--":e<1024?e+" B":e<1024*1024?(e/1024).toFixed(1)+" KB":(e/(1024*1024)).toFixed(1)+" MB"}_formatDate(e){if(!e)return"--";try{let t=new Date(e);return isNaN(t.getTime())?e:t.toLocaleString()}catch{return e}}_escapeHtml(e){return e==null?"":String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")}render(){let e=this.shadowRoot||this;if(!e)return;let t=`
+      <style>
+        :host { display: block; }
+        .esc-wrapper {
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          color: var(--text-primary, #201515);
+        }
+        .esc-explain {
+          color: var(--text-muted, #939084);
+          font-size: 0.875rem;
+          margin-bottom: 12px;
+        }
+        .esc-empty {
+          padding: 16px;
+          background: var(--bg-card, #ffffff);
+          border: 1px dashed var(--border, #ECEAE3);
+          border-radius: 6px;
+          color: var(--text-muted, #939084);
+          font-size: 0.875rem;
+        }
+        .esc-list { display: flex; flex-direction: column; gap: 6px; }
+        .esc-item {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 10px 12px;
+          background: var(--bg-card, #ffffff);
+          border: 1px solid var(--border, #ECEAE3);
+          border-radius: 6px;
+          cursor: pointer;
+        }
+        .esc-item:hover { background: var(--bg-hover, #F3EFE9); }
+        .esc-name { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .esc-meta { font-size: 0.75rem; color: var(--text-muted, #939084); }
+        .esc-error {
+          padding: 10px 12px;
+          background: var(--bg-card, #ffffff);
+          border: 1px solid var(--error, #C45B5B);
+          border-radius: 6px;
+          color: var(--error, #C45B5B);
+          font-size: 0.85rem;
+        }
+        .esc-viewer {
+          margin-top: 16px;
+          padding: 12px;
+          background: var(--bg-card, #ffffff);
+          border: 1px solid var(--border, #ECEAE3);
+          border-radius: 6px;
+        }
+        .esc-viewer-header {
+          display: flex; justify-content: space-between; align-items: center;
+          margin-bottom: 8px;
+        }
+        .esc-close-btn {
+          padding: 4px 10px; cursor: pointer;
+          border: 1px solid var(--border, #ECEAE3);
+          background: transparent; border-radius: 4px;
+          color: var(--text-secondary, #36342E);
+          font-size: 0.75rem;
+        }
+        .esc-body {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.78rem;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+          max-height: 480px;
+          overflow: auto;
+          background: var(--bg-secondary, #F8F4F0);
+          padding: 10px;
+          border-radius: 4px;
+        }
+      </style>
+    `,i="";this._loading&&this._items.length===0?i='<div class="esc-empty">Loading escalations...</div>':this._error?i='<div class="esc-error">Failed to load escalations: '+this._escapeHtml(this._error)+"</div>":!this._items||this._items.length===0?i='<div class="esc-empty">Escalations: no events yet. Handoff/escalation markdown documents written by the runner under .loki/escalations/ will appear here.</div>':i='<div class="esc-list">'+this._items.map(n=>{let l=this._escapeHtml(n.filename||""),c=this._escapeHtml(this._formatSize(n.size_bytes)),p=this._escapeHtml(this._formatDate(n.modified_at));return'<div class="esc-item" data-filename="'+l+'"><span class="esc-name">'+l+'</span><span class="esc-meta">'+c+" &middot; "+p+"</span></div>"}).join("")+"</div>";let a="";if(this._activeFile){let o=this._escapeHtml(this._activeFile),n;this._activeBodyError?n='<div class="esc-error">Failed to load: '+this._escapeHtml(this._activeBodyError)+"</div>":this._activeBody===null?n='<div class="esc-body">Loading '+o+"...</div>":n='<div class="esc-body">'+this._escapeHtml(this._activeBody)+"</div>",a='<div class="esc-viewer"><div class="esc-viewer-header"><span class="esc-name">'+o+'</span><button class="esc-close-btn" data-action="close">Close</button></div>'+n+"</div>"}e.innerHTML=t+'<div class="esc-wrapper"><div class="esc-explain">Handoff/escalation documents written under .loki/escalations/. Click an entry to view its contents.</div>'+i+a+"</div>",e.querySelectorAll(".esc-item").forEach(o=>{o.addEventListener("click",()=>{let n=o.getAttribute("data-filename");n&&this._openFile(n)})});let r=e.querySelector('.esc-close-btn[data-action="close"]');r&&r.addEventListener("click",()=>this._closeFile())}};typeof customElements<"u"&&!customElements.get("loki-escalations")&&customElements.define("loki-escalations",ye);var we=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._transcripts=[],this._hookEvents=[],this._loading=!1,this._error=null,this._api=null,this._pollInterval=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._load(),this._pollInterval=setInterval(()=>this._load(),3e4)}disconnectedCallback(){super.disconnectedCallback(),this._pollInterval&&(clearInterval(this._pollInterval),this._pollInterval=null)}attributeChangedCallback(e,t,i){t!==i&&(e==="api-url"&&this._api&&(this._api.baseUrl=i,this._load()),e==="theme"&&this._applyTheme())}_setupApi(){let e=this.getAttribute("api-url")||(typeof window<"u"?window.location.origin:"");this._api=g({baseUrl:e})}async _load(){this._loading=!0,this._error=null;try{let e=await this._api.get("/api/council/transcripts?limit=10");this._transcripts=Array.isArray(e&&e.transcripts)?e.transcripts:[]}catch(e){this._error=e&&e.message?e.message:String(e),this._transcripts=[]}try{let e=await this._api.get("/api/council/transcripts?limit=20&type_prefix=claude_hook_");this._hookEvents=Array.isArray(e&&e.hook_events)?e.hook_events:[]}catch{this._hookEvents=[]}finally{this._loading=!1,this.render()}}_escapeHtml(e){return e==null?"":String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")}_formatTimestamp(e){if(!e)return"--";try{let t=new Date(e);return isNaN(t.getTime())?e:t.toLocaleString()}catch{return e}}_truncate(e,t){if(!e)return"";let i=String(e);return i.length>t?i.slice(0,t)+"...":i}_verdictBadgeHtml(e){let t=String(e||"").toUpperCase();return t==="APPROVE"?'<span class="ct-badge ct-badge-approve">APPROVE</span>':t==="REJECT"?'<span class="ct-badge ct-badge-reject">REJECT</span>':t==="CANNOT_VALIDATE"?'<span class="ct-badge ct-badge-cannot">CANNOT_VALIDATE</span>':'<span class="ct-badge ct-badge-unknown">'+this._escapeHtml(t||"UNKNOWN")+"</span>"}_outcomeBadgeHtml(e){let t=String(e||"").toUpperCase();return t==="APPROVED"?'<span class="ct-badge ct-badge-approve">APPROVED</span>':t==="REJECTED"?'<span class="ct-badge ct-badge-reject">REJECTED</span>':t==="BLOCKED_BY_GATE"?'<span class="ct-badge ct-badge-blocked">BLOCKED BY GATE</span>':'<span class="ct-badge ct-badge-unknown">'+this._escapeHtml(t||"UNKNOWN")+"</span>"}_voterRowHtml(e,t){let i=e.is_contrarian===!0,a=i&&t===!0,s="ct-voter-row";i&&(s+=" ct-voter-contrarian"),a&&(s+=" ct-voter-flipped");let r=this._escapeHtml(e.name||"unknown"),o=this._verdictBadgeHtml(e.verdict),n=this._escapeHtml(this._truncate(e.reasoning,300)),l="",c="";a?(l='<span class="ct-badge ct-badge-override">OVERRIDE</span>',c=`<div class="ct-flip-caption">Devil's Advocate flipped this outcome</div>`):i&&e.triggered&&(l=`<span class="ct-badge ct-badge-da">DEVIL'S ADVOCATE</span>`);let p="";i&&Array.isArray(e.challenges)&&e.challenges.length>0&&(p='<ul class="ct-challenges">'+e.challenges.map(m=>"<li>"+this._escapeHtml(String(m))+"</li>").join("")+"</ul>");let u="";return Array.isArray(e.issues)&&e.issues.length>0&&(u='<ul class="ct-issues">'+e.issues.map(m=>{let f=this._escapeHtml(m.severity||""),x=this._escapeHtml(m.description||"");return'<li><span class="ct-issue-sev ct-issue-sev-'+f.toLowerCase()+'">'+f+"</span> "+x+"</li>"}).join("")+"</ul>"),'<div class="'+s+'"><div class="ct-voter-header"><span class="ct-voter-name">'+r+"</span>"+o+l+"</div>"+(n?'<div class="ct-voter-reason">'+n+"</div>":"")+p+u+c+"</div>"}_transcriptCardHtml(e){let t=this._escapeHtml(String(e.iteration||"--")),i=this._escapeHtml(this._formatTimestamp(e.timestamp)),a=this._escapeHtml(this._truncate(e.task_or_prd,200)),s=this._outcomeBadgeHtml(e.outcome),r=Array.isArray(e.voters)?e.voters:[],o=r.filter(m=>!m.is_contrarian),n=r.filter(m=>m.is_contrarian),l=o.map(m=>this._voterRowHtml(m,!1)).join(""),c="";e.contrarian_triggered&&(c='<div class="ct-contrarian-section"><div class="ct-section-label">Anti-Sycophancy Check</div>'+n.map(f=>this._voterRowHtml(f,e.contrarian_flipped)).join("")+"</div>");let p=typeof e.approve_count=="number"?e.approve_count:"--",u=typeof e.reject_count=="number"?e.reject_count:"--",b=typeof e.threshold=="number"?e.threshold:"--";return'<div class="ct-card"><div class="ct-card-header"><div class="ct-card-meta"><span class="ct-iter-label">Iteration '+t+'</span><span class="ct-ts">'+i+"</span></div>"+s+"</div>"+(a?'<div class="ct-prd-preview">'+a+"</div>":"")+'<div class="ct-tally">Approve: '+p+" &middot; Reject: "+u+" &middot; Threshold: "+b+'</div><div class="ct-voters">'+l+"</div>"+c+"</div>"}render(){let e=this.shadowRoot||this;if(!e)return;let t=`
+      <style>
+        :host { display: block; margin-top: 24px; }
+        .ct-wrapper {
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          color: var(--text-primary, #201515);
+        }
+        .ct-heading {
+          font-family: 'DM Serif Display', Georgia, serif;
+          font-size: 1.15rem;
+          font-weight: 400;
+          color: var(--loki-text-primary, #201515);
+          margin: 0 0 12px 0;
+        }
+        .ct-explain {
+          color: var(--text-muted, #939084);
+          font-size: 0.875rem;
+          margin-bottom: 16px;
+        }
+        .ct-empty {
+          padding: 16px;
+          background: var(--bg-card, #ffffff);
+          border: 1px dashed var(--border, #ECEAE3);
+          border-radius: 6px;
+          color: var(--text-muted, #939084);
+          font-size: 0.875rem;
+        }
+        .ct-error {
+          padding: 10px 12px;
+          background: var(--bg-card, #ffffff);
+          border: 1px solid var(--error, #C45B5B);
+          border-radius: 6px;
+          color: var(--error, #C45B5B);
+          font-size: 0.85rem;
+        }
+        .ct-list { display: flex; flex-direction: column; gap: 16px; }
+        .ct-card {
+          padding: 16px;
+          background: var(--bg-card, #ffffff);
+          border: 1px solid var(--border, #ECEAE3);
+          border-radius: 8px;
+        }
+        .ct-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 10px;
+        }
+        .ct-card-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .ct-iter-label {
+          font-weight: 600;
+          font-size: 0.95rem;
+        }
+        .ct-ts {
+          font-size: 0.78rem;
+          color: var(--text-muted, #939084);
+          font-family: 'JetBrains Mono', monospace;
+        }
+        .ct-prd-preview {
+          font-size: 0.82rem;
+          color: var(--text-secondary, #36342E);
+          background: var(--bg-secondary, #F8F4F0);
+          border-radius: 4px;
+          padding: 8px 10px;
+          margin-bottom: 10px;
+          font-style: italic;
+        }
+        .ct-tally {
+          font-size: 0.78rem;
+          color: var(--text-muted, #939084);
+          margin-bottom: 12px;
+        }
+        .ct-voters { display: flex; flex-direction: column; gap: 8px; }
+        .ct-voter-row {
+          padding: 8px 10px;
+          border: 1px solid var(--border, #ECEAE3);
+          border-radius: 5px;
+          background: var(--bg-secondary, #F8F4F0);
+        }
+        .ct-voter-contrarian {
+          border-color: var(--warning, #D4A017);
+        }
+        .ct-voter-flipped {
+          border-color: var(--error, #C45B5B);
+          border-width: 2px;
+        }
+        .ct-voter-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 4px;
+        }
+        .ct-voter-name {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.82rem;
+          font-weight: 500;
+        }
+        .ct-voter-reason {
+          font-size: 0.80rem;
+          color: var(--text-secondary, #36342E);
+          margin-top: 4px;
+        }
+        .ct-flip-caption {
+          font-size: 0.75rem;
+          color: var(--error, #C45B5B);
+          font-weight: 500;
+          margin-top: 4px;
+        }
+        .ct-contrarian-section {
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px dashed var(--border, #ECEAE3);
+        }
+        .ct-section-label {
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--text-muted, #939084);
+          margin-bottom: 8px;
+        }
+        .ct-challenges {
+          margin: 6px 0 0 0;
+          padding-left: 16px;
+          font-size: 0.78rem;
+          color: var(--text-secondary, #36342E);
+        }
+        .ct-challenges li { margin-bottom: 3px; }
+        .ct-issues {
+          margin: 6px 0 0 0;
+          padding-left: 16px;
+          font-size: 0.78rem;
+          color: var(--text-secondary, #36342E);
+        }
+        .ct-issues li { margin-bottom: 3px; }
+        .ct-issue-sev {
+          font-weight: 600;
+          font-size: 0.72rem;
+          border-radius: 3px;
+          padding: 1px 4px;
+        }
+        .ct-issue-sev-critical { background: #fde8e8; color: #C45B5B; }
+        .ct-issue-sev-high     { background: #fdeee8; color: #c4733b; }
+        .ct-issue-sev-medium   { background: #fdf6e8; color: #b38a2e; }
+        .ct-issue-sev-low      { background: #eaf2e8; color: #4a7c4e; }
+        /* Verdict / outcome badges */
+        .ct-badge {
+          display: inline-block;
+          font-size: 0.70rem;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          border-radius: 4px;
+          padding: 2px 7px;
+          white-space: nowrap;
+        }
+        .ct-badge-approve  { background: #d4f0dc; color: #2d7d46; }
+        .ct-badge-reject   { background: #fde8e8; color: #C45B5B; }
+        .ct-badge-cannot   { background: #fdf3d4; color: #8a6c0e; }
+        .ct-badge-blocked  { background: #ede8fd; color: #5b3dc4; }
+        .ct-badge-override { background: #C45B5B; color: #ffffff; }
+        .ct-badge-da       { background: #fdf3d4; color: #8a6c0e; }
+        .ct-badge-unknown  { background: var(--bg-secondary, #F8F4F0); color: var(--text-muted, #939084); }
+      </style>
+    `,i="";this._loading&&this._transcripts.length===0?i='<div class="ct-empty">Loading council transcripts...</div>':this._error?i='<div class="ct-error">Failed to load transcripts: '+this._escapeHtml(this._error)+"</div>":!this._transcripts||this._transcripts.length===0?i='<div class="ct-empty">No council rounds recorded yet -- transcripts appear after the first iteration vote.</div>':i='<div class="ct-list">'+this._transcripts.map(s=>this._transcriptCardHtml(s)).join("")+"</div>",e.innerHTML=t+'<div class="ct-wrapper"><h3 class="ct-heading">Council Transcripts</h3><div class="ct-explain">Per-iteration voting records from .loki/council/transcripts/. Polls every 30 seconds.</div>'+i+this._hookEventsHtml()+"</div>"}_hookEventsHtml(){let e=Array.isArray(this._hookEvents)?this._hookEvents:[],t;return e.length===0?t='<div class="ct-empty">No live tool activity yet -- Claude hook events stream here while a run is active.</div>':t='<div class="ct-voters">'+e.slice(0,20).map(a=>{let s=this._escapeHtml(a.type||a.event||"event"),r=this._escapeHtml(this._formatTimestamp(a.timestamp||a.ts)),o=this._escapeHtml(this._truncate(a.tool||a.message||a.summary||(a.data?JSON.stringify(a.data):""),120));return'<div class="ct-voter-row"><span class="ct-iter-label">'+s+'</span> <span class="ct-ts">'+r+"</span>"+(o?'<div class="ct-prd-preview">'+o+"</div>":"")+"</div>"}).join("")+"</div>",'<h3 class="ct-heading" style="margin-top:24px;">Live Tool Activity</h3><div class="ct-explain">Claude hook events (PreToolUse / PostToolUse / Stop) streamed from .loki/events.jsonl. Lets you watch background tool calls as they run.</div>'+t}};typeof customElements<"u"&&!customElements.get("loki-council-transcripts")&&customElements.define("loki-council-transcripts",we);var Mt=[{id:"overview",label:"Overview"},{id:"architecture",label:"Architecture"},{id:"modules",label:"Key Modules"},{id:"data-flow",label:"Data Flow"},{id:"ask",label:"Ask"}],$e=class extends h{static get observedAttributes(){return["api-url","theme"]}constructor(){super(),this._activeTab="overview",this._loading=!1,this._error=null,this._api=null,this._meta=null,this._sectionCache={},this._question="",this._answer=null,this._asking=!1,this._askError=null}connectedCallback(){super.connectedCallback(),this._setupApi(),this._loadMeta()}attributeChangedCallback(e,t,i){e==="api-url"&&this._api&&(this._api.baseUrl=i)}_setupApi(){let e=this.getAttribute("api-url")||window.location.origin;this._api=g({baseUrl:e})}async _loadMeta(){this._loading=!0,this._error=null,this.render();try{this._meta=await this._api._get("/api/wiki")}catch(e){this._error=e&&e.message?e.message:"Failed to load wiki"}finally{this._loading=!1,this.render();let e=this._activeTab;this._meta&&this._meta.generated&&(e==="architecture"||e==="modules"||e==="data-flow")&&!this._sectionCache[e]&&this._loadSection(e).then(()=>this.render())}}async _loadSection(e){if(this._sectionCache[e])return this._sectionCache[e];try{let t=await this._api._get(`/api/wiki/${encodeURIComponent(e)}`);return this._sectionCache[e]=t,t}catch(t){return this._sectionCache[e]={error:t&&t.message||"load failed"},this._sectionCache[e]}}async _selectTab(e){this._activeTab=e,e==="architecture"||e==="modules"||e==="data-flow"?this._meta&&this._meta.generated?(this.render(),await this._loadSection(e)):this.render():this.render()}async _ask(){let e=(this._question||"").trim();if(e){this._asking=!0,this._askError=null,this._answer=null,this.render();try{this._answer=await this._api._post("/api/wiki/ask",{question:e},{timeout:2e5})}catch(t){this._askError=t&&t.message?t.message:"Ask failed"}finally{this._asking=!1,this.render()}}}_esc(e){return String(e??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}_renderCitations(e){return!e||!e.length?"":`<div class="cites"><strong>Sources:</strong><ul>${e.map(i=>`<li><code>${this._esc(i.file)}:${this._esc(i.line)}</code></li>`).join("")}</ul></div>`}_renderOverview(){let e=this._meta;if(!e||!e.generated)return`<div class="empty">
+        <p>No wiki has been generated for this project yet.</p>
+        <p>Run <code>loki wiki generate</code> to build a cited codebase wiki.</p>
+      </div>`;let t=(e.sections||[]).map(i=>`<li>${this._esc(i.title)} <span class="dim">(${this._esc(i.citation_count)} citations)</span></li>`).join("");return`<div class="overview">
+      <p><strong>${this._esc(e.project||"Project")}</strong> wiki -
+        ${this._esc(e.file_count||0)} source files indexed.</p>
+      <p class="dim">Generated: ${this._esc(e.generated_at||"unknown")}</p>
+      <ul>${t}</ul>
+    </div>`}_renderSection(e){if(!this._meta||!this._meta.generated)return`<div class="empty">
+        <p>No wiki generated yet.</p>
+        <p>Run <code>loki wiki generate</code> to build a cited codebase wiki.</p>
+      </div>`;let t=this._sectionCache[e];return t?t.error?`<div class="error">${this._esc(t.error)}</div>`:`<div class="section">
+      <h3>${this._esc(t.title)}</h3>
+      <pre class="body">${this._esc(t.body)}</pre>
+      ${this._renderCitations(t.citations)}
+    </div>`:'<div class="empty">Loading...</div>'}_renderAsk(){let e="";if(this._asking)e='<div class="empty">Searching the codebase...</div>';else if(this._askError)e=`<div class="error">${this._esc(this._askError)}</div>`;else if(this._answer){let t=this._answer.note?`<p class="dim">${this._esc(this._answer.note)}</p>`:"";e=`<div class="answer">
+        <pre class="body">${this._esc(this._answer.answer||"")}</pre>
+        ${t}
+        ${this._renderCitations(this._answer.citations)}
+      </div>`}return`<div class="ask">
+      <div class="ask-row">
+        <input id="wiki-q" type="text" placeholder="Ask about this codebase..."
+          value="${this._esc(this._question)}" />
+        <button id="wiki-ask-btn">Ask</button>
+      </div>
+      <p class="dim">Answers are grounded in the indexed codebase and cite real file:line locations.</p>
+      ${e}
+    </div>`}_renderBody(){if(this._loading)return'<div class="empty">Loading wiki...</div>';if(this._error)return`<div class="error">${this._esc(this._error)}</div>`;switch(this._activeTab){case"overview":return this._renderOverview();case"architecture":return this._renderSection("architecture");case"modules":return this._renderSection("modules");case"data-flow":return this._renderSection("data-flow");case"ask":return this._renderAsk();default:return this._renderOverview()}}render(){if(!this.shadowRoot)return;let e=Mt.map(a=>`<button class="tab ${a.id===this._activeTab?"active":""}"
+        data-tab="${a.id}">${this._esc(a.label)}</button>`).join("");this.shadowRoot.innerHTML=`
+      <style>
+        :host { display: block; font-family: var(--loki-font, system-ui, sans-serif);
+          color: var(--loki-fg, #1a1a1a); }
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--loki-border, #ddd);
+          margin-bottom: 12px; flex-wrap: wrap; }
+        .tab { background: none; border: none; padding: 8px 14px; cursor: pointer;
+          font-size: 0.9rem; color: var(--loki-fg-dim, #666); border-bottom: 2px solid transparent; }
+        .tab.active { color: var(--loki-accent, #2563eb); border-bottom-color: var(--loki-accent, #2563eb); }
+        .body { white-space: pre-wrap; word-break: break-word; font-family: inherit;
+          background: var(--loki-bg-alt, #f6f8fa); padding: 12px; border-radius: 6px; }
+        .cites { margin-top: 10px; font-size: 0.85rem; }
+        .cites ul { margin: 4px 0 0; padding-left: 18px; }
+        code { font-family: ui-monospace, monospace; font-size: 0.85em;
+          background: var(--loki-bg-alt, #eef); padding: 1px 4px; border-radius: 3px; }
+        .dim { color: var(--loki-fg-dim, #888); }
+        .empty, .error { padding: 16px; }
+        .error { color: var(--loki-danger, #c00); }
+        .ask-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        #wiki-q { flex: 1; padding: 8px; border: 1px solid var(--loki-border, #ccc);
+          border-radius: 6px; font-size: 0.9rem; }
+        #wiki-ask-btn { padding: 8px 16px; border: none; border-radius: 6px;
+          background: var(--loki-accent, #2563eb); color: #fff; cursor: pointer; }
+        h3 { margin-top: 0; }
+      </style>
+      <div class="tabs">${e}</div>
+      <div class="content">${this._renderBody()}</div>
+    `,this.shadowRoot.querySelectorAll(".tab").forEach(a=>{a.addEventListener("click",()=>this._selectTab(a.dataset.tab))});let t=this.shadowRoot.getElementById("wiki-q");t&&(t.addEventListener("input",a=>{this._question=a.target.value}),t.addEventListener("keydown",a=>{a.key==="Enter"&&this._ask()}));let i=this.shadowRoot.getElementById("wiki-ask-btn");i&&i.addEventListener("click",()=>this._ask())}};customElements.get("loki-wiki-browser")||customElements.define("loki-wiki-browser",$e);var Pt="1.4.0";function Ft(d={}){return d.theme?_.setTheme(d.theme):d.autoDetectContext!==!1?_.init():R.init(),d.apiUrl&&g({baseUrl:d.apiUrl}),{theme:_.getTheme(),context:_.detectContext()}}return pt(jt);})();
 
 // Expose init at top level for convenience
 if (typeof window !== 'undefined') {

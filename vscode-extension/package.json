@@ -1,8 +1,8 @@
 {
   "name": "loki-mode",
   "displayName": "Loki Mode",
-  "description": "Loki Mode by Autonomi - Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI",
-  "version": "7.5.13",
+  "description": "DEPRECATED - use the loki-mode CLI (npm install -g loki-mode). Loki Mode by Autonomi: autonomous spec-to-product build system with a deterministic verification layer. This extension is no longer maintained.",
+  "version": "7.45.1",
   "publisher": "asklokesh",
   "license": "BUSL-1.1",
   "repository": {
@@ -21,9 +21,9 @@
     "ai",
     "claude",
     "codex",
-    "gemini",
     "autonomous",
-    "agent"
+    "agent",
+    "deprecated"
   ],
   "icon": "media/icons/loki-icon.png",
   "activationEvents": [
@@ -319,13 +319,11 @@
           "default": "claude",
           "enum": [
             "claude",
-            "codex",
-            "gemini"
+            "codex"
           ],
           "enumDescriptions": [
             "Claude Code - Full features (subagents, parallel, Task tool, MCP)",
-            "OpenAI Codex CLI - Degraded mode (sequential only)",
-            "Google Gemini CLI - Degraded mode (sequential only)"
+            "OpenAI Codex CLI - Degraded mode (sequential only)"
           ],
           "description": "AI provider to use for Loki Mode"
         },

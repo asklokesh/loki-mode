@@ -2,6 +2,17 @@
 
 All notable changes to the "loki-mode" extension will be documented in this file.
 
+## [7.45.1] - 2026-06-15
+
+### Changed
+- Marked the extension DEPRECATED. The Loki Mode product is now the CLI
+  (`npm install -g loki-mode`) with a built-in web dashboard
+  (`loki dashboard start`). This listing is kept as a pointer only and will
+  not receive feature updates.
+- Corrected the listing content: removed Google Gemini (provider deprecated and
+  runtime removed), fixed the license to Business Source License 1.1 (was
+  incorrectly labeled MIT), and corrected the install and Docker instructions.
+
 ## [0.1.0] - 2026-01-31
 
 ### Added

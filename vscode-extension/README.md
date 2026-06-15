@@ -1,227 +1,74 @@
 # Loki Mode for VS Code
 
-> **DEPRECATED as of v7.2.0.** The Loki Mode VSCode extension is no longer
-> maintained. Use the dashboard at `loki dashboard start` instead. Last
-> published: v7.1.0. The marketplace listing remains for users on older
-> versions but will not receive updates.
+> **DEPRECATED.** This extension is no longer maintained. The Loki Mode product
+> is now the CLI. Install it with `npm install -g loki-mode` (or Bun, Docker,
+> Homebrew) and run it from your terminal, or use the built-in web dashboard
+> with `loki dashboard start`.
 >
-> The `vscode-extension/` source remains in the repository so contributors
-> who want to build and install the extension locally can still do so, but
-> no further releases will be published to the VS Code Marketplace.
+> This Marketplace listing is kept only as a pointer for people who find it by
+> search. It will not receive feature updates. The `vscode-extension/` source
+> remains in the repository for reference, but no further functional releases
+> are planned.
+>
+> Get started: [autonomi.dev](https://autonomi.dev) -
+> [github.com/asklokesh/loki-mode](https://github.com/asklokesh/loki-mode)
 
-Multi-agent autonomous development powered by Claude Code, OpenAI Codex, and Google Gemini.
+## What Loki Mode is now
 
-## Features
+Loki Mode by Autonomi is an autonomous spec-to-product build system: give it a
+spec (a PRD, a GitHub issue, an OpenAPI doc) and it runs an autonomous build
+loop to a working, tested result. Its distinguishing feature is the verification
+layer: it does not mark work complete until it passes deterministic quality
+gates, a multi-reviewer completion council, and an evidence gate that requires
+proof the tests and build actually ran and passed.
 
-### Session Management
-- Start autonomous development sessions from PRD files
-- Choose between Claude Code, OpenAI Codex, or Google Gemini as your AI provider
-- Pause, resume, and stop sessions at any time
-- Inject human guidance during execution
+It runs as a CLI and ships with a web dashboard. There is no longer a maintained
+VS Code extension surface.
 
-### Real-Time Task Tracking
-- View all tasks grouped by status: In Progress, Pending, Completed
-- Live progress updates with spinning indicators for active tasks
-- Click tasks to see details and current progress
-
-### Status Bar Integration
-- Always-visible status indicator in the VS Code status bar
-- Shows current phase and task progress when running
-- Quick access to actions via click menu
-
-### Session Information Panel
-- View PRD file, provider, and current phase
-- Track session duration in real-time
-- See current task and overall progress
-
-## Installation
-
-### From VS Code Marketplace
-
-1. Open VS Code
-2. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
-3. Search for "Loki Mode"
-4. Click Install
-
-### From VSIX File
-
-1. Download the `.vsix` file from the releases page
-2. Open VS Code
-3. Go to Extensions
-4. Click the "..." menu and select "Install from VSIX..."
-5. Select the downloaded file
-
-### Requirements
-
-- VS Code 1.80.0 or higher
-- Node.js 18+ (for the backend server)
-- One of the supported AI CLI tools:
-  - Claude Code CLI (`claude`)
-  - OpenAI Codex CLI (`codex`)
-  - Google Gemini CLI (`gemini`)
-
-## Quick Start
-
-### Step 1: Start the Backend Server
-
-**The extension requires the Loki Mode server to be running first:**
+## Use the CLI instead
 
 ```bash
-# Using Loki CLI (if installed via npm or Homebrew)
-loki start
+# Install (pick one)
+npm install -g loki-mode
+bun install -g loki-mode
+brew install asklokesh/tap/loki-mode
 
-# Or from loki-mode source directory
-./autonomy/run.sh
+# Build from a spec
+loki start ./prd.md            # from a PRD file
+loki start owner/repo#123      # from a GitHub issue
+
+# Check your environment
+loki doctor
+
+# Open the web dashboard (the modern replacement for this extension's panels)
+loki dashboard start
 ```
 
-You should see: "Loki API server listening on http://localhost:57374"
+### Docker
 
-### Step 2: Use the Extension
-
-1. Open a project folder in VS Code
-2. Click the Loki Mode icon in the Activity Bar (sidebar)
-3. Select "Start Session"
-4. Choose your PRD file
-5. Select your AI provider (Claude recommended)
-6. Watch as Loki Mode autonomously develops your project
-
-## Commands
-
-| Command | Description | Keyboard Shortcut |
-|---------|-------------|-------------------|
-| `Loki: Start Session` | Start a new autonomous development session | - |
-| `Loki: Stop Session` | Stop the current session | - |
-| `Loki: Pause Session` | Pause execution | - |
-| `Loki: Resume Session` | Resume a paused session | - |
-| `Loki: Show Status` | Display current session status | - |
-| `Loki: Inject Input` | Send human guidance to the AI | - |
-| `Loki: Refresh Tasks` | Refresh task and session data | - |
-
-Access all commands via:
-- Command Palette (Ctrl+Shift+P / Cmd+Shift+P)
-- Status bar click menu
-- Activity Bar panel context menus
-
-## Extension Settings
-
-Configure Loki Mode in your VS Code settings:
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `loki.apiEndpoint` | Backend API server URL | `http://localhost:57374` |
-| `loki.defaultProvider` | Default AI provider | `claude` |
-| `loki.autoRefresh` | Auto-refresh interval (ms) | `5000` |
-| `loki.showNotifications` | Show progress notifications | `true` |
-
-### Example Settings
-
-```json
-{
-  "loki.apiEndpoint": "http://localhost:57374",
-  "loki.defaultProvider": "claude",
-  "loki.autoRefresh": 3000,
-  "loki.showNotifications": true
-}
+```bash
+docker pull asklokesh/loki-mode
+loki docker start ./prd.md
 ```
 
 ## Providers
 
-### Claude Code (Recommended)
-- Full feature support
-- Parallel task execution
-- Sub-agent spawning
-- MCP integration
+- **Claude Code** (recommended) - full features: subagents, parallel execution,
+  Task tool, MCP integration.
+- **OpenAI Codex CLI** - degraded mode (sequential only).
+- **Cline** and **Aider** - additional fallbacks.
 
-### OpenAI Codex
-- Degraded mode
-- Sequential task execution
-- No sub-agent support
-
-### Google Gemini
-- Degraded mode
-- Sequential task execution
-- No sub-agent support
-
-## Views
-
-### Session Panel
-Located in the Activity Bar, shows:
-- Current session status
-- PRD file path (click to open)
-- Selected provider
-- Current phase
-- Task progress
-- Session duration
-- Action buttons (Pause/Resume/Stop)
-
-### Tasks Panel
-Located below the Session panel, shows:
-- Tasks grouped by status
-- In Progress tasks (expanded by default)
-- Pending tasks (expanded by default)
-- Completed tasks (collapsed by default)
-
-### Status Bar
-Located in the bottom status bar:
-- Idle: Shows "Loki Mode" with rocket icon
-- Running: Shows phase and progress with spinning icon
-- Paused: Shows "Paused" with pause icon
-- Error: Shows "Error" with error icon
-
-## Screenshots
-
-[Screenshot: Session Panel]
-[Screenshot: Tasks Panel]
-[Screenshot: Status Bar Running]
-[Screenshot: Provider Selection]
-
-## Troubleshooting
-
-### Session won't start
-1. Ensure the backend server is running at the configured endpoint
-2. Check that your AI CLI tool is installed and accessible
-3. Verify your PRD file is valid
-
-### Tasks not updating
-1. Click "Refresh Tasks" in the panel
-2. Check the Output panel for errors
-3. Verify API endpoint connectivity
-
-### Status bar not visible
-1. Right-click the status bar
-2. Ensure "Loki Mode" is checked
-3. Restart VS Code if needed
-
-## Backend Setup
-
-This extension requires the Loki Mode backend server. To start it:
-
-```bash
-# Using npm
-npm install -g loki-mode
-loki server
-
-# Using Docker
-docker run -p 57374:57374 lokesh/loki-mode
-
-# From source
-cd autonomy && ./run.sh --server
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `npm test`
-5. Submit a pull request
+Note: Google Gemini support was deprecated and its runtime removed in a later
+release. It is no longer a supported provider.
 
 ## License
 
-MIT License - see LICENSE file for details.
+Source-available under the Business Source License 1.1 (BUSL-1.1): free to use
+and self-host, converts to Apache-2.0 at the change date. See the `LICENSE` file.
 
 ## Links
 
-- [Loki Mode Documentation](https://github.com/asklokesh/loki-mode)
+- [Autonomi](https://autonomi.dev)
+- [Loki Mode on GitHub](https://github.com/asklokesh/loki-mode)
+- [Documentation](https://github.com/asklokesh/loki-mode#readme)
 - [Report Issues](https://github.com/asklokesh/loki-mode/issues)
-- [Changelog](CHANGELOG.md)
