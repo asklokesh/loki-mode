@@ -1,13 +1,29 @@
 # Loki Mode Docker Compose
-# Usage: docker-compose run loki start
+# Usage: docker compose run loki start prd.md
+#
+# Auth (pick ONE):
+#   1. API key (default, recommended): copy .env.example to .env and set
+#      ANTHROPIC_API_KEY. `env_file: .env` below loads it automatically, so you
+#      can edit .env and re-run `docker compose run loki ...` without retyping
+#      flags. This is why compose beats a long `docker run -e ...` command.
+#   2. Host OAuth (Claude Code Max/Pro subscribers, no API key): export your
+#      Claude Code credentials to a file and mount them -- see the commented
+#      `LOKI_OAUTH` volume below and DOCKER_README.md "Option 2: host OAuth".
+#
 # Note: version key removed - deprecated in Docker Compose v2+
 
 services:
   loki:
     build: .
     image: loki-mode:latest
+    # .env in this directory is loaded automatically (ANTHROPIC_API_KEY etc.).
+    # Edit .env and re-run -- no need to rebuild or retype flags.
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      # Mount current directory as workspace
+      # Mount current directory as workspace. .loki/ state (memory, session,
+      # queue, checkpoints) is created here, so it persists across runs.
       - .:/workspace:rw
       # Share git config for commits
       - ~/.gitconfig:/home/loki/.gitconfig:ro
@@ -15,6 +31,12 @@ services:
       - ~/.ssh:/home/loki/.ssh:ro
       # Share GitHub CLI auth
       - ~/.config/gh:/home/loki/.config/gh:ro
+      # Auth Option 2 (host OAuth, no API key): uncomment to reuse your Claude
+      # Code login. First export the token from the host (see DOCKER_README.md):
+      #   security find-generic-password -s "Claude Code-credentials" -w \
+      #     | jq '{claudeAiOauth}' > .loki-oauth-credentials.json   # macOS
+      # NEVER commit that file (it holds a live token).
+      # - ./.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw
     environment:
       # Loki Mode configuration
       - LOKI_NOTIFICATIONS=false  # No desktop notifications in container
@@ -22,6 +44,9 @@ services:
       - LOKI_DASHBOARD_PORT=57374
       - LOKI_CHROMA_HOST=chroma
       - LOKI_CHROMA_PORT=8000
+      # Auth Option 1 (default): API key, read from .env via env_file above.
+      # Listing it here also forwards a value already exported in your shell.
+      - ANTHROPIC_API_KEY
       # Pass through GitHub token if set
       - GITHUB_TOKEN
       - GH_TOKEN

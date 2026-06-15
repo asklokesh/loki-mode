@@ -9,6 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.45.0] - 2026-06-15
+
+Docker is now a first-class way to run Loki. The published image could not run a
+single build (it shipped the runtime but no AI provider CLI), so this release
+makes the image buildable, adds a zero-friction `loki docker` host wrapper, and a
+docker compose .env workflow, plus a security fix for a tracked empty .env.
+
+### Fixed
+- Docker image could not run builds. The published `asklokesh/loki-mode` image
+  shipped the Loki runtime (bun/node/python) but NO AI provider CLI, so
+  `docker run ... start` died at the first provider call with "No AI provider CLI
+  found; cannot prompt to install in a non-interactive shell." The Dockerfile now
+  installs `@anthropic-ai/claude-code` (the Tier-1 default provider). Verified:
+  `claude --version` (2.1.177) runs in the image and a `claude -p` call succeeds
+  with valid auth.
+- Security: a tracked empty `.env` defeated gitignore. An empty `.env` had been
+  committed since v6.36.2, so `.gitignore` could not protect a user's real `.env`.
+  Untracked it (`git rm --cached .env`) and added `.env`, `.env.*`, and
+  `.loki-oauth-credentials.json` to `.gitignore` (with `!.env.example` kept
+  tracked).
+- Docker resume refused to restart in the same folder. Inside a `--rm`
+  container the orchestrator is always PID 1, so a prior run recorded
+  `loki.pid=1`. On the next `loki docker start` in that folder the stale-PID
+  lock check ran `kill -0 1`, which always succeeds (PID 1 is the live init
+  process), so the lock falsely read "another loki instance is running" and
+  refused to resume. Fixed: a recorded pid of 1 from a prior container is now
+  treated as stale unless it is the live container's own pid (`$$` == 1), so
+  re-running `loki docker start` in the same folder resumes correctly with full
+  memory and session continuity.
+
+### Added
+- `loki docker <any-loki-command>` zero-friction host wrapper. Runs loki inside
+  the published image with the same experience as the local CLI. It bind-mounts
+  the current folder to /workspace so `.loki/` state (memory, session, queue,
+  checkpoints) persists on the host and resume + continuity work exactly like
+  local. Auth is auto-detected: ANTHROPIC_API_KEY if set, else the host's
+  existing Claude Code login (macOS keychain or `~/.claude/.credentials.json`) is
+  extracted to a private 0600 temp file and mounted read-write (so the
+  in-container claude can refresh the short-lived token and it persists), else an
+  honest error with setup guidance. Forwards `~/.gitconfig`, `~/.config/gh`, and
+  GITHUB_TOKEN/GH_TOKEN. Flags: `--image`, `--dry-run`. New module
+  `autonomy/docker-run.sh` with 24 hermetic unit tests (`tests/test-docker-run.sh`).
+- Multi-repo + unified-dashboard parity for `loki docker`. You can now run
+  `loki docker start` in several different repos at once, exactly like the host
+  CLI supports many repos. Each repo gets its own container (deterministic name
+  `loki-<sha256-prefix-of-path>`), its own bind-mounted `/workspace`, and its own
+  `.loki/` state on the host, so two repos run as two concurrent containers
+  without colliding. Each `loki docker` project also registers on the HOST with
+  its real folder path and no pid into the same machine-global registry
+  (`~/.loki/dashboard/projects.json`) the host dashboard reads, so a single host
+  `loki dashboard` lists ALL your projects whether they run via local
+  `loki start` or via `loki docker start` (the dashboard derives "running" from
+  each project's bind-mounted `.loki/session.json`). Docker is now a first-class
+  multi-repo surface with one unified view, matching the local CLI experience.
+  Builds run with the dashboard off by default (so concurrent runs never fight
+  over port 57374); use `loki start --api` or the host `loki dashboard` for the
+  UI.
+- docker compose .env workflow. `docker-compose.yml` now has `env_file: .env`, an
+  ANTHROPIC_API_KEY passthrough, and a commented host-OAuth-mount volume. New
+  `.env.example` template. Users copy `.env.example` to `.env`, set their key, run
+  `docker compose run loki start prd.md`, and edit/re-run without retyping flags.
+
+### Changed
+- Docker docs currency. Removed deprecated Gemini references from DOCKER_README.md
+  and the release.yml Docker Hub short-description. Fixed stale Docker image tags
+  (were 7.40.0) in README.md. Documented both auth methods and the `loki docker`
+  wrapper across DOCKER_README.md, README.md, docs/INSTALLATION.md, and SKILL.md.
+
 ## [7.44.0] - 2026-06-15
 
 Web-surface consolidation + local-ci parallelization. One local web surface (the

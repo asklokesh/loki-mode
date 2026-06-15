@@ -3,6 +3,14 @@
 # OS files
 *.DS_Store
 
+# Secrets -- never commit. .env holds ANTHROPIC_API_KEY for docker compose;
+# .loki-oauth-credentials.json holds a live Claude Code OAuth token (Auth
+# Option 2). .env.example is the committed placeholder template.
+.env
+.env.*
+!.env.example
+.loki-oauth-credentials.json
+
 # Python virtualenv
 .venv/
 dashboard/.venv/

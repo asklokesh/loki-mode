@@ -1550,7 +1550,24 @@ validate_api_keys() {
 
     local key_var=""
     case "$provider" in
-        claude) key_var="ANTHROPIC_API_KEY" ;;
+        claude)
+            # Inside Docker, the Claude Code CLI can authenticate either via
+            # ANTHROPIC_API_KEY OR via a mounted OAuth credentials file (the
+            # zero-friction `loki docker` wrapper mounts the host login at
+            # ~/.claude/.credentials.json). If that file is present, the CLI
+            # has a valid login and we must NOT block on the env var -- doing
+            # so was the bug that made OAuth-based Docker runs exit at
+            # pre-flight with "Required API key ... is not set". Mirror the
+            # OAuth-aware doctor check (run.sh:9268).
+            if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+                local _claude_creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+                if [[ -s "$_claude_creds" ]]; then
+                    log_info "Claude Code OAuth credentials detected ($_claude_creds); using CLI login."
+                    return 0
+                fi
+            fi
+            key_var="ANTHROPIC_API_KEY"
+            ;;
         codex)  key_var="OPENAI_API_KEY" ;;
         cline)  # Cline manages its own keys via `cline auth`
             if ! command -v cline &>/dev/null; then

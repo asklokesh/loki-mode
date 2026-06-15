@@ -456,7 +456,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: asklokesh/loki-mode
           readme-filepath: ./DOCKER_README.md
-          short-description: "Multi-agent autonomous development system for Claude Code, Codex CLI, and Gemini CLI"
+          short-description: "Autonomous spec-to-product system for Claude Code, Codex CLI, Cline, and Aider"
 
   # The VS Code marketplace publishing job was removed in v7.2.0. The
   # Loki Mode VSCode extension is deprecated and no longer maintained. The

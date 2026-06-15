@@ -1,10 +1,100 @@
 # Loki Mode
 
-**Multi-agent autonomous development system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI**
+**Multi-agent autonomous development system. Takes a spec to a deployed product with minimal human intervention.**
 
-Transform your spec into a fully deployed, production-ready product with minimal human intervention. Built on 2025 research from OpenAI, Google DeepMind, and Anthropic.
+Transform your spec into a fully built, production-ready product. Built on 2025 research from OpenAI, Google DeepMind, and Anthropic. Source-available under BUSL-1.1.
 
-## Quick Start
+The image ships the Claude Code CLI pre-installed, so it can run real builds out of the box. Just supply credentials (see Authentication below).
+
+Docker is where sandboxes and runs happen. `loki docker` gives you the full local experience in one command (including `.loki/` state, resume, and continuity), so start there. The raw `docker run` and `docker compose` methods below remain available as alternatives.
+
+## Quick Start (loki docker, easiest)
+
+If you already have loki installed on the host (npm/brew/bun) plus Docker, `loki docker` is the simplest way to run loki in a container. It is a thin host wrapper around the published image: it runs any loki command inside `asklokesh/loki-mode` with zero config.
+
+```bash
+# Run a build against a spec in the current directory
+loki docker start prd.md
+
+# Any loki command works
+loki docker status
+
+# Print the docker command it would run, without running it
+loki docker --dry-run start prd.md
+```
+
+What it does for you automatically:
+
+- Bind-mounts the current folder to `/workspace`, so `.loki/` state (memory, session, queue, checkpoints) persists on the host. Resume and continuity behave exactly like the local `loki` CLI. Stop a build and run `loki docker start prd.md` again later and it resumes with full memory and session continuity.
+- Auto-detects auth, in this order:
+  1. `ANTHROPIC_API_KEY` if set in your environment (explicit), else
+  2. your host's existing Claude Code login (macOS Keychain, or `~/.claude/.credentials.json` on Linux), extracted to a private temp file and mounted read-write so the in-container claude can refresh the short-lived token. A Claude Code Max/Pro subscriber needs no API key; it just reuses the login. Else
+  3. an honest error with setup guidance.
+- Forwards `~/.gitconfig` and `~/.config/gh` (read-only) plus `GITHUB_TOKEN`/`GH_TOKEN` if set, so commits and PRs work like local.
+- Registers the project with the host dashboard, so one host `loki dashboard` shows all your `loki docker` and local `loki start` projects in a single unified view (see "Run loki in multiple repos" below). Builds run with the dashboard off by default; add `--api` to publish port 57374 for a single run.
+
+Flags:
+
+| Flag | Description |
+|------|-------------|
+| `--image IMG` | Override the image (default `asklokesh/loki-mode:latest`) |
+| `--dry-run` | Print the docker command that would run, then exit |
+
+The credentials temp file used for Auth method 2 is created with `0600` permissions and wiped on exit. It is never written into the project, never committed, never logged.
+
+Requirements: loki installed on the host (npm/brew/bun) plus Docker. `loki docker` is a host wrapper; it does not bundle the image, it pulls/runs the published one.
+
+### Run loki in multiple repos (unified dashboard)
+
+`loki docker` is a first-class multi-repo surface, just like the host CLI. You can run `loki docker start` in several different folders at once:
+
+```bash
+cd ~/work/api      && loki docker start prd.md
+cd ~/work/frontend && loki docker start prd.md
+cd ~/work/cli      && loki docker start prd.md
+```
+
+Each repo gets its own container (deterministic name `loki-<hash-of-path>`), its own bind-mounted `/workspace`, and its own `.loki/` state on the host, so two repos run as two concurrent containers without colliding on a shared port.
+
+Every `loki docker` project registers on the host (with its real folder path) into the same machine-global registry the host dashboard reads. So one host dashboard shows them all:
+
+```bash
+loki dashboard      # on the host -- lists ALL projects
+```
+
+The host `loki dashboard` lists every project whether it runs via local `loki start` or via `loki docker start`, and derives each project's running state from its bind-mounted `.loki/session.json`. One dashboard, all repos, same as the local CLI experience.
+
+Note: `loki docker` builds run with the dashboard off by default (so concurrent runs never fight over port 57374). The unified view is the host `loki dashboard`. To bring up the dashboard for a single containerized run instead, use `loki docker start --api prd.md`, which publishes port 57374 for that one container.
+
+## Quick Start (docker compose)
+
+If you prefer not to install loki on the host, `docker compose` runs Loki from the image directly. You set credentials once in a `.env` file and never retype long flags.
+
+```bash
+# 1. Get the repo (provides docker-compose.yml and .env.example)
+git clone https://github.com/asklokesh/loki-mode.git
+cd loki-mode
+
+# 2. Copy the env template and set your key
+cp .env.example .env
+# edit .env, set ANTHROPIC_API_KEY=sk-ant-...
+
+# 3. Run a build against a spec in the current directory
+docker compose run loki start prd.md
+```
+
+To change anything (budget, provider, max iterations), edit `.env` and run the command again. No flags to retype.
+
+With the dashboard UI:
+
+```bash
+docker compose run --service-ports loki start --api prd.md
+# Dashboard at http://localhost:57374
+```
+
+## Quick Start (docker run)
+
+If you prefer `docker run`, pass the key as an environment variable:
 
 ```bash
 # Pull the latest image
@@ -16,17 +106,77 @@ docker run --rm asklokesh/loki-mode
 # Start autonomous mode with a spec
 docker run -it \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   asklokesh/loki-mode start prd.md
 
 # With dashboard UI
 docker run -it \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -p 57374:57374 \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   asklokesh/loki-mode start --api prd.md
 # Dashboard at http://localhost:57374
 ```
+
+## Authentication
+
+Loki uses Claude (the only provider pre-installed in the image). There are two ways to authenticate.
+
+### Method 1: API key (default, recommended)
+
+Set `ANTHROPIC_API_KEY`. Get a key from https://console.anthropic.com/settings/keys.
+
+With compose, put it in `.env`:
+
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+With `docker run`, pass it directly:
+
+```bash
+docker run -it \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  -v "$(pwd)":/workspace \
+  asklokesh/loki-mode start prd.md
+```
+
+### Method 2: Mount host OAuth credentials (Claude Max/Pro subscribers, no API key)
+
+If you have a Claude Code Max or Pro subscription and no API key, mount your host login credentials into the container.
+
+macOS (credentials live in the Keychain, export them to a file first):
+
+```bash
+security find-generic-password -s "Claude Code-credentials" -w \
+  | jq '{claudeAiOauth}' > .loki-oauth-credentials.json
+
+docker run -it \
+  -v "$(pwd)/.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw" \
+  -v "$(pwd)":/workspace \
+  asklokesh/loki-mode start prd.md
+```
+
+Linux (credentials are already a file at `~/.claude/.credentials.json`, mount it directly):
+
+```bash
+docker run -it \
+  -v ~/.claude/.credentials.json:/home/loki/.claude/.credentials.json:rw \
+  -v "$(pwd)":/workspace \
+  asklokesh/loki-mode start prd.md
+```
+
+For compose, uncomment the OAuth-mount volume line in `docker-compose.yml`.
+
+Notes for Method 2:
+- The mount must be `rw` so refreshed tokens persist back to the host file.
+- Never commit `.loki-oauth-credentials.json`. It contains a live token.
+- Tokens are short-lived (hours). If a container sits idle past expiry, re-export the file before the next run.
+
+## State and Memory Persistence
+
+Loki writes its state to `.loki/` inside `/workspace` (memory, session, queue, checkpoints). Because the project directory is bind-mounted to `/workspace`, that state lives on your host and persists across runs. Stop a build and start it again later and it resumes with full memory and session continuity.
 
 ## Image Details
 
@@ -40,67 +190,73 @@ docker run -it \
 | Node.js | 20 LTS |
 | Python | 3.x (for dashboard server) |
 | GitHub CLI | v2.65.0 |
+| Claude Code CLI | pre-installed |
 
 ## Usage Examples
 
 ```bash
 # Interactive shell
-docker run -it -v $(pwd):/workspace asklokesh/loki-mode bash
+docker run -it -v "$(pwd)":/workspace asklokesh/loki-mode bash
 
 # Background autonomous mode
 docker run -d \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   asklokesh/loki-mode start --bg prd.md
 
 # Quick single-task mode (max 3 iterations)
 docker run -it \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   asklokesh/loki-mode quick "add login page"
 
 # Check status
-docker run -it -v $(pwd):/workspace asklokesh/loki-mode status
+docker run -it -v "$(pwd)":/workspace asklokesh/loki-mode status
 
 # Build a PRD interactively from templates
-docker run -it -v $(pwd):/workspace asklokesh/loki-mode init
+docker run -it -v "$(pwd)":/workspace asklokesh/loki-mode init
 
 # Generate PRD from a GitHub issue
 docker run -it \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   asklokesh/loki-mode issue https://github.com/org/repo/issues/42
 ```
 
-## Multi-Provider Support
+## Providers
+
+Claude is the default provider and the only CLI pre-installed in this image.
+
+| Provider | Tier | In this image | Notes |
+|----------|------|---------------|-------|
+| Claude Code | Tier 1 (default) | Yes | Full feature support (subagents, parallel, Task tool, MCP) |
+| OpenAI Codex CLI | Tier 3 | No | Degraded mode (sequential only). Install the CLI in a derived image. |
+| Cline | Tier 2 | No | Reduced parallelism. Install the CLI in a derived image. |
+| Aider | Tier 3 | No | Degraded mode. Install the CLI in a derived image. |
+
+To use a Tier 2/3 provider, build a derived image that installs that provider's CLI, then set `LOKI_PROVIDER` and the relevant API key. Example skeleton:
+
+```dockerfile
+FROM asklokesh/loki-mode:latest
+USER root
+# install your provider CLI here (for example, the Codex CLI)
+USER loki
+```
 
 ```bash
-# Claude (default) -- full feature support
-docker run -it \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v $(pwd):/workspace \
-  asklokesh/loki-mode start prd.md
-
-# OpenAI Codex CLI -- degraded mode (sequential only)
 docker run -it \
   -e LOKI_PROVIDER=codex \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-  -v $(pwd):/workspace \
-  asklokesh/loki-mode start prd.md
-
-# Google Gemini CLI -- degraded mode (sequential only)
-docker run -it \
-  -e LOKI_PROVIDER=gemini \
-  -e GOOGLE_API_KEY="$GOOGLE_API_KEY" \
-  -v $(pwd):/workspace \
-  asklokesh/loki-mode start prd.md
+  -v "$(pwd)":/workspace \
+  your-derived-image start prd.md
 ```
 
 ## Volume Mounts
 
 | Host Path | Container Path | Mode | Purpose |
 |-----------|---------------|------|---------|
-| Project dir | `/workspace` | `rw` | Source code and PRD files |
+| Project dir | `/workspace` | `rw` | Source code, PRD files, and persisted `.loki/` state |
+| OAuth credentials | `/home/loki/.claude/.credentials.json` | `rw` | Claude Max/Pro login (Auth Method 2) |
 | `~/.gitconfig` | `/home/loki/.gitconfig` | `ro` | Git configuration |
 | `~/.ssh` | `/home/loki/.ssh` | `ro` | Git SSH authentication |
 | `~/.config/gh` | `/home/loki/.config/gh` | `ro` | GitHub CLI authentication |
@@ -110,7 +266,7 @@ docker run -it \
 docker run -it \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   -v ~/.gitconfig:/home/loki/.gitconfig:ro \
   -v ~/.ssh:/home/loki/.ssh:ro \
   -v ~/.config/gh:/home/loki/.config/gh:ro \
@@ -126,16 +282,15 @@ docker run -it \
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key (required for Claude provider) |
-| `OPENAI_API_KEY` | OpenAI API key (required for Codex provider) |
-| `GOOGLE_API_KEY` | Google API key (required for Gemini provider) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (Auth Method 1, default for Claude provider) |
+| `OPENAI_API_KEY` | OpenAI API key (required only for the Codex provider in a derived image) |
 | `GITHUB_TOKEN` | GitHub personal access token |
 
 ### Core Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOKI_PROVIDER` | AI provider: `claude`, `codex`, `gemini` | `claude` |
+| `LOKI_PROVIDER` | AI provider: `claude`, `codex`, `cline`, `aider` | `claude` |
 | `LOKI_MAX_ITERATIONS` | Max autonomous iteration cycles | `1000` |
 | `LOKI_MAX_RETRIES` | Max retry attempts per iteration | `50` |
 | `LOKI_DASHBOARD` | Enable dashboard server | `true` |
@@ -200,6 +355,7 @@ docker run -it \
 | `memory <cmd>` | Cross-project learnings |
 | `council <cmd>` | Completion council status |
 | `config <cmd>` | Configuration: show, init, edit, path |
+| `docker <cmd>` | Run any loki command inside the published image (host wrapper, zero config) |
 | `sandbox <cmd>` | Docker sandbox: start, stop, status, logs, shell |
 | `remote [PRD]` | Start remote session (connect from phone/browser, Claude Pro/Max) |
 | `cleanup` | Kill orphaned processes |
@@ -209,7 +365,7 @@ docker run -it \
 ### Start Options
 
 ```
---provider NAME     AI provider: claude (default), codex, gemini
+--provider NAME     AI provider: claude (default), codex, cline, aider
 --parallel          Enable parallel mode with git worktrees
 --bg, --background  Run in background
 --simple            Force simple complexity tier
@@ -222,21 +378,24 @@ docker run -it \
 --yes, -y           Skip confirmation prompts
 ```
 
-## Docker Compose
+## Docker Compose Reference
+
+The repo ships a ready-to-use `docker-compose.yml` with an `env_file: .env` and an `ANTHROPIC_API_KEY` passthrough, plus a commented OAuth-mount volume for Auth Method 2. Copy `.env.example` to `.env`, set your key, and run. For reference, the service looks like this:
 
 ```yaml
 services:
   loki:
     image: asklokesh/loki-mode:latest
+    env_file: .env
     volumes:
       - .:/workspace:rw
       - ~/.gitconfig:/home/loki/.gitconfig:ro
       - ~/.ssh:/home/loki/.ssh:ro
       - ~/.config/gh:/home/loki/.config/gh:ro
+      # Auth Method 2 (Claude Max/Pro): uncomment to mount host OAuth credentials
+      # - ./.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw
     environment:
       - ANTHROPIC_API_KEY
-      - GITHUB_TOKEN
-      - LOKI_DASHBOARD=true
     ports:
       - "57374:57374"
     working_dir: /workspace
@@ -245,6 +404,7 @@ services:
 ```
 
 ```bash
+cp .env.example .env       # then edit .env and set ANTHROPIC_API_KEY
 docker compose run loki start prd.md
 ```
 
@@ -262,7 +422,7 @@ docker run -it \
   --security-opt=no-new-privileges:true \
   --cap-drop=ALL --cap-add=CHOWN \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v $(pwd):/workspace \
+  -v "$(pwd)":/workspace \
   loki-mode:sandbox start prd.md
 
 # Or use the built-in sandbox launcher
@@ -284,7 +444,8 @@ docker inspect --format='{{.State.Health.Status}}' <container-id>
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `7.x.x` | Specific version (e.g. `7.5.11`) |
+| `7.45.0` | Specific version (current release) |
+| `7.x.x` | Prior versions |
 | `sandbox` | Security-hardened image (Debian slim) |
 
 ## Links
@@ -296,7 +457,7 @@ docker inspect --format='{{.State.Health.Status}}' <container-id>
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1) -- See [LICENSE](https://github.com/asklokesh/loki-mode/blob/main/LICENSE) and [docs/LICENSE-CHANGE-NOTICE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/LICENSE-CHANGE-NOTICE.md). Converts to Apache 2.0 on March 19, 2030.
+Business Source License 1.1 (BUSL-1.1). Source-available, not open source. See [LICENSE](https://github.com/asklokesh/loki-mode/blob/main/LICENSE) and [docs/LICENSE-CHANGE-NOTICE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/LICENSE-CHANGE-NOTICE.md). Converts to Apache 2.0 on March 19, 2030.
 
 ## Support
 

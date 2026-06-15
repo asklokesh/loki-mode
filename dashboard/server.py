@@ -2911,13 +2911,28 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
 
     pid = project.get("pid")
     if not isinstance(pid, int) or pid <= 0:
-        # Already not running: nothing to signal, just reconcile the registry.
+        # No host pid. Two sub-cases:
+        #  - A `loki docker` project registers with pid=None but may still be
+        #    actively building inside a container. Its runner polls .loki/STOP
+        #    (bind-mounted to the host path), so writing STOP here actually
+        #    stops the containerized build -- this is the unified-dashboard Stop
+        #    parity for Docker projects (the container pid is meaningless on the
+        #    host, so os.kill is not an option).
+        #  - A genuinely stopped project: the STOP write is harmless.
+        # Write STOP when we resolved a real .loki dir, then reconcile.
+        stop_signaled = False
+        if loki_dir is not None:
+            try:
+                (loki_dir / "STOP").write_text(datetime.now(timezone.utc).isoformat())
+                stop_signaled = True
+            except OSError:
+                pass
         registry.mark_project_stopped(project_id)
         return {
             "success": True,
             "project_id": project_id,
-            "stopped": False,
-            "already_stopped": True,
+            "stopped": stop_signaled,
+            "already_stopped": not stop_signaled,
         }
 
     # Write the STOP file so the runner's own cleanup STOP-branch fires for a

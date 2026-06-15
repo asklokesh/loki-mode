@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.44.0
+**Version:** v7.45.0
 
 ---
 
@@ -341,19 +341,85 @@ loki start ./my-spec.md --provider cline
 
 #### Docker
 
-Pass the provider as an environment variable:
+Docker is where sandboxes and runs happen. The easiest way to run Loki in a
+container is the `loki docker` host wrapper, which gives you the full local
+experience (including `.loki/` state, resume, and continuity) in one command.
+The raw `docker run` and `docker compose` methods below remain as alternatives.
+
+##### loki docker (easiest)
+
+If you have loki installed on the host (npm/brew/bun) plus Docker, `loki docker`
+runs any loki command inside the published `asklokesh/loki-mode` image with zero
+config:
 
 ```bash
-# Use Codex with Docker
-docker run -e LOKI_PROVIDER=codex \
-  -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:latest start ./my-spec.md
-
-# Use Cline with Docker
-docker run -e LOKI_PROVIDER=cline \
-  -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:latest start ./my-spec.md
+loki docker start prd.md             # full local experience in Docker
+loki docker status                   # any loki command works
+loki docker --dry-run start prd.md   # print the docker command, do not run
 ```
+
+It bind-mounts the current folder to `/workspace`, so `.loki/` state (memory,
+session, queue, checkpoints) persists on the host and resume and continuity
+behave exactly like the local `loki` CLI. Auth is auto-detected:
+`ANTHROPIC_API_KEY` if set, else your host's existing Claude Code login
+(Max/Pro subscribers need no API key), else an honest error with guidance. It
+also forwards `~/.gitconfig` and `~/.config/gh` (read-only) plus
+`GITHUB_TOKEN`/`GH_TOKEN` if set, so commits and PRs work like local, and
+exposes the dashboard on port 57374. Use `--image IMG` to override the image.
+
+`loki docker` is a thin host wrapper around the image; it requires loki and
+Docker installed on the host.
+
+Multi-repo + unified dashboard: you can run `loki docker start` in several
+different repos at once, exactly like the host CLI. Each repo gets its own
+container (deterministic name `loki-<hash-of-path>`) and its own bind-mounted
+`.loki/` state. Every `loki docker` project registers with the host dashboard,
+so running `loki dashboard` on the host shows ALL your projects in one unified
+view, whether they run via local `loki start` or via `loki docker start`. Builds
+run with the dashboard off by default (so concurrent runs do not collide on port
+57374); use the host `loki dashboard`, or `loki docker start --api` for a single
+containerized run's UI.
+
+##### docker run
+
+As of v7.45.0 the image ships the Claude Code CLI, so the default `claude`
+provider works inside the container. Provide auth with your Anthropic API key:
+
+```bash
+# Run Loki Mode in Docker (Claude provider, API-key auth)
+docker run --rm -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  -v $(pwd):/workspace -w /workspace \
+  asklokesh/loki-mode:7.45.0 start ./my-spec.md
+```
+
+##### docker compose + .env (no host install)
+
+If you prefer not to install loki on the host, the repo ships a
+`docker-compose.yml` with `env_file: .env`. Copy the example,
+set your key once, then run without retyping long `-e` flags:
+
+```bash
+cp .env.example .env          # then edit .env and set ANTHROPIC_API_KEY
+docker compose run loki start prd.md
+```
+
+`.env` is gitignored. Edit it and re-run any time; compose reloads it
+automatically.
+
+##### Host OAuth (Claude Code Max/Pro subscribers, no API key)
+
+If you have a Claude Code subscription and no API key, you can reuse your host
+login by mounting your credentials file at
+`/home/loki/.claude/.credentials.json` instead of setting `ANTHROPIC_API_KEY`.
+See [DOCKER_README.md](../DOCKER_README.md) "Option 2: host OAuth" for the
+one-line export command and the compose volume to uncomment.
+
+##### Other providers in Docker
+
+The image ships only the Claude Code CLI. Codex, Cline, and Aider are
+bring-your-own-CLI: install the provider CLI in a derived image (or mount it),
+then select it with `-e LOKI_PROVIDER=<name>`. See
+[DOCKER_README.md](../DOCKER_README.md) for details.
 
 ### Degraded Mode
 

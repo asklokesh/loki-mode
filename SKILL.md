@@ -3,7 +3,7 @@ name: loki-mode
 description: Autonomous spec-driven build system with a built-in trust layer. It does not call work done until it is verified (RARV-C closure loop, 11 quality gates, completion council, verified-completion evidence gate). Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.44.0
+# Loki Mode v7.45.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -219,6 +219,15 @@ loki start --provider aider ./prd.md         # Aider (18+ providers), degraded m
 loki start ./prd.md --parallel
 loki start 123 --ship                        # Issue -> PR -> auto-merge
 
+# Run any loki command inside the published Docker image, zero config (v7.45.0).
+# Bind-mounts the current folder to /workspace so .loki state, resume, and
+# continuity behave exactly like the local CLI. Auth auto-detected: ANTHROPIC_API_KEY,
+# else the host Claude Code login (Max/Pro), else an honest error. Requires loki + Docker on the host.
+loki docker start prd.md                      # full local experience in Docker
+loki docker status                            # any loki command works
+loki docker --dry-run start prd.md            # print the docker command, do not run
+loki docker --image IMG start prd.md          # override the image
+
 # Legacy: `loki run <issue>` still works but prints a deprecation notice.
 # It is an alias for `loki start <issue>` and will be removed in a future major.
 ```
@@ -398,4 +407,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v7.44.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v7.45.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**

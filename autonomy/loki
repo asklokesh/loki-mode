@@ -1931,6 +1931,21 @@ cmd_start() {
     if [ -f "$_start_pid_file" ]; then
         local _existing_pid
         _existing_pid=$(cat "$_start_pid_file" 2>/dev/null | tr -dc '0-9')
+        # Docker resume fix: in a `--rm` container every run starts a fresh PID
+        # namespace where the orchestrator is PID 1. A prior run that wrote
+        # loki.pid=1 leaves that marker in the bind-mounted .loki on the host;
+        # the NEXT container is ALSO PID 1, so `kill -0 1` (a self-signal) always
+        # succeeds and the lock falsely reads "another instance is running",
+        # making resume in the same folder impossible. Two cases are NOT a live
+        # sibling and must be cleared: (a) the recorded pid equals OUR OWN pid
+        # ($$) -- this is the in-container resume case, where the new run is PID 1
+        # and the stale marker is also 1; (b) the recorded pid is 1 but we are
+        # NOT pid 1 (a host reading a container's leftover marker). Mirrors the
+        # downstream guard in run.sh. A genuine concurrent sibling can never
+        # share our $$, so this never masks a real running instance.
+        if [ "$_existing_pid" = "$$" ] || { [ "$_existing_pid" = "1" ] && [ "$$" != "1" ]; }; then
+            _existing_pid=""
+        fi
         if [ -n "$_existing_pid" ] && kill -0 "$_existing_pid" 2>/dev/null; then
             echo -e "${RED}Error: another loki instance is running (pid $_existing_pid).${NC}" >&2
             echo -e "${YELLOW}Run 'loki stop' first, then retry 'loki start'.${NC}" >&2
@@ -14369,6 +14384,9 @@ main() {
             ;;
         web)
             cmd_web "$@"
+            ;;
+        docker)
+            cmd_docker "$@"
             ;;
         preview)
             cmd_preview "$@"
@@ -28358,6 +28376,180 @@ PYEOF
             exit 1
             ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# loki docker - zero-friction Docker host wrapper
+#
+# Runs loki inside the published image with the SAME experience as the local
+# CLI: invoke it in a project folder and it just works. The current directory
+# is bind-mounted to /workspace, so .loki/ state (memory, session, queue,
+# checkpoints) persists on the host and resume + continuity behave exactly like
+# `loki start` locally. Auth is auto-detected (ANTHROPIC_API_KEY if set, else
+# the host Claude Code login), so Claude Code subscribers get zero-config runs.
+#
+# Usage:
+#   loki docker start prd.md       # run a build in the container, .loki persists
+#   loki docker <any-loki-command> # forwards any command into the container
+#   loki docker --dry-run start    # print the docker argv without running
+#   loki docker --image IMG ...    # override the image (default published tag)
+# ---------------------------------------------------------------------------
+cmd_docker() {
+    local docker_mod="$_LOKI_SCRIPT_DIR/docker-run.sh"
+    if [ ! -f "$docker_mod" ]; then
+        echo -e "${RED}Error: docker wrapper module not found at $docker_mod${NC}" >&2
+        return 3
+    fi
+
+    local sub="${1:-}"
+    case "$sub" in
+        ""|--help|-h|help)
+            echo -e "${BOLD}loki docker${NC} - run loki inside the Docker image, zero config"
+            echo ""
+            echo "Usage: loki docker [--image IMG] [--dry-run] <loki-command> [args]"
+            echo ""
+            echo "Runs the published Loki image with your current folder mounted at"
+            echo "/workspace, so .loki state persists and resume works exactly like"
+            echo "the local CLI. Auth is auto-detected:"
+            echo "  1. ANTHROPIC_API_KEY (if set in your environment), else"
+            echo "  2. your host Claude Code login (Max/Pro subscription), else"
+            echo "  3. an error with setup guidance."
+            echo ""
+            echo "Examples:"
+            echo "  loki docker start prd.md"
+            echo "  loki docker status"
+            echo "  loki docker --dry-run start prd.md"
+            echo ""
+            echo "Options:"
+            echo "  --image IMG   Override the image (default: ${LOKI_DOCKER_IMAGE:-asklokesh/loki-mode:latest})"
+            echo "  --dry-run     Print the docker command that would run, then exit"
+            [ "$sub" = "" ] && return 1
+            return 0
+            ;;
+    esac
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${RED}Error: docker is not installed or not on PATH.${NC}" >&2
+        echo "Install Docker Desktop (https://www.docker.com/products/docker-desktop/) and retry." >&2
+        return 4
+    fi
+
+    # Parse wrapper-only flags (everything else is the loki command to forward).
+    # --api is BOTH a forwarded loki flag (start --api) and a wrapper signal to
+    # publish the dashboard port, so we detect it without consuming it.
+    local dry_run=0
+    local with_api=0
+    local -a fwd=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --image) shift; export LOKI_DOCKER_IMAGE="${1:-}"; shift ;;
+            --dry-run) dry_run=1; shift ;;
+            --api) with_api=1; fwd+=("$1"); shift ;;
+            *) fwd+=("$1"); shift ;;
+        esac
+    done
+
+    # shellcheck source=/dev/null
+    source "$docker_mod"
+
+    local auth; auth="$(loki_docker_detect_auth)"
+    local creds=""
+    local cleanup_creds=0
+
+    case "$auth" in
+        apikey)
+            echo -e "${DIM:-}Auth: ANTHROPIC_API_KEY (from environment)${NC}" >&2
+            ;;
+        oauth)
+            creds="$(mktemp "${TMPDIR:-/tmp}/loki-docker-creds.XXXXXX")" || {
+                echo -e "${RED}Error: could not create a temp file for credentials.${NC}" >&2
+                return 2
+            }
+            cleanup_creds=1
+            # Wipe the token file on any exit path.
+            # shellcheck disable=SC2064
+            trap "rm -f '$creds' 2>/dev/null || true" EXIT INT TERM
+            if ! loki_docker_extract_creds "$creds"; then
+                echo -e "${RED}Error: found a host Claude Code login but could not read its token.${NC}" >&2
+                return 2
+            fi
+            echo -e "${DIM:-}Auth: host Claude Code login (auto-detected, mounted read-write)${NC}" >&2
+            ;;
+        none)
+            echo -e "${RED}Error: no auth available for the Docker run.${NC}" >&2
+            echo "Do ONE of the following, then retry:" >&2
+            echo "  - export ANTHROPIC_API_KEY=sk-ant-...   (get one at https://console.anthropic.com/settings/keys)" >&2
+            echo "  - or log in to Claude Code on this host (claude) so loki can reuse it." >&2
+            return 5
+            ;;
+    esac
+
+    # Default the command to 'help' if the user passed only wrapper flags.
+    [ ${#fwd[@]} -eq 0 ] && fwd=(help)
+
+    local -a docker_argv=()
+    while IFS= read -r line; do docker_argv+=("$line"); done < <(loki_docker_build_argv "$auth" "$creds" "$with_api" "${fwd[@]}")
+
+    if [ "$dry_run" = "1" ]; then
+        echo "Would run:"
+        # Mask the API key value: dry-run output is exactly what users paste into
+        # bug reports / CI logs, so never print the secret.
+        local _a
+        for _a in "${docker_argv[@]}"; do
+            case "$_a" in
+                ANTHROPIC_API_KEY=*) printf '  %q' "ANTHROPIC_API_KEY=***" ;;
+                *) printf '  %q' "$_a" ;;
+            esac
+        done
+        echo ""
+        [ "$cleanup_creds" = "1" ] && rm -f "$creds" 2>/dev/null || true
+        return 0
+    fi
+
+    # Multi-repo unified dashboard (Option B): register THIS project on the host
+    # with the real cwd and NO pid, so the existing host dashboard
+    # (`loki dashboard`) lists it alongside host `loki start` projects and reads
+    # its live status from the bind-mounted .loki/session.json. Best-effort and
+    # failure-swallowed: registry bookkeeping must never block a build.
+    _loki_docker_register_host running
+    "${docker_argv[@]}"
+    local rc=$?
+    _loki_docker_register_host stopped
+    [ "$cleanup_creds" = "1" ] && rm -f "$creds" 2>/dev/null || true
+    return $rc
+}
+
+# Host-side project registry bookkeeping for `loki docker` (Option B). Registers
+# $(pwd) in ~/.loki/dashboard/projects.json with NO pid (pid=None) so the
+# dashboard's "running" decision falls back to .loki/session.json (which the
+# container writes into the bind-mounted workspace). $1 = running|stopped.
+_loki_docker_register_host() {
+    local _state="${1:-running}"
+    command -v python3 >/dev/null 2>&1 || return 0
+    local _skill="${SKILL_DIR:-$_LOKI_SCRIPT_DIR/..}"
+    LOKI_REG_TARGET="$(pwd)" LOKI_REG_SKILL="$_skill" LOKI_REG_STATE="$_state" \
+    python3 - <<'PYDOCKERREG' >/dev/null 2>&1 || true
+import os, sys
+sys.path.insert(0, os.environ.get("LOKI_REG_SKILL", "."))
+try:
+    from dashboard import registry
+    target = os.path.abspath(os.environ["LOKI_REG_TARGET"])
+    state = os.environ.get("LOKI_REG_STATE", "running")
+    if state == "stopped":
+        registry.mark_project_stopped(target)
+    else:
+        registry.register_project(target)
+        reg = registry._load_registry()
+        pid_key = registry._generate_project_id(target)
+        if pid_key in reg.get("projects", {}):
+            # No host pid for a containerized run: the dashboard uses the
+            # bind-mounted .loki/session.json to decide "running".
+            reg["projects"][pid_key]["pid"] = None
+            reg["projects"][pid_key]["status"] = "running"
+            registry._save_registry(reg)
+except Exception:
+    pass
+PYDOCKERREG
 }
 
 main "$@"
