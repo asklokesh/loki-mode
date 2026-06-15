@@ -49,6 +49,10 @@ export class LokiSessionControl extends LokiElement {
       notice: '',         // inline disclosure shown after a change
     };
     this._modelBusy = false;
+    // Browser PRD-input: start a build from a spec.
+    this._startBusy = false;
+    this._startNotice = '';
+    this._specText = '';
     this._api = null;
     this._state = getState();
     this._statusUpdateHandler = null;
@@ -211,8 +215,53 @@ export class LokiSessionControl extends LokiElement {
     }
   }
 
-  _triggerStart() {
-    this.dispatchEvent(new CustomEvent('session-start', { detail: this._status }));
+  async _triggerStart() {
+    if (this._startBusy) return;
+    const spec = (this._specText || '').trim();
+    if (!spec) {
+      this._startNotice = 'Enter a spec or one-line brief to start a build.';
+      this.render();
+      return;
+    }
+    if (!this._api || typeof this._api.startSession !== 'function') {
+      this._startNotice = 'Start is not available on this server.';
+      this.render();
+      return;
+    }
+    this._startBusy = true;
+    this._startNotice = 'Starting build...';
+    this.render();
+    try {
+      const result = await this._api.startSession(spec, {
+        provider: this._status.provider || 'claude',
+      });
+      if (result && result.error) throw new Error(result.error);
+      // Transition the UI to monitoring the new run.
+      this._startBusy = false;
+      this._startNotice = '';
+      this._specText = '';
+      this._status.mode = 'running';
+      this._status.connected = true;
+      this.render();
+      // Pull fresh status so the panel reflects the live run promptly.
+      this._loadStatus();
+      this.dispatchEvent(new CustomEvent('session-start', {
+        detail: { ...this._status, pid: result && result.pid, spec: result && result.spec },
+      }));
+    } catch (err) {
+      console.error('Failed to start build:', err);
+      this._startBusy = false;
+      // Honest surfacing of single-flight / validation errors from the API.
+      this._startNotice = (err && err.message)
+        ? `Could not start: ${err.message}`
+        : 'Could not start the build. Try again.';
+      this.render();
+    }
+  }
+
+  _onSpecInput(value) {
+    // Store without re-render so typing is not interrupted.
+    this._specText = value;
   }
 
   async _triggerPause() {
@@ -326,12 +375,36 @@ export class LokiSessionControl extends LokiElement {
     `;
   }
 
+  _renderStartControl() {
+    // Browser PRD-input: a spec textarea + Start button, shown when no run is
+    // active so a user can kick off a build straight from the dashboard.
+    return `
+      <div class="start-control">
+        <label class="start-label" for="spec-input">Start a build from a spec</label>
+        <textarea
+          class="spec-input"
+          id="spec-input"
+          rows="3"
+          placeholder="Paste a PRD or type a one-line brief (e.g. 'a CLI todo app in Go with JSON storage')"
+          aria-label="Spec or one-line brief"
+          ${this._startBusy ? 'disabled' : ''}>${this._escapeHtml(this._specText)}</textarea>
+        <button class="control-btn start" id="start-btn" aria-label="Start build" ${this._startBusy ? 'disabled' : ''}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          ${this._startBusy ? 'Starting...' : 'Start Build'}
+        </button>
+        ${this._startNotice ? `<div class="start-notice">${this._escapeHtml(this._startNotice)}</div>` : ''}
+      </div>
+    `;
+  }
+
   render() {
     const isCompact = this.hasAttribute('compact');
     const statusClass = this._getStatusClass();
     const statusLabel = this._getStatusLabel();
     const isRunning = ['running', 'autonomous'].includes(this._status.mode);
     const isPaused = this._status.mode === 'paused';
+    // Browser PRD-input: offer Start only when no run is active.
+    const canStart = !isRunning && !isPaused;
 
     const styles = `
       <style>
@@ -567,6 +640,44 @@ export class LokiSessionControl extends LokiElement {
           font-size: 10px;
           color: var(--loki-accent);
         }
+
+        .start-control {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--loki-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .start-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--loki-text-secondary);
+        }
+
+        .spec-input {
+          width: 100%;
+          box-sizing: border-box;
+          resize: vertical;
+          padding: 6px 8px;
+          border-radius: 4px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-card);
+          color: var(--loki-text-primary);
+          font-size: 11px;
+          font-family: inherit;
+        }
+
+        .spec-input:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .start-notice {
+          font-size: 10px;
+          color: var(--loki-accent);
+        }
       </style>
     `;
 
@@ -595,6 +706,7 @@ export class LokiSessionControl extends LokiElement {
             Stop
           </button>
         </div>
+        ${canStart ? this._renderStartControl() : ''}
       </div>
     `;
 
@@ -648,6 +760,8 @@ export class LokiSessionControl extends LokiElement {
           </button>
         </div>
 
+        ${canStart ? this._renderStartControl() : ''}
+
         ${this._renderModelControl()}
 
         <div class="connection-status">
@@ -699,6 +813,11 @@ export class LokiSessionControl extends LokiElement {
     const modelSelect = this.shadowRoot.getElementById('model-select');
     if (modelSelect) {
       modelSelect.addEventListener('change', (e) => this._onModelChange(e.target.value));
+    }
+
+    const specInput = this.shadowRoot.getElementById('spec-input');
+    if (specInput) {
+      specInput.addEventListener('input', (e) => this._onSpecInput(e.target.value));
     }
   }
 }

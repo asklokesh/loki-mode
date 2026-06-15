@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.44.0] - 2026-06-15
+
+Web-surface consolidation + local-ci parallelization. One local web surface (the
+dashboard), Purple Lab deprecated with a value-preserving migration path, and the
+dashboard gains browser PRD-input so nobody loses the ability to start a build
+from a browser.
+
+### Changed
+- Purple Lab (`loki web`, web-app/, port 57375) is DEPRECATED as of this release.
+  Rationale: it was a second web surface (its own FastAPI server, auth, crypto,
+  DB migrations) whose monitoring half duplicated the dashboard, whose advertised
+  multi-user/account layer was unbacked UI, and whose hosted-platform role now
+  lives in the separate Autonomi Cloud product. Consolidating to one local
+  surface simplifies the UX and sharpens the open-core line (free CLI + local
+  dashboard; paid hosted = Autonomi Cloud).
+- `loki web` still works (value-preserving): it prints a deprecation banner
+  pointing to the dashboard (auto-launches at `loki start`, http://localhost:57374,
+  or `loki dashboard`) and to Autonomi Cloud for the hosted platform, emits a
+  cli_command_deprecated telemetry event, then still launches Purple Lab so no
+  existing user is stranded (mirrors the `loki run` -> `loki start` deprecation).
+
+### Added
+- Dashboard can now START a build from the browser, absorbing Purple Lab's one
+  unique value. New `POST /api/control/start` (scope: control) accepts a PRD as
+  text or path (path-traversal guarded, post-resolution containment check),
+  single-flight (409 if a run is already active), and spawns the run via run.sh.
+  The SPA gains a spec textarea + a wired Start button (startSession in the API
+  client). The dashboard is now the single local surface: monitor AND launch.
+- local-ci parallelization re-land (#588): provably-independent read-only checks
+  (bash -n, shellcheck, JSON/YAML/emoji/git-add structural, static-asset checks)
+  run in concurrent background lanes; everything that spawns a process, hits the
+  network (bun test), runs pytest, or shares mutable state (model-override,
+  plan-command, the stop block) stays on a serial spine. A prior parallelization
+  attempt was reverted for making the gate non-deterministic; this re-land was
+  proven deterministic across 5 consecutive full runs (62 checks, 0 failures,
+  identical each run). `--serial` / LOCAL_CI_SERIAL=1 is the bisect lever.
+
+### Docs
+- README (Purple Lab section + nav link + commands table) and the Autonomi
+  website (Docs product pages) repoint Purple Lab current-product framing to the
+  dashboard (local) and Autonomi Cloud (hosted); historical changelog/launch
+  artifacts left intact (deprecate with a pointer, never silently delete).
+
 ## [7.43.0] - 2026-06-14
 
 Bug-hunt + greenfield-E2E hardening wave. A real first-time-user greenfield

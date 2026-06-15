@@ -1060,6 +1060,27 @@ export class LokiApiClient extends EventTarget {
   // ============================================
 
   /**
+   * Start a build from a spec.
+   * Absorbs the browser PRD-input capability: kicks off `loki start` against
+   * an inline spec (one-line brief or full PRD) or an existing spec path.
+   * @param {string} prd - the spec text (one-line brief or PRD body)
+   * @param {{provider?: string, parallel?: boolean, prdPath?: string}} [opts]
+   * @returns {Promise<{success: boolean, pid: number, spec: string, provider: string}>}
+   */
+  async startSession(prd, opts = {}) {
+    const body = {
+      provider: opts.provider || 'claude',
+      parallel: Boolean(opts.parallel),
+    };
+    if (opts.prdPath) {
+      body.prd_path = opts.prdPath;
+    } else {
+      body.prd_text = prd || '';
+    }
+    return this._post('/api/control/start', body);
+  }
+
+  /**
    * Pause the current session
    */
   async pauseSession() {

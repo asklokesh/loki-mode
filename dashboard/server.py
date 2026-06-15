@@ -53,7 +53,7 @@ from . import auth
 from . import audit
 from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
-from .control import atomic_write_json
+from .control import atomic_write_json, find_skill_dir, is_process_running
 from .activity_logger import get_activity_logger
 
 try:
@@ -2627,6 +2627,231 @@ async def list_running_projects():
             "is_active": is_active,
         })
     return {"projects": out, "active_project_dir": active}
+
+
+class StartBuildRequest(BaseModel):
+    """Schema for starting a build from a spec via the dashboard.
+
+    Absorbs the browser PRD-input capability: the caller supplies a spec as
+    inline text (prd_text -- a one-line brief or a full PRD) OR as a path to an
+    existing spec file (prd_path). Exactly one is required. provider is
+    optional and validated against the supported provider list.
+    """
+    # prd_text is capped at 1 MiB: a real PRD is well under this, and the cap
+    # bounds disk-fill / oversized-spawn from browser input (pydantic returns
+    # 422 on overflow before any file write or subprocess spawn).
+    prd_text: Optional[str] = Field(default=None, max_length=1_048_576)
+    prd_path: Optional[str] = None
+    provider: str = "claude"
+    parallel: bool = False
+
+    def validate_provider(self) -> None:
+        """Validate provider is from the supported list.
+
+        Mirrors dashboard/control.py StartRequest.validate_provider so the
+        dashboard and the standalone control app accept the same set.
+        """
+        allowed = ["claude", "codex", "gemini", "cline", "aider"]
+        if self.provider not in allowed:
+            raise ValueError(
+                f"Invalid provider: {self.provider}. "
+                f"Must be one of: {', '.join(allowed)}"
+            )
+
+
+def _validate_prd_path(raw_path: str, project_dir: _Path) -> _Path:
+    """Path-guard a caller-supplied PRD path.
+
+    Ports the proven traversal-safety logic from
+    dashboard/control.py:StartRequest.validate_prd_path, but anchors the
+    allowed roots to the resolved target project directory (the active
+    dashboard project) plus the user's home, rather than the dashboard
+    process CWD. Returns the resolved, verified path. Raises ValueError on
+    any unsafe / nonexistent / non-file path.
+    """
+    # Reject literal traversal sequences before any resolution.
+    if ".." in raw_path:
+        raise ValueError("PRD path contains path traversal sequence (..)")
+
+    prd_path = _Path(raw_path).expanduser().resolve()
+
+    if not prd_path.exists():
+        raise ValueError(f"PRD file does not exist: {raw_path}")
+    if not prd_path.is_file():
+        raise ValueError(f"PRD path is not a file: {raw_path}")
+
+    # Must resolve within the target project dir or the user's home. This is
+    # the post-resolution containment check: even a symlink that escaped the
+    # no-".." check is caught here because relative_to is computed on the
+    # fully-resolved real path.
+    roots = [project_dir.resolve(), _Path.home().resolve()]
+    for root in roots:
+        try:
+            prd_path.relative_to(root)
+            return prd_path
+        except ValueError:
+            continue
+    raise ValueError(f"PRD path is outside allowed directories: {raw_path}")
+
+
+def _write_spec_text(prd_text: str, project_dir: _Path) -> _Path:
+    """Persist an inline spec to .loki/specs/ and return its path.
+
+    The browser one-line-brief / PRD-textarea flow lands here. The file is
+    written inside the target project's .loki/specs so it is contained and
+    auditable; run.sh is then started against that file path.
+    """
+    specs_dir = project_dir / ".loki" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    spec_file = specs_dir / f"dashboard-spec-{stamp}.md"
+    spec_file.write_text(prd_text, encoding="utf-8")
+    return spec_file
+
+
+def _project_run_active(loki_dir: _Path) -> Optional[int]:
+    """Single-flight check: return the live orchestrator PID if a run is active
+    in this project, else None.
+
+    Honest: checks loki.pid (process alive) first, then session.json
+    status=running with a 6h staleness window (mirrors control.get_status), so
+    a crashed run that left a stale session.json does not block a fresh start.
+    """
+    pid_file = loki_dir / "loki.pid"
+    pid_str = _safe_read_text(pid_file).strip()
+    if pid_str.isdigit():
+        pid = int(pid_str)
+        if is_process_running(pid):
+            return pid
+
+    session_file = loki_dir / "session.json"
+    if session_file.exists():
+        try:
+            sd = json.loads(session_file.read_text())
+            if sd.get("status") == "running":
+                started_at = sd.get("startedAt", "")
+                if started_at:
+                    try:
+                        st = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                        age_h = (datetime.now(timezone.utc) - st).total_seconds() / 3600
+                        if age_h <= 6:
+                            return -1  # running per session.json, no usable pid
+                    except (ValueError, TypeError):
+                        return -1
+                else:
+                    return -1
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+    return None
+
+
+@app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control"))])
+async def start_build(request: Request, body: StartBuildRequest):
+    """Start a Loki Mode build from a spec, kicked off from the browser.
+
+    Absorbs the one unique browser capability: PRD-input to kick off a build.
+    Accepts a spec as inline text (prd_text) OR as a path (prd_path), validates
+    and path-guards it, writes inline text into .loki/specs/, then spawns
+    `run.sh` against the resolved spec via subprocess (same mechanism the
+    standalone control app uses).
+
+    Single-flight: refuses with 409 if a run is already active in the target
+    project.
+    """
+    if not _control_limiter.check("control"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Validate provider.
+    try:
+        body.validate_provider()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Exactly one spec source.
+    has_text = bool(body.prd_text and body.prd_text.strip())
+    has_path = bool(body.prd_path and body.prd_path.strip())
+    if has_text == has_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one of prd_text or prd_path",
+        )
+
+    # Resolve the target project directory from the active dashboard project.
+    loki_dir = _get_loki_dir()
+    project_dir = loki_dir.parent if loki_dir.name == ".loki" else _Path.cwd()
+    project_dir = project_dir.resolve()
+
+    # Single-flight: refuse if a run is already active in this project.
+    active_pid = _project_run_active(loki_dir)
+    if active_pid is not None:
+        detail = "A build is already running in this project"
+        if active_pid > 0:
+            detail += f" (PID {active_pid})"
+        raise HTTPException(status_code=409, detail=detail)
+
+    # Resolve the spec to a concrete, path-guarded file.
+    try:
+        if has_path:
+            spec_file = _validate_prd_path(body.prd_path.strip(), project_dir)
+        else:
+            spec_file = _write_spec_text(body.prd_text, project_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write spec: {e}")
+
+    # Locate run.sh (same resolver the standalone control app uses).
+    skill_dir = find_skill_dir()
+    run_sh = skill_dir / "autonomy" / "run.sh"
+    if not run_sh.exists():
+        raise HTTPException(status_code=500, detail=f"run.sh not found at {run_sh}")
+
+    # Build args: mirror control.py:start_session (provider, optional parallel,
+    # background, then the spec path).
+    args = [str(run_sh), "--provider", body.provider]
+    if body.parallel:
+        args.append("--parallel")
+    args.append("--bg")
+    args.append(str(spec_file))
+
+    try:
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(project_dir),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start build: {e}")
+
+    # Persist provider for status tracking (same as control.py).
+    try:
+        state_dir = loki_dir / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "provider").write_text(body.provider)
+    except OSError:
+        pass
+
+    audit.log_event(
+        action="start",
+        resource_type="session",
+        details={
+            "source": "dashboard",
+            "provider": body.provider,
+            "spec": str(spec_file),
+            "pid": process.pid,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {
+        "success": True,
+        "message": f"Build started with provider {body.provider}",
+        "pid": process.pid,
+        "spec": str(spec_file),
+        "provider": body.provider,
+    }
 
 
 class RunningProjectStopRequest(BaseModel):

@@ -22,10 +22,16 @@ cd "$REPO_ROOT" || exit 2
 
 FAST=0
 VERBOSE=0
+# LOCAL_CI_SERIAL=1 forces the fully-serial path (the pre-parallelization
+# behaviour). This is the bisect lever: if a future flake appears, run with
+# LOCAL_CI_SERIAL=1 to determine whether it is parallel-induced or a real
+# logic regression, without reverting the parallelization.
+SERIAL="${LOCAL_CI_SERIAL:-0}"
 for arg in "$@"; do
   case "$arg" in
     --fast)    FAST=1 ;;
     --verbose) VERBOSE=1 ;;
+    --serial)  SERIAL=1 ;;
   esac
 done
 
@@ -80,6 +86,115 @@ skip_check() {
 }
 
 # ---------------------------------------------------------------------------
+# Parallel-lane infrastructure (re-land of local-ci parallelization, #588)
+# ---------------------------------------------------------------------------
+# History: a prior attempt to parallelize this gate made it NON-DETERMINISTIC
+# and was reverted. Two failure classes appeared ONLY under concurrency:
+#   (a) state-contending suites (test-model-override.sh and any reader of
+#       .loki/state) clobbered each other's .loki/state and $HOME/.loki config;
+#   (b) the doctor/network probes (bun test) timed out when bun's own
+#       concurrency plus parallel shell lanes plus an agent storm all ran at
+#       once.
+# A gate that flips PASS/FAIL is a DEFECT, not flaky tests. The safe re-land:
+#   1. ONLY provably-independent, read-only checks run in concurrent background
+#      lanes: bash -n syntax, shellcheck, JSON/YAML/emoji/git-add structural
+#      checks, and the read-only web-app/dashboard static-asset checks.
+#   2. Everything that spawns a loki process, kills processes (the stop block),
+#      hits the network (bun test / doctor), runs pytest, or shares mutable state
+#      stays on a SERIAL spine in the original order.
+#   3. pytest stays serial-inline (NOT a lane): the blanket run and the per-file
+#      gates collect the SAME files, so backgrounding would double-execute them
+#      concurrently, and a pytest lane would still be live during `bun test` ->
+#      reintroducing failure class (b). The two state-contending suites
+#      (model-override, plan-command) also stay serial; serialization removes the
+#      class-(a) race, so no temp HOME is needed (and temp HOME breaks the
+#      model-override fastapi import -- see the note above the helper region).
+#
+# CRITICAL correctness note: a background subshell CANNOT mutate the parent's
+# PASSED/FAILED arrays (the appends happen in a copy and are lost). So every
+# parallel lane routes its verdict and buffered output through the filesystem,
+# and harvest_lanes folds them back into the parent arrays IN FIXED ORDER after
+# wait. This also keeps output non-interleaved and the FAIL tails readable.
+
+declare -a _LANE_LABELS=()
+declare -a _LANE_PIDS=()
+LANE_DIR=""
+
+# Launch one parallel lane. Identical PASS/FAIL semantics to run_check, but the
+# verdict + captured output go to files; the parent reads them in harvest_lanes.
+run_check_bg() {
+  local label="$1"; shift
+  local cmd="$*"
+  # Serial fallback: behave exactly like run_check (the bisect lever).
+  if [ "$SERIAL" = "1" ]; then
+    run_check "$label" "$cmd"
+    return
+  fi
+  if [ -z "$LANE_DIR" ]; then
+    LANE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/loki-localci-lanes-XXXXXX")
+  fi
+  local idx="${#_LANE_LABELS[@]}"
+  _LANE_LABELS+=("$label")
+  local out_file="$LANE_DIR/$idx.out"
+  local status_file="$LANE_DIR/$idx.status"
+  local cmd_file="$LANE_DIR/$idx.cmd"
+  printf '%s' "$cmd" > "$cmd_file"
+  (
+    if out=$(eval "$cmd" 2>&1); then
+      printf '%s' "$out" > "$out_file"
+      printf 'PASS' > "$status_file"
+    else
+      printf '%s' "$out" > "$out_file"
+      printf 'FAIL' > "$status_file"
+    fi
+  ) &
+  _LANE_PIDS+=("$!")
+}
+
+# Wait for all parallel lanes, then fold their verdicts into PASSED/FAILED in
+# fixed launch order and replay their buffered output. Idempotent / safe to call
+# when no lanes were launched.
+harvest_lanes() {
+  [ "${#_LANE_LABELS[@]}" -eq 0 ] && return 0
+  local pid
+  for pid in "${_LANE_PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  echo
+  echo "${CYAN}== parallel lanes (${#_LANE_LABELS[@]}) -- results folded in launch order${NC}"
+  local idx label status out cmd
+  for idx in "${!_LANE_LABELS[@]}"; do
+    label="${_LANE_LABELS[$idx]}"
+    status=$(cat "$LANE_DIR/$idx.status" 2>/dev/null || echo "FAIL")
+    cmd=$(cat "$LANE_DIR/$idx.cmd" 2>/dev/null || echo "")
+    echo
+    echo "${CYAN}== $label${NC}"
+    echo "${DIM}$cmd${NC}"
+    if [ "$status" = "PASS" ]; then
+      PASSED+=("$label"); echo "${GREEN}PASS:${NC} $label"
+      if [ "$VERBOSE" = "1" ]; then cat "$LANE_DIR/$idx.out" 2>/dev/null; fi
+    else
+      FAILED+=("$label")
+      echo "${RED}FAIL:${NC} $label"
+      out=$(cat "$LANE_DIR/$idx.out" 2>/dev/null || true)
+      echo "$out" | tail -30
+    fi
+  done
+  rm -rf "$LANE_DIR" 2>/dev/null || true
+  _LANE_LABELS=(); _LANE_PIDS=(); LANE_DIR=""
+}
+
+# Per-suite HOME hermeticity was prototyped here for the state-contending suites
+# (model-override, plan-command) but removed: serial pinning already eliminates
+# the only concurrency those suites could contend under (the read-only pool is
+# drained before the serial spine), so a temp HOME guards a race that no longer
+# exists. It also actively BREAKS the model-override suite, whose dashboard leg
+# does `from dashboard import server` -> imports fastapi from the HOME-relative
+# user site (~/Library/Python/.../site-packages); overriding HOME makes that
+# import fail. The suites self-isolate their own .loki/state in mktemp WORK dirs.
+# Conclusion (#588): real HOME + serial == deterministic; no helper needed.
+
+# ---------------------------------------------------------------------------
 # 0. Working tree sanity
 # ---------------------------------------------------------------------------
 echo "${CYAN}Loki Mode local-ci -- mirrors every GitHub Actions workflow${NC}"
@@ -91,9 +206,14 @@ echo "VERSION: $(cat VERSION 2>/dev/null || echo MISSING)"
 # ---------------------------------------------------------------------------
 # 1. Bash syntax (mirrors release.yml gate.bash-syntax-validation)
 # ---------------------------------------------------------------------------
-run_check "bash -n autonomy/run.sh" "bash -n autonomy/run.sh"
-run_check "bash -n autonomy/loki"   "bash -n autonomy/loki"
-run_check "bash -n autonomy/completion-council.sh" "bash -n autonomy/completion-council.sh"
+# PARALLEL: pure syntax checks, read-only, no shared state. These lanes launch
+# now and run concurrently with the read-only pool below (shellcheck, pytest,
+# JSON/YAML/emoji). The whole pool is drained by harvest_lanes BEFORE the serial
+# spine (bun test, cli-commands, stop block) starts, so no lane is ever live
+# during the process-killing / network-probing checks.
+run_check_bg "bash -n autonomy/run.sh" "bash -n autonomy/run.sh"
+run_check_bg "bash -n autonomy/loki"   "bash -n autonomy/loki"
+run_check_bg "bash -n autonomy/completion-council.sh" "bash -n autonomy/completion-council.sh"
 
 # ---------------------------------------------------------------------------
 # 2. shellcheck on workflow + script bash blocks (best-effort)
@@ -105,8 +225,9 @@ if command -v shellcheck >/dev/null 2>&1; then
   # very file pass local-ci and then go red in CI (the exact "local passes / CI
   # is the discovery channel" gap CLAUDE.md forbids). So we run the SAME linter
   # CI runs, as the authoritative gate, plus keep the fast error-level subset.
-  run_check "shellcheck (CI parity: tests/run-shellcheck.sh)" 'bash tests/run-shellcheck.sh'
-  run_check "shellcheck loki-ts fixtures (errors)" 'find loki-ts/tests/fixtures/build_prompt -name env.sh -print0 | xargs -0 shellcheck -S error'
+  # PARALLEL: shellcheck is read-only static analysis.
+  run_check_bg "shellcheck (CI parity: tests/run-shellcheck.sh)" 'bash tests/run-shellcheck.sh'
+  run_check_bg "shellcheck loki-ts fixtures (errors)" 'find loki-ts/tests/fixtures/build_prompt -name env.sh -print0 | xargs -0 shellcheck -S error'
 else
   skip_check "shellcheck" "shellcheck not installed (brew install shellcheck)"
 fi
@@ -114,6 +235,19 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Python tests (mirrors release.yml gate.python-tests)
 # ---------------------------------------------------------------------------
+# SERIAL (inline): pytest gates stay on the serial spine, NOT in background
+# lanes. Two reasons, both load-bearing for determinism:
+#   1. The blanket run below collects the entire tests/ tree, which INCLUDES the
+#      per-file gates (test_proof_*, test_bench_*, dashboard/*) run by name just
+#      after. Backgrounding them would execute the SAME files concurrently with
+#      the blanket run -- a state-contention double-execution hazard.
+#   2. Running pytest inline keeps the pytest<->bun-test ordering identical to
+#      the original serial script (pytest first, never concurrent with bun's
+#      network/doctor probes). A single pytest background lane would still be
+#      live during `bun test`, recreating the doctor-timeout-under-load flake.
+# The parallelism win is still real: the bash -n and shellcheck lanes launched
+# ABOVE run concurrently with this pytest block. The per-name array entries the
+# comments below justify are preserved.
 if command -v python3.12 >/dev/null 2>&1; then
   run_check "python3.12 -m pytest -q" "python3.12 -m pytest -q 2>&1 | tail -10"
 elif command -v python3 >/dev/null 2>&1; then
@@ -136,6 +270,8 @@ else
   PROOF_PY=""
 fi
 if [ -n "$PROOF_PY" ]; then
+  # SERIAL (inline): per-file proof + bench pytest gates. Same files as the
+  # blanket run above; kept inline so they never execute concurrently with it.
   # THE GATE: redaction corpus + end-to-end no-leak + refuse-if-bypassed.
   run_check "tests/test_proof_redaction.py (R1 redaction gate)" "$PROOF_PY -m pytest -q tests/test_proof_redaction.py 2>&1 | tail -5"
   # Schema + integrity hash + include-diffs + graceful degradation.
@@ -168,18 +304,31 @@ fi
 # ---------------------------------------------------------------------------
 # 4. JSON validation (mirrors release.yml prepublishOnly)
 # ---------------------------------------------------------------------------
-run_check "JSON validation" "python3 -c 'import json; json.load(open(\"package.json\")); json.load(open(\"vscode-extension/package.json\")); json.load(open(\"loki-ts/tsconfig.json\"))'"
+# PARALLEL: read-only structural validation (JSON/YAML/emoji/git-add).
+run_check_bg "JSON validation" "python3 -c 'import json; json.load(open(\"package.json\")); json.load(open(\"vscode-extension/package.json\")); json.load(open(\"loki-ts/tsconfig.json\"))'"
 
 # ---------------------------------------------------------------------------
 # 5. YAML validation for every workflow
 # ---------------------------------------------------------------------------
-run_check "workflow YAML parse" 'for f in .github/workflows/*.yml; do python3 -c "import yaml; yaml.safe_load(open(\"$f\"))" || { echo "BAD: $f"; exit 1; }; done'
+run_check_bg "workflow YAML parse" 'for f in .github/workflows/*.yml; do python3 -c "import yaml; yaml.safe_load(open(\"$f\"))" || { echo "BAD: $f"; exit 1; }; done'
 
 # ---------------------------------------------------------------------------
 # 6. CLAUDE.md compliance: no emojis, no `git add -A`
 # ---------------------------------------------------------------------------
-run_check "no emojis in modified files" '! git diff HEAD --name-only | xargs -I{} grep -lP "[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]" {} 2>/dev/null | grep -v "^$"'
-run_check "no git add -A in workflows" '! grep -rn "git add -A" .github/workflows/ 2>/dev/null | grep -v "^.*#"'
+run_check_bg "no emojis in modified files" '! git diff HEAD --name-only | xargs -I{} grep -lP "[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]" {} 2>/dev/null | grep -v "^$"'
+run_check_bg "no git add -A in workflows" '! grep -rn "git add -A" .github/workflows/ 2>/dev/null | grep -v "^.*#"'
+
+# ---------------------------------------------------------------------------
+# Harvest the read-only parallel pool BEFORE the serial-sensitive spine. The
+# spine below spawns loki processes (cli-commands, alias-forwarding,
+# bun-parity), kills processes machine-wide (the stop block), and runs the
+# network/doctor probes (bun test). The prior parallelization flaked precisely
+# because those ran under concurrent CPU + lane load. Draining the pool here
+# means the serial tail runs with nothing else live, which is the determinism
+# guarantee. The small web-app/dashboard static pool launched later is harvested
+# at the very end.
+# ---------------------------------------------------------------------------
+harvest_lanes
 
 # ---------------------------------------------------------------------------
 # 7. loki-ts typecheck + tests (mirrors test.yml bun-tests)
@@ -460,6 +609,21 @@ run_check "tests/test-cost-capture.sh (result-line cost + budget breaker + slug)
 # catalog claude-fable-5 entry, and the security-review model guard. Never
 # invokes a real model. The dashboard endpoints are covered by the pytest gate
 # (tests/dashboard/test_session_model_endpoint.py).
+# SERIAL: this suite and the plan suite below read .loki/state/model-override
+# and resolve the dashboard pricing leg via `from dashboard import server`. They
+# stay on the serial spine, NOT in background lanes. Serialization is the
+# determinism mechanism: harvest_lanes (above) drains the entire read-only pool
+# BEFORE this spine, so when these suites run nothing else is live and the
+# class-(a) state contention that broke the prior parallelization cannot occur.
+# NOTE: we deliberately do NOT wrap these in a throwaway HOME. The #588 task
+# sketched a temp-HOME hermeticity helper, but serial pinning is the stronger
+# mechanism and makes temp HOME redundant (no concurrent suite to contend with).
+# Worse, a temp HOME empirically BREAKS this suite: fastapi lives in the
+# HOME-relative user site (~/Library/Python/.../site-packages), so overriding
+# HOME makes `from dashboard import server` (it imports fastapi) fail, the
+# dashboard pricing leg returns empty, and 15 of 66 cases mismatch. The suites
+# already self-isolate their .loki/state in their own mktemp WORK dirs, so no
+# extra isolation is needed. Real HOME + serial == deterministic (verified 66/66).
 run_check "tests/test-model-override.sh (fable + mid-flight model switch)" "bash tests/test-model-override.sh 2>&1 | tail -3"
 
 # Cost/iteration estimator (loki plan): complexity detection, LOKI_COMPLEXITY
@@ -611,8 +775,9 @@ run_check "npm pack tarball contents" 'npm pack --dry-run 2>&1 | grep -E "loki-t
 # ---------------------------------------------------------------------------
 # 10b. Phase Merge-3: web-app dist must be built with base: '/lab/'
 # ---------------------------------------------------------------------------
-run_check "web-app dist baked with /lab/ base" 'test -f web-app/dist/index.html && grep -q "/lab/assets/" web-app/dist/index.html'
-run_check "no hardcoded /api/ or /ws literals in web-app/src/" '! grep -rnE "['"'"'\"]/(api|ws|proxy)/" web-app/src/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v "\.test\." | grep -q .'
+# PARALLEL: read-only static asset checks.
+run_check_bg "web-app dist baked with /lab/ base" 'test -f web-app/dist/index.html && grep -q "/lab/assets/" web-app/dist/index.html'
+run_check_bg "no hardcoded /api/ or /ws literals in web-app/src/" '! grep -rnE "['"'"'\"]/(api|ws|proxy)/" web-app/src/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v "\.test\." | grep -q .'
 
 # ---------------------------------------------------------------------------
 # 10c. Dashboard SPA inline JavaScript must PARSE (no SyntaxError)
@@ -625,7 +790,7 @@ run_check "no hardcoded /api/ or /ws literals in web-app/src/" '! grep -rnE "['"
 # importmap/json data islands) and parses it via Node's vm. FAIL on any
 # SyntaxError. Proven to FAIL on the old broken build and PASS on the fixed one.
 if command -v node >/dev/null 2>&1; then
-  run_check "dashboard SPA inline scripts parse (node)" "node scripts/check-inline-scripts.js dashboard/static/index.html"
+  run_check_bg "dashboard SPA inline scripts parse (node)" "node scripts/check-inline-scripts.js dashboard/static/index.html"
 else
   skip_check "dashboard SPA inline scripts parse" "node not installed"
 fi
@@ -691,6 +856,13 @@ run_check "npm audit (production deps, high+)" "
 # 14. Cleanup probe (CLAUDE.md mandate)
 # ---------------------------------------------------------------------------
 run_check "no /tmp/loki-* /tmp/test-* leftovers" 'ls /tmp/loki-* /tmp/test-* 2>&1 | grep -q "No such file" || ! ls /tmp/loki-* /tmp/test-* 2>/dev/null | grep -q .'
+
+# ---------------------------------------------------------------------------
+# Harvest parallel lanes: wait for all background lanes launched above, then
+# fold their verdicts into PASSED/FAILED in fixed launch order. MUST run before
+# the summary so the counts include the parallel lanes.
+# ---------------------------------------------------------------------------
+harvest_lanes
 
 # ---------------------------------------------------------------------------
 # Summary

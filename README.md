@@ -13,7 +13,7 @@ _The free, source-available autonomous coding agent by [Autonomi](https://www.au
 [![Docker Pulls](https://img.shields.io/docker/pulls/asklokesh/loki-mode?style=for-the-badge&logo=docker&logoColor=white&color=2F71E3)](https://hub.docker.com/r/asklokesh/loki-mode)
 [![License](https://img.shields.io/badge/License-BUSL--1.1-36342E?style=for-the-badge)](LICENSE)
 
-[Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md) | [Purple Lab Web UI](#purple-lab)
+[Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md) | [Purple Lab -- deprecated v7.44.0](#purple-lab)
 
 </div>
 
@@ -290,36 +290,9 @@ TLS, OIDC/SSO, RBAC, OTEL tracing, policy engine, audit trails. Activated via en
 
 ## Purple Lab
 
-The hosted development platform. A Replit-like web UI for visual PRD-to-code workflow, with the Loki agent for iterative development. The same software is free and source-available as the local Loki Mode dashboard; offered managed to teams and enterprises under the **Autonomi** brand (Autonomi Cloud).
+**[DEPRECATED in v7.44.0]** Purple Lab (`loki web`, port 57375) is deprecated. The local build monitor and project dashboard are now the dashboard (auto-launched by `loki start`, http://localhost:57374). For the hosted/commercial platform, see [Autonomi Cloud](https://www.autonomi.dev/).
 
-```bash
-loki web                           # launches at http://localhost:57375
-```
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-**Platform Pages**
-- Home -- One-line prompt to start building instantly
-- Projects -- Browse, search, filter past builds
-- Templates -- 20+ starter PRDs by category
-- Showcase -- Gallery of example projects to build
-- Compare -- Feature comparison vs competitors
-
-</td>
-<td width="50%" valign="top">
-
-**IDE Workspace**
-- Monaco editor with tabs, Cmd+P quick open
-- AI chat panel for iterative development
-- Activity panel: build log, agents, quality gates
-- Live preview with URL bar navigation
-- Right-click context menu: Review, Test, Explain
-
-</td>
-</tr>
-</table>
+The historical feature set (platform pages, Monaco IDE workspace, AI chat panel) lives on in the dashboard and in Autonomi Cloud. `loki web` still invokes the old binary for backward compatibility but will be removed in a future major version.
 
 ---
 
@@ -372,7 +345,7 @@ Status legend: "E2E-verified" means we run real spec-to-code builds on it oursel
 | `loki status` | Show current status |
 | `loki dashboard` | Open web dashboard |
 | `loki preview` | Print running app URL and open in browser (Live App Preview, v7.24.0; was: `loki open`) |
-| `loki web` | Launch Purple Lab web UI |
+| `loki web` | Launch Purple Lab web UI [DEPRECATED in v7.44.0 -- use `loki start` which auto-opens the dashboard at http://localhost:57374; for the hosted platform see Autonomi Cloud] |
 | `loki doctor` | Check environment and dependencies |
 | `loki plan [PRD]` | Pre-execution analysis: complexity, cost, iterations |
 | `loki review [--staged\|--diff]` | AI-powered code review with severity filtering |

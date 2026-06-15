@@ -891,7 +891,6 @@ show_landing() {
     echo "Get started:"
     echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
     echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
-    echo -e "  ${CYAN}loki web${NC}              Open the visual builder to input a spec and watch agents build"
     echo -e "  ${CYAN}loki dashboard start${NC}  Start the live run monitor (then: loki dashboard open)"
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
@@ -3970,9 +3969,9 @@ cmd_dashboard_help() {
     echo "Usage: loki dashboard <command> [options]"
     echo ""
     echo "Note: 'loki dashboard' is the operations/observability UI (port ${DASHBOARD_DEFAULT_PORT})."
-    echo "      It is NOT the same as 'loki web' (Purple Lab, port ${PURPLE_LAB_DEFAULT_PORT}, where you input PRDs)."
-    echo "      Use 'loki dashboard' to monitor agents, tasks, costs, council, escalations."
-    echo "      Use 'loki web' to submit a PRD and watch agents build."
+    echo "      It is NOT the same as 'loki web' (Purple Lab, port ${PURPLE_LAB_DEFAULT_PORT}, deprecated v7.44.0)."
+    echo "      Use 'loki dashboard' to monitor agents, tasks, costs, council, escalations,"
+    echo "      and to submit a PRD via the embedded 'Lab' tab (replaces the deprecated 'loki web')."
     echo ""
     echo "Commands:"
     echo "  start    Start the dashboard server"
@@ -4205,9 +4204,11 @@ cmd_dashboard_start() {
         echo "  URL:  $url"
         echo "  Logs: $log_file"
         echo ""
-        # v7.28.x UX #5: distinguish the two browser UIs up front so a newcomer
-        # who wants to submit a spec does not land on the ops monitor by mistake.
-        echo -e "${DIM}Looking for the project web UI to submit a spec? loki web (:${PURPLE_LAB_DEFAULT_PORT:-57375})${NC}"
+        # v7.28.x UX #5: point a newcomer who wants to submit a spec at the right
+        # surface. v7.44.0: the standalone Purple Lab (loki web) is deprecated and
+        # consolidated here, so steer to the embedded Lab tab instead of spawning
+        # a second port.
+        echo -e "${DIM}Want to submit a spec in the browser? Open the 'Lab' tab in this dashboard.${NC}"
         echo ""
         echo -e "Open in browser: ${CYAN}loki dashboard open${NC}"
         echo -e "Check status:    ${CYAN}loki dashboard status${NC}"
@@ -4578,6 +4579,32 @@ PURPLE_LAB_PID_FILE="${PURPLE_LAB_STATE_DIR}/purple-lab.pid"
 cmd_web() {
     local subcommand="${1:-start}"
 
+    # Deprecation (v7.44.0): Purple Lab (loki web, port 57375) is deprecated and
+    # consolidated into the dashboard. The hosted/commercial role moved to the
+    # separate Autonomi Cloud repo. This is a VALUE-PRESERVING deprecation: the
+    # command STILL WORKS (it launches after the banner) so no one is stranded.
+    # The banner + telemetry mirror the run->start deprecation contract: print
+    # to stderr, suppress under machine-output flags (--json/-q/--quiet/json...),
+    # and only emit telemetry when .loki already exists (events/emit.sh creates
+    # "$LOKI_DIR/events/pending" as a side effect that would flip downstream
+    # guards in a clean directory). The --help/-h/help path shows the deprecation
+    # in its own help text instead, so we skip the banner there.
+    case "$subcommand" in
+        --help|-h|help) ;;
+        *)
+            if ! _deprecated_alias_should_suppress "$@"; then
+                echo "loki web (Purple Lab) is deprecated as of v7.44.0. For local build + monitoring, use the dashboard (auto-launches at 'loki start', http://localhost:${DASHBOARD_DEFAULT_PORT}; or 'loki dashboard'). For the hosted platform, see Autonomi Cloud." >&2
+                if [ -d "${LOKI_DIR:-.loki}" ]; then
+                    emit_event cli_command_deprecated cli web \
+                        "from=web" \
+                        "to=dashboard" \
+                        "version=7.44.0" \
+                        "argv=${*:-}"
+                fi
+            fi
+            ;;
+    esac
+
     case "$subcommand" in
         start)
             shift || true
@@ -4617,13 +4644,19 @@ cmd_web() {
 }
 
 cmd_web_help() {
-    echo -e "${BOLD}Purple Lab -- Loki Mode Web UI${NC}"
+    echo -e "${BOLD}Purple Lab -- Loki Mode Web UI (deprecated -- use the dashboard)${NC}"
     echo ""
     echo "Usage: loki web [command] [options]"
     echo ""
+    echo "DEPRECATED as of v7.44.0: Purple Lab is consolidated into the dashboard."
+    echo "  For local build + monitoring, use the dashboard (auto-launches at"
+    echo "  'loki start', http://localhost:${DASHBOARD_DEFAULT_PORT}; or 'loki dashboard')."
+    echo "  For the hosted platform, see Autonomi Cloud."
+    echo "  'loki web' still works for now (it launches after a deprecation notice),"
+    echo "  but it will be removed in a future release. Migrate to the dashboard."
+    echo ""
     echo "Note: 'loki web' is Purple Lab (the PRD-input/build-watch UI, port ${PURPLE_LAB_DEFAULT_PORT})."
     echo "      It is NOT the same as 'loki dashboard' (operations UI, port ${DASHBOARD_DEFAULT_PORT})."
-    echo "      Use 'loki web' to submit a PRD and watch agents build it."
     echo "      Use 'loki dashboard' to monitor running agents, tasks, costs, council, escalations."
     echo ""
     echo "Commands:"
