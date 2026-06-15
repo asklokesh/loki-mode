@@ -7041,6 +7041,48 @@ enforce_test_coverage() {
             local output
             output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" npx mocha 2>&1) || test_passed=false
             details="mocha: $(echo "$output" | tail -3 | tr '\n' ' ')"
+        else
+            # v7.41.x (test-coverage fail-open fix): a real "scripts.test" was
+            # previously missed entirely. A greenfield project whose package.json
+            # has {"scripts":{"test":"node --test"}} (or any non-placeholder test
+            # script) actually runs a working suite via `npm test`, yet the gate
+            # reported runner:none + pass:true -- so a project whose tests FAIL
+            # green-lit identically. Detect a real test script (excluding the npm
+            # placeholder "no test specified") with a JSON parser, not grep (grep
+            # would false-positive on devDeps / unrelated keys), then run the
+            # configured command. This MUST sit before the monorepo/python/go/rust
+            # checks, all of which gate on test_runner=="none".
+            local _pkg_test_script
+            _pkg_test_script=$(_LOKI_PKG="${TARGET_DIR:-.}/package.json" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_LOKI_PKG']) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+t = (d.get('scripts') or {}).get('test') or ''
+# npm's default placeholder; treat as 'no test'.
+if 'no test specified' in t.lower():
+    sys.exit(0)
+sys.stdout.write(t.strip())
+" 2>/dev/null || echo "")
+            if [ -n "$_pkg_test_script" ]; then
+                # LOKI_TEST_COMMAND lets an operator override the invocation; the
+                # default is the project's own `npm test`.
+                local _test_cmd="${LOKI_TEST_COMMAND:-npm test}"
+                # Label the runner by what the script invokes so evidence is
+                # honest (node --test, vitest, jest, etc. all surface here).
+                case "$_pkg_test_script" in
+                    *"node --test"*|*"node:test"*) test_runner="node-test" ;;
+                    *vitest*) test_runner="vitest" ;;
+                    *jest*)   test_runner="jest" ;;
+                    *mocha*)  test_runner="mocha" ;;
+                    *)        test_runner="npm-test" ;;
+                esac
+                local output
+                output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" sh -c "$_test_cmd" 2>&1) || test_passed=false
+                details="$test_runner ($_test_cmd): $(echo "$output" | tail -5 | tr '\n' ' ')"
+            fi
         fi
     fi
 
@@ -7165,10 +7207,23 @@ enforce_test_coverage() {
     fi
 
     if [ "$test_runner" = "none" ]; then
-        log_info "Test coverage: no test runner detected, skipping"
+        log_info "Test coverage: no test runner detected, recording inconclusive (not pass)"
+        # v7.41.x fail-open fix: previously this wrote pass:true, so a project
+        # whose tests truly do not run was indistinguishable from one whose tests
+        # passed. Record pass:"inconclusive" instead. The completion-council
+        # evidence gate already treats runner=="none" as pass-through regardless
+        # of the pass value (completion-council.sh: runner=='none' short-circuits
+        # BEFORE the `passed is False` block), so genuinely-no-tests stays
+        # non-blocking (no infinite hang), while the JSON record is now honest:
+        # "no tests" never reads as "tests passed". A DETECTED runner that fails
+        # still writes pass:false below and BLOCKS.
+        #
+        # unit-tests.pass is only read for the status-line display (run.sh ~2183,
+        # PASS vs PENDING); keeping the touch preserves the historical
+        # non-blocking behavior for legitimate no-test projects.
         touch "$quality_dir/unit-tests.pass"
         cat > "$quality_dir/test-results.json" << TREOF
-{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":true,"summary":"No test runner detected"}
+{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":"inconclusive","summary":"No test runner detected"}
 TREOF
         # Finding #598: stamp the per-iteration freshness marker so a later
         # completion-route capture (ensure_completion_test_evidence) reuses this
@@ -14161,6 +14216,22 @@ if __name__ == "__main__":
                 log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"
                 _gate_block_for_completion=""
                 # Fall through; the gate-failed loop continues normally
+            # HIGH (trust-gate): the checklist hard gate must also guard the
+            # DEFAULT completion-promise / loki_complete_task route, not only the
+            # interval-gated council path (council_evaluate) and the dashboard
+            # force-review path -- both of which already call this gate. Without
+            # it, an agent that leaves a `priority: critical` checklist item
+            # `failing` and claims done on a non-council-interval iteration would
+            # ship, bypassing the checklist gate entirely. council_reverify_checklist
+            # ran above (when a claim is present) so statuses are fresh here.
+            # Mirrors the evidence/held-out gate arms below. No-op safe:
+            # council_checklist_gate returns 0 (pass) when there is no checklist
+            # results file or when no critical items are failing, so this branch
+            # never fires on those projects. Gate output is written by the gate.
+            elif [ "$_completion_claimed" = 1 ] && type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
+                log_warn "Completion claim rejected: critical checklist item(s) failing (hard gate)."
+                log_warn "  Details under .loki/council/gate-block.json"
+                # Fall through; keep iterating until critical checklist items pass.
             # v7.19.1: the verified-completion evidence gate must also guard the
             # DEFAULT completion route (a completion claim via loki_complete_task
             # / the completion-promise text), not only the interval-gated council

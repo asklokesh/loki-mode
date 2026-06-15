@@ -599,7 +599,7 @@ export class LokiMemoryBrowser extends LokiElement {
       return `
         <div class="detail-panel">
           <div class="detail-header">
-            <h3>Skill: ${item.name}</h3>
+            <h3>Skill: ${this._escapeHtml(item.name)}</h3>
             <button class="close-btn" id="close-detail">&times;</button>
           </div>
           <div class="detail-body">

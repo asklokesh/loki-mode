@@ -281,7 +281,12 @@ class VectorIndex:
         import tempfile
         npz_path = f"{path}.npz"
         npz_dir = os.path.dirname(npz_path) or "."
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=npz_dir, suffix=".npz.tmp")
+        # The temp file MUST end in ".npz". np.savez appends ".npz" to any
+        # target whose name does not already end in ".npz", so a ".npz.tmp"
+        # suffix would make numpy write the real archive to <tmp>.npz and leave
+        # the original temp file 0 bytes. os.replace would then move the empty
+        # file into place and orphan the real data (corrupting every index).
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=npz_dir, suffix=".npz")
         os.close(tmp_fd)
         try:
             np.savez(

@@ -116,10 +116,17 @@ provider_version() {
 # Invocation function
 # Note: Codex uses positional prompt, not -p flag
 # Note: Reasoning effort is configured via environment or config, not CLI flag
+# v7.x: pin the resolved model explicitly via -m/--model. Without it, codex
+# falls back to the installed CLI's built-in default (e.g. gpt-5.5 on codex
+# 0.132.0), which silently ignores _codex_validate_model and makes the run.sh
+# cost table (priced for gpt-5.3-codex) wrong. --model is the documented model
+# selector and is readable in process listings.
 provider_invoke() {
     local prompt="$1"
     shift
-    codex exec --full-auto --skip-git-repo-check "$prompt" "$@"
+    codex exec --full-auto --skip-git-repo-check \
+        --model "$PROVIDER_MODEL_DEVELOPMENT" \
+        "$prompt" "$@"
 }
 
 # Model tier to effort level parameter (Codex uses effort, not separate models)
@@ -197,6 +204,18 @@ provider_invoke_with_tier() {
     local effort
     effort=$(resolve_model_for_tier "$tier")
 
+    # Resolve the model name by tier. These three vars can diverge via the
+    # generic LOKI_MODEL_* env (each validated by _codex_validate_model), so
+    # honor the tier rather than hardcoding development. Capability aliases
+    # (best/balanced/cheap) mirror resolve_model_for_tier's mapping.
+    local model
+    case "$tier" in
+        planning|best)        model="$PROVIDER_MODEL_PLANNING" ;;
+        development|balanced) model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+        fast|cheap)           model="$PROVIDER_MODEL_FAST" ;;
+        *)                    model="$PROVIDER_MODEL_DEVELOPMENT" ;;
+    esac
+
     local extra_flags=()
     if [ "${LOKI_CODEX_WEB_SEARCH:-false}" = "true" ]; then
         extra_flags+=(--search)
@@ -211,6 +230,7 @@ provider_invoke_with_tier() {
         --ask-for-approval never \
         --sandbox danger-full-access \
         --skip-git-repo-check \
+        --model "$model" \
         "${extra_flags[@]}" \
         "$prompt" "$@"
 }

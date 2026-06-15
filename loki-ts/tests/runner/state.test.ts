@@ -182,7 +182,26 @@ describe("loadState: corrupt JSON -> backup + zero counters", () => {
 });
 
 describe("loadState: terminal-status reset", () => {
-  for (const term of ["failed", "max_iterations_reached", "max_retries_exceeded", "exited"]) {
+  // Full reset set mirrored from run.sh:10976:
+  //   failed|max_iterations_reached|max_retries_exceeded|exited
+  //   |council_approved|council_force_approved|completion_promise_fulfilled|running
+  // The last four were the BUG-1 parity gap: before the fix the Bun route
+  // omitted them, so a run that ended council_approved /
+  // completion_promise_fulfilled (or crashed at status "running") re-hydrated the
+  // prior non-zero counters on the next loadState instead of resetting to 0
+  // (bash resets). Each entry below is a non-vacuity case for the fix: against
+  // the old 4-element TERMINAL_STATUSES these four would have asserted retain
+  // (9/99) and failed.
+  for (const term of [
+    "failed",
+    "max_iterations_reached",
+    "max_retries_exceeded",
+    "exited",
+    "council_approved",
+    "council_force_approved",
+    "completion_promise_fulfilled",
+    "running",
+  ]) {
     it(`resets counters when previous status was '${term}'`, () => {
       saveState(baseCtx({ retryCount: 9, iterationCount: 99, status: term }));
       const r = loadState({ lokiDirOverride: dir });
@@ -195,7 +214,13 @@ describe("loadState: terminal-status reset", () => {
   }
 
   it("does not reset for non-terminal statuses", () => {
-    saveState(baseCtx({ retryCount: 4, iterationCount: 11, status: "running" }));
+    // "paused" is a genuine non-terminal status: run.sh:10979 deliberately
+    // excludes paused/interrupted/budget_exceeded/stopped from the reset case,
+    // so a paused session resumes with its counters intact. (Was "running",
+    // but run.sh:10976 lists "running" among the reset statuses -- a crashed
+    // mid-run session must reset -- so "running" is no longer a valid example
+    // of a non-resetting status after the TERMINAL_STATUSES parity fix.)
+    saveState(baseCtx({ retryCount: 4, iterationCount: 11, status: "paused" }));
     const r = loadState({ lokiDirOverride: dir });
     expect(r.resetForNewSession).toBe(false);
     expect(r.retryCount).toBe(4);

@@ -1257,6 +1257,12 @@ async def get_continuity() -> str:
         return "# CONTINUITY.md not found"
     except PathTraversalError:
         return "# Access denied"
+    except Exception as e:
+        # Match the tool-handler error-envelope pattern so a corrupt or
+        # unreadable state file (e.g. IsADirectoryError, OSError) returns an
+        # honest error string instead of raising uncaught into the MCP runtime.
+        logger.error(f"get_continuity failed: {e}")
+        return f"# Error reading CONTINUITY.md: {e}"
 
 
 @mcp.resource("loki://memory/index")
@@ -1271,14 +1277,26 @@ async def get_memory_index() -> str:
                 return json.dumps(index_data)
             return json.dumps({"topics": [], "message": "Index not initialized"})
 
-        # Fallback to direct file read
+        # Fallback to direct file read. Parse-and-reserialize so a corrupt
+        # index.json yields a clean error envelope instead of serving corrupt
+        # bytes as a successful response (or raising on a downstream consumer).
         index_path = safe_path_join('.loki', 'memory', 'index.json')
         if os.path.exists(index_path):
             with safe_open(index_path, 'r') as f:
-                return f.read()
+                raw = f.read()
+            try:
+                return json.dumps(json.loads(raw))
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"get_memory_index: corrupt index.json: {e}")
+                return json.dumps({"error": f"corrupt index.json: {e}", "topics": []})
         return json.dumps({"topics": [], "message": "Index not initialized"})
     except PathTraversalError:
         return json.dumps({"error": "Access denied", "topics": []})
+    except Exception as e:
+        # Generic envelope so any other state-file failure (OSError,
+        # IsADirectoryError) returns honestly rather than raising uncaught.
+        logger.error(f"get_memory_index failed: {e}")
+        return json.dumps({"error": str(e), "topics": []})
 
 
 @mcp.resource("loki://queue/pending")
@@ -1304,6 +1322,12 @@ async def get_pending_tasks() -> str:
         return json.dumps({"pending_tasks": [], "count": 0})
     except PathTraversalError:
         return json.dumps({"error": "Access denied", "pending_tasks": [], "count": 0})
+    except Exception as e:
+        # Generic envelope: a degraded install (STATE_MANAGER_AVAILABLE=False)
+        # does a bare json.load on .loki/state/task-queue.json; a corrupt file
+        # raises JSONDecodeError that must return an error, not crash the runtime.
+        logger.error(f"get_pending_tasks failed: {e}")
+        return json.dumps({"error": str(e), "pending_tasks": [], "count": 0})
 
 
 # ============================================================

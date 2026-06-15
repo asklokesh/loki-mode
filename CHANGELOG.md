@@ -9,6 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.43.0] - 2026-06-14
+
+Bug-hunt + greenfield-E2E hardening wave. A real first-time-user greenfield
+fullstack E2E run (the first since v7.41.1) exposed three verified-completion
+trust holes; a parallel adversarial bug-fleet found data-loss and concurrency
+defects across the memory, event, MCP, app-runner, and provider subsystems. All
+fixes are additive and reversible; the build_prompt bash<->Bun parity lock is
+unchanged (60/60 golden fixtures byte-identical).
+
+### Fixed
+- Memory vector index no longer destroys itself on save: VectorIndex.save() used
+  a tempfile suffix of ".npz.tmp", but numpy's savez appends ".npz", so the real
+  data was written to tmp+".npz" and a 0-byte file was atomically moved into
+  place. Every persisted index was being wiped on write. Suffix is now ".npz" so
+  the atomic replace moves the actual data (memory/vector_index.py).
+- Event bus subscribe() no longer drops events at or behind a subscriber's wall
+  clock: the previous since=last_check window silently skipped events whose
+  timestamp tied or trailed the poll time under clock skew. The time window is
+  removed; deduplication is now purely id-based via _processed_ids
+  (events/bus.py).
+- MCP resource handlers (continuity, memory index, pending tasks) return a
+  structured error envelope on any corrupt/unreadable state file instead of only
+  catching PathTraversalError (an unhandled JSONDecodeError previously bubbled
+  out); the memory-index handler parses and re-serializes so malformed JSON is
+  reported, not forwarded (mcp/server.py).
+- App-runner stop now reaps the full process tree on the default macOS path: when
+  setsid is unavailable, deep worker processes were orphaned because only the
+  direct child was signalled. Stop now snapshots descendants (BFS) once, then
+  TERM -> grace -> KILL. The crash-counter (_APP_RUNNER_CRASH_COUNT) also resets
+  to 0 on a healthy watchdog tick, so transient restarts no longer accumulate
+  toward a false permanent-failure state (autonomy/app-runner.sh).
+- Codex provider now pins the resolved model: provider_invoke and
+  provider_invoke_with_tier pass an explicit --model, so codex no longer silently
+  falls back to the installed CLI default (mispricing the run and ignoring
+  _codex_validate_model) (providers/codex.sh).
+- Dashboard XSS hardening: the council dashboard had no HTML escaping at all;
+  agent name/type/task and the memory-browser item name are now escaped before
+  insertion into the DOM (dashboard-ui/components/loki-council-dashboard.js,
+  loki-memory-browser.js; dashboard/static/index.html rebuilt).
+- Bun runner loop-termination correctness: council_approved,
+  council_force_approved, completion_promise_fulfilled, and running are now in
+  TERMINAL_STATUSES (mirroring run.sh), and the max-iteration guard uses >=
+  (was >) with the default raised to 1000 and read from MAX_ITERATIONS
+  (loki-ts/src/runner/state.ts, autonomous.ts).
+- Verified-completion evidence gate no longer reads a clean committed tree as
+  empty-diff fabrication when the run-start base SHA is unreachable (history
+  rewrite / reset --hard): the unreachable-base fallback marks the diff axis
+  inconclusive (pass-through) instead of blocking (autonomy/completion-council.sh).
+
+### Fixed (greenfield-E2E trust holes)
+- Test-coverage gate is no longer fail-open on no-runner projects: when no test
+  runner is detected it now records pass:"inconclusive" instead of pass:true, so
+  "tests never ran" is no longer indistinguishable from "tests passed" in
+  test-results.json. The completion-council evidence gate already short-circuits
+  runner=="none" to pass-through (before the passed-is-False check), so genuine
+  no-test projects stay non-blocking while a detected runner that fails still
+  writes pass:false and blocks (autonomy/run.sh).
+- The critical-checklist hard gate now also guards the DEFAULT completion-promise
+  / loki_complete_task route, not only the council-interval and dashboard
+  force-review paths. An agent that left a priority:critical checklist item
+  failing and claimed done on a non-council iteration previously bypassed the
+  checklist gate entirely (autonomy/run.sh).
+- New --allow-haiku flag on loki start: exports LOKI_ALLOW_HAIKU=true so a
+  first-time evaluator can run the cheaper local-testing tier explicitly. Opt-in
+  only; the default development tier remains opus (autonomy/loki).
+
+### Tests
+- New regression coverage: tests/memory/test_vector_index_save_load.py,
+  tests/mcp/test_resource_corrupt_state.py, tests/test_event_bus_subscribe_skew.py,
+  tests/test-app-runner-tree-stop.sh, tests/test-cli-allow-haiku-flag.sh,
+  tests/test-completion-route-checklist-gate.sh, tests/test-coverage-gate-fail-open.sh.
+  Evidence-gate unreachable-base case added to tests/test-evidence-gate.sh; codex
+  --model assertions added to tests/test-provider-invocation.sh.
+
 ## [7.42.0] - 2026-06-14
 
 Ten-team parallel hardening + documentation completeness wave (worktree-isolated,

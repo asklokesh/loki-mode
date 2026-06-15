@@ -3910,7 +3910,7 @@ var LokiDashboard=(()=>{var Ee=Object.defineProperty;var rt=Object.getOwnPropert
       `:e.steps!==void 0?`
         <div class="detail-panel">
           <div class="detail-header">
-            <h3>Skill: ${e.name}</h3>
+            <h3>Skill: ${this._escapeHtml(e.name)}</h3>
             <button class="close-btn" id="close-detail">&times;</button>
           </div>
           <div class="detail-body">
@@ -5518,7 +5518,7 @@ var LokiDashboard=(()=>{var Ee=Object.defineProperty;var rt=Object.getOwnPropert
           ${this._renderTabContent()}
         </div>
 
-        ${this._error?`<div class="error-banner">${this._error}</div>`:""}
+        ${this._error?`<div class="error-banner">${this._escapeHtml(this._error)}</div>`:""}
       </div>
     `,this._attachEventListeners())}_attachEventListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("force-review-btn");t&&t.addEventListener("click",()=>this._forceReview()),e.querySelectorAll(".tab[data-tab]").forEach(i=>{i.addEventListener("click",()=>this._setTab(i.dataset.tab))})}_renderTabContent(){switch(this._activeTab){case"overview":return this._renderOverview();case"decisions":return this._renderDecisions();case"convergence":return this._renderConvergence();case"agents":return this._renderAgents();default:return""}}_renderOverview(){let e=this._councilState||{},t=e.consecutive_no_change||0,i=e.done_signals||0,a=e.total_votes||0,s=e.approve_votes||0,r=this._verdicts.length>0?this._verdicts[this._verdicts.length-1]:null,o=this._agents.filter(n=>n.alive).length;return`
       <div class="overview-grid">
@@ -5631,27 +5631,27 @@ var LokiDashboard=(()=>{var Ee=Object.defineProperty;var rt=Object.getOwnPropert
           <div class="agent-card ${this._selectedAgent?.id===t.id?"agent-selected":""}"
                data-agent-index="${i}">
             <div class="agent-header">
-              <span class="agent-name">${t.name||t.id||"Unknown"}</span>
+              <span class="agent-name">${this._escapeHtml(t.name||t.id||"Unknown")}</span>
               <span class="agent-status ${t.alive?"status-alive":"status-dead"}">
                 ${t.alive?"Running":"Stopped"}
               </span>
             </div>
             <div class="agent-meta">
-              ${t.type?`<span class="agent-type">${t.type}</span>`:""}
+              ${t.type?`<span class="agent-type">${this._escapeHtml(t.type)}</span>`:""}
               ${t.pid?`<span class="agent-pid">PID: ${t.pid}</span>`:""}
-              ${t.task?`<span class="agent-task">Task: ${t.task}</span>`:""}
+              ${t.task?`<span class="agent-task">Task: ${this._escapeHtml(t.task)}</span>`:""}
             </div>
             ${this._selectedAgent?.id===t.id?`
               <div class="agent-actions">
                 ${t.alive?`
-                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Pause
                   </button>
-                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Kill
                   </button>
                 `:`
-                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${t.id||t.name}">
+                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${this._escapeHtml(t.id||t.name)}">
                     Resume
                   </button>
                 `}
@@ -5660,7 +5660,7 @@ var LokiDashboard=(()=>{var Ee=Object.defineProperty;var rt=Object.getOwnPropert
           </div>
         `).join("")}
       </div>
-    `;return this._pendingRaf=requestAnimationFrame(()=>{this._pendingRaf=null;let t=this.shadowRoot;t&&t.querySelectorAll(".agent-card[data-agent-index]").forEach(i=>{let a=parseInt(i.dataset.agentIndex,10),s=this._agents[a];s&&(i.addEventListener("click",()=>this._selectAgent(s)),i.querySelectorAll("[data-action]").forEach(r=>{r.addEventListener("click",o=>{o.stopPropagation();let n=r.dataset.action,l=r.dataset.agentId;n==="pause"?this._pauseAgent(l):n==="kill"?this._killAgent(l):n==="resume"&&this._resumeAgent(l)})}))})}),e}_formatTime(e){if(!e)return"";try{return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}catch{return e}}_getStyles(){return`
+    `;return this._pendingRaf=requestAnimationFrame(()=>{this._pendingRaf=null;let t=this.shadowRoot;t&&t.querySelectorAll(".agent-card[data-agent-index]").forEach(i=>{let a=parseInt(i.dataset.agentIndex,10),s=this._agents[a];s&&(i.addEventListener("click",()=>this._selectAgent(s)),i.querySelectorAll("[data-action]").forEach(r=>{r.addEventListener("click",o=>{o.stopPropagation();let n=r.dataset.action,l=r.dataset.agentId;n==="pause"?this._pauseAgent(l):n==="kill"?this._killAgent(l):n==="resume"&&this._resumeAgent(l)})}))})}),e}_formatTime(e){if(!e)return"";try{return new Date(e).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}catch{return e}}_escapeHtml(e){return e?String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}_getStyles(){return`
       :host {
         display: block;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;

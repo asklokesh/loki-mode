@@ -328,17 +328,20 @@ class EventBus:
             Events as they arrive
         """
         start_time = time.time()
-        last_check = datetime.now(timezone.utc).isoformat()
 
         while True:
             if timeout and (time.time() - start_time) > timeout:
                 break
 
-            # Set last_check BEFORE fetching to avoid missing events that
-            # arrive between fetch and timestamp update
-            next_check = datetime.now(timezone.utc).isoformat()
-            events = self.get_pending_events(types=types, since=last_check)
-            last_check = next_check
+            # Dedup is driven solely by _processed_ids (maintained via
+            # mark_processed), NOT by a wall-clock `since` window. A local
+            # `since=now` filter silently drops any event whose timestamp is
+            # at or behind the subscriber's clock: cross-process clock skew
+            # (an emitter a few ms/s behind) or second-granularity timestamps
+            # (emit.sh's .000Z fallback) would lose events forever. This
+            # mirrors start_background_processing() and bus.ts, which both
+            # call get_pending_events with no `since` argument.
+            events = self.get_pending_events(types=types)
 
             for event in events:
                 yield event

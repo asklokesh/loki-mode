@@ -1057,6 +1057,7 @@ cmd_start() {
                 echo "Options:"
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider"
                 echo "  --parallel            Enable parallel mode with git worktrees"
+                echo "  --allow-haiku         Enable Haiku model for the fast tier (default: disabled)"
                 echo "  --bg, --background    Run in background mode"
                 echo "  --simple              Force simple complexity tier (3 phases)"
                 echo "  --complex             Force complex complexity tier (8 phases)"
@@ -1178,6 +1179,17 @@ cmd_start() {
                 ;;
             --parallel)
                 args+=("--parallel")
+                shift
+                ;;
+            --allow-haiku)
+                # Enable Haiku for the fast tier. Mirrors the LOKI_ALLOW_HAIKU=true
+                # env var (consumed by providers/claude.sh and run.sh). Documented in
+                # loki --help and run.sh; previously only the env var worked here, so
+                # `loki start ./prd.md --allow-haiku` aborted with "Unknown option".
+                # Export reaches the runner; also forward as an arg so the run.sh
+                # parser (run.sh:15015) sees it on every route.
+                export LOKI_ALLOW_HAIKU=true
+                args+=("--allow-haiku")
                 shift
                 ;;
             --regen-prd|--regenerate-prd|--regen|--fresh-prd)

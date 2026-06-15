@@ -637,6 +637,46 @@ if [ "$GATE_RC" -eq 0 ]; then ok "case20 rc=0 (knob off)"; else bad "case20 rc=0
     || bad "case20 no inconclusive file when off" "file was written"
 
 # ===========================================================================
+# Case 23: base SHA SET but UNREACHABLE (history rewrite / git reset --hard) +
+#          a clean committed tree (all work committed, empty working-tree diff).
+#          The gate cannot compute `git diff base..HEAD`, so it falls back to
+#          `git diff HEAD` which is empty on a clean tree. This case proves the
+#          fallback is treated as INCONCLUSIVE (reason base_unreachable), NOT as
+#          positive empty-diff fabrication evidence: rc=0 (PASS-through) and an
+#          evidence-inconclusive.json with reason=base_unreachable is written.
+#          Contrast with case 13 (REACHABLE base, truly-empty -> BLOCK): a real
+#          empty run still blocks; only the unreachable-base ambiguity passes.
+# ===========================================================================
+echo "Case 23: base set-but-unreachable + clean committed tree -> PASS (reason base_unreachable)"
+repo="$(new_repo case23)"
+# All work is committed; capture a baseline that is NOT in this repo's history
+# (40-char hex that no object resolves to) to simulate a rewritten/reset base.
+unreach_base="0123456789abcdef0123456789abcdef01234567"
+write_test_results "$repo" jest true
+# Sanity: working tree must be genuinely clean (the bug only triggers when the
+# HEAD-fallback diff is empty; a dirty tree would mask it).
+if [ -n "$(grepo "$repo" status --porcelain)" ]; then
+    bad "case23 setup" "working tree is not clean: $(grepo "$repo" status --porcelain)"
+fi
+INC23="$repo/.loki/state/evidence-inconclusive.json"
+(
+    cd "$repo" || exit 99
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    export COUNCIL_STATE_DIR="$repo/.loki/council"
+    export TARGET_DIR="$repo"
+    export ITERATION_COUNT=7
+    export _LOKI_RUN_START_SHA="$unreach_base"
+    council_evidence_gate
+)
+GATE_RC=$?
+if [ "$GATE_RC" -eq 0 ]; then ok "case23 rc=0 (unreachable base does NOT false-block clean committed tree)"; else bad "case23 rc=0" "got rc=$GATE_RC (false BLOCK on real committed work)"; fi
+[ ! -f "$repo/.loki/council/evidence-block.json" ] && ok "case23 no evidence-block.json written" \
+    || bad "case23 no block file" "block report was written: $(block_reason "$repo/.loki/council/evidence-block.json")"
+inc_reason="$(block_reason "$INC23")"
+[ "$inc_reason" = "base_unreachable" ] && ok "case23 evidence-inconclusive.json reason=base_unreachable" \
+    || bad "case23 inconclusive reason=base_unreachable" "got [$inc_reason]"
+
+# ===========================================================================
 # Case 21 (v7.28.0): consumer side -- build_completion_summary RENDERS the
 #         honest inconclusive line into COMPLETION.txt when
 #         evidence-inconclusive.json is present. This proves Feature 2(b)

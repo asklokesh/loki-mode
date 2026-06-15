@@ -333,12 +333,26 @@ export interface LoadStateResult {
   resetForNewSession: boolean;
 }
 
-// Heuristic terminal-status set from run.sh:8806-8810.
+// Terminal-status set mirrored from the reset case at run.sh:10976
+// (`case "$prev_status" in failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled|running)`).
+// Bash resets RETRY_COUNT and ITERATION_COUNT to 0 for any of these statuses on
+// the next load_state. Previously this set omitted council_approved,
+// council_force_approved, completion_promise_fulfilled, and running, so a Bun
+// run that ended council_approved / completion_promise_fulfilled (or crashed at
+// status "running") re-hydrated the prior non-zero counters instead of
+// resetting -- a parity drift vs bash. The "running" case closes the
+// crash-mid-run path: nothing resumes from "running", so loading it must reset.
+// Deliberately NOT reset (genuine resume): paused, interrupted,
+// budget_exceeded, stopped.
 const TERMINAL_STATUSES = new Set([
   "failed",
   "max_iterations_reached",
   "max_retries_exceeded",
   "exited",
+  "council_approved",
+  "council_force_approved",
+  "completion_promise_fulfilled",
+  "running",
 ]);
 
 // Validate the parsed JSON the way the inline python at run.sh:8767-8784 does.

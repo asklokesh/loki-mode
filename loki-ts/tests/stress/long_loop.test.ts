@@ -158,7 +158,14 @@ function baseOpts(provider: ProviderInvoker, council: CouncilHook): RunnerOpts {
     provider: "claude",
     autonomyMode: "checkpoint",
     maxRetries: 3,
-    maxIterations: ITERATIONS,
+    // maxIterations:ITERATIONS+1 so exactly ITERATIONS real iterations run
+    // before the cap. Under bash parity the loop post-increments (run.sh:12889)
+    // then aborts on `-ge` (run.sh:9896): counter reaches 1..ITERATIONS (none
+    // >= ITERATIONS+1), then increments to ITERATIONS+1 and aborts. Was
+    // `ITERATIONS` when the Bun loop used strict `>`; the parity fix to `>=`
+    // aborts one iteration earlier, so we add 1 to keep ITERATIONS iterations
+    // running and the post-increment terminal counter at ITERATIONS+1.
+    maxIterations: ITERATIONS + 1,
     baseWaitSeconds: 0,
     maxWaitSeconds: 0,
     sessionModel: "sonnet",

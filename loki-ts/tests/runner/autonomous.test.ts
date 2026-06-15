@@ -173,12 +173,100 @@ describe("runAutonomous", () => {
   it("returns 0 when max iterations reached", async () => {
     const provider = new FakeProvider([{ exitCode: 1, capturedOutputPath: "" }]);
     const code = await runAutonomous(
-      baseOpts({ maxIterations: 1, maxRetries: 5, providerOverride: provider }),
+      baseOpts({ maxIterations: 2, maxRetries: 5, providerOverride: provider }),
     );
     expect(code).toBe(0);
-    // 1 iteration runs (counter incremented to 1), then 2nd iteration aborts on max.
-    expect(provider.calls.length).toBeGreaterThanOrEqual(1);
+    // maxIterations:2 -> 1 real iteration runs (counter increments to 1, not
+    // >= 2), then the 2nd pass increments to 2 and aborts on max via `>=`,
+    // mirroring bash run.sh:9896 (`-ge`). Was maxIterations:1 with strict `>`,
+    // which let one iteration run; under `>=` maxIterations:1 would abort before
+    // any provider call, so we use 2 to preserve the "one iteration runs" check.
+    expect(provider.calls.length).toBe(1);
   });
+
+  // ---------------------------------------------------------------------------
+  // BUG-2 parity proofs: max-iterations boundary (`>=` not `>`) and default
+  // (1000 not 100). Source of truth: bash check_max_iterations (run.sh:9896,
+  // `-ge`), evaluated AFTER the post-increment at run.sh:12889; default
+  // MAX_ITERATIONS (run.sh:619, `${LOKI_MAX_ITERATIONS:-1000}`) and
+  // build_prompt.ts:1160 (`envInt(env, "MAX_ITERATIONS", 1000)`).
+  // ---------------------------------------------------------------------------
+
+  it("BUG-2 boundary: max-iterations check is `>=` (matches bash -ge), not `>`", async () => {
+    // With maxIterations=2 and a never-stop council, bash runs exactly ONE real
+    // iteration: the counter post-increments to 1 (1 >= 2 is false, provider
+    // runs), then the next pass increments to 2 (2 >= 2 is true, abort BEFORE
+    // the provider call). So the stub provider is invoked exactly once.
+    //
+    // Non-vacuity: with the pre-fix strict `>`, the counter would have to reach
+    // 3 to abort, so the provider would have been invoked TWICE -- this `toBe(1)`
+    // would fail against the old comparison. The off-by-one was Bun running one
+    // extra iteration past the cap relative to bash.
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([false, false, false]); // never stop
+    const code = await runAutonomous(
+      baseOpts({ maxIterations: 2, maxRetries: 5, providerOverride: provider, council }),
+    );
+    expect(code).toBe(0);
+    expect(provider.calls.length).toBe(1);
+  });
+
+  it("BUG-2 default: unset maxIterations reads MAX_ITERATIONS env (not a hardcoded 100)", async () => {
+    // Fast proof that the default path is envIntLocal("MAX_ITERATIONS", 1000),
+    // not a hardcoded constant: omit maxIterations and set MAX_ITERATIONS=3.
+    // The loop must abort at 3 via max_iterations_reached -- exactly 2 real
+    // iterations run (post-increment 1,2 then 3 >= 3 aborts). A hardcoded 100
+    // default would ignore the env entirely and run far past 3.
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([false, false, false, false]); // never stop
+    const opts = baseOpts({ maxRetries: 5, providerOverride: provider, council });
+    delete (opts as Partial<RunnerOpts>).maxIterations;
+    const prevEnv = process.env["MAX_ITERATIONS"];
+    process.env["MAX_ITERATIONS"] = "3";
+    try {
+      const code = await runAutonomous(opts);
+      expect(code).toBe(0);
+      expect(provider.calls.length).toBe(2);
+      const state = JSON.parse(
+        readFileSync(resolve(lokiDir, "autonomy-state.json"), "utf8"),
+      ) as { status: string };
+      expect(state.status).toBe("max_iterations_reached");
+    } finally {
+      if (prevEnv === undefined) delete process.env["MAX_ITERATIONS"];
+      else process.env["MAX_ITERATIONS"] = prevEnv;
+    }
+  });
+
+  it(
+    "BUG-2 default: maxIterations defaults to 1000 (not 100) when both opt and env are unset",
+    async () => {
+      // Omit maxIterations AND env so makeContext applies the bare 1000 default.
+      // We run 101 real iterations (council stops on the 101st). If the default
+      // were still 100, the loop would have aborted via max_iterations_reached at
+      // 100 (100 provider calls) before the council's stop fired. Reaching 101
+      // iterations proves the cap is > 100, i.e. 1000.
+      //
+      // Non-vacuity: against the old `?? 100` default this would see only 100
+      // provider calls and a max_iterations_reached terminal -- both fail.
+      const STOP_AT = 101;
+      const verdicts = Array.from({ length: STOP_AT }, (_, i) => i === STOP_AT - 1);
+      const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+      const council = new FakeCouncil(verdicts);
+      const opts = baseOpts({ maxRetries: 5, providerOverride: provider, council });
+      delete (opts as Partial<RunnerOpts>).maxIterations;
+      const prevEnv = process.env["MAX_ITERATIONS"];
+      delete process.env["MAX_ITERATIONS"];
+      try {
+        const code = await runAutonomous(opts);
+        expect(code).toBe(0);
+        expect(provider.calls.length).toBe(STOP_AT);
+      } finally {
+        if (prevEnv === undefined) delete process.env["MAX_ITERATIONS"];
+        else process.env["MAX_ITERATIONS"] = prevEnv;
+      }
+    },
+    60_000,
+  );
 
   it("returns 1 when max retries exceeded on persistent failure", async () => {
     const provider = new FakeProvider([{ exitCode: 1, capturedOutputPath: "" }]);
@@ -257,7 +345,14 @@ describe("runAutonomous", () => {
         council,
         stateOverride: fakeStateMod,
         autonomyMode: "checkpoint",
-        maxIterations: 3,
+        // maxIterations:4 so exactly 3 real iterations run before the cap. Under
+        // bash parity (run.sh:12889 post-increment then run.sh:9896 `-ge`), the
+        // counter increments to 1,2,3 (none >= 4), then increments to 4 and
+        // aborts -- 3 provider calls. (Was 3 here when the Bun loop used strict
+        // `>`, which ran one extra iteration vs bash; the parity fix to `>=`
+        // makes maxIterations:3 yield only 2 iterations, so we bump to 4 to keep
+        // this test's "3 iterations" intent intact.)
+        maxIterations: 4,
         maxRetries: 5,
         prdPath: "/tmp/test-prd.md",
       }),
@@ -401,7 +496,12 @@ describe("runAutonomous", () => {
           council,
           stateOverride: fakeStateMod,
           autonomyMode: "checkpoint",
-          maxIterations: 3,
+          // maxIterations:4 so exactly 3 real iterations run before the cap,
+          // matching bash parity (run.sh:12889 post-increment then run.sh:9896
+          // `-ge`). Was 3; bumped to 4 when the Bun loop switched from strict
+          // `>` to `>=` (the parity fix), since `>=` aborts one iteration
+          // earlier. Keeps the "last persisted phase is iteration 3" intent.
+          maxIterations: 4,
           maxRetries: 5,
           prdPath: "/tmp/test-prd.md",
         }),

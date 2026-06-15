@@ -1519,8 +1519,17 @@ council_evidence_gate() {
         if committed_files=$(git diff --name-only "$base_sha" HEAD 2>/dev/null); then
             :
         else
-            # Base present but unreachable (e.g. shallow clone): fall back to
-            # working-tree diff vs HEAD (mirrors proof-generator.py fallback).
+            # Base present but UNREACHABLE (e.g. shallow clone, history rewrite,
+            # or `git reset --hard` -- a documented live hazard). The diff vs the
+            # run-start SHA cannot be computed, so we can no longer prove that the
+            # committed-union diff is empty. Treat this as INCONCLUSIVE, not as
+            # positive empty-diff fabrication evidence: an agent that committed
+            # all its work leaves a clean working tree, and `git diff HEAD` would
+            # read empty -> a false BLOCK. We still fall back to the working-tree
+            # diff vs HEAD to capture any uncommitted work, but the empty-diff
+            # block is suppressed below via the diff_inconclusive guard.
+            diff_inconclusive="true"
+            diff_inconclusive_reason="base_unreachable"
             committed_files=$(git diff --name-only HEAD 2>/dev/null || echo "")
         fi
         unstaged_files=$(git diff --name-only HEAD 2>/dev/null || echo "")
@@ -1543,7 +1552,11 @@ council_evidence_gate() {
         else
             diff_files=0
         fi
-        if [ "$diff_files" -eq 0 ]; then
+        # Only treat an empty union as positive fabrication evidence when the
+        # baseline was CONCLUSIVE. If the base SHA was unreachable (history
+        # rewrite / reset --hard), a clean committed tree yields an empty
+        # working-tree diff that must NOT read as empty-diff fabrication.
+        if [ "$diff_files" -eq 0 ] && [ "$diff_inconclusive" != "true" ]; then
             diff_fails="true"
         fi
     fi

@@ -237,14 +237,18 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
         providerOverride: provider,
         council,
         signals,
-        maxIterations: 3,
+        // maxIterations:4 so exactly 3 real iterations run before the cap, under
+        // bash parity (run.sh:12889 post-increment then run.sh:9896 `-ge`). Was
+        // 3 when the Bun loop used strict `>`; the parity fix to `>=` aborts one
+        // iteration earlier, so 4 keeps the "ran 3 cycles" assertion intact.
+        maxIterations: 4,
       }),
     );
 
     // Clean exit on max_iterations (autonomous.ts:323 returns 0).
     expect(code).toBe(0);
 
-    // Provider invoked exactly maxIterations times -- proves >=2 cycles ran.
+    // Provider invoked exactly 3 times -- proves >=2 cycles ran.
     expect(provider.calls.length).toBe(3);
     expect(provider.calls.length).toBeGreaterThanOrEqual(2);
 
@@ -259,10 +263,10 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
       prdPath: string;
     };
     expect(state.status).toBe("max_iterations_reached");
-    // autonomous.ts increments iterationCount BEFORE the max check, so on the
-    // (maxIterations+1)-th tick the counter reads 4 then the early return
-    // fires. Provider was called exactly maxIterations=3 times, which is the
-    // load-bearing "ran >=2 cycles" assertion.
+    // autonomous.ts increments iterationCount BEFORE the max check (`>=`,
+    // mirroring bash run.sh:9896), so with maxIterations=4 the counter reaches
+    // 4 and the early return fires. Provider was called exactly 3 times, which
+    // is the load-bearing "ran >=2 cycles" assertion.
     expect(state.iterationCount).toBeGreaterThanOrEqual(3);
     expect(state.lastExitCode).toBe(0);
     expect(state.prdPath).toBe(prdPath);
@@ -288,7 +292,11 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
         providerOverride: provider,
         council,
         signals,
-        maxIterations: 2,
+        // maxIterations:3 so exactly 2 real iterations run before the cap, under
+        // bash parity (run.sh:12889 post-increment then run.sh:9896 `-ge`). Was
+        // 2 with strict `>`; the parity fix to `>=` aborts one iteration
+        // earlier, so 3 keeps the 2-iteration (cp-1/cp-2, 2 logs) assertions.
+        maxIterations: 3,
       }),
     );
     expect(code).toBe(0);

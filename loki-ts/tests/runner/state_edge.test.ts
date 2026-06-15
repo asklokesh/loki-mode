@@ -250,10 +250,16 @@ describe("loadState: corrupt JSON -> .corrupt.<ts> backup + reset counters", () 
     loadState({ lokiDirOverride: dir, now: pinnedNow });
 
     // Now write fresh state -- must succeed and produce parseable JSON.
+    // Use a non-terminal status ("paused") so the round-trip preserves the
+    // iterationCount: this test asserts corruption-recovery round-trips a fresh
+    // save, not the terminal-reset behavior. (Was "running", but run.sh:10976
+    // now lists "running" among the reset statuses, so loadState would reset
+    // iterationCount to 0 and break this round-trip check. "running" is
+    // incidental to corruption recovery -- "paused" exercises the same path.)
     saveState({
       retryCount: 0,
       iterationCount: 1,
-      status: "running",
+      status: "paused",
       exitCode: 0,
       prdPath: "",
       pid: 1,
@@ -266,6 +272,6 @@ describe("loadState: corrupt JSON -> .corrupt.<ts> backup + reset counters", () 
     const reread = loadState({ lokiDirOverride: dir, now: pinnedNow });
     expect(reread.corrupted).toBe(false);
     expect(reread.iterationCount).toBe(1);
-    expect(reread.state?.status).toBe("running");
+    expect(reread.state?.status).toBe("paused");
   });
 });

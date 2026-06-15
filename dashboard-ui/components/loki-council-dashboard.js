@@ -246,7 +246,7 @@ export class LokiCouncilDashboard extends LokiElement {
           ${this._renderTabContent()}
         </div>
 
-        ${this._error ? `<div class="error-banner">${this._error}</div>` : ''}
+        ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
       </div>
     `;
 
@@ -437,27 +437,27 @@ export class LokiCouncilDashboard extends LokiElement {
           <div class="agent-card ${this._selectedAgent?.id === agent.id ? 'agent-selected' : ''}"
                data-agent-index="${idx}">
             <div class="agent-header">
-              <span class="agent-name">${agent.name || agent.id || 'Unknown'}</span>
+              <span class="agent-name">${this._escapeHtml(agent.name || agent.id || 'Unknown')}</span>
               <span class="agent-status ${agent.alive ? 'status-alive' : 'status-dead'}">
                 ${agent.alive ? 'Running' : 'Stopped'}
               </span>
             </div>
             <div class="agent-meta">
-              ${agent.type ? `<span class="agent-type">${agent.type}</span>` : ''}
+              ${agent.type ? `<span class="agent-type">${this._escapeHtml(agent.type)}</span>` : ''}
               ${agent.pid ? `<span class="agent-pid">PID: ${agent.pid}</span>` : ''}
-              ${agent.task ? `<span class="agent-task">Task: ${agent.task}</span>` : ''}
+              ${agent.task ? `<span class="agent-task">Task: ${this._escapeHtml(agent.task)}</span>` : ''}
             </div>
             ${this._selectedAgent?.id === agent.id ? `
               <div class="agent-actions">
                 ${agent.alive ? `
-                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${agent.id || agent.name}">
+                  <button class="btn btn-sm btn-warn" data-action="pause" data-agent-id="${this._escapeHtml(agent.id || agent.name)}">
                     Pause
                   </button>
-                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${agent.id || agent.name}">
+                  <button class="btn btn-sm btn-danger" data-action="kill" data-agent-id="${this._escapeHtml(agent.id || agent.name)}">
                     Kill
                   </button>
                 ` : `
-                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${agent.id || agent.name}">
+                  <button class="btn btn-sm btn-primary" data-action="resume" data-agent-id="${this._escapeHtml(agent.id || agent.name)}">
                     Resume
                   </button>
                 `}
@@ -503,6 +503,15 @@ export class LokiCouncilDashboard extends LokiElement {
     } catch {
       return timestamp;
     }
+  }
+
+  _escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   _getStyles() {
