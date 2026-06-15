@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.45.1] - 2026-06-15
+
+### Fixed
+- Project registry concurrent-write race: `dashboard/registry.py` `_save_registry`
+  now writes atomically (temp file in the registry dir + `os.replace`) so a reader
+  never sees a torn file, and the leaf mutators (register_project,
+  unregister_project, update_last_accessed, mark_project_stopped) take a
+  best-effort advisory file lock (graceful fallback when fcntl is unavailable).
+  Matters most now that multi-repo `loki docker` makes concurrent registration the
+  common path.
+
+### Changed
+- DOCKER_README.md documents that the dashboard Stop for a `loki docker` project is
+  honored at the next iteration boundary (writes `.loki/STOP`, the runner polls
+  it), so Stop is reliable but not instant for containerized builds;
+  `docker stop loki-<hash>` stops immediately.
+
+### Notes
+- The published v7.45.0 image was validated end-to-end: `loki docker start`
+  against the published `asklokesh/loki-mode:7.45.0` built a working app and
+  committed as the correct GitHub identity (asklokesh), confirming the v7.45.0
+  Docker fixes work in the real artifact.
+
 ## [7.45.0] - 2026-06-15
 
 Docker is now a first-class way to run Loki. The published image could not run a

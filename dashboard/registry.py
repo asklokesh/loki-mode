@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 import hashlib
 
 
@@ -23,6 +25,62 @@ REGISTRY_FILE = REGISTRY_DIR / "projects.json"
 def _ensure_registry_dir() -> None:
     """Ensure the registry directory exists."""
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def _registry_lock() -> Iterator[None]:
+    """
+    Best-effort advisory lock around a read-modify-write of the registry.
+
+    Two concurrent writers (e.g. two `loki docker start` in different repos, or
+    a docker run racing a host `loki start`) would otherwise both load the old
+    registry, mutate, and save, dropping one writer's entry (lost update). This
+    serializes the leaf mutators so they take turns.
+
+    Degrades gracefully: if fcntl is unavailable (Windows) or the lock cannot
+    be acquired for any reason, execution proceeds without a lock rather than
+    blocking a build. The atomic write in _save_registry still guarantees no
+    reader ever sees a torn file; only the lost-update protection is
+    best-effort.
+
+    The lock path is derived from the current REGISTRY_DIR at call time (not a
+    module-level constant) so tests that monkeypatch REGISTRY_DIR stay
+    hermetic. Not reentrant: do not nest this around another leaf mutator (the
+    leaf mutators do not call one another).
+    """
+    _ensure_registry_dir()
+    lock_fd = None
+    locked = False
+    try:
+        import fcntl  # POSIX only; absent on Windows
+
+        lock_path = REGISTRY_DIR / ".registry.lock"
+        try:
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            locked = True
+        except OSError:
+            # Could not open or lock the file; proceed without the lock.
+            locked = False
+    except ImportError:
+        # fcntl not available (e.g. Windows); proceed without the lock.
+        lock_fd = None
+
+    try:
+        yield
+    finally:
+        if lock_fd is not None:
+            try:
+                if locked:
+                    import fcntl
+
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except (OSError, ImportError):
+                pass
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
 
 
 def _load_registry() -> dict:
@@ -38,10 +96,39 @@ def _load_registry() -> dict:
 
 
 def _save_registry(registry: dict) -> None:
-    """Save the project registry to disk."""
+    """
+    Save the project registry to disk atomically.
+
+    Writes to a temp file in the SAME directory as REGISTRY_FILE (so os.replace
+    is an atomic rename on the same filesystem), flushes and fsyncs it, then
+    os.replace()s it over the destination. Every reader therefore sees either
+    the complete old file or the complete new file, never a half-written (torn)
+    one. The temp file is removed on any error path so partial files never
+    leak.
+
+    Note: atomic write alone eliminates torn reads but does not by itself
+    prevent lost updates under true simultaneity. The leaf mutators wrap their
+    load->mutate->save in _registry_lock() to serialize concurrent writers and
+    reduce that window; when locking is unavailable the degradation is honest
+    (torn reads still impossible, lost-update still possible).
+    """
     _ensure_registry_dir()
-    with open(REGISTRY_FILE, "w") as f:
-        json.dump(registry, f, indent=2, default=str)
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=str(REGISTRY_DIR), prefix=".projects.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(registry, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, str(REGISTRY_FILE))
+    except BaseException:
+        # Clean up the temp file on any failure so we never leak partial files.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _generate_project_id(path: str) -> str:
@@ -70,34 +157,38 @@ def register_project(
     if not os.path.isdir(path):
         raise ValueError(f"Path does not exist: {path}")
 
-    registry = _load_registry()
     project_id = _generate_project_id(path)
 
-    # Check if already registered
-    if project_id in registry["projects"]:
-        # Update existing entry
-        project = registry["projects"][project_id]
-        if name:
-            project["name"] = name
-        if alias:
-            project["alias"] = alias
-        project["updated_at"] = datetime.now(timezone.utc).isoformat()
-    else:
-        # Create new entry
-        project = {
-            "id": project_id,
-            "path": path,
-            "name": name or os.path.basename(path),
-            "alias": alias,
-            "registered_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "last_accessed": None,
-            "has_loki_dir": os.path.isdir(os.path.join(path, ".loki")),
-            "status": "active",
-        }
-        registry["projects"][project_id] = project
+    # Lock the load->mutate->save so concurrent registrations serialize and do
+    # not lost-update each other (the multi-repo `loki docker` happy path).
+    with _registry_lock():
+        registry = _load_registry()
 
-    _save_registry(registry)
+        # Check if already registered
+        if project_id in registry["projects"]:
+            # Update existing entry
+            project = registry["projects"][project_id]
+            if name:
+                project["name"] = name
+            if alias:
+                project["alias"] = alias
+            project["updated_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            # Create new entry
+            project = {
+                "id": project_id,
+                "path": path,
+                "name": name or os.path.basename(path),
+                "alias": alias,
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "last_accessed": None,
+                "has_loki_dir": os.path.isdir(os.path.join(path, ".loki")),
+                "status": "active",
+            }
+            registry["projects"][project_id] = project
+
+        _save_registry(registry)
     return project
 
 
@@ -111,19 +202,20 @@ def unregister_project(identifier: str) -> bool:
     Returns:
         True if removed, False if not found
     """
-    registry = _load_registry()
+    with _registry_lock():
+        registry = _load_registry()
 
-    # Find by ID, path, or alias
-    project_id = None
-    for pid, project in registry["projects"].items():
-        if pid == identifier or project["path"] == identifier or project.get("alias") == identifier:
-            project_id = pid
-            break
+        # Find by ID, path, or alias
+        project_id = None
+        for pid, project in registry["projects"].items():
+            if pid == identifier or project["path"] == identifier or project.get("alias") == identifier:
+                project_id = pid
+                break
 
-    if project_id:
-        del registry["projects"][project_id]
-        _save_registry(registry)
-        return True
+        if project_id:
+            del registry["projects"][project_id]
+            _save_registry(registry)
+            return True
     return False
 
 
@@ -179,13 +271,14 @@ def update_last_accessed(identifier: str) -> Optional[dict]:
     Returns:
         Updated project entry or None
     """
-    registry = _load_registry()
+    with _registry_lock():
+        registry = _load_registry()
 
-    for pid, project in registry["projects"].items():
-        if pid == identifier or project["path"] == identifier or project.get("alias") == identifier:
-            project["last_accessed"] = datetime.now(timezone.utc).isoformat()
-            _save_registry(registry)
-            return project
+        for pid, project in registry["projects"].items():
+            if pid == identifier or project["path"] == identifier or project.get("alias") == identifier:
+                project["last_accessed"] = datetime.now(timezone.utc).isoformat()
+                _save_registry(registry)
+                return project
     return None
 
 
@@ -207,19 +300,20 @@ def mark_project_stopped(identifier: str) -> Optional[dict]:
         Idempotent: marking an already-stopped project is a no-op that still
         returns the entry.
     """
-    registry = _load_registry()
+    with _registry_lock():
+        registry = _load_registry()
 
-    for pid_key, project in registry["projects"].items():
-        if (
-            pid_key == identifier
-            or project["path"] == identifier
-            or project.get("alias") == identifier
-        ):
-            project["status"] = "stopped"
-            project["pid"] = None
-            project["updated_at"] = datetime.now(timezone.utc).isoformat()
-            _save_registry(registry)
-            return project
+        for pid_key, project in registry["projects"].items():
+            if (
+                pid_key == identifier
+                or project["path"] == identifier
+                or project.get("alias") == identifier
+            ):
+                project["status"] = "stopped"
+                project["pid"] = None
+                project["updated_at"] = datetime.now(timezone.utc).isoformat()
+                _save_registry(registry)
+                return project
     return None
 
 

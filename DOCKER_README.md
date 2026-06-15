@@ -66,6 +66,8 @@ The host `loki dashboard` lists every project whether it runs via local `loki st
 
 Note: `loki docker` builds run with the dashboard off by default (so concurrent runs never fight over port 57374). The unified view is the host `loki dashboard`. To bring up the dashboard for a single containerized run instead, use `loki docker start --api prd.md`, which publishes port 57374 for that one container.
 
+Stopping a containerized build: the dashboard Stop button (and `loki stop`) signals a `loki docker` project by writing `.loki/STOP` into the bind-mounted workspace, which the in-container runner honors at the next iteration boundary. So Stop is reliable but not instant for Docker projects: a build can take up to one provider iteration to wind down, versus the immediate signal a host process receives. To stop a container immediately, use `docker stop loki-<hash-of-path>`.
+
 ## Quick Start (docker compose)
 
 If you prefer not to install loki on the host, `docker compose` runs Loki from the image directly. You set credentials once in a `.env` file and never retype long flags.
