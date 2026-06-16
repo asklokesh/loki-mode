@@ -1,6 +1,6 @@
 # Loki Mode Documentation
 
-**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous, spec-driven build system with a built-in trust layer. It does not call work done until it is verified: the RARV-C closure loop, 11 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
+**The flagship product of [Autonomi](https://www.autonomi.dev/) -- an autonomous, spec-driven build system with a built-in trust layer. It does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted. Provider-agnostic: Claude Code, OpenAI Codex CLI, Cline, and Aider.**
 
 > Spec-driven: turn a spec -- a PRD, GitHub issue, YAML feature file, or any natural-language brief -- into a fully deployed, production-ready application, with verification built in so "done" means verified, not just attempted.
 
@@ -10,7 +10,7 @@
 
 Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
-- **Built-in trust layer (verified completion)** - Does not call work done until it is verified: the RARV-C closure loop, 11 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted
+- **Built-in trust layer (verified completion)** - Does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted
 - **Spec-driven development** - Any spec (PRD, GitHub issue, OpenAPI/YAML doc, or one-line brief) drives the build end to end
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
@@ -54,7 +54,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **Docker Sandbox** - Isolated secure execution environment
 - **Project Registry** - Multi-project orchestration
 - **Staged Autonomy** - Approval gates for sensitive operations
-- **11-Gate Quality System** ([[Quality Gates]]) - Static analysis, 3-reviewer parallel review, anti-sycophancy, severity blocking, coverage gates, mutation detection, Gate 10 backward-compatibility (healing mode, v6.67.0), Gate 11 documentation coverage (v7.5.0), verified-completion evidence gate with inconclusive disclosure (v7.28.0), and held-out spec evals for anti-reward-hacking (v7.28.0)
+- **8-Gate Quality System** ([[Quality Gates]]) - Static analysis, test suite (pass/fail), blind 3-reviewer code review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity detection, test-mutation detection, documentation coverage (v6.75.0), and Magic Modules debate; plus a conditional backward-compatibility auditor (healing mode, v6.67.0, not numbered), the verified-completion evidence gate with inconclusive disclosure (v7.28.0), and held-out spec evals for anti-reward-hacking (v7.28.0)
 - **Guided First Build** - `loki quickstart`: four questions to a running build, with the real cost estimate shown before any spend, and a consent-gated Claude Code install offer when no provider is found (v7.29.0)
 - **Completion Council** - 3-member voting system with anti-sycophancy checks
 - **Security Hardening** - Path traversal, XSS, injection, and memory leak protections
@@ -103,7 +103,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 ## Version History
 
-Current Version: **7.45.1** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **7.46.0** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

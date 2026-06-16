@@ -84,8 +84,8 @@ The combination means: specs drive generation, debate drives quality, and the re
 
 ### With Quality Gates
 
-- Gate 11 (documentation coverage) now includes component docs -- each spec becomes part of COMPONENTS.md
-- Gate 5 (test coverage) applies to generated tests in `.loki/magic/generated/tests/`
+- Gate 7 (documentation coverage) now includes component docs -- each spec becomes part of COMPONENTS.md
+- Gate 2 (test suite) applies to generated tests in `.loki/magic/generated/tests/`
 - A new healing-style hook blocks merging when a component's spec has been manually edited but the implementation was not regenerated
 
 ---
@@ -190,7 +190,7 @@ loki magic diff Button
 |-------|-------------|
 | `skills/healing.md` | Healing-style hooks protect spec edits; friction-map tracks manually edited generated files |
 | `skills/documentation.md` | Component specs feed COMPONENTS.md; registry feeds ARCHITECTURE.md |
-| `skills/quality-gates.md` | Gate 11 includes component doc coverage; debate block = gate failure |
+| `skills/quality-gates.md` | Gate 7 includes component doc coverage; Magic Modules debate (gate 8) block = gate failure |
 | `skills/agents.md` | `component-designer`, `a11y-auditor` agent types map to personas |
 | `skills/testing.md` | Generated Vitest and Playwright tests execute under the normal test gates |
 | `skills/artifacts.md` | Generated components count as artifacts and flow through the artifact pipeline |

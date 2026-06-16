@@ -44,6 +44,8 @@ const ENV_KEYS = [
   "PHASE_CODE_REVIEW",
   "LOKI_GATE_DOC_COVERAGE",
   "LOKI_GATE_MAGIC_DEBATE",
+  "LOKI_GATE_MOCK",
+  "LOKI_GATE_MUTATION",
   "LOKI_STUB_GATE_STATIC_ANALYSIS",
   "LOKI_STUB_GATE_TEST_COVERAGE",
   "LOKI_STUB_GATE_CODE_REVIEW",
@@ -177,6 +179,8 @@ describe("escalation ladder boundaries", () => {
     process.env["PHASE_CODE_REVIEW"] = "false";
     process.env["LOKI_GATE_DOC_COVERAGE"] = "false";
     process.env["LOKI_GATE_MAGIC_DEBATE"] = "false";
+    process.env["LOKI_GATE_MOCK"] = "false";
+    process.env["LOKI_GATE_MUTATION"] = "false";
   });
 
   it("counts failures normally below CLEAR_LIMIT (count 1, 2)", async () => {
@@ -257,10 +261,14 @@ describe("runQualityGates orchestration", () => {
     expect(r.failed).toEqual([]);
     expect(r.blocked).toBe(false);
     expect(r.escalated).toBe(false);
-    // All five gates enabled by default.
+    // All seven gates enabled by default (mock_integrity and
+    // mutation_integrity were added default-on; with no findings artifact
+    // they pass honestly with a "gate did not run" detail).
     expect(r.passed).toEqual([
       "static_analysis",
       "test_coverage",
+      "mock_integrity",
+      "mutation_integrity",
       "code_review",
       "doc_coverage",
       "magic_debate",
@@ -290,8 +298,11 @@ describe("runQualityGates orchestration", () => {
     process.env["PHASE_UNIT_TESTS"] = "false";
     process.env["LOKI_GATE_DOC_COVERAGE"] = "false";
     process.env["LOKI_GATE_MAGIC_DEBATE"] = "false";
+    // mock_integrity and mutation_integrity are left default-on; with no
+    // findings artifact they run and pass, so they appear in passed[]
+    // ahead of code_review (sequence order).
     const r = await runQualityGates(makeCtx());
-    expect(r.passed).toEqual(["code_review"]);
+    expect(r.passed).toEqual(["mock_integrity", "mutation_integrity", "code_review"]);
   });
 
   it("soft-gate path (LOKI_HARD_GATES=false) only runs code_review and never blocks", async () => {
@@ -898,6 +909,19 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     expect(selection.pool_size).toBe(4);
     // Anti-sycophancy file written on unanimous pass.
     expect(existsSync(join(dir, "anti-sycophancy.txt"))).toBe(true);
+  });
+
+  it("blocks on a unanimous pass when the Devil's-Advocate raises blocking severity", async () => {
+    const daBlockReviewer: ReviewerFn = async ({ reviewer }) =>
+      reviewer.name === "devils-advocate"
+        ? "VERDICT: FAIL\nFINDINGS:\n- [Critical] hidden untested error path the council missed"
+        : "VERDICT: PASS\nFINDINGS:\n- None";
+    const r = await runCodeReview(makeCtx(), {
+      diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },
+      reviewer: daBlockReviewer,
+    });
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("devil's advocate raised blocking severity");
   });
 
   it("blocks the gate when any reviewer reports [Critical] or [High]", async () => {

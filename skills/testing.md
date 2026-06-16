@@ -10,7 +10,7 @@
 6. If you believe a test expectation is incorrect, document WHY and flag for council review. Do not silently change it.
 7. Every test file must have at least one assertion per tested function.
 
-Gate 8 (mock detector) and Gate 9 (mutation detector) enforce rules 3-5 automatically.
+Gate 5 (mock integrity detector) and Gate 6 (mutation detector) enforce rules 3-5 automatically.
 Violations result in automatic FAIL during VERIFY phase.
 
 ---

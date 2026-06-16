@@ -972,7 +972,7 @@ Source: `run.sh:7880-7881` (checklist_should_verify, checklist_verify)
 
 ## 7. Quality Gates
 
-### 7.1 Nine-Gate Pipeline
+### 7.1 Eight-Gate Pipeline
 
 Source: `skills/quality-gates.md`
 
@@ -980,40 +980,39 @@ Source: `skills/quality-gates.md`
   Code Change
       |
       v
-  Gate 1: Static Analysis (CodeQL, ESLint)
-      |──BLOCK (critical findings)──> [REJECTED]
+  Gate 1: Static Analysis (CodeQL, ESLint/Pylint, type-checker)
+      |──BLOCK (severity ladder)──> [REJECTED]
       v
-  Gate 2: Type Check (tsc --noEmit)
+  Gate 2: Test Suite (pass/fail; red blocks; coverage % not measured this release)
       |──BLOCK──> [REJECTED]
       v
-  Gate 3: Unit Tests (>80% coverage, 100% pass)
-      |──BLOCK──> [REJECTED]
-      v
-  Gate 4: Integration Tests
-      |──BLOCK──> [REJECTED]
-      v
-  Gate 5: 3-Reviewer Blind Review (see 7.3)
+  Gate 3: Blind 3-Reviewer Review with severity blocking (see 7.3)
       |──BLOCK (Critical/High severity)──> [REJECTED]
       v
-  Gate 6: Anti-Sycophancy Check
-      |──BLOCK (devil's advocate finds issues)──> [REJECTED]
+  Gate 4: Anti-Sycophancy Devil's Advocate (on unanimous PASS)
+      |──BLOCK (devil's advocate Crit/High findings)──> [REJECTED]
       v
-  Gate 7: Security Scan
+  Gate 5: Mock Integrity Detector
+      |──BLOCK (HIGH findings)──> [REJECTED]
+      v
+  Gate 6: Test Mutation Detector
+      |──BLOCK (HIGH findings)──> [REJECTED]
+      v
+  Gate 7: Documentation Coverage
       |──BLOCK──> [REJECTED]
       v
-  Gate 8: Performance Check
-      |──BLOCK──> [REJECTED]
-      v
-  Gate 9: E2E / Playwright
-      |──BLOCK──> [REJECTED]
+  Gate 8: Magic Modules Debate
+      |──BLOCK (BLOCK-severity findings)──> [REJECTED]
       v
   [APPROVED]
 ```
 
+Backward-compatibility is a conditional healing-mode auditor, not a numbered gate.
+
 Gate status values: `passed`, `failed`, `skipped`
 Persistence: `.loki/dashboard-state.json` field `qualityGates`
 Severity levels: `critical`, `high`, `medium`, `low`
-Blocking threshold: Critical and High always block; Medium blocks by default.
+Blocking threshold: Critical and High block; Medium and Low are advisory.
 
 ### 7.2 Model Escalation
 

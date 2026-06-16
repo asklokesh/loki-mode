@@ -16135,7 +16135,7 @@ print()
                 echo -e "${RED}Test coverage gate FAILED${NC}"
                 return 1
             else
-                echo -e "${GREEN}Tests passed (min coverage: ${min_coverage}%)${NC}"
+                echo -e "${GREEN}Tests passed (min coverage TARGET, not measured: ${min_coverage}%)${NC}"
                 return 0
             fi
             ;;
@@ -27527,7 +27527,7 @@ if test_results:
     test_lines.append(f"Passed: {test_results.get('pass', 'unknown')}")
     test_lines.append(f"Timestamp: {test_results.get('timestamp', 'unknown')}")
     if test_results.get("min_coverage"):
-        test_lines.append(f"Min coverage target: {test_results['min_coverage']}%")
+        test_lines.append(f"Min coverage TARGET (not measured): {test_results['min_coverage']}%")
 else:
     test_lines.append("No test result data recorded")
 sections.append(("Tests", test_lines))

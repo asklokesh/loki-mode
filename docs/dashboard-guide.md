@@ -151,13 +151,15 @@ Progress bars for three memory types:
 Shows count and visual progress bar for each.
 
 #### Quality Gates
-6 quality gates with status icons:
-- **Static Analysis**: CodeQL/ESLint checks
-- **3-Reviewer**: Parallel blind review system
-- **Anti-Sycophancy**: Devil's advocate validation
-- **Test Coverage**: Unit test requirements
-- **Security Scan**: OWASP vulnerability check
-- **Performance**: Performance regression tests
+8 quality gates with status icons:
+- **Static Analysis**: CodeQL/ESLint/type-checker findings on the diff
+- **Test Suite**: Project test runner pass/fail (red blocks)
+- **Blind Code Review**: 3-reviewer council with severity blocking (Critical/High block, Medium/Low advisory)
+- **Anti-Sycophancy**: Devil's Advocate re-review on unanimous PASS
+- **Mock Integrity**: Tautological-assertion and mock-ratio detection
+- **Test Mutation**: Assertion-churn (test-fitting) detection
+- **Documentation Coverage**: README presence, docs freshness, API docs
+- **Magic Modules Debate**: Spec-vs-implementation debate on generated modules
 
 Status icons:
 - Checkmark (green): Passed

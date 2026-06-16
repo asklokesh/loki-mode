@@ -1,7 +1,7 @@
 # Loki Mode plugin for Claude Code
 
 Loki Mode is the autonomous spec-to-product build system with a built-in trust
-layer (RARV-C closure loop, 11 quality gates, completion council). This plugin
+layer (RARV-C closure loop, 8 quality gates, completion council). This plugin
 brings Loki's spec-hardening, drift-detection, and deterministic PR verification
 into Claude Code as slash commands, and wires up the Loki MCP server.
 

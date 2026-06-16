@@ -286,7 +286,7 @@ Developers who value open-source tooling, speed, and terminal-native workflows. 
 | **Autonomous Iteration** | No (task-level) | No | Partial (/loop, /schedule) | No (requires prompting) | Yes (RARV loop + completion council) |
 | **SDLC Pipeline** | No | No | No | No | Yes (9 phases) |
 | **Code Review** | No | No | Yes (single-pass) | Yes (single-pass) | Yes (3-reviewer blind) |
-| **Quality Gates** | No | No | No | No | Yes (10 gates) |
+| **Quality Gates** | No | No | No | No | Yes (8 gates) |
 | **Anti-Sycophancy** | No | No | No | No | Yes (devil's advocate) |
 | **Memory System** | Enterprise only | No | CLAUDE.md + auto-memory | Session resumption | Episodic/semantic/procedural |
 | **Self-Hosted** | Partial (Agent-E) | No | Partial (CLI local, but subscription or API required) | Yes (with API key) | Yes (fully, any provider API key) |
@@ -383,10 +383,10 @@ Claude Code and Codex CLI offer single-pass code review. Neither provides:
 - 3-reviewer blind parallel review
 - Anti-sycophancy checks (devil's advocate on unanimous approval)
 - Severity-based blocking gates
-- Test coverage enforcement (>80% unit, 100% pass)
+- Test suite enforcement (100% pass; coverage % not measured this release)
 - Static analysis integration (CodeQL, ESLint)
 
-**Opportunity:** Loki Mode's 10-gate quality system provides enterprise-grade assurance that no competitor matches.
+**Opportunity:** Loki Mode's 8-gate quality system provides enterprise-grade assurance that no competitor matches.
 
 ### Gap 4: No Persistent Cross-Project Learning
 
@@ -433,7 +433,7 @@ Rork generates mobile apps but cannot handle backends, APIs, or infrastructure. 
 This positioning highlights three unique capabilities no competitor offers together:
 1. **Autonomous SDLC** (not just coding assistance)
 2. **Multi-provider** (not locked to one vendor)
-3. **Quality-assured** (10-gate system, 3-reviewer blind review)
+3. **Quality-assured** (8-gate system, 3-reviewer blind review)
 
 ### Differentiation by Competitor
 
@@ -443,7 +443,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Autonomy | Semi-autonomous (/loop, /schedule, but no SDLC orchestration) | Fully autonomous (RARV loop + completion council) |
 | Scope | Individual coding tasks, PR reviews | Full SDLC pipeline (9 phases) |
 | Providers | Claude models only (multi-cloud hosting) | 5 providers, 3+ model families |
-| Quality | Single-pass review, GitHub Action | 10-gate, 3-reviewer blind system, anti-sycophancy |
+| Quality | Single-pass review, GitHub Action | 8-gate, 3-reviewer blind system, anti-sycophancy |
 | Memory | CLAUDE.md + auto-memory (session-scoped) | Episodic/semantic/procedural (cross-project) |
 | Cost model | Subscription with rate limits or API | Self-hosted, pay-per-token, any provider |
 | IDE/surface | Terminal, VS Code, JetBrains, Desktop, Web | Terminal, VS Code (via extension) |
@@ -458,7 +458,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Speed | 240+ tokens/sec | Depends on provider |
 | Providers | OpenAI only | 5 providers |
 | Multi-agent | Experimental (isolated) | 41 agent types, 8 domains |
-| Quality | Single-pass review | 10-gate system |
+| Quality | Single-pass review | 8-gate system |
 | **Loki Mode advantage:** | Autonomous pipeline, multi-provider, mature multi-agent |
 
 #### vs. Emergence AI
@@ -475,7 +475,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 |-----------|------|-----------|
 | Focus | Mobile apps (no-code) | Full-stack software |
 | Target user | Non-technical | Developers + technical teams |
-| Quality | No testing/review | 10-gate quality system |
+| Quality | No testing/review | 8-gate quality system |
 | Output | Mobile app only | Any software type |
 | **Loki Mode advantage:** | Developer-grade, full-stack, quality-assured |
 
@@ -485,7 +485,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 "You already use AI for coding. Loki Mode makes it autonomous -- give it a PRD, and it handles planning, implementation, testing, code review, and deployment. Keep using Claude or Codex under the hood."
 
 **For engineering leaders evaluating AI tooling:**
-"Loki Mode is the only open-source system with enterprise-grade quality gates (10 gates, 3-reviewer blind review, anti-sycophancy checks) that runs autonomously on any AI provider. Self-hosted, no vendor lock-in."
+"Loki Mode is the only open-source system with enterprise-grade quality gates (8 gates, 3-reviewer blind review, anti-sycophancy checks) that runs autonomously on any AI provider. Self-hosted, no vendor lock-in."
 
 **For startups and solo developers:**
 "Go from idea to deployed product overnight. Write a PRD, invoke Loki Mode, and let it build, test, and deploy while you sleep. Works with your existing Claude or OpenAI API key."
@@ -557,7 +557,7 @@ The most significant near-term competitive threat is Anthropic's Agent SDK (http
 
 **However, Loki Mode's structural advantages remain:**
 1. **Multi-provider:** Agent SDK is Claude-only. Loki Mode works with any provider.
-2. **Battle-tested pipeline:** 10 quality gates, completion council, healing, memory -- these took months to build and validate. A new Agent SDK project starts from zero.
+2. **Battle-tested pipeline:** 8 quality gates, completion council, healing, memory -- these took months to build and validate. A new Agent SDK project starts from zero.
 3. **Open source and self-hosted:** No dependency on Anthropic's platform decisions.
 4. **Research foundation:** Built on patterns from OpenAI, DeepMind, Anthropic, and academic research. Not just engineering, but applied AI safety research (Constitutional AI, anti-sycophancy, alignment faking detection).
 

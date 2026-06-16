@@ -16,7 +16,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Directory to scan. Defaults to the repo containing this script (so
+# run-all-tests.sh keeps scanning loki-mode unchanged). A run.sh gate wrapper
+# MUST set LOKI_SCAN_DIR to the target project; cwd is NOT used by find here,
+# so `cd TARGET_DIR` alone does not redirect the scan.
+PROJECT_DIR="${LOKI_SCAN_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STRICT="${1:-}"
 
 RED='\033[0;31m'

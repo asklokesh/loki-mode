@@ -294,7 +294,7 @@ echo ""
 echo "Quality Gate: PASSED"
 echo ""
 
-info "Critical/High/Medium issues BLOCK the pipeline"
+info "Critical/High issues BLOCK the pipeline; Medium/Low advisory"
 info "Low/Cosmetic issues become TODO comments"
 pause
 

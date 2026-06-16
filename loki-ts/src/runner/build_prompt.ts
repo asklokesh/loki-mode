@@ -212,7 +212,7 @@ const ANALYSIS_INSTRUCTION =
 // prompt is prefixed with "ultracode: " so the three-pass reverse-engineer-a-PRD
 // flow runs as a workflow fan-out. When the three-pass path is chosen, the
 // instruction stays UNCHANGED (byte-identical default). This NEVER touches the
-// council, the 11 gates, the evidence gate, or the RARV loop -- only this one
+// council, the 8 gates, the evidence gate, or the RARV loop -- only this one
 // read-only analysis instruction. Parity-locked with the bash route in
 // autonomy/run.sh (run_autonomous decides once, build_prompt prefixes).
 //

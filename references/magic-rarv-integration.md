@@ -84,4 +84,4 @@ PRD says: "Add a login form with email, password, and submit button."
 - `skills/magic-modules.md` -- skill module for agents
 - `references/magic-modules-patterns.md` -- full API and pattern reference
 - `references/memory-system.md` -- memory engine details
-- `skills/quality-gates.md` -- all 12 gates documented
+- `skills/quality-gates.md` -- all 8 deterministic quality gates documented

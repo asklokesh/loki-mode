@@ -2,9 +2,18 @@
 # Test Mutation Detector - Quality Gate #9
 # Verifies that test assertions exercise real code paths
 #
-# Usage: ./tests/detect-test-mutations.sh [--strict] [--commit HASH]
-#   --strict: Exit with error code on any finding (for CI)
+# Usage: ./tests/detect-test-mutations.sh [--strict] [--block-high] [--commit HASH]
+#   --strict: Exit 1 on ANY finding (HIGH/MEDIUM/LOW) -- for CI; over-blocks
+#   --block-high: Exit 2 when one or more HIGH-severity findings are present,
+#                 0 otherwise. Does NOT block on MEDIUM/LOW. This is the clean
+#                 exit-code contract for the run.sh mutation gate wrapper, so it
+#                 does not have to grep stdout. --strict takes precedence if both
+#                 are passed.
 #   --commit HASH: Check specific commit for assertion value mutations
+#
+# Output contract: every HIGH-severity finding prints a line beginning with the
+# literal token "[HIGH]" on stdout (ANSI-colored), so a wrapper may also grep
+# '\[HIGH\]' as an alternative to --block-high.
 #
 # Detects:
 # 1. Shell tests where functions are redefined to return canned output
@@ -16,14 +25,21 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Directory to scan. Defaults to the repo containing this script (so
+# run-all-tests.sh keeps scanning loki-mode unchanged). A run.sh gate wrapper
+# MUST set LOKI_SCAN_DIR to the target project; cwd is NOT used by find/git here,
+# so `cd TARGET_DIR` alone does not redirect the scan. The Check-5 git history is
+# also read from this directory.
+PROJECT_DIR="${LOKI_SCAN_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STRICT=""
+BLOCK_HIGH=""
 COMMIT_HASH=""
 
 # Parse arguments
 while [ $# -gt 0 ]; do
     case "$1" in
         --strict) STRICT="--strict"; shift ;;
+        --block-high) BLOCK_HIGH="--block-high"; shift ;;
         --commit) COMMIT_HASH="$2"; shift 2 ;;
         *) shift ;;
     esac
@@ -36,6 +52,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 FINDINGS=0
+HIGH_FINDINGS=0
 
 echo "=========================================="
 echo "Test Mutation Detector - Quality Gate #9"
@@ -48,7 +65,7 @@ report() {
     local message="$3"
 
     case "$severity" in
-        HIGH)   echo -e "${RED}[HIGH]${NC}   $file - $message" ;;
+        HIGH)   echo -e "${RED}[HIGH]${NC}   $file - $message"; ((HIGH_FINDINGS++)) ;;
         MEDIUM) echo -e "${YELLOW}[MEDIUM]${NC} $file - $message" ;;
         LOW)    echo -e "${CYAN}[LOW]${NC}    $file - $message" ;;
     esac
@@ -140,7 +157,14 @@ if [ -n "$COMMITS_TO_CHECK" ]; then
             if echo "$file" | grep -qE '\.(test|spec)\.(ts|js|tsx|jsx)$|^tests?/|test_.*\.py$'; then
                 has_test=true
                 test_files_changed="$test_files_changed $file"
-            elif echo "$file" | grep -qE '\.(ts|js|tsx|jsx|py|sh)$' | grep -vqE '\.md$|\.json$|\.yml$|\.yaml$' 2>/dev/null; then
+            elif echo "$file" | grep -qE '\.(ts|js|tsx|jsx|py|sh)$'; then
+                # Implementation source file. The broken `grep -q ... | grep -vq`
+                # pipe that previously gated this branch always evaluated false
+                # (grep -q emits no stdout, so the piped grep saw empty input and
+                # exited 1), which left has_impl permanently false and made the
+                # entire HIGH commit-mutation path dead. The .md/.json/.yml
+                # extensions cannot match the .ts/.js/... pattern above, so the
+                # exclusion grep was redundant and has been removed.
                 has_impl=true
                 impl_files_changed="$impl_files_changed $file"
             fi
@@ -173,9 +197,19 @@ echo "=========================================="
 echo "Results: $FINDINGS finding(s)"
 echo "=========================================="
 
+echo "  HIGH:    $HIGH_FINDINGS"
+
+# --strict takes precedence: block on ANY finding (legacy CI behavior, unchanged).
 if [ "$STRICT" = "--strict" ] && [ $FINDINGS -gt 0 ]; then
     echo -e "${RED}GATE FAILED: $FINDINGS finding(s)${NC}"
     exit 1
+fi
+
+# --block-high: exit 2 only when HIGH-severity findings are present. MEDIUM/LOW
+# do not block (they are routed to the findings injector by the run.sh wrapper).
+if [ "$BLOCK_HIGH" = "--block-high" ] && [ $HIGH_FINDINGS -gt 0 ]; then
+    echo -e "${RED}GATE FAILED: $HIGH_FINDINGS HIGH-severity finding(s)${NC}"
+    exit 2
 fi
 
 if [ $FINDINGS -eq 0 ]; then

@@ -2,25 +2,42 @@
 
 **Never ship code without passing all quality gates.**
 
-## The 11 Quality Gates
+## The 8 Quality Gates
 
-1. **Input Guardrails** - Validate scope, detect injection, check constraints (OpenAI SDK)
-2. **Static Analysis** - CodeQL, ESLint/Pylint, type checking
-3. **Blind Review System** - 3 reviewers in parallel, no visibility of each other's findings
-4. **Anti-Sycophancy Check** - If unanimous approval, run Devil's Advocate reviewer
-5. **Output Guardrails** - Validate code quality, spec compliance, no secrets (tripwire on fail)
-6. **Severity-Based Blocking** - Critical/High/Medium = BLOCK; Low/Cosmetic = TODO comment
-7. **Test Coverage Gates** - Unit: 100% pass, >80% coverage; Integration: 100% pass
-8. **Mock Detector** - Classifies internal vs external mocks; flags tests that never import source code, tautological assertions, and high internal mock ratios
-9. **Test Mutation Detector** - Detects assertion value changes alongside implementation changes (test fitting), low assertion density, and missing pass/fail tracking
-10. **Backward Compatibility** - Behavioral preservation, friction safety, institutional knowledge retention (healing mode)
-11. **Documentation Coverage** - README exists, docs freshness within 10 commits, API docs for packages
+Every gate below is wired into the orchestration loop (`autonomy/run.sh`) and
+blocks completion when it fails. The table lists exactly what each gate detects,
+what it does NOT detect (so you never over-trust a green gate), its opt-out flag,
+and its blocking behavior. Transcribe this list verbatim; do not recompute it.
 
-## Gate 10: Backward Compatibility & Behavioral Preservation (v6.67.0)
+| # | Gate | Detects | Does NOT detect | Blocking | Opt-out flag |
+|---|------|---------|-----------------|----------|--------------|
+| 1 | Static Analysis | CodeQL, ESLint/Pylint, type-checker findings on the diff | Logic bugs that pass the linters | Yes (severity ladder) | `PHASE_STATIC_ANALYSIS=false` |
+| 2 | Test Suite (pass/fail) | Whether the project test runner passes or fails (red blocks) | Coverage % (not measured in this release) | Yes (red blocks) | `PHASE_UNIT_TESTS=false` |
+| 3 | Blind Code Review (3-reviewer council + severity blocking) | Correctness/security/design issues via 3 blind reviewers; Critical/High block, Medium/Low advisory | Issues none of the 3 reviewers surface | Yes (Crit/High block) | `PHASE_CODE_REVIEW=false` |
+| 4 | Anti-Sycophancy / Devil's Advocate (on unanimous PASS) | Sycophantic unanimous approvals: a Devil's Advocate re-review on a unanimous PASS; its Crit/High findings block | Problems the Devil's Advocate reviewer also misses | Yes (DA Crit/High block) | `LOKI_GATE_DEVILS_ADVOCATE=false` |
+| 5 | Mock Integrity Detector | Tautological assertions, internal-mock ratio, tests that do not import source (`tests/detect-mock-problems.sh`); HIGH blocks | Semantic correctness of mocks (whether a mock faithfully models the real dependency) | Yes (HIGH blocks) | `LOKI_GATE_MOCK=false` |
+| 6 | Test Mutation Detector | Assertion-value churn alongside implementation changes (test-fitting), low assertion density (`tests/detect-test-mutations.sh`); HIGH blocks | Logically-correct-but-weak assertions | Yes (HIGH blocks) | `LOKI_GATE_MUTATION=false` |
+| 7 | Documentation Coverage | README presence, docs freshness within 10 commits, API docs for exported symbols in packages | Whether the docs are accurate or useful | Yes | `LOKI_GATE_DOC_COVERAGE=false` |
+| 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules; BLOCK-severity findings block | Issues outside the Magic Modules debate scope | Yes (BLOCK severity) | `LOKI_GATE_MAGIC_DEBATE=false` |
 
-**Triggered when:** `LOKI_HEAL_MODE=true` or `loki heal` is active, or diff touches files flagged in `.loki/healing/friction-map.json`.
+**Severity-based blocking** ties the review gates together: any Critical or High
+finding blocks completion. Medium, Low, and cosmetic findings are advisory and
+become TODO comments rather than blockers. It is the block policy inside code
+review (gate 3), not a separate gate function.
 
-**Purpose:** Prevent accidental removal of institutional logic or behavioral changes to legacy code without explicit documentation.
+**Follow-up (later release):** real coverage measurement (Fix A). Today gate 2
+decides purely on the test runner's pass/fail; the coverage percentage is not
+measured.
+
+### Conditional auditor (not numbered): Backward Compatibility (v6.67.0)
+
+This is a healing-mode SPECIALIST reviewer, not one of the 8 loop gates. It fires
+only when `LOKI_HEAL_MODE=true`, when `loki heal` is active, or when the diff
+touches files flagged in `.loki/healing/friction-map.json`. Greenfield projects
+skip it entirely. To suppress on a healing project, set `LOKI_HEAL_MODE=false`.
+
+**Purpose:** Prevent accidental removal of institutional logic or behavioral
+changes to legacy code without explicit documentation.
 
 **Checks:**
 1. **Friction Safety** - If modified code matches a friction-map entry, verify `safe_to_remove` is true or `classification` is `true_bug`
@@ -36,14 +53,9 @@
 - Missing adapter for replaced component = **High** (BLOCK)
 - Behavioral baseline mismatch without documentation = **Medium** (BLOCK)
 
-**Disabling**: gate 10 only fires when `LOKI_HEAL_MODE=true` or
-`.loki/healing/friction-map.json` exists in the project root (v7.4.20).
-Greenfield projects skip the auditor entirely. To suppress on a healing
-project, set `LOKI_HEAL_MODE=false`.
-
 ---
 
-## Gate 11: Documentation Coverage (v6.75.0)
+## Gate 7: Documentation Coverage (v6.75.0)
 
 **Triggers when:** Diff touches public APIs, new files added, library/package releases
 
@@ -61,25 +73,27 @@ project, set `LOKI_HEAL_MODE=false`.
 
 **Disabling (not recommended for packages):**
 ```bash
-LOKI_GATE_DOC_COVERAGE=false  # Disable gate 11
+LOKI_GATE_DOC_COVERAGE=false  # Disable gate 7
 ```
 
 ---
 
-## Gate 8 and 9: Automated Test Integrity
+## Gates 5 and 6: Automated Test Integrity
 
-Gates 8 (Mock Detector) and 9 (Test Mutation Detector) run during the VERIFY phase and are enabled by default.
+Gate 5 (Mock Integrity Detector) and gate 6 (Test Mutation Detector) run during
+the VERIFY phase and are enabled by default (opt-out, never opt-in).
 
 **How they run:**
-- Gate 8 runs `tests/detect-mock-problems.sh` against all test files in the project
-- Gate 9 runs `tests/detect-test-mutations.sh` against recent commits (default: last 5, or use `--commit HASH` for targeted checks)
+- Gate 5 runs `tests/detect-mock-problems.sh` against all test files in the project
+- Gate 6 runs `tests/detect-test-mutations.sh` against recent commits (default: last 5, or use `--commit HASH` for targeted checks)
 - Both produce findings at HIGH/MEDIUM/LOW severity levels
-- HIGH findings = automatic FAIL (same as other blocking gates)
+- HIGH findings = automatic FAIL (same as other blocking gates); MED/LOW route to the findings-injection file for the next iteration rather than blocking
 
-**Disabling**: gates 8 and 9 are baked into the test pipeline (the bash
-scripts at `tests/detect-mock-problems.sh` and
-`tests/detect-test-mutations.sh`); they have no env-var toggle today.
-Skip the gate by not running the script in your CI.
+**Disabling:**
+```bash
+LOKI_GATE_MOCK=false      # Disable gate 5 (Mock Integrity Detector)
+LOKI_GATE_MUTATION=false  # Disable gate 6 (Test Mutation Detector)
+```
 
 ---
 
@@ -647,12 +661,12 @@ velocity_quality_balance:
   before_commit:
     - static_analysis: "Run ESLint/Pylint/CodeQL - warnings must not increase"
     - complexity_check: "Cyclomatic complexity must not increase >10%"
-    - test_coverage: "Coverage must not decrease"
+    - test_suite: "Tests must pass (coverage % not measured in this release)"
 
   thresholds:
     max_new_warnings: 0  # Zero tolerance for new warnings
     max_complexity_increase: 10%  # Per file, per commit
-    min_coverage: 80%  # Never drop below
+    coverage_target: 80%  # Target/threshold only; not measured this release (Fix A follow-up)
 
   if_threshold_violated:
     action: "BLOCK commit, fix before proceeding"
@@ -665,7 +679,6 @@ velocity_quality_balance:
 .loki/metrics/quality/
 +-- warnings.json      # Static analysis warning count over time
 +-- complexity.json    # Cyclomatic complexity per file
-+-- coverage.json      # Test coverage percentage
 +-- velocity.json      # Lines added/commits per hour
 +-- ratio.json         # Quality/Velocity ratio (must stay positive)
 ```
@@ -872,7 +885,7 @@ Task(prompt="Stage 2: Check code quality ONLY...")
 |----------|--------|
 | Critical | BLOCK - fix immediately |
 | High | BLOCK - fix before commit |
-| Medium | BLOCK - fix before merge |
+| Medium | Advisory - TODO comment, fix recommended |
 | Low | TODO comment, fix later |
 | Cosmetic | Note, optional fix |
 

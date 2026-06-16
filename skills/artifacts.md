@@ -36,7 +36,7 @@ format: "markdown"
 contents:
   - Phase name and duration
   - Tasks completed (from queue)
-  - Quality gate results (9 gates)
+  - Quality gate results (8 gates)
   - Coverage metrics
   - Known issues / TODOs
 ```

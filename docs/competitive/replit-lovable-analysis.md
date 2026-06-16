@@ -316,7 +316,7 @@ Replit Agent has evolved rapidly through four major versions:
 | Self-testing loop | Yes | No | Yes (RARV cycle) |
 | Code review | No | No | Yes (3-reviewer blind review) |
 | Anti-sycophancy | No | No | Yes (devil's advocate) |
-| Quality gates | No | Security scan only | 10 gates |
+| Quality gates | No | Security scan only | 8 gates |
 | Memory system | No | Project knowledge | Episodic/semantic/procedural |
 | Model selection | Platform-chosen | Platform-chosen | Task-aware (Opus/Sonnet/Haiku) |
 | Multi-provider support | No (Replit only) | No (Lovable only) | Yes (Claude/Codex/Gemini/Cline/Aider) |
@@ -393,7 +393,7 @@ Loki Mode operates as a true autonomous engineering system, not a prompt-respons
 
 ### 2. Quality Assurance
 
-Loki Mode's 10-gate quality system (static analysis, 3-reviewer blind review, anti-sycophancy, severity-based blocking, test coverage, backward compatibility) has no equivalent in either platform. Replit and Lovable have zero code review, zero anti-sycophancy, and minimal quality gates. This is Loki Mode's strongest differentiator.
+Loki Mode's 8-gate quality system (static analysis, test suite (pass/fail), blind 3-reviewer review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity, test-mutation, documentation coverage, Magic Modules debate; backward-compatibility is a conditional healing-mode auditor) has no equivalent in either platform. Replit and Lovable have zero code review, zero anti-sycophancy, and minimal quality gates. This is Loki Mode's strongest differentiator.
 
 ### 3. Multi-Provider and Multi-Model Intelligence
 
@@ -531,7 +531,7 @@ Replit now supports React Native/Expo with full backend and RevenueCat monetizat
 When positioning Loki Mode against Replit and Lovable, emphasize:
 
 1. **"No credit anxiety"** -- You pay your API provider directly. No surprise bills. No credits burned on AI mistakes.
-2. **"Production quality, not prototype quality"** -- 10 quality gates, 3-reviewer blind review, anti-sycophancy. Your code ships to production, not to a rewrite backlog.
+2. **"Production quality, not prototype quality"** -- 8 quality gates, 3-reviewer blind review, anti-sycophancy. Your code ships to production, not to a rewrite backlog.
 3. **"No lock-in"** -- Your code. Your infrastructure. Your choice of AI provider. Export is not a feature -- it is the default.
 4. **"Autonomous, not assistive"** -- Loki Mode does not wait for your next prompt. It plans, builds, tests, reviews, and deploys. You review the output, not babysit the process.
 5. **"Works with your codebase"** -- Legacy systems, brownfield projects, enterprise code. Not just greenfield MVPs.

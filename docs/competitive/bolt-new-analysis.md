@@ -409,7 +409,7 @@ These are bolt.new weaknesses that Loki Mode already solves or can emphasize:
 
 #### R5: Advertise Production Readiness as Key Differentiator
 - **bolt.new's gap**: 70% done code, no tests, no review, $5-20K remediation
-- **Loki Mode's advantage**: RARV cycle, 10 quality gates, 3-reviewer system, automated testing
+- **Loki Mode's advantage**: RARV cycle, 8 quality gates, 3-reviewer system, automated testing
 - **Action**: Create comparison content showing: "bolt.new gives you a prototype. Loki Mode gives you a product."
 - **Messaging**: "From PRD to production, not PRD to prototype"
 

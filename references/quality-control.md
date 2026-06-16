@@ -240,15 +240,15 @@ This diversity prevents groupthink and catches more issues.
 |----------|--------|-----------|
 | **Critical** | BLOCK - Fix immediately | NO |
 | **High** | BLOCK - Fix immediately | NO |
-| **Medium** | BLOCK - Fix before proceeding | NO |
+| **Medium** | Advisory - Add `// TODO(review): ...` comment | YES |
 | **Low** | Add `// TODO(review): ...` comment | YES |
 | **Cosmetic** | Add `// FIXME(nitpick): ...` comment | YES |
 
-**Critical/High/Medium = BLOCK and fix before proceeding**
-**Low/Cosmetic = Add TODO/FIXME comment, continue**
+**Critical/High = BLOCK and fix before proceeding**
+**Medium/Low/Cosmetic = Add TODO/FIXME comment, continue (advisory)**
 
 ### 4. Test Coverage Gates
-- Unit tests: 100% pass, >80% coverage
+- Unit tests: 100% pass (coverage % not measured in this release)
 - Integration tests: 100% pass
 - E2E tests: critical flows pass
 
@@ -445,7 +445,7 @@ Quality gates are enforced by `autonomy/CONSTITUTION.md`:
 **Pre-Commit (BLOCKING):**
 - Linting (auto-fix enabled)
 - Type checking (strict mode)
-- Contract tests (80% coverage minimum)
+- Contract tests (coverage % not enforced as a gate)
 - Spec validation (Spectral)
 
 **Post-Implementation (AUTO-FIX):**

@@ -7035,7 +7035,6 @@ enforce_test_coverage() {
 
     local min_coverage="${LOKI_MIN_COVERAGE:-80}"
     local test_passed=true
-    local coverage_pct=0
     local test_runner="none"
     local details=""
 
@@ -7262,12 +7261,12 @@ TREOF
     if [ "$test_passed" = "true" ]; then
         touch "$quality_dir/unit-tests.pass"
         rm -f "$loki_dir/signals/TESTS_FAILED" 2>/dev/null || true
-        log_info "Test coverage gate: $test_runner passed"
+        log_info "Test suite gate: $test_runner passed"
         return 0
     else
         rm -f "$quality_dir/unit-tests.pass"
         echo "tests_failed" > "$loki_dir/signals/TESTS_FAILED" 2>/dev/null || true
-        log_warn "Test coverage gate: $test_runner FAILED"
+        log_warn "Test suite gate: $test_runner FAILED"
         return 1
     fi
 }
@@ -7380,7 +7379,7 @@ run_doc_staleness_check() {
 }
 
 # ============================================================================
-# Documentation Quality Gate - Gate 11 (v6.75.0)
+# Documentation Quality Gate - Gate 7 (Documentation Coverage)
 # Checks README, documentation freshness, and package API docs
 # ============================================================================
 
@@ -7530,6 +7529,139 @@ run_magic_debate_gate() {
     fi
 
     log_info "Magic Modules Gate 12: PASS"
+    return 0
+}
+
+# ============================================================================
+# Mock Integrity Gate (P0-3): wire tests/detect-mock-problems.sh as a blocking
+# gate. The detector scans test files for mock patterns that mask real failures
+# (tautological assertions, inline-mock-only tests, conditional/empty bodies,
+# high internal-mock ratios). Invoked with --strict so it exits 1 iff CRITICAL
+# or HIGH findings exist; MED/LOW never block (they are routed to a findings
+# file for next-iteration injection). Opt out with LOKI_GATE_MOCK=false.
+#
+# Scan-target note: the wrapper exports LOKI_SCAN_DIR=TARGET_DIR at the detector
+# invocation, and the detector honors it (tests/detect-mock-problems.sh:23), so
+# the gate scans the target project, not the loki-mode tree. When LOKI_SCAN_DIR
+# is unset the detector falls back to its own repo (the default for loki-mode's
+# own test run); the wrapper always sets it, so the target is what gets scanned.
+# ============================================================================
+enforce_mock_integrity() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local quality_dir="$loki_dir/quality"
+    mkdir -p "$quality_dir"
+    local findings_file="$quality_dir/mock-findings.txt"
+    local detector="$SCRIPT_DIR/../tests/detect-mock-problems.sh"
+    local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"
+
+    if [ ! -f "$detector" ]; then
+        log_info "Mock integrity gate: detector not found, skipping (inconclusive)"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local output rc
+    output=$(cd "${TARGET_DIR:-.}" && LOKI_SCAN_DIR="${TARGET_DIR:-.}" \
+        timeout "$gate_timeout" bash "$detector" --strict 2>&1)
+    rc=$?
+
+    # timeout exit 124 -- treat as inconclusive (do not block on a hang)
+    if [ "$rc" -eq 124 ]; then
+        log_warn "Mock integrity gate: detector timed out after ${gate_timeout}s -- inconclusive"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    if [ "$rc" -ne 0 ]; then
+        # --strict exits 1 iff CRITICAL or HIGH found. Persist per-finding text.
+        {
+            echo "# Mock integrity findings (CRITICAL/HIGH block this iteration)"
+            echo "$output" | grep -E '\[(CRITICAL|HIGH|MEDIUM|LOW)\]' || true
+        } > "$findings_file"
+        log_warn "Mock integrity gate: CRITICAL/HIGH mock problems detected -- BLOCK"
+        return 1
+    fi
+
+    # Pass: record any MED/LOW findings for injection, then clear the block file.
+    local med_low
+    med_low=$(echo "$output" | grep -E '\[(MEDIUM|LOW)\]' || true)
+    if [ -n "$med_low" ]; then
+        {
+            echo "# Mock integrity advisory findings (MED/LOW, non-blocking)"
+            echo "$med_low"
+        } > "$findings_file"
+    else
+        rm -f "$findings_file" 2>/dev/null || true
+    fi
+    log_info "Mock integrity gate: PASS"
+    return 0
+}
+
+# ============================================================================
+# Test Mutation Integrity Gate (P0-3): wire tests/detect-test-mutations.sh as a
+# blocking gate. The detector flags assertion-value mutations that look like
+# test-fitting (tests changed to match buggy output). We do NOT pass --strict:
+# --strict blocks on ANY finding (over-blocks on MED/LOW). Instead we parse
+# stdout and block only when a [HIGH] line is present; MED/LOW are routed to a
+# findings file for next-iteration injection. Opt out with LOKI_GATE_MUTATION=false.
+#
+# Scan-target note: same as the mock gate -- the wrapper exports
+# LOKI_SCAN_DIR=TARGET_DIR and the detector honors it
+# (tests/detect-test-mutations.sh:33), so the gate scans the target project, not
+# the loki-mode tree. The Check-5 git history is also read from that directory.
+# ============================================================================
+enforce_mutation_integrity() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local quality_dir="$loki_dir/quality"
+    mkdir -p "$quality_dir"
+    local findings_file="$quality_dir/mutation-findings.txt"
+    local detector="$SCRIPT_DIR/../tests/detect-test-mutations.sh"
+    local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"
+
+    if [ ! -f "$detector" ]; then
+        log_info "Mutation integrity gate: detector not found, skipping (inconclusive)"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local output rc
+    # No --strict: it over-blocks on MED/LOW. Decide on [HIGH] lines instead.
+    output=$(cd "${TARGET_DIR:-.}" && LOKI_SCAN_DIR="${TARGET_DIR:-.}" \
+        timeout "$gate_timeout" bash "$detector" 2>&1)
+    rc=$?
+
+    if [ "$rc" -eq 124 ]; then
+        log_warn "Mutation integrity gate: detector timed out after ${gate_timeout}s -- inconclusive"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local high_count
+    high_count=$(echo "$output" | grep -c '\[HIGH\]' || true)
+    # grep -c returns 0 with no matches but may print empty under set -e edge; normalize.
+    [ -z "$high_count" ] && high_count=0
+
+    if [ "$high_count" -gt 0 ]; then
+        {
+            echo "# Test mutation findings (HIGH blocks this iteration)"
+            echo "$output" | grep -E '\[(HIGH|MEDIUM|MED|LOW)\]' || true
+        } > "$findings_file"
+        log_warn "Mutation integrity gate: $high_count HIGH test-fitting finding(s) -- BLOCK"
+        return 1
+    fi
+
+    # Pass: route any MED/LOW findings to injection file, else clear it.
+    local med_low
+    med_low=$(echo "$output" | grep -E '\[(MEDIUM|MED|LOW)\]' || true)
+    if [ -n "$med_low" ]; then
+        {
+            echo "# Test mutation advisory findings (MED/LOW, non-blocking)"
+            echo "$med_low"
+        } > "$findings_file"
+    else
+        rm -f "$findings_file" 2>/dev/null || true
+    fi
+    log_info "Mutation integrity gate: PASS"
     return 0
 }
 
@@ -7785,6 +7917,97 @@ MANAGED_REVIEW
     return 0
 }
 
+# _dispatch_reviewer: single-reviewer provider invocation, factored out of
+# run_code_review so the blind-council loop AND the Devil's-Advocate re-review
+# (P0-4) share ONE dispatch path. This preserves the load-bearing claude trust
+# guards (no --model/Fable routing, --bare, --disallowedTools, caveman OFF) for
+# both callers; a hand-written parallel dispatcher would drift from them.
+# Args: $1 = prompt text, $2 = output file path. Writes the model reply to $2.
+_dispatch_reviewer() {
+    local prompt_text="$1"
+    local review_output="$2"
+    case "${PROVIDER_NAME:-claude}" in
+        claude)
+            # SECURITY-REVIEW MODEL GUARD (evidence-based routing, item 4b):
+            # Reviewers deliberately do NOT pass --model, so they run on
+            # the account default model and are NEVER routed to Fable by a
+            # mid-flight model override or LOKI_FABLE_ARCHITECT (those only
+            # rewrite the iteration's tier_param, not this dispatch). This
+            # must stay true. The official model-config docs CONTRADICT
+            # routing security review to Fable: Fable's safety classifiers
+            # refuse cybersecurity content, and in non-interactive (-p)
+            # mode a flagged request ends the turn with stop_reason
+            # "refusal" instead of a transparent Opus re-run. A refused
+            # security reviewer would return no VERDICT and break the
+            # unanimous-council gate. Defensive-cyber capability lives in
+            # Mythos 5 (Project Glasswing), not Fable. If a future change
+            # adds --model here, the security-sentinel reviewer must be
+            # pinned to opus, never fable.
+            # EMBED 2 + 3 (v7.33.0). This is a trust-gate council subcall.
+            # $prompt_text is fully self-contained (the diff, changed files,
+            # checks, and strict VERDICT/FINDINGS output format), output is
+            # captured to $review_output, and it deliberately does NOT pass
+            # --model or go through buildAutoFlags. So:
+            #   EMBED 2 (--bare): the prompt needs no hooks/LSP/CLAUDE.md/
+            #     MCP discovery, so --bare is safe and cheaper. Opt out
+            #     LOKI_BARE_SUBCALLS=0.
+            #   EMBED 3 (--disallowedTools): raise the cost of a reviewer
+            #     casually mutating the tree (a parallel agent once ran
+            #     `git reset --hard` and wiped uncommitted work). Deny
+            #     Edit/Write/NotebookEdit + git mutation forms (incl. the
+            #     git -C / --git-dir evasions); read-only git stays allowed.
+            #     Guardrail, not a sandbox -- echo>/sed -i/etc. remain; the
+            #     real net is commit-before-agent-wave. Opt out
+            #     LOKI_REVIEW_TOOL_GUARD=0. See loki_review_guard_denylist.
+            local _rv_argv=("--dangerously-skip-permissions")
+            if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
+                _rv_argv+=("--bare")
+            fi
+            if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
+                _rv_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
+            fi
+            #   EMBED 3b (--allowedTools, #167): positive least-privilege
+            #     allowlist. DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1).
+            #     Emitted ALONGSIDE the denylist: verified live (claude
+            #     2.1.177) that deny precedence holds even under
+            #     --dangerously-skip-permissions, so the denylist still
+            #     hard-blocks mutations while this narrows the surface to
+            #     read/inspect tools. See loki_review_allowlist.
+            if type loki_review_allowlist_enabled >/dev/null 2>&1 && loki_review_allowlist_enabled; then
+                _rv_argv+=("--allowedTools" "$(loki_review_allowlist)")
+            fi
+            # caveman HARD-SUPPRESS (parsed output): this is a trust-gate
+            # subcall whose output is parsed for "^VERDICT:" + findings. A
+            # globally-active caveman would compress/reword that line and
+            # silently flip the verdict, so we UNCONDITIONALLY disable
+            # caveman here with CAVEMAN_DEFAULT_MODE=off (the activate hook
+            # then deletes its flag and emits nothing). Set inline, not via
+            # the helper, so the carve-out holds even when the helper is
+            # out of scope. No-op when caveman is absent.
+            CAVEMAN_DEFAULT_MODE=off \
+            claude "${_rv_argv[@]}" -p "$prompt_text" \
+                --output-format text > "$review_output" 2>/dev/null
+            ;;
+        codex)
+            codex exec --full-auto --skip-git-repo-check "$prompt_text" \
+                > "$review_output" 2>/dev/null
+            ;;
+        cline)
+            invoke_cline_capture "$prompt_text" \
+                > "$review_output" 2>/dev/null
+            ;;
+        aider)
+            invoke_aider_capture "$prompt_text" \
+                > "$review_output" 2>/dev/null
+            ;;
+        *)
+            echo "VERDICT: PASS" > "$review_output"
+            echo "FINDINGS:" >> "$review_output"
+            echo "- [Low] Unknown provider, review skipped" >> "$review_output"
+            ;;
+    esac
+}
+
 run_code_review() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
     local review_dir="$loki_dir/quality/reviews"
@@ -7873,7 +8096,7 @@ MANAGED_SELECTION
     # Select specialists via keyword scoring (python3 reads files, not env vars)
     # Loads from agents/types.json when available, falls back to hardcoded pool (v6.7.0)
     # v7.4.20: gate legacy-healing-auditor on healing-mode signals to match
-    # the documented contract in skills/quality-gates.md (Gate 10).
+    # the documented contract in skills/quality-gates.md (conditional backward-compat auditor, not one of the 8 numbered gates).
     local healing_active="false"
     if [ "${LOKI_HEAL_MODE:-}" = "true" ] || [ "${LOKI_HEAL_MODE:-}" = "1" ]; then
         healing_active="true"
@@ -7969,7 +8192,7 @@ if files_path and os.path.exists(files_path):
 search_text = diff_text + " " + files_text
 
 # v7.4.20: gate legacy-healing-auditor on healing-mode signals to match
-# skills/quality-gates.md (Gate 10) which documents it as conditional. The
+# skills/quality-gates.md (conditional backward-compat auditor, not one of the 8 numbered gates) which documents it as conditional. The
 # auditor BLOCKs on missing characterization tests / missing adapters, which
 # is a contract a greenfield project never agreed to maintain. agentbudget
 # regression: the auditor pinned 9 of 10 iterations to forced PAUSE because
@@ -8097,91 +8320,11 @@ BUILD_PROMPT
 
         log_step "Dispatching reviewer: $reviewer_name"
 
-        # Launch blind review in background (provider-specific)
+        # Launch blind review in background (shared dispatch helper).
         (
             local prompt_text
             prompt_text=$(cat "$review_prompt_file")
-            case "${PROVIDER_NAME:-claude}" in
-                claude)
-                    # SECURITY-REVIEW MODEL GUARD (evidence-based routing, item 4b):
-                    # Reviewers deliberately do NOT pass --model, so they run on
-                    # the account default model and are NEVER routed to Fable by a
-                    # mid-flight model override or LOKI_FABLE_ARCHITECT (those only
-                    # rewrite the iteration's tier_param, not this dispatch). This
-                    # must stay true. The official model-config docs CONTRADICT
-                    # routing security review to Fable: Fable's safety classifiers
-                    # refuse cybersecurity content, and in non-interactive (-p)
-                    # mode a flagged request ends the turn with stop_reason
-                    # "refusal" instead of a transparent Opus re-run. A refused
-                    # security reviewer would return no VERDICT and break the
-                    # unanimous-council gate. Defensive-cyber capability lives in
-                    # Mythos 5 (Project Glasswing), not Fable. If a future change
-                    # adds --model here, the security-sentinel reviewer must be
-                    # pinned to opus, never fable.
-                    # EMBED 2 + 3 (v7.33.0). This is a 3-reviewer council
-                    # subcall. $prompt_text is fully self-contained (built above
-                    # into $review_prompt_file with the diff, changed files,
-                    # checks, and strict VERDICT/FINDINGS output format), output
-                    # is captured to $review_output, and it deliberately does NOT
-                    # pass --model or go through buildAutoFlags. So:
-                    #   EMBED 2 (--bare): the prompt needs no hooks/LSP/CLAUDE.md/
-                    #     MCP discovery, so --bare is safe and cheaper. Opt out
-                    #     LOKI_BARE_SUBCALLS=0.
-                    #   EMBED 3 (--disallowedTools): raise the cost of a reviewer
-                    #     casually mutating the tree (a parallel agent once ran
-                    #     `git reset --hard` and wiped uncommitted work). Deny
-                    #     Edit/Write/NotebookEdit + git mutation forms (incl. the
-                    #     git -C / --git-dir evasions); read-only git stays allowed.
-                    #     Guardrail, not a sandbox -- echo>/sed -i/etc. remain; the
-                    #     real net is commit-before-agent-wave. Opt out
-                    #     LOKI_REVIEW_TOOL_GUARD=0. See loki_review_guard_denylist.
-                    local _rv_argv=("--dangerously-skip-permissions")
-                    if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
-                        _rv_argv+=("--bare")
-                    fi
-                    if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
-                        _rv_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
-                    fi
-                    #   EMBED 3b (--allowedTools, #167): positive least-privilege
-                    #     allowlist. DEFAULT OFF (opt-in LOKI_REVIEW_ALLOWLIST=1).
-                    #     Emitted ALONGSIDE the denylist: verified live (claude
-                    #     2.1.177) that deny precedence holds even under
-                    #     --dangerously-skip-permissions, so the denylist still
-                    #     hard-blocks mutations while this narrows the surface to
-                    #     read/inspect tools. See loki_review_allowlist.
-                    if type loki_review_allowlist_enabled >/dev/null 2>&1 && loki_review_allowlist_enabled; then
-                        _rv_argv+=("--allowedTools" "$(loki_review_allowlist)")
-                    fi
-                    # caveman HARD-SUPPRESS (parsed output): this is a trust-gate
-                    # subcall whose output is parsed for "^VERDICT:" + findings. A
-                    # globally-active caveman would compress/reword that line and
-                    # silently flip the verdict, so we UNCONDITIONALLY disable
-                    # caveman here with CAVEMAN_DEFAULT_MODE=off (the activate hook
-                    # then deletes its flag and emits nothing). Set inline, not via
-                    # the helper, so the carve-out holds even when the helper is
-                    # out of scope. No-op when caveman is absent.
-                    CAVEMAN_DEFAULT_MODE=off \
-                    claude "${_rv_argv[@]}" -p "$prompt_text" \
-                        --output-format text > "$review_output" 2>/dev/null
-                    ;;
-                codex)
-                    codex exec --full-auto --skip-git-repo-check "$prompt_text" \
-                        > "$review_output" 2>/dev/null
-                    ;;
-                cline)
-                    invoke_cline_capture "$prompt_text" \
-                        > "$review_output" 2>/dev/null
-                    ;;
-                aider)
-                    invoke_aider_capture "$prompt_text" \
-                        > "$review_output" 2>/dev/null
-                    ;;
-                *)
-                    echo "VERDICT: PASS" > "$review_output"
-                    echo "FINDINGS:" >> "$review_output"
-                    echo "- [Low] Unknown provider, review skipped" >> "$review_output"
-                    ;;
-            esac
+            _dispatch_reviewer "$prompt_text" "$review_output"
         ) &
         pids+=($!)
         register_pid "$!" "code-reviewer" "name=$reviewer_name"
@@ -8314,12 +8457,108 @@ AGG_SCRIPT
         "iteration=$ITERATION_COUNT"
 
     # Anti-sycophancy check: unanimous PASS is suspicious
-    if [ "$pass_count" -eq "$reviewer_count" ] && [ "$fail_count" -eq 0 ]; then
+    if [ "$pass_count" -eq "$reviewer_count" ] && [ "$fail_count" -eq 0 ] && [ "$reviewer_count" -gt 0 ]; then
         log_warn "ANTI-SYCOPHANCY: All $reviewer_count reviewers passed unanimously"
         log_warn "Devil's advocate note: Unanimous approval may indicate insufficient scrutiny"
         log_warn "Consider manual review of $review_dir/$review_id/"
         echo "UNANIMOUS_PASS: All reviewers approved - potential sycophancy risk" \
             >> "$review_dir/$review_id/anti-sycophancy.txt"
+
+        # P0-4: Devil's-Advocate re-review. The bare warning above was INERT --
+        # it never changed the verdict. Now, on unanimous PASS, dispatch ONE
+        # additional adversarial reviewer (reusing _dispatch_reviewer so the
+        # same trust guards + provider routing apply) whose sole job is to find
+        # a Critical/High issue the unanimous council missed. If it does, we set
+        # has_blocking=true so the EXISTING blocking decision below fires and the
+        # gate returns 1. Runs in the FOREGROUND (no &) so has_blocking mutates
+        # this (parent) shell, not a subshell. Opt out LOKI_GATE_DEVILS_ADVOCATE=false.
+        if [ "${LOKI_GATE_DEVILS_ADVOCATE:-true}" = "true" ]; then
+            log_info "Devil's Advocate: re-reviewing unanimous PASS for missed Critical/High issues..."
+            local da_output="$review_dir/$review_id/devils-advocate.txt"
+            local da_prompt_file="$review_dir/$review_id/devils-advocate-prompt.txt"
+            export LOKI_DA_PROMPT_DIFF_FILE="$diff_file"
+            export LOKI_DA_PROMPT_FILES_FILE="$files_file"
+            export LOKI_DA_PROMPT_OUT="$da_prompt_file"
+            python3 << 'BUILD_DA_PROMPT'
+import os
+
+with open(os.environ["LOKI_DA_PROMPT_FILES_FILE"], "r") as f:
+    files = f.read().strip()
+with open(os.environ["LOKI_DA_PROMPT_DIFF_FILE"], "r") as f:
+    diff = f.read().strip()
+
+prompt = f"""You are a Devil's Advocate reviewer. Three independent reviewers ALL approved this change. Unanimous approval is a red flag for insufficient scrutiny. Your SOLE job is to find a Critical or High severity issue they missed.
+
+Be adversarial and concrete. Hunt for: security holes, data loss, race conditions, broken error handling, silent failures, off-by-one and boundary bugs, resource leaks, injection, and logic that does not match intent. Do NOT rubber-stamp. If after genuine effort you find no Critical/High issue, say so honestly -- do not invent one.
+
+Files changed:
+{files}
+
+Diff:
+{diff}
+
+Output format (STRICT - follow exactly):
+VERDICT: PASS or FAIL
+FINDINGS:
+- [severity] description (file:line)
+Severity levels: Critical, High, Medium, Low
+
+Output VERDICT: FAIL only if you found a real Critical or High issue. Otherwise output VERDICT: PASS."""
+
+with open(os.environ["LOKI_DA_PROMPT_OUT"], "w") as f:
+    f.write(prompt)
+BUILD_DA_PROMPT
+            unset LOKI_DA_PROMPT_DIFF_FILE LOKI_DA_PROMPT_FILES_FILE LOKI_DA_PROMPT_OUT
+
+            local da_prompt_text
+            da_prompt_text=$(cat "$da_prompt_file")
+            # Foreground (no &) so a Critical/High finding can set has_blocking
+            # in THIS shell. || true so a non-zero CLI exit under set -e does not
+            # abort the gate; a missing/empty reply is treated as no finding.
+            _dispatch_reviewer "$da_prompt_text" "$da_output" || true
+
+            if [ -f "$da_output" ] && [ -s "$da_output" ]; then
+                local da_verdict
+                da_verdict=$(grep -i "^VERDICT:" "$da_output" | head -1 | sed 's/^VERDICT:[[:space:]]*//' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+                if [ "$da_verdict" = "FAIL" ] && grep -qiE "\[(Critical|High)\]" "$da_output"; then
+                    has_blocking=true
+                    # Audit accuracy: aggregate.json was written above (line ~8429)
+                    # with has_blocking=false (entering this block requires a
+                    # unanimous PASS, so the field was necessarily false). The DA
+                    # only ever raises it false->true, so patch the persisted
+                    # record to reflect the final outcome. Targeted field update
+                    # (not a re-move of the write) keeps every other reader of
+                    # aggregate.json undisturbed.
+                    export LOKI_DA_AGG_FILE="$review_dir/$review_id/aggregate.json"
+                    python3 << 'DA_AGG_PATCH' || true
+import json, os
+agg_file = os.environ["LOKI_DA_AGG_FILE"]
+try:
+    with open(agg_file) as f:
+        data = json.load(f)
+    data["has_blocking"] = True
+    with open(agg_file, "w") as f:
+        json.dump(data, f, indent=2)
+except (OSError, ValueError):
+    pass
+DA_AGG_PATCH
+                    unset LOKI_DA_AGG_FILE
+                    log_error "DEVIL'S ADVOCATE: found Critical/High issue the unanimous council missed -- BLOCK"
+                    {
+                        echo "DEVILS_ADVOCATE_BLOCK: Critical/High found after unanimous PASS"
+                        grep -iE "\[(Critical|High)\]" "$da_output" || true
+                    } >> "$review_dir/$review_id/anti-sycophancy.txt"
+                else
+                    log_info "Devil's Advocate: no additional Critical/High issues found"
+                    echo "DEVILS_ADVOCATE_PASS: no Critical/High beyond unanimous council" \
+                        >> "$review_dir/$review_id/anti-sycophancy.txt"
+                fi
+            else
+                log_warn "Devil's Advocate: no usable output (treating as no finding)"
+                echo "DEVILS_ADVOCATE_NO_OUTPUT: reviewer produced no usable reply" \
+                    >> "$review_dir/$review_id/anti-sycophancy.txt"
+            fi
+        fi
     fi
 
     # Blocking decision
@@ -13963,14 +14202,14 @@ if __name__ == "__main__":
             fi
             # Test coverage gate
             if [ "${PHASE_UNIT_TESTS:-true}" = "true" ]; then
-                log_info "Quality gate: test coverage..."
+                log_info "Quality gate: test suite (pass/fail)..."
                 if enforce_test_coverage; then
                     clear_gate_failure "test_coverage"
                 else
                     local tc_count
                     tc_count=$(track_gate_failure "test_coverage")
                     gate_failures="${gate_failures}test_coverage,"
-                    log_warn "Test coverage gate FAILED ($tc_count consecutive) - must pass next iteration"
+                    log_warn "Test suite gate FAILED ($tc_count consecutive) - must pass next iteration"
                 fi
             fi
             # BUG-ST-002: Check pause signal between quality gates (after test coverage)
@@ -13980,6 +14219,30 @@ if __name__ == "__main__":
                     echo "$gate_failures" > "${TARGET_DIR:-.}/.loki/quality/gate-failures.txt"
                 fi
                 continue
+            fi
+            # Mock integrity gate (P0-3): block on CRITICAL/HIGH mock problems.
+            if [ "${LOKI_GATE_MOCK:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: mock integrity..."
+                if enforce_mock_integrity; then
+                    clear_gate_failure "mock_integrity"
+                else
+                    local mk_count
+                    mk_count=$(track_gate_failure "mock_integrity")
+                    gate_failures="${gate_failures}mock_integrity,"
+                    log_warn "Mock integrity gate FAILED ($mk_count consecutive) - CRITICAL/HIGH mock problems"
+                fi
+            fi
+            # Test mutation integrity gate (P0-3): block on HIGH test-fitting.
+            if [ "${LOKI_GATE_MUTATION:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: test mutation integrity..."
+                if enforce_mutation_integrity; then
+                    clear_gate_failure "mutation_integrity"
+                else
+                    local mt_count
+                    mt_count=$(track_gate_failure "mutation_integrity")
+                    gate_failures="${gate_failures}mutation_integrity,"
+                    log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
+                fi
             fi
             # Code review gate (upgraded from advisory, with escalation)
             if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
@@ -14052,7 +14315,7 @@ if __name__ == "__main__":
             if [ "$ITERATION_COUNT" -gt 0 ]; then
                 run_doc_staleness_check
             fi
-            # Documentation quality gate - Gate 11 (v6.75.0)
+            # Documentation quality gate - Gate 7 (Documentation Coverage)
             if [ "${LOKI_GATE_DOC_COVERAGE:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: documentation coverage..."
                 if run_doc_quality_gate; then

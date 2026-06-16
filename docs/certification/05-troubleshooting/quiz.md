@@ -67,11 +67,11 @@ D) Removes the entire `.loki/` directory
 
 ---
 
-**Question 8:** Which environment variable disables Gate 8 (Mock Detector)?
+**Question 8:** Which environment variable disables Gate 5 (Mock Integrity Detector)?
 
-A) `LOKI_SKIP_MOCK_CHECK=true`
+A) `LOKI_GATE_MOCK=false`
 B) `LOKI_GATE_MOCK_DETECTOR=false`
-C) `LOKI_DISABLE_GATE_8=true`
+C) `LOKI_DISABLE_GATE_5=true`
 D) `LOKI_NO_MOCK_DETECTION=true`
 
 ---

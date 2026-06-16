@@ -241,17 +241,18 @@ sleep 1.5
 # ==============================================================
 # PART 5: QUALITY GATES
 # ==============================================================
-banner "7-GATE QUALITY SYSTEM"
+banner "8-GATE QUALITY SYSTEM"
 echo ""
 pass "[1] Static Analysis" "ESLint 0 errors, TypeScript strict"
-pass "[2] Blind Review" "5/5 specialist reviewers approved"
-pass "[3] Anti-Sycophancy" "Devil's advocate issue resolved"
-pass "[4] Severity Check" "0 Critical, 0 High blocking"
-pass "[5] Unit Tests" "68/68 passing (94% coverage)"
-pass "[6] Integration Tests" "12/12 passing"
-pass "[7] E2E Tests" "8/8 Playwright scenarios"
+pass "[2] Test Suite" "68/68 passing"
+pass "[3] Blind Code Review" "3/3 reviewers approved (Critical/High block)"
+pass "[4] Anti-Sycophancy" "Devil's advocate re-review clean"
+pass "[5] Mock Integrity" "No tautological assertions"
+pass "[6] Test Mutation" "No assertion-churn detected"
+pass "[7] Documentation Coverage" "README + API docs present"
+pass "[8] Magic Modules Debate" "Spec-vs-impl debate clean"
 echo ""
-echo -e "  ${GREEN}ALL 7 GATES PASSED${NC}"
+echo -e "  ${GREEN}ALL 8 GATES PASSED${NC}"
 echo ""
 sleep 1.5
 

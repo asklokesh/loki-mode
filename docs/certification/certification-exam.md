@@ -49,7 +49,7 @@ D) test-coverage-auditor
 A) 3
 B) 5
 C) 7
-D) 9
+D) 8
 
 ---
 
@@ -71,12 +71,12 @@ D) complex
 
 ---
 
-**Question 8:** What is the minimum test coverage required by Gate 7?
+**Question 8:** What does Gate 7 (Documentation Coverage) check?
 
-A) 50%
-B) 60%
-C) 80%
-D) 100%
+A) That unit test coverage is at least 80%
+B) That every function has an inline comment
+C) That a README exists, docs are fresh within 10 commits, and packages have API docs
+D) That cyclomatic complexity stays under 10
 
 ---
 
@@ -439,11 +439,11 @@ D) Removes the entire `.loki/` directory
 
 ---
 
-**Question 48:** Which environment variable disables Gate 8 (Mock Detector)?
+**Question 48:** Which environment variable disables Gate 5 (Mock Integrity Detector)?
 
-A) `LOKI_GATE_MOCK_DETECTOR=false`
+A) `LOKI_GATE_MOCK=false`
 B) `LOKI_SKIP_MOCK_CHECK=true`
-C) `LOKI_DISABLE_GATE_8=true`
+C) `LOKI_DISABLE_GATE_5=true`
 D) `LOKI_NO_MOCK_DETECTION=true`
 
 ---

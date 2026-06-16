@@ -25,7 +25,7 @@ and pass council. Status snapshots are based on the v7.4.3 codebase.
 | Completion council | `loki-ts/src/runner/completion.ts` | 100-run synthetic parity vs `autonomy/completion-council.sh`; verdict divergence < 1%; severity budget + unanimous+DA logic mirrors `completion-council.sh:1337-1345` | Scaffolded only; no parity harness yet |
 | Code review | `loki-ts/src/runner/council.ts` | Single-writer invariant on `.loki/quality/reviews/<id>/*.txt` preserved; dashboard reads still work | Scaffolded only; needs 3-reviewer parallel logic |
 | Provider invocation (TS path) | `loki-ts/src/runner/providers.ts` | Real `claude -p`, `codex exec`, `gemini`, `cline`, `aider` subprocess calls succeed end-to-end on a real PRD | Scaffolded; no real-provider integration test recorded |
-| Quality gates pipeline | `loki-ts/src/runner/quality_gates.ts` | All 9 gates from `skills/quality-gates.md` invoked from TS runner; gate 6 (backward-compat / healing) preserved | Scaffolded |
+| Quality gates pipeline | `loki-ts/src/runner/quality_gates.ts` | All 8 gates from `skills/quality-gates.md` invoked from TS runner; gate 6 (backward-compat / healing) preserved | Scaffolded |
 | Task queues | `loki-ts/src/runner/queues.ts` | `.loki/queue/pending.json` schema preserved byte-for-byte; dashboard `/api/queue/*` keeps working | Scaffolded |
 | Phase 5 release tag | `git tag` | `v7.5.0` (or last 7.x minor) shipped containing all of the above | NOT SHIPPED (current tag v7.4.3) |
 

@@ -14,7 +14,7 @@ Named after the Norse god of mischief, Loki Mode operates autonomously and can s
 
 ### Is Loki Mode free?
 
-Yes, Loki Mode is open source under the MIT license. However, you need API access to Claude or Codex (which have their own pricing).
+Yes, Loki Mode is free and source-available under the BUSL-1.1 license. However, you need API access to Claude or Codex (which have their own pricing).
 
 ### What AI providers are supported?
 

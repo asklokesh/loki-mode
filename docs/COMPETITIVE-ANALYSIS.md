@@ -20,7 +20,7 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 | Adoption | 594 stars, 6K/wk npm | 11,903 stars, 21K/wk npm | GSD (20x) |
 | Simplicity | Complex (5.4K-line run.sh, 12 Python modules) | Simple (markdown agents + slash commands) | GSD |
 | Full autonomy | Walk away, come back to deployed product | Human checkpoints at discuss/verify/milestone | Loki |
-| Quality gates | 9-gate + Completion Council + anti-sycophancy | User verification only | Loki |
+| Quality gates | 8-gate + Completion Council + anti-sycophancy | User verification only | Loki |
 | Memory system | Episodic/semantic/procedural + vector search | None | Loki |
 | Context management | Standard | Fresh subagent contexts per task (core innovation) | GSD |
 | Time to value | Learn architecture, understand CLI flags | `npx get-shit-done-cc` and go | GSD |

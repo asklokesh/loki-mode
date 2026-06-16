@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.46.0] - 2026-06-16
+
+### Verification-credibility sweep (the trust layer is now honest and real)
+
+This release makes Loki's verification layer match its claims. An internal audit
+found gates that were advertised but hollow, unwired, or described inaccurately.
+The fix: make every gate real or stop claiming it. The deterministic gate set is
+now an honest 8.
+
+- **Mock-integrity and test-mutation detectors are now wired as blocking gates.**
+  `tests/detect-mock-problems.sh` and `tests/detect-test-mutations.sh` existed but
+  were never invoked by the build loop. They now run every iteration: HIGH-severity
+  findings block; Medium/Low are advisory and injected into the next iteration.
+  Opt out with `LOKI_GATE_MOCK=0` / `LOKI_GATE_MUTATION=0`. Both detectors honor
+  `LOKI_SCAN_DIR` so they scan the target project, not the Loki install.
+- **Anti-sycophancy now acts, not just logs.** On a unanimous code-review PASS, a
+  Devil's-Advocate reviewer is dispatched; a Critical/High finding blocks
+  completion. Previously this path only wrote an audit note. Opt out with
+  `LOKI_GATE_DEVILS_ADVOCATE=0`.
+- **Test-coverage gate honesty.** The gate ran tests for pass/fail but never
+  measured a coverage percentage, while docs claimed ">80% coverage". Docs and
+  log labels now state pass/fail accurately; the `min_coverage` JSON field is
+  retained as a target. Real coverage measurement is a planned follow-up.
+- **Phantom gates removed.** "Input Guardrails" and "Output Guardrails" were
+  listed among the gates but had no implementation. Removed. The canonical count
+  is now 8: static analysis, test suite (pass/fail), blind 3-reviewer code review
+  with severity blocking, anti-sycophancy Devil's Advocate, mock integrity, test
+  mutation, documentation coverage, and Magic Modules debate. Backward-compat is a
+  conditional healing-mode auditor, not one of the 8.
+- **Severity-blocking documented accurately.** Code-review blocks on Critical/High
+  only; Medium/Low are advisory. Docs and the dashboard-served gate list now match
+  the code (previously several surfaces said Medium blocks).
+- **Bun-route parity** for the new gates and the Devil's-Advocate toggle in
+  `loki-ts/src/runner/quality_gates.ts`.
+- **Regression guards** added (`tests/test-p0-verification-sweep.sh`,
+  `tests/test-p0-gate-behavior.sh`, wired into local-ci) so gate-count and
+  severity-blocking claims cannot silently drift again.
+
+Reviewed by a 3-of-3 unanimous completion council. No runtime behavior changes
+beyond the gates now actually blocking on the conditions documented.
+
 ## [7.45.1] - 2026-06-15
 
 ### Fixed

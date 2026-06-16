@@ -69,6 +69,8 @@ export type GateOutcome = {
 export type GateName =
   | "static_analysis"
   | "test_coverage"
+  | "mock_integrity"
+  | "mutation_integrity"
   | "code_review"
   | "doc_coverage"
   | "magic_debate";
@@ -432,6 +434,108 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
   return { passed: false, detail: `test_coverage: npm test exit ${r.exitCode} -- ${tail}` };
 }
 
+// --- Mock + mutation integrity gates -------------------------------------
+//
+// Bash sources of truth (Slice A, run.sh):
+//   enforce_mock_integrity()      -> tests/detect-mock-problems.sh
+//   enforce_mutation_integrity()  -> tests/detect-test-mutations.sh
+//
+// Approach: artifact-reading, NOT direct script invocation. The detector
+// scripts derive their scan root as `$(cd "$SCRIPT_DIR/.." && pwd)` (the loki
+// install dir) and ignore cwd, so invoking them from this TS runner would
+// scan the loki install instead of the target project. Instead we read the
+// findings files the bash gate writes into the target's .loki/quality/ dir,
+// mirroring the established artifact-reading pattern in runTestCoverage
+// (readTestResultsArtifact, ~373).
+//
+// CROSS-SLICE CONTRACT (coordinate with Slice A / integrator before ship):
+//   - Mock findings file:     <lokiDir>/quality/mock-findings.txt
+//   - Mutation findings file: <lokiDir>/quality/mutation-findings.txt
+//   These are the raw stdout of the respective detector scripts. The detector
+//   scripts emit ANSI-colored severity tokens (e.g. "\033[0;31m[HIGH]\033[0m"),
+//   so we match on the `[HIGH]` / `[CRITICAL]` substring tokens, which survive
+//   the surrounding color codes (a naive anchored regex would not).
+//
+// Block policy (mirrors the bash exit-code semantics in section 4 of the P0
+// plan and the detector scripts):
+//   - Mock:     CRITICAL or HIGH -> block (detect-mock-problems.sh exits 1 on
+//               either). MED/LOW -> pass (routed to findings injection).
+//   - Mutation: HIGH only -> block (we do NOT use --strict, which over-blocks
+//               MED/LOW; the wrapper gates on the presence of a [HIGH] token).
+//
+// HONESTY: when the findings file is ABSENT the gate returns passed=true with a
+// "gate did not run" detail. Absence is NOT phrased as "clean" -- we never
+// manufacture a verdict from a missing artifact.
+
+function readFindingsArtifact(base: string, name: string): string | null {
+  const p = join(base, "quality", name);
+  if (!existsSync(p)) return null;
+  try {
+    return readFileSync(p, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+// Count occurrences of a severity token, tolerant of surrounding ANSI codes.
+// Matches "[HIGH]" / "[CRITICAL]" anywhere in the line.
+function hasSeverityToken(body: string, token: "HIGH" | "CRITICAL"): boolean {
+  return new RegExp(`\\[${token}\\]`, "i").test(body);
+}
+
+// Mirror of bash enforce_mock_integrity -> tests/detect-mock-problems.sh.
+// Reads <lokiDir>/quality/mock-findings.txt. Blocks on CRITICAL or HIGH.
+// Honors LOKI_STUB_GATE_MOCK_INTEGRITY for tests.
+export async function runMockIntegrity(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_MOCK_INTEGRITY";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("mock_integrity");
+
+  const base = ctx?.lokiDir ?? lokiDir();
+  const body = readFindingsArtifact(base, "mock-findings.txt");
+  if (body === null) {
+    return {
+      passed: true,
+      detail: "mock_integrity: no mock-findings.txt artifact -- gate did not run",
+    };
+  }
+  const critical = hasSeverityToken(body, "CRITICAL");
+  const high = hasSeverityToken(body, "HIGH");
+  if (critical || high) {
+    return {
+      passed: false,
+      detail: `mock_integrity: blocking findings present (critical=${critical} high=${high})`,
+    };
+  }
+  return { passed: true, detail: "mock_integrity: no critical/high findings" };
+}
+
+// Mirror of bash enforce_mutation_integrity -> tests/detect-test-mutations.sh.
+// Reads <lokiDir>/quality/mutation-findings.txt. Blocks ONLY on [HIGH] (we do
+// not use --strict, which over-blocks MED/LOW). Honors
+// LOKI_STUB_GATE_MUTATION_INTEGRITY for tests.
+export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_MUTATION_INTEGRITY";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("mutation_integrity");
+
+  const base = ctx?.lokiDir ?? lokiDir();
+  const body = readFindingsArtifact(base, "mutation-findings.txt");
+  if (body === null) {
+    return {
+      passed: true,
+      detail: "mutation_integrity: no mutation-findings.txt artifact -- gate did not run",
+    };
+  }
+  if (hasSeverityToken(body, "HIGH")) {
+    return {
+      passed: false,
+      detail: "mutation_integrity: [HIGH] finding present -- possible test fitting",
+    };
+  }
+  return { passed: true, detail: "mutation_integrity: no high findings" };
+}
+
 // --- Code review: 3-reviewer parallel council ----------------------------
 //
 // Bash source: autonomy/run.sh:6234-6646 (run_code_review, ~413 LOC).
@@ -647,6 +751,41 @@ FINDINGS:
 // own ReviewerFn to drive specific verdicts.
 export const stubReviewer: ReviewerFn = async () => "VERDICT: PASS\nFINDINGS:\n- (stub)";
 
+// P0-4 Devil's-Advocate prompt. Built ONLY on a unanimous PASS to stress-test
+// sycophantic agreement. Unlike a specialist reviewer (which looks for issues
+// in its lane), the DA is told the change was unanimously approved and is
+// instructed to actively argue it is WRONG. Same STRICT output contract as
+// buildReviewerPrompt so parseVerdict handles the result unchanged.
+export function buildDevilsAdvocatePrompt(reviewer: Reviewer, diff: string, files: string): string {
+  return `You are the ${reviewer.name}. ${reviewer.focus}.
+
+This change was just UNANIMOUSLY APPROVED by every reviewer on the council. That
+unanimity is itself a risk signal: it may indicate sycophantic agreement rather
+than a genuinely defect-free change. Your job is to DISAGREE on the merits. Find
+the strongest reason this change is wrong.
+
+Look for: ${reviewer.checks}.
+
+Files changed:
+${files.trim()}
+
+Diff:
+${diff.trim()}
+
+Output format (STRICT - follow exactly):
+VERDICT: PASS or FAIL
+FINDINGS:
+- [severity] description (file:line)
+Severity levels: Critical, High, Medium, Low
+
+Only output VERDICT: FAIL with a [Critical] or [High] finding if you can name a
+concrete, real defect. Do NOT manufacture issues. If after genuine adversarial
+scrutiny the change is sound, output:
+VERDICT: PASS
+FINDINGS:
+- None`;
+}
+
 // Parse a reviewer output blob into a structured verdict. Mirrors the bash
 // `grep -i "^VERDICT:"` + `grep -qiE "\[(Critical|High)\]"` checks at
 // autonomy/run.sh:6577-6594.
@@ -801,12 +940,61 @@ export async function runCodeReview(
     }
   }
 
-  // Anti-sycophancy note (autonomy/run.sh:6629-6635).
+  // Anti-sycophancy / Devil's Advocate (P0-4 parity with bash run.sh:8316+).
+  //
+  // Pre-P0-4 this block ONLY wrote anti-sycophancy.txt and was otherwise inert:
+  // a unanimous PASS sailed through with no adversarial re-check. P0-4 makes the
+  // gate ACT. On a unanimous PASS we now dispatch ONE Devil's-Advocate reviewer
+  // whose sole job is to argue the change is WRONG. If the DA returns a
+  // Critical/High finding we flip the result to blocking so the iteration does
+  // not pass on potentially-sycophantic unanimous approval.
+  //
+  // Gated behind LOKI_GATE_DEVILS_ADVOCATE (default on); set to "false" or "0"
+  // to disable. Uses the same truthiness convention as the other LOKI_GATE_*
+  // toggles (readToggles' flag helper) so the Bun route matches the bash gate
+  // guard at autonomy/run.sh:8473 ([ "${LOKI_GATE_DEVILS_ADVOCATE:-true}" =
+  // "true" ]): default-on, disabled by =false (not only =0).
+  //
+  // NOTE: the reviewer dispatcher is still the stub (stubReviewer returns
+  // "VERDICT: PASS") pending the providers.ts integration. Until that lands the
+  // DA dispatch is structurally correct but inert in production (the stub never
+  // returns a blocking verdict). Tests inject a ReviewerFn via opts.reviewer to
+  // exercise the blocking path. TODO(providers.ts): once real provider dispatch
+  // lands, the DA call below automatically becomes a live adversarial review.
   if (passCount === selection.reviewers.length && failCount === 0) {
     writeFileSync(
       join(reviewDir, "anti-sycophancy.txt"),
       `UNANIMOUS_PASS: All reviewers approved - potential sycophancy risk\n`,
     );
+
+    const daEnv = process.env["LOKI_GATE_DEVILS_ADVOCATE"];
+    const daEnabled = daEnv === undefined || daEnv === "" ? true : daEnv === "true" || daEnv === "1";
+    if (daEnabled) {
+      const daReviewer: Reviewer = {
+        name: "devils-advocate",
+        focus: "Adversarial re-review of a UNANIMOUSLY-approved change",
+        checks: "hidden critical/high defects the council missed: silent failure modes, untested error paths, security regressions, broken invariants, sycophantic agreement on a flawed change",
+      };
+      const daPrompt = buildDevilsAdvocatePrompt(daReviewer, diff, files);
+      writeFileSync(join(reviewDir, `${daReviewer.name}-prompt.txt`), daPrompt);
+      let daOutput: string;
+      try {
+        daOutput = await reviewer({ reviewer: daReviewer, diff, files, prompt: daPrompt });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Fail-safe: a thrown DA reviewer becomes a Critical so a broken
+        // adversarial pass cannot silently approve.
+        daOutput = `VERDICT: FAIL\nFINDINGS:\n- [Critical] devil's advocate threw: ${msg}`;
+      }
+      writeFileSync(join(reviewDir, `${daReviewer.name}.txt`), daOutput);
+      const daVerdict = parseVerdict(daReviewer.name, daOutput);
+      if (daVerdict.blocking) {
+        return {
+          passed: false,
+          detail: `code_review: ${passCount}/${selection.reviewers.length} pass but devil's advocate raised blocking severity (${reviewId})`,
+        };
+      }
+    }
   }
 
   if (hasBlocking) {
@@ -1314,6 +1502,8 @@ type GateToggles = {
   hardGates: boolean;
   staticAnalysis: boolean;
   testCoverage: boolean;
+  mockIntegrity: boolean;
+  mutationIntegrity: boolean;
   codeReview: boolean;
   docCoverage: boolean;
   magicDebate: boolean;
@@ -1329,6 +1519,8 @@ function readToggles(): GateToggles {
     hardGates: flag("LOKI_HARD_GATES", true),
     staticAnalysis: flag("PHASE_STATIC_ANALYSIS", true),
     testCoverage: flag("PHASE_UNIT_TESTS", true),
+    mockIntegrity: flag("LOKI_GATE_MOCK", true),
+    mutationIntegrity: flag("LOKI_GATE_MUTATION", true),
     codeReview: flag("PHASE_CODE_REVIEW", true),
     docCoverage: flag("LOKI_GATE_DOC_COVERAGE", true),
     magicDebate: flag("LOKI_GATE_MAGIC_DEBATE", true),
@@ -1474,6 +1666,8 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
   const sequence: Array<{ name: GateName; enabled: boolean; run: () => Promise<GateResult> }> = [
     { name: "static_analysis", enabled: toggles.staticAnalysis, run: () => runStaticAnalysis(ctx) },
     { name: "test_coverage", enabled: toggles.testCoverage, run: () => runTestCoverage(ctx) },
+    { name: "mock_integrity", enabled: toggles.mockIntegrity, run: () => runMockIntegrity(ctx) },
+    { name: "mutation_integrity", enabled: toggles.mutationIntegrity, run: () => runMutationIntegrity(ctx) },
     { name: "code_review", enabled: toggles.codeReview, run: () => runCodeReview(ctx) },
     { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },

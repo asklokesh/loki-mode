@@ -105,19 +105,20 @@ Full agent type definitions are in `references/agent-types.md`.
 
 ## Quality Gates
 
-Loki Mode enforces a 9-gate quality system. Code must pass all applicable gates before moving forward:
+Loki Mode enforces an 8-gate quality system. Code must pass all applicable gates before moving forward:
 
 | Gate | Name | Purpose |
 |------|------|---------|
-| 1 | Input Guardrails | Validate scope, detect injection, check constraints |
-| 2 | Static Analysis | CodeQL, ESLint/Pylint, type checking |
-| 3 | Blind Review System | 3 specialist reviewers in parallel, blind to each other |
-| 4 | Anti-Sycophancy Check | If reviewers unanimously approve, run a Devil's Advocate reviewer |
-| 5 | Output Guardrails | Validate code quality, spec compliance, no secrets |
-| 6 | Severity-Based Blocking | Critical/High/Medium = BLOCK; Low/Cosmetic = TODO |
-| 7 | Test Coverage Gates | Unit: 100% pass, >80% coverage; Integration: 100% pass |
-| 8 | Mock Detector | Flags tests that mock internal modules instead of real code |
-| 9 | Test Mutation Detector | Detects assertion value changes alongside implementation changes |
+| 1 | Static Analysis | CodeQL, ESLint/Pylint, type checking |
+| 2 | Test Suite (pass/fail) | Red blocks; coverage % not measured this release |
+| 3 | Blind Code Review (3-reviewer council + severity blocking) | 3 specialist reviewers in parallel, blind to each other; Critical/High = BLOCK; Medium/Low advisory |
+| 4 | Anti-Sycophancy / Devil's Advocate | If reviewers unanimously approve, run a Devil's Advocate reviewer |
+| 5 | Mock Integrity Detector | Flags tests that mock internal modules instead of real code |
+| 6 | Test Mutation Detector | Detects assertion value changes alongside implementation changes |
+| 7 | Documentation Coverage | README exists, docs freshness, API docs for packages |
+| 8 | Magic Modules Debate | Spec-vs-implementation debate on generated Magic Modules |
+
+A conditional backward-compatibility / legacy-healing auditor also runs in healing mode (not one of the 8 numbered gates).
 
 The blind review system (Gate 3) selects 3 reviewers from a pool of 5 named specialists:
 
@@ -179,4 +180,4 @@ Every Loki Mode project uses these files in the `.loki/` directory:
 
 ## Summary
 
-Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses 41 agent types organized into 8 domains, enforces quality through 9 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.
+Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses 41 agent types organized into 8 domains, enforces quality through 8 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.

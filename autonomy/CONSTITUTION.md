@@ -155,7 +155,7 @@ SKILL.md (~190 lines)         # Always loaded: RARV cycle, autonomy rules
 skills/
   00-index.md                  # Module routing table
   model-selection.md           # Task tool, parallelization
-  quality-gates.md             # 9-gate system, anti-sycophancy
+  quality-gates.md             # 8-gate system, anti-sycophancy
   testing.md                   # Playwright, E2E, property-based
   production.md                # CI/CD, batch processing
   agents.md                    # 41 agent types, A2A patterns
@@ -196,7 +196,14 @@ Main Worktree (orchestrator)
 
 ---
 
-## Quality Gates (9-Gate System)
+## Quality Gates
+
+Note: the canonical, implemented quality-gate set is the 8-gate system defined in
+`skills/quality-gates.md` (static analysis, test suite pass/fail, blind 3-reviewer
+code review with severity blocking, anti-sycophancy Devil's Advocate, mock
+integrity, test mutation, documentation coverage, Magic Modules debate). The
+list below is an aspirational SDLC taxonomy and may name phases that are not
+deterministic loop gates; treat `skills/quality-gates.md` as the source of truth.
 
 ### Gate 1: Static Analysis
 ```yaml

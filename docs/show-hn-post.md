@@ -2,7 +2,7 @@
 
 ## Title
 
-Show HN: Loki Mode - PRD in, tested code out (41 agent roles, 9 quality gates, RARV self-verification)
+Show HN: Loki Mode - PRD in, tested code out (41 agent roles, 8 quality gates, RARV self-verification)
 
 ## Body
 
@@ -40,7 +40,7 @@ Integrations: Jira, Slack, Teams, GitHub Actions.
 
 ## Feedback wanted
 
-- Is the 9-gate quality system overkill, or does it actually help for your use cases?
+- Is the 8-gate quality system overkill, or does it actually help for your use cases?
 - How do you handle the tension between autonomous agent speed and code review thoroughness?
 - What PRD complexity level breaks this approach? I have hit walls with highly coupled distributed systems.
 

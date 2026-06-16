@@ -227,7 +227,7 @@ Example MCP client config entry that authorizes the bootstrap:
 Run a task as a native Claude Code Dynamic Workflow (a background multi-agent
 fan-out) from inside Loki. This is a PASSTHROUGH: Loki prepends the `ultracode`
 keyword and lets Claude Code orchestrate the workflow; Loki adds no orchestration
-of its own and does not touch the council, the 11 quality gates, the evidence
+of its own and does not touch the council, the 8 quality gates, the evidence
 gate, or the RARV loop.
 
 Claude-provider-only and opt-in. Requires the claude CLI >= 2.1.154 with

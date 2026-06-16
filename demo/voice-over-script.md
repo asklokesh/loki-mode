@@ -143,7 +143,7 @@ Complete narration for Loki Mode demo video.
 >
 > [Show: Quality gate output]
 >
-> Critical, High, and Medium issues BLOCK the pipeline.
+> Critical and High issues BLOCK the pipeline; Medium and Low are advisory.
 > Low and Cosmetic issues get TODO comments but don't block.
 >
 > Tests must pass. Coverage must exceed 80%. No exceptions.

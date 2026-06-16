@@ -2,7 +2,7 @@
 # Loki Mode -- sentrux architectural-drift helper (v7.5.14).
 #
 # Why this exists:
-#   Loki's existing 11 quality gates and 3-reviewer council catch correctness
+#   Loki's existing 8 quality gates and 3-reviewer council catch correctness
 #   and behavioral regressions, but no current gate emits a deterministic,
 #   per-iteration architecture-drift signal. sentrux (https://github.com/sentrux/sentrux)
 #   is a Rust CLI that scores codebase structure (modularity, acyclicity,

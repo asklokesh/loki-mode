@@ -11,52 +11,59 @@ page run alongside and feed into that decision.
 
 ---
 
-## The 11 Quality Gates
+## The 8 Quality Gates
 
-| # | Gate | What it checks |
-|---|------|----------------|
-| 1 | Input Guardrails | Validate scope, detect prompt injection, check constraints |
-| 2 | Static Analysis | CodeQL, ESLint/Pylint, type checking |
-| 3 | Blind Review System | 3 reviewers in parallel, no visibility of each other's findings |
-| 4 | Anti-Sycophancy Check | On unanimous approval, run a Devil's Advocate reviewer |
-| 5 | Output Guardrails | Validate code quality, spec compliance, no secrets |
-| 6 | Severity-Based Blocking | Critical/High/Medium = BLOCK; Low/Cosmetic = TODO comment |
-| 7 | Test Coverage Gates | Unit: 100% pass, over 80% coverage; Integration: 100% pass |
-| 8 | Mock Detector | Flags tests that never import source, tautological assertions, high internal-mock ratios |
-| 9 | Test Mutation Detector | Detects assertion changes alongside implementation changes (test fitting), low assertion density |
-| 10 | Backward Compatibility | Behavioral preservation, friction safety, institutional-knowledge retention (healing mode) |
-| 11 | Documentation Coverage | README exists, docs freshness within 10 commits, API docs for packages |
+Every gate below is wired into the orchestration loop (`autonomy/run.sh`) and
+blocks completion when it fails. The "Does NOT detect" column is deliberate: a
+green gate is a bounded signal, not a proof of correctness.
 
-Severity-based blocking is the rule that ties them together: any Critical, High,
-or Medium finding blocks completion. Low and cosmetic findings become TODO
-comments rather than blockers.
+| # | Gate | Detects | Does NOT detect | Blocking | Opt-out flag |
+|---|------|---------|-----------------|----------|--------------|
+| 1 | Static Analysis | CodeQL, ESLint/Pylint, type-checker findings | Logic bugs that pass the linters | Yes (severity ladder) | `PHASE_STATIC_ANALYSIS=false` |
+| 2 | Test Suite (pass/fail) | Whether the project test runner passes or fails | Coverage % (not measured in this release) | Yes (red blocks) | `PHASE_UNIT_TESTS=false` |
+| 3 | Blind Code Review (3-reviewer council + severity blocking) | Correctness/security/design issues via 3 blind reviewers; Critical/High block, Medium/Low advisory | Issues none of the 3 reviewers surface | Yes (Crit/High block) | `PHASE_CODE_REVIEW=false` |
+| 4 | Anti-Sycophancy / Devil's Advocate (on unanimous PASS) | Sycophantic unanimous approvals via a Devil's Advocate re-review; its Crit/High findings block | Problems the Devil's Advocate reviewer also misses | Yes (DA Crit/High block) | `LOKI_GATE_DEVILS_ADVOCATE=false` |
+| 5 | Mock Integrity Detector | Tautological assertions, internal-mock ratio, tests that do not import source; HIGH blocks | Semantic correctness of mocks | Yes (HIGH blocks) | `LOKI_GATE_MOCK=false` |
+| 6 | Test Mutation Detector | Assertion-value churn alongside implementation changes (test-fitting), low assertion density; HIGH blocks | Logically-correct-but-weak assertions | Yes (HIGH blocks) | `LOKI_GATE_MUTATION=false` |
+| 7 | Documentation Coverage | README presence, docs freshness within 10 commits, API docs for packages | Whether the docs are accurate or useful | Yes | `LOKI_GATE_DOC_COVERAGE=false` |
+| 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules; BLOCK-severity findings block | Issues outside the Magic Modules debate scope | Yes (BLOCK severity) | `LOKI_GATE_MAGIC_DEBATE=false` |
 
-### Gate 10: Backward Compatibility (healing mode)
+Severity-based blocking is the rule that ties the review gates together: any
+Critical or High finding blocks completion. Medium, Low, and cosmetic findings
+become TODO comments rather than blockers. It is the block policy inside code
+review (gate 3), not a separate gate.
 
-Gate 10 fires only when `LOKI_HEAL_MODE=true`, when `loki heal` is active, or
-when the diff touches files listed in `.loki/healing/friction-map.json`.
-Greenfield projects skip it entirely. It prevents accidental removal of
-institutional logic or behavioral changes to legacy code without explicit
-documentation, checking friction safety, characterization-test coverage,
-business-rule comment preservation, adapter verification, and behavioral
-baselines.
+Coverage honesty: gate 2 decides purely on the test runner's pass/fail. The
+coverage percentage is not measured in this release. Real coverage measurement
+is a follow-up (Fix A).
 
-### Gate 11: Documentation Coverage
+### Conditional auditor (not numbered): Backward Compatibility (healing mode)
 
-Gate 11 fires when a diff touches public APIs, adds new files, or releases a
+This is a healing-mode SPECIALIST reviewer, not one of the 8 loop gates. It fires
+only when `LOKI_HEAL_MODE=true`, when `loki heal` is active, or when the diff
+touches files listed in `.loki/healing/friction-map.json`. Greenfield projects
+skip it entirely. It prevents accidental removal of institutional logic or
+behavioral changes to legacy code without explicit documentation, checking
+friction safety, characterization-test coverage, business-rule comment
+preservation, adapter verification, and behavioral baselines.
+
+### Gate 7: Documentation Coverage
+
+Gate 7 fires when a diff touches public APIs, adds new files, or releases a
 library/package. It checks that exported symbols are documented, that a non-empty
 README exists, that documentation is within 10 commits of HEAD, and that any
 `CLAUDE.md` references current key files. Missing API docs block for npm/pip
 packages. Disable (not recommended for packages) with
 `LOKI_GATE_DOC_COVERAGE=false`.
 
-### Gates 8 and 9: Test integrity
+### Gates 5 and 6: Test integrity
 
-The Mock Detector and Test Mutation Detector run during the VERIFY phase and are
-enabled by default. They run `tests/detect-mock-problems.sh` and
-`tests/detect-test-mutations.sh`; HIGH findings fail the gate like any other
-blocking gate. They have no env-var toggle; skip them by not running the scripts
-in your CI.
+The Mock Integrity Detector and Test Mutation Detector run during the VERIFY
+phase and are enabled by default (opt-out, never opt-in). They run
+`tests/detect-mock-problems.sh` and `tests/detect-test-mutations.sh`; HIGH
+findings fail the gate like any other blocking gate, while MED/LOW findings route
+to the next-iteration findings file rather than blocking. Disable with
+`LOKI_GATE_MOCK=false` (gate 5) or `LOKI_GATE_MUTATION=false` (gate 6).
 
 ---
 

@@ -86,7 +86,7 @@ Three review loops identified these critical gaps in v1 of this PRD:
 Tabbed panel below the editor (collapsible, resizable height):
 - **Build Log:** Real-time loki output (WebSocket, already works on HomePage)
 - **Agents:** Active agent cards with status (already built as AgentDashboard)
-- **Quality Gates:** 9-gate display (already built as QualityGatesPanel)
+- **Quality Gates:** 8-gate display (already built as QualityGatesPanel)
 - **AI Chat:** NEW -- text input that sends prompts to iterate on the project
 
 **2b. AI Chat (key differentiator)**

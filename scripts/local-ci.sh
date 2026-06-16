@@ -597,6 +597,12 @@ run_check "tests/test-spec.sh (living spec lock/status/sync + drift finding)" "b
 run_check "tests/test-evidence-gate.sh (evidence gate + inconclusive lifecycle)" "bash tests/test-evidence-gate.sh 2>&1 | tail -3"
 run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/test-verify.sh 2>&1 | tail -3"
 
+# P0 verification-credibility sweep (docs/P0-SWEEP-PLAN.md): the static
+# acceptance gate (gates WIRED) + the behavioral gate (mock/mutation detectors
+# actually BLOCK, LOKI_SCAN_DIR redirects the scan to the target fixture).
+run_check "tests/test-p0-verification-sweep.sh (P0 sweep acceptance: gates wired)" "bash tests/test-p0-verification-sweep.sh 2>&1 | tail -3"
+run_check "tests/test-p0-gate-behavior.sh (P0 mock/mutation gates actually block)" "bash tests/test-p0-gate-behavior.sh 2>&1 | tail -3"
+
 # v7.28.0: cost-capture root cause. Authoritative result-line cost capture
 # (result-cost-<iter>.json), efficiency writer precedence, budget breaker trip,
 # and the slug-sanitization fix (underscore/dot/space paths). Regression guard

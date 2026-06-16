@@ -12,10 +12,10 @@ This file contains answers for all module quizzes and the final certification ex
 | 2 | C | 41 agent types: 37 domain + 4 orchestration |
 | 3 | B | After 5 failures, the task moves to `.loki/queue/dead-letter.json` |
 | 4 | C | architecture-strategist is always one of the 3 selected reviewers |
-| 5 | D | 9 quality gates (Input Guardrails through Test Mutation Detector) |
+| 5 | D | 8 quality gates (Static Analysis through Magic Modules Debate); backward-compatibility is a conditional healing-mode auditor, not one of the 8 |
 | 6 | B | Episodic, semantic, and procedural memory |
 | 7 | B | Simple tier uses 3 phases |
-| 8 | C | Gate 7 requires >80% unit test coverage |
+| 8 | C | Gate 7 (Documentation Coverage) checks README presence, docs freshness within 10 commits, and API docs for packages; coverage % is not measured this release |
 | 9 | C | Claude Code supports full features; Codex and Gemini run in degraded mode |
 | 10 | B | If all 3 reviewers unanimously approve, a Devil's Advocate reviewer runs |
 

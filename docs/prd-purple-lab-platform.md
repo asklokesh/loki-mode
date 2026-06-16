@@ -97,7 +97,7 @@ Loki Mode already has 75+ commands and 120+ API endpoints. The platform doesn't 
 - **Terminal tab:** Real-time loki session output (already streamed via WebSocket)
 - **Agent Log tab:** Shows which agents are active, what they're working on (uses `/api/agents` and `/api/session/agents`)
 - **Build Output tab:** Structured build phases -- RARV cycle visualization, iteration count, current phase
-- **Quality Gates tab:** 9-gate status display (uses existing checklist/quality endpoints)
+- **Quality Gates tab:** 8-gate status display (uses existing checklist/quality endpoints)
 - **AI Chat tab:** Send messages to iterate on the project ("fix the login page", "add dark mode") -- triggers `loki start` with the prompt as PRD amendment
 
 **Header toolbar:**
@@ -182,12 +182,12 @@ This is the "Loki way" -- instead of just editing code, users can talk to the AI
 
 ### Quality Gates Panel
 
-Shows the 9 Loki quality gates in real-time:
+Shows the Loki quality gates and checks in real-time:
 1. Static Analysis (CodeQL/ESLint)
 2. 3-Reviewer Blind Review
 3. Anti-Sycophancy Check
 4. Severity Blocking (Critical/High)
-5. Test Coverage (>80%)
+5. Test Suite (pass/fail; coverage % not measured this release)
 6. Security Scan (OWASP)
 7. Performance Check
 8. Mock Detector

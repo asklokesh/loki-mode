@@ -57,5 +57,5 @@ architecture, and adversarial review -- complementing Loki Mode's autonomous exe
 1. P0 must ship independently and prove value before P1/P2 begin
 2. No runtime dependency on BMAD repo -- adapter reads BMAD output artifacts only
 3. Zero regression on existing non-BMAD workflows
-4. All code must pass existing 9-gate quality system
+4. All code must pass existing 8-gate quality system
 5. Context budget: BMAD additions must stay under 15K tokens per iteration

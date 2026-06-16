@@ -885,7 +885,7 @@ async def agent_card() -> dict:
         "capabilities": {
             "agents": 41,
             "swarms": 8,
-            "quality_gates": 9,
+            "quality_gates": 8,
             "providers": ["claude", "codex", "cline", "aider"],
             "streaming": True,
             "pushNotifications": False,
@@ -7177,15 +7177,14 @@ async def remove_checklist_waiver(item_id: str):
 # =============================================================================
 
 _DEFAULT_QUALITY_GATES = [
-    {"name": "Static Analysis", "description": "CodeQL, ESLint, type checking", "status": "pending"},
-    {"name": "Parallel Code Review", "description": "3-reviewer blind review system", "status": "pending"},
-    {"name": "Anti-Sycophancy Check", "description": "Devil's advocate on unanimous approval", "status": "pending"},
-    {"name": "Severity Assessment", "description": "Critical/High/Medium = BLOCK", "status": "pending"},
-    {"name": "Unit Test Coverage", "description": "Target >80% coverage, 100% pass", "status": "pending"},
-    {"name": "Integration Tests", "description": "End-to-end verification", "status": "pending"},
-    {"name": "Security Scan", "description": "Dependency audit, OWASP checks", "status": "pending"},
-    {"name": "Build Verification", "description": "Clean build with no warnings", "status": "pending"},
-    {"name": "Council Vote", "description": "Completion council consensus", "status": "pending"},
+    {"name": "Static Analysis", "description": "CodeQL, ESLint/Pylint, type-checker findings on the diff", "status": "pending"},
+    {"name": "Test Suite", "description": "Project test runner pass/fail (red blocks)", "status": "pending"},
+    {"name": "Blind Code Review", "description": "3-reviewer blind review; Critical/High = BLOCK; Medium/Low advisory", "status": "pending"},
+    {"name": "Anti-Sycophancy", "description": "Devil's Advocate re-review on unanimous PASS", "status": "pending"},
+    {"name": "Mock Integrity", "description": "Tautological-assertion and mock-ratio detection", "status": "pending"},
+    {"name": "Test Mutation", "description": "Assertion-churn (test-fitting) detection", "status": "pending"},
+    {"name": "Documentation Coverage", "description": "README presence, docs freshness, API docs for exported symbols", "status": "pending"},
+    {"name": "Magic Modules Debate", "description": "Spec-vs-implementation debate on generated modules", "status": "pending"},
 ]
 
 

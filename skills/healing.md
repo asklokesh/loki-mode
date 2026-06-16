@@ -43,7 +43,7 @@ friction_detection:
   rule: "Before 'fixing' any quirk, verify it is not an undocumented business rule"
   action: "Document in .loki/healing/friction-map.json"
   classification:
-    business_rule: "Keep and document. Gate 10 blocks removal."
+    business_rule: "Keep and document. The backward-compatibility / legacy-healing auditor (healing mode) blocks removal."
     true_bug: "Fix with characterization test proving the fix."
     unknown: "Keep until classified. NEVER remove unknown friction."
 ```

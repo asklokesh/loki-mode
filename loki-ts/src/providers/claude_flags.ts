@@ -439,7 +439,7 @@ export function sessionResumeArgv(targetDir?: string): string[] {
 // check here; the provider gate (Claude-only) and the "ultracode: " prompt
 // prefixing live in runner/build_prompt.ts (useClaudeWorkflowsForAnalysis +
 // analysisInstruction), the one place the analysis prompt is composed. Workflows
-// are Claude-provider-only and never touch the council, the 11 gates, the
+// are Claude-provider-only and never touch the council, the 8 gates, the
 // evidence gate, or the RARV loop -- only the read-only codebase-analysis prompt.
 // ---------------------------------------------------------------------------
 export function workflowsEnabled(): boolean {

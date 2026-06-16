@@ -233,8 +233,7 @@ npm run test:unit
 # or
 pytest tests/unit/
 ```
-- Coverage: >80% required
-- All tests must pass
+- All tests must pass (coverage % not measured in this release)
 
 **INTEGRATION Phase:**
 ```bash

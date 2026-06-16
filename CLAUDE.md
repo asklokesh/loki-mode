@@ -41,7 +41,7 @@ skills/                     # On-demand skill modules (v3.0 architecture)
   00-index.md               # Module selection rules and routing
   model-selection.md        # Task tool, parallelization, thinking modes
   providers.md              # Multi-provider documentation
-  quality-gates.md          # 11-gate system, velocity-quality balance
+  quality-gates.md          # 8-gate system, velocity-quality balance
   healing.md                # Legacy system healing (Amazon AGI Lab patterns)
   testing.md                # Playwright, E2E, property-based testing
   production.md             # HN patterns, CI/CD, context management
@@ -110,13 +110,17 @@ loki start --provider cline ./prd.md
 LOKI_PROVIDER=codex loki start ./prd.md
 ```
 
-### Quality Gates
+### Quality Gates (8 gates; see `skills/quality-gates.md` for the canonical table)
 1. Static analysis (CodeQL, ESLint)
-2. 3-reviewer parallel system (blind review)
-3. Anti-sycophancy checks (devil's advocate on unanimous approval)
-4. Severity-based blocking (Critical/High/Medium = BLOCK)
-5. Test coverage gates (>80% unit, 100% pass)
-6. Backward compatibility gate (healing mode - behavioral preservation, v6.67.0)
+2. Test suite pass/fail (red blocks; coverage % not measured in this release)
+3. Blind 3-reviewer code review with severity blocking (Critical/High = BLOCK; Medium/Low advisory)
+4. Anti-sycophancy / Devil's Advocate (on unanimous PASS)
+5. Mock-integrity detector (HIGH blocks)
+6. Test-mutation detector (HIGH blocks)
+7. Documentation coverage
+8. Magic Modules debate (BLOCK severity)
+
+Conditional auditor (not numbered): Backward-compatibility / legacy-healing-auditor (healing mode only - behavioral preservation, v6.67.0).
 
 ### Legacy System Healing (introduced v6.67.0)
 - **Current in v7.18.0**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
@@ -125,7 +129,7 @@ LOKI_PROVIDER=codex loki start ./prd.md
 - **Principles**: Friction-as-semantics, failure-first learning, universal adapters, incremental healing, institutional knowledge preservation
 - **Artifacts**: `.loki/healing/` (friction-map.json, failure-modes.json, institutional-knowledge.md)
 - **Review**: `legacy-healing-auditor` specialist added to code review pool (gated)
-- **Gate**: Gate 10 backward compatibility check (blocks removal of unclassified friction)
+- **Gate**: backward-compatibility / legacy-healing auditor (healing mode; not one of the 8 numbered gates) blocks removal of unclassified friction
 - **Hooks**: `hook_pre_healing_modify()` (`autonomy/hooks/migration-hooks.sh:283`), `hook_post_healing_modify()` (`:328`), `hook_healing_phase_gate()` (`:386`)
 - **Memory**: `FrictionPoint` and `FailureMode` schemas for healing-specific memory entries
 - **Skill**: `skills/healing.md` | **Reference**: `references/legacy-healing-patterns.md`
@@ -300,7 +304,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.45.1 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.46.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

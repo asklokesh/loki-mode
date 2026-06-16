@@ -11,7 +11,7 @@
 |-----------|--------|-----------|--------|
 | **Proven Scale** | 1M+ LoC, large agent count | Benchmarks only | Cursor |
 | **Research Foundation** | Empirical iteration | 25+ academic citations | Loki Mode |
-| **Quality Assurance** | Workers self-manage | 11-gate system + anti-sycophancy | Loki Mode |
+| **Quality Assurance** | Workers self-manage | 8-gate system + anti-sycophancy | Loki Mode |
 | **Anti-Sycophancy** | Not mentioned | CONSENSAGENT blind review | Loki Mode |
 | **Velocity-Quality Balance** | Not mentioned | arXiv-backed metrics | Loki Mode |
 | **Full SDLC Coverage** | Code generation focus | Spec (PRD/issue/YAML) to production + growth | Loki Mode |
@@ -57,7 +57,7 @@ velocity_quality_balance:
 
   thresholds:
     max_new_warnings: 0  # Zero tolerance
-    min_coverage: 80%
+    coverage_target: 80%  # Target only; coverage % not measured this release
 ```
 
 **Research Basis:** [arXiv 2511.04427v2](https://arxiv.org/abs/2511.04427) - Empirical study of 807 repositories
@@ -66,16 +66,19 @@ velocity_quality_balance:
 
 ---
 
-### 3. 11-Gate Quality System
+### 3. 8-Gate Quality System
 
 **Loki Mode's Gates:**
-1. Input Guardrails - Validate scope, detect injection (OpenAI SDK pattern)
-2. Static Analysis - CodeQL, ESLint, type checking
-3. Blind Review System - 3 parallel reviewers
-4. Anti-Sycophancy Check - Devil's advocate on unanimous approval
-5. Output Guardrails - Code quality, spec compliance, no secrets
-6. Severity-Based Blocking - Critical/High/Medium = BLOCK
-7. Test Coverage Gates - 100% pass, >80% coverage
+1. Static Analysis - CodeQL, ESLint, type checking
+2. Test Suite (pass/fail) - red blocks; coverage % not measured this release
+3. Blind Code Review - 3 parallel reviewers + severity blocking (Critical/High = BLOCK; Medium/Low advisory)
+4. Anti-Sycophancy / Devil's Advocate - on unanimous PASS
+5. Mock Integrity Detector - HIGH blocks
+6. Test Mutation Detector - HIGH blocks
+7. Documentation Coverage
+8. Magic Modules Debate - BLOCK severity
+
+Conditional auditor (not numbered): backward-compatibility / legacy-healing-auditor (healing mode only).
 
 **Cursor:** Removed dedicated quality roles. Quote: "Dedicated integrator roles created more bottlenecks than they solved."
 
@@ -174,7 +177,7 @@ Cursor learned through failure:
 ### 3. Simplicity Principle
 > "A surprising amount of the system's behavior comes down to how we prompt the agents. The harness and models matter, but the prompts matter more."
 
-**Loki Mode:** More elaborate infrastructure (11 gates, 41 agent types, memory systems). May be over-engineered for some use cases.
+**Loki Mode:** More elaborate infrastructure (8 gates, 41 agent types, memory systems). May be over-engineered for some use cases.
 
 ---
 
@@ -192,7 +195,7 @@ We incorporated Cursor's proven patterns:
 ## Conclusion
 
 **Loki Mode is scientifically better in:**
-- Quality assurance (research-backed 11-gate system)
+- Quality assurance (research-backed 8-gate system)
 - Anti-sycophancy (CONSENSAGENT blind review)
 - Velocity-quality balance (arXiv metrics)
 - Full SDLC coverage (spec to growth -- PRD, GitHub issue, or YAML)

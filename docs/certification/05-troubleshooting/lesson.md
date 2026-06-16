@@ -17,30 +17,40 @@ This module covers diagnosing and resolving common issues in Loki Mode: gate fai
 
 ## Quality Gate Failures
 
-When a quality gate fails, identify which gate triggered the failure:
+When a quality gate fails, identify which gate triggered the failure (the 8-gate
+system is detailed in `skills/quality-gates.md`):
 
-**Gates 1-6 (Review gates):**
+**Gates 1-2 (Static analysis and test suite):**
+- Gate 1 (Static Analysis): fix CodeQL/ESLint/Pylint/type-checker findings
+- Gate 2 (Test Suite): the test runner must pass; red blocks. Coverage % is not
+  measured this release. Fix failing tests before proceeding (never delete or
+  skip tests)
+
+**Gates 3-4 (Review gates):**
 - Check the review output for severity levels
-- Critical/High/Medium = BLOCK (must fix)
+- Critical/High = BLOCK; Medium/Low advisory (recommended to fix)
 - Low/Cosmetic = TODO (informational)
 - If all 3 reviewers pass unanimously, Gate 4 runs Devil's Advocate
 
-**Gate 7 (Test coverage):**
-- Unit tests must have 100% pass rate and >80% coverage
-- Integration tests must have 100% pass rate
-- Fix failing tests before proceeding (never delete or skip tests)
-
-**Gate 8 (Mock detector):**
+**Gate 5 (Mock integrity detector):**
 - Runs `tests/detect-mock-problems.sh`
 - Flags tests that mock internal modules instead of using real code
 - Flags tautological assertions and high internal mock ratios
-- Disable with `LOKI_GATE_MOCK_DETECTOR=false` (not recommended)
+- Disable with `LOKI_GATE_MOCK=false` (not recommended)
 
-**Gate 9 (Test mutation detector):**
+**Gate 6 (Test mutation detector):**
 - Runs `tests/detect-test-mutations.sh`
 - Detects assertion values changed alongside implementation (test fitting)
-- Detects low assertion density and missing pass/fail tracking
-- Disable with `LOKI_GATE_MUTATION_DETECTOR=false` (not recommended)
+- Detects low assertion density
+- Disable with `LOKI_GATE_MUTATION=false` (not recommended)
+
+**Gate 7 (Documentation coverage):**
+- Checks README presence, docs freshness within 10 commits, and API docs for packages
+- Disable with `LOKI_GATE_DOC_COVERAGE=false` (not recommended for packages)
+
+**Gate 8 (Magic Modules debate):**
+- Runs the spec-vs-implementation debate on generated Magic Modules
+- BLOCK-severity findings block; disable with `LOKI_GATE_MAGIC_DEBATE=false`
 
 ## Circuit Breaker System
 
