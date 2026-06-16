@@ -447,7 +447,7 @@ export default function HomePage() {
             {/* 6. Newsletter Signup */}
             <NewsletterSignup />
 
-            {/* 7. Open Source Stats */}
+            {/* 7. Source-Available Stats */}
             <OpenSourceStats />
           </div>
         ) : (

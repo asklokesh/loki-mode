@@ -3,8 +3,8 @@
 Status: SEAMS implemented (this worktree). NOT a live hosted backend.
 
 R9 in the competitive-stickiness arc is the open-core monetization layer: keep
-Loki fully open source and free, while adding the SEAMS where hosted, enterprise,
-and paid plans would attach later. R9 ships the seams only. There is no Loki
+Loki fully source-available (BUSL-1.1) and free to self-host, while adding the
+SEAMS where hosted, enterprise, and paid plans would attach later. R9 ships the seams only. There is no Loki
 hosted service, no license-verification backend, and no paid gate on any
 existing feature. Every honest stub is labeled as such.
 

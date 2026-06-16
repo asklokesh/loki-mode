@@ -36,8 +36,8 @@ const BENEFITS = [
   },
   {
     icon: Code2,
-    title: 'Open Source',
-    description: 'MIT-licensed. Fork it, extend it, own it.',
+    title: 'Source-Available',
+    description: 'BUSL-1.1 source-available. Read it, fork it, self-host it.',
   },
 ];
 

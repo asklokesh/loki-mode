@@ -45,7 +45,7 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 | **Enterprise Security** | `--dangerously-skip-permissions` | MCP sandboxed | Sandboxed | Audit logs, RBAC | Staged autonomy | Sandboxed |
 | **Cross-Project Learning** | No | AgentDB | No | No | No | Limited |
 | **Observability** | Dashboard + STATUS.txt | Real-time tracing | Logs | Full tracing | Built-in | Full |
-| **Pricing** | Free (OSS) | Free (OSS) | Free (OSS) | $25+/mo | $20-400/mo | $20-500/mo |
+| **Pricing** | Free (source-available) | Free (OSS) | Free (OSS) | $25+/mo | $20-400/mo | $20-500/mo |
 | **Production Ready** | Experimental | Production | Production | Production | Production | Production |
 | **Resource Monitoring** | Yes (v2.18.5) | Unknown | No | No | No | No |
 | **State Recovery** | Yes (checkpoints) | Yes (AgentDB) | Limited | Yes | Git worktrees | Yes |

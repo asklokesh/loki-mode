@@ -59,7 +59,7 @@ const STATS = [
     icon: Code2,
     value: 100,
     suffix: '%',
-    label: 'Open Source',
+    label: 'Source-Available',
   },
 ];
 

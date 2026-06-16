@@ -239,7 +239,7 @@ Loki Mode now incorporates proven patterns from Cursor's large-scale agent deplo
 3. **Anti-Sycophancy** - Blind review prevents false positives
 4. **Full SDLC** - Business, marketing, growth automation
 5. **Published Benchmarks** - Verify claims with reproducible tests
-6. **MIT License** - More adoption-friendly
+6. **Source-available (BUSL-1.1)** - Inspect and self-host the full code
 
 ---
 
@@ -256,7 +256,7 @@ Loki Mode now incorporates proven patterns from Cursor's large-scale agent deplo
 - Full spec-to-product lifecycle (not just coding)
 - 41 specialized agent roles
 - Anti-sycophancy measures
-- MIT license
+- Source-available (BUSL-1.1) license
 - No subscription requirement
 - Verified benchmarks
 

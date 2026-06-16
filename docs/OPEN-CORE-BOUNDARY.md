@@ -1,15 +1,16 @@
 # Loki Mode open-core boundary
 
-Loki Mode is and stays open source. This document draws the line between what is
-free forever and what hosted/paid/enterprise plans would add on top. R9 ships
+Loki Mode is and stays source-available (BUSL-1.1) and free to self-host. This
+document draws the line between what is free forever and what
+hosted/paid/enterprise plans would add on top. R9 ships
 the SEAMS for that line; it does not ship a hosted backend, a license server, or
 any paywall on existing functionality.
 
 ## Principle
 
-OSS is fully functional with zero hosted backend. Every capability Loki has
-today runs locally, free, with no account, no license key, and no network call
-to any Loki service. Hosted/paid features are ADDITIVE convenience and
+The free self-hosted tier is fully functional with zero hosted backend. Every
+capability Loki has today runs locally, free, with no account, no license key,
+and no network call to any Loki service. Hosted/paid features are ADDITIVE convenience and
 team/enterprise layers, never a removal or gating of something that is free
 today.
 

@@ -45,7 +45,7 @@ export function ROICalculator() {
   const hoursSavedPerMonth = Math.round(teamSize * hoursPerWeek * savingsPercent * weeksPerMonth);
   const costSavedPerMonth = Math.round(hoursSavedPerMonth * hourlyRate);
   const annualSavings = costSavedPerMonth * 12;
-  const lokiCost = 0; // Self-hosted, open source
+  const lokiCost = 0; // Self-hosted, source-available
   const roiPercent = lokiCost > 0 ? Math.round(((annualSavings - lokiCost) / lokiCost) * 100) : Infinity;
 
   return (
@@ -137,7 +137,7 @@ export function ROICalculator() {
             <div className="text-2xl font-bold text-[#36342E]">
               {roiPercent === Infinity ? 'Free' : <AnimatedCounter value={roiPercent} suffix="%" />}
             </div>
-            <div className="text-xs text-[#6B6960] mt-1">ROI (open source)</div>
+            <div className="text-xs text-[#6B6960] mt-1">ROI (self-hosted)</div>
           </div>
         </div>
 

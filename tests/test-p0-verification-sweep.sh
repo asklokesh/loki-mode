@@ -305,6 +305,36 @@ else
     bad "canonical 'open source' license claim" "$(printf '%s' "$_os_hits" | head -3)"
 fi
 
+# Guard 3b: product web surfaces (web-app/src/ + website/) describe ONLY Loki,
+# so any 'open source' / '(OSS)' / 'MIT license' string in them is a Loki license
+# claim and is false (Loki is BUSL-1.1 source-available). Generated/minified
+# trees (dist/, node_modules/) are excluded -- they are rebuilt from src.
+#
+# ALLOWLIST: if a future hit is a legitimate reference to ANOTHER tool being
+# open-source (true statement) or to the open-core *business model* (not a
+# literal "Loki is open source" claim), add its 'path:substring' marker to
+# _WEB_OS_ALLOW below with a one-line reason. Keep the allowlist minimal; reword
+# the source in preference to allowlisting wherever possible.
+_WEB_OS_ALLOW=(
+    # path-substring markers for legitimate third-party-OSS / open-core refs.
+    # (none today: both trees are fully reworded to source-available.)
+)
+_web_os_raw="$(grep -rinE 'open[ -]source|\(OSS\)|MIT[ -]licen' \
+    "$REPO_ROOT/web-app/src" "$REPO_ROOT/website" 2>/dev/null \
+    | grep -vE 'node_modules|/dist/')"
+# Drop allowlisted lines (each marker is matched as a fixed substring).
+if [ -n "$_web_os_raw" ] && [ "${#_WEB_OS_ALLOW[@]}" -gt 0 ]; then
+    for _mk in "${_WEB_OS_ALLOW[@]}"; do
+        _web_os_raw="$(printf '%s\n' "$_web_os_raw" | grep -vF "$_mk")"
+    done
+fi
+_web_os_hits="$(printf '%s' "$_web_os_raw" | grep -vE '^$')"
+if [ -z "$_web_os_hits" ]; then
+    ok "web-app/src + website: no Loki 'open source'/'MIT' license claim (BUSL-1.1 is source-available)"
+else
+    bad "web surface Loki 'open source'/'MIT' license claim" "$(printf '%s' "$_web_os_hits" | head -3)"
+fi
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 echo

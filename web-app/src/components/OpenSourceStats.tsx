@@ -134,7 +134,7 @@ export function OpenSourceStats() {
             fill="currentColor"
           />
         </svg>
-        <span className="text-sm font-semibold text-[#36342E] dark:text-[#E8E6E3]">Open Source</span>
+        <span className="text-sm font-semibold text-[#36342E] dark:text-[#E8E6E3]">Source-Available</span>
       </div>
 
       <div className="grid grid-cols-4 gap-6 max-w-lg mx-auto">

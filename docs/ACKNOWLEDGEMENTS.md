@@ -336,7 +336,7 @@ Based on research synthesis, the following improvements are planned:
 
 This acknowledgements file documents the research and resources that influenced Loki Mode's design. All referenced works retain their original licenses and copyrights.
 
-Loki Mode itself is released under the MIT License.
+Loki Mode itself is released under the Business Source License 1.1 (BUSL-1.1), a source-available license.
 
 ---
 

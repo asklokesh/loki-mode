@@ -2634,6 +2634,27 @@ except Exception:
         fi
     fi
 
+    # P2-2: assumption-ledger summary for proof-of-done. "done" means "done, plus
+    # here are the N places your spec was ambiguous and what Loki assumed."
+    # spec_ledger_counts echoes "<total> <high>"; defined when spec-interrogation.sh
+    # is sourced (run.sh sources it in DISCOVERY). Guarded for safety.
+    local assumptions_total=0 assumptions_high=0 assumption_lines=""
+    if type spec_ledger_counts &>/dev/null; then
+        local _ac
+        _ac="$(spec_ledger_counts 2>/dev/null || echo '0 0')"
+        assumptions_total="${_ac%% *}"
+        assumptions_high="${_ac##* }"
+        case "$assumptions_total" in ''|*[!0-9]*) assumptions_total=0 ;; esac
+        case "$assumptions_high"  in ''|*[!0-9]*) assumptions_high=0 ;; esac
+        if [ "$assumptions_total" != "0" ]; then
+            local _ledger_md="$loki_dir/assumptions/ledger.md"
+            if [ -f "$_ledger_md" ]; then
+                # Pull just the "## <id> ..." headings as a terse one-per-line list.
+                assumption_lines="$(grep '^## ' "$_ledger_md" 2>/dev/null | sed 's/^## /  - /' || true)"
+            fi
+        fi
+    fi
+
     # ---- Durable human-readable file: .loki/COMPLETION.txt --------------------
     {
         echo "Loki Mode run summary"
@@ -2668,6 +2689,14 @@ except Exception:
             echo "$evidence_inconclusive_line"
             echo ""
         fi
+        if [ "$assumptions_total" != "0" ]; then
+            echo "Spec assumptions recorded: $assumptions_total ($assumptions_high high-severity)"
+            echo "  These are places your spec was ambiguous and what Loki assumed. See .loki/assumptions/ledger.md"
+            if [ -n "$assumption_lines" ]; then
+                echo "$assumption_lines"
+            fi
+            echo ""
+        fi
         echo "Review the work:"
         echo "  $review_cmd"
         echo ""
@@ -2691,6 +2720,8 @@ except Exception:
     _LOKI_CS_DELEGATE_BRANCH="$delegate_branch" \
     _LOKI_CS_PR_URL="$pr_url" \
     _LOKI_CS_TS="$ts" \
+    _LOKI_CS_ASSUMPTIONS_TOTAL="$assumptions_total" \
+    _LOKI_CS_ASSUMPTIONS_HIGH="$assumptions_high" \
     _LOKI_CS_OUT_FILE="$loki_dir/state/completion.json" \
     python3 -c "
 import json, os, tempfile
@@ -2710,6 +2741,8 @@ rec = {
     'delegate_branch': os.environ.get('_LOKI_CS_DELEGATE_BRANCH', ''),
     'pr_url': os.environ.get('_LOKI_CS_PR_URL', ''),
     'timestamp': os.environ.get('_LOKI_CS_TS', ''),
+    'assumptions_total': i(os.environ.get('_LOKI_CS_ASSUMPTIONS_TOTAL')),
+    'assumptions_high': i(os.environ.get('_LOKI_CS_ASSUMPTIONS_HIGH')),
 }
 d = os.path.dirname(out)
 fd, tmp = tempfile.mkstemp(dir=d, suffix='.json')
@@ -11581,6 +11614,17 @@ build_prompt() {
         gate_failure_context="${gate_failure_context}FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK."
     fi
 
+    # P2-2: high-severity spec-assumption context. When DISCOVERY recorded any
+    # high-severity assumption (the spec was ambiguous in a high-impact place),
+    # surface it to the build agent so it implements with the gap in view (or
+    # fixes the spec) instead of obliviously coding past it. spec_ledger_prompt_block
+    # is defined when spec-interrogation.sh is sourced (run.sh sources it in
+    # DISCOVERY); guarded so build_prompt is safe when the module is absent.
+    local assumption_context=""
+    if type spec_ledger_prompt_block &>/dev/null; then
+        assumption_context="$(spec_ledger_prompt_block 2>/dev/null || true)"
+    fi
+
     # Human directive injection (from HUMAN_INPUT.md)
     # NOTE: Do NOT unset LOKI_HUMAN_INPUT here - build_prompt runs in a subshell
     # (command substitution) so unset would not affect the parent shell.
@@ -11833,15 +11877,15 @@ except Exception:
         else
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             else
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             fi
         fi
@@ -11946,6 +11990,7 @@ except Exception:
     fi
     [ -n "$human_directive" ] && printf '%s\n' "$human_directive"
     [ -n "$gate_failure_context" ] && printf '%s\n' "$gate_failure_context"
+    [ -n "$assumption_context" ] && printf '%s\n' "$assumption_context"
     [ -n "$queue_tasks" ] && printf '%s\n' "$queue_tasks"
     [ -n "$bmad_context" ] && printf '%s\n' "$bmad_context"
     [ -n "$openspec_context" ] && printf '%s\n' "$openspec_context"
@@ -13066,6 +13111,22 @@ except Exception:
         fi
     fi
 
+    # P2-1: Spec interrogation (DISCOVERY phase, BEFORE iteration 1 begins
+    # coding). Auto-detects spec ambiguities/contradictions/underspecification
+    # via the Devil's-Advocate grill + prd-analyzer, classifies them with a
+    # deterministic severity, and records every gap as a first-class assumption
+    # under .loki/assumptions/. Default-on; LOKI_SPEC_GRILL=0 opts out.
+    # Provider-aware and degrades cleanly (no provider -> prd-analyzer
+    # assumptions only, no fabricated questions). Best-effort: never blocks the
+    # run. The completion-side teeth are council_assumption_ledger_gate.
+    if [ -f "${SCRIPT_DIR}/spec-interrogation.sh" ]; then
+        # shellcheck disable=SC1090
+        . "${SCRIPT_DIR}/spec-interrogation.sh" 2>/dev/null || true
+        if type spec_interrogation_run &>/dev/null; then
+            spec_interrogation_run "$prd_path" || true
+        fi
+    fi
+
     # Auto-derive completion promise from PRD (v6.10.0)
     # When PRD exists but no explicit promise, auto-derive one and switch to checkpoint mode
     if [ -n "$prd_path" ] && [ -f "$prd_path" ] && [ -z "$COMPLETION_PROMISE" ]; then
@@ -13226,6 +13287,18 @@ except Exception as exc:
 
         local prompt
         prompt=$(build_prompt "$retry" "$prd_path" "$ITERATION_COUNT")
+
+        # P2-2 auto-acknowledgment lifecycle: build_prompt just injected the
+        # high-severity spec assumptions into the prompt (assumption_context), so
+        # the agent has now SEEN them. Mark them acknowledged so the completion
+        # gate is not a permanent dead-end in autonomous (non-TTY) mode where no
+        # human can ever set confirmed=true. This is the opposite of silent
+        # autocorrect: the gap was recorded, prompt-injected, and is surfaced in
+        # proof-of-done. LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1 disables auto-ack so
+        # only a human confirmation clears the block (the helper checks the knob).
+        if type spec_ledger_acknowledge_all &>/dev/null; then
+            spec_ledger_acknowledge_all 2>/dev/null || true
+        fi
 
         # BUG #5 fix: Clear LOKI_HUMAN_INPUT in the parent shell after build_prompt
         # consumed it. build_prompt runs in a subshell (command substitution), so
@@ -14539,6 +14612,17 @@ if __name__ == "__main__":
                 log_warn "Completion claim rejected: held-out spec-eval gate found failing held-out acceptance check(s)."
                 log_warn "  Details under .loki/council/heldout-block.json ; opt out with LOKI_HELDOUT_GATE=0"
                 # Fall through; keep iterating until the held-out checks pass.
+            # P2-2: the assumption ledger gate must also guard the DEFAULT
+            # completion-promise route, not only the interval-gated council path.
+            # Otherwise an agent can self-assert "done" while a high-severity spec
+            # assumption is still unresolved, bypassing the spec-robustness gate.
+            # Mirrors the evidence/held-out gate arms above. Opt-out: the gate's
+            # own LOKI_ASSUMPTION_GATE=0 (returns 0 immediately when disabled, so
+            # this branch never fires). Gate output is printed by the gate itself.
+            elif [ "$_completion_claimed" = 1 ] && type council_assumption_ledger_gate &>/dev/null && ! council_assumption_ledger_gate; then
+                log_warn "Completion claim rejected: assumption ledger gate found unresolved high-severity spec assumption(s)."
+                log_warn "  Details under .loki/council/assumption-block.json ; opt out with LOKI_ASSUMPTION_GATE=0"
+                # Fall through; keep iterating until high-sev assumptions resolve.
             elif [ "$_completion_claimed" = 1 ]; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then
@@ -15014,6 +15098,8 @@ check_human_intervention() {
             log_info "Council force-review: blocked by evidence hard gate"
         elif type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
             log_info "Council force-review: blocked by held-out spec-eval hard gate"
+        elif type council_assumption_ledger_gate &>/dev/null && ! council_assumption_ledger_gate; then
+            log_info "Council force-review: blocked by assumption ledger hard gate"
         elif type council_vote &>/dev/null && council_vote; then
             log_header "COMPLETION COUNCIL: FORCE REVIEW - PROJECT COMPLETE"
             # BUG #17 fix: Write COMPLETED marker, generate council report, and

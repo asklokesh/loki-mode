@@ -280,7 +280,7 @@ Developers who value open-source tooling, speed, and terminal-native workflows. 
 | Feature | Emergence AI (Agent-E) | Rork | Claude Code CLI | Codex CLI | Loki Mode |
 |---------|:---------------------:|:----:|:--------------:|:---------:|:---------:|
 | **Primary Focus** | Web automation | Mobile apps | Coding assistant | Coding assistant | PRD-to-deploy |
-| **Open Source** | Partial (Agent-E only) | No | Source-available | Yes (Apache-2.0) | Yes |
+| **Open Source / Source model** | Partial (Agent-E only) | No | Source-available | Yes (Apache-2.0) | Source-available (BUSL-1.1) |
 | **Multi-Provider** | Yes (OpenAI, Azure, Ollama) | Yes (Gemini, Claude) | Partial (Claude models via Bedrock/Vertex/Foundry) | No (GPT only) | Yes (5 providers, 3+ model families) |
 | **Multi-Agent** | Yes (2-agent model) | No | Yes (coordinated teams) | Yes (experimental) | Yes (41 agent types) |
 | **Autonomous Iteration** | No (task-level) | No | Partial (/loop, /schedule) | No (requires prompting) | Yes (RARV loop + completion council) |
@@ -454,7 +454,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Dimension | Codex CLI | Loki Mode |
 |-----------|-----------|-----------|
 | Autonomy | Assisted (human prompts each task) | Fully autonomous |
-| Open source | Yes (Apache-2.0) | Yes |
+| Source model | Open source (Apache-2.0) | Source-available (BUSL-1.1) |
 | Speed | 240+ tokens/sec | Depends on provider |
 | Providers | OpenAI only | 5 providers |
 | Multi-agent | Experimental (isolated) | 41 agent types, 8 domains |
@@ -467,8 +467,8 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Focus | Web/workflow automation | Software development |
 | Pricing | Enterprise contracts | Free + API costs |
 | Self-hosted | VPC option | Fully self-hosted |
-| Open source | Partial | Yes |
-| **Loki Mode advantage:** | Purpose-built for software, open source, accessible pricing |
+| Source-available | Partial | Yes (BUSL-1.1) |
+| **Loki Mode advantage:** | Purpose-built for software, source-available, accessible pricing |
 
 #### vs. Rork
 | Dimension | Rork | Loki Mode |
@@ -485,7 +485,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 "You already use AI for coding. Loki Mode makes it autonomous -- give it a PRD, and it handles planning, implementation, testing, code review, and deployment. Keep using Claude or Codex under the hood."
 
 **For engineering leaders evaluating AI tooling:**
-"Loki Mode is the only open-source system with enterprise-grade quality gates (8 gates, 3-reviewer blind review, anti-sycophancy checks) that runs autonomously on any AI provider. Self-hosted, no vendor lock-in."
+"Loki Mode is the only source-available system with enterprise-grade quality gates (8 gates, 3-reviewer blind review, anti-sycophancy checks) that runs autonomously on any AI provider. Self-hosted, no vendor lock-in."
 
 **For startups and solo developers:**
 "Go from idea to deployed product overnight. Write a PRD, invoke Loki Mode, and let it build, test, and deploy while you sleep. Works with your existing Claude or OpenAI API key."
@@ -558,7 +558,7 @@ The most significant near-term competitive threat is Anthropic's Agent SDK (http
 **However, Loki Mode's structural advantages remain:**
 1. **Multi-provider:** Agent SDK is Claude-only. Loki Mode works with any provider.
 2. **Battle-tested pipeline:** 8 quality gates, completion council, healing, memory -- these took months to build and validate. A new Agent SDK project starts from zero.
-3. **Open source and self-hosted:** No dependency on Anthropic's platform decisions.
+3. **Source-available and self-hosted:** No dependency on Anthropic's platform decisions.
 4. **Research foundation:** Built on patterns from OpenAI, DeepMind, Anthropic, and academic research. Not just engineering, but applied AI safety research (Constitutional AI, anti-sycophancy, alignment faking detection).
 
 ---

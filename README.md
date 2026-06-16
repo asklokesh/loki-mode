@@ -502,4 +502,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=asklokesh/loki-mode&type=timeline&logscale&legend=bottom-right)](https://www.star-history.com/?repos=asklokesh%2Floki-mode&type=timeline&logscale=&legend=bottom-right)
+[![Star History Chart](https://api.star-history.com/chart?repos=asklokesh/loki-mode&type=timeline&legend=bottom-right)](https://www.star-history.com/?repos=asklokesh%2Floki-mode&type=timeline&legend=bottom-right)

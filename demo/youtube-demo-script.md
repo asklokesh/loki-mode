@@ -16,7 +16,7 @@ by trimming. Do not stage two separate builds.
 ## Binding honesty rules (read before recording)
 
 - Show only shipped, real features. Everything on screen must be reproducible
-  by a viewer using the open-source CLI.
+  by a viewer using the source-available CLI.
 - The hook is TRUST, not benchmarks. The line is: AI builders happily say
   "done" when the thing is broken; Loki Mode will not call work done until it
   is verified.
@@ -136,7 +136,7 @@ Target run length 4:30 to 5:30. Structure follows the producer brief.
 | 8 | Terminal: completion summary | `cat .loki/COMPLETION.txt` | "When it finishes, it does not just say done. It shows receipts. The branch, the files changed, the diff. And the line that matters: your app is live, here is the URL." | 3:00-3:25 (25s) |
 | 9 | Terminal / dashboard: the gates report and evidence gate explanation; lower third footnote "HumanEval 98.78% (162/164)" | show gates report | "Behind that is a verified-completion gate. If the diff is empty, or the tests are red, Loki refuses to call it done. It cannot fake the receipts. On the HumanEval coding benchmark it solved 162 of 164 problems. But the point is not the score. The point is it tells you the truth about what it built." | 3:25-4:10 (45s) |
 | 10 | Terminal: heal one-liner | type `loki heal ./legacy-app` (show help / dry-run, do not run a full heal) | "It is not just for new projects. Point it at an old codebase with one command, and it maps the system before it changes anything." | 4:10-4:25 (15s) |
-| 11 | Terminal: install line; end card with repo URL | show `npm install -g loki-mode` (or brew/docker) | "Loki Mode is free and open source. Install it, give it a spec, and let it build something it can actually stand behind. Link below." | 4:25-4:40 (15s) |
+| 11 | Terminal: install line; end card with repo URL | show `npm install -g loki-mode` (or brew/docker) | "Loki Mode is free to self-host and source-available. Install it, give it a spec, and let it build something it can actually stand behind. Link below." | 4:25-4:40 (15s) |
 
 Total: approximately 4:40.
 
@@ -166,7 +166,7 @@ Derived by trimming the same footage. Target 75 seconds.
 | 3 | Terminal: `loki start prd.md`, dashboard auto-opens | from shots 4-5 | "Loki Mode plans it, builds it, and checks its own work through quality gates and a review council." | 0:22-0:38 (16s) |
 | 4 | Live App iframe: add a note, delete a note, badge "Running" | from shot 7 | "Here is the app it built, running locally. Real. I can use it right now." | 0:38-0:55 (17s) |
 | 5 | COMPLETION.txt receipts + evidence-gate line | from shots 8-9 | "And it proves it. Branch, diff, live URL. If the diff is empty or the tests are red, it refuses to say done." | 0:55-1:08 (13s) |
-| 6 | Install line + end card | from shot 11 | "Free and open source. Link below." | 1:08-1:15 (7s) |
+| 6 | Install line + end card | from shot 11 | "Free to self-host, source-available. Link below." | 1:08-1:15 (7s) |
 
 Total: approximately 1:15.
 
@@ -214,7 +214,7 @@ Brownfield teaser:
 and it maps the system before it changes anything."
 
 CTA:
-"Loki Mode is free and open source. Install it, give it a spec, and let it build
+"Loki Mode is free to self-host and source-available. Install it, give it a spec, and let it build
 something it can actually stand behind. Link below."
 
 ---

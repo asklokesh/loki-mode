@@ -24,7 +24,7 @@ I built Loki Mode because I got tired of the copy-paste loop between AI coding a
 
 **Test suite:** 683 npm tests, 631 pytest tests, 16 shell tests. Self-reported HumanEval score of 162/164 (98.78%).
 
-Built solo. MIT licensed.
+Built solo. BUSL-1.1 source-available.
 
 ## Try it
 

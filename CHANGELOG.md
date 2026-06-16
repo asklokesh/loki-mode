@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.47.0] - 2026-06-16
+
+### Security: OIDC RBAC bypass fixed (P3-1)
+
+- **Every SSO/OIDC user previously became admin.** `validate_oidc_token` hardcoded
+  `"scopes": ["*"]` for all OIDC-authenticated users, defeating the entire RBAC
+  system. Now OIDC role/group claims are mapped to the existing roles
+  (admin/operator/viewer/auditor) with the scope hierarchy. When no recognized
+  role claim is present, the user defaults to least-privilege `viewer`, never
+  admin. Recognized claim sources: a configurable `LOKI_OIDC_ROLES_CLAIM`
+  (supports dotted paths), `roles`, `groups`, Keycloak `realm_access.roles`, and
+  Cognito `cognito:groups`. Default role configurable via `LOKI_OIDC_DEFAULT_ROLE`
+  (defaults to viewer). API-token auth is unchanged.
+
+### Spec-robustness: interrogation gate + assumption ledger (P2-1, P2-2)
+
+- **Loki now interrogates the spec before building and records its assumptions.**
+  A Devil's-Advocate spec interrogation (built on `loki grill`) now runs by
+  default in the DISCOVERY phase before the first iteration, classifying findings
+  as ambiguous / contradictory / underspecified / missing. Opt out with
+  `LOKI_SPEC_GRILL=0`.
+- **Assumptions are a first-class, tracked artifact.** Spec gaps Loki fills become
+  recorded entries under `.loki/assumptions/` (the gap, the assumption, why,
+  severity, what it affects). A new `council_assumption_ledger_gate` surfaces them
+  in the proof-of-done so "done" means "done, plus here are the places your spec
+  was ambiguous and what I assumed." Set `LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1` to
+  make high-severity unconfirmed assumptions block completion (human-in-the-loop);
+  default mode records and surfaces without blocking autonomous runs. Opt out with
+  `LOKI_ASSUMPTION_GATE=0`. Degrades cleanly when no provider CLI is present (no
+  fabricated questions).
+
+### Honesty: license claims corrected (source-available, not open source)
+
+- Loki is BUSL-1.1 source-available, not "open source". Corrected false
+  "open source"/"OSS"/"MIT" claims about Loki across the product UI
+  (web-app), the marketing site, and docs to "source-available (BUSL-1.1)". True
+  statements about other tools being open-source are unchanged. The repo-wide
+  honesty regression guard now also covers web-app and website surfaces.
+
+Reviewed by a unanimous completion council. Each stream was built in an isolated
+worktree and verified independently (OIDC 17/17, spec-robustness 22/22, P0 gates
+non-regressing, local-ci green).
+
 ## [7.46.0] - 2026-06-16
 
 ### Verification-credibility sweep (the trust layer is now honest and real)

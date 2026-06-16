@@ -477,6 +477,111 @@ def _base64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data)
 
 
+# Role precedence (highest privilege first). When a token carries multiple
+# recognized role claims, the highest-privilege match wins.
+_ROLE_PRECEDENCE = ("admin", "operator", "auditor", "viewer")
+
+
+def _normalize_claim_values(value) -> set[str]:
+    """Normalize an OIDC claim value into a lowercased set of strings.
+
+    Claim values may be a single string, a space-separated string, or a
+    list of strings (different providers use different shapes). All are
+    flattened into a set of lowercased tokens for matching against ROLES.
+    """
+    out: set[str] = set()
+    if value is None:
+        return out
+    if isinstance(value, str):
+        for part in value.split():
+            if part:
+                out.add(part.strip().lower())
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            if isinstance(item, str):
+                s = item.strip().lower()
+                if s:
+                    out.add(s)
+    return out
+
+
+def _collect_role_claims(claims: dict) -> set[str]:
+    """Collect candidate role/group values from standard OIDC claim shapes.
+
+    Recognized sources (case-insensitive values flattened into one set):
+    - A configurable claim named by LOKI_OIDC_ROLES_CLAIM (supports a dotted
+      path for nested claims, e.g. "realm_access.roles" for Keycloak).
+    - "roles" (generic)
+    - "groups" (generic)
+    - "realm_access.roles" (Keycloak)
+    - "cognito:groups" (AWS Cognito)
+
+    Note: "groups"/"cognito:groups" typically carry arbitrary group names,
+    not Loki role names. Only values that exactly match one of the four
+    built-in role names (admin/operator/viewer/auditor, case-insensitive)
+    grant a role. Everything else is ignored and the default role applies.
+    """
+    candidates: set[str] = set()
+
+    def _read_dotted(path: str):
+        node = claims
+        for key in path.split("."):
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                return None
+        return node
+
+    configured = os.environ.get("LOKI_OIDC_ROLES_CLAIM", "").strip()
+    sources = []
+    if configured:
+        sources.append(configured)
+    sources.extend(["roles", "groups", "realm_access.roles", "cognito:groups"])
+
+    for src in sources:
+        if "." in src:
+            val = _read_dotted(src)
+        else:
+            val = claims.get(src)
+        candidates |= _normalize_claim_values(val)
+
+    return candidates
+
+
+def _default_oidc_role() -> str:
+    """Return the configured default OIDC role, validated against ROLES.
+
+    Defaults to the least-privileged role ("viewer"). If LOKI_OIDC_DEFAULT_ROLE
+    is set to an unrecognized value, falls back to "viewer" (never admin).
+    """
+    configured = os.environ.get("LOKI_OIDC_DEFAULT_ROLE", "").strip().lower()
+    if configured in ROLES:
+        return configured
+    return "viewer"
+
+
+def _scopes_from_claims(claims: dict) -> tuple[list[str], str]:
+    """Map OIDC token claims to Loki scopes via the existing ROLES mapping.
+
+    Returns a tuple of (scopes, role_name). If no recognized role claim is
+    present, the safe default role (viewer, or LOKI_OIDC_DEFAULT_ROLE) is
+    applied. This function NEVER returns ["*"]/admin by default: full access
+    is granted only when an explicit admin role claim is present.
+    """
+    candidate_values = _collect_role_claims(claims)
+
+    matched_role = None
+    for role in _ROLE_PRECEDENCE:
+        if role in candidate_values:
+            matched_role = role
+            break
+
+    if matched_role is None:
+        matched_role = _default_oidc_role()
+
+    return resolve_scopes(matched_role), matched_role
+
+
 def validate_oidc_token(token_str: str) -> Optional[dict]:
     """Validate an OIDC JWT token.
 
@@ -488,6 +593,12 @@ def validate_oidc_token(token_str: str) -> Optional[dict]:
     - Issuer matches OIDC_ISSUER
     - Audience matches OIDC_AUDIENCE or OIDC_CLIENT_ID
     - Token is not expired
+
+    On success, role/group claims are mapped to Loki roles (admin/operator/
+    viewer/auditor) via _scopes_from_claims. When no recognized role claim is
+    present, the least-privileged default role (viewer, configurable via
+    LOKI_OIDC_DEFAULT_ROLE) is applied. OIDC users are never granted ["*"]
+    unless an explicit admin role claim is present.
 
     SECURITY CRITICAL: Without PyJWT, JWT signatures are NOT cryptographically
     verified. An attacker can forge tokens with arbitrary claims. For any
@@ -529,11 +640,13 @@ def validate_oidc_token(token_str: str) -> Optional[dict]:
             issuer=OIDC_ISSUER,
         )
 
+        scopes, role = _scopes_from_claims(decoded)
         return {
             "id": decoded.get("sub", ""),
             "name": decoded.get("name", decoded.get("email", decoded.get("sub", ""))),
             "email": decoded.get("email", ""),
-            "scopes": ["*"],  # OIDC users get full access
+            "scopes": scopes,  # mapped from OIDC role/group claims
+            "role": role,
             "auth_method": "oidc",
             "issuer": decoded.get("iss"),
         }
@@ -602,11 +715,13 @@ def validate_oidc_token(token_str: str) -> Optional[dict]:
             return None
 
         # Return user info from claims
+        scopes, role = _scopes_from_claims(claims)
         return {
             "id": claims.get("sub", ""),
             "name": claims.get("name", claims.get("email", claims.get("sub", ""))),
             "email": claims.get("email", ""),
-            "scopes": ["*"],  # OIDC users get full access
+            "scopes": scopes,  # mapped from OIDC role/group claims
+            "role": role,
             "auth_method": "oidc",
             "issuer": claims.get("iss"),
         }

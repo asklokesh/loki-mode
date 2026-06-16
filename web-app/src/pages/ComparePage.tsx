@@ -27,7 +27,7 @@ const COMPARISON_DATA: ComparisonRow[] = [
   { feature: 'One-click cloud deploy', category: 'Deployment', lokiMode: 'Planned', boltNew: true, replit: true, lovable: true },
   // Cost & Hosting
   { feature: 'Self-hosted (your keys)', category: 'Cost', lokiMode: true, boltNew: false, replit: false, lovable: false },
-  { feature: 'Free tier available', category: 'Cost', lokiMode: 'Open source', boltNew: true, replit: true, lovable: true },
+  { feature: 'Free tier available', category: 'Cost', lokiMode: 'Source-available (BUSL-1.1)', boltNew: true, replit: true, lovable: true },
   { feature: 'No vendor lock-in', category: 'Cost', lokiMode: true, boltNew: false, replit: false, lovable: false },
   // Enterprise
   { feature: 'SSO / OIDC authentication', category: 'Enterprise', lokiMode: true, boltNew: false, replit: true, lovable: false },
@@ -80,7 +80,7 @@ const BENEFIT_CARDS = [
   },
   {
     title: 'Your Infrastructure',
-    description: 'Self-hosted, open source, no data leaves your network. Use your own API keys across 5 providers.',
+    description: 'Self-hosted, source-available (BUSL-1.1), no data leaves your network. Use your own API keys across 5 providers.',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-[#2F71E3]">
         <rect x="2" y="2" width="20" height="8" rx="2" stroke="currentColor" strokeWidth="2" />

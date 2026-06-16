@@ -1722,6 +1722,111 @@ EVIDENCE_EOF
 }
 
 #===============================================================================
+# P2-2 Assumption ledger gate (spec-robustness).
+#
+# Blocks completion while any high-severity assumption is unresolved, where
+# unresolved means: severity=high AND confirmed=false AND acknowledged=false.
+# This is the completion-side teeth for the spec-interrogation feature: when the
+# spec was ambiguous and Loki had to assume something high-impact, "done" cannot
+# be declared until that assumption has at least been acknowledged (auto-ack
+# lifecycle in run.sh, default-on) or human-confirmed
+# (LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1).
+#
+# By-design timing: in DEFAULT autonomous mode run.sh auto-acknowledges entries
+# every iteration right after injecting them into the build prompt, so by the
+# time the council reaches this gate (>= COUNCIL_MIN_ITERATIONS) they are already
+# acknowledged and the gate passes. That is intentional: a permanent block on
+# "unconfirmed" in a non-TTY run would just die at max-iterations and never reach
+# the proof-of-done. The PERSISTENT block lives in the
+# LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1 path (auto-ack disabled, only human
+# confirmed=true clears it). In BOTH modes the assumptions are unconditionally
+# SURFACED in proof-of-done (build_completion_summary reads counts ignoring
+# ack/confirm state), so "done" always means "done, plus here is what I assumed."
+#
+# The block COUNT comes from spec_ledger_high_unresolved_count() in
+# autonomy/spec-interrogation.sh. The gate sources that module if it is not
+# already loaded, so it works both inside run.sh (already sourced) and in
+# standalone tests (sources it here). When the module / ledger is absent the
+# count is 0 and the gate passes -- a project with no recorded assumptions is
+# never blocked (no spurious block on clean specs).
+#
+# Mirrors council_evidence_gate: opt-out knob first, defensive COUNCIL_STATE_DIR
+# default, writes .loki/council/assumption-block.json on block (removed on pass).
+#
+# Returns 0 (pass / OK to complete) or 1 (block / CONTINUE).
+#===============================================================================
+council_assumption_ledger_gate() {
+    # Knob first: opt-out is exact-as-today, before any file read or write.
+    [ "${LOKI_ASSUMPTION_GATE:-1}" = "0" ] && return 0
+
+    if [ -z "${COUNCIL_STATE_DIR:-}" ]; then
+        COUNCIL_STATE_DIR="${TARGET_DIR:-.}/.loki/council"
+    fi
+
+    # Source the spec-interrogation module if its counter is not already defined
+    # (standalone tests / completion-promise route). Best-effort.
+    if ! type spec_ledger_high_unresolved_count >/dev/null 2>&1; then
+        local _si_helper
+        _si_helper="$(dirname "${BASH_SOURCE[0]}")/spec-interrogation.sh"
+        if [ -f "$_si_helper" ]; then
+            # shellcheck disable=SC1090
+            . "$_si_helper" 2>/dev/null || true
+        fi
+    fi
+
+    # No module => no ledger => nothing to block on (pass-through).
+    if ! type spec_ledger_high_unresolved_count >/dev/null 2>&1; then
+        if [ -f "$COUNCIL_STATE_DIR/assumption-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/assumption-block.json"
+        fi
+        return 0
+    fi
+
+    local unresolved
+    unresolved="$(spec_ledger_high_unresolved_count 2>/dev/null || echo 0)"
+    # Defensive: coerce to an integer.
+    case "$unresolved" in
+        ''|*[!0-9]*) unresolved=0 ;;
+    esac
+
+    if [ "$unresolved" -eq 0 ]; then
+        # Gate passes: remove any stale block report.
+        if [ -f "$COUNCIL_STATE_DIR/assumption-block.json" ]; then
+            rm -f "$COUNCIL_STATE_DIR/assumption-block.json"
+        fi
+        return 0
+    fi
+
+    log_warn "[Council] Assumption ledger gate BLOCKED: ${unresolved} high-severity spec assumption(s) unresolved (the spec was ambiguous in ${unresolved} high-impact place(s))."
+    log_warn "[Council] Resolve by confirming them in .loki/assumptions/ (set confirmed=true), or opt out with LOKI_ASSUMPTION_GATE=0."
+
+    mkdir -p "$COUNCIL_STATE_DIR" 2>/dev/null || true
+    local ab_file="$COUNCIL_STATE_DIR/assumption-block.json"
+    local ab_tmp="${ab_file}.tmp"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    cat > "$ab_tmp" << ASSUMPTION_EOF
+{
+    "status": "blocked",
+    "blocked": true,
+    "blocked_at": "$timestamp",
+    "iteration": ${ITERATION_COUNT:-0},
+    "reason": "high_severity_assumptions_unresolved",
+    "high_unresolved": $unresolved
+}
+ASSUMPTION_EOF
+    mv "$ab_tmp" "$ab_file" 2>/dev/null || rm -f "$ab_tmp" 2>/dev/null || true
+
+    if type record_trust_event_bash &>/dev/null; then
+        record_trust_event_bash "assumption_block" \
+            "high_unresolved=$unresolved" \
+            >/dev/null 2>&1 || true
+    fi
+
+    return 1
+}
+
+#===============================================================================
 # Council Member Review - Individual member evaluation
 #===============================================================================
 
@@ -2510,6 +2615,14 @@ council_evaluate() {
     if ! council_evidence_gate; then
         log_info "[Council] Completion blocked by evidence hard gate"
         return 1  # CONTINUE - cannot complete without real evidence
+    fi
+
+    # P2-2: assumption ledger gate - block completion while high-severity spec
+    # assumptions are unresolved (the spec was ambiguous in a high-impact place
+    # and Loki had to assume something that has not been acknowledged/confirmed).
+    if ! council_assumption_ledger_gate; then
+        log_info "[Council] Completion blocked by assumption ledger gate"
+        return 1  # CONTINUE - cannot complete with unresolved high-sev assumptions
     fi
 
     # Compute threshold using the same ceiling(2/3) formula as council_vote and council_aggregate_votes

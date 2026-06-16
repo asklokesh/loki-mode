@@ -26,8 +26,8 @@ Replit and Lovable represent two dominant players in the "vibe coding" / AI app 
 
 | Metric | Replit | Lovable | Loki Mode |
 |--------|--------|---------|-----------|
-| Valuation | $9B (Mar 2026) | $6.6B (Dec 2025) | Open source |
-| ARR | $265M+ (targeting $1B) | $400M+ (Feb 2026) | N/A (open source) |
+| Valuation | $9B (Mar 2026) | $6.6B (Dec 2025) | Source-available (BUSL-1.1) |
+| ARR | $265M+ (targeting $1B) | $400M+ (Feb 2026) | N/A (source-available) |
 | Users | 50M+ registered | 8M+ users | Developer community |
 | Total Funding | $650M+ | $653M | $0 |
 | Employees | ~1,000+ | ~817 | Solo maintainer |
@@ -376,7 +376,7 @@ Replit Agent has evolved rapidly through four major versions:
 
 | Metric | Replit Agent | Lovable.dev | Loki Mode |
 |--------|:-----------:|:-----------:|:---------:|
-| Free tier | Yes (limited) | Yes (30 credits/mo) | Yes (open source, free) |
+| Free tier | Yes (limited) | Yes (30 credits/mo) | Yes (source-available, free to self-host) |
 | Entry paid | $20/mo (Core) | $25/mo (Pro) | $0 (bring your own API key) |
 | Team plan | $100/mo (Pro) | $50/mo (Business) | $0 |
 | Cost model | Effort-based credits | Per-prompt credits | API key costs only |
@@ -585,7 +585,7 @@ The term "vibe coding" (coined by Andrej Karpathy) has driven explosive growth i
 
 **Medium-term (12 months):** Moderate threat -- as Replit/Lovable improve production quality and add enterprise features, they will attract more professional developers. Loki Mode must ship deployment, dashboard, and Figma integration.
 
-**Long-term (24 months):** High convergence risk -- all platforms will trend toward autonomous, production-grade, multi-agent systems. Loki Mode's quality gates, memory system, and brownfield support will be critical differentiators. The open-source model is an enduring advantage if the community grows.
+**Long-term (24 months):** High convergence risk -- all platforms will trend toward autonomous, production-grade, multi-agent systems. Loki Mode's quality gates, memory system, and brownfield support will be critical differentiators. The source-available, self-hostable model is an enduring advantage if the community grows.
 
 ---
 

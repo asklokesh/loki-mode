@@ -102,7 +102,7 @@ GPT pattern. Example: "Autonomi Cloud, powered by Loki."
    Loki Mode (free)" CTA and a "Autonomi Cloud / Enterprise" commercial CTA.
 
 5. **License/legal**: BUSL-1.1 is held by Autonomi; "Free for personal/internal/
-   academic use" applies to Loki Mode (OSS); commercial licensing = Autonomi.
+   academic use" applies to Loki Mode (source-available); commercial licensing = Autonomi.
    Keep "source-available," never "open source" (BUSL is not OSI-approved).
 
 ## Taglines (approved patterns)

@@ -38,7 +38,7 @@ Single-page site with no build step and no framework dependencies.
 4. Comparison table (vs bolt.new, Replit, Lovable)
 5. Testimonials
 6. Pricing (Free, Pro, Enterprise)
-7. Open Source stats and install command
+7. Source-available stats and install command
 8. Footer with links and social icons
 
 ## Design

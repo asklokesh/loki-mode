@@ -68,11 +68,51 @@ For organizations using identity providers (Okta, Auth0, Azure AD), Loki Mode su
 ```bash
 export LOKI_OIDC_ISSUER="https://your-idp.okta.com/oauth2/default"
 export LOKI_OIDC_CLIENT_ID="your-client-id"
-export LOKI_OIDC_CLIENT_SECRET="your-client-secret"
-export LOKI_OIDC_REDIRECT_URI="http://localhost:57374/auth/callback"
+# Optional: audience override (defaults to LOKI_OIDC_CLIENT_ID)
+export LOKI_OIDC_AUDIENCE="your-api-audience"
 ```
 
-The system validates OIDC tokens against the issuer's JWKS endpoint and maps claims to Loki Mode roles.
+The system validates OIDC bearer tokens (presented as `Authorization: Bearer <jwt>`)
+against the issuer's JWKS endpoint. When PyJWT + cryptography are installed, the
+JWT signature is cryptographically verified (RS256/RS384/RS512) along with the
+issuer, audience, and expiry. Without PyJWT, tokens are rejected unless
+`LOKI_OIDC_SKIP_SIGNATURE_VERIFY=true` is set explicitly (insecure, local testing
+only).
+
+**Claims-to-roles mapping:**
+
+On a valid token, role/group claims are mapped to the four built-in Loki roles
+(`admin`, `operator`, `viewer`, `auditor`). The resolved role's scopes are then
+enforced through the same scope hierarchy used for API tokens. OIDC users are
+NOT granted full access by default.
+
+Recognized claim sources (case-insensitive; values may be a string,
+space-separated string, or list):
+
+| Claim | Provider |
+|-------|----------|
+| value of `LOKI_OIDC_ROLES_CLAIM` (supports dotted paths, e.g. `realm_access.roles`) | configurable |
+| `roles` | generic |
+| `groups` | generic |
+| `realm_access.roles` | Keycloak |
+| `cognito:groups` | AWS Cognito |
+
+Only claim values that exactly match a built-in role name (`admin`, `operator`,
+`viewer`, `auditor`) grant that role. Arbitrary group names (common in `groups`
+or `cognito:groups`) do not map to a role and fall through to the default.
+
+When multiple recognized roles are present, the highest-privilege match wins
+(precedence: `admin` > `operator` > `auditor` > `viewer`).
+
+**Default role (when no recognized role claim is present):**
+
+```bash
+# Defaults to the least-privileged role (viewer). Never admin.
+export LOKI_OIDC_DEFAULT_ROLE="viewer"
+```
+
+If `LOKI_OIDC_DEFAULT_ROLE` is unset or set to an unrecognized value, it falls
+back to `viewer`. The default is never `admin` / full access.
 
 ## Authorization
 

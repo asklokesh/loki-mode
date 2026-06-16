@@ -602,6 +602,8 @@ run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/t
 # actually BLOCK, LOKI_SCAN_DIR redirects the scan to the target fixture).
 run_check "tests/test-p0-verification-sweep.sh (P0 sweep acceptance: gates wired)" "bash tests/test-p0-verification-sweep.sh 2>&1 | tail -3"
 run_check "tests/test-p0-gate-behavior.sh (P0 mock/mutation gates actually block)" "bash tests/test-p0-gate-behavior.sh 2>&1 | tail -3"
+run_check "tests/test-spec-interrogation.sh (P2 spec interrogation + assumption ledger gate)" "bash tests/test-spec-interrogation.sh 2>&1 | tail -3"
+run_check "tests/dashboard/test_oidc_rbac_mapping.py (OIDC RBAC: no-claim defaults to viewer, not admin)" "python3 tests/dashboard/test_oidc_rbac_mapping.py 2>&1 | tail -3"
 
 # v7.28.0: cost-capture root cause. Authoritative result-line cost capture
 # (result-cost-<iter>.json), efficiency writer precedence, budget breaker trip,

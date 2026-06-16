@@ -529,7 +529,7 @@ The "vibe coding" market -- AI tools that generate code from natural language --
 | Lovable | Lovable | $100M ARR in 8 months | Design-quality prototypes |
 | Vercel | v0 | Part of Vercel ($3.5B+) | UI component generator |
 | Replit | Replit | $1.16B valuation | Browser IDE + AI |
-| Autonomi | Loki Mode | Open source, early stage | PRD-to-production system |
+| Autonomi | Loki Mode | Source-available (BUSL-1.1), early stage | PRD-to-production system |
 
 ### 11.4 Strategic Implication for Loki Mode
 

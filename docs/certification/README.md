@@ -73,7 +73,7 @@ docs/certification/
 
 ## Cost and Licensing
 
-This certification program is **free and open source**, released under the same license as Loki Mode. No registration or payment is required.
+This certification program is **free and source-available**, released under the same license as Loki Mode (BUSL-1.1). No registration or payment is required.
 
 ## Version
 
