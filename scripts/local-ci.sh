@@ -352,6 +352,13 @@ run_check "tests/test-cli-commands.sh (LOKI_LEGACY_BASH=1)" "LOKI_LEGACY_BASH=1 
 run_check "tests/cli/test-alias-forwarding.sh (Bun route)" "LOKI_ROUTE=bun bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
 run_check "tests/cli/test-alias-forwarding.sh (bash route)" "LOKI_ROUTE=bash bash tests/cli/test-alias-forwarding.sh 2>&1 | tail -3"
 
+# P4-2: AUTOMATED bash<->Bun runtime parity. Extracts the load-bearing
+# invariants from BOTH routes (autonomy-override text, PHASE_KEYS, effort-per-tier,
+# model-fallback, LOKI_GATE_* toggle set) and asserts equality, failing with a
+# diff on drift. Replaces the prior manual-review-only parity check that was a
+# recurring drift source. Skips cleanly if bun is absent.
+run_check "tests/test-bash-bun-parity.sh (runtime bash<->Bun parity)" "bash tests/test-bash-bun-parity.sh 2>&1 | tail -8"
+
 # v7.5.15: sentrux gate unit tests (fake on-PATH binary; safe on every host).
 # Mirrors the test.yml shell-tests job; fast, no network, no real sentrux dep.
 run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sentrux-gate.sh 2>&1 | tail -3"
@@ -595,7 +602,9 @@ run_check "tests/test-spec.sh (living spec lock/status/sync + drift finding)" "b
 # disclosure lifecycle) and the deterministic `loki verify` pipeline. Wired in
 # v7.28.0 after a council reviewer caught both suites missing from local-ci.
 run_check "tests/test-evidence-gate.sh (evidence gate + inconclusive lifecycle)" "bash tests/test-evidence-gate.sh 2>&1 | tail -3"
+run_check "tests/test-evidence-gate-no-tests.sh (P1-1 no-tests not affirmative)" "bash tests/test-evidence-gate-no-tests.sh 2>&1 | tail -3"
 run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/test-verify.sh 2>&1 | tail -3"
+run_check "tests/dashboard/test_tenant_isolation.py (P3-7 tenant boundary enforcement)" "python3 -m unittest tests.dashboard.test_tenant_isolation 2>&1 | tail -3"
 
 # P0 verification-credibility sweep (docs/P0-SWEEP-PLAN.md): the static
 # acceptance gate (gates WIRED) + the behavioral gate (mock/mutation detectors

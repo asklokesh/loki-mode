@@ -55,6 +55,11 @@ from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
 from .control import atomic_write_json, find_skill_dir, is_process_running
 from .activity_logger import get_activity_logger
+from .api_v2 import (
+    TenantContext,
+    _enforce_project_tenant,
+    resolve_tenant_context,
+)
 
 try:
     from . import __version__ as _version
@@ -267,6 +272,7 @@ class ProjectResponse(BaseModel):
     description: Optional[str]
     prd_path: Optional[str]
     status: str
+    tenant_id: int
     created_at: datetime
     updated_at: datetime
     task_count: int = 0
@@ -1255,14 +1261,25 @@ async def list_projects(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> list[ProjectResponse]:
-    """List projects with pagination. Does not eager-load tasks for efficiency."""
+    """List projects with pagination. Does not eager-load tasks for efficiency.
+
+    Tenant isolation (P3-7): a non-admin authenticated caller only sees
+    projects belonging to their declared tenant (X-Loki-Tenant-ID). A global
+    admin and single-user local mode (auth disabled) see all projects.
+    """
     try:
         from sqlalchemy import func as sa_func
 
         query = select(Project)
         if status:
             query = query.where(Project.status == status)
+        if not tenant_ctx.is_global_admin and tenant_ctx.auth_enabled:
+            # Pin to the caller's tenant. A None tenant_id yields no matches,
+            # which is the correct fail-closed behaviour for a scoped caller
+            # that did not declare a tenant.
+            query = query.where(Project.tenant_id == tenant_ctx.tenant_id)
         query = query.order_by(Project.created_at.desc()).offset(offset).limit(limit)
 
         result = await db.execute(query)
@@ -1295,6 +1312,7 @@ async def list_projects(
                     description=project.description,
                     prd_path=project.prd_path,
                     status=project.status,
+                    tenant_id=project.tenant_id,
                     created_at=project.created_at,
                     updated_at=project.updated_at,
                     task_count=total,
@@ -1311,8 +1329,14 @@ async def list_projects(
 async def create_project(
     project: ProjectCreate,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> ProjectResponse:
-    """Create a new project."""
+    """Create a new project.
+
+    Tenant isolation (P3-7): a non-admin caller may only create projects in
+    their own declared tenant; targeting another tenant returns 403.
+    """
+    tenant_ctx.enforce(project.tenant_id)
     # Validate tenant exists
     tenant_result = await db.execute(
         select(Tenant).where(Tenant.id == project.tenant_id)
@@ -1342,6 +1366,7 @@ async def create_project(
         description=db_project.description,
         prd_path=db_project.prd_path,
         status=db_project.status,
+        tenant_id=db_project.tenant_id,
         created_at=db_project.created_at,
         updated_at=db_project.updated_at,
         task_count=0,
@@ -1353,8 +1378,9 @@ async def create_project(
 async def get_project(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> ProjectResponse:
-    """Get a project by ID."""
+    """Get a project by ID, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Project)
         .options(selectinload(Project.tasks))
@@ -1365,6 +1391,8 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    tenant_ctx.enforce(project.tenant_id)
+
     task_count = len(project.tasks)
     completed_count = len([t for t in project.tasks if t.status == TaskStatus.DONE])
 
@@ -1374,6 +1402,7 @@ async def get_project(
         description=project.description,
         prd_path=project.prd_path,
         status=project.status,
+        tenant_id=project.tenant_id,
         created_at=project.created_at,
         updated_at=project.updated_at,
         task_count=task_count,
@@ -1386,8 +1415,9 @@ async def update_project(
     project_id: int,
     project_update: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> ProjectResponse:
-    """Update a project."""
+    """Update a project, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Project)
         .options(selectinload(Project.tasks))
@@ -1397,6 +1427,8 @@ async def update_project(
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    tenant_ctx.enforce(project.tenant_id)
 
     update_data = project_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -1420,6 +1452,7 @@ async def update_project(
         description=project.description,
         prd_path=project.prd_path,
         status=project.status,
+        tenant_id=project.tenant_id,
         created_at=project.created_at,
         updated_at=project.updated_at,
         task_count=task_count,
@@ -1432,8 +1465,9 @@ async def delete_project(
     project_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> None:
-    """Delete a project."""
+    """Delete a project, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Project).where(Project.id == project_id)
     )
@@ -1441,6 +1475,8 @@ async def delete_project(
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    tenant_ctx.enforce(project.tenant_id)
 
     audit.log_event(
         action="delete",
@@ -1702,8 +1738,11 @@ async def list_tasks(
 async def create_task(
     task: TaskCreate,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> TaskResponse:
-    """Create a new task."""
+    """Create a new task, scoped to the caller's tenant boundary."""
+    # Enforce the tenant boundary on the target project (also 404s if missing).
+    await _enforce_project_tenant(db, tenant_ctx, task.project_id)
     # Verify project exists
     result = await db.execute(
         select(Project).where(Project.id == task.project_id)
@@ -1777,8 +1816,9 @@ async def create_task(
 async def get_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> TaskResponse:
-    """Get a task by ID."""
+    """Get a task by ID, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Task).where(Task.id == task_id)
     )
@@ -1786,6 +1826,8 @@ async def get_task(
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    await _enforce_project_tenant(db, tenant_ctx, task.project_id)
 
     return _task_response_from_db(task)
 
@@ -1795,8 +1837,9 @@ async def update_task(
     task_id: int,
     task_update: TaskUpdate,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> TaskResponse:
-    """Update a task."""
+    """Update a task, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Task).where(Task.id == task_id)
     )
@@ -1804,6 +1847,8 @@ async def update_task(
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    await _enforce_project_tenant(db, tenant_ctx, task.project_id)
 
     update_data = task_update.model_dump(exclude_unset=True)
 
@@ -1844,8 +1889,9 @@ async def delete_task(
     task_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> None:
-    """Delete a task."""
+    """Delete a task, scoped to the caller's tenant boundary."""
     result = await db.execute(
         select(Task).where(Task.id == task_id)
     )
@@ -1853,6 +1899,8 @@ async def delete_task(
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    await _enforce_project_tenant(db, tenant_ctx, task.project_id)
 
     project_id = task.project_id
 
@@ -1888,8 +1936,12 @@ async def move_task(
     task_id: int,
     move: TaskMove,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ) -> TaskResponse:
-    """Move a task to a new status/position (for Kanban drag-and-drop)."""
+    """Move a task to a new status/position (for Kanban drag-and-drop).
+
+    Scoped to the caller's tenant boundary.
+    """
     result = await db.execute(
         select(Task).where(Task.id == task_id)
     )
@@ -1897,6 +1949,8 @@ async def move_task(
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    await _enforce_project_tenant(db, tenant_ctx, task.project_id)
 
     old_status = task.status
 

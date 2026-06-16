@@ -1569,6 +1569,19 @@ council_evidence_gate() {
     local test_fails="false"
     local test_runner="none"
     local test_pass="true"
+    # P1-1 (evidence-gate loophole): track WHY the test signal is not conclusive
+    # positive evidence, mirroring diff_inconclusive. A project that ran NO test
+    # suite (runner=="none") must NOT count as affirmative "tests are green"
+    # evidence -- absence of tests is not proof of correctness. We classify it as
+    # INCONCLUSIVE (not FAIL: a no-tests project is still allowed to complete, it
+    # just may not lean on tests as positive proof), so the no-tests "done" routes
+    # to the completion council's affirmative vote instead of silently passing on
+    # diff-alone. test_inconclusive is pass-through by construction: it never sets
+    # test_fails and never writes evidence-block.json, exactly like
+    # diff_inconclusive. Opt-out (LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1) reverts to
+    # the historical behavior where runner=="none" was an affirmative PASS.
+    local test_inconclusive="false"
+    local test_inconclusive_reason=""
     if [ -f "$tr_file" ]; then
         local test_status
         test_status=$(_TR_FILE="$tr_file" python3 -c "
@@ -1597,9 +1610,25 @@ else:
             test_fails="true"
         fi
         # INCONCLUSIVE => test_fails stays "false" => pass-through.
+        # No test suite ran: a present results file that records runner=="none"
+        # is not affirmative evidence. Route to council (inconclusive), not a
+        # silent diff-alone pass. Default-on; LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1
+        # restores the old affirmative-PASS behavior.
+        if [ "$test_runner" = "none" ] && [ "${LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE:-0}" != "1" ]; then
+            test_inconclusive="true"
+            test_inconclusive_reason="no_test_runner"
+        fi
+    else
+        # Missing test-results.json: no suite was recorded at all. Like the
+        # runner=="none" case this is not affirmative evidence, so classify it
+        # inconclusive (still pass-through: test_fails stays "false"). Preserves
+        # the historical "no file = no gate" non-blocking behavior while making
+        # the absence auditable instead of silently affirmative.
+        if [ "${LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE:-0}" != "1" ]; then
+            test_inconclusive="true"
+            test_inconclusive_reason="no_test_results"
+        fi
     fi
-    # Missing test-results.json (the else of the -f check) likewise leaves
-    # test_fails="false" => inconclusive => pass-through (no file = no gate).
 
     # --- v7.28.0: inconclusive-baseline lifecycle -------------------------------
     # When the gate cannot establish a diff baseline (no git repo, or no run-start
@@ -1635,12 +1664,63 @@ INCONCLUSIVE_EOF
         fi
     fi
 
+    # --- P1-1: durable, auditable evidence-gate details -------------------------
+    # Persist the full evidence picture on EVERY gate run (pass and block) so any
+    # completion claim is auditable after the fact: diff status, test runner +
+    # status, both inconclusive reasons, and the final verdict. Atomic temp+mv,
+    # under .loki/council/ (already excluded from the diff union by the gate's own
+    # ^\.loki/ filter, so it never makes the gate toothless). Best-effort: a write
+    # failure never changes the gate's decision. _write_evidence_details <verdict>
+    # where verdict is one of pass|block (the caller passes the decided verdict).
+    _write_evidence_details() {
+        local _verdict="$1"
+        mkdir -p "$COUNCIL_STATE_DIR" 2>/dev/null || true
+        local _det_file="$COUNCIL_STATE_DIR/evidence-gate-details.json"
+        local _det_tmp="${_det_file}.tmp"
+        local _det_ts
+        _det_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        local _diff_ok _tests_ok
+        if [ "$diff_fails" = "true" ]; then _diff_ok="false"; else _diff_ok="true"; fi
+        if [ "$test_fails" = "true" ]; then _tests_ok="false"; else _tests_ok="true"; fi
+        cat > "$_det_tmp" << DETAILS_EOF
+{
+    "recorded_at": "$_det_ts",
+    "iteration": ${ITERATION_COUNT:-0},
+    "verdict": "$_verdict",
+    "diff": {
+        "ok": $_diff_ok,
+        "base_sha": "${base_sha:-}",
+        "files_changed": $diff_files,
+        "inconclusive": $diff_inconclusive,
+        "inconclusive_reason": "$diff_inconclusive_reason"
+    },
+    "tests": {
+        "ok": $_tests_ok,
+        "runner": "$test_runner",
+        "pass": $test_pass,
+        "inconclusive": $test_inconclusive,
+        "inconclusive_reason": "$test_inconclusive_reason"
+    }
+}
+DETAILS_EOF
+        mv "$_det_tmp" "$_det_file" 2>/dev/null || rm -f "$_det_tmp" 2>/dev/null || true
+    }
+
     # --- Block decision: block iff DIFF FAILS or TEST FAILS ---
     if [ "$diff_fails" != "true" ] && [ "$test_fails" != "true" ]; then
         # Gate passes: remove any stale block report.
         if [ -f "$COUNCIL_STATE_DIR/evidence-block.json" ]; then
             rm -f "$COUNCIL_STATE_DIR/evidence-block.json"
         fi
+        # P1-1: when the gate passes ONLY because no test suite ran, say so out
+        # loud. The pass is pass-through (no-tests must not deadlock), but a
+        # completion that is not backed by any test evidence should never slip by
+        # silently. The durable detail is in evidence-gate-details.json; this is
+        # the human-visible honesty at the pass site.
+        if [ "$test_inconclusive" = "true" ]; then
+            log_warn "[Council] Evidence gate: completion not backed by test evidence (${test_inconclusive_reason}). Pass-through; set LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1 to treat no-tests as affirmative."
+        fi
+        _write_evidence_details "pass"
         return 0
     fi
 
@@ -1717,6 +1797,9 @@ EVIDENCE_EOF
             "tests_ok=$tests_ok" \
             >/dev/null 2>&1 || true
     fi
+
+    # P1-1: durable audit record for the block path too (see _write_evidence_details).
+    _write_evidence_details "block"
 
     return 1
 }

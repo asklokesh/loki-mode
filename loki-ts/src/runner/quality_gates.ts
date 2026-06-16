@@ -73,7 +73,8 @@ export type GateName =
   | "mutation_integrity"
   | "code_review"
   | "doc_coverage"
-  | "magic_debate";
+  | "magic_debate"
+  | "lsp_diagnostics";
 
 export type GateResult = {
   passed: boolean;
@@ -1493,6 +1494,128 @@ export async function runMagicDebateGate(ctx?: RunnerContext): Promise<GateResul
   return { passed: true, detail: `magic_debate: ${specs.length} spec(s) clean` };
 }
 
+// --- LSP diagnostics gate (P1-5) ------------------------------------------
+//
+// Status: ARTIFACT-READING gate, writer PENDING. See TODO(writer) below.
+//
+// Context: an LSP proxy MCP server exists at mcp/lsp_proxy.py (tools
+// lsp_get_diagnostics etc.). Today LSP is only a build-time PROMPT NUDGE
+// (build_prompt.ts:352 LSP_GROUNDING) -- it asks the agent to consult LSP
+// tools, but nothing in the verification pipeline ever reads diagnostics
+// back. This gate closes that loop: it consumes diagnostics for the changed
+// files and BLOCKS the iteration when LSP reports compiler/type ERRORS.
+//
+// APPROACH -- why artifact-reading (NOT direct python invocation):
+//   mcp/lsp_proxy.py is an MCP STDIO server, not a one-shot CLI. Reading
+//   diagnostics requires the full LSP lifecycle (spawn the per-language
+//   server, JSON-RPC `initialize` handshake up to 10s, `didOpen`, then poll
+//   `textDocument/publishDiagnostics`). runStaticAnalysis's subprocess
+//   pattern does NOT transfer -- it spawns trivial stateless one-shots
+//   (`node --check`, `bash -n`), not a stateful server. The established
+//   pattern in this module for out-of-band tooling is artifact-reading:
+//   runTestCoverage (readTestResultsArtifact, ~373), runMockIntegrity and
+//   runMutationIntegrity (readFindingsArtifact, ~470). This gate mirrors
+//   that pattern.
+//
+// CONTRACT (for the future writer -- TODO(writer)):
+//   Artifact path:  <lokiDir>/quality/lsp-diagnostics.json
+//   Shape: mirrors the lsp_get_diagnostics proxy output so a writer can dump
+//   it near-verbatim (mcp/lsp_proxy.py:1163):
+//     {
+//       "count_errors":   <int>,   // sum of diagnostics with severity == 1
+//       "count_warnings": <int>,   // sum of diagnostics with severity == 2
+//       "diagnostics": [ { "severity": 1|2|3|4, "message": "...", ... } ]
+//     }
+//   LSP severity: 1=Error, 2=Warning, 3=Information, 4=Hint (LSP spec).
+//   The WRITER owns the git-diff scoping (which changed files to query) and
+//   the LSP lifecycle. This gate does NOT enumerate the diff itself: it only
+//   reads the aggregated artifact the writer produces. This keeps the gate
+//   cheap and deterministic and avoids duplicating the diff-enumeration that
+//   runStaticAnalysis already does.
+//
+// BLOCK POLICY:
+//   count_errors > 0      -> BLOCK (compiler/type errors must not ship).
+//   warnings only         -> PASS, surfaced as an advisory detail.
+//
+// HONESTY (never fabricate a verdict from absence):
+//   - Gate is OPT-IN: default OFF. LSP servers are not always installed and a
+//     default-on gate would surprise users (and silently no-op on every repo
+//     without a language server). Enable with LOKI_GATE_LSP_DIAGNOSTICS=true.
+//     The toggle alone gates the gate (see readToggles); there is no second
+//     in-body self-skip.
+//   - When the artifact is ABSENT (no writer yet, or LSP not available) the
+//     gate returns passed=true with "lsp not available -- gate did not run".
+//     Absence is NEVER phrased as "clean". It never blocks.
+//   - Honors LOKI_STUB_GATE_LSP_DIAGNOSTICS for orchestration tests.
+type LSPDiagnostic = {
+  severity?: number;
+  message?: string;
+};
+
+type LSPDiagnosticsArtifact = {
+  count_errors?: number;
+  count_warnings?: number;
+  diagnostics?: LSPDiagnostic[];
+};
+
+function readLSPDiagnosticsArtifact(base: string): LSPDiagnosticsArtifact | null {
+  const p = join(base, "quality", "lsp-diagnostics.json");
+  if (!existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, "utf-8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as LSPDiagnosticsArtifact;
+  } catch {
+    return null;
+  }
+}
+
+export async function runLSPDiagnostics(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_LSP_DIAGNOSTICS";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("lsp_diagnostics");
+
+  const base = ctx?.lokiDir ?? lokiDir();
+  const artifact = readLSPDiagnosticsArtifact(base);
+
+  // HONEST pass-through: no artifact means no writer ran (TODO(writer)) or no
+  // LSP server was available. Never fabricate a "clean" verdict from absence.
+  if (artifact === null) {
+    // Absence means no writer produced the artifact (LSP not available, or no
+    // writer ran yet). Name the artifact -- phrasing it as "lsp not available"
+    // alone would be inaccurate on a machine that DOES have a language server
+    // but where no writer has run. Mirrors the sibling findings-gates' detail.
+    return {
+      passed: true,
+      detail: "lsp_diagnostics: no lsp-diagnostics.json artifact (lsp not available) -- gate did not run",
+    };
+  }
+
+  // Prefer the proxy's pre-counted fields; fall back to counting the
+  // diagnostics array by severity (1=Error, 2=Warning) when counts are absent.
+  const diags = Array.isArray(artifact.diagnostics) ? artifact.diagnostics : [];
+  const errorCount = typeof artifact.count_errors === "number"
+    ? artifact.count_errors
+    : diags.filter((d) => d.severity === 1).length;
+  const warnCount = typeof artifact.count_warnings === "number"
+    ? artifact.count_warnings
+    : diags.filter((d) => d.severity === 2).length;
+
+  if (errorCount > 0) {
+    return {
+      passed: false,
+      detail: `lsp_diagnostics: ${errorCount} error(s), ${warnCount} warning(s) -- LSP reports compiler/type errors`,
+    };
+  }
+  if (warnCount > 0) {
+    return {
+      passed: true,
+      detail: `lsp_diagnostics: 0 errors, ${warnCount} warning(s) (advisory)`,
+    };
+  }
+  return { passed: true, detail: "lsp_diagnostics: 0 errors, 0 warnings" };
+}
+
 // --- Orchestrator ---------------------------------------------------------
 
 // Per-iteration toggles read from env. These mirror the bash gate-block guards
@@ -1507,6 +1630,7 @@ type GateToggles = {
   codeReview: boolean;
   docCoverage: boolean;
   magicDebate: boolean;
+  lspDiagnostics: boolean;
 };
 
 function readToggles(): GateToggles {
@@ -1524,6 +1648,10 @@ function readToggles(): GateToggles {
     codeReview: flag("PHASE_CODE_REVIEW", true),
     docCoverage: flag("LOKI_GATE_DOC_COVERAGE", true),
     magicDebate: flag("LOKI_GATE_MAGIC_DEBATE", true),
+    // P1-5: opt-in, default OFF. LSP servers are not always installed; a
+    // default-on gate would surprise users and silently no-op on every repo
+    // without a language server. Enable with LOKI_GATE_LSP_DIAGNOSTICS=true.
+    lspDiagnostics: flag("LOKI_GATE_LSP_DIAGNOSTICS", false),
   };
 }
 
@@ -1671,6 +1799,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     { name: "code_review", enabled: toggles.codeReview, run: () => runCodeReview(ctx) },
     { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },
+    { name: "lsp_diagnostics", enabled: toggles.lspDiagnostics, run: () => runLSPDiagnostics(ctx) },
   ];
 
   for (const gate of sequence) {

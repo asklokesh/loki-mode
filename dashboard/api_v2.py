@@ -20,6 +20,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import auth
@@ -28,6 +29,7 @@ from . import api_keys
 from . import tenants as tenants_mod
 from . import runs as runs_mod
 from .database import get_db
+from .models import Project, Run
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +122,178 @@ def _audit_context(request: Request, token_info: Optional[dict] = None) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Tenant isolation (P3-7)
+# ---------------------------------------------------------------------------
+#
+# The audit (backlog P3-7) flagged that API-level cross-tenant access was NOT
+# enforced: any authenticated caller with the `read` scope could list every
+# tenant and read any tenant's projects, regardless of which tenant they
+# belong to. A caller authenticated for tenant A could read tenant B's data.
+#
+# The caller's tenant MUST come from the trusted, server-validated token --
+# never from a client-supplied request header, which the caller could simply
+# set to a victim tenant's id and bypass the boundary entirely. The auth layer
+# (dashboard/auth.py) has no dedicated tenant field, but a validated token's
+# `scopes` list IS trusted: it is returned by validate_token() (from the
+# server-side token store) and by validate_oidc_token() (from
+# cryptographically/issuer-validated claims). We therefore bind a token to a
+# tenant via a `tenant:<id>` scope, parsed out of token_info["scopes"]. To
+# scope a token to tenant 5, mint it with that scope in its scope list, e.g.
+# via the API-key endpoint or auth.generate_token:
+#
+#     POST /api/v2/api-keys  {"name": "...", "scopes": ["read", "tenant:5"]}
+#     auth.generate_token(name="...", scopes=["read", "tenant:5"])
+#
+# A token's scopes decide crossing rights:
+#
+#   * A global admin (scope `*`, i.e. the admin role) may cross any tenant.
+#   * A non-admin token is pinned to the tenant in its `tenant:<id>` scope;
+#     a request that targets a different tenant is denied with 403.
+#   * When auth is disabled (no enterprise token auth and no OIDC) there is no
+#     caller identity to isolate -- this is single-user local mode -- so access
+#     is not restricted.
+#
+# This boundary is deliberately fail-closed for authenticated non-admin
+# callers: a token with no `tenant:<id>` scope cannot reach ANY tenant-scoped
+# resource (every cross-tenant check fails), so an un-scoped token is not
+# silently granted access to a tenant it was never bound to.
+
+TENANT_SCOPE_PREFIX = "tenant:"
+
+
+class TenantContext:
+    """Resolved tenant boundary for the current caller.
+
+    Attributes:
+        tenant_id: The tenant the caller's token is bound to (parsed from its
+            trusted `tenant:<id>` scope), or None if the token carries no
+            tenant scope.
+        is_global_admin: True if the caller holds admin scope and may
+            legitimately cross tenant boundaries.
+        auth_enabled: True if any auth method (token or OIDC) is active.
+    """
+
+    __slots__ = ("tenant_id", "is_global_admin", "auth_enabled")
+
+    def __init__(
+        self,
+        tenant_id: Optional[int],
+        is_global_admin: bool,
+        auth_enabled: bool,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.is_global_admin = is_global_admin
+        self.auth_enabled = auth_enabled
+
+    def enforce(self, target_tenant_id: int) -> None:
+        """Raise 403 if the caller may not access the given tenant's resources.
+
+        A global admin may access any tenant. When auth is disabled there is
+        no caller to isolate, so access is allowed. Otherwise the caller's
+        token-bound tenant must exactly match the target tenant.
+        """
+        if self.is_global_admin or not self.auth_enabled:
+            return
+        if self.tenant_id is None or self.tenant_id != target_tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Cross-tenant access denied",
+            )
+
+
+def _tenant_id_from_token(token_info: Optional[dict]) -> Optional[int]:
+    """Extract the caller's tenant id from a validated token's scopes.
+
+    Looks for a single `tenant:<id>` scope in the (trusted) token scope list.
+    Returns None if the token carries no such scope. If the token carries
+    conflicting tenant scopes (more than one distinct tenant), access is
+    denied (403) rather than silently picking one.
+    """
+    if not token_info:
+        return None
+    found: set[int] = set()
+    for scope in token_info.get("scopes", []):
+        if isinstance(scope, str) and scope.startswith(TENANT_SCOPE_PREFIX):
+            raw = scope[len(TENANT_SCOPE_PREFIX):].strip()
+            try:
+                found.add(int(raw))
+            except (TypeError, ValueError):
+                # Malformed tenant scope -- ignore it (does not grant access).
+                continue
+    if not found:
+        return None
+    if len(found) > 1:
+        raise HTTPException(
+            status_code=403,
+            detail="Token carries conflicting tenant scopes",
+        )
+    return next(iter(found))
+
+
+def resolve_tenant_context(
+    token_info: Optional[dict] = Depends(auth.get_current_token),
+) -> TenantContext:
+    """FastAPI dependency that resolves the caller's tenant boundary.
+
+    The caller's tenant is derived solely from the trusted, server-validated
+    token (its `tenant:<id>` scope); whether the caller is a global admin (and
+    may cross tenants) is read from the same token's scopes. No client-supplied
+    header is consulted, so a caller cannot impersonate another tenant.
+    """
+    auth_enabled = auth.is_enterprise_mode() or auth.is_oidc_mode()
+    is_global_admin = bool(token_info) and auth.has_scope(token_info, "admin")
+    tenant_id = _tenant_id_from_token(token_info)
+    return TenantContext(
+        tenant_id=tenant_id,
+        is_global_admin=is_global_admin,
+        auth_enabled=auth_enabled,
+    )
+
+
+async def _enforce_project_tenant(
+    db: AsyncSession, tenant_ctx: TenantContext, project_id: int
+) -> None:
+    """Enforce the tenant boundary for a project referenced by id.
+
+    Loads the project's tenant_id and applies tenant_ctx.enforce. A missing
+    project yields 404 (so existence is not leaked across tenants any more
+    than the boundary already allows). For a global admin / auth-disabled
+    caller this is a cheap pass-through that does not need the lookup.
+    """
+    if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
+        return
+    result = await db.execute(
+        select(Project.tenant_id).where(Project.id == project_id)
+    )
+    owner_tenant_id = result.scalar_one_or_none()
+    if owner_tenant_id is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tenant_ctx.enforce(owner_tenant_id)
+
+
+async def _enforce_run_tenant(
+    db: AsyncSession, tenant_ctx: TenantContext, run_id: int
+) -> None:
+    """Enforce the tenant boundary for a run referenced by id.
+
+    A run belongs to a project, which belongs to a tenant. We resolve the
+    run -> project -> tenant chain and apply the boundary. A missing run
+    yields 404.
+    """
+    if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
+        return
+    result = await db.execute(
+        select(Project.tenant_id)
+        .join(Run, Run.project_id == Project.id)
+        .where(Run.id == run_id)
+    )
+    owner_tenant_id = result.scalar_one_or_none()
+    if owner_tenant_id is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    tenant_ctx.enforce(owner_tenant_id)
+
+
 # ===========================================================================
 # TENANT ENDPOINTS
 # ===========================================================================
@@ -149,18 +323,33 @@ async def create_tenant(
 @router.get("/tenants", dependencies=[Depends(auth.require_scope("read"))])
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """List all tenants."""
+    """List tenants visible to the caller.
+
+    A global admin sees every tenant. A tenant-scoped caller sees only their
+    own tenant (and an empty list if the token carries no `tenant:<id>`
+    scope). When auth is disabled, all tenants are returned (single-user
+    local mode).
+    """
     items = await tenants_mod.list_tenants(db)
-    return [tenants_mod._tenant_to_response(t) for t in items]
+    if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
+        return [tenants_mod._tenant_to_response(t) for t in items]
+    return [
+        tenants_mod._tenant_to_response(t)
+        for t in items
+        if t.id == tenant_ctx.tenant_id
+    ]
 
 
 @router.get("/tenants/{tenant_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_tenant(
     tenant_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Get a tenant by ID."""
+    """Get a tenant by ID, scoped to the caller's tenant boundary."""
+    tenant_ctx.enforce(tenant_id)
     tenant = await tenants_mod.get_tenant(db, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -175,8 +364,10 @@ async def update_tenant(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
     """Update an existing tenant."""
+    tenant_ctx.enforce(tenant_id)
     tenant = await tenants_mod.update_tenant(
         db, tenant_id,
         name=body.name, description=body.description, settings=body.settings,
@@ -199,8 +390,10 @@ async def delete_tenant(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
     """Delete a tenant."""
+    tenant_ctx.enforce(tenant_id)
     deleted = await tenants_mod.delete_tenant(db, tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -216,8 +409,10 @@ async def delete_tenant(
 async def get_tenant_projects(
     tenant_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """List all projects for a tenant."""
+    """List all projects for a tenant, scoped to the caller's tenant boundary."""
+    tenant_ctx.enforce(tenant_id)
     tenant = await tenants_mod.get_tenant(db, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -248,8 +443,10 @@ async def create_run(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Create a new run."""
+    """Create a new run, scoped to the caller's tenant boundary."""
+    await _enforce_project_tenant(db, tenant_ctx, body.project_id)
     run_resp = await runs_mod.create_run(
         db, project_id=body.project_id, trigger=body.trigger, config=body.config,
     )
@@ -268,19 +465,62 @@ async def list_runs(
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """List runs with optional filters."""
-    return await runs_mod.list_runs(
-        db, project_id=project_id, status=status, limit=limit, offset=offset,
+    """List runs with optional filters, scoped to the caller's tenant.
+
+    A global admin / auth-disabled caller sees all runs. A tenant-scoped
+    caller only ever sees runs whose project belongs to their tenant: an
+    explicit project_id is enforced against the boundary, and an unscoped
+    listing is narrowed to the caller's own projects.
+    """
+    if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
+        return await runs_mod.list_runs(
+            db, project_id=project_id, status=status, limit=limit, offset=offset,
+        )
+
+    if project_id is not None:
+        # Targeting a specific project: enforce it belongs to the caller.
+        await _enforce_project_tenant(db, tenant_ctx, project_id)
+        return await runs_mod.list_runs(
+            db, project_id=project_id, status=status, limit=limit, offset=offset,
+        )
+
+    # No project filter: restrict to the caller's own projects. A caller with
+    # no tenant binding sees nothing (fail-closed).
+    if tenant_ctx.tenant_id is None:
+        return []
+    proj_result = await db.execute(
+        select(Project.id).where(Project.tenant_id == tenant_ctx.tenant_id)
     )
+    owned_project_ids = [row[0] for row in proj_result]
+    if not owned_project_ids:
+        return []
+    # Collect this tenant's runs across all its projects, then apply the
+    # caller's limit/offset ONCE over the globally-sorted result so pagination
+    # is correct (not per-project). We over-fetch up to limit+offset per
+    # project to guarantee the merged top window is complete, then sort by
+    # created_at desc and slice. Isolation is unconditional regardless.
+    fetch_cap = limit + offset
+    collected: list = []
+    for pid in owned_project_ids:
+        collected.extend(
+            await runs_mod.list_runs(
+                db, project_id=pid, status=status, limit=fetch_cap, offset=0,
+            )
+        )
+    collected.sort(key=lambda r: r.created_at, reverse=True)
+    return collected[offset:offset + limit]
 
 
 @router.get("/runs/{run_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_run(
     run_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Get run details by ID."""
+    """Get run details by ID, scoped to the caller's tenant boundary."""
+    await _enforce_run_tenant(db, tenant_ctx, run_id)
     run_resp = await runs_mod.get_run(db, run_id)
     if run_resp is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -294,8 +534,10 @@ async def cancel_run(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Cancel a running run."""
+    """Cancel a running run, scoped to the caller's tenant boundary."""
+    await _enforce_run_tenant(db, tenant_ctx, run_id)
     run_resp = await runs_mod.cancel_run(db, run_id)
     if run_resp is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -313,8 +555,10 @@ async def replay_run(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Replay a run."""
+    """Replay a run, scoped to the caller's tenant boundary."""
+    await _enforce_run_tenant(db, tenant_ctx, run_id)
     run_resp = await runs_mod.replay_run(db, run_id)
     if run_resp is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -329,8 +573,10 @@ async def replay_run(
 async def get_run_timeline(
     run_id: int,
     db: AsyncSession = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Get the timeline of events for a run."""
+    """Get the timeline of events for a run, scoped to the caller's tenant."""
+    await _enforce_run_tenant(db, tenant_ctx, run_id)
     timeline = await runs_mod.get_run_timeline(db, run_id)
     if timeline is None:
         return {"run_id": run_id, "phases": [], "current_phase": None, "events": []}

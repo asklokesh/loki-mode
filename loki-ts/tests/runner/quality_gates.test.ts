@@ -21,6 +21,7 @@ import {
   getGateFailureCount,
   runCodeReview,
   runDocQualityGate,
+  runLSPDiagnostics,
   runMagicDebateGate,
   runQualityGates,
   runStaticAnalysis,
@@ -51,6 +52,8 @@ const ENV_KEYS = [
   "LOKI_STUB_GATE_CODE_REVIEW",
   "LOKI_STUB_GATE_DOC_COVERAGE",
   "LOKI_STUB_GATE_MAGIC_DEBATE",
+  "LOKI_GATE_LSP_DIAGNOSTICS",
+  "LOKI_STUB_GATE_LSP_DIAGNOSTICS",
 ];
 
 beforeEach(() => {
@@ -987,5 +990,110 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     );
     expect(txt).toContain("[Critical]");
     expect(txt).toContain("provider down");
+  });
+});
+
+// --- LSP diagnostics gate (P1-5) ------------------------------------------
+//
+// Artifact-reading gate, opt-in (default OFF). Writer PENDING (TODO(writer)
+// in quality_gates.ts). These tests pin the runner's pass-through-on-absence
+// honesty, the error/warning block policy, and the default-off sequence
+// behavior so the gate never surprises a user without a language server.
+
+describe("runLSPDiagnostics (P1-5 artifact-reading gate)", () => {
+  function writeArtifact(obj: unknown) {
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(join(scratch, "quality", "lsp-diagnostics.json"), JSON.stringify(obj));
+  }
+
+  it("passes with honest 'gate did not run' detail when the artifact is absent", async () => {
+    // No writer ran / LSP not available. Must NOT block and must NOT phrase
+    // absence as "clean".
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("lsp not available");
+    expect(r.detail ?? "").toContain("gate did not run");
+    expect(r.detail ?? "").not.toContain("clean");
+  });
+
+  it("blocks when the artifact reports one or more errors (count_errors > 0)", async () => {
+    writeArtifact({ count_errors: 2, count_warnings: 1, diagnostics: [] });
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("2 error(s)");
+  });
+
+  it("counts severity-1 diagnostics as errors when count_errors is absent", async () => {
+    writeArtifact({
+      diagnostics: [
+        { severity: 1, message: "Cannot find name 'foo'" },
+        { severity: 2, message: "unused var" },
+      ],
+    });
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("1 error(s)");
+  });
+
+  it("passes with an advisory detail when only warnings are present", async () => {
+    writeArtifact({ count_errors: 0, count_warnings: 3, diagnostics: [] });
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("3 warning(s)");
+    expect(r.detail ?? "").toContain("advisory");
+  });
+
+  it("passes cleanly when there are zero errors and zero warnings", async () => {
+    writeArtifact({ count_errors: 0, count_warnings: 0, diagnostics: [] });
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("0 errors, 0 warnings");
+  });
+
+  it("honors the LOKI_STUB_GATE_LSP_DIAGNOSTICS escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_LSP_DIAGNOSTICS"] = "fail";
+    // Even with a clean artifact present the stub override must win.
+    writeArtifact({ count_errors: 0, count_warnings: 0, diagnostics: [] });
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
+  });
+});
+
+describe("runQualityGates LSP-diagnostics toggle (default OFF)", () => {
+  beforeEach(() => {
+    // Keep the other real gates in stub mode so this block focuses on the
+    // lsp_diagnostics sequence membership, not unrelated gate state.
+    process.env["LOKI_STUB_GATE_STATIC_ANALYSIS"] = "pass";
+    process.env["LOKI_STUB_GATE_TEST_COVERAGE"] = "pass";
+    process.env["LOKI_STUB_GATE_CODE_REVIEW"] = "pass";
+    process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
+    process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "pass";
+  });
+
+  it("does NOT run lsp_diagnostics by default (absent from passed[] and failed[])", async () => {
+    const r = await runQualityGates(makeCtx());
+    expect(r.passed).not.toContain("lsp_diagnostics");
+    expect(r.failed).not.toContain("lsp_diagnostics");
+  });
+
+  it("runs and passes lsp_diagnostics when toggled on with no artifact (honest pass-through)", async () => {
+    process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "true";
+    const r = await runQualityGates(makeCtx());
+    expect(r.passed).toContain("lsp_diagnostics");
+    expect(r.failed).not.toContain("lsp_diagnostics");
+    expect(r.blocked).toBe(false);
+  });
+
+  it("blocks via lsp_diagnostics when toggled on and the artifact reports errors", async () => {
+    process.env["LOKI_GATE_LSP_DIAGNOSTICS"] = "true";
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(
+      join(scratch, "quality", "lsp-diagnostics.json"),
+      JSON.stringify({ count_errors: 1, count_warnings: 0, diagnostics: [] }),
+    );
+    const r = await runQualityGates(makeCtx());
+    expect(r.failed).toContain("lsp_diagnostics");
+    expect(r.blocked).toBe(true);
   });
 });

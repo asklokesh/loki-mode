@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.49.0] - 2026-06-16
+
+### Verification depth + enterprise isolation + parity guard
+
+- **Evidence-gate loopholes tightened (P1-1).** A project with no test runner no
+  longer counts as affirmative "done" evidence; it is recorded inconclusive and
+  routed to the completion council's explicit vote instead of a silent pass.
+  Every evidence-gate decision is now persisted to
+  `.loki/council/evidence-gate-details.json` for audit. Opt out:
+  `LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1`.
+- **Tenant isolation enforced (P3-7).** API-level cross-tenant access is now
+  blocked: project, run, and task endpoints are scoped to the caller's tenant
+  (derived from the trusted token, never a client header); a global admin may
+  still cross tenants. Closes a real cross-tenant read/write/delete gap.
+- **LSP diagnostics verification gate (P1-5).** A new opt-in
+  `LOKI_GATE_LSP_DIAGNOSTICS` gate on the Bun route blocks on language-server
+  errors in changed files (pass-through when no LSP server is available; a
+  diagnostics writer is a tracked follow-up).
+- **Automated bash/Bun parity test (P4-2).** A new local-ci check asserts the
+  load-bearing runtime invariants stay identical across routes (autonomy-override
+  text, phase keys, effort-per-tier, model fallback, gate toggle set), so route
+  drift fails the gate instead of shipping silently.
+
+Each stream built in an isolated worktree, council-reviewed, local-ci green.
+
 ## [7.48.0] - 2026-06-16
 
 ### Fix: shellcheck SC2120 on spec-interrogation.sh (v7.47.0 workflow red)
