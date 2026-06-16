@@ -72,6 +72,67 @@ loki syslog test --message "Test event from Loki Mode"
 tail -f /var/log/loki-mode.log
 ```
 
+## Event Export Module (CEF + Splunk HEC)
+
+In addition to syslog forwarding, Loki Mode ships a programmatic exporter for
+audit/security events at `src/observability/siem-export.js`. It provides two
+well-specified, vendor-agnostic formats and an SSRF-safe HEC sender.
+
+### Zero egress unless configured
+
+The module follows the same gate as the OTEL bridge: nothing leaves the host
+unless an endpoint env var is set. `createHECSenderFromEnv()` returns `null`
+when `LOKI_SPLUNK_HEC_URL` is unset, so there is no code path to the network.
+Endpoint URLs are validated to be `http:`/`https:` only (the same SSRF guard
+the OTLP exporter uses), so a stray `file://` or `gopher://` endpoint is
+rejected before any request is built.
+
+### Auto-detected environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LOKI_SPLUNK_HEC_URL` | enables HEC | Splunk HEC collector URL. Presence enables the sender. |
+| `LOKI_SPLUNK_HEC_TOKEN` | no | HEC auth token (sent as `Authorization: Splunk <token>`). |
+| `LOKI_SPLUNK_HEC_INDEX` | no | Target Splunk index. |
+| `LOKI_SPLUNK_HEC_SOURCETYPE` | no | Sourcetype (default `loki:audit`). |
+| `LOKI_CEF_VENDOR` / `LOKI_CEF_PRODUCT` | no | Override CEF vendor/product header fields. |
+
+### CEF (Common Event Format)
+
+`toCEF(entry)` converts a Loki audit entry into a single-line CEF record.
+Header pipes/backslashes and extension `=`/newlines are escaped per the CEF
+spec, so events cannot break the record framing. Failed events
+(`success: false`) are elevated to severity 8.
+
+```
+CEF:0|Autonomi|Loki Mode|7.49.0|revoke_token|revoke_token|8|rt=2026-02-15T14:30:00.000Z suser=alice src=10.0.0.4 cs1=token cs1Label=resourceType outcome=failure msg=expired credential loki.provider=claude loki.cost=4.25
+```
+
+Nested `details` are flattened under the `loki.` namespace. Standard CEF keys
+are used where they exist (`rt`, `suser`, `src`, `outcome`, `msg`, `cs1..cs3`).
+
+### Splunk HEC JSON
+
+`toHEC(entry)` wraps an audit entry in a Splunk HEC envelope (epoch-seconds
+`time`, `sourcetype`, optional `index`, and the raw `event`). `HECSender.send()`
+POSTs it fire-and-forget; network errors are logged, never thrown, so
+observability never breaks the run.
+
+```bash
+export LOKI_SPLUNK_HEC_URL=https://splunk.example.com:8088/services/collector
+export LOKI_SPLUNK_HEC_TOKEN=your-hec-token
+export LOKI_SPLUNK_HEC_INDEX=security
+```
+
+### GitHub Enterprise SAML SSO (docs-only follow-up)
+
+Ingesting GitHub Enterprise SAML/SSO sign-in events is a documented follow-up,
+not a shipped code path. Those events live in the GitHub audit log API and
+require an org-scoped admin token plus an outbound polling client, which is out
+of scope for the local audit path. Recommended approach today: pull the GitHub
+Enterprise audit log via its native streaming to your SIEM (Splunk/Datadog/
+Azure Event Hubs) and correlate on `actor`/`user_id` with Loki Mode events.
+
 ## Splunk Integration
 
 ### Method 1: Splunk Universal Forwarder
@@ -261,6 +322,47 @@ export LOKI_SYSLOG_FORMAT=cef
 # CEF:0|Autonomi|Loki Mode|5.42.2|session.start|Session Started|3|
 # rt=2026-02-15T14:30:00Z suser=user cs1=claude cs1Label=Provider
 ```
+
+## OTEL Vendor Templates (Datadog, Honeycomb)
+
+Loki Mode already emits OpenTelemetry traces/metrics when `LOKI_OTEL_ENDPOINT`
+is set (see `src/observability/otel.js`). Ready-to-use vendor templates live in
+`src/observability/siem-export.js` (`OTEL_TEMPLATES`) and produce the exact set
+of env vars to ship to a vendor. They are recipes, not egress: copy the output
+into your shell.
+
+### Datadog
+
+Datadog ingests OTLP/HTTP via the Datadog Agent's OTLP receiver (default
+`:4318`) or, agentless, via the OpenTelemetry Collector contrib exporter.
+
+```bash
+# Local Datadog Agent OTLP receiver (recommended)
+export LOKI_OTEL_ENDPOINT=http://localhost:4318
+export LOKI_SERVICE_NAME=loki-mode
+
+# Agentless intake (set API key + site)
+export LOKI_OTEL_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_HEADERS="dd-api-key=YOUR_DD_API_KEY"
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,dd.site=datadoghq.com"
+```
+
+`site` examples: `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`.
+
+### Honeycomb
+
+Honeycomb ingests OTLP/HTTP directly. Auth is the `x-honeycomb-team` header.
+
+```bash
+export LOKI_OTEL_ENDPOINT=https://api.honeycomb.io   # or https://api.eu1.honeycomb.io
+export LOKI_SERVICE_NAME=loki-mode
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=YOUR_API_KEY,x-honeycomb-dataset=loki"
+```
+
+Note: `OTEL_EXPORTER_OTLP_HEADERS` is honored when the real `@opentelemetry`
+SDK is installed (otel.js prefers it and falls back to the built-in JSON
+exporter). For Datadog the local-agent path holds the API key, so the header is
+optional there.
 
 ## Datadog Security Monitoring
 

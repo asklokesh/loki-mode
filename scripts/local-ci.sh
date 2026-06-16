@@ -615,6 +615,13 @@ run_check "tests/test-spec-interrogation.sh (P2 spec interrogation + assumption 
 run_check "tests/dashboard/test_oidc_rbac_mapping.py (OIDC RBAC: no-claim defaults to viewer, not admin)" "python3 tests/dashboard/test_oidc_rbac_mapping.py 2>&1 | tail -3"
 run_check "tests/test-semantic-test-detector.sh (P1-3 semantic test-authenticity detector)" "bash tests/test-semantic-test-detector.sh 2>&1 | tail -3"
 run_check "tests/test-coverage-measurement.sh (P0-1 FixA real coverage + P3-5 run manifest)" "bash tests/test-coverage-measurement.sh 2>&1 | tail -3"
+run_check "tests/test-oracle-triangulation.sh (P2-3 spec-vs-reality oracle)" "bash tests/test-oracle-triangulation.sh 2>&1 | tail -3"
+run_check "tests/test-spec-structure-validation.sh (P2-5 spec-structure validation)" "bash tests/test-spec-structure-validation.sh 2>&1 | tail -3"
+run_check "tests/test-spec-drift-severity.sh (P2-6 spec-drift blocking)" "bash tests/test-spec-drift-severity.sh 2>&1 | tail -3"
+run_check "tests/test-contradiction-detection.sh (P2-4 contradiction detection)" "bash tests/test-contradiction-detection.sh 2>&1 | tail -3"
+run_check "tests/test-invariant-detector.sh (P1-4 spec-independent invariants)" "bash tests/test-invariant-detector.sh 2>&1 | tail -3"
+run_check "tests/test-secret-scan.sh (P3-4 secret scan blocks)" "bash tests/test-secret-scan.sh 2>&1 | tail -3"
+run_check "tests/test-static-analysis-languages.sh (P1-6 static analysis language coverage)" "bash tests/test-static-analysis-languages.sh 2>&1 | tail -3"
 
 # v7.28.0: cost-capture root cause. Authoritative result-line cost capture
 # (result-cost-<iter>.json), efficiency writer precedence, budget breaker trip,

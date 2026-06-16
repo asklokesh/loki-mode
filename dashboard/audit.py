@@ -513,30 +513,25 @@ def _file_has_integrity(log_file: str) -> bool:
     return False
 
 
-def verify_all_logs() -> dict:
-    """v7.7.15: verify the entire audit chain across all rotated log files.
+def verify_all_logs_in_dir(audit_dir) -> dict:
+    """Verify the entire audit chain across all rotated log files in
+    an explicit directory.
 
-    Walks `AUDIT_DIR/audit-*.jsonl` in chronological order, threading
-    the chain hash from one file to the next via `start_hash`. Skips
-    files from the pre-integrity era (files whose first entry has no
-    `_integrity_hash` field, because integrity hashing was introduced
-    after some audit logs already existed).
+    This is the directory-parameterized core of :func:`verify_all_logs`.
+    The default :func:`verify_all_logs` delegates here with the module
+    ``AUDIT_DIR`` so existing callers are unaffected. The explicit-dir
+    form lets the unified cross-chain verifier (see ``src/audit/crosslink.js``)
+    validate an arbitrary audit directory without mutating module globals.
+
+    Args:
+        audit_dir: Path (str or pathlib.Path) to a directory containing
+            ``audit-*.jsonl`` files.
 
     Returns:
-        A dict with:
-          - valid (bool): True if the entire cross-file chain is intact.
-          - files_checked (int): Count of integrity-bearing files inspected.
-          - files_skipped (int): Count of pre-integrity files skipped.
-          - entries_checked (int): Total entries verified across all files.
-          - first_tampered_file (str | None): Path to the first file
-            whose chain broke, or None if valid.
-          - first_tampered_line (int | None): 1-based line number in
-            that file where the chain broke, or None if valid.
-          - genesis_file (str | None): Path to the first integrity-bearing
-            log file (the chain's genesis on this machine), or None if
-            no integrity-bearing files exist.
+        Same shape as :func:`verify_all_logs`.
     """
-    if not AUDIT_DIR.exists():
+    audit_dir = Path(audit_dir)
+    if not audit_dir.exists():
         return {"valid": True, "files_checked": 0, "files_skipped": 0,
                 "entries_checked": 0, "first_tampered_file": None,
                 "first_tampered_line": None, "genesis_file": None}
@@ -547,7 +542,7 @@ def verify_all_logs() -> dict:
     # would break chain ordering and false-negative on any user who hit
     # size-based rotation. Sort by mtime instead -- mirrors what
     # `_cleanup_old_logs` already does at line 178.
-    files = sorted(AUDIT_DIR.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
+    files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
     prev_hash = "0" * 64
     total_entries = 0
     files_checked = 0
@@ -582,3 +577,189 @@ def verify_all_logs() -> dict:
         "first_tampered_line": None,
         "genesis_file": genesis_file,
     }
+
+
+def verify_all_logs() -> dict:
+    """v7.7.15: verify the entire audit chain across all rotated log files.
+
+    Walks `AUDIT_DIR/audit-*.jsonl` in chronological order, threading
+    the chain hash from one file to the next via `start_hash`. Skips
+    files from the pre-integrity era (files whose first entry has no
+    `_integrity_hash` field, because integrity hashing was introduced
+    after some audit logs already existed).
+
+    Returns:
+        A dict with:
+          - valid (bool): True if the entire cross-file chain is intact.
+          - files_checked (int): Count of integrity-bearing files inspected.
+          - files_skipped (int): Count of pre-integrity files skipped.
+          - entries_checked (int): Total entries verified across all files.
+          - first_tampered_file (str | None): Path to the first file
+            whose chain broke, or None if valid.
+          - first_tampered_line (int | None): 1-based line number in
+            that file where the chain broke, or None if valid.
+          - genesis_file (str | None): Path to the first integrity-bearing
+            log file (the chain's genesis on this machine), or None if
+            no integrity-bearing files exist.
+    """
+    return verify_all_logs_in_dir(AUDIT_DIR)
+
+
+def compute_chain_tip_in_dir(audit_dir) -> dict:
+    """Return the current tip (last hash) of the Python audit chain in
+    an explicit directory, plus a verification verdict for that chain.
+
+    Used by the unified cross-chain verifier to anchor the Python chain
+    state into the JS (``src/audit/log.js``) tamper-evident chain via a
+    cross-link record, and to reconcile a previously recorded anchor
+    against the live chain.
+
+    Args:
+        audit_dir: Path (str or pathlib.Path) to the Python audit dir.
+
+    Returns:
+        A dict with:
+          - genesis (str): The genesis hash for this chain ("0"*64).
+          - tip_hash (str): The last integrity hash, or the genesis hash
+            if the chain is empty.
+          - entries (int): Total integrity-bearing entries in the chain.
+          - valid (bool): Whether the chain verifies end-to-end.
+          - chain_id (str): Stable identifier for this chain family.
+    """
+    result = verify_all_logs_in_dir(audit_dir)
+    audit_dir = Path(audit_dir)
+    genesis = "0" * 64
+    tip_hash = genesis
+    if audit_dir.exists():
+        files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
+        prev = genesis
+        for log_file in files:
+            if not _file_has_integrity(str(log_file)):
+                continue
+            r = verify_log_integrity(str(log_file), start_hash=prev)
+            prev = r.get("last_hash", prev)
+        tip_hash = prev
+    return {
+        "genesis": genesis,
+        "tip_hash": tip_hash,
+        "entries": result.get("entries_checked", 0),
+        "valid": bool(result.get("valid", False)),
+        "chain_id": "loki-dashboard-audit",
+    }
+
+
+def compute_prefix_hash_in_dir(audit_dir, n_entries: int) -> dict:
+    """Recompute the dashboard chain hash after exactly the first
+    ``n_entries`` integrity-bearing entries, walking files in mtime
+    order across rotations.
+
+    This is what lets the unified cross-chain verifier distinguish
+    legitimate append-only GROWTH from TAMPER. A cross-link anchor pins
+    ``(tip_hash, entries)`` at link time; later the live chain may have
+    grown. Reconciliation recomputes the hash of the first ``n_entries``
+    (the anchored prefix) and checks it still reproduces the anchored
+    ``tip_hash``. Growth keeps the prefix intact (reproducible); any
+    mutation at-or-before the anchor, or truncation below it, makes the
+    prefix unreproducible.
+
+    Args:
+        audit_dir: Path (str or pathlib.Path) to the Python audit dir.
+        n_entries: Number of leading integrity-bearing entries to hash.
+
+    Returns:
+        A dict with:
+          - found (bool): True if at least ``n_entries`` entries exist
+            and the prefix was hashed without a chain break inside it.
+          - prefix_hash (str): The chain hash after ``n_entries`` entries
+            (or the running hash reached if fewer entries exist / a break
+            occurred -- in which case ``found`` is False).
+          - entries_available (int): Total integrity-bearing entries seen.
+    """
+    audit_dir = Path(audit_dir)
+    genesis = "0" * 64
+    if n_entries <= 0:
+        return {"found": True, "prefix_hash": genesis, "entries_available": 0}
+    if not audit_dir.exists():
+        return {"found": False, "prefix_hash": genesis, "entries_available": 0}
+    files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
+    prev_hash = genesis
+    seen = 0
+    started = False
+    for log_file in files:
+        if not started and not _file_has_integrity(str(log_file)):
+            continue
+        started = True
+        try:
+            with open(log_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        return {"found": False, "prefix_hash": prev_hash,
+                                "entries_available": seen}
+                    stored_hash = entry.pop("_integrity_hash", None)
+                    if stored_hash is None:
+                        return {"found": False, "prefix_hash": prev_hash,
+                                "entries_available": seen}
+                    entry_json = json.dumps(entry, sort_keys=True, default=str)
+                    expected = _compute_chain_hash(entry_json, prev_hash)
+                    if stored_hash != expected:
+                        # Chain broke inside the prefix -> not reproducible.
+                        return {"found": False, "prefix_hash": prev_hash,
+                                "entries_available": seen}
+                    prev_hash = stored_hash
+                    seen += 1
+                    if seen == n_entries:
+                        return {"found": True, "prefix_hash": prev_hash,
+                                "entries_available": seen}
+        except OSError:
+            return {"found": False, "prefix_hash": prev_hash,
+                    "entries_available": seen}
+    # Fewer than n_entries entries exist (truncation below the anchor).
+    return {"found": False, "prefix_hash": prev_hash, "entries_available": seen}
+
+
+def _unified_cli() -> int:
+    """Tiny CLI shim so the Node-side unified verifier (or an operator)
+    can fetch the Python chain tip / verdict for a given directory as
+    JSON. Invoked as:
+
+        python3 dashboard/audit.py tip <audit_dir>
+        python3 dashboard/audit.py verify <audit_dir>
+
+    Prints a single JSON object to stdout. Returns process exit code 0
+    on a valid chain, 1 on an invalid chain, 2 on usage error.
+    """
+    argv = sys.argv[1:]
+    if len(argv) < 2 or argv[0] not in ("tip", "verify", "prefix"):
+        print(json.dumps(
+            {"error": "usage: audit.py {tip|verify} <audit_dir> "
+                      "| prefix <audit_dir> <n_entries>"}))
+        return 2
+    cmd, audit_dir = argv[0], argv[1]
+    if cmd == "tip":
+        out = compute_chain_tip_in_dir(audit_dir)
+        print(json.dumps(out))
+        return 0 if out.get("valid", False) else 1
+    if cmd == "prefix":
+        if len(argv) < 3:
+            print(json.dumps({"error": "prefix requires <n_entries>"}))
+            return 2
+        try:
+            n = int(argv[2])
+        except ValueError:
+            print(json.dumps({"error": "n_entries must be an integer"}))
+            return 2
+        out = compute_prefix_hash_in_dir(audit_dir, n)
+        print(json.dumps(out))
+        return 0 if out.get("found", False) else 1
+    out = verify_all_logs_in_dir(audit_dir)
+    print(json.dumps(out))
+    return 0 if out.get("valid", False) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(_unified_cli())

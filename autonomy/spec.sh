@@ -470,12 +470,17 @@ PYEOF
 # drift check quietly and, on drift, emits ONE SPEC_DRIFT record to stdout in
 # the verify finding TSV shape:
 #     severity \t category \t source \t file \t line \t message
-# Severity is Medium (-> CONCERNS, per the task). Graceful no-op (prints
-# nothing, returns 0) when there is no lock or the spec cannot be resolved.
+# Severity is High (-> BLOCKED under verify's default --block-on critical,high).
+# A spec lock is an explicit human declaration that "this spec is the contract"
+# (loki spec lock / sync), so once it exists, real drift is a blocking gate, not
+# a soft concern. Graceful no-op (prints nothing, returns 0) when there is no
+# lock or the spec cannot be resolved, so an unlocked / first-run workflow is
+# never blocked.
 #
 # This function is intentionally side-effect-light for the verify caller: it
-# still writes the drift-report.json (a useful artifact) but never blocks and
-# never prints to the verify human channel.
+# still writes the drift-report.json (a useful artifact) and never prints to the
+# verify human channel; the BLOCK is delivered purely via the High finding the
+# verify verdict logic consumes.
 # ---------------------------------------------------------------------------
 spec_verify_hook() {
     local out_dir="${1:-$SPEC_DIR_DEFAULT}"
@@ -485,16 +490,17 @@ spec_verify_hook() {
     local spec_path
     # Prefer the spec path recorded in the lock; fall back to resolution.
     spec_path="$(python3 -c 'import sys,json; print(json.load(open(sys.argv[1])).get("spec_path",""))' "$lock_file" 2>/dev/null || echo "")"
-    # MEDIUM-4: the lock recorded a spec path but that file is now MISSING (the
-    # locked spec was deleted). That is real drift -- the contract the lock binds
-    # no longer exists -- so emit a Medium spec_drift finding instead of silently
-    # returning 0. NEVER fall back to spec_resolve_source here: comparing against
-    # a different candidate file would mask the deletion and attest a spec that is
-    # not the locked one. The empty-spec_path case below is a SEPARATE, legitimate
-    # fallback (legacy locks that never recorded a path).
+    # The lock recorded a spec path but that file is now MISSING (the locked spec
+    # was deleted). That is real drift -- the contract the lock binds no longer
+    # exists -- so emit a High spec_drift finding (blocking, consistent with the
+    # content-drift finding below) instead of silently returning 0. NEVER fall
+    # back to spec_resolve_source here: comparing against a different candidate
+    # file would mask the deletion and attest a spec that is not the locked one.
+    # The empty-spec_path case below is a SEPARATE, legitimate fallback (legacy
+    # locks that never recorded a path).
     if [ -n "$spec_path" ] && [ ! -f "$spec_path" ]; then
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "Medium" "spec_drift" "deterministic:loki-spec" "$spec_path" "null" \
+            "High" "spec_drift" "deterministic:loki-spec" "$spec_path" "null" \
             "locked spec file missing: $spec_path (the spec is the contract; restore it or run 'loki spec sync' after review to re-lock against the current spec)"
         return 0
     fi
@@ -523,9 +529,10 @@ PYEOF
 )"
     [ -n "$summary" ] || return 0
 
-    # Emit one Medium SPEC_DRIFT finding in the verify TSV shape.
+    # Emit one High SPEC_DRIFT finding in the verify TSV shape (blocking under
+    # verify's default --block-on critical,high; only reachable when a lock exists).
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "Medium" "spec_drift" "deterministic:loki-spec" "$spec_path" "null" "$summary"
+        "High" "spec_drift" "deterministic:loki-spec" "$spec_path" "null" "$summary"
     return 0
 }
 
@@ -572,8 +579,10 @@ EXIT CODES:
 
 VERIFY INTEGRATION:
     When .loki/spec/spec.lock exists, `loki verify` runs the drift check and
-    adds a Medium-severity SPEC_DRIFT finding on drift, which maps to a CONCERNS
-    verdict. No lock = graceful no-op.
+    adds a High-severity SPEC_DRIFT finding on drift, which BLOCKS verify under
+    its default --block-on critical,high. Locking is an explicit declaration
+    that the spec is the contract, so post-lock drift is a hard gate. No lock =
+    graceful no-op (gate skipped, never blocks an unlocked / first-run workflow).
 
 EOF
 }

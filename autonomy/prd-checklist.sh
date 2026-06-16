@@ -48,6 +48,13 @@ CHECKLIST_DIR=""
 CHECKLIST_FILE=""
 CHECKLIST_RESULTS_FILE=""
 CHECKLIST_LAST_VERIFY_ITERATION=0
+# Path to the spec/PRD that drove this checklist. Used by the acceptance-oracle
+# triangulation (checklist_oracle_triangulate) to compare what the spec ASSERTS
+# against actual codebase reality. Empty in codebase-analysis mode (no PRD).
+CHECKLIST_PRD_PATH=""
+
+# Acceptance-oracle triangulation toggle (default-on, opt-out).
+CHECKLIST_ORACLE_ENABLED=${LOKI_CHECKLIST_ORACLE:-1}
 
 #===============================================================================
 # Initialization
@@ -66,11 +73,308 @@ checklist_init() {
 
     mkdir -p "$CHECKLIST_DIR"
 
+    # Remember the spec path so verify-time triangulation can read what the spec
+    # asserts. Only store a real, readable file (codebase-analysis mode has none).
     if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
+        CHECKLIST_PRD_PATH="$prd_path"
         log_info "PRD checklist initialized for: $prd_path"
     fi
 
     return 0
+}
+
+#===============================================================================
+# Acceptance-Oracle Triangulation (P2-3)
+#===============================================================================
+# The PRD checklist derives acceptance criteria from the SPEC alone. That is a
+# single oracle: if the spec is wrong, every check can pass while the product is
+# wrong. This function adds a SECOND independent oracle -- actual codebase
+# reality -- and triangulates the two:
+#
+#   (1) spec      : what the PRD/spec ASSERTS (e.g. "uses PostgreSQL")
+#   (2) reality   : what the codebase actually wires (deps + import/usage signals)
+#
+# When the spec asserts a stack the codebase CONTRADICTS (reality shows a
+# DIFFERENT, mutually-exclusive choice and NOT the spec's), we EMIT A FINDING
+# rather than silently letting the spec win. The finding is written to
+# .loki/checklist/oracle-findings.json and surfaced to the completion council via
+# checklist_as_evidence(), and a best-effort trust event is recorded.
+#
+# Honest scope (v7.x, P2-3 first slice):
+#   IMPLEMENTED: the spec-vs-reality CONFLICT dimension for the database/datastore
+#   choice, which is the highest-signal, lowest-false-positive triangulation
+#   (the choices are mutually exclusive and have unambiguous dependency markers).
+#
+#   DEFERRED (documented follow-up, NOT faked): the third leg of full
+#   triangulation -- DOMAIN INVARIANTS (auth must hash, money must not be float,
+#   PII must be encrypted) -- and additional stack axes (web framework, language
+#   runtime). These need an invariant catalog plus per-language AST-aware
+#   detection to avoid false positives; a regex grep would be noisy. They are
+#   intentionally left out of this slice. Backlog: P2-3 follow-up "domain-
+#   invariant oracle". See the conflict-detection design here as the template.
+#
+# Non-conflict cases that must NOT fire (guarded + tested):
+#   - spec asserts DB X, codebase has nothing wired yet (greenfield): ABSENT is
+#     not a contradiction -> no finding.
+#   - spec asserts DB X, codebase wires DB X: agreement -> no finding.
+#   - spec asserts nothing about a datastore: no spec oracle -> no finding.
+#
+# Opt-out: LOKI_CHECKLIST_ORACLE=0 (default on). When off, this is a no-op.
+
+# Emit oracle findings JSON for the current project. Pure detection in python3
+# (env-var inputs only, never positional args inside the heredoc), so the bash
+# wrapper just decides whether anything was written.
+checklist_oracle_triangulate() {
+    if [ "$CHECKLIST_ORACLE_ENABLED" != "1" ]; then
+        return 0
+    fi
+
+    # Need a spec oracle to triangulate against. No spec -> nothing to do.
+    if [ -z "$CHECKLIST_PRD_PATH" ] || [ ! -f "$CHECKLIST_PRD_PATH" ]; then
+        return 0
+    fi
+
+    local findings_file="${CHECKLIST_DIR:-".loki/checklist"}/oracle-findings.json"
+    local project_dir
+    project_dir="$(pwd)"
+
+    # Feed the detector to python3 via a quoted heredoc (delimiter in quotes) so
+    # bash performs NO interpolation: no dollar-digit footgun, no quote-escaping
+    # hazards. All inputs arrive through _ORACLE_* env vars.
+    local status_token
+    status_token=$(_ORACLE_SPEC="$CHECKLIST_PRD_PATH" \
+                   _ORACLE_OUT="$findings_file" \
+                   _ORACLE_PROJECT="$project_dir" \
+                   python3 - <<'ORACLE_PY' 2>/dev/null || echo "NOOP"
+import json, os, re, sys, tempfile, glob
+
+spec_path = os.environ["_ORACLE_SPEC"]
+out_path = os.environ["_ORACLE_OUT"]
+project = os.environ["_ORACLE_PROJECT"]
+
+# --- Datastore catalog: canonical name -> (spec regex, reality dependency/usage
+# markers). Choices are mutually exclusive enough that a different one being
+# wired while the spec names another is a genuine contradiction. ---
+DATASTORES = {
+    "postgresql": {
+        "spec": r"(?i)\b(postgres(?:ql)?|psql)\b",
+        # python deps / node deps / connection markers
+        "deps": [r"(?i)\bpsycopg2?\b", r"(?i)\basyncpg\b",
+                 r'(?i)"pg"\s*:', r"(?i)\bpg-promise\b", r"(?i)\bpostgres\b",
+                 r"(?i)\bsequelize\b.*postgres", r"(?i)postgresql://"],
+    },
+    "mysql": {
+        "spec": r"(?i)\b(mysql|mariadb)\b",
+        "deps": [r"(?i)\bpymysql\b", r"(?i)\bmysqlclient\b",
+                 r'(?i)"mysql2?"\s*:', r"(?i)mysql://"],
+    },
+    "mongodb": {
+        "spec": r"(?i)\b(mongo(?:db)?)\b",
+        "deps": [r"(?i)\bpymongo\b", r"(?i)\bmongoengine\b", r"(?i)\bmotor\b",
+                 r'(?i)"mongoose"\s*:', r'(?i)"mongodb"\s*:', r"(?i)mongodb(?:\+srv)?://"],
+    },
+    "sqlite": {
+        "spec": r"(?i)\bsqlite\b",
+        "deps": [r"(?i)\bsqlite3\b", r"(?i)\baiosqlite\b",
+                 r'(?i)"better-sqlite3"\s*:', r"(?i)sqlite://"],
+    },
+    "redis": {
+        "spec": r"(?i)\bredis\b",
+        "deps": [r"(?i)\bredis\b", r"(?i)\bioredis\b", r"(?i)redis://"],
+    },
+    "dynamodb": {
+        "spec": r"(?i)\bdynamo(?:db)?\b",
+        "deps": [r"(?i)\bboto3\b.*dynamo", r"(?i)dynamodb", r'(?i)"@aws-sdk/client-dynamodb"'],
+    },
+}
+
+# Datastores that are caches/secondary by nature: their presence alongside a
+# primary DB is NOT a contradiction (apps routinely use both). Treat them as
+# spec-only signals but never as the "reality contradicts" side.
+SECONDARY = {"redis"}
+
+def read_text(path, limit=400000):
+    try:
+        with open(path, "r", errors="replace") as f:
+            return f.read(limit)
+    except Exception:
+        return ""
+
+spec_text = read_text(spec_path)
+if not spec_text.strip():
+    print("NOOP")
+    sys.exit(0)
+
+# --- Spec oracle: which datastores does the spec ASSERT? ---
+spec_asserts = set()
+for name, cfg in DATASTORES.items():
+    if re.search(cfg["spec"], spec_text):
+        spec_asserts.add(name)
+
+# If the spec names exactly one PRIMARY datastore, we can triangulate it. If it
+# names several primaries, the spec itself is ambiguous about the datastore;
+# triangulation of "the" choice is unsound, so skip (spec-interrogation owns
+# spec-internal ambiguity, not this oracle).
+spec_primary = sorted(spec_asserts - SECONDARY)
+if len(spec_primary) != 1:
+    print("NO_SPEC_DB")
+    sys.exit(0)
+spec_db = spec_primary[0]
+
+# --- Reality oracle: scan a bounded set of dependency/lock/source manifests for
+# datastore markers. We scan manifests first (highest signal, lowest noise). ---
+MANIFEST_GLOBS = [
+    "package.json", "requirements.txt", "requirements/*.txt", "pyproject.toml",
+    "Pipfile", "poetry.lock", "go.mod", "Gemfile", "pom.xml", "build.gradle",
+    "composer.json", "Cargo.toml",
+    ".env.example", ".env.sample", "docker-compose.yml", "docker-compose.yaml",
+]
+SKIP_DIRS = {".git", "node_modules", ".loki", "__pycache__", ".venv", "venv",
+             "dist", "build", ".next", "vendor"}
+
+manifest_text_parts = []
+for pat in MANIFEST_GLOBS:
+    for p in glob.glob(os.path.join(project, pat)):
+        if os.path.isfile(p):
+            manifest_text_parts.append(read_text(p, 200000))
+manifest_text = "\n".join(manifest_text_parts)
+
+# Light source scan for connection-string usage as a secondary reality signal,
+# bounded to a small number of files to stay fast and avoid scanning artifacts.
+def source_scan_hit(markers, cap_files=400):
+    seen = 0
+    for root, dirs, files in os.walk(project):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for fn in files:
+            if not fn.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go",
+                                ".rb", ".java", ".rs", ".php", ".env")):
+                continue
+            seen += 1
+            if seen > cap_files:
+                return False
+            txt = read_text(os.path.join(root, fn), 80000)
+            for m in markers:
+                if re.search(m, txt):
+                    return True
+    return False
+
+def reality_has(name):
+    cfg = DATASTORES[name]
+    for m in cfg["deps"]:
+        if re.search(m, manifest_text):
+            return True
+    # Only fall back to a source scan for the cheap connection-string style
+    # markers (URLs); dependency-name markers belong in manifests.
+    url_markers = [m for m in cfg["deps"] if "://" in m]
+    if url_markers and source_scan_hit(url_markers):
+        return True
+    return False
+
+reality_dbs = set()
+for name in DATASTORES:
+    if name in SECONDARY:
+        continue
+    if reality_has(name):
+        reality_dbs.add(name)
+
+findings = []
+
+# Conflict iff: spec asserts spec_db, AND reality shows a DIFFERENT primary db,
+# AND reality does NOT also show the spec db. Absent reality (greenfield) and
+# agreement both yield no finding.
+contradicting = sorted(d for d in reality_dbs if d != spec_db)
+if contradicting and spec_db not in reality_dbs:
+    findings.append({
+        "id": "oracle-datastore-conflict",
+        "dimension": "spec_vs_reality",
+        "axis": "datastore",
+        "severity": "high",
+        "spec_asserts": spec_db,
+        "codebase_reality": contradicting,
+        "title": "Spec asserts %s but codebase wires %s" % (
+            spec_db, ", ".join(contradicting)),
+        "detail": ("The spec/PRD names %s as the datastore, but the codebase "
+                   "dependencies/usage indicate %s is wired and %s is not. "
+                   "Acceptance criteria derived from the spec alone would pass "
+                   "against the wrong datastore. Resolve which oracle is correct "
+                   "(update the spec or the implementation) before completion."
+                   % (spec_db, ", ".join(contradicting), spec_db)),
+    })
+
+result = {
+    "version": 1,
+    "spec_path": spec_path,
+    "spec_datastore": spec_db,
+    "reality_datastores": sorted(reality_dbs),
+    "findings": findings,
+    "deferred": [
+        "domain-invariant oracle (auth-hashing, money-not-float, PII-encryption)",
+        "additional stack axes (web framework, language runtime)",
+    ],
+}
+
+# Always write the result so evidence/council can read both findings AND a clean
+# "checked, no conflict" record (honest: absence of a finding is itself signal).
+d = os.path.dirname(out_path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+with os.fdopen(fd, "w") as f:
+    json.dump(result, f, indent=2)
+    f.write("\n")
+os.replace(tmp, out_path)
+
+if findings:
+    print("CONFLICT %d" % len(findings))
+else:
+    print("CLEAN")
+ORACLE_PY
+)
+
+    # Honest logging + best-effort trust event on a real conflict only.
+    local tok rest
+    read -r tok rest <<< "$status_token"
+    case "$tok" in
+        CONFLICT)
+            log_warn "[checklist] acceptance-oracle conflict: spec disagrees with codebase reality (${rest:-1} finding(s)); see ${findings_file}"
+            if type record_trust_event_bash &>/dev/null; then
+                record_trust_event_bash "oracle_conflict" \
+                    "dimension=spec_vs_reality" \
+                    "axis=datastore" \
+                    "findings=${rest:-1}" \
+                    >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+# Echo the oracle findings as a formatted block for council evidence. Empty when
+# no findings (or oracle disabled / not run).
+checklist_oracle_evidence() {
+    local findings_file="${CHECKLIST_DIR:-".loki/checklist"}/oracle-findings.json"
+    if [ ! -f "$findings_file" ]; then
+        return 0
+    fi
+    _ORACLE_OUT="$findings_file" python3 -c '
+import json, os
+try:
+    with open(os.environ["_ORACLE_OUT"]) as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(0)
+findings = data.get("findings", [])
+if not findings:
+    raise SystemExit(0)
+print("")
+print("### Acceptance-Oracle Triangulation (spec vs codebase reality)")
+for fnd in findings:
+    sev = str(fnd.get("severity", "high")).upper()
+    print("  [FAIL] [%s] %s" % (sev, fnd.get("title", fnd.get("id", "?"))))
+    detail = fnd.get("detail", "")
+    if detail:
+        print("         %s" % detail)
+' 2>/dev/null || true
 }
 
 #===============================================================================
@@ -314,6 +618,12 @@ checklist_verify() {
     # first verification-results.json summary already excludes held-out items.
     checklist_select_heldout
 
+    # Acceptance-oracle triangulation: compare what the spec ASSERTS against
+    # actual codebase reality and emit a finding on conflict. Runs at verify-time
+    # (not init) so codebase reality actually exists by now even on a greenfield
+    # build. Best-effort, default-on, never blocks verification itself.
+    checklist_oracle_triangulate 2>/dev/null || true
+
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local verify_script="${script_dir}/checklist-verify.py"
@@ -477,6 +787,11 @@ try:
 except Exception:
     print('Checklist data unavailable')
 " 2>/dev/null || echo "Checklist data unavailable"
+
+        # Append acceptance-oracle triangulation findings (spec vs codebase
+        # reality) so the completion council sees a spec-vs-reality conflict as
+        # first-class evidence. Emits nothing when there are no findings.
+        checklist_oracle_evidence
     } >> "${evidence_file:-/dev/stdout}"
 }
 

@@ -7,7 +7,7 @@
 # test extracts the canonical values from BOTH routes and asserts equality,
 # failing loudly with a diff when they drift.
 #
-# WHAT IS COVERED (the contract -- 5 invariants):
+# WHAT IS COVERED (the contract -- 6 invariants):
 #   1. Autonomy-override system-prompt text
 #        bash:  providers/claude.sh _loki_autonomy_override_text()
 #        bun:   loki-ts/src/providers/claude_flags.ts AUTONOMY_OVERRIDE_TEXT
@@ -24,6 +24,15 @@
 #   5. Gate-toggle env var names (LOKI_GATE_*) referenced by both routes
 #        bash:  grep over autonomy/
 #        bun:   grep over loki-ts/src/
+#   6. `report session` (bash canonical) == `stats` (Bun) stdout
+#        bash:  autonomy/loki cmd_report -> cmd_stats
+#        bun:   loki-ts/src/commands/stats.ts runStats
+#        The `report` noun stays bash-routed by design (its other subcommands --
+#        metrics/cost/export/share/dogfood -- are not Bun-ported), so
+#        `report session` runs bash cmd_stats while `stats` runs the Bun port.
+#        Those two MUST produce identical stdout (the deprecation-alias contract
+#        in stats.ts). This invariant locks that, modulo the one-line stderr
+#        deprecation pointer that fires only on the bare `stats` token.
 #
 # EXTRACTION STRATEGY: for the COMPUTED invariants (override text, effort,
 # fallback) we EXECUTE the real code on both routes rather than regex-parsing
@@ -44,6 +53,24 @@
 #     a legitimate bash-only knob and is subtracted from the GATE_* set on the
 #     bash side before the set-equality assertion. Re-classify if the Bun route
 #     ever runs those gates.
+#   - The `report` NOUN dispatcher (autonomy/loki cmd_report) is bash-routed BY
+#     DESIGN, not a Bun gap. bin/loki only routes `report kpis` to Bun (kpis has
+#     no bash implementation); every other report subcommand
+#     (session/metrics/cost/export/share/dogfood) forwards to the existing bash
+#     cmd_* function. metrics/cost/export/share/dogfood are NOT Bun-ported, so a
+#     native Bun `report` dispatcher would have to drag in five more commands --
+#     out of scope. The one subcommand that DOES have a Bun port, `session`
+#     (-> cmd_stats), is the deprecated alias of the Bun-native `stats`, and the
+#     two are pinned byte-identical by invariant 6 above. So `report` being
+#     bash-routed creates NO user-visible drift. Re-classify (port a Bun `report`
+#     dispatcher) only if/when those other subcommands are themselves ported.
+#   - context_gauge / format_tokens (autonomy/tui.sh): formerly bash-only and
+#     called out as "not ported" in status.ts. PORTED in the P4-6 parity sweep
+#     (loki-ts/src/commands/status.ts) so `loki status` renders the Budget and
+#     Context visual gauges identically on both routes. No longer an asymmetry;
+#     covered by loki-ts/tests/commands/status.test.ts (byte-for-byte verified
+#     against `bash autonomy/loki status`). Listed here as a former entry so the
+#     record stays honest.
 #
 # NOT COVERED (out of scope for this test, by design):
 #   - The full build_prompt() output (the loki-ts fixture corpus in
@@ -392,6 +419,60 @@ $(printf '%s\n' "$only_bun" | sed 's/^/  /')
 }
 
 # ---------------------------------------------------------------------------
+# INVARIANT 6: `report session` (bash canonical) == `stats` (Bun) stdout.
+# The `report` noun is bash-routed by design (see ALLOWED ASYMMETRY); its
+# `session` subcommand forwards to bash cmd_stats, which is the deprecated alias
+# of the Bun-native `stats`. Run BOTH routes against the same seeded .loki and
+# assert byte-identical stdout (ANSI-stripped). The Bun route also emits a
+# one-line stderr deprecation pointer on the bare `stats` token; we compare
+# STDOUT only, so that pointer is correctly excluded.
+# ---------------------------------------------------------------------------
+check_report_session_stats() {
+    local name="report session (bash) == stats (Bun) stdout"
+    local bun_cli="loki-ts/src/cli.ts"
+    if [ ! -f "$bun_cli" ]; then
+        fail "$name" "Bun CLI entry not found at $bun_cli"
+        return
+    fi
+
+    # Seed a deterministic .loki so both routes aggregate identical inputs.
+    local seed="$TMPDIR_PARITY/report-stats-loki"
+    mkdir -p "$seed/metrics/efficiency" "$seed/state"
+    printf '%s\n' '{"currentPhase":"design","currentIteration":2}' > "$seed/state/orchestrator.json"
+    printf '%s\n' '{"input_tokens":1000,"output_tokens":500,"cost_usd":0.5,"duration_seconds":120}' \
+        > "$seed/metrics/efficiency/iteration-1.json"
+    printf '%s\n' '{"input_tokens":2000,"output_tokens":800,"cost_usd":1.2,"duration_seconds":200}' \
+        > "$seed/metrics/efficiency/iteration-2.json"
+
+    local bash_out="$TMPDIR_PARITY/report.bash.txt"
+    local bun_out="$TMPDIR_PARITY/stats.bun.txt"
+
+    # Strip ANSI on both sides (the existing route-parity normalization).
+    LOKI_DIR="$seed" bash autonomy/loki report session 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' > "$bash_out"
+    LOKI_DIR="$seed" "$BUN_BIN" "$bun_cli" stats 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' > "$bun_out"
+
+    if [ ! -s "$bash_out" ]; then
+        fail "$name" "bash 'report session' produced no stdout (cmd_report wiring broke?)"
+        return
+    fi
+    if [ ! -s "$bun_out" ]; then
+        fail "$name" "Bun 'stats' produced no stdout (runStats broke?)"
+        return
+    fi
+
+    if cmp -s "$bash_out" "$bun_out"; then
+        pass "$name"
+    else
+        local d
+        d="$(diff "$bash_out" "$bun_out" | head -40)"
+        fail "$name" "DRIFT between 'report session' (bash) and 'stats' (Bun) stdout:
+$d"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run all checks.
 # ---------------------------------------------------------------------------
 check_autonomy_override
@@ -399,6 +480,7 @@ check_phase_keys
 check_effort
 check_fallback
 check_gate_env
+check_report_session_stats
 
 echo ""
 echo "=== parity summary: $PASS passed, $FAIL failed ==="

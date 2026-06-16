@@ -170,6 +170,14 @@ class PrdAnalyzer:
         self.feature_count = 0
         self.scope = "unknown"
         self.score = 0.0
+        # Deterministic structural validation result (P2-5). Populated by
+        # validate_structure() during analyze(). Shape:
+        #   {"ok": bool, "issues": [str, ...], "warnings": [str, ...]}
+        # issues   = structural problems that would likely yield a garbage
+        #            checklist (no headings, unparseable, basic contradictions).
+        # warnings = lower-confidence findings worth surfacing but not blocking
+        #            (e.g. a referenced local doc that does not exist).
+        self.structure = {"ok": True, "issues": [], "warnings": []}
 
     def load(self):
         """Load and validate the PRD file, optionally appending architecture doc."""
@@ -190,6 +198,11 @@ class PrdAnalyzer:
     def analyze(self):
         """Run all analysis dimensions and compute score."""
         self.load()
+        # P2-5: deterministic structural validation runs BEFORE the rest of the
+        # analysis (and therefore before the checklist is extracted downstream)
+        # so a malformed/contradictory spec is flagged early with an actionable
+        # message instead of silently producing a garbage checklist.
+        self.validate_structure()
         total_weight = 0.0
         earned_weight = 0.0
 
@@ -281,6 +294,157 @@ class PrdAnalyzer:
         elif word_count > 500 and self.scope == "small":
             self.scope = "medium"
 
+    def validate_structure(self):
+        """Deterministic structural validation of the spec (P2-5).
+
+        Runs before checklist extraction so a malformed/contradictory spec is
+        caught early with an actionable message rather than producing a garbage
+        checklist. All checks are regex/stdlib based and deterministic.
+
+        Severity policy: only a TRULY UNUSABLE spec (no readable text / binary
+        garbage) is an ISSUE (Status FAIL). Everything else is a WARNING, so a
+        shallow heuristic never marks a valid spec FAIL. This is deliberate:
+        the one-line-brief input mode is supported, and nothing downstream
+        currently blocks on FAIL anyway (see deferral note below), so WARNING
+        is the honest severity for "structure-thin but possibly valid input".
+
+        ISSUE (high confidence, Status FAIL):
+          1. Parseable / decodable text  -- must contain readable word
+             characters and not be majority-undecodable bytes. A file of pure
+             punctuation or binary content cannot yield a real checklist.
+
+        WARNINGS (surfaced early, do not flip Status to FAIL):
+          2. Headings present            -- at least one Markdown heading
+             (``# ...``) so sections can be located. An "all prose" spec with
+             zero structure yields a less reliable checklist, but a one-line
+             brief is still valid input -> WARNING, not FAIL.
+          3. Referenced LOCAL docs exist -- only explicit Markdown links to
+             LOCAL, RELATIVE files (``[text](./relative.md)``), resolved
+             against the PRD's parent directory. Specs legitimately describe
+             files to be BUILT, so a missing path is a WARNING; only docs the
+             author claims already exist are flagged, and only as a warning.
+          4. Trivial self-contradiction  -- the same requirement phrased as
+             both "must X" and "must not X" on an identical short predicate.
+             This is a shallow LEXICAL heuristic only: it has no notion of the
+             subject, so "all data must be encrypted" + "public assets must
+             not be encrypted" collide on the predicate "be encrypted" even
+             though they do not actually conflict. Because of that
+             false-positive risk it is a WARNING, never an ISSUE. It does NOT
+             do semantic contradiction detection, cross-section reasoning, or
+             circular dependency analysis -- that deeper work lives in the
+             spec-interrogation pipeline, not here.
+
+        Populates ``self.structure`` = {"ok", "issues", "warnings"}. Empty/
+        missing-file cases are already raised by ``load()`` before this runs.
+        Never raises; never changes the process exit code (callers such as
+        run.sh invoke the analyzer best-effort and gate on the observations
+        file, not the exit status).
+        """
+        issues = []
+        warnings = []
+
+        text = self.content or ""
+
+        # --- Check 1: parseable / decodable -------------------------------
+        # load() already replaced undecodable bytes with U+FFFD and rejected
+        # empty content. A spec that is overwhelmingly replacement characters
+        # or has no word characters at all is effectively unparseable.
+        word_chars = len(re.findall(r"\w", text))
+        replacement_chars = text.count("�")
+        if word_chars == 0:
+            issues.append(
+                "Spec contains no readable text (no word characters found). "
+                "Provide a Markdown/plain-text spec with actual requirements."
+            )
+        elif replacement_chars > 0 and replacement_chars > word_chars:
+            issues.append(
+                "Spec appears to be binary or wrong-encoding content "
+                f"({replacement_chars} undecodable bytes vs {word_chars} text "
+                "characters). Provide a UTF-8 Markdown/plain-text spec."
+            )
+
+        # --- Check 2: headings present ------------------------------------
+        # Use self.lines so the (optional) architecture doc counts too.
+        heading_count = sum(1 for ln in self.lines if re.match(r"^\s{0,3}#{1,6}\s+\S", ln))
+        if heading_count == 0:
+            warnings.append(
+                "Spec has no Markdown headings (no '# ...' lines). The checklist "
+                "will be guessed from unstructured prose, which is less reliable. "
+                "Add section headings (e.g. ## Features, ## Acceptance Criteria) "
+                "if this is more than a one-line brief."
+            )
+
+        # --- Check 3: referenced LOCAL relative docs exist ----------------
+        # Only flag explicit Markdown links to local, relative paths. URLs,
+        # anchors, mailto, and absolute paths are skipped. A PRD describes
+        # files to be BUILT, so a missing path is a WARNING, not a hard issue.
+        base_dir = self.prd_path.parent if self.prd_path.parent != Path("") else Path(".")
+        seen_targets = set()
+        for m in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", text):
+            target = m.group(1).strip()
+            # Strip an optional title: [t](path "title")
+            target = target.split()[0] if target else target
+            if not target or target in seen_targets:
+                continue
+            seen_targets.add(target)
+            low = target.lower()
+            # Skip non-local references.
+            if (
+                "://" in target
+                or low.startswith(("http:", "https:", "ftp:", "mailto:", "tel:", "#", "data:"))
+                or target.startswith("/")
+                or target.startswith("~")
+            ):
+                continue
+            # Only consider links that look like a doc/asset reference, i.e.
+            # they have a file extension. A bare word in parens is more likely
+            # to be incidental than a real file reference.
+            stem = target.split("#")[0].split("?")[0]
+            if "." not in os.path.basename(stem):
+                continue
+            candidate = (base_dir / stem)
+            try:
+                exists = candidate.exists()
+            except OSError:
+                exists = False
+            if not exists:
+                warnings.append(
+                    f"Referenced local file not found: '{target}' "
+                    f"(resolved to '{candidate}'). If this doc is supposed to "
+                    "already exist, add it or fix the link; if it describes "
+                    "something to be built, this can be ignored."
+                )
+
+        # --- Check 4: trivial self-contradiction (BASIC, shallow) ---------
+        # Catch only the most obvious lexical case: identical short predicate
+        # appearing as both "must <p>" and "must not <p>". This is a deliberate
+        # shallow heuristic. Real contradiction/circularity detection is out of
+        # scope here (see spec-interrogation pipeline).
+        must_pos = {}
+        must_neg = set()
+        for ln in self.lines:
+            low = ln.lower()
+            for mm in re.finditer(r"\bmust\s+not\s+([a-z][a-z0-9 _-]{2,40}?)(?=[.,;:)]|$)", low):
+                must_neg.add(mm.group(1).strip())
+            for mm in re.finditer(r"\bmust\s+(?!not\b)([a-z][a-z0-9 _-]{2,40}?)(?=[.,;:)]|$)", low):
+                pred = mm.group(1).strip()
+                must_pos.setdefault(pred, ln.strip()[:120])
+        contradictions = sorted(set(must_pos) & must_neg)
+        for pred in contradictions[:5]:
+            warnings.append(
+                f"Possible self-contradiction: the spec says both 'must {pred}' "
+                f"and 'must not {pred}'. If these apply to the same subject, "
+                "resolve the conflict. (Basic lexical check, ignores subject; "
+                "may be a false positive -- review manually.)"
+            )
+
+        self.structure = {
+            "ok": len(issues) == 0,
+            "issues": issues,
+            "warnings": warnings,
+        }
+        return self.structure
+
     def generate_observations(self):
         """Generate the observations markdown content."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -309,9 +473,40 @@ class PrdAnalyzer:
             f"**Quality Score:** {self.score}/10",
             f"**Estimated Scope:** {self.scope} (~{self.feature_count} items detected)",
             f"",
+        ]
+
+        # P2-5: structural validation section. This is the durable, visible
+        # channel: run.sh invokes the analyzer with stderr discarded and the
+        # exit code swallowed, so the observations file is what downstream
+        # readers (and the operator) actually see.
+        struct = getattr(self, "structure", {"ok": True, "issues": [], "warnings": []})
+        status = "PASS" if struct.get("ok", True) else "FAIL"
+        lines.append("## Structural Validation")
+        lines.append("")
+        lines.append(f"**Status:** {status}")
+        lines.append("")
+        if struct.get("issues"):
+            lines.append("Structural issues detected (fix these before relying "
+                         "on the generated checklist):")
+            lines.append("")
+            for issue in struct["issues"]:
+                lines.append(f"- {issue}")
+            lines.append("")
+        if struct.get("warnings"):
+            lines.append("Warnings (lower confidence, review manually):")
+            lines.append("")
+            for warn in struct["warnings"]:
+                lines.append(f"- {warn}")
+            lines.append("")
+        if struct.get("ok") and not struct.get("warnings"):
+            lines.append("- Spec is parseable, has headings, and has no "
+                         "obvious self-contradictions.")
+            lines.append("")
+
+        lines.extend([
             f"## Strengths",
             f"",
-        ]
+        ])
         if strengths:
             lines.extend(strengths)
         else:
@@ -475,6 +670,25 @@ def main():
 
         write_atomic(args.output, observations)
         print(f"PRD analysis complete: score={analyzer.score}/10 scope={analyzer.scope}")
+        # P2-5: surface structural validation on stdout (run.sh keeps stdout in
+        # its log; only stderr is discarded). Exit code intentionally stays 0
+        # for a structurally-suspect-but-non-empty spec to match the
+        # best-effort, never-blocks contract other callers rely on.
+        struct = getattr(analyzer, "structure", {"ok": True, "issues": [], "warnings": []})
+        if not struct.get("ok", True):
+            print(
+                "PRD structure check: FAIL ("
+                + f"{len(struct.get('issues', []))} issue(s)) -- "
+                + "see Structural Validation section in observations"
+            )
+        elif struct.get("warnings"):
+            print(
+                "PRD structure check: PASS with "
+                + f"{len(struct['warnings'])} warning(s) -- "
+                + "see Structural Validation section in observations"
+            )
+        else:
+            print("PRD structure check: PASS")
         print(f"Observations written to: {args.output}")
 
     except FileNotFoundError as e:

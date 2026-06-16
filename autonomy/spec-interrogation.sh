@@ -29,6 +29,28 @@
 #   prompt-injected, and surfaced in proof-of-done. LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1
 #   disables auto-ack for a human-in-the-loop path (only confirmed=true clears).
 #
+# Design note (P2-4 contradictions -- the exception to the lifecycle above):
+#   A GAP can become a recorded assumption: "the spec is silent, so I took the
+#   implementer default." A CONTRADICTION cannot -- there is no default that
+#   satisfies "X and not-X". So a contradiction (class=contradictory, forced to
+#   severity=high) is NEVER auto-acknowledged, even in default autonomous mode
+#   (spec_ledger_acknowledge_all skips it). It stays acknowledged=false and keeps
+#   the completion gate BLOCKED until a human sets confirmed=true. We chose this
+#   "block, do not assume away" behavior over the softer "auto-ack but surface
+#   loudly" option because a silently-acked contradiction lets "done" be declared
+#   over a spec we know is internally inconsistent, which is exactly the
+#   accuracy failure this feature exists to prevent. Honest cost: in a fully
+#   autonomous run an unresolved contradiction grinds the loop to max-iterations
+#   (no human to confirm), wasting budget. It is STILL surfaced in proof-of-done
+#   on every terminal path. Escape hatches: a human sets confirmed=true in
+#   .loki/assumptions/, or the operator sets LOKI_ASSUMPTION_GATE=0. A follow-up
+#   in run.sh (out of this module's scope) should add an early hard-stop on an
+#   unresolved contradiction so the run fails fast instead of grinding.
+#   Contradictions come from two sources: spec-INTERNAL (grill finds them, the
+#   classifier tags them) and spec-EXTERNAL (spec_interrogation_external_check
+#   compares the spec to the repo's declared dependencies; narrow + high-
+#   confidence by design).
+#
 # Provider-aware + clean degrade: grill needs a provider CLI; when absent we log
 # an honest message, skip the grill subcall (NO fabricated questions), but STILL
 # fold prd-analyzer's deterministic missing-dimension assumptions into the ledger
@@ -38,6 +60,7 @@
 #   LOKI_SPEC_GRILL=0                  skip interrogation entirely
 #   LOKI_ASSUMPTION_GATE=0            completion gate is pass-through (gate file)
 #   LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1  require human confirmed=true (no auto-ack)
+#   LOKI_SPEC_EXTERNAL_CHECK=0       skip the spec-vs-repo external contradiction check
 
 set -uo pipefail
 
@@ -81,6 +104,17 @@ spec_interrogation_severity_for() {
             printf 'high'; return 0 ;;
     esac
 
+    # P2-4: a "Contradictions" SECTION escalates to high even when the line has
+    # no contradiction keyword. Keyword-only detection would silently miss a
+    # contradiction phrased plainly ("section 2 mandates immutable records;
+    # section 5 specifies an edit endpoint."), which is exactly the failure P2-4
+    # exists to prevent -- and the grill-prompt follow-up that adds a
+    # "Contradictions" section would emit such keyword-free findings.
+    case "$lc_section" in
+        *contradiction*|*contradictor*)
+            printf 'high'; return 0 ;;
+    esac
+
     # Section-driven severity.
     case "$lc_section" in
         *security*|*scale*|*reliability*)
@@ -110,6 +144,13 @@ spec_interrogation_class_for() {
 
     case "$lc_line" in
         *contradict*|*conflict*|*inconsistent*|*mutually\ exclusive*)
+            printf 'contradictory'; return 0 ;;
+    esac
+
+    # P2-4: a "Contradictions" SECTION tags its findings contradictory even when
+    # the line carries no contradiction keyword (see severity_for for rationale).
+    case "$lc_section" in
+        *contradiction*|*contradictor*)
             printf 'contradictory'; return 0 ;;
     esac
 
@@ -249,9 +290,19 @@ spec_interrogation_classify_report() {
         # Trim leading/trailing whitespace.
         stripped="$(printf '%s' "$q" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
         [ -z "$stripped" ] && continue
-        # Skip explicit "None identified." placeholders (no fabricated findings).
-        case "$stripped" in
-            "None identified"*|"None."*|"None"|"N/A"*) continue ;;
+        # Skip negative-result / clean-spec lines so a grill that honestly
+        # reports "nothing found" never becomes a persisted finding (and, under
+        # "### Contradictions", never deadlocks a clean spec to max-iterations).
+        # Match a lowercased copy (bash 3.2 has no ${var,,}); write the original.
+        # Patterns are START-anchored to whole-line negative phrasings so a real
+        # finding that merely contains "no" (e.g. "no input validation on the
+        # login endpoint") is NOT skipped.
+        local stripped_lc
+        stripped_lc="$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')"
+        case "$stripped_lc" in
+            "none"|"none."*|"none found"*|"none identified"*|\
+            "no contradiction"*|"no issues"*|"no conflicts"*|"no problems"*|\
+            "no concerns"*|"no gaps"*|"not applicable"*|"n/a"*) continue ;;
         esac
 
         local sev class affects assumption
@@ -260,7 +311,20 @@ spec_interrogation_classify_report() {
         affects="$(_spec_affects_for "$section")"
         # No-fabrication: the finding is a QUESTION; the honest assumption is a
         # stated default, NOT an invented resolution the build will not follow.
-        assumption="Spec gives no answer; proceeding with the implementer default for ${affects}."
+        # P2-4: a CONTRADICTION is special. A gap can become a recorded
+        # assumption (a stated default), but a contradiction CANNOT be assumed
+        # away -- there is no consistent default for "X and not-X". So a
+        # contradictory finding carries a contradiction-specific message instead
+        # of the implementer-default text. This keeps spec_ledger_prompt_block
+        # honest (it would otherwise instruct the build agent to "proceed with a
+        # default" for something that has no consistent default) and makes the
+        # ledger rollup state the truth: unresolvable by assumption, needs a
+        # human.
+        if [ "$class" = "contradictory" ]; then
+            assumption="UNRESOLVED CONTRADICTION: the spec is internally inconsistent here and cannot be assumed away; a human must resolve it before this can be built correctly."
+        else
+            assumption="Spec gives no answer; proceeding with the implementer default for ${affects}."
+        fi
 
         spec_ledger_write \
             "$stripped" \
@@ -271,6 +335,144 @@ spec_interrogation_classify_report() {
             "$affects" \
             "grill"
     done < "$report"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# P2-4 EXTERNAL contradiction check: spec vs existing code/config.
+#
+# A spec-internal contradiction is found by the grill (LLM) and recognized by
+# the classifier above. An EXTERNAL contradiction is the spec disagreeing with
+# the repo it is being built into (spec says Postgres, repo wired to Mongo).
+#
+# Design constraint -- PRECISION OVER RECALL (deliberate):
+#   A contradiction is tagged high + contradictory and (per the auto-ack skip
+#   above) BLOCKS completion until a human resolves it. In an autonomous run no
+#   human is present, so a false positive grinds a GOOD spec to max-iterations.
+#   That is a severe failure mode. A grep heuristic is far lower-confidence than
+#   the LLM-identified internal contradictions feeding the same blocking path, so
+#   this check fires ONLY on UNAMBIGUOUS POSITIVE-CONFLICT evidence and is happy
+#   to miss real conflicts (low recall) rather than ever block a clean spec.
+#
+# Scope of THIS slice: database-engine conflict only -- the single signal where
+# "what the spec names" and "what the repo is wired to" are both concretely
+# detectable from declared dependencies. The trigger requires ALL FOUR:
+#   1. the spec explicitly names database engine X, AND
+#   2. a manifest (package.json / requirements.txt / go.mod / pyproject.toml /
+#      Gemfile) declares a concrete driver for a DIFFERENT engine Y, AND
+#   3. that same manifest declares NO driver for engine X, AND
+#   4. the spec does NOT also name engine Y (if it names BOTH, the spec is
+#      discussing the choice -- "we chose Mongo over Postgres" -- not in
+#      conflict; skip rather than false-fire on a good spec).
+# Bare prose substring matches in source files are intentionally NOT used (specs
+# mention databases in passing; comments and migrations carry both drivers).
+#
+# Honest deferral: other external conflicts (REST-vs-gRPC, language/runtime,
+# cloud provider) are NOT implemented here. They need a higher-confidence
+# extractor than a single grep and are documented as the harder follow-up.
+#
+# Usage: spec_interrogation_external_check <spec_path>
+# Best-effort; writes at most one contradiction ledger entry; never fails a run.
+# ---------------------------------------------------------------------------
+spec_interrogation_external_check() {
+    local spec_path="${1:-}"
+    [ -n "$spec_path" ] && [ -f "$spec_path" ] || return 0
+    [ "${LOKI_SPEC_EXTERNAL_CHECK:-1}" = "0" ] && return 0
+
+    local repo_root="${TARGET_DIR:-.}"
+
+    # Collect declared-dependency manifest text (declarations only, not prose).
+    local manifests="" m
+    for m in \
+        "$repo_root/package.json" \
+        "$repo_root/requirements.txt" \
+        "$repo_root/pyproject.toml" \
+        "$repo_root/go.mod" \
+        "$repo_root/Gemfile"; do
+        [ -f "$m" ] && manifests="$manifests $m"
+    done
+    # No declared dependencies => no concrete repo signal => nothing to conflict.
+    [ -n "$manifests" ] || return 0
+
+    # Lowercase the spec body and the manifest text once.
+    local spec_lc deps_lc
+    spec_lc="$(tr '[:upper:]' '[:lower:]' < "$spec_path" 2>/dev/null)"
+    # shellcheck disable=SC2086  # word-split of the manifest path list is intended
+    deps_lc="$(cat $manifests 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    [ -n "$spec_lc" ] && [ -n "$deps_lc" ] || return 0
+
+    # Engine -> concrete driver-dependency token (a dependency name, not prose).
+    # Keys are the engine names we look for in the SPEC; values are the package
+    # tokens that prove the repo is wired to that engine.
+    _spec_db_driver_token() {
+        case "$1" in
+            postgres) printf '%s' 'pg|psycopg|postgresql|asyncpg|node-postgres|sequelize-postgres|gorm.io/driver/postgres' ;;
+            mongodb)  printf '%s' 'mongoose|pymongo|mongodb|motor|go.mongodb.org/mongo-driver' ;;
+            mysql)    printf '%s' 'mysql|mysql2|pymysql|mysqlclient|gorm.io/driver/mysql' ;;
+            *)        printf '' ;;
+        esac
+    }
+    # Does the spec name engine $1? Match unambiguous engine names only.
+    _spec_names_engine() {
+        case "$1" in
+            postgres) printf '%s' 'postgres\|postgresql' ;;
+            mongodb)  printf '%s' 'mongodb\|mongo db\|mongo database' ;;
+            mysql)    printf '%s' 'mysql' ;;
+            *)        printf '' ;;
+        esac
+    }
+
+    local engines="postgres mongodb mysql"
+    local spec_engine other_engine
+    for spec_engine in $engines; do
+        local spec_pat
+        spec_pat="$(_spec_names_engine "$spec_engine")"
+        [ -n "$spec_pat" ] || continue
+        printf '%s' "$spec_lc" | grep -q -e "$spec_pat" || continue
+
+        # Spec names this engine. Is the repo wired to a DIFFERENT one, with no
+        # driver for the spec's engine?
+        local spec_engine_token
+        spec_engine_token="$(_spec_db_driver_token "$spec_engine")"
+        # If the repo DOES declare a driver for the spec's engine, there is no
+        # conflict (they agree) -- skip.
+        if printf '%s' "$deps_lc" | grep -E -q -- "$spec_engine_token"; then
+            continue
+        fi
+
+        for other_engine in $engines; do
+            [ "$other_engine" = "$spec_engine" ] && continue
+            # PRECISION guard: if the spec ALSO names other_engine, this is not an
+            # unambiguous conflict -- the spec is discussing both engines (e.g.
+            # "we chose MongoDB over PostgreSQL"). Skip rather than false-fire on
+            # a good spec, since a false contradiction would block it to max-iter.
+            local other_spec_pat
+            other_spec_pat="$(_spec_names_engine "$other_engine")"
+            if [ -n "$other_spec_pat" ] && printf '%s' "$spec_lc" | grep -q -e "$other_spec_pat"; then
+                continue
+            fi
+            local other_token
+            other_token="$(_spec_db_driver_token "$other_engine")"
+            [ -n "$other_token" ] || continue
+            if printf '%s' "$deps_lc" | grep -E -q -- "$other_token"; then
+                # UNAMBIGUOUS: spec names X, repo declares a Y driver, repo has
+                # no X driver. Record one high/contradictory external finding.
+                local gap assumption
+                gap="External contradiction: the spec specifies the ${spec_engine} database, but this repository declares a ${other_engine} driver dependency and no ${spec_engine} driver."
+                assumption="UNRESOLVED CONTRADICTION: the spec and the existing code disagree on the database engine and this cannot be assumed away; a human must reconcile the spec with the repo before building."
+                spec_ledger_write \
+                    "$gap" \
+                    "$assumption" \
+                    "external: spec vs repo dependencies" \
+                    "high" \
+                    "contradictory" \
+                    "data-store" \
+                    "external-check"
+                # One database-engine conflict is enough to block; stop scanning.
+                return 0
+            fi
+        done
+    done
     return 0
 }
 
@@ -371,6 +573,16 @@ print("%d %d" % (total, high))
 # Auto-acknowledgment lifecycle helper: set acknowledged=true on every ledger
 # entry. run.sh calls this once an iteration AFTER assumptions are injected into
 # the build prompt (unless LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1). Best-effort.
+#
+# P2-4 EXCEPTION: class=contradictory entries are NEVER auto-acknowledged. A gap
+# can be assumed away (auto-ack records that the implementer-default was taken),
+# but a contradiction is unresolvable by assumption -- there is no default that
+# satisfies "X and not-X". Auto-acknowledging it would silently clear the
+# completion gate and let "done" be declared over an internally inconsistent
+# spec. So a contradiction stays acknowledged=false until a human confirms a
+# resolution (sets confirmed=true). This is deliberately the same teeth the
+# LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1 path applies to ALL entries, scoped here to
+# just contradictions in default autonomous mode. See the design note below.
 # ---------------------------------------------------------------------------
 spec_ledger_acknowledge_all() {
     [ "${LOKI_ASSUMPTIONS_REQUIRE_CONFIRM:-0}" = "1" ] && return 0
@@ -387,6 +599,9 @@ for p in glob.glob(os.path.join(d, "a-*.json")):
     except Exception:
         continue
     if r.get("acknowledged"):
+        continue
+    # P2-4: a contradiction cannot be assumed away, so it is never auto-acked.
+    if r.get("class") == "contradictory":
         continue
     r["acknowledged"] = True
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), suffix=".tmp")
@@ -530,6 +745,11 @@ spec_interrogation_run() {
     # Always fold prd-analyzer's deterministic missing-dimension assumptions
     # (works with no provider) so degrade still surfaces something.
     spec_ledger_fold_prd_observations || true
+
+    # P2-4: best-effort EXTERNAL contradiction check (spec vs repo deps). Runs
+    # with no provider (it is pure file inspection) and is intentionally narrow
+    # (high-confidence DB-engine conflict only) so it never blocks a clean spec.
+    spec_interrogation_external_check "$spec_path" || true
 
     spec_ledger_rebuild_md || true
 

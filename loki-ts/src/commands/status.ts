@@ -18,6 +18,71 @@ import { findPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 
+// ---------------------------------------------------------------------------
+// context_gauge / format_tokens port (autonomy/tui.sh:176-216).
+//
+// autonomy/loki sources tui.sh at startup (autonomy/loki:59-61), so the bash
+// `status` arm ALWAYS finds context_gauge defined and renders the visual gauge
+// bar for the Budget and Context blocks. The Bun route previously emitted only
+// the plain data line, which was a real bash<->Bun output drift (not a no-op:
+// the `type context_gauge` guard succeeds in bash). These helpers reproduce the
+// gauge byte-for-byte so the two routes render identically.
+//
+// Inlined here (not added to util/) to keep the change scoped to commands/ --
+// these are the only callers.
+//
+// Contract (verified against `bash autonomy/loki status`, byte-identical modulo
+// ANSI -- bash gates the gauge COLOR on TTY via tui.sh, so a piped bash run
+// emits no color on the bar, whereas Bun always emits per the colors.ts
+// always-emit deviation; the existing route-parity convention normalizes ANSI):
+//   - bar width 30, BAR_FILL "=" (tui.sh:45), empty cell " ".
+//   - colors: green < 50%, yellow < 80%, red >= 80% (TUI_* == loki-ts colors).
+//   - line: "  <BOLD>label<NC> <color>[bar]<NC> pct% (used_fmt / total_fmt)".
+//   - format_tokens truncates at one decimal like `bc scale=1` then prints
+//     %.1f (so 1259 -> "1.2K", never rounds up).
+//   - renders nothing when total == 0, mirroring the bash
+//     `if [ "$total" -eq 0 ]; then return; fi` early-out.
+
+const GAUGE_WIDTH = 30;
+
+// Mirror tui.sh format_tokens: bc `scale=1` truncates, printf %.1f formats.
+// Under 1000 the bash branch echoes the integer verbatim.
+function formatTokens(n: number): string {
+  const v = Math.trunc(n);
+  if (v >= 1000000) {
+    const truncated = Math.trunc((v / 1000000) * 10) / 10;
+    return `${truncated.toFixed(1)}M`;
+  }
+  if (v >= 1000) {
+    const truncated = Math.trunc((v / 1000) * 10) / 10;
+    return `${truncated.toFixed(1)}K`;
+  }
+  return String(v);
+}
+
+// Mirror tui.sh context_gauge. Returns the rendered line WITHOUT a trailing
+// newline (callers add one), or null when total == 0 (the bash early-out).
+function contextGauge(used: number, total: number, label: string): string | null {
+  if (total === 0) return null;
+
+  // Integer arithmetic mirrors bash $(( )) (truncating division).
+  const pct = Math.trunc((used * 100) / total);
+  let filled = Math.trunc((used * GAUGE_WIDTH) / total);
+  if (filled > GAUGE_WIDTH) filled = GAUGE_WIDTH;
+  const empty = GAUGE_WIDTH - filled;
+
+  // Color: green < 50%, yellow < 80%, red >= 80% (tui.sh:190-193).
+  let color = GREEN;
+  if (pct >= 80) color = RED;
+  else if (pct >= 50) color = YELLOW;
+
+  const bar = "=".repeat(Math.max(0, filled)) + " ".repeat(Math.max(0, empty));
+  const usedFmt = formatTokens(used);
+  const totalFmt = formatTokens(total);
+
+  return `  ${BOLD}${label}${NC} ${color}[${bar}]${NC} ${pct}% (${usedFmt} / ${totalFmt})`;
+}
+
 // Inline Python source -- copied verbatim from autonomy/loki:2131-2275
 // (cmd_status_json body). DO NOT modify without updating bash side too.
 const STATUS_JSON_PY = `
@@ -567,22 +632,35 @@ async function runStatusText(): Promise<number> {
     const budgetUsed = readBudgetField(budgetFile, "budget_used");
     if (budgetLimit !== "0") {
       process.stdout.write(`${CYAN}Budget:${NC} \$${budgetUsed} / \$${budgetLimit}\n`);
-      // context_gauge function is from TUI helpers loaded by bash; not ported.
+      // Budget gauge (autonomy/loki:2909-2919). Bash converts dollars to integer
+      // cents via `bc scale=0` (truncation) before calling context_gauge, with
+      // empty-string guards falling back to 0 / 100. Replicate that exactly so
+      // the bar/percent match byte-for-byte.
+      const usedCents = Math.trunc((Number.parseFloat(budgetUsed) || 0) * 100);
+      const limitParsed = Number.parseFloat(budgetLimit);
+      const limitCents = Number.isFinite(limitParsed) && limitParsed !== 0
+        ? Math.trunc(limitParsed * 100)
+        : 100;
+      const gauge = contextGauge(usedCents, limitCents, "Budget");
+      if (gauge !== null) process.stdout.write(`${gauge}\n`);
     } else {
       process.stdout.write(`${CYAN}Cost:${NC} \$${budgetUsed} (no limit)\n`);
     }
   }
 
-  // Context window
+  // Context window. Bash (autonomy/loki:2930-2938) renders the visual gauge
+  // because context_gauge is ALWAYS defined (tui.sh is sourced at startup), so
+  // the `if type context_gauge` branch is always taken and the gauge REPLACES
+  // the plain `Context:` line. The bash `else` plain-line branch is dead in the
+  // real CLI (it only fires if the helper were undefined). When total == 0 the
+  // gauge does an early `return` and prints NOTHING -- so we emit nothing too,
+  // exactly mirroring that path (no plain fallback line).
   const ctxFile = resolve(dir, "state", "context-usage.json");
   if (existsSync(ctxFile)) {
     const ctxTotal = readContextField(ctxFile, "window_size", 200000);
     const ctxUsed = readContextField(ctxFile, "used_tokens", 0);
-    let ctxPct = 0;
-    if (ctxTotal > 0) {
-      ctxPct = Math.floor((ctxUsed * 100) / ctxTotal);
-    }
-    process.stdout.write(`${CYAN}Context:${NC} ${ctxPct}% (${ctxUsed} / ${ctxTotal} tokens)\n`);
+    const gauge = contextGauge(ctxUsed, ctxTotal, "Context");
+    if (gauge !== null) process.stdout.write(`${gauge}\n`);
   }
 
   // Dashboard. Check BOTH the project-local in-build dashboard and the

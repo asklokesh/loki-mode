@@ -7,7 +7,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { runStatus } from "../../src/commands/status.ts";
-import { stripAnsi } from "../../src/util/colors.ts";
+import { stripAnsi, RED } from "../../src/util/colors.ts";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -303,7 +303,7 @@ describe("status: text mode -- minimal .loki present", () => {
     }
   });
 
-  it("shows Budget line when budget_limit > 0", async () => {
+  it("shows Budget line + visual gauge when budget_limit > 0", async () => {
     const root = mkTmp();
     try {
       const lokiDir = join(root, ".loki");
@@ -316,7 +316,46 @@ describe("status: text mode -- minimal .loki present", () => {
       const r = await runWithCapture([]);
       expect(r.exitCode).toBe(0);
       const out = stripAnsi(r.stdout);
+      // Plain data line (unchanged) ...
       expect(out).toContain("Budget: $12.5 / $100");
+      // ... PLUS the visual gauge (context_gauge port -- parity with the bash
+      // route, which sources tui.sh and always renders this bar). 12.5/100 ->
+      // 1250c / 10000c = 12% over a width-30 "=" bar (3 filled cells); tokens
+      // formatted 1.2K / 10.0K (format_tokens). Byte-for-byte verified against
+      // `bash autonomy/loki status`.
+      expect(out).toContain("  Budget [===                           ] 12% (1.2K / 10.0K)");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("colors the budget gauge red at >= 80% and matches bash bar/format", async () => {
+    const root = mkTmp();
+    try {
+      const lokiDir = join(root, ".loki");
+      mkdirSync(join(lokiDir, "metrics"), { recursive: true });
+      writeFileSync(
+        join(lokiDir, "metrics", "budget.json"),
+        JSON.stringify({ budget_limit: 50, budget_used: 48 }),
+      );
+      process.env["LOKI_DIR"] = lokiDir;
+      const r = await runWithCapture([]);
+      expect(r.exitCode).toBe(0);
+      // 48/50 = 96% -> 28 filled cells, red color branch.
+      expect(stripAnsi(r.stdout)).toContain(
+        "  Budget [============================  ] 96% (4.8K / 5.0K)",
+      );
+      // Confirm the RED color precedes the bar (color-branch coverage).
+      // Assert against the RED constant rather than a hard-coded escape so the
+      // test holds under NO_COLOR (where colors.ts resolves RED to "" at module
+      // load time -- a raw-escape assertion would falsely fail there).
+      const budgetLineRaw = r.stdout
+        .split("\n")
+        .find((l) => stripAnsi(l).includes("Budget [")) as string | undefined;
+      expect(budgetLineRaw).toBeDefined();
+      if (RED !== "") {
+        expect(budgetLineRaw as string).toContain(RED);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -341,7 +380,7 @@ describe("status: text mode -- minimal .loki present", () => {
     }
   });
 
-  it("computes context window percentage", async () => {
+  it("renders the context window as a visual gauge (parity with bash)", async () => {
     const root = mkTmp();
     try {
       const lokiDir = join(root, ".loki");
@@ -354,7 +393,34 @@ describe("status: text mode -- minimal .loki present", () => {
       const r = await runWithCapture([]);
       expect(r.exitCode).toBe(0);
       const out = stripAnsi(r.stdout);
-      expect(out).toContain("Context: 25% (50000 / 200000 tokens)");
+      // context_gauge port REPLACES the old plain "Context: 25% (...)" line, to
+      // match the bash route (autonomy/loki:2930 always takes the gauge branch
+      // because tui.sh is sourced). 50000/200000 = 25% -> 7 filled "=" cells of
+      // 30; tokens 50.0K / 200.0K. Byte-for-byte verified against bash.
+      expect(out).toContain("  Context [=======                       ] 25% (50.0K / 200.0K)");
+      // The old plain wording must no longer appear (it was the dead bash else).
+      expect(out).not.toContain("Context: 25% (50000 / 200000 tokens)");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the context gauge entirely when window_size is 0 (bash early-out)", async () => {
+    const root = mkTmp();
+    try {
+      const lokiDir = join(root, ".loki");
+      mkdirSync(join(lokiDir, "state"), { recursive: true });
+      writeFileSync(
+        join(lokiDir, "state", "context-usage.json"),
+        JSON.stringify({ window_size: 0, used_tokens: 1000 }),
+      );
+      process.env["LOKI_DIR"] = lokiDir;
+      const r = await runWithCapture([]);
+      expect(r.exitCode).toBe(0);
+      const out = stripAnsi(r.stdout);
+      // tui.sh context_gauge does `if total -eq 0; then return; fi` -> nothing.
+      expect(out).not.toContain("Context [");
+      expect(out).not.toContain("Context:");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

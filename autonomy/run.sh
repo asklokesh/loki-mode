@@ -7038,6 +7038,130 @@ enforce_static_analysis() {
         }
     fi
 
+    # C / C++ (P1-6: cppcheck is a standalone static analyzer that needs no
+    # build system, headers, or compile flags, so it does not false-block on
+    # missing includes the way a per-file `clang` compile would. The exit gate
+    # fires only on `error` severity; style/warning/portability findings on WIP
+    # code do not block. When cppcheck is absent we pass through honestly
+    # (log, no block) rather than silently skipping.)
+    local cfiles
+    cfiles=$(echo "$changed_files" | grep -E '\.(c|cc|cpp|cxx|h|hpp|hxx)$' || true)
+    if [ -n "$cfiles" ]; then
+        local cabs=""
+        for f in $cfiles; do
+            [ -f "${TARGET_DIR:-.}/$f" ] && cabs="$cabs ${TARGET_DIR:-.}/$f"
+        done
+        if [ -n "$cabs" ]; then
+            if command -v cppcheck &>/dev/null; then
+                total_checked=$((total_checked + $(echo "$cabs" | wc -w)))
+                # Default cppcheck reports ONLY error severity, so with
+                # --error-exitcode=2 the gate returns 2 exclusively on an
+                # error-severity finding. We deliberately do NOT pass
+                # --enable=warning: that would make warning/style/portability
+                # findings on incomplete WIP code block the iteration (verified:
+                # a deref-then-null-check warning returns 2 under --enable=warning
+                # but 0 under the default ruleset). Error severity only = honest
+                # parity with the TS/shell `-S error` gates above.
+                local cpp_out cpp_rc=0
+                # shellcheck disable=SC2086
+                cpp_out=$(cppcheck --quiet --error-exitcode=2 $cabs 2>&1) || cpp_rc=$?
+                if [ "$cpp_rc" -eq 2 ]; then
+                    findings=$((findings + 1))
+                    details="${details}cppcheck (error severity): $(echo "$cpp_out" | tail -3 | tr '\n' ' '). "
+                fi
+            else
+                log_info "Static analysis: cppcheck not on PATH, skipping C/C++ check (pass-through)"
+            fi
+        fi
+    fi
+
+    # Kotlin (P1-6: ktlint and detekt are standalone, build-system-free linters.
+    # Prefer ktlint; fall back to detekt. Absent -> honest pass-through.)
+    #
+    # ADVISORY ONLY (not blocking): unlike cppcheck/checkstyle which expose an
+    # error-vs-style severity distinction, ktlint is a pure formatter -- every
+    # finding it reports is a style/formatting issue and it exits nonzero on ANY
+    # violation, with no CLI mode to fail only on error severity. detekt's failure
+    # threshold is config-driven (maxIssues) and its findings are code smells, not
+    # compiler errors; there is no stable CLI flag to fail only on error severity.
+    # Per the gate principle (a new-language arm must NOT block on style/formatting,
+    # consistent with cppcheck's error-exitcode-only and the JS/TS/Py `-S error`
+    # gates), we run these linters as ADVISORY: report findings via log_warn and
+    # the details string, but do NOT increment `findings` (no BLOCK). This avoids
+    # false-blocking a WIP build on formatting. Absent -> honest pass-through.
+    local kt_files
+    kt_files=$(echo "$changed_files" | grep -E '\.(kt|kts)$' || true)
+    if [ -n "$kt_files" ]; then
+        local kt_abs=""
+        for f in $kt_files; do
+            [ -f "${TARGET_DIR:-.}/$f" ] && kt_abs="$kt_abs ${TARGET_DIR:-.}/$f"
+        done
+        if [ -n "$kt_abs" ]; then
+            if command -v ktlint &>/dev/null; then
+                total_checked=$((total_checked + $(echo "$kt_abs" | wc -w)))
+                local kt_out
+                # shellcheck disable=SC2086
+                kt_out=$(cd "${TARGET_DIR:-.}" && ktlint $kt_files 2>&1) || {
+                    # Advisory: ktlint reports only style/formatting; warn, do not block.
+                    details="${details}ktlint advisory (style, non-blocking): $(echo "$kt_out" | tail -3 | tr '\n' ' '). "
+                    log_warn "Static analysis: ktlint reported style findings (advisory, non-blocking)"
+                }
+            elif command -v detekt &>/dev/null; then
+                total_checked=$((total_checked + $(echo "$kt_abs" | wc -w)))
+                local dt_out dt_input
+                dt_input=$(echo "$kt_files" | tr ' \n' ',,' | sed 's/,*$//;s/^,*//')
+                dt_out=$(cd "${TARGET_DIR:-.}" && detekt --input "$dt_input" 2>&1) || {
+                    # Advisory: detekt threshold is config-driven, findings are code
+                    # smells (no error-severity-only CLI mode); warn, do not block.
+                    details="${details}detekt advisory (code smell, non-blocking): $(echo "$dt_out" | tail -3 | tr '\n' ' '). "
+                    log_warn "Static analysis: detekt reported findings (advisory, non-blocking)"
+                }
+            else
+                log_info "Static analysis: ktlint/detekt not on PATH, skipping Kotlin check (pass-through)"
+            fi
+        fi
+    fi
+
+    # Java (P1-6: checkstyle is a pure static linter that needs no compile or
+    # classpath, but it REQUIRES a config file. A per-file `javac` would
+    # false-block on unresolved imports/classpath the way per-file tsc did, so
+    # Java is gated on checkstyle-with-config only. Without a config we pass
+    # through honestly. C# is deferred: roslyn analyzers and `dotnet build` need
+    # a full project + restore, which cannot be auto-detected cleanly per-file.)
+    local java_files
+    java_files=$(echo "$changed_files" | grep -E '\.java$' || true)
+    if [ -n "$java_files" ]; then
+        local java_abs=""
+        for f in $java_files; do
+            [ -f "${TARGET_DIR:-.}/$f" ] && java_abs="$java_abs ${TARGET_DIR:-.}/$f"
+        done
+        if [ -n "$java_abs" ]; then
+            local _cs_config=""
+            for cfg in checkstyle.xml .checkstyle.xml config/checkstyle/checkstyle.xml google_checks.xml sun_checks.xml; do
+                if [ -f "${TARGET_DIR:-.}/$cfg" ]; then _cs_config="${TARGET_DIR:-.}/$cfg"; break; fi
+            done
+            if command -v checkstyle &>/dev/null && [ -n "$_cs_config" ]; then
+                total_checked=$((total_checked + $(echo "$java_abs" | wc -w)))
+                local cs_out
+                # checkstyle's exit code equals the count of audit events at
+                # severity=error; warning/info violations are printed but do NOT
+                # bump the exit code (verified against checkstyle CLI behavior).
+                # So a nonzero exit means error-severity findings only -- this is
+                # already error-gated like cppcheck (--error-exitcode) and the
+                # JS/TS/Py `-S error` gates, and does NOT block on style/warning.
+                # Whether a given rule is error vs warning is the user's explicit
+                # choice in their checkstyle config, which we respect.
+                # shellcheck disable=SC2086
+                cs_out=$(cd "${TARGET_DIR:-.}" && checkstyle -c "$_cs_config" $java_files 2>&1) || {
+                    findings=$((findings + 1))
+                    details="${details}checkstyle (error severity): $(echo "$cs_out" | tail -3 | tr '\n' ' '). "
+                }
+            else
+                log_info "Static analysis: checkstyle+config not available, skipping Java check (pass-through)"
+            fi
+        fi
+    fi
+
     # Write results
     cat > "$quality_dir/static-analysis.json" << SAFEOF
 {"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","files_checked":$total_checked,"findings":$findings,"summary":"$details","pass":$([ $findings -eq 0 ] && echo "true" || echo "false")}

@@ -18,6 +18,7 @@
 var { AuditLog } = require('./log');
 var compliance = require('./compliance');
 var { ResidencyController } = require('./residency');
+var crosslink = require('./crosslink');
 
 var _log = null;
 var _residency = null;
@@ -122,6 +123,34 @@ function flush() {
 }
 
 /**
+ * Cross-link the dashboard (Python) audit chain into the agent (JS)
+ * audit chain, producing a single verifiable tamper-evident trail.
+ * See src/audit/crosslink.js.
+ */
+function crossLink(opts) {
+  if (!_initialized) init();
+  return crosslink.crossLink(Object.assign({ projectDir: _projectDir }, opts || {}));
+}
+
+/**
+ * Verify the unified (agent + dashboard) audit trail as one logical
+ * chain: both sub-chains valid AND every cross-link anchor reconciled.
+ */
+function verifyUnified(opts) {
+  if (!_initialized) init();
+  return crosslink.verifyUnified(Object.assign({ projectDir: _projectDir }, opts || {}));
+}
+
+/**
+ * Append-only / external-witness option: write the current unified root
+ * to an append-only witness file (and optionally an external command).
+ */
+function writeWitness(opts) {
+  if (!_initialized) init();
+  return crosslink.writeWitness(Object.assign({ projectDir: _projectDir }, opts || {}));
+}
+
+/**
  * Destroy audit trail (for testing).
  */
 function destroy() {
@@ -144,4 +173,7 @@ module.exports = {
   getSummary: getSummary,
   flush: flush,
   destroy: destroy,
+  crossLink: crossLink,
+  verifyUnified: verifyUnified,
+  writeWitness: writeWitness,
 };

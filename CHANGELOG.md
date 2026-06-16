@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.50.0] - 2026-06-16
+
+### Spec-robustness, enterprise depth, and verification breadth (10-stream batch)
+
+All default-on or zero-config-intelligent; opt-out knobs only. Each stream built
+in an isolated worktree, council-reviewed.
+
+- **Acceptance oracle triangulation (P2-3).** The checklist now cross-checks the
+  spec against actual codebase reality (e.g. spec says Postgres, repo wired to
+  Mongo) and surfaces the conflict as evidence to the council instead of silently
+  letting the spec win. Opt out: `LOKI_CHECKLIST_ORACLE=0`.
+- **Spec-structure validation (P2-5).** A malformed, unparseable, or
+  missing-referenced-file spec is now flagged early with an actionable message in
+  `.loki/prd-observations.md`.
+- **Spec-drift is now blocking (P2-6).** When a spec is locked (`loki spec lock`),
+  real drift emits High and blocks `loki verify` instead of a soft concern.
+- **Contradiction detection (P2-4).** Spec contradictions (internal, and spec vs
+  the repo's declared dependencies) are tagged as a distinct class that cannot be
+  assumed away and must be resolved (never auto-acknowledged).
+- **Spec-independent invariant detector (P1-4).** New detector flags secrets in
+  source and PII in logs regardless of what the spec says. Available now.
+- **Stronger secret scanning (P3-4).** `loki verify` secret scan hardened with a
+  documented high-confidence pattern set (AWS, private keys, GitHub/Slack/cloud
+  tokens) that blocks, with low false positives (placeholders and env refs
+  ignored). Also fixed a latent bug where PEM private-key blocks were never caught.
+- **Static-analysis language coverage (P1-6).** Auto-detected C/C++ (cppcheck),
+  Kotlin (ktlint/detekt), and Java (checkstyle) static analysis, with honest
+  pass-through when the tool is absent. No new flags.
+- **Approval workflows (P3-3).** The policy-engine approval gate is now a tested,
+  usable pause-and-await gate; zero-config runs have no gate (engages only when a
+  policy file declares one).
+- **Org-level cost governance (P3-8).** Org/tenant spend rollup + ceiling on top
+  of per-run budgets, auto-detecting org context; per-run behavior unchanged when
+  no org ceiling is configured.
+- **Unified audit trail (P3-9).** A cross-link + unified-verify capability for the
+  dashboard (Python) and agent (JS) audit chains now exists and is tested: it can
+  link the two chains and verify them together. Tamper-evidence here is SHA-chain
+  integrity (detects truncation or in-place edits of a chain), not HMAC signing.
+  The capability is not yet wired into a runtime auto-call path, and the
+  append-only witness is off by default; wiring it into the live verify flow is a
+  follow-up.
+- **SIEM on-ramps (P3-10).** CEF and Splunk HEC export for security/audit events
+  plus Datadog/Honeycomb OTEL templates; no egress unless an endpoint is set.
+- **Bun parity-gap commands (P4-6).** `loki status` now renders the budget/context
+  gauges identically on the Bun route; parity test extended.
+
 ## [7.49.0] - 2026-06-16
 
 ### Verification depth + enterprise isolation + parity guard
