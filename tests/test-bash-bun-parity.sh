@@ -353,10 +353,15 @@ $d"
 # Allowed-asymmetry: gate names that are legitimately bash-only (documented in
 # the header). Keep this list as small as possible and justify every entry.
 GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT")
-# Allowed-asymmetry: gate names that are legitimately bun-only. LSP diagnostics
-# is a Bun-route verification gate (loki-ts/src/runner/quality_gates.ts) with no
-# bash-route equivalent yet; bringing it to bash is a tracked follow-up.
-GATE_ALLOWED_BUN_ONLY=("LOKI_GATE_LSP_DIAGNOSTICS")
+# Allowed-asymmetry: gate names that are legitimately bun-only.
+#   (none) -- LOKI_GATE_LSP_DIAGNOSTICS and LOKI_GATE_LSP_WRITER are now wired
+#   on BOTH routes: the diagnostics writer is route-neutral Python
+#   (mcp/lsp_proxy.py --write-diagnostics), invoked identically from the Bun
+#   gate (loki-ts/src/runner/quality_gates.ts) and the bash gate
+#   (autonomy/run.sh), with byte-identical reader/blocking semantics
+#   (count_errors > 0 blocks when LOKI_GATE_LSP_DIAGNOSTICS=true). The prior
+#   bun-only carve-out was removed once the bash reader landed.
+GATE_ALLOWED_BUN_ONLY=()
 
 check_gate_env() {
     local name="LOKI_GATE_* env var set (autonomy/ <-> loki-ts/src/)"

@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
-import { lokiDir } from "../util/paths.ts";
+import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 
@@ -1496,14 +1496,18 @@ export async function runMagicDebateGate(ctx?: RunnerContext): Promise<GateResul
 
 // --- LSP diagnostics gate (P1-5) ------------------------------------------
 //
-// Status: ARTIFACT-READING gate, writer PENDING. See TODO(writer) below.
+// Status: ACTIVE -- writer + reader both wired (Bun route). The writer is the
+// route-neutral Python program mcp/lsp_proxy.py --write-diagnostics, invoked by
+// runLSPDiagnosticsWriter below before the gate reads the artifact.
 //
 // Context: an LSP proxy MCP server exists at mcp/lsp_proxy.py (tools
-// lsp_get_diagnostics etc.). Today LSP is only a build-time PROMPT NUDGE
+// lsp_get_diagnostics etc.). LSP was previously only a build-time PROMPT NUDGE
 // (build_prompt.ts:352 LSP_GROUNDING) -- it asks the agent to consult LSP
-// tools, but nothing in the verification pipeline ever reads diagnostics
-// back. This gate closes that loop: it consumes diagnostics for the changed
-// files and BLOCKS the iteration when LSP reports compiler/type ERRORS.
+// tools, but nothing in the verification pipeline read diagnostics back, and
+// the gate that was meant to close that loop was INERT (it read an artifact no
+// code produced). This gate now closes the loop: the writer produces real
+// diagnostics for the changed files and the gate BLOCKS the iteration when LSP
+// reports compiler/type ERRORS.
 //
 // APPROACH -- why artifact-reading (NOT direct python invocation):
 //   mcp/lsp_proxy.py is an MCP STDIO server, not a one-shot CLI. Reading
@@ -1517,17 +1521,18 @@ export async function runMagicDebateGate(ctx?: RunnerContext): Promise<GateResul
 //   runMutationIntegrity (readFindingsArtifact, ~470). This gate mirrors
 //   that pattern.
 //
-// CONTRACT (for the future writer -- TODO(writer)):
+// CONTRACT (implemented by mcp/lsp_proxy.py write_diagnostics_artifact):
 //   Artifact path:  <lokiDir>/quality/lsp-diagnostics.json
-//   Shape: mirrors the lsp_get_diagnostics proxy output so a writer can dump
-//   it near-verbatim (mcp/lsp_proxy.py:1163):
+//   Minimal deterministic shape (only the fields this gate reads -- the writer
+//   strips the proxy's non-deterministic elapsed_ms / range / source):
 //     {
 //       "count_errors":   <int>,   // sum of diagnostics with severity == 1
 //       "count_warnings": <int>,   // sum of diagnostics with severity == 2
-//       "diagnostics": [ { "severity": 1|2|3|4, "message": "...", ... } ]
+//       "diagnostics": [ { "file": "...", "severity": 1|2|3|4, "message": "..." } ]
 //     }
 //   LSP severity: 1=Error, 2=Warning, 3=Information, 4=Hint (LSP spec).
-//   The WRITER owns the git-diff scoping (which changed files to query) and
+//   The WRITER owns the git-diff scoping (which changed files to query, using
+//   the same HEAD~1 -> --cached -> ls-files chain as runStaticAnalysis) and
 //   the LSP lifecycle. This gate does NOT enumerate the diff itself: it only
 //   reads the aggregated artifact the writer produces. This keeps the gate
 //   cheap and deterministic and avoids duplicating the diff-enumeration that
@@ -1570,21 +1575,79 @@ function readLSPDiagnosticsArtifact(base: string): LSPDiagnosticsArtifact | null
   }
 }
 
+// P1-5 writer invocation. The diagnostics artifact is produced by the Python
+// writer in mcp/lsp_proxy.py (`python3 -m mcp.lsp_proxy --write-diagnostics`),
+// the SAME program the bash route invokes, so both routes get byte-identical
+// output (single source of aggregation, no TS/bash re-implementation). The
+// writer enumerates the changed files, queries the per-language LSP servers,
+// and writes <lokiDir>/quality/lsp-diagnostics.json -- or writes NOTHING when
+// no server is available (the gate's absence path then fires honestly).
+//
+// Best-effort: a writer failure (python missing, MCP deps absent, timeout) is
+// logged and we fall through to reading whatever artifact exists. We never
+// fabricate a verdict from a writer error.
+async function runLSPDiagnosticsWriter(ctx: RunnerContext): Promise<void> {
+  try {
+    // cwd=REPO_ROOT so `-m mcp.lsp_proxy` imports (the mcp package lives in the
+    // install dir). --root=ctx.cwd points the diff enumeration at the TARGET
+    // project the loop is building (mirroring runStaticAnalysis's ctx.cwd
+    // root), NOT the install dir -- otherwise the gate would enumerate loki's
+    // own diff and be inert on every user project.
+    const r = await run(
+      ["python3", "-m", "mcp.lsp_proxy", "--write-diagnostics", "--root", ctx.cwd],
+      {
+        cwd: REPO_ROOT,
+        timeoutMs: 120_000,
+      },
+    );
+    if (r.exitCode !== 0) {
+      const tail = (r.stderr || r.stdout || `exit ${r.exitCode}`)
+        .trim()
+        .split(/\r?\n/)
+        .slice(-2)
+        .join(" | ");
+      ctx.log(`lsp_diagnostics writer exit ${r.exitCode} (non-fatal): ${tail}`);
+    }
+  } catch (err) {
+    ctx.log(`lsp_diagnostics writer failed (non-fatal): ${(err as Error).message}`);
+  }
+}
+
 export async function runLSPDiagnostics(ctx?: RunnerContext): Promise<GateResult> {
   const stubKey = "LOKI_STUB_GATE_LSP_DIAGNOSTICS";
   const stubVal = process.env[stubKey];
   if (stubVal === "fail" || stubVal === "pass") return stubResult("lsp_diagnostics");
 
   const base = ctx?.lokiDir ?? lokiDir();
+
+  // Produce the artifact before reading it. Skipped when:
+  //   - no ctx (unit-level callers that pre-stage the artifact themselves),
+  //   - LOKI_GATE_LSP_WRITER=0 (operator escape hatch; lets a caller supply a
+  //     pre-built artifact, e.g. from the bash route's writer, without this
+  //     gate re-running it).
+  // The writer points its output at ctx.lokiDir via LOKI_DIR so a test or a
+  // non-default .loki location is honored.
+  if (ctx !== undefined && process.env["LOKI_GATE_LSP_WRITER"] !== "0") {
+    const prevLokiDir = process.env["LOKI_DIR"];
+    process.env["LOKI_DIR"] = base;
+    try {
+      await runLSPDiagnosticsWriter(ctx);
+    } finally {
+      if (prevLokiDir === undefined) delete process.env["LOKI_DIR"];
+      else process.env["LOKI_DIR"] = prevLokiDir;
+    }
+  }
+
   const artifact = readLSPDiagnosticsArtifact(base);
 
-  // HONEST pass-through: no artifact means no writer ran (TODO(writer)) or no
-  // LSP server was available. Never fabricate a "clean" verdict from absence.
+  // HONEST pass-through: no artifact means the writer measured nothing real
+  // (no LSP server on PATH, or no changed file maps to a detected server) and
+  // intentionally wrote nothing. Never fabricate a "clean" verdict from absence.
   if (artifact === null) {
-    // Absence means no writer produced the artifact (LSP not available, or no
-    // writer ran yet). Name the artifact -- phrasing it as "lsp not available"
-    // alone would be inaccurate on a machine that DOES have a language server
-    // but where no writer has run. Mirrors the sibling findings-gates' detail.
+    // The writer removes any stale artifact and writes none when it cannot
+    // measure. Name the artifact -- phrasing it as "lsp not available" alone
+    // would be inaccurate on a machine that DOES have a language server but
+    // where no changed file matched. Mirrors the sibling findings-gates' detail.
     return {
       passed: true,
       detail: "lsp_diagnostics: no lsp-diagnostics.json artifact (lsp not available) -- gate did not run",

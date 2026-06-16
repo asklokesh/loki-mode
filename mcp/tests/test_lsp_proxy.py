@@ -373,5 +373,174 @@ class LSPClientShutdownTests(unittest.TestCase):
         fake_proc.kill.assert_called()
 
 
+class DiagnosticsWriterTests(unittest.TestCase):
+    """P1-5: the diagnostics WRITER that feeds the LSP-diagnostics quality
+    gate (loki-ts/src/runner/quality_gates.ts runLSPDiagnostics). Proves
+    non-vacuity (real severity-1 diagnostics -> blocking artifact) at the
+    recording/aggregation layer, and the no-false-fire honesty paths (no
+    server / no measurable file -> NO artifact, so the gate's absence path
+    fires instead of a fabricated clean verdict)."""
+
+    def setUp(self):
+        self.lp = _import_lsp_proxy()
+        self.lp._reset_detection_cache()
+
+    def _make_repo(self, files):
+        """Create a tmp dir with the given {relpath: contents} and return it."""
+        d = tempfile.mkdtemp(prefix='loki-lsp-writer-')
+        for rel, body in files.items():
+            p = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, 'w', encoding='utf-8') as fh:
+                fh.write(body)
+        return d
+
+    def test_no_server_writes_no_artifact(self):
+        """No detected language server -> measured:false, no artifact. The
+        gate must then report 'did not run', never a clean verdict."""
+        root = self._make_repo({'a.ts': 'const x = 1;\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        with mock.patch.object(self.lp, '_detect_lsps', return_value={}):
+            status = self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertFalse(status['measured'])
+        self.assertFalse(status['wrote_artifact'])
+        self.assertFalse(os.path.isfile(
+            os.path.join(loki, 'quality', 'lsp-diagnostics.json')))
+
+    def test_server_present_but_no_matching_changed_file(self):
+        """Server detected for rust, but the changed file is .ts -> nothing
+        real to measure -> no artifact."""
+        root = self._make_repo({'a.ts': 'const x = 1;\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        with mock.patch.object(self.lp, '_detect_lsps',
+                               return_value={'rust': '/usr/bin/rust-analyzer'}), \
+             mock.patch.object(self.lp, '_writer_changed_files',
+                               return_value=['a.ts']):
+            status = self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertFalse(status['measured'])
+        self.assertEqual(status['reason'], 'no-changed-file-with-detected-server')
+        self.assertFalse(os.path.isfile(
+            os.path.join(loki, 'quality', 'lsp-diagnostics.json')))
+
+    def test_real_error_recorded_and_blocks(self):
+        """NON-VACUITY: a severity-1 diagnostic from the per-file LSP query is
+        recorded into the artifact with count_errors>0 -- the exact shape the
+        gate blocks on. Diagnostics source is mocked at the proxy boundary so
+        this exercises the writer's enumeration + aggregation + serialization
+        WITHOUT fabricating a verdict (the gate still independently reads the
+        file)."""
+        root = self._make_repo({'src/main.py': 'x: int = "nope"\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        fake = json.dumps({
+            'diagnostics': [
+                {'severity': 1, 'message': 'Type error', 'range': {}, 'source': 'x'},
+                {'severity': 2, 'message': 'Unused', 'range': {}},
+                {'severity': 3, 'message': 'Info note'},
+            ],
+            'count_errors': 1, 'count_warnings': 1,
+            'language': 'python', 'elapsed_ms': 123.4,
+        })
+        with mock.patch.object(self.lp, '_detect_lsps',
+                               return_value={'python': '/usr/bin/pyright'}), \
+             mock.patch.object(self.lp, '_writer_changed_files',
+                               return_value=['src/main.py']), \
+             mock.patch.object(self.lp, '_lsp_get_diagnostics_blocking',
+                               return_value=fake):
+            status = self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertTrue(status['measured'])
+        self.assertTrue(status['wrote_artifact'])
+        self.assertEqual(status['count_errors'], 1)
+        path = os.path.join(loki, 'quality', 'lsp-diagnostics.json')
+        self.assertTrue(os.path.isfile(path))
+        with open(path, encoding='utf-8') as fh:
+            artifact = json.load(fh)
+        self.assertEqual(artifact['count_errors'], 1)
+        self.assertEqual(artifact['count_warnings'], 1)
+        # Minimal deterministic shape: only severity/message/file survive;
+        # elapsed_ms / range / source are stripped.
+        self.assertEqual(len(artifact['diagnostics']), 3)
+        for d in artifact['diagnostics']:
+            self.assertEqual(set(d.keys()), {'file', 'severity', 'message'})
+        self.assertNotIn('elapsed_ms', artifact)
+
+    def test_per_file_lsp_error_does_not_count_clean(self):
+        """A detected server that returns {'error':...} for the only changed
+        file means we measured nothing -> no artifact (NOT a fabricated
+        clean verdict)."""
+        root = self._make_repo({'src/main.py': 'x = 1\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        with mock.patch.object(self.lp, '_detect_lsps',
+                               return_value={'python': '/usr/bin/pyright'}), \
+             mock.patch.object(self.lp, '_writer_changed_files',
+                               return_value=['src/main.py']), \
+             mock.patch.object(self.lp, '_lsp_get_diagnostics_blocking',
+                               return_value=json.dumps({'error': 'spawn failed'})):
+            status = self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertFalse(status['measured'])
+        self.assertEqual(status['reason'], 'no-file-yielded-diagnostics')
+        self.assertFalse(os.path.isfile(
+            os.path.join(loki, 'quality', 'lsp-diagnostics.json')))
+
+    def test_clean_file_writes_zero_artifact(self):
+        """A measured file with no diagnostics writes a real 0/0 artifact --
+        this is a MEASURED clean result (we queried a live server), distinct
+        from the absence path."""
+        root = self._make_repo({'src/main.py': 'x = 1\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        with mock.patch.object(self.lp, '_detect_lsps',
+                               return_value={'python': '/usr/bin/pyright'}), \
+             mock.patch.object(self.lp, '_writer_changed_files',
+                               return_value=['src/main.py']), \
+             mock.patch.object(self.lp, '_lsp_get_diagnostics_blocking',
+                               return_value=json.dumps({
+                                   'diagnostics': [], 'count_errors': 0,
+                                   'count_warnings': 0})):
+            status = self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertTrue(status['measured'])
+        path = os.path.join(loki, 'quality', 'lsp-diagnostics.json')
+        with open(path, encoding='utf-8') as fh:
+            artifact = json.load(fh)
+        self.assertEqual(artifact['count_errors'], 0)
+        self.assertEqual(artifact['count_warnings'], 0)
+        self.assertEqual(artifact['diagnostics'], [])
+
+    def test_stale_artifact_removed_when_unmeasured(self):
+        """A previously-written artifact must be removed when a later run
+        measures nothing, so last iteration's errors cannot block forever."""
+        root = self._make_repo({'a.ts': 'const x = 1;\n'})
+        loki = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        qdir = os.path.join(loki, 'quality')
+        os.makedirs(qdir, exist_ok=True)
+        stale = os.path.join(qdir, 'lsp-diagnostics.json')
+        with open(stale, 'w', encoding='utf-8') as fh:
+            fh.write('{"count_errors": 5, "count_warnings": 0, "diagnostics": []}')
+        with mock.patch.object(self.lp, '_detect_lsps', return_value={}):
+            self.lp.write_diagnostics_artifact(root=root, loki_dir=loki)
+        self.assertFalse(os.path.isfile(stale))
+
+    def test_deterministic_serialization(self):
+        """Same inputs -> byte-identical artifact (route + run parity)."""
+        root = self._make_repo({'src/main.py': 'x = 1\n'})
+        loki1 = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        loki2 = tempfile.mkdtemp(prefix='loki-lsp-out-')
+        fake = json.dumps({'diagnostics': [
+            {'severity': 2, 'message': 'b'},
+            {'severity': 1, 'message': 'a'},
+        ]})
+        for lk in (loki1, loki2):
+            with mock.patch.object(self.lp, '_detect_lsps',
+                                   return_value={'python': '/usr/bin/pyright'}), \
+                 mock.patch.object(self.lp, '_writer_changed_files',
+                                   return_value=['src/main.py']), \
+                 mock.patch.object(self.lp, '_lsp_get_diagnostics_blocking',
+                                   return_value=fake):
+                self.lp.write_diagnostics_artifact(root=root, loki_dir=lk)
+        with open(os.path.join(loki1, 'quality', 'lsp-diagnostics.json'), 'rb') as fh:
+            b1 = fh.read()
+        with open(os.path.join(loki2, 'quality', 'lsp-diagnostics.json'), 'rb') as fh:
+            b2 = fh.read()
+        self.assertEqual(b1, b2)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -54,6 +54,7 @@ const ENV_KEYS = [
   "LOKI_STUB_GATE_MAGIC_DEBATE",
   "LOKI_GATE_LSP_DIAGNOSTICS",
   "LOKI_STUB_GATE_LSP_DIAGNOSTICS",
+  "LOKI_GATE_LSP_WRITER",
 ];
 
 beforeEach(() => {
@@ -1001,6 +1002,14 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
 // behavior so the gate never surprises a user without a language server.
 
 describe("runLSPDiagnostics (P1-5 artifact-reading gate)", () => {
+  beforeEach(() => {
+    // These tests exercise the READER against pre-staged artifacts. Disable
+    // the writer so its (correct) stale-artifact removal does not delete the
+    // fixtures, and so a machine WITH a language server does not enumerate
+    // loki's own diff into the scratch dir.
+    process.env["LOKI_GATE_LSP_WRITER"] = "0";
+  });
+
   function writeArtifact(obj: unknown) {
     mkdirSync(join(scratch, "quality"), { recursive: true });
     writeFileSync(join(scratch, "quality", "lsp-diagnostics.json"), JSON.stringify(obj));
@@ -1069,6 +1078,9 @@ describe("runQualityGates LSP-diagnostics toggle (default OFF)", () => {
     process.env["LOKI_STUB_GATE_CODE_REVIEW"] = "pass";
     process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
     process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "pass";
+    // Reader-only fixtures: disable the writer (see the artifact-reading
+    // describe block above for the rationale).
+    process.env["LOKI_GATE_LSP_WRITER"] = "0";
   });
 
   it("does NOT run lsp_diagnostics by default (absent from passed[] and failed[])", async () => {
@@ -1096,4 +1108,48 @@ describe("runQualityGates LSP-diagnostics toggle (default OFF)", () => {
     expect(r.failed).toContain("lsp_diagnostics");
     expect(r.blocked).toBe(true);
   });
+});
+
+// --- LSP diagnostics WRITER invocation (P1-5 closing the loop) -------------
+//
+// The gate now INVOKES the Python writer (mcp/lsp_proxy.py
+// --write-diagnostics) before reading the artifact, so the gate is no longer
+// inert. This block exercises the real writer subprocess end-to-end (NOT a
+// stub): it must (a) not crash the gate, (b) write NOTHING when no changed
+// file maps to a detected language server, and (c) leave the gate on its
+// honest "did not run" absence path -- never a fabricated clean verdict. This
+// is the hermetic, deny-filter half of the proof: it runs identically on any
+// machine regardless of which (if any) language servers are installed, because
+// the scratch dir has no source files the writer would query. The non-vacuity
+// half (real severity-1 error -> blocking artifact) is proven against the
+// writer's aggregation layer in mcp/tests/test_lsp_proxy.py
+// (DiagnosticsWriterTests.test_real_error_recorded_and_blocks).
+describe("runLSPDiagnostics writer invocation (no-false-fire)", () => {
+  it("invokes the writer, writes no artifact for an empty scratch repo, and passes on the honest absence path", async () => {
+    // Writer ENABLED (default). The scratch lokiDir has no source files that
+    // map to any language server, so the writer must produce no artifact.
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("gate did not run");
+    expect(r.detail ?? "").not.toContain("clean");
+    // The writer must NOT have manufactured an artifact from a no-op run.
+    expect(existsSync(join(scratch, "quality", "lsp-diagnostics.json"))).toBe(false);
+  }, 130_000);
+
+  it("removes a stale artifact when a later run measures nothing (no permanent block)", async () => {
+    // Pre-stage a stale 'errors present' artifact, then run the gate with the
+    // writer enabled. Because the scratch repo has nothing the writer can
+    // measure, the writer must delete the stale artifact, so the gate falls
+    // back to the honest absence path instead of blocking forever on last
+    // iteration's errors.
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(
+      join(scratch, "quality", "lsp-diagnostics.json"),
+      JSON.stringify({ count_errors: 9, count_warnings: 0, diagnostics: [] }),
+    );
+    const r = await runLSPDiagnostics(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("gate did not run");
+    expect(existsSync(join(scratch, "quality", "lsp-diagnostics.json"))).toBe(false);
+  }, 130_000);
 });

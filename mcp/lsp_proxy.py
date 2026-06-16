@@ -1304,6 +1304,180 @@ async def lsp_find_definition_by_name(symbol: str,
 # MAIN
 # ============================================================
 
+# ============================================================
+# DIAGNOSTICS WRITER (P1-5 quality gate)
+# ============================================================
+#
+# The LSP-diagnostics quality gate (loki-ts/src/runner/quality_gates.ts,
+# runLSPDiagnostics) READS <lokiDir>/quality/lsp-diagnostics.json but nothing
+# wrote it -- the gate was inert. This is the WRITER, invoked the same way on
+# both routes (Bun gate calls `python3 -m mcp.lsp_proxy --write-diagnostics`;
+# the bash route, when wired by the run.sh owner, calls the identical command),
+# so a single program produces byte-identical output for both. NO TS/bash
+# re-implementation of the aggregation -- that is the whole point of putting it
+# here.
+#
+# It enumerates the changed files itself (HEAD~1 -> --cached -> ls-files,
+# mirroring runStaticAnalysis's chain in quality_gates.ts so file selection
+# cannot diverge from the sibling static-analysis gate), queries each
+# supported file via the SAME in-process LSP client cache (_get_or_spawn_client,
+# one process for all files -- not python3-per-file), aggregates, and writes
+# the minimal deterministic shape the gate consumes.
+#
+# HONESTY (never fabricate a clean verdict from absence): when NO supported
+# language server is on PATH, or NO changed file maps to an available server,
+# the writer writes NO artifact and removes any stale one. The gate's existing
+# absence path then fires ("gate did not run") instead of a manufactured
+# "0 errors, 0 warnings" clean verdict. Likewise on any unrecoverable error
+# the writer leaves no artifact.
+#
+# DETERMINISM: the artifact carries ONLY the fields the gate reads
+# (count_errors, count_warnings, diagnostics[].severity/.message/.file).
+# Non-deterministic proxy fields (elapsed_ms, ranges, source) are dropped, and
+# diagnostics are sorted stably (file, severity, message) so the same inputs
+# always serialize byte-identically across runs and routes.
+
+_DIAG_ARTIFACT_REL = os.path.join('quality', 'lsp-diagnostics.json')
+
+
+def _writer_loki_dir() -> str:
+    """Resolve the .loki dir the artifact is written under. Honors LOKI_DIR
+    (matching loki-ts/src/util/paths.ts lokiDir()), else <cwd>/.loki."""
+    env = os.environ.get('LOKI_DIR')
+    if env:
+        return env
+    return os.path.join(os.getcwd(), '.loki')
+
+
+def _writer_changed_files(root: str) -> List[str]:
+    """Return changed files relative to `root`, mirroring the HEAD~1 ->
+    --cached -> ls-files chain in runStaticAnalysis (quality_gates.ts). An
+    empty-but-successful `git diff HEAD~1 HEAD` is honored as "no changes
+    this iteration" and does NOT fall through to ls-files (parity with the
+    tryGit null-vs-empty distinction in the TS gate)."""
+    def _try_git(git_args: List[str]) -> Optional[str]:
+        try:
+            proc = subprocess.run(
+                ['git', '-C', root, *git_args],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+
+    raw: str
+    head_tilde = _try_git(['diff', '--name-only', 'HEAD~1', 'HEAD'])
+    if head_tilde is not None:
+        raw = head_tilde
+    else:
+        cached = _try_git(['diff', '--name-only', '--cached'])
+        if cached is not None and cached.strip():
+            raw = cached
+        else:
+            ls_files = _try_git(['ls-files'])
+            raw = ls_files if (ls_files is not None and ls_files.strip()) else ''
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def write_diagnostics_artifact(root: Optional[str] = None,
+                               loki_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Enumerate changed files, query LSP diagnostics per supported file via
+    the shared in-process client cache, aggregate, and atomically write the
+    gate artifact. Returns a status dict (also printed by --write-diagnostics).
+
+    Writes NO artifact (and removes a stale one) when there is nothing real to
+    measure -- no detected server, or no changed file maps to a detected
+    server -- so the gate's absence path fires honestly instead of a fabricated
+    clean verdict."""
+    root = root or os.getcwd()
+    loki_dir = loki_dir or _writer_loki_dir()
+    artifact_path = os.path.join(loki_dir, _DIAG_ARTIFACT_REL)
+
+    def _remove_stale() -> None:
+        try:
+            if os.path.isfile(artifact_path):
+                os.remove(artifact_path)
+        except OSError:
+            pass
+
+    detected = _detect_lsps()
+    if not detected:
+        _remove_stale()
+        return {'measured': False, 'reason': 'no-language-server-on-path',
+                'wrote_artifact': False}
+
+    changed_rel = _writer_changed_files(root)
+    # Keep only files whose language has a detected server AND that exist on
+    # disk (skip deleted/renamed diff entries).
+    targets: List[str] = []
+    for rel in changed_rel:
+        abs_path = rel if os.path.isabs(rel) else os.path.join(root, rel)
+        if not os.path.isfile(abs_path):
+            continue
+        lang = _suffix_to_language(abs_path)
+        if lang is None or lang not in detected:
+            continue
+        targets.append(abs_path)
+
+    if not targets:
+        _remove_stale()
+        return {'measured': False, 'reason': 'no-changed-file-with-detected-server',
+                'wrote_artifact': False,
+                'detected': sorted(detected.keys())}
+
+    all_diags: List[Dict[str, Any]] = []
+    queried = 0
+    for abs_path in targets:
+        try:
+            raw = _lsp_get_diagnostics_blocking(abs_path)
+            parsed = json.loads(raw)
+        except (OSError, ValueError):
+            continue
+        if 'error' in parsed:
+            # Server present in detection but failed for this file (spawn
+            # failure, unsupported, etc.). Skip it -- do NOT count it clean.
+            continue
+        queried += 1
+        for d in parsed.get('diagnostics', []) or []:
+            sev = d.get('severity')
+            if not isinstance(sev, int):
+                continue
+            all_diags.append({
+                'file': abs_path,
+                'severity': sev,
+                'message': str(d.get('message', '')),
+            })
+
+    if queried == 0:
+        # Every detected-server file failed to produce a usable result. We
+        # measured nothing real -- do not fabricate a clean artifact.
+        _remove_stale()
+        return {'measured': False, 'reason': 'no-file-yielded-diagnostics',
+                'wrote_artifact': False, 'detected': sorted(detected.keys())}
+
+    # Stable sort so the same inputs serialize identically across runs/routes.
+    all_diags.sort(key=lambda d: (d['file'], d['severity'], d['message']))
+    count_errors = sum(1 for d in all_diags if d['severity'] == 1)
+    count_warnings = sum(1 for d in all_diags if d['severity'] == 2)
+    artifact = {
+        'count_errors': count_errors,
+        'count_warnings': count_warnings,
+        'diagnostics': all_diags,
+    }
+
+    os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+    body = json.dumps(artifact, indent=2, sort_keys=True) + '\n'
+    tmp_path = f'{artifact_path}.tmp.{os.getpid()}'
+    with open(tmp_path, 'w', encoding='utf-8') as fh:
+        fh.write(body)
+    os.replace(tmp_path, artifact_path)
+    return {'measured': True, 'wrote_artifact': True, 'path': artifact_path,
+            'files_queried': queried, 'count_errors': count_errors,
+            'count_warnings': count_warnings}
+
+
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(
@@ -1317,7 +1491,36 @@ def main() -> None:
         '--port', type=int, default=8422,
         help='Port for HTTP transport (default: 8422).',
     )
+    parser.add_argument(
+        '--write-diagnostics', action='store_true',
+        help='One-shot: enumerate changed files, query LSP diagnostics for '
+             'each supported file, and write the quality-gate artifact at '
+             '<LOKI_DIR>/quality/lsp-diagnostics.json. Writes nothing when no '
+             'language server is available (the gate then reports "did not '
+             'run"). Used by the LSP-diagnostics quality gate on both routes.',
+    )
+    parser.add_argument(
+        '--root', default=None,
+        help='Project root to enumerate changed files in (default: cwd). The '
+             'caller MUST pass the TARGET project dir here, not the loki '
+             'install dir -- the install dir is only the import path for '
+             '`-m mcp.lsp_proxy`.',
+    )
     args = parser.parse_args()
+
+    if args.write_diagnostics:
+        # One-shot writer mode -- no MCP server, no event loop. Always cleans
+        # up any spawned LSP clients before exit. `--root` is the TARGET
+        # project (where the diff lives); it is independent of the process cwd
+        # (which the caller may set to the install dir so `-m mcp.lsp_proxy`
+        # imports).
+        try:
+            status = write_diagnostics_artifact(root=args.root)
+        finally:
+            _cleanup_all_clients()
+        print(json.dumps(status))
+        return
+
     # SIGTERM handler so docker stop / supervisord stop triggers cleanup
     # symmetrically to atexit. Re-raises via default handler so the
     # process actually exits.

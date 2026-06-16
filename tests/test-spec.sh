@@ -5,7 +5,7 @@
 #   create spec -> lock -> mutate spec -> status detects CHANGED (exit 1)
 #   -> sync -> status back in sync (exit 0)
 # Plus: ADDED/REMOVED detection, drift-report.json shape, the verify
-# SPEC_DRIFT integration (drift -> Medium finding -> CONCERNS), and the
+# SPEC_DRIFT integration (drift -> High finding -> BLOCKED), and the
 # graceful no-op when no lock exists.
 #
 # Self-contained: each scenario runs in its own throwaway git repo under a
@@ -218,7 +218,7 @@ scenario_json() {
 }
 
 # ---------------------------------------------------------------------------
-# Scenario 5: verify integration. Drift -> SPEC_DRIFT Medium finding -> CONCERNS.
+# Scenario 5: verify integration. Drift -> SPEC_DRIFT High finding -> BLOCKED.
 #             No lock -> spec_drift gate skipped, no finding.
 # ---------------------------------------------------------------------------
 scenario_verify_integration() {
@@ -261,10 +261,12 @@ print(len([f for f in d["findings"] if f["category"]=="spec_drift"]))' 2>/dev/nu
     TOTAL=$((TOTAL + 1))
     local verdict finding_sev finding_cat
     verdict="$(python3 -c 'import json;print(json.load(open(".loki/verify/evidence.json"))["verdict"])' 2>/dev/null)"
-    if [ "$verdict" = "CONCERNS" ] || [ "$verdict" = "BLOCKED" ]; then
-        log_pass "verify verdict is CONCERNS/BLOCKED on spec drift (got $verdict)"
+    # P2-6: drift against an existing lock is now a High (blocking) finding, so
+    # the verdict is BLOCKED under verify's default --block-on critical,high.
+    if [ "$verdict" = "BLOCKED" ]; then
+        log_pass "verify verdict is BLOCKED on spec drift (got $verdict)"
     else
-        log_fail "verify verdict on drift" "expected CONCERNS, got '$verdict'"
+        log_fail "verify verdict on drift" "expected BLOCKED, got '$verdict'"
     fi
 
     finding_cat="$(python3 -c '
@@ -279,10 +281,11 @@ import json
 d=json.load(open(".loki/verify/evidence.json"))
 f=[x for x in d["findings"] if x["category"]=="spec_drift"]
 print(f[0]["severity"] if f else "missing")' 2>/dev/null)"
-    assert_eq "SPEC_DRIFT finding severity is Medium" "Medium" "$finding_sev"
+    assert_eq "SPEC_DRIFT finding severity is High" "High" "$finding_sev"
 
-    # verify exit should be CONCERNS (1) given a Medium-only drift finding.
-    assert_eq "verify exits CONCERNS(1) on Medium spec drift" 1 "$verify_rc"
+    # verify exit should be BLOCKED (2) given a High drift finding under the
+    # default block threshold (critical,high).
+    assert_eq "verify exits BLOCKED(2) on High spec drift" 2 "$verify_rc"
 
     cd "$SCRIPT_DIR" || true
     rm -rf "$repo"
@@ -319,8 +322,8 @@ scenario_no_commit_lock() {
 }
 
 # ---------------------------------------------------------------------------
-# Scenario 7 (MEDIUM-4): the lock recorded a spec path, but that spec file is
-#             now DELETED. spec_verify_hook must emit a Medium spec_drift finding
+# Scenario 7: the lock recorded a spec path, but that spec file is
+#             now DELETED. spec_verify_hook must emit a High spec_drift finding
 #             ("locked spec file missing: <path>") and must NOT silently pass or
 #             fall back to spec_resolve_source (comparing a different candidate).
 # ---------------------------------------------------------------------------
@@ -351,7 +354,7 @@ scenario_deleted_locked_spec() {
     hook_rc=$?
 
     assert_eq "deleted-locked-spec: hook rc is non-fatal (0)" 0 "$hook_rc"
-    assert_contains "deleted-locked-spec: emits a Medium spec_drift finding" "$hook_out" "Medium	spec_drift"
+    assert_contains "deleted-locked-spec: emits a High spec_drift finding" "$hook_out" "High	spec_drift"
     assert_contains "deleted-locked-spec: message names the missing locked path" "$hook_out" "locked spec file missing: prd.md"
     # The finding must reference the LOCKED path (prd.md), never the decoy (PRD.md).
     TOTAL=$((TOTAL + 1))

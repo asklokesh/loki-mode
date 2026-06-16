@@ -1480,7 +1480,40 @@ check_policy() {
     elif [ $exit_code -eq 2 ]; then
         log_warn "Policy requires APPROVAL: $result"
         audit_agent_action "policy_approval_required" "Policy requires approval" "enforcement=$enforcement_point"
-        # Log but proceed (full approval flow is P1-3 scope)
+        # P3-3 (v7.51.0): honor the approval requirement when the operator has
+        # opted into enforcement. This is OPT-IN and changes NOTHING for existing
+        # users: the wait fires only when staged autonomy is on
+        # (LOKI_STAGED_AUTONOMY=true) or the explicit
+        # LOKI_POLICY_APPROVAL_ENFORCE=1 knob is set. Otherwise it stays advisory
+        # (log + proceed), preserving the historical default behavior. The wait
+        # reuses the same .loki/signals/ file-signal mechanism as staged-autonomy
+        # plan approval (check_staged_autonomy), extended with a reject arm so an
+        # operator can deny (deny == policy DENIED == return 1).
+        if [ "$STAGED_AUTONOMY" = "true" ] || [ "${LOKI_POLICY_APPROVAL_ENFORCE:-0}" = "1" ]; then
+            local _approve_sig=".loki/signals/POLICY_APPROVED"
+            local _reject_sig=".loki/signals/POLICY_REJECTED"
+            log_warn "Policy enforcement: waiting for approval at enforcement point '$enforcement_point'."
+            log_warn "  Approve: create $_approve_sig  |  Reject: create $_reject_sig"
+            audit_agent_action "policy_approval_wait" "Waiting for policy approval signal" "enforcement=$enforcement_point"
+            while [ ! -f "$_approve_sig" ] && [ ! -f "$_reject_sig" ]; do
+                sleep 5
+            done
+            if [ -f "$_reject_sig" ]; then
+                rm -f "$_reject_sig" "$_approve_sig" 2>/dev/null || true
+                log_error "Policy REJECTED by operator at enforcement point '$enforcement_point'"
+                audit_agent_action "policy_approval_rejected" "Operator rejected policy approval" "enforcement=$enforcement_point"
+                emit_event_json "policy_denied" \
+                    "enforcement=$enforcement_point" \
+                    "result=operator_rejected"
+                return 1
+            fi
+            rm -f "$_approve_sig" 2>/dev/null || true
+            log_info "Policy approved by operator at enforcement point '$enforcement_point'; continuing."
+            audit_agent_action "policy_approval_granted" "Operator approved policy" "enforcement=$enforcement_point"
+            return 0
+        fi
+        # Default (no staged autonomy, no enforce knob): advisory only -- log and
+        # proceed. This preserves the historical behavior for existing users.
         return 0
     fi
     return 0
@@ -7757,6 +7790,55 @@ os.replace(tmp, out)
         else
             log_info "Coverage: not measured (${COVERAGE_REASON:-unknown}); pass-through, not blocking"
         fi
+    else
+        # P3-5/coverage-honesty (v7.51.0): measurement is OPT-IN (it re-runs the
+        # suite instrumented, which would double every test run -- a UX
+        # regression for an autonomous loop). At default-off we deliberately do
+        # NOT measure, but we STILL write a coverage fact so the run manifest /
+        # reproducibility record always has one honest coverage shape. This is
+        # the "missing-artifact" fix, not a hollow gate: measured=false, pct=null,
+        # blocked=false, with an explicit reason. ZERO runtime (no instrumented
+        # re-run). Reuses the EXACT python3 writer + schema used at default-on so
+        # consumers see a single shape. Single-pass, never blocks.
+        _LOKI_COV_MEASURED="false" \
+        _LOKI_COV_PCT="" \
+        _LOKI_COV_TOOL="none" \
+        _LOKI_COV_REASON="not requested (set LOKI_COVERAGE_GATE=1 to measure)" \
+        _LOKI_COV_MIN="$min_coverage" \
+        _LOKI_COV_ENFORCED="0" \
+        _LOKI_COV_BLOCKED="false" \
+        _LOKI_COV_RUNNER="$test_runner" \
+        _LOKI_COV_OUT="$quality_dir/coverage.json" \
+        python3 -c "
+import json, os, tempfile
+out=os.environ['_LOKI_COV_OUT']
+measured = os.environ.get('_LOKI_COV_MEASURED','false') == 'true'
+pct_raw = os.environ.get('_LOKI_COV_PCT','')
+try:
+    pct = float(pct_raw) if (measured and pct_raw != '') else None
+except ValueError:
+    pct = None
+def b(v): return os.environ.get(v,'false') == 'true'
+def i(v):
+    try: return int(float(os.environ.get(v,'0')))
+    except (TypeError, ValueError): return 0
+rec = {
+    'measured': measured,
+    'pct': pct,
+    'tool': os.environ.get('_LOKI_COV_TOOL','none'),
+    'runner': os.environ.get('_LOKI_COV_RUNNER','none'),
+    'threshold': i('_LOKI_COV_MIN'),
+    'enforced': os.environ.get('_LOKI_COV_ENFORCED','0') == '1',
+    'blocked': b('_LOKI_COV_BLOCKED'),
+    'reason': os.environ.get('_LOKI_COV_REASON','') if not measured else '',
+    'timestamp': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+}
+d=os.path.dirname(out)
+fd, tmp=tempfile.mkstemp(dir=d, suffix='.json')
+with os.fdopen(fd,'w') as f:
+    json.dump(rec, f, indent=2)
+os.replace(tmp, out)
+" 2>/dev/null || true
     fi
 
     if [ "$test_passed" = "true" ]; then
@@ -7852,6 +7934,65 @@ ensure_completion_test_evidence() {
         printf '%s\n' "$this_iter" > "$iter_marker" 2>/dev/null || true
     fi
     return 0
+}
+
+# P1-1 (v7.51.0): ADVISORY consumer for the evidence-gate detail record that
+# completion-council.sh:_write_evidence_details writes on EVERY evidence-gate run
+# (pass and block) to .loki/council/evidence-gate-details.json. Until now run.sh
+# had ZERO consumers of that file -- the audit record was durable but invisible
+# to the operator and to the next-iteration prompt. This surfaces a one-line
+# advisory summary (verdict + diff axis + tests axis). It NEVER blocks and NEVER
+# introduces a new gate (the evidence gate itself already blocks; this is purely
+# visibility). Absent or malformed file -> degrade silently (no error, no block).
+surface_evidence_gate_details() {
+    local _det_file="${TARGET_DIR:-.}/.loki/council/evidence-gate-details.json"
+    [ -f "$_det_file" ] || return 0
+    local _summary
+    _summary=$(_LOKI_EGD_FILE="$_det_file" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_LOKI_EGD_FILE']) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+verdict = d.get('verdict', 'unknown')
+diff = d.get('diff', {}) if isinstance(d.get('diff'), dict) else {}
+tests = d.get('tests', {}) if isinstance(d.get('tests'), dict) else {}
+diff_ok = diff.get('ok')
+tests_ok = tests.get('ok')
+runner = tests.get('runner', 'none')
+parts = ['verdict=%s' % verdict]
+parts.append('diff_ok=%s' % diff_ok)
+parts.append('tests_ok=%s (runner=%s)' % (tests_ok, runner))
+if diff.get('inconclusive'):
+    parts.append('diff_inconclusive=%s' % (diff.get('inconclusive_reason') or 'yes'))
+if tests.get('inconclusive'):
+    parts.append('tests_inconclusive=%s' % (tests.get('inconclusive_reason') or 'yes'))
+print(' '.join(str(p) for p in parts))
+" 2>/dev/null) || return 0
+    [ -n "$_summary" ] || return 0
+    if printf '%s' "$_summary" | grep -q "verdict=block"; then
+        log_warn "[Council] Evidence-gate details: $_summary"
+    else
+        log_info "[Council] Evidence-gate details: $_summary"
+    fi
+    return 0
+}
+
+# P1-1 (v7.51.0): wrapper that runs the evidence gate, then surfaces its detail
+# record on BOTH the pass and block paths, and returns the gate's exact rc. This
+# preserves the elif chain's `! council_evidence_gate` semantics byte-for-byte
+# (fall-through on pass so the held-out and assumption gates downstream still
+# evaluate; block on a 1). The surface call is advisory-only and never affects
+# the returned rc. The detail file is fresh here -- _write_evidence_details ran
+# inside council_evidence_gate just above on this same iteration.
+_evidence_gate_and_surface() {
+    local _rc=0
+    council_evidence_gate || _rc=$?
+    surface_evidence_gate_details || true
+    return $_rc
 }
 
 # ============================================================================
@@ -14818,6 +14959,88 @@ if __name__ == "__main__":
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
                 fi
             fi
+            # LSP diagnostics gate (P1-5 bash-route parity, v7.51.0). Closes the
+            # parity gap: the Bun route ships runLSPDiagnostics
+            # (loki-ts/src/runner/quality_gates.ts) with a route-neutral Python
+            # writer (mcp/lsp_proxy.py); the bash route had NO writer/reader.
+            # This block runs the SAME writer and mirrors the TS blocking
+            # semantics byte-for-byte:
+            #   - Gate is OPT-IN: default OFF. Enabled by LOKI_GATE_LSP_DIAGNOSTICS=true
+            #     (the single toggle; mirrors flag("LOKI_GATE_LSP_DIAGNOSTICS", false)
+            #     at quality_gates.ts:1717). No second knob.
+            #   - When enabled, count_errors > 0 -> BLOCK (mirrors
+            #     "if (errorCount > 0) { passed: false }" at quality_gates.ts:1667).
+            #   - warnings only -> advisory PASS (quality_gates.ts:1673).
+            #   - artifact absent/malformed -> honest pass-through, NEVER block
+            #     (quality_gates.ts:1646 returns passed:true on null artifact).
+            # The writer is OPT-OUT-able with LOKI_GATE_LSP_WRITER=0 (operator can
+            # supply a pre-built artifact), matching the TS escape hatch
+            # (quality_gates.ts:1630). cwd must be the install dir (PROJECT_DIR =
+            # $SCRIPT_DIR/.. ) so `-m mcp.lsp_proxy` imports, while --root points
+            # at the TARGET project the loop is building (mirrors
+            # runLSPDiagnosticsWriter: cwd=REPO_ROOT, --root=ctx.cwd).
+            if [ "${LOKI_GATE_LSP_DIAGNOSTICS:-false}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: LSP diagnostics..."
+                # WRITER: route-neutral Python, same program as the Bun route.
+                if [ "${LOKI_GATE_LSP_WRITER:-1}" != "0" ]; then
+                    ( cd "$PROJECT_DIR" && LOKI_DIR="${TARGET_DIR:-.}/.loki" python3 -m mcp.lsp_proxy --write-diagnostics --root "${TARGET_DIR:-.}" ) >/dev/null 2>&1 || true
+                fi
+                # READER: read counts, mirror TS block policy.
+                local _lsp_file="${TARGET_DIR:-.}/.loki/quality/lsp-diagnostics.json"
+                local _lsp_verdict="absent"
+                if [ -f "$_lsp_file" ]; then
+                    _lsp_verdict=$(_LOKI_LSP_FILE="$_lsp_file" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_LOKI_LSP_FILE']) as f:
+        d = json.load(f)
+except Exception:
+    print('absent'); sys.exit(0)
+if not isinstance(d, dict):
+    print('absent'); sys.exit(0)
+diags = d.get('diagnostics') if isinstance(d.get('diagnostics'), list) else []
+ce = d.get('count_errors')
+cw = d.get('count_warnings')
+errors = ce if isinstance(ce, int) else sum(1 for x in diags if isinstance(x, dict) and x.get('severity') == 1)
+warns = cw if isinstance(cw, int) else sum(1 for x in diags if isinstance(x, dict) and x.get('severity') == 2)
+if errors > 0:
+    print('block %d %d' % (errors, warns))
+elif warns > 0:
+    print('warn %d %d' % (errors, warns))
+else:
+    print('clean 0 0')
+" 2>/dev/null) || _lsp_verdict="absent"
+                    [ -n "$_lsp_verdict" ] || _lsp_verdict="absent"
+                fi
+                case "$_lsp_verdict" in
+                    block*)
+                        local _lsp_e _lsp_w
+                        _lsp_e=$(printf '%s' "$_lsp_verdict" | awk '{print $2}')
+                        _lsp_w=$(printf '%s' "$_lsp_verdict" | awk '{print $3}')
+                        local lsp_count
+                        lsp_count=$(track_gate_failure "lsp_diagnostics")
+                        gate_failures="${gate_failures}lsp_diagnostics,"
+                        log_warn "LSP diagnostics gate FAILED ($lsp_count consecutive) - ${_lsp_e} error(s), ${_lsp_w} warning(s); LSP reports compiler/type errors"
+                        ;;
+                    warn*)
+                        local _lsp_w2
+                        _lsp_w2=$(printf '%s' "$_lsp_verdict" | awk '{print $3}')
+                        clear_gate_failure "lsp_diagnostics"
+                        log_info "LSP diagnostics: 0 errors, ${_lsp_w2} warning(s) (advisory)"
+                        ;;
+                    clean*)
+                        clear_gate_failure "lsp_diagnostics"
+                        log_info "LSP diagnostics: 0 errors, 0 warnings"
+                        ;;
+                    *)
+                        # Absent or malformed artifact: honest pass-through, never
+                        # block (mirrors quality_gates.ts:1646). Do not fabricate
+                        # a clean verdict from absence.
+                        clear_gate_failure "lsp_diagnostics"
+                        log_info "LSP diagnostics: no lsp-diagnostics.json artifact (lsp not available) -- gate did not run"
+                        ;;
+                esac
+            fi
             # Code review gate (upgraded from advisory, with escalation)
             if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: code review..."
@@ -15096,7 +15319,7 @@ if __name__ == "__main__":
             # LOKI_EVIDENCE_GATE=0 (council_evidence_gate returns 0 immediately
             # when disabled, so this branch never fires). Gate output (reason +
             # opt-out hint) is printed by council_evidence_gate itself.
-            elif [ "$_completion_claimed" = 1 ] && type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
+            elif [ "$_completion_claimed" = 1 ] && type council_evidence_gate &>/dev/null && ! _evidence_gate_and_surface; then
                 log_warn "Completion claim rejected: evidence gate found no proof of completion (empty diff vs run-start SHA, or red tests)."
                 log_warn "  Details under .loki/council/evidence-block.json ; opt out with LOKI_EVIDENCE_GATE=0"
                 # Fall through; keep iterating until there is real evidence.
@@ -15595,7 +15818,7 @@ check_human_intervention() {
         fi
         if type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
             log_info "Council force-review: blocked by checklist hard gate"
-        elif type council_evidence_gate &>/dev/null && ! council_evidence_gate; then
+        elif type council_evidence_gate &>/dev/null && ! _evidence_gate_and_surface; then
             log_info "Council force-review: blocked by evidence hard gate"
         elif type council_heldout_gate &>/dev/null && ! council_heldout_gate; then
             log_info "Council force-review: blocked by held-out spec-eval hard gate"

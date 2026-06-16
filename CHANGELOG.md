@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.51.0] - 2026-06-16
+
+### Tech-debt closure: four inert/half-wired features made real (both routes)
+
+This release removes scaffolding that read like a feature but did nothing,
+honoring the no-tech-debt mandate. Each activation is advisory-first and
+deny-filters clean results, so an activated gate can never false-fire and
+deadlock the autonomous loop. Defaults are unchanged for existing users.
+
+- **Coverage artifact honesty** (`autonomy/run.sh`): at the default (measurement
+  off) the coverage block was skipped entirely, so no `coverage.json` was ever
+  written -- a missing-artifact gap in the reproducibility manifest. The gate now
+  writes `coverage.json` with `measured:false` even when measurement is off, with
+  zero added runtime (no instrumented re-run) and no blocking. Measurement stays
+  opt-in (`LOKI_COVERAGE_GATE=1`); default-on would double every test run.
+- **LSP-diagnostics gate made real on both routes**: the gate read
+  `.loki/quality/lsp-diagnostics.json` but nothing wrote it (inert). A
+  route-neutral writer (`mcp/lsp_proxy.py --write-diagnostics`) is now invoked
+  identically from the Bun gate (`loki-ts/src/runner/quality_gates.ts`) and the
+  bash gate (`autonomy/run.sh`), with byte-identical blocking semantics: single
+  knob `LOKI_GATE_LSP_DIAGNOSTICS` (default off); `count_errors > 0` blocks only
+  when enabled; absent/malformed/clean never fires; no language server present ->
+  writes nothing (never fabricates a clean verdict). `LOKI_GATE_LSP_WRITER=0`
+  lets a caller supply a pre-built artifact. The bash/Bun parity test now
+  validates these as genuinely shared toggles (prior bun-only carve-out removed).
+- **Evidence-gate-details consumer** (`autonomy/run.sh`, closes P1-1): the
+  completion council wrote `.loki/council/evidence-gate-details.json` but run.sh
+  had no consumer. run.sh now surfaces the details advisory (WARN on block, INFO
+  otherwise) without introducing a new block; the wrapper preserves the gate's
+  exact return code, so completion detection is unchanged. Absent/malformed file
+  degrades silently.
+- **Approval phase-gate enforcement** (`autonomy/run.sh`): a policy
+  "approval required" result (exit 2) previously logged and proceeded. It now
+  honors an approval wait on `.loki/signals/POLICY_APPROVED|POLICY_REJECTED`
+  (same mechanism as staged autonomy) when `LOKI_STAGED_AUTONOMY=true` or
+  `LOKI_POLICY_APPROVAL_ENFORCE=1`. With neither knob set, behavior is unchanged
+  (advisory log + proceed).
+
+Gates: local-ci 78/78, full pytest + bun test + bash/Bun parity matrix green,
+3-reviewer council unanimous APPROVE (2 Opus adversarial + 1 Sonnet).
+
 ## [7.50.0] - 2026-06-16
 
 ### Spec-robustness, enterprise depth, and verification breadth (10-stream batch)
