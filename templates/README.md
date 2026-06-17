@@ -18,39 +18,60 @@ loki init my-project --template saas-starter
 
 ## Templates
 
+The tier below is the complexity that Loki Mode's `detect_complexity` routine
+(`autonomy/run.sh`) actually assigns to each PRD. Complexity is auto-detected
+from the PRD's structure (its section count and length), not from the size of
+the finished product. A short, lightly-sectioned spec like `simple-todo-app`
+detects as Simple; a richly-sectioned spec (more than 10 h2/h3 sections, or
+more than 1000 words) detects as Complex, even when the app it describes is a
+single static page. So a few visually small projects (for example
+`static-landing-page`) land under Complex purely because their PRD is deeply
+sectioned. The Est. Time column reflects build effort, which does not always
+track the detected tier.
+
 ### Simple
+
+PRD detects as Simple: fewer than 3 sections, fewer than 5 features, and under
+200 words.
 
 | Template | Description | Tech Stack | Est. Time |
 |----------|-------------|------------|-----------|
-| [simple-todo-app.md](simple-todo-app.md) | Minimal todo app for testing Loki Mode basics | React, Express, SQLite | 15-20 min |
-| [static-landing-page.md](static-landing-page.md) | SaaS landing page with hero, features, pricing, FAQ | HTML, CSS, vanilla JS | 10-15 min |
-| [api-only.md](api-only.md) | REST API for notes with full CRUD and tests | Express, in-memory, Vitest | 15-20 min |
+| [simple-todo-app.md](simple-todo-app.md) | Minimal todo app for testing Loki Mode basics | HTML, CSS, vanilla JS (localStorage) | 15-20 min |
 
 ### Standard
 
+PRD detects as Standard: between the Simple and Complex thresholds (roughly
+3 to 10 sections and under 1000 words).
+
 | Template | Description | Tech Stack | Est. Time |
 |----------|-------------|------------|-----------|
-| [rest-api.md](rest-api.md) | REST API with CRUD, pagination, filtering, Swagger docs (no auth) | Express, TypeScript, Prisma, SQLite | 25-35 min |
-| [rest-api-auth.md](rest-api-auth.md) | REST API with JWT auth, registration, login, refresh, rate limiting | Express/FastAPI, PostgreSQL, JWT, bcrypt | 30-45 min |
-| [cli-tool.md](cli-tool.md) | File organizer CLI with subcommands, config, watch mode, undo | Node.js, Commander.js, chalk, chokidar | 30-45 min |
-| [discord-bot.md](discord-bot.md) | Moderation bot with slash commands, auto-mod, reaction roles | discord.js, SQLite, node-cron | 45-60 min |
-| [chrome-extension.md](chrome-extension.md) | Tab manager extension with groups, sessions, search, memory monitor | Manifest V3, vanilla JS, Chrome APIs | 30-45 min |
-| [blog-platform.md](blog-platform.md) | Blog with markdown CMS, categories, RSS feed, SEO | Next.js, CodeMirror, SQLite, TailwindCSS | 45-60 min |
-| [full-stack-demo.md](full-stack-demo.md) | Bookmark manager with tags, search, and filtering | React, Express, SQLite, TailwindCSS | 30-60 min |
-| [web-scraper.md](web-scraper.md) | Configurable scraper with pagination, robots.txt, multi-format export | Python, httpx, BeautifulSoup4, SQLite | 30-45 min |
-| [data-pipeline.md](data-pipeline.md) | ETL pipeline with multi-source ingestion, transforms, monitoring | Python, Pydantic, SQLAlchemy, Click | 30-45 min |
 | [dashboard.md](dashboard.md) | Real-time analytics dashboard with charts, tables, drag-and-drop layout | React, Recharts, TanStack Table, WebSocket | 45-60 min |
+| [data-pipeline.md](data-pipeline.md) | ETL pipeline with multi-source ingestion, transforms, monitoring | Python, Pydantic, SQLAlchemy, Click | 30-45 min |
 | [game.md](game.md) | Browser-based 2D game with enemy AI, scoring, levels, high scores | HTML5 Canvas, TypeScript, Web Audio API | 30-45 min |
-| [slack-bot.md](slack-bot.md) | Slack bot with slash commands, events, interactive messages, scheduling | Node.js, Bolt SDK, SQLite | 30-45 min |
-| [npm-library.md](npm-library.md) | npm package with TypeScript, dual ESM/CJS, tree shaking, auto docs | TypeScript, tsup, Vitest, typedoc | 30-45 min |
 | [microservice.md](microservice.md) | Containerized service with health checks, logging, Prometheus metrics | Express, TypeScript, Docker, Prisma, pino | 30-45 min |
+| [npm-library.md](npm-library.md) | npm package with TypeScript, dual ESM/CJS, tree shaking, auto docs | TypeScript, tsup, Vitest, typedoc | 30-45 min |
+| [web-scraper.md](web-scraper.md) | Configurable scraper with pagination, robots.txt, multi-format export | Python, httpx, BeautifulSoup4, SQLite | 30-45 min |
 
 ### Complex
 
+PRD detects as Complex: more than 10 sections, OR more than 15 features, OR
+more than 1000 words. Most templates land here because their PRDs are deeply
+sectioned, regardless of the finished app's size.
+
 | Template | Description | Tech Stack | Est. Time |
 |----------|-------------|------------|-----------|
+| [api-only.md](api-only.md) | REST API for notes with full CRUD and tests | Express, in-memory, Vitest | 15-20 min |
+| [static-landing-page.md](static-landing-page.md) | SaaS landing page with hero, features, pricing, FAQ | HTML, CSS, vanilla JS | 10-15 min |
+| [slack-bot.md](slack-bot.md) | Slack bot with slash commands, events, interactive messages, scheduling | Node.js, Bolt SDK, SQLite | 30-45 min |
+| [full-stack-demo.md](full-stack-demo.md) | Bookmark manager with tags, search, and filtering | React, Express, SQLite, TailwindCSS | 30-60 min |
+| [cli-tool.md](cli-tool.md) | File organizer CLI with subcommands, config, watch mode, undo | Node.js, Commander.js, chalk, chokidar | 30-45 min |
+| [discord-bot.md](discord-bot.md) | Moderation bot with slash commands, auto-mod, reaction roles | discord.js, SQLite, node-cron | 45-60 min |
+| [chrome-extension.md](chrome-extension.md) | Tab manager extension with groups, sessions, search, memory monitor | Manifest V3, vanilla JS, Chrome APIs | 30-45 min |
 | [mobile-app.md](mobile-app.md) | Habit tracker with streaks, reminders, calendar, charts | React Native (Expo), Zustand, AsyncStorage | 45-60 min |
 | [saas-starter.md](saas-starter.md) | SaaS app with auth, OAuth, Stripe billing, admin dashboard | Next.js, Prisma, PostgreSQL, Stripe, NextAuth | 60-90 min |
+| [blog-platform.md](blog-platform.md) | Blog with markdown CMS, categories, RSS feed, SEO | Next.js, CodeMirror, SQLite, TailwindCSS | 45-60 min |
+| [rest-api.md](rest-api.md) | REST API with CRUD, pagination, filtering, Swagger docs (no auth) | Express, TypeScript, Prisma, SQLite | 25-35 min |
+| [rest-api-auth.md](rest-api-auth.md) | REST API with JWT auth, registration, login, refresh, rate limiting | Express/FastAPI, PostgreSQL, JWT, bcrypt | 30-45 min |
 | [e-commerce.md](e-commerce.md) | Storefront with catalog, cart, Stripe checkout, order management | Next.js, Prisma, PostgreSQL, Stripe | 60-90 min |
 | [ai-chatbot.md](ai-chatbot.md) | RAG chatbot with document upload, vector search, streaming responses | Next.js, OpenAI API, ChromaDB, Vercel AI SDK | 60-90 min |
 
@@ -74,7 +95,7 @@ Every template follows a consistent structure:
 
 ## Choosing a Template
 
-**First time using Loki Mode?** Start with `simple-todo-app.md` or `api-only.md`. These complete quickly and validate your setup.
+**First time using Loki Mode?** Start with `simple-todo-app.md` (the one Simple-tier template) or `api-only.md`. Both complete quickly and validate your setup. Note that `api-only.md` detects as Complex despite finishing fast, because its PRD is heavily sectioned.
 
 **Testing full capabilities?** Use `full-stack-demo.md`. It exercises frontend, backend, database, and code review agents without taking too long.
 
