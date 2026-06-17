@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.58.1] - 2026-06-17
+
+### Fix: doctor bash-route crash off a TTY (Bun Parity green)
+
+- The v7.58.0 doctor progress helpers (doctor_probe_note / doctor_probe_clear)
+  ended in `[ -t 2 ]`, which returns 1 when stderr is not a TTY. Under
+  `set -euo pipefail` that non-zero return aborted the entire bash `loki doctor`
+  before the Summary line, on CI / headless / non-TTY runs only (it was masked
+  on an interactive Mac TTY). The GitHub Bun Parity workflow caught it. Fixed by
+  returning 0 from both helpers. TTY progress feedback is unchanged.
+
 ## [7.58.0] - 2026-06-17
 
 ### Reliability + data-durability + repo hygiene wave (12 fixes)

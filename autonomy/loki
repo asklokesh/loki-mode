@@ -8197,12 +8197,18 @@ cmd_doctor() {
     # stderr only -- the parity-captured stdout stays byte-identical across the
     # bash and Bun routes.
     doctor_probe_note() {
+        # return 0 is mandatory: [ -t 2 ] returns 1 off a TTY, and under
+        # set -euo pipefail a bare call here aborts the whole doctor run on
+        # CI/headless (the v7.58.1 Bun-Parity crash).
         [ -t 2 ] && printf '  %s...\r' "$1" >&2
+        return 0
     }
     doctor_probe_clear() {
         # Erase the transient progress line so it does not linger above the
         # PASS/WARN result. Only on a TTY (where the note was printed).
+        # return 0: same set -e safety as doctor_probe_note.
         [ -t 2 ] && printf '\r\033[K' >&2
+        return 0
     }
     # ChromaDB check (bounded network probe)
     doctor_probe_note "Probing ChromaDB (port 8100)"
