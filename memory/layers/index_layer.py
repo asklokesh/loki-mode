@@ -26,15 +26,26 @@ class Topic:
     Attributes:
         id: Unique identifier for the topic
         summary: Brief summary of the topic content
-        relevance_score: How relevant this topic is (0.0 to 1.0)
+        relevance_score: How relevant this topic is (0.0 to 1.0). This is the
+            STORED value and is what to_dict() persists.
         token_count: Estimated tokens in the full memory
         last_accessed: When this topic was last accessed
+        match_score: Transient, per-query ranking score (stored relevance
+            plus a keyword-match boost). None when no query boost applies.
+            Never persisted by to_dict(); used only for ranking/threshold
+            decisions within a single retrieval call.
     """
     id: str
     summary: str
     relevance_score: float = 0.5
     token_count: int = 0
     last_accessed: Optional[str] = None
+    match_score: Optional[float] = None
+
+    @property
+    def effective_score(self) -> float:
+        """Ranking score for this query: match_score when set, else stored relevance."""
+        return self.match_score if self.match_score is not None else self.relevance_score
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -80,11 +91,16 @@ class IndexLayer:
         """
         self.base_path = Path(base_path)
         self.index_path = self.base_path / "index.json"
-        self._cache: Optional[Dict[str, Any]] = None
 
     def load(self) -> Dict[str, Any]:
         """
         Load index.json from disk.
+
+        Always re-reads from disk: these files are tiny (~100 token target)
+        and are written by separate processes (the dashboard reads
+        index.json via server.py while the orchestrator writes it), so an
+        in-memory cache cannot be invalidated correctly across processes.
+        An honest fresh read beats a stale cache for retrieval accuracy.
 
         Returns:
             Index dictionary with version, topics, and metadata
@@ -94,8 +110,7 @@ class IndexLayer:
 
         try:
             with open(self.index_path, "r") as f:
-                self._cache = json.load(f)
-                return self._cache
+                return json.load(f)
         except (json.JSONDecodeError, IOError):
             return self._create_empty_index()
 
@@ -132,8 +147,6 @@ class IndexLayer:
             except OSError:
                 pass
             raise
-
-        self._cache = index
 
     def update(self, memories: List[Dict[str, Any]]) -> None:
         """
@@ -216,19 +229,22 @@ class IndexLayer:
             summary_lower = topic.summary.lower()
             summary_words = set(summary_lower.split())
 
-            # Calculate match score based on word overlap
+            # Calculate match score based on word overlap.
+            # The boost is applied to a SEPARATE transient match_score, never
+            # to the stored relevance_score, so callers still see the stored
+            # value while ranking and the Layer-3 gate use the boosted score.
             common_words = query_words & summary_words
-            if common_words:
-                # Boost relevance based on word matches
+            if common_words and query_words:
                 match_boost = len(common_words) / len(query_words) * 0.3
-                topic.relevance_score = min(1.0, topic.relevance_score + match_boost)
+                topic.match_score = min(1.0, topic.relevance_score + match_boost)
                 relevant.append(topic)
             elif topic.relevance_score >= 0.8:
-                # Include high-relevance topics even without exact match
+                # Include high-relevance topics even without exact match.
+                # No keyword boost: ranking falls back to stored relevance.
                 relevant.append(topic)
 
-        # Sort by relevance score, descending
-        relevant.sort(key=lambda t: t.relevance_score, reverse=True)
+        # Sort by effective (match-or-stored) score, descending
+        relevant.sort(key=lambda t: t.effective_score, reverse=True)
 
         return relevant
 
