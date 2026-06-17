@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.56.0] - 2026-06-17
+
+### Reachable audit helpers + invariant-findings prompt surfacing
+
+- **Audit/compliance CLI commands** (`autonomy/loki`): the manifest tamper-evidence
+  helpers (v7.55 linkManifest/verifyManifestLink) and the compliance snapshot
+  scheduler (v7.54 maybeGenerateSnapshot) shipped as tested-but-not-invoked.
+  They are now reachable on demand: `loki audit link-manifest [dir]` hashes the
+  run manifest into the audit chain, `loki audit verify-manifest [dir]` checks it
+  (detects tamper), and `loki compliance snapshot [dir] [--force]` generates a
+  compliance snapshot (respecting the default-disabled interval unless --force).
+  All are explicit on-demand commands (never gate or slow a run); honest no-op
+  when the manifest is absent.
+- **Invariant-findings surfaced into the prompt** (`loki-ts/src/runner/build_prompt.ts`):
+  the invariant gate wrote `.loki/quality/invariant-findings.txt` but nothing read
+  it into the next-iteration prompt (the actionable per-finding text was not
+  surfaced). build_prompt.ts now reads and injects it, mirroring the semantic-
+  findings consumer. Closes the writer-with-no-reader on the prompt side.
+
+Gates: local-ci 83/83, bun tests + parity green, 2-reviewer council APPROVE (both
+verified the CLI commands work empirically and the prompt injection reaches the
+rendered prompt).
+
 ## [7.55.0] - 2026-06-16
 
 ### Verification depth: invariant gate + anti-sycophancy parity + manifest tamper-evidence

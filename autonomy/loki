@@ -726,8 +726,8 @@ show_help() {
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
     echo "More commands (grill, spec, cleanup, init, watch, demo, web, api,"
-    echo "logs, github, import, council, proof, audit, agent, template, magic,"
-    echo "docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
+    echo "logs, github, import, council, proof, audit, compliance, agent, template,"
+    echo "magic, docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
     echo "failover, monitor, remote, ...) are dispatchable and documented via"
     echo "'loki <command> --help'."
     echo ""
@@ -14530,6 +14530,9 @@ main() {
         audit)
             cmd_audit "$@"
             ;;
+        compliance)
+            cmd_compliance "$@"
+            ;;
         review)
             cmd_review "$@"
             ;;
@@ -15853,6 +15856,211 @@ STATE_QUERY_PY
 }
 
 # Agent action audit log and quality scanning
+# Resolve the repo root (where src/audit lives) from the loki script dir.
+# _LOKI_SCRIPT_DIR is autonomy/; the JS audit modules live at ../src/audit.
+_loki_audit_repo_root() {
+    ( cd "$_LOKI_SCRIPT_DIR/.." && pwd )
+}
+
+# Link the run manifest (.loki/loki-run.json) into the agent audit chain for
+# the TARGET project (not the loki repo). Honest no-op when the manifest is
+# absent. Exit 0 on link or honest no-op; exit 1 only on a real error.
+cmd_audit_link_manifest() {
+    local target_dir="${1:-$PWD}"
+    if ! command -v node &>/dev/null; then
+        echo -e "${RED}Error: node is required for 'loki audit link-manifest'${NC}"
+        echo "Install Node.js, then re-run."
+        return 1
+    fi
+    local repo_root
+    repo_root="$(_loki_audit_repo_root)"
+    local abs_target
+    abs_target="$( cd "$target_dir" 2>/dev/null && pwd )" || {
+        echo -e "${RED}Error: project dir not found: $target_dir${NC}"
+        return 1
+    }
+
+    echo -e "${BOLD}Linking run manifest into the audit chain...${NC}"
+    echo "  Project: $abs_target"
+
+    LOKI_AUDIT_MOD="$repo_root/src/audit" LOKI_AUDIT_TARGET="$abs_target" \
+        node -e '
+const audit = require(process.env.LOKI_AUDIT_MOD);
+const res = audit.linkManifest({ projectDir: process.env.LOKI_AUDIT_TARGET });
+if (res.linked) {
+  console.log("  linked: yes");
+  console.log("  manifest: " + res.manifestPath);
+  console.log("  sha256: " + res.manifestSha256);
+  if (res.manifestSchema) console.log("  schema: " + res.manifestSchema);
+  if (res.anchor && typeof res.anchor.seq !== "undefined") console.log("  anchor seq: " + res.anchor.seq);
+} else {
+  console.log("  linked: no (" + (res.reason || "no-op") + ")");
+  console.log("  manifest: " + res.manifestPath);
+}
+' || {
+        echo -e "${RED}Error: manifest link failed${NC}"
+        return 1
+    }
+    return 0
+}
+
+# Verify the run-manifest link for the TARGET project. Honest empty case
+# (no anchor recorded yet) exits 0; a real tamper/integrity failure exits 1.
+cmd_audit_verify_manifest() {
+    local target_dir="${1:-$PWD}"
+    if ! command -v node &>/dev/null; then
+        echo -e "${RED}Error: node is required for 'loki audit verify-manifest'${NC}"
+        echo "Install Node.js, then re-run."
+        return 1
+    fi
+    local repo_root
+    repo_root="$(_loki_audit_repo_root)"
+    local abs_target
+    abs_target="$( cd "$target_dir" 2>/dev/null && pwd )" || {
+        echo -e "${RED}Error: project dir not found: $target_dir${NC}"
+        return 1
+    }
+
+    echo -e "${BOLD}Verifying run-manifest link...${NC}"
+    echo "  Project: $abs_target"
+
+    LOKI_AUDIT_MOD="$repo_root/src/audit" LOKI_AUDIT_TARGET="$abs_target" \
+        node -e '
+const audit = require(process.env.LOKI_AUDIT_MOD);
+const res = audit.verifyManifestLink({ projectDir: process.env.LOKI_AUDIT_TARGET });
+const chainValid = res.chain && res.chain.valid;
+console.log("  chain integrity: " + (chainValid ? "valid" : "INVALID"));
+if (!res.present) {
+  console.log("  manifest link: none recorded yet (no-op)");
+  // Honest empty case: success only if the chain itself is valid.
+  process.exit(chainValid ? 0 : 1);
+}
+const m = res.manifest || {};
+console.log("  manifest: " + (m.manifestPath || "?"));
+console.log("  pinned sha256:  " + (m.pinnedSha256 || "?"));
+console.log("  current sha256: " + (m.currentSha256 || "(absent)"));
+if (res.valid) {
+  console.log("  verdict: VALID (manifest matches anchored hash)");
+  process.exit(0);
+} else {
+  console.log("  verdict: TAMPERED / INVALID");
+  if (m.error) console.log("  reason: " + m.error);
+  process.exit(1);
+}
+'
+    return $?
+}
+
+# loki compliance - periodic compliance snapshot (SOC2 / ISO27001 / GDPR).
+# The scheduler is default-disabled (LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS
+# unset or 0). `loki compliance snapshot` runs the self-rate-limiting check;
+# `--force` generates a snapshot now regardless of interval/elapsed gate.
+cmd_compliance() {
+    local subcommand="${1:-help}"
+
+    case "$subcommand" in
+        snapshot)
+            shift
+            local force="" target_dir="$PWD"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --force|-f) force="1"; shift ;;
+                    --help|-h)
+                        echo -e "${BOLD}loki compliance snapshot${NC} - Generate/check a compliance snapshot"
+                        echo ""
+                        echo "Usage: loki compliance snapshot [PROJECT_DIR] [--force]"
+                        echo ""
+                        echo "Without --force, respects the default-disabled interval"
+                        echo "(LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS). Reports honestly:"
+                        echo "  disabled     interval unset/0 (default)"
+                        echo "  not-elapsed  interval not yet elapsed since last snapshot"
+                        echo "  generated    a new snapshot was written"
+                        echo ""
+                        echo "With --force, a snapshot is generated now regardless."
+                        echo "Snapshots are written to .loki/audit/compliance-snapshots/ in the project dir."
+                        return 0
+                        ;;
+                    -*) echo -e "${RED}Unknown option: $1${NC}"; return 1 ;;
+                    *) target_dir="$1"; shift ;;
+                esac
+            done
+
+            if ! command -v node &>/dev/null; then
+                echo -e "${RED}Error: node is required for 'loki compliance snapshot'${NC}"
+                echo "Install Node.js, then re-run."
+                return 1
+            fi
+            local repo_root
+            repo_root="$(_loki_audit_repo_root)"
+            local abs_target
+            abs_target="$( cd "$target_dir" 2>/dev/null && pwd )" || {
+                echo -e "${RED}Error: project dir not found: $target_dir${NC}"
+                return 1
+            }
+
+            echo -e "${BOLD}Compliance snapshot${NC}"
+            echo "  Project: $abs_target"
+
+            LOKI_SCHED_MOD="$repo_root/src/audit/compliance-scheduler.js" \
+            LOKI_SCHED_TARGET="$abs_target" LOKI_SCHED_FORCE="$force" \
+                node -e '
+const sched = require(process.env.LOKI_SCHED_MOD);
+const target = process.env.LOKI_SCHED_TARGET;
+const force = process.env.LOKI_SCHED_FORCE === "1";
+if (force) {
+  const now = Date.now();
+  const snapshot = sched.buildSnapshot({ projectDir: target, nowMs: now });
+  const file = sched.persistSnapshot({ projectDir: target, snapshot: snapshot, nowMs: now });
+  console.log("  result: generated (forced)");
+  console.log("  path: " + file);
+  console.log("  audit entries: " + snapshot.totalAuditEntries);
+  process.exit(0);
+}
+const res = sched.maybeGenerateSnapshot({ projectDir: target });
+if (res.generated) {
+  console.log("  result: generated");
+  console.log("  path: " + res.path);
+  console.log("  interval (hours): " + res.intervalHours);
+} else if (res.reason === "disabled") {
+  console.log("  result: disabled (scheduler off; default)");
+  console.log("  enable: set LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS=<N>, or use --force to generate now");
+} else if (res.reason === "not-elapsed") {
+  console.log("  result: not-elapsed (interval not yet reached)");
+  console.log("  interval (hours): " + res.intervalHours);
+  if (res.nextEligibleAtMs) console.log("  next eligible: " + new Date(res.nextEligibleAtMs).toISOString());
+  console.log("  override: use --force to generate now");
+} else {
+  console.log("  result: " + (res.reason || "no-op"));
+}
+process.exit(0);
+' || {
+                echo -e "${RED}Error: compliance snapshot failed${NC}"
+                return 1
+            }
+            return 0
+            ;;
+        --help|-h|help)
+            echo -e "${BOLD}loki compliance${NC} - Periodic compliance snapshots"
+            echo ""
+            echo "Usage: loki compliance <subcommand> [options]"
+            echo ""
+            echo "Subcommands:"
+            echo "  snapshot [DIR] [--force]   Generate/check a compliance snapshot"
+            echo "  help                       Show this help"
+            echo ""
+            echo "The compliance scheduler is default-disabled. A snapshot bundles the"
+            echo "SOC2, ISO27001 and GDPR reports plus the audit chain-integrity verdict"
+            echo "into .loki/audit/compliance-snapshots/. Enable periodic generation by setting"
+            echo "LOKI_COMPLIANCE_SNAPSHOT_INTERVAL_HOURS, or run with --force on demand."
+            ;;
+        *)
+            echo -e "${RED}Unknown compliance subcommand: $subcommand${NC}"
+            echo "Run 'loki compliance help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
 cmd_audit() {
     local subcommand="${1:-help}"
     local audit_file="$LOKI_DIR/logs/agent-audit.jsonl"
@@ -16148,22 +16356,50 @@ print()
             fi
             ;;
 
+        link-manifest)
+            # Fold the run manifest (.loki/loki-run.json bill-of-materials) into
+            # the agent audit chain so it becomes tamper-evident and verifiable
+            # against the evidence chain. Explicit, on-demand command: cmd_start
+            # execs run.sh and replaces the loki process, so there is no
+            # post-completion return point in this CLI wrapper to auto-invoke
+            # from. Honest no-op (exit 0) when the manifest is absent.
+            shift
+            local target_dir="${1:-$PWD}"
+            cmd_audit_link_manifest "$target_dir"
+            ;;
+        verify-manifest)
+            # Verify the run-manifest link: agent chain integrity AND the on-disk
+            # manifest still matching the hash pinned by the most recent
+            # manifest-link anchor. Honest empty case (exit 0) when no anchor was
+            # recorded yet; nonzero only on a real tamper/integrity failure.
+            shift
+            local target_dir="${1:-$PWD}"
+            cmd_audit_verify_manifest "$target_dir"
+            ;;
         --help|-h|help)
             echo -e "${BOLD}loki audit${NC} - Agent audit log and quality scanning"
             echo ""
             echo "Usage: loki audit <subcommand> [options]"
             echo ""
             echo "Subcommands:"
-            echo "  log [N]     Show last N audit log entries (default: 50)"
-            echo "  count       Count actions by type"
-            echo "  scan        Run quality scan against dashboard API"
-            echo "  lint        Run static analysis on project files"
-            echo "  test        Run test coverage check"
-            echo "  help        Show this help"
+            echo "  log [N]            Show last N audit log entries (default: 50)"
+            echo "  count              Count actions by type"
+            echo "  scan               Run quality scan against dashboard API"
+            echo "  lint               Run static analysis on project files"
+            echo "  test               Run test coverage check"
+            echo "  link-manifest [P]  Link the run manifest into the audit chain (tamper-evidence)"
+            echo "  verify-manifest [P] Verify the run-manifest link against the evidence chain"
+            echo "  help               Show this help"
             echo ""
             echo "Quality Scan Options (loki audit scan):"
             echo "  --preset NAME   Compliance preset (default|healthcare|fintech|government)"
             echo "  --export        Save report to .loki/quality/report-{date}.json"
+            echo ""
+            echo "Manifest tamper-evidence (loki audit link-manifest / verify-manifest):"
+            echo "  Hashes .loki/loki-run.json (the build bill-of-materials) into the"
+            echo "  agent audit chain. link-manifest no-ops honestly if the manifest is"
+            echo "  absent; verify-manifest reports honestly if no anchor exists yet."
+            echo "  Optional [P] is the project dir (default: current directory)."
             echo ""
             echo "The agent audit log records actions taken during Loki sessions,"
             echo "including CLI invocations, git commits, and session lifecycle events."

@@ -674,6 +674,21 @@ async function buildGateFailureContext(cwd: string): Promise<string> {
   // the consumer that reaches parity with bash. Absent/empty -> nothing added.
   ctx += buildSemanticFindingsBlock(cwd);
 
+  // P1-4 invariant-violation findings. Surfaced INDEPENDENTLY of
+  // gate-failures.txt, mirroring the semantic block above. The bash route's
+  // enforce_invariant_integrity (run.sh:8422) WRITES
+  // .loki/quality/invariant-findings.txt -- the blocking write CRITICAL/HIGH
+  // (run.sh:8451) and the advisory write MED/LOW (run.sh:8464) -- but neither
+  // route had a prompt-reader: run.sh only logs the path (run.sh:15565), and the
+  // Bun runInvariants (quality_gates.ts:810) deliberately does NOT persist the
+  // file today, calling out a build_prompt.ts reader as the prerequisite
+  // follow-up (quality_gates.ts:786-794). This is that reader: it surfaces the
+  // per-finding text written by the bash gate into the next-iteration prompt.
+  // It also primes the Bun route -- once quality_gates.ts persists the file (its
+  // named follow-up), this consumer surfaces it with no further change.
+  // Absent/empty -> nothing added.
+  ctx += buildInvariantFindingsBlock(cwd);
+
   return ctx;
 }
 
@@ -694,6 +709,31 @@ function buildSemanticFindingsBlock(cwd: string): string {
   if (lines.length === 0) return "";
   // Prefix copied verbatim from run.sh:12348, including the leading space.
   return ` SEMANTIC TEST-AUTHENTICITY FINDINGS (fix the fake tests; an assertion must verify a value that flows through the code under test, not echo a literal back): ${lines.join("\n")}`;
+}
+
+// P1-4 helper: surface the specific invariant-violation findings (which
+// invariant, which file/property) that enforce_invariant_integrity
+// (run.sh:8422) wrote to .loki/quality/invariant-findings.txt. Structural
+// mirror of buildSemanticFindingsBlock: read the file, keep only severity-tagged
+// lines, head -20 cap, prepend an actionable header (with a leading space,
+// matching the semantic block so concatenation reads cleanly). The two bash
+// writer headers ("# Invariant findings (...)" / "# Invariant advisory findings
+// (...)") carry no severity token, so the filter drops them for both the
+// blocking and advisory writes. Unlike semantic, no prompt-builder on either
+// route had a reader (run.sh only logs the path; quality_gates.ts does not
+// persist the file -- quality_gates.ts:786-794), so the header below is newly
+// authored actionable text, not a verbatim bash prefix.
+// Returns "" when the file is absent or has no severity-tagged lines.
+function buildInvariantFindingsBlock(cwd: string): string {
+  const path = resolve(cwd, ".loki/quality/invariant-findings.txt");
+  const raw = readFileSafe(path);
+  if (raw === null) return "";
+  const lines = raw
+    .split("\n")
+    .filter((l) => /\[(CRITICAL|HIGH|MEDIUM|LOW)\]/.test(l))
+    .slice(0, 20);
+  if (lines.length === 0) return "";
+  return ` INVARIANT VIOLATION FINDINGS (fix the violated invariants; a property/metamorphic invariant that the code under test must always uphold is currently broken): ${lines.join("\n")}`;
 }
 
 // Phase 1 helper: read structured findings from the most recent review dir

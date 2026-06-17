@@ -98,3 +98,84 @@ describe("buildGateFailureContext -- semantic-findings injection (P1-3 parity)",
     expect(out).not.toContain("[LOW] f20.test.ts:20 finding 20");
   });
 });
+
+// Tests for invariant-findings injection (P1-4 parity).
+//
+// Problem closed here (writer-no-reader anti-pattern): the bash route's
+// enforce_invariant_integrity (run.sh:8422) WRITES
+// <lokiDir>/quality/invariant-findings.txt (blocking + advisory), but NO
+// prompt-builder read it on either route -- run.sh only logs the path
+// (run.sh:15565), and the Bun runInvariants deliberately does not persist the
+// file yet, naming a build_prompt.ts reader as the prerequisite follow-up
+// (quality_gates.ts:786-794). These tests pin that Bun reader: invariant
+// findings are surfaced INDEPENDENTLY of gate-failures.txt (the discriminating
+// case a nested impl would silently fail), header-only/empty -> "", head -20 cap.
+describe("buildGateFailureContext -- invariant-findings injection (P1-4 parity)", () => {
+  it("surfaces invariant findings even when gate-failures.txt is absent", async () => {
+    mkQuality();
+    writeFileSync(
+      resolve(workDir, ".loki/quality/invariant-findings.txt"),
+      "# Invariant findings (CRITICAL/HIGH block this completion)\n" +
+        "[HIGH] src/reverse.ts:12 reverse(reverse(x)) != x\n",
+    );
+    const out = await _internals.buildGateFailureContext(workDir);
+    // No gate-failures.txt -> no gate-failure prefix, but the invariant block
+    // still appears (the writer-no-reader case this closes).
+    expect(out).not.toContain("QUALITY GATE FAILURES");
+    expect(out).toContain(
+      "INVARIANT VIOLATION FINDINGS (fix the violated invariants; a property/metamorphic invariant that the code under test must always uphold is currently broken): ",
+    );
+    expect(out).toContain("[HIGH] src/reverse.ts:12 reverse(reverse(x)) != x");
+    // The header line has no severity token and must be dropped (same as the
+    // bash grep filter the writer uses).
+    expect(out).not.toContain("# Invariant findings");
+    // Leading space before the header so it starts the string when no gate block.
+    expect(out.startsWith(" INVARIANT VIOLATION FINDINGS")).toBe(true);
+  });
+
+  it("appends invariant findings after the gate-failure block when both present", async () => {
+    mkQuality();
+    writeFileSync(resolve(workDir, ".loki/quality/gate-failures.txt"), "ERR-1: TypeError\n");
+    writeFileSync(
+      resolve(workDir, ".loki/quality/invariant-findings.txt"),
+      "# Invariant advisory findings (MED/LOW, non-blocking)\n" +
+        "[MEDIUM] src/sort.ts:5 sort idempotence advisory\n",
+    );
+    const out = await _internals.buildGateFailureContext(workDir);
+    const fixIdx = out.indexOf("FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.");
+    const invIdx = out.indexOf("INVARIANT VIOLATION FINDINGS");
+    expect(fixIdx).toBeGreaterThanOrEqual(0);
+    // Invariant block comes AFTER the gate-failure "FIX THESE ISSUES" line.
+    expect(invIdx).toBeGreaterThan(fixIdx);
+    expect(out).toContain("[MEDIUM] src/sort.ts:5 sort idempotence advisory");
+    // Advisory-write header (no severity token) is dropped just like the
+    // blocking-write header.
+    expect(out).not.toContain("# Invariant advisory findings");
+  });
+
+  it("injects nothing for an empty / non-tagged invariant-findings.txt", async () => {
+    mkQuality();
+    writeFileSync(
+      resolve(workDir, ".loki/quality/invariant-findings.txt"),
+      "# Invariant findings (none)\n",
+    );
+    expect(await _internals.buildGateFailureContext(workDir)).toBe("");
+  });
+
+  it("injects nothing when invariant-findings.txt is absent", async () => {
+    mkQuality();
+    expect(await _internals.buildGateFailureContext(workDir)).toBe("");
+  });
+
+  it("caps surfaced invariant findings at 20 lines (bash head -20 parity)", async () => {
+    mkQuality();
+    const many = Array.from({ length: 30 }, (_, i) => `[LOW] inv${i}.ts:${i} violation ${i}`).join(
+      "\n",
+    );
+    writeFileSync(resolve(workDir, ".loki/quality/invariant-findings.txt"), `${many}\n`);
+    const out = await _internals.buildGateFailureContext(workDir);
+    expect(out).toContain("[LOW] inv0.ts:0 violation 0");
+    expect(out).toContain("[LOW] inv19.ts:19 violation 19");
+    expect(out).not.toContain("[LOW] inv20.ts:20 violation 20");
+  });
+});
