@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.59.1] - 2026-06-17
+
+### Fix: v7.59.0 release gate broke on numpy-less CI env
+
+- tests/test_embeddings_edge_cases.py hard-imported numpy, which the Release
+  gate's Python env does not install, so pytest collection errored and failed
+  the whole release (v7.59.0 published to npm at 7.58.1, the Release workflow
+  went red). Guarded the import with a clean pytest skip when numpy is absent,
+  matching the optional-dep treatment of the embeddings module itself.
+
 ## [7.59.0] - 2026-06-17
 
 ### Reliability hardening wave (20-agent fleet: bug-hunt + fixes across all subsystems)

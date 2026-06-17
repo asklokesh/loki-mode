@@ -10,7 +10,16 @@ import math
 import os
 import sys
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # numpy is an optional dep; skip cleanly when absent (CI gate env)
+    try:
+        import pytest
+
+        pytest.skip("numpy not installed; embeddings edge-case tests skipped", allow_module_level=True)
+    except ImportError:
+        print("SKIP: numpy not installed; embeddings edge-case tests skipped")
+        sys.exit(0)
 
 # Make the repo root importable so `memory` resolves regardless of cwd.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
