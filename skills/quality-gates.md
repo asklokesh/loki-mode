@@ -2,12 +2,14 @@
 
 **Never ship code without passing all quality gates.**
 
-## The 8 Quality Gates
+## The Quality Gates (8 default-on + 1 opt-in)
 
-Every gate below is wired into the orchestration loop (`autonomy/run.sh`) and
-blocks completion when it fails. The table lists exactly what each gate detects,
-what it does NOT detect (so you never over-trust a green gate), its opt-out flag,
-and its blocking behavior. Transcribe this list verbatim; do not recompute it.
+Every gate below is wired into the orchestration loop (`autonomy/run.sh`). The 8
+numbered gates are default-on and block completion when they fail; the opt-in
+gate (marked below) is default-OFF and runs only when its flag is set. The table
+lists exactly what each gate detects, what it does NOT detect (so you never
+over-trust a green gate), its opt-out flag, and its blocking behavior. Transcribe
+this list verbatim; do not recompute it.
 
 | # | Gate | Detects | Does NOT detect | Blocking | Opt-out flag |
 |---|------|---------|-----------------|----------|--------------|
@@ -19,6 +21,7 @@ and its blocking behavior. Transcribe this list verbatim; do not recompute it.
 | 6 | Test Mutation Detector | Assertion-value churn alongside implementation changes (test-fitting), low assertion density (`tests/detect-test-mutations.sh`); HIGH blocks | Logically-correct-but-weak assertions | Yes (HIGH blocks) | `LOKI_GATE_MUTATION=false` |
 | 7 | Documentation Coverage | README presence, docs freshness within 10 commits, API docs for exported symbols in packages | Whether the docs are accurate or useful | Yes | `LOKI_GATE_DOC_COVERAGE=false` |
 | 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules; BLOCK-severity findings block | Issues outside the Magic Modules debate scope | Yes (BLOCK severity) | `LOKI_GATE_MAGIC_DEBATE=false` |
+| 9 (opt-in, default OFF) | Semantic Test-Authenticity | Fake tests that look real but verify nothing (literal-via-variable echo, mock-return echo, deleted assertions) that gates 5+6 miss (`tests/detect-semantic-test-problems.sh --block-high`); CRITICAL/HIGH block | Deep dataflow, legitimate computed-literal assertions, Python/shell tests (JS/TS only); MED/LOW are advisory | Only when enabled, and only on CRITICAL/HIGH; runs solely on a completion claim | Opt-IN: `LOKI_GATE_SEMANTIC_TESTS=true` to enable (default off = not invoked, never blocks) |
 
 **Severity-based blocking** ties the review gates together: any Critical or High
 finding blocks completion. Medium, Low, and cosmetic findings are advisory and

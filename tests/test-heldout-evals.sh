@@ -17,7 +17,7 @@
 #
 # Contract:
 #   - N>=4 items -> count = clamp(round(0.25*N), 1, 5) held-out, chosen by
-#     sha256(id) order (stable, reproducible). N<4 -> zero held-out.
+#     sha256(id) order (stable, reproducible). N>=2 -> reserve >=1; N<2 -> zero.
 #   - held-out items excluded from checklist_summary (the build prompt feed) and
 #     from council_checklist_gate.
 #   - council_heldout_gate: failing held-out item -> rc 1 (block); all
@@ -161,10 +161,22 @@ sel2=$(python3 -c "import json;print(','.join(json.load(open('$d2/.loki/checklis
 [ "$sel1" = "$sel2" ] && ok "case1 reproducible across dirs (stable sha256 order)" || bad "case1 reproducible" "[$sel1] vs [$sel2]"
 
 # ===========================================================================
-# Case 2: N<4 -> no held-out reserved.
+# Case 2: small specs (2 <= N < 4) reserve exactly 1 held-out item (P1-2).
+#         N=1 reserves 0 (cannot hold out from a single-item checklist).
 # ===========================================================================
-echo "Case 2: N=3 -> zero held-out"
-d="$TMP_ROOT/case2"; make_checklist "$d" 3
+echo "Case 2: N=2 and N=3 -> exactly 1 held-out; N=1 -> 0"
+for n in 2 3; do
+    d="$TMP_ROOT/case2-n$n"; make_checklist "$d" "$n"
+    (
+        cd "$d" || exit 1
+        CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
+        checklist_select_heldout
+    )
+    HO_FILE="$d/.loki/checklist/held-out.json"
+    count=$(python3 -c "import json;print(len(json.load(open('$HO_FILE'))['held_out']))" 2>/dev/null)
+    [ "$count" = "1" ] && ok "case2 N=$n -> 1 held-out" || bad "case2 N=$n -> 1 held-out" "got [$count]"
+done
+d="$TMP_ROOT/case2-n1"; make_checklist "$d" 1
 (
     cd "$d" || exit 1
     CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
@@ -172,7 +184,7 @@ d="$TMP_ROOT/case2"; make_checklist "$d" 3
 )
 HO_FILE="$d/.loki/checklist/held-out.json"
 count=$(python3 -c "import json;print(len(json.load(open('$HO_FILE'))['held_out']))" 2>/dev/null)
-[ "$count" = "0" ] && ok "case2 N<4 -> 0 held-out" || bad "case2 N<4 -> 0 held-out" "got [$count]"
+[ "$count" = "0" ] && ok "case2 N=1 -> 0 held-out (no-op boundary)" || bad "case2 N=1 -> 0 held-out" "got [$count]"
 
 # ===========================================================================
 # Case 3: clamp upper bound. N=40 -> round(0.25*40)=10, clamped to max 5.
@@ -316,15 +328,15 @@ heldout_rc=0
     || bad "case8 no block file when off" "file was written"
 
 # ===========================================================================
-# Case 9: no held-out reservation (N<4, no held-out.json) -> council_heldout_gate
+# Case 9: empty held-out set (N=1, the no-op boundary) -> council_heldout_gate
 #         PASSES (default-off when nothing reserved). Backwards compatible.
 # ===========================================================================
-echo "Case 9: no held-out.json -> heldout_gate PASS (default-off)"
-d="$TMP_ROOT/case9"; make_checklist "$d" 3
+echo "Case 9: empty held-out set (N=1) -> heldout_gate PASS (default-off)"
+d="$TMP_ROOT/case9"; make_checklist "$d" 1
 (
     cd "$d" || exit 1
     CHECKLIST_DIR=".loki/checklist"; CHECKLIST_FILE=".loki/checklist/checklist.json"
-    checklist_select_heldout    # N<4: writes held_out=[] (empty), still a file
+    checklist_select_heldout    # N<2: writes held_out=[] (empty), still a file
 )
 heldout_rc=0
 (

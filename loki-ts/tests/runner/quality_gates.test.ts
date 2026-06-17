@@ -24,6 +24,7 @@ import {
   runLSPDiagnostics,
   runMagicDebateGate,
   runQualityGates,
+  runSemanticTests,
   runStaticAnalysis,
   runTestCoverage,
   selectReviewers,
@@ -55,6 +56,9 @@ const ENV_KEYS = [
   "LOKI_GATE_LSP_DIAGNOSTICS",
   "LOKI_STUB_GATE_LSP_DIAGNOSTICS",
   "LOKI_GATE_LSP_WRITER",
+  "LOKI_GATE_SEMANTIC_TESTS",
+  "LOKI_STUB_GATE_SEMANTIC_TESTS",
+  "LOKI_SEMANTIC_DETECTOR",
 ];
 
 beforeEach(() => {
@@ -752,6 +756,143 @@ describe("runMagicDebateGate (real Phase 5 implementation)", () => {
     process.env["LOKI_STUB_GATE_MAGIC_DEBATE"] = "fail";
     // Stub wins even though env-off would otherwise return pass.
     const r = await runMagicDebateGate(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
+  });
+});
+
+// --- runSemanticTests (P1-3 Bun mirror -- spawns the detector script) -----
+//
+// The semantic gate SPAWNS tests/detect-semantic-test-problems.sh with
+// --block-high and maps the detector's exit code: rc 2 -> BLOCK, everything
+// else (0/124/absent/spawn-error/any-other) -> PASS. To keep the test
+// deterministic and hermetic we point LOKI_SEMANTIC_DETECTOR at a tiny fixture
+// detector under `scratch` that simply exits with a chosen code, instead of
+// scanning the real loki-mode tree (whose evolving test files would make the
+// verdict non-deterministic). This exercises the EXACT exit-code mapping the
+// gate implements without coupling to the detector's heuristics.
+describe("runSemanticTests (P1-3 spawn-based gate)", () => {
+  // Write a fake detector script that exits with `code`, mark it executable,
+  // and return its absolute path. Mirrors how the bash gate invokes the real
+  // detector (bash <detector> --block-high) -- the gate calls `bash <path>`,
+  // so the script does not even need a +x bit, but we set it anyway.
+  function fakeDetector(code: number): string {
+    const p = join(scratch, `fake-detector-${code}.sh`);
+    writeFileSync(p, `#!/usr/bin/env bash\nexit ${code}\n`, { mode: 0o755 });
+    return p;
+  }
+
+  it("does not run when the gate is off (default) via runQualityGates", async () => {
+    // Default OFF: LOKI_GATE_SEMANTIC_TESTS unset. Even with a detector that
+    // would BLOCK (rc 2), the orchestrator must never invoke it.
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(2);
+    // Silence the other gates so the orchestration outcome is clean and we are
+    // asserting purely on semantic_tests being absent.
+    process.env["PHASE_STATIC_ANALYSIS"] = "false";
+    process.env["PHASE_UNIT_TESTS"] = "false";
+    process.env["LOKI_GATE_MOCK"] = "false";
+    process.env["LOKI_GATE_MUTATION"] = "false";
+    process.env["PHASE_CODE_REVIEW"] = "false";
+    process.env["LOKI_GATE_DOC_COVERAGE"] = "false";
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "false";
+
+    const outcome = await runQualityGates(makeCtx());
+    expect(outcome.passed).not.toContain("semantic_tests");
+    expect(outcome.failed).not.toContain("semantic_tests");
+    expect(outcome.blocked).toBe(false);
+  });
+
+  it("runs and BLOCKS when on and the detector reports HIGH (exit 2)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(2);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("CRITICAL/HIGH");
+  });
+
+  it("passes when on and the detector is clean (exit 0)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(0);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("no blocking findings");
+  });
+
+  it("passes (deny-filter) when on and the detector times out (exit 124)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(124);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("timed out");
+  });
+
+  it("passes (deny-filter) when on and the detector exits with any other code", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(1);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("rc 1");
+  });
+
+  it("passes when the detector script is absent (never fabricates a verdict)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = join(scratch, "does-not-exist.sh");
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("detector not found");
+  });
+
+  it("BLOCKS through runQualityGates when on + HIGH (registered in sequence)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(2);
+    // Quiet the other gates so the only failure is semantic_tests.
+    process.env["PHASE_STATIC_ANALYSIS"] = "false";
+    process.env["PHASE_UNIT_TESTS"] = "false";
+    process.env["LOKI_GATE_MOCK"] = "false";
+    process.env["LOKI_GATE_MUTATION"] = "false";
+    process.env["PHASE_CODE_REVIEW"] = "false";
+    process.env["LOKI_GATE_DOC_COVERAGE"] = "false";
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "false";
+
+    const outcome = await runQualityGates(makeCtx());
+    expect(outcome.failed).toContain("semantic_tests");
+    expect(outcome.blocked).toBe(true);
+  });
+
+  it("runs the REAL detector against ctx.cwd and BLOCKS on a HIGH fixture (locks LOKI_SCAN_DIR wiring)", async () => {
+    // Integration-flavored: no LOKI_SEMANTIC_DETECTOR override, so the gate
+    // spawns the real tests/detect-semantic-test-problems.sh. This proves the
+    // load-bearing LOKI_SCAN_DIR=ctx.cwd wiring -- if the gate scanned its own
+    // SCRIPT_DIR/.. (loki's tree) instead of ctx.cwd, this hermetic fixture
+    // would be invisible and the gate would not block. The fixture is the
+    // detector's documented HIGH pattern: a var bound to a literal, asserted to
+    // equal the SAME literal, with NO call in between (literal-via-variable echo).
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    const testFile = join(scratch, "fake.test.ts");
+    writeFileSync(
+      testFile,
+      [
+        "describe('fake', () => {",
+        "  it('verifies nothing', () => {",
+        '    const x = "hello";',
+        '    expect(x).toBe("hello");',
+        "  });",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    // ctx.cwd === scratch (makeCtx default), which the gate passes as
+    // LOKI_SCAN_DIR so the real detector scans this temp dir only.
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("CRITICAL/HIGH");
+  });
+
+  it("honors the LOKI_STUB_GATE_SEMANTIC_TESTS escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_SEMANTIC_TESTS"] = "fail";
+    // Stub wins even with a clean detector.
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(0);
+    const r = await runSemanticTests(makeCtx());
     expect(r.passed).toBe(false);
     expect(r.detail ?? "").toContain("stub forced fail");
   });

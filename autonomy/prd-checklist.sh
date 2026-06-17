@@ -422,7 +422,11 @@ checklist_should_verify() {
 # non-cooperative agent with filesystem tools can read the reservation directly.
 #
 # Selection is idempotent and reproducible: count = clamp(round(0.25*N), 1, 5)
-# for N>=4 items; ordering by sha256 of each item's "id" (stable, not random).
+# for N>=2 items; ordering by sha256 of each item's "id" (stable, not random).
+# Small checklists (2 <= N < 4) reserve exactly 1 held-out item via the same
+# sha256-rank selection (the clamp floor of 1 guarantees coverage), so a small
+# spec's checklist is never fully gameable. N<2 is a no-op: holding out the only
+# item of a 1-item checklist would leave nothing to verify against in the loop.
 # Written once to .loki/checklist/held-out.json; never overwritten if present.
 checklist_select_heldout() {
     local heldout_file="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json"
@@ -442,7 +446,7 @@ checklist_select_heldout() {
     #   PARTIAL kept=k dropped=d - some prior ids survived; we keep only survivors
     #   DUP_SKIP          - current checklist ids are not unique; the id-based
     #                       mechanism is unsound, so we reserve nothing (MEDIUM-2)
-    #   NOOP              - n<4 with no prior file, or other no-write outcome
+    #   NOOP              - n<2 with no prior file, or other no-write outcome
     # Honest caveat: re-selection or partial-survival after a regen can reserve
     # items the build loop already saw in earlier prompts (the hidden-from-loop
     # guarantee is best-effort once the checklist ids change mid-run).
@@ -512,7 +516,7 @@ if os.path.exists(out_path):
 
 if prior is not None:
     prior_ids = [i for i in prior.get('held_out', []) if i]
-    # A prior reservation of [] (e.g. an earlier n<4 run) is a valid no-op state;
+    # A prior reservation of [] (e.g. an earlier n<2 run) is a valid no-op state;
     # keep it idempotent rather than re-selecting now that n may have grown.
     if not prior_ids:
         print('IDEMPOTENT')
@@ -525,9 +529,11 @@ if prior is not None:
     if not survivors:
         # Fully stale: the checklist regenerated and orphaned the reservation.
         # Deterministically re-select from the CURRENT checklist.
-        if n < 4:
+        if n < 2:
+            # N<2: cannot hold out from a 1-item checklist (reserving the only
+            # item leaves nothing to verify against). No-op write of an empty set.
             atomic_write({'held_out': [], 'total_items': n,
-                          'note': 'n<4: no held-out reserved (re-selected after stale reservation)'})
+                          'note': 'n<2: no held-out reserved (re-selected after stale reservation)'})
             print('RESELECTED 0')
             sys.exit(0)
         held = fresh_selection()
@@ -542,11 +548,15 @@ if prior is not None:
     sys.exit(0)
 
 # No prior reservation: first selection.
-if n < 4:
-    # N>=4 gate: smaller checklists get no held-out (nothing to hide reliably).
-    atomic_write({'held_out': [], 'total_items': n, 'note': 'n<4: no held-out reserved'})
+if n < 2:
+    # N<2 gate: a 1-item (or empty) checklist cannot meaningfully hold out an
+    # item -- reserving the only item would leave nothing to verify against in
+    # the build loop. Write an empty set so downstream reads stay well-formed.
+    atomic_write({'held_out': [], 'total_items': n, 'note': 'n<2: no held-out reserved'})
     print('NOOP')
     sys.exit(0)
+# For 2 <= N < 4, fresh_selection() reserves exactly 1 item (select_count clamps
+# round(0.25*N) up to a floor of 1), so small specs are never fully gameable.
 
 held = fresh_selection()
 atomic_write({'held_out': held, 'total_items': n})

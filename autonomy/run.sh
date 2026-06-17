@@ -585,7 +585,7 @@ BACKGROUND_MODE=${LOKI_BACKGROUND:-false}                # Run in background
 STAGED_AUTONOMY=${LOKI_STAGED_AUTONOMY:-false}           # Require plan approval
 AUDIT_LOG_ENABLED=${LOKI_AUDIT_LOG:-true}                # Enable audit logging (on by default)
 MAX_PARALLEL_AGENTS=${LOKI_MAX_PARALLEL_AGENTS:-10}      # Limit concurrent agents
-SANDBOX_MODE=${LOKI_SANDBOX_MODE:-false}                 # Docker sandbox mode
+SANDBOX_MODE=${LOKI_SANDBOX_MODE:-false}                 # Docker sandbox mode (informational; the real dispatch reads LOKI_SANDBOX_MODE at autonomy/loki:1965 and execs sandbox.sh -- this var is not consumed in run.sh)
 ALLOWED_PATHS=${LOKI_ALLOWED_PATHS:-""}                  # Empty = all paths allowed
 BLOCKED_COMMANDS=${LOKI_BLOCKED_COMMANDS:-"rm -rf /,dd if=,mkfs,:(){ :|:& };:"}
 
@@ -8314,6 +8314,89 @@ enforce_mutation_integrity() {
 }
 
 # ============================================================================
+# Semantic Test-Authenticity Gate (P1-3): wire tests/detect-semantic-test-problems.sh
+# as an OPT-IN completion gate. The detector catches the harder class of fake
+# tests that the regex detectors (gates 5+6) miss: assertions that look real but
+# verify nothing because the asserted value never flows through code under test
+# (literal-via-variable echo HIGH, mock-return echo MED, deleted assertions MED).
+#
+# ADVISORY-FIRST POSTURE (no-deadlock contract): this helper is invoked ONLY when
+# LOKI_GATE_SEMANTIC_TESTS=true (the elif guard at the completion-promise arm
+# short-circuits when off, so there is zero runtime cost on the default path).
+# When on, it runs the detector with --block-high (clean exit-code contract:
+# rc 2 iff a CRITICAL/HIGH finding exists). We surface ALL severities to a
+# findings file (advisory) and return nonzero ONLY on rc 2. Every other exit --
+# rc 0 (clean), rc 124 (timeout), detector absent, no test files, malformed
+# output -- returns 0 (pass/fall-through), so the autonomous loop can NEVER
+# deadlock on a clean run. Mirrors enforce_mock_integrity's invocation
+# (cd TARGET_DIR + LOKI_SCAN_DIR=TARGET_DIR + timeout), swapping --strict for
+# --block-high and deciding on the rc-2 contract instead of grepping stdout.
+# ============================================================================
+enforce_semantic_integrity() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local quality_dir="$loki_dir/quality"
+    mkdir -p "$quality_dir"
+    local findings_file="$quality_dir/semantic-findings.txt"
+    local detector="$SCRIPT_DIR/../tests/detect-semantic-test-problems.sh"
+    local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"
+
+    if [ ! -f "$detector" ]; then
+        log_info "Semantic test gate: detector not found, skipping (inconclusive)"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local output rc
+    # --block-high exits 2 iff CRITICAL/HIGH present; 0 otherwise (clean wrapper).
+    output=$(cd "${TARGET_DIR:-.}" && LOKI_SCAN_DIR="${TARGET_DIR:-.}" \
+        timeout "$gate_timeout" bash "$detector" --block-high 2>&1)
+    rc=$?
+
+    # timeout exit 124 -- inconclusive, never block on a hang (deny-filter)
+    if [ "$rc" -eq 124 ]; then
+        log_warn "Semantic test gate: detector timed out after ${gate_timeout}s -- inconclusive"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    if [ "$rc" -eq 2 ]; then
+        # rc 2 == one or more CRITICAL/HIGH findings. Persist per-finding text.
+        {
+            echo "# Semantic test-authenticity findings (CRITICAL/HIGH block this completion)"
+            echo "$output" | grep -E '\[(CRITICAL|HIGH|MEDIUM|LOW)\]' || true
+        } > "$findings_file"
+        log_warn "Semantic test gate: CRITICAL/HIGH fake-test problems detected -- BLOCK"
+        return 1
+    fi
+
+    # rc 0 (and any other non-2, non-124 code, e.g. a malformed run) -> PASS.
+    # Route any MED/LOW advisory findings to the injection file, else clear it.
+    local med_low
+    med_low=$(echo "$output" | grep -E '\[(MEDIUM|LOW)\]' || true)
+    if [ -n "$med_low" ]; then
+        {
+            echo "# Semantic test advisory findings (MED/LOW, non-blocking)"
+            echo "$med_low"
+        } > "$findings_file"
+    else
+        rm -f "$findings_file" 2>/dev/null || true
+    fi
+    log_info "Semantic test gate: PASS"
+    return 0
+}
+
+# P1-3 wrapper that runs the semantic gate and returns its exact rc, mirroring
+# _evidence_gate_and_surface so the completion-promise elif arm reads cleanly
+# (`! _semantic_gate_and_surface`). Returns nonzero ONLY when enforce_semantic_integrity
+# saw an rc-2 (CRITICAL/HIGH) result; all deny-filter cases already collapse to 0
+# inside enforce_semantic_integrity, so this never blocks a clean run.
+_semantic_gate_and_surface() {
+    local _rc=0
+    enforce_semantic_integrity || _rc=$?
+    return "$_rc"
+}
+
+# ============================================================================
 # 3-Reviewer Parallel Code Review (v5.35.0)
 # Specialist pool from skills/quality-gates.md with blind review
 # architecture-strategist always included, 2 more selected by keyword scoring
@@ -12248,6 +12331,23 @@ if d.get('blocked'):
         gate_failure_context="${gate_failure_context}FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK."
     fi
 
+    # P1-3: surface specific semantic test-authenticity findings (which fake test,
+    # which line) when the opt-in gate (LOKI_GATE_SEMANTIC_TESTS) wrote them, so a
+    # block converges: the agent gets the exact files/lines to fix rather than a
+    # bare gate name. The file exists only when the gate ran AND found something
+    # (cleared on clean), so this is zero-cost on the default path and when off.
+    # Mirrors the static-analysis/test-results detail-surfacing above. Surfaced
+    # whether the run blocked (CRIT/HIGH) or only advised (MED/LOW): both inform
+    # the next iteration. Independent of gate-failures.txt presence (the
+    # completion-promise arm does not append a gate token).
+    if [ -f "${TARGET_DIR:-.}/.loki/quality/semantic-findings.txt" ]; then
+        local sem_findings
+        sem_findings=$(grep -E '\[(CRITICAL|HIGH|MEDIUM|LOW)\]' "${TARGET_DIR:-.}/.loki/quality/semantic-findings.txt" 2>/dev/null | head -20 || true)
+        if [ -n "$sem_findings" ]; then
+            gate_failure_context="${gate_failure_context} SEMANTIC TEST-AUTHENTICITY FINDINGS (fix the fake tests; an assertion must verify a value that flows through the code under test, not echo a literal back): ${sem_findings}"
+        fi
+    fi
+
     # P2-2: high-severity spec-assumption context. When DISCOVERY recorded any
     # high-severity assumption (the spec was ambiguous in a high-impact place),
     # surface it to the build agent so it implements with the gap in view (or
@@ -15347,6 +15447,20 @@ else:
                 log_warn "Completion claim rejected: assumption ledger gate found unresolved high-severity spec assumption(s)."
                 log_warn "  Details under .loki/council/assumption-block.json ; opt out with LOKI_ASSUMPTION_GATE=0"
                 # Fall through; keep iterating until high-sev assumptions resolve.
+            # P1-3: semantic test-authenticity gate (OPT-IN, default OFF). Catches
+            # fake tests that look real but verify nothing (literal-via-variable
+            # echo etc.) that the regex gates 5+6 miss. ADVISORY-FIRST: the arm is
+            # guarded by LOKI_GATE_SEMANTIC_TESTS=true, so by default it never runs
+            # (zero runtime cost, never blocks). When enabled it runs the detector
+            # with --block-high and rejects the completion ONLY on a CRITICAL/HIGH
+            # finding; clean / no-test-files / detector-absent / timeout / malformed
+            # all collapse to a pass inside _semantic_gate_and_surface, so the
+            # autonomous loop can never deadlock on a clean run. Mirrors the
+            # evidence / held-out / assumption arms above.
+            elif [ "$_completion_claimed" = 1 ] && [ "${LOKI_GATE_SEMANTIC_TESTS:-false}" = "true" ] && type _semantic_gate_and_surface &>/dev/null && ! _semantic_gate_and_surface; then
+                log_warn "Completion claim rejected: semantic test-authenticity gate found CRITICAL/HIGH fake-test problem(s)."
+                log_warn "  Details under .loki/quality/semantic-findings.txt ; opt-in gate -- disable with LOKI_GATE_SEMANTIC_TESTS=false"
+                # Fall through; keep iterating until the fake tests are fixed.
             elif [ "$_completion_claimed" = 1 ]; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then

@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.53.0] - 2026-06-16
+
+### Verification depth + enterprise compliance surface (P1-2, P1-3, P3-6, P3-11)
+
+- **Held-out checklist for small specs (P1-2)** (`autonomy/prd-checklist.sh`):
+  small checklists (2 <= N < 4) previously reserved ZERO held-out items, leaving
+  the entire checklist gameable. They now reserve exactly 1 held-out item via the
+  same deterministic sha256 ranking used for larger sets. N=1 stays a no-op
+  (cannot hold out from a single-item checklist); N>=4 is unchanged. Idempotent.
+- **Semantic test-authenticity gate wired on both routes (P1-3)**: the semantic
+  detector (`tests/detect-semantic-test-problems.sh`, which catches fake tests
+  that regex detectors miss) is now an opt-in quality gate via
+  `LOKI_GATE_SEMANTIC_TESTS` (default off). Wired on the bash route
+  (`autonomy/run.sh`) and mirrored on the Bun route
+  (`loki-ts/src/runner/quality_gates.ts`) with byte-identical blocking semantics:
+  blocks only on CRITICAL/HIGH findings; clean/absent/timeout/malformed never
+  fires (deny-filtered); default-off means the detector is not invoked (zero
+  cost, cannot deadlock the loop). Documented as the opt-in 9th gate in
+  `skills/quality-gates.md`.
+- **Sandbox default kept opt-in, honestly documented (P3-6)**: sandbox mode is
+  Docker-backed and hard-errors without Docker, so defaulting it on would break
+  non-Docker users. It stays opt-in (`LOKI_SANDBOX_MODE=true`); the
+  `loki start` CLI help now accurately states "default: off; requires Docker"
+  instead of an ambiguous description.
+- **Continuous compliance surface (P3-11)**: new `GET /api/compliance` dashboard
+  endpoint returns the live SOC2/ISO27001/GDPR compliance report generated from
+  the real audit chain (via `src/audit/index.js getReport` + a CLI shim),
+  including the real `verifyChain()` tamper-evidence verdict. Auth/tenant-scoped
+  (`require_scope("audit")`); returns an honest empty report (never a fabricated
+  "compliant" verdict) when no audit data exists, and degrades to
+  `available:false` if the audit engine is unavailable.
+
+Gates: local-ci 78/78, full pytest + bun test (78/78) + bash/Bun parity (11
+shared toggles, 0 fail) green, held-out evals 34/34, 3-reviewer council
+unanimous APPROVE.
+
 ## [7.52.0] - 2026-06-16
 
 ### Codex CLI compatibility: --full-auto deprecation swept repo-wide + budget quoting hardening

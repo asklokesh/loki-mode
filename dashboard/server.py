@@ -3248,6 +3248,121 @@ async def get_audit_summary(days: int = 7):
     return audit.get_audit_summary(days=days)
 
 
+# Continuous compliance surface (P3-11).
+#
+# Exposes the agent audit chain's compliance posture as an always-available
+# live endpoint. There is NO background scheduler in this surface (that is
+# infra, out of scope): the report is regenerated from the CURRENT audit
+# state on every request, so the endpoint is "continuous" in the sense that
+# it always reflects live state -- never a stale cached snapshot.
+#
+# The report is produced by the authoritative Node compliance engine
+# (src/audit/index.js, the single source of truth for SOC2/ISO/GDPR control
+# mappings) via its `report` CLI shim, so the Python surface never
+# reimplements (and never drifts from) the mapping logic. The chain it reads
+# is the JS AGENT chain at <project>/.loki/audit/audit.jsonl -- a different
+# chain from the Python dashboard chain that /api/enterprise/audit serves
+# (the two are reconciled by the cross-link verifier, not merged), so this
+# endpoint deliberately does NOT gate on audit.is_audit_enabled() (that flag
+# governs the Python chain). When the agent chain has no entries the report
+# is returned honestly with totalAuditEntries == 0; no fabricated pass.
+_COMPLIANCE_TYPES = ("soc2", "iso27001", "gdpr")
+
+
+@app.get("/api/compliance", dependencies=[Depends(auth.require_scope("audit"))])
+def get_compliance_status(report_type: str = Query("soc2", alias="type")):
+    """Live compliance status for the active project's agent audit chain.
+
+    Auth/tenant scoping: requires the `audit` scope (same gate as the
+    /api/enterprise/audit family). The data is filesystem state scoped to
+    the active project via _get_loki_dir(), exactly like the other
+    .loki-backed read endpoints; there is no DB tenant_id on a JSONL file
+    to enforce against.
+
+    Query: ?type=soc2|iso27001|gdpr (default soc2).
+
+    Returns the compliance report JSON regenerated from CURRENT audit
+    state on every call. If no audit data has been recorded the report is
+    honestly empty (totalAuditEntries == 0), not a fabricated compliant
+    verdict. If the Node engine is unavailable, returns an honest
+    available:false payload (HTTP 200) rather than masquerading as "no
+    compliance".
+    """
+    if not _read_limiter.check("compliance"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    if report_type not in _COMPLIANCE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid type: {report_type}. Must be one of {list(_COMPLIANCE_TYPES)}",
+        )
+
+    import shutil
+
+    # The agent audit chain lives under <project>/.loki/audit; _get_loki_dir()
+    # returns the .loki dir, so the project root is its parent.
+    project_dir = str(_get_loki_dir().parent.resolve())
+    repo_root = _Path(__file__).resolve().parent.parent
+    index_js = repo_root / "src" / "audit" / "index.js"
+
+    node_bin = shutil.which("node")
+    if node_bin is None or not index_js.exists():
+        return {
+            "available": False,
+            "reason": (
+                "Node runtime not found"
+                if node_bin is None
+                else f"compliance engine not found at {index_js}"
+            ),
+            "reportType": report_type,
+            "projectDir": project_dir,
+            "report": None,
+        }
+
+    try:
+        proc = subprocess.run(
+            [node_bin, str(index_js), "report", report_type, project_dir],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "available": False,
+            "reason": f"compliance engine invocation failed: {exc}",
+            "reportType": report_type,
+            "projectDir": project_dir,
+            "report": None,
+        }
+
+    if proc.returncode != 0:
+        return {
+            "available": False,
+            "reason": (proc.stderr or "compliance engine returned non-zero").strip()[:500],
+            "reportType": report_type,
+            "projectDir": project_dir,
+            "report": None,
+        }
+
+    try:
+        report = json.loads(proc.stdout.strip())
+    except json.JSONDecodeError:
+        return {
+            "available": False,
+            "reason": "compliance engine produced non-JSON output",
+            "reportType": report_type,
+            "projectDir": project_dir,
+            "report": None,
+        }
+
+    return {
+        "available": True,
+        "reportType": report_type,
+        "projectDir": project_dir,
+        "report": report,
+    }
+
+
 # =============================================================================
 # File-based Session Endpoints (reads from .loki/ flat files)
 # =============================================================================

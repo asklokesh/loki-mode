@@ -71,6 +71,7 @@ export type GateName =
   | "test_coverage"
   | "mock_integrity"
   | "mutation_integrity"
+  | "semantic_tests"
   | "code_review"
   | "doc_coverage"
   | "magic_debate"
@@ -535,6 +536,118 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
     };
   }
   return { passed: true, detail: "mutation_integrity: no high findings" };
+}
+
+// --- Semantic test-authenticity gate (P1-3 Bun mirror) -------------------
+//
+// Bash source of truth: enforce_semantic_integrity (autonomy/run.sh:8335) +
+// the completion-promise gate arm (autonomy/run.sh:15460), driven by the
+// detector tests/detect-semantic-test-problems.sh.
+//
+// PRECEDENT -- why this gate SPAWNS the detector (NOT the artifact-reading
+// pattern that runMockIntegrity / runMutationIntegrity use): the mock and
+// mutation detectors derive their scan root from `$SCRIPT_DIR/..` (the loki
+// install dir) and IGNORE cwd, so a TS spawn pointed at a user project would
+// scan loki's own tree -- which is why those two mirrors read the bash-written
+// findings artifact instead. The semantic detector is different: it honors the
+// LOKI_SCAN_DIR env var (tests/detect-semantic-test-problems.sh:103) to choose
+// its scan root, exactly the way the bash gate drives it (cd TARGET_DIR +
+// LOKI_SCAN_DIR=TARGET_DIR + --block-high). Nothing in loki-ts/src writes
+// semantic-findings.txt, so an artifact reader would be permanently INERT on a
+// pure-Bun run (always "absent -> pass"). The real precedent here is the other
+// SPAWN gates -- runStaticAnalysis and runLSPDiagnosticsWriter -- which run a
+// subprocess pointed at ctx.cwd. This gate follows that pattern.
+//
+// EXIT-CODE CONTRACT (mirrors the bash rc handling byte-for-byte):
+//   rc 2            -> CRITICAL/HIGH present  -> BLOCK (passed: false)
+//   rc 0            -> clean                  -> PASS
+//   rc 124          -> detector timed out     -> PASS (deny-filter, never block on a hang)
+//   detector absent -> nothing to run         -> PASS
+//   spawn error     -> inconclusive           -> PASS
+//   any other rc    -> inconclusive/malformed -> PASS
+// Only an exact exit code of 2 blocks. The autonomous loop can NEVER deadlock
+// on a clean (or unmeasurable) run.
+//
+// LOKI_SCAN_DIR is LOAD-BEARING: the detector comment is explicit that cwd
+// alone does not redirect the scan, so we must pass it via the env option (the
+// `run` helper merges opts.env over process.env). We do NOT shell out to the
+// `timeout(1)` binary -- it is absent on darwin's default PATH -- and instead
+// rely on run()'s own timeoutMs. Whatever code a kill yields still falls into
+// the "any other rc -> PASS" branch, so the deny-filter holds regardless.
+//
+// OPT-IN: default OFF (mirrors bash `${LOKI_GATE_SEMANTIC_TESTS:-false}`). The
+// readToggles flag() helper gates invocation; there is no second in-body skip.
+// Honors LOKI_STUB_GATE_SEMANTIC_TESTS for orchestration tests.
+//
+// Test injection: LOKI_SEMANTIC_DETECTOR overrides the detector path so tests
+// can point the gate at a fixture detector that returns a deterministic exit
+// code (the same style runStaticAnalysis tests use a hermetic scratch repo).
+export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_SEMANTIC_TESTS";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("semantic_tests");
+
+  const cwd = ctx?.cwd ?? process.cwd();
+  const detector =
+    process.env["LOKI_SEMANTIC_DETECTOR"] ??
+    join(REPO_ROOT, "tests", "detect-semantic-test-problems.sh");
+
+  // Detector absent -> nothing to run. Mirror the bash `if [ ! -f ... ]`
+  // skip; never fabricate a verdict from a missing script.
+  if (!existsSync(detector)) {
+    return {
+      passed: true,
+      detail: "semantic_tests: detector not found -- gate did not run",
+    };
+  }
+
+  // Gate timeout, applied via run()'s timeoutMs rather than the timeout(1)
+  // binary (absent on darwin's default PATH). Fixed at the bash default (300s).
+  // The bash route reads its gate-timeout value knob here, but that env name is
+  // a documented bash-ONLY knob in the parity contract
+  // (tests/test-bash-bun-parity.sh GATE_ALLOWED_BASH_ONLY), so we deliberately
+  // do NOT reference it on the Bun route -- referencing the literal (even in a
+  // comment) would re-introduce a parity asymmetry, since the parity grep scans
+  // source text. Blocking semantics are unaffected: a timeout maps to PASS
+  // (deny-filter) on BOTH routes, so the operator knob only shifts WHEN an
+  // inconclusive pass happens on a hung detector, never the rc-2 BLOCK decision,
+  // which stays byte-identical.
+  const TIMEOUT_MS = 300_000;
+
+  let exitCode: number;
+  try {
+    const r = await run(["bash", detector, "--block-high"], {
+      cwd,
+      // LOKI_SCAN_DIR is load-bearing: the detector reads it to pick its scan
+      // root; cwd alone does not redirect find/git inside the script.
+      env: { LOKI_SCAN_DIR: cwd },
+      timeoutMs: TIMEOUT_MS,
+    });
+    exitCode = r.exitCode;
+  } catch {
+    // Spawn failure -- inconclusive, never block (deny-filter).
+    return {
+      passed: true,
+      detail: "semantic_tests: detector spawn failed -- inconclusive, not blocking",
+    };
+  }
+
+  // ONLY an exact exit code of 2 blocks (CRITICAL/HIGH findings).
+  if (exitCode === 2) {
+    return {
+      passed: false,
+      detail: "semantic_tests: CRITICAL/HIGH fake-test problems detected -- BLOCK",
+    };
+  }
+  // rc 124 (timeout) is named for clarity; every other code collapses to PASS.
+  if (exitCode === 124) {
+    return {
+      passed: true,
+      detail: "semantic_tests: detector timed out -- inconclusive, not blocking",
+    };
+  }
+  // rc 0 (clean) and any other non-2/non-124 code -> PASS (deny-filter).
+  return { passed: true, detail: `semantic_tests: no blocking findings (rc ${exitCode})` };
 }
 
 // --- Code review: 3-reviewer parallel council ----------------------------
@@ -1690,6 +1803,7 @@ type GateToggles = {
   testCoverage: boolean;
   mockIntegrity: boolean;
   mutationIntegrity: boolean;
+  semanticTests: boolean;
   codeReview: boolean;
   docCoverage: boolean;
   magicDebate: boolean;
@@ -1708,6 +1822,10 @@ function readToggles(): GateToggles {
     testCoverage: flag("PHASE_UNIT_TESTS", true),
     mockIntegrity: flag("LOKI_GATE_MOCK", true),
     mutationIntegrity: flag("LOKI_GATE_MUTATION", true),
+    // P1-3: opt-in, default OFF (mirrors bash `${LOKI_GATE_SEMANTIC_TESTS:-false}`).
+    // Catches the harder class of fake tests the regex detectors (mock+mutation)
+    // miss; only blocks on CRITICAL/HIGH (detector rc 2).
+    semanticTests: flag("LOKI_GATE_SEMANTIC_TESTS", false),
     codeReview: flag("PHASE_CODE_REVIEW", true),
     docCoverage: flag("LOKI_GATE_DOC_COVERAGE", true),
     magicDebate: flag("LOKI_GATE_MAGIC_DEBATE", true),
@@ -1859,6 +1977,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     { name: "test_coverage", enabled: toggles.testCoverage, run: () => runTestCoverage(ctx) },
     { name: "mock_integrity", enabled: toggles.mockIntegrity, run: () => runMockIntegrity(ctx) },
     { name: "mutation_integrity", enabled: toggles.mutationIntegrity, run: () => runMutationIntegrity(ctx) },
+    { name: "semantic_tests", enabled: toggles.semanticTests, run: () => runSemanticTests(ctx) },
     { name: "code_review", enabled: toggles.codeReview, run: () => runCodeReview(ctx) },
     { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },
