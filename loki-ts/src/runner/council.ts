@@ -494,8 +494,48 @@ export async function councilEvaluate(cec: CouncilEvaluateContext): Promise<Aggr
     severityThreshold: cec.severityThreshold ?? "HIGH",
   });
 
-  if (aggregate.unanimous && aggregate.decision === "COMPLETE") {
-    const contrarian = await councilDevilsAdvocate(verdicts, { lokiDir: cec.ctx.lokiDir });
+  // Anti-sycophancy gate. Mirrors bash completion-council.sh:723
+  //   if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
+  // i.e. the devil's advocate only ADDS scrutiny on a unanimous APPROVE with at
+  // least 2 members. It never blocks a non-unanimous result. The size>=2 guard
+  // prevents a single-member council (threshold floor((1*2+2)/3)=1, unanimous by
+  // definition) from triggering the contrarian re-review.
+  if (aggregate.unanimous && aggregate.decision === "COMPLETE" && aggregate.totalMembers >= 2) {
+    // Prefer the LLM devil's-advocate re-review (bash council_devils_advocate,
+    // completion-council.sh:2074-2170) when a provider is reachable, mirroring
+    // the same gate used for the base-voter dispatch above:
+    //   - caller injected a claudeRunner (test mode), OR
+    //   - the installed claude CLI advertises both --agents and --json-schema.
+    // The base voters are not re-overridden here -- this is a SEPARATE second
+    // invocation, exactly as bash runs council_devils_advocate after the member
+    // loop. On ANY dispatch failure (no provider, malformed reply, non-zero
+    // exit) we degrade to the deterministic file-scan councilDevilsAdvocate so
+    // anti-sycophancy is never silently dropped (a bare uphold would defeat the
+    // gate). We NEVER hang: dispatch throws -> caught -> scan path.
+    const shouldTryLlmDa =
+      cec.voters === undefined &&
+      (cec.claudeRunner !== undefined ||
+        (claudeFlagSupportedShim("--agents") && claudeFlagSupportedShim("--json-schema")));
+
+    let contrarian: AgentVerdict | null = null;
+    if (shouldTryLlmDa) {
+      try {
+        const mod = await import("../council/voter_agents.ts");
+        contrarian = await mod.dispatchDevilsAdvocate(cec, cec.claudeRunner);
+      } catch (err) {
+        const msg = `[council] devil's-advocate LLM dispatch failed, falling back to deterministic scan: ${(err as Error).message}`;
+        const log = (cec.ctx as Partial<RunnerContext>).log;
+        if (typeof log === "function") log(msg);
+        else console.warn(msg);
+        contrarian = null;
+      }
+    }
+    // Fall back to the deterministic anti-sycophancy scan when the LLM DA was
+    // not attempted or failed. This is the "base verdict" the system produced
+    // before the LLM upgrade -- a strict skeptical scan, not a bare uphold.
+    if (contrarian === null) {
+      contrarian = await councilDevilsAdvocate(verdicts, { lokiDir: cec.ctx.lokiDir });
+    }
     if (contrarian.verdict === "REJECT" || contrarian.verdict === "CANNOT_VALIDATE") {
       const flippedAggregate: AggregateResult = {
         ...aggregate,

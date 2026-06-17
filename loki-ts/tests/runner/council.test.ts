@@ -311,6 +311,146 @@ describe("councilEvaluate", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// LLM devil's-advocate auto-wiring (parity with bash council_devils_advocate).
+// Trigger mirrors completion-council.sh:723
+//   if [ $approve_count -eq $COUNCIL_SIZE ] && [ $COUNCIL_SIZE -ge 2 ]; then
+// Fold-in mirrors the v7.41.3 conservative tie-break: only a clean DA APPROVE
+// upholds; REJECT/CANNOT_VALIDATE flips the unanimous COMPLETE to CONTINUE.
+// ---------------------------------------------------------------------------
+
+describe("councilEvaluate -- LLM devil's-advocate wiring", () => {
+  // A runner whose reply depends on which agent slug appears in the argv:
+  // the base dispatch declares the 3 base slugs, the DA dispatch declares
+  // devils-advocate. This lets one fake drive BOTH invocations distinctly.
+  function makeRunner(opts: {
+    baseStdout: string;
+    daStdout?: string;
+    daExit?: number;
+    daThrow?: boolean;
+    onDaCall?: () => void;
+  }) {
+    return async (argv: string[]) => {
+      const isDa = argv.some((a) => a.includes("devils-advocate"));
+      if (isDa) {
+        opts.onDaCall?.();
+        if (opts.daThrow) throw new Error("simulated provider crash");
+        return { stdout: opts.daStdout ?? "", exitCode: opts.daExit ?? 0 };
+      }
+      return { stdout: opts.baseStdout, exitCode: 0 };
+    };
+  }
+
+  const unanimousApproveBase = JSON.stringify({
+    findings: [
+      { role: "requirements-verifier", vote: "APPROVE", reason: "met", confidence: 0.9 },
+      { role: "test-auditor", vote: "APPROVE", reason: "passing", confidence: 0.85 },
+      { role: "convergence-voter", vote: "APPROVE", reason: "stable", confidence: 0.7 },
+    ],
+  });
+
+  it("invokes the LLM DA on unanimous APPROVE and upholds when DA APPROVES", async () => {
+    let daCalled = false;
+    const daApprove = JSON.stringify({
+      findings: [{ role: "devils-advocate", vote: "APPROVE", reason: "no flaw found", confidence: 0.95 }],
+    });
+    const runner = makeRunner({
+      baseStdout: unanimousApproveBase,
+      daStdout: daApprove,
+      onDaCall: () => { daCalled = true; },
+    });
+    const r = await councilEvaluate({ ctx: fakeCtx(), iteration: 1, claudeRunner: runner });
+    expect(daCalled).toBe(true);
+    expect(r.decision).toBe("COMPLETE");
+    // 3 base + 1 DA appended.
+    expect(r.votes.length).toBe(4);
+    expect(r.votes[3]?.role).toBe("devils_advocate");
+    expect(r.votes[3]?.verdict).toBe("APPROVE");
+  });
+
+  it("downgrades the unanimous COMPLETE to CONTINUE when the LLM DA REJECTS", async () => {
+    let daCalled = false;
+    const daReject = JSON.stringify({
+      findings: [
+        {
+          role: "devils-advocate",
+          vote: "REJECT",
+          reason: "missing functionality",
+          confidence: 0.8,
+          issues: [{ severity: "HIGH", description: "a real user could not use this" }],
+        },
+      ],
+    });
+    const runner = makeRunner({
+      baseStdout: unanimousApproveBase,
+      daStdout: daReject,
+      onDaCall: () => { daCalled = true; },
+    });
+    const r = await councilEvaluate({ ctx: fakeCtx(), iteration: 2, claudeRunner: runner });
+    expect(daCalled).toBe(true);
+    expect(r.decision).toBe("CONTINUE");
+    expect(r.unanimous).toBe(false);
+    expect(r.votes.length).toBe(4);
+    expect(r.votes[3]?.role).toBe("devils_advocate");
+    expect(r.votes[3]?.verdict).toBe("REJECT");
+  });
+
+  it("downgrades to CONTINUE when the LLM DA returns CANNOT_VALIDATE", async () => {
+    // Mirrors bash v7.41.3: any non-APPROVE contrarian outcome flips the verdict.
+    const daCannotValidate = JSON.stringify({
+      findings: [
+        { role: "devils-advocate", vote: "CANNOT_VALIDATE", reason: "evidence unreachable", confidence: 0.5 },
+      ],
+    });
+    const runner = makeRunner({ baseStdout: unanimousApproveBase, daStdout: daCannotValidate });
+    const r = await councilEvaluate({ ctx: fakeCtx(), iteration: 5, claudeRunner: runner });
+    expect(r.decision).toBe("CONTINUE");
+    expect(r.unanimous).toBe(false);
+    expect(r.votes[3]?.role).toBe("devils_advocate");
+    expect(r.votes[3]?.verdict).toBe("CANNOT_VALIDATE");
+  });
+
+  it("does NOT invoke the DA on a non-unanimous result", async () => {
+    let daCalled = false;
+    const mixedBase = JSON.stringify({
+      findings: [
+        { role: "requirements-verifier", vote: "APPROVE", reason: "met", confidence: 0.9 },
+        { role: "test-auditor", vote: "APPROVE", reason: "passing", confidence: 0.85 },
+        {
+          role: "convergence-voter",
+          vote: "REJECT",
+          reason: "regressing",
+          confidence: 0.7,
+          issues: [{ severity: "HIGH", description: "more failing tasks" }],
+        },
+      ],
+    });
+    const runner = makeRunner({ baseStdout: mixedBase, onDaCall: () => { daCalled = true; } });
+    const r = await councilEvaluate({ ctx: fakeCtx(), iteration: 3, claudeRunner: runner });
+    expect(daCalled).toBe(false);
+    expect(r.decision).toBe("CONTINUE");
+    // No DA appended on the non-unanimous path -- 3 base votes only.
+    expect(r.votes.length).toBe(3);
+  });
+
+  it("falls back to the deterministic scan (no hang, no bare uphold) when the LLM DA errors", async () => {
+    let daCalled = false;
+    const runner = makeRunner({
+      baseStdout: unanimousApproveBase,
+      daThrow: true,
+      onDaCall: () => { daCalled = true; },
+    });
+    // No logs/ dir in tmpBase -> deterministic scan vetoes ("no test logs").
+    const r = await councilEvaluate({ ctx: fakeCtx(), iteration: 4, claudeRunner: runner });
+    expect(daCalled).toBe(true);
+    // LLM DA threw -> fell back to scan -> scan vetoes -> CONTINUE (not upheld).
+    expect(r.decision).toBe("CONTINUE");
+    expect(r.votes.length).toBe(4);
+    expect(r.votes[3]?.role).toBe("devils_advocate");
+    expect(r.votes[3]?.verdict).toBe("REJECT");
+  });
+});
+
 describe("councilWriteReport", () => {
   it("writes .loki/council/report.md with the expected sections", async () => {
     const aggregate: AggregateResult = {

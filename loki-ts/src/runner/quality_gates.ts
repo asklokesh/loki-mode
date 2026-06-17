@@ -72,6 +72,7 @@ export type GateName =
   | "mock_integrity"
   | "mutation_integrity"
   | "semantic_tests"
+  | "invariants"
   | "code_review"
   | "doc_coverage"
   | "magic_debate"
@@ -746,6 +747,128 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
     clearSemanticFindings(base);
   }
   return { passed: true, detail: `semantic_tests: no blocking findings (rc ${exitCode})` };
+}
+
+// --- Invariant (spec-independent property) gate (P1-4 Bun mirror) ---------
+//
+// Bash source of truth (to be wired by the run.sh owner in the same wave):
+// enforce_invariant_integrity -> tests/detect-invariant-violations.sh, modeled
+// on enforce_semantic_integrity (autonomy/run.sh:8335). The detector asserts a
+// small set of invariants that hold regardless of the spec (no committed
+// secrets, no PII in logs), so it catches the "spec was silent and the model
+// guessed wrong" failure mode.
+//
+// PRECEDENT -- this gate SPAWNS the detector (NOT the artifact-reading pattern
+// runMockIntegrity / runMutationIntegrity use), for the SAME reason
+// runSemanticTests does: the detector honors LOKI_SCAN_DIR
+// (tests/detect-invariant-violations.sh:123) to choose its scan root, so a TS
+// spawn pointed at the target project scans the right tree. Nothing in
+// loki-ts/src writes an invariant-findings artifact, so an artifact reader
+// would be permanently INERT on a pure-Bun run. runSemanticTests is the exact
+// precedent cloned here.
+//
+// EXIT-CODE CONTRACT -- this DIFFERS from runSemanticTests. The invariant
+// detector is invoked with --strict (NOT --block-high) and exits 1 on
+// CRITICAL/HIGH, 0 otherwise (tests/detect-invariant-violations.sh:347-353).
+// So we block ONLY on an exact exit code of 1:
+//   rc 1            -> CRITICAL/HIGH present  -> BLOCK (passed: false)
+//   rc 0            -> clean                  -> PASS
+//   rc 124          -> detector timed out     -> PASS (deny-filter, never block on a hang)
+//   detector absent -> nothing to run         -> PASS
+//   spawn error     -> inconclusive           -> PASS
+//   any other rc    -> inconclusive/malformed -> PASS
+// Only an exact exit code of 1 blocks. The autonomous loop can NEVER deadlock
+// on a clean (or unmeasurable) run. rc 1 is less defensive than the semantic
+// gate's rc 2 (it collides with a generic bash exit 1), but mirroring the
+// detector's real --strict contract is the correct behavior; we do not
+// redesign the detector from here.
+//
+// FINDINGS PERSISTENCE -- intentionally NOT mirrored. The semantic gate writes
+// semantic-findings.txt because build_prompt.ts has a reader
+// (buildSemanticFindingsBlock). NOTHING on the Bun route reads an
+// invariant-findings file today, so writing one would itself be the inert
+// writer-with-no-reader pattern this gate was created to eliminate. Blocking
+// flows through GateResult.passed=false -> gate-failures.txt (which build_prompt
+// DOES read) plus the detail string. Surfacing per-finding invariant text into
+// the next-iteration prompt is a follow-up that needs a build_prompt.ts reader
+// (out of this file's ownership).
+//
+// LOKI_SCAN_DIR is LOAD-BEARING: the detector comment is explicit that cwd
+// alone does not redirect the scan (tests/detect-invariant-violations.sh:119-123).
+// We pass it via the env option (run merges opts.env over process.env). We do
+// NOT shell out to timeout(1) (absent on darwin's default PATH) and rely on
+// run()'s timeoutMs; a kill's exit code falls into the "any other rc -> PASS"
+// branch, so the deny-filter holds.
+//
+// OPT-IN: default OFF (mirrors the intended bash `${LOKI_GATE_INVARIANTS:-false}`).
+// readToggles' flag() helper gates invocation; there is no second in-body skip.
+// Honors LOKI_STUB_GATE_INVARIANTS for orchestration tests.
+//
+// Test injection: LOKI_INVARIANT_DETECTOR overrides the detector path so tests
+// can point the gate at a fixture detector returning a deterministic exit code
+// (same style runSemanticTests uses LOKI_SEMANTIC_DETECTOR).
+export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
+  const stubKey = "LOKI_STUB_GATE_INVARIANTS";
+  const stubVal = process.env[stubKey];
+  if (stubVal === "fail" || stubVal === "pass") return stubResult("invariants");
+
+  const cwd = ctx?.cwd ?? process.cwd();
+  const detector =
+    process.env["LOKI_INVARIANT_DETECTOR"] ??
+    join(REPO_ROOT, "tests", "detect-invariant-violations.sh");
+
+  // Detector absent -> nothing to run. Mirror the bash `if [ ! -f ... ]` skip;
+  // never fabricate a verdict from a missing script.
+  if (!existsSync(detector)) {
+    return {
+      passed: true,
+      detail: "invariants: detector not found -- gate did not run",
+    };
+  }
+
+  // Gate timeout via run()'s timeoutMs (not the timeout(1) binary, absent on
+  // darwin's default PATH). Fixed at the bash default (300s). We deliberately do
+  // NOT reference the bash-route gate-timeout knob here -- it is a documented
+  // bash-only value knob in the parity contract (GATE_ALLOWED_BASH_ONLY) and even
+  // a textual mention of that token would re-introduce an asymmetry. A timeout
+  // maps to PASS on both routes, so the knob only shifts WHEN an inconclusive
+  // pass happens, never the rc-1 BLOCK decision.
+  const TIMEOUT_MS = 300_000;
+
+  let exitCode: number;
+  try {
+    const r = await run(["bash", detector, "--strict"], {
+      cwd,
+      // LOKI_SCAN_DIR is load-bearing: the detector reads it to pick its scan
+      // root; cwd alone does not redirect find inside the script.
+      env: { LOKI_SCAN_DIR: cwd },
+      timeoutMs: TIMEOUT_MS,
+    });
+    exitCode = r.exitCode;
+  } catch {
+    // Spawn failure -- inconclusive, never block (deny-filter).
+    return {
+      passed: true,
+      detail: "invariants: detector spawn failed -- inconclusive, not blocking",
+    };
+  }
+
+  // ONLY an exact exit code of 1 blocks (CRITICAL/HIGH invariant violations
+  // under --strict). Every other code (0 clean, 124 timeout, any other) is
+  // deny-filtered to PASS so the loop can never deadlock on an unmeasurable run.
+  if (exitCode === 1) {
+    return {
+      passed: false,
+      detail: "invariants: CRITICAL/HIGH invariant violation detected -- BLOCK",
+    };
+  }
+  if (exitCode === 124) {
+    return {
+      passed: true,
+      detail: "invariants: detector timed out -- inconclusive, not blocking",
+    };
+  }
+  return { passed: true, detail: `invariants: no blocking violations (rc ${exitCode})` };
 }
 
 // --- Code review: 3-reviewer parallel council ----------------------------
@@ -1902,6 +2025,7 @@ type GateToggles = {
   mockIntegrity: boolean;
   mutationIntegrity: boolean;
   semanticTests: boolean;
+  invariants: boolean;
   codeReview: boolean;
   docCoverage: boolean;
   magicDebate: boolean;
@@ -1924,6 +2048,13 @@ function readToggles(): GateToggles {
     // Catches the harder class of fake tests the regex detectors (mock+mutation)
     // miss; only blocks on CRITICAL/HIGH (detector rc 2).
     semanticTests: flag("LOKI_GATE_SEMANTIC_TESTS", false),
+    // P1-4: opt-in, default OFF (mirrors the intended bash
+    // `${LOKI_GATE_INVARIANTS:-false}`). An inert gate does no harm; a wrongly
+    // active gate that false-fires deadlocks the loop, so we default off and
+    // deny-filter every non-rc-1 detector outcome to PASS. Only blocks on an
+    // exact detector exit of 1 (--strict CRITICAL/HIGH). Enable with
+    // LOKI_GATE_INVARIANTS=true.
+    invariants: flag("LOKI_GATE_INVARIANTS", false),
     codeReview: flag("PHASE_CODE_REVIEW", true),
     docCoverage: flag("LOKI_GATE_DOC_COVERAGE", true),
     magicDebate: flag("LOKI_GATE_MAGIC_DEBATE", true),
@@ -2076,6 +2207,7 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
     { name: "mock_integrity", enabled: toggles.mockIntegrity, run: () => runMockIntegrity(ctx) },
     { name: "mutation_integrity", enabled: toggles.mutationIntegrity, run: () => runMutationIntegrity(ctx) },
     { name: "semantic_tests", enabled: toggles.semanticTests, run: () => runSemanticTests(ctx) },
+    { name: "invariants", enabled: toggles.invariants, run: () => runInvariants(ctx) },
     { name: "code_review", enabled: toggles.codeReview, run: () => runCodeReview(ctx) },
     { name: "doc_coverage", enabled: toggles.docCoverage, run: () => runDocQualityGate(ctx) },
     { name: "magic_debate", enabled: toggles.magicDebate, run: () => runMagicDebateGate(ctx) },

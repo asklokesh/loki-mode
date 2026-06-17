@@ -8402,6 +8402,87 @@ _semantic_gate_and_surface() {
     return "$_rc"
 }
 
+# P1-4 invariant/property gate (bash-route parity, v7.51.0). The Bun route
+# ships an invariant toggle (loki-ts/src/runner/quality_gates.ts:2057,
+# `invariants: flag("LOKI_GATE_INVARIANTS", false)`) running
+# tests/detect-invariant-violations.sh --strict; the bash route had NO
+# counterpart, so the bash/Bun parity test reported "Only in bun:
+# LOKI_GATE_INVARIANTS". This wires the bash side, mirroring
+# enforce_semantic_integrity's structure byte-for-byte:
+#   - detector --strict exit-code contract (tests/detect-invariant-violations.sh
+#     :347-353): rc 1 iff CRITICAL/HIGH present, rc 0 otherwise.
+#   - detector honors LOKI_SCAN_DIR (tests/detect-invariant-violations.sh:123),
+#     so the wrapper exports it to the TARGET project (cwd alone does NOT
+#     redirect the scan).
+# The PLURAL token LOKI_GATE_INVARIANTS is used deliberately to match the Bun
+# readToggles flag name; the detector's own reference comment suggests a
+# singular default-on variant (no trailing S), which is NOT used here (parity
+# needs the plural, and this gate is OPT-IN / default OFF like the semantic
+# gate).
+enforce_invariant_integrity() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local quality_dir="$loki_dir/quality"
+    mkdir -p "$quality_dir"
+    local findings_file="$quality_dir/invariant-findings.txt"
+    local detector="$SCRIPT_DIR/../tests/detect-invariant-violations.sh"
+    local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"
+
+    if [ ! -f "$detector" ]; then
+        log_info "Invariant gate: detector not found, skipping (inconclusive)"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local output rc
+    # --strict exits 1 iff CRITICAL/HIGH present; 0 otherwise (clean wrapper).
+    output=$(cd "${TARGET_DIR:-.}" && LOKI_SCAN_DIR="${TARGET_DIR:-.}" \
+        timeout "$gate_timeout" bash "$detector" --strict 2>&1)
+    rc=$?
+
+    # timeout exit 124 -- inconclusive, never block on a hang (deny-filter)
+    if [ "$rc" -eq 124 ]; then
+        log_warn "Invariant gate: detector timed out after ${gate_timeout}s -- inconclusive"
+        rm -f "$findings_file" 2>/dev/null || true
+        return 0
+    fi
+
+    if [ "$rc" -eq 1 ]; then
+        # rc 1 == one or more CRITICAL/HIGH findings. Persist per-finding text.
+        {
+            echo "# Invariant findings (CRITICAL/HIGH block this completion)"
+            echo "$output" | grep -E '\[(CRITICAL|HIGH|MEDIUM|LOW)\]' || true
+        } > "$findings_file"
+        log_warn "Invariant gate: CRITICAL/HIGH invariant violations detected -- BLOCK"
+        return 1
+    fi
+
+    # rc 0 (and any other non-1, non-124 code, e.g. a malformed run) -> PASS.
+    # Route any MED/LOW advisory findings to the injection file, else clear it.
+    local med_low
+    med_low=$(echo "$output" | grep -E '\[(MEDIUM|LOW)\]' || true)
+    if [ -n "$med_low" ]; then
+        {
+            echo "# Invariant advisory findings (MED/LOW, non-blocking)"
+            echo "$med_low"
+        } > "$findings_file"
+    else
+        rm -f "$findings_file" 2>/dev/null || true
+    fi
+    log_info "Invariant gate: PASS"
+    return 0
+}
+
+# Thin wrapper mirroring _semantic_gate_and_surface so the completion-promise
+# elif arm reads cleanly (`! _invariant_gate_and_surface`). Returns nonzero
+# ONLY when enforce_invariant_integrity saw an rc-1 (CRITICAL/HIGH) result; all
+# deny-filter cases already collapse to 0 inside enforce_invariant_integrity,
+# so this never blocks a clean run.
+_invariant_gate_and_surface() {
+    local _rc=0
+    enforce_invariant_integrity || _rc=$?
+    return "$_rc"
+}
+
 # ============================================================================
 # 3-Reviewer Parallel Code Review (v5.35.0)
 # Specialist pool from skills/quality-gates.md with blind review
@@ -15467,6 +15548,22 @@ else:
                 log_warn "Completion claim rejected: semantic test-authenticity gate found CRITICAL/HIGH fake-test problem(s)."
                 log_warn "  Details under .loki/quality/semantic-findings.txt ; opt-in gate -- disable with LOKI_GATE_SEMANTIC_TESTS=false"
                 # Fall through; keep iterating until the fake tests are fixed.
+            # P1-4: invariant/property gate (OPT-IN, default OFF). Mirrors the
+            # semantic arm above and the Bun route's invariants toggle
+            # (loki-ts/src/runner/quality_gates.ts:2057). Guarded by
+            # LOKI_GATE_INVARIANTS (PLURAL, to match the Bun readToggles flag
+            # name; the detector's reference-comment singular default-on variant
+            # without the trailing S is deliberately NOT used). Accepts "true" or
+            # "1"; default OFF means the arm never runs (zero cost, never
+            # blocks). When enabled it runs detect-invariant-violations.sh
+            # --strict and rejects completion ONLY on a CRITICAL/HIGH (rc 1)
+            # finding; clean / detector-absent / timeout / malformed all
+            # collapse to a pass inside _invariant_gate_and_surface, so the
+            # autonomous loop can never deadlock on a clean run.
+            elif [ "$_completion_claimed" = 1 ] && { [ "${LOKI_GATE_INVARIANTS:-false}" = "true" ] || [ "${LOKI_GATE_INVARIANTS:-false}" = "1" ]; } && type _invariant_gate_and_surface &>/dev/null && ! _invariant_gate_and_surface; then
+                log_warn "Completion claim rejected: invariant gate found CRITICAL/HIGH invariant/property violation(s)."
+                log_warn "  Details under .loki/quality/invariant-findings.txt ; opt-in gate -- disable with LOKI_GATE_INVARIANTS=false"
+                # Fall through; keep iterating until the invariant violations are fixed.
             elif [ "$_completion_claimed" = 1 ]; then
                 echo ""
                 if [ -n "$COMPLETION_PROMISE" ]; then

@@ -229,6 +229,27 @@ function writeWitness(opts) {
 }
 
 /**
+ * Link the run manifest (loki-run.json bill-of-materials) into the agent
+ * audit chain so it becomes tamper-evident and verifiable against the
+ * evidence chain. No-op (honest) when the manifest is absent.
+ * See src/audit/crosslink.js (linkManifest).
+ */
+function linkManifest(opts) {
+  if (!_initialized) init();
+  return crosslink.linkManifest(Object.assign({ projectDir: _projectDir }, opts || {}));
+}
+
+/**
+ * Verify the run-manifest link: agent chain integrity AND the on-disk
+ * manifest still matching the hash pinned by the most recent
+ * manifest-link anchor. See src/audit/crosslink.js (verifyManifestLink).
+ */
+function verifyManifestLink(opts) {
+  if (!_initialized) init();
+  return crosslink.verifyManifestLink(Object.assign({ projectDir: _projectDir }, opts || {}));
+}
+
+/**
  * Destroy audit trail (for testing).
  */
 function destroy() {
@@ -255,6 +276,8 @@ module.exports = {
   crossLink: crossLink,
   verifyUnified: verifyUnified,
   writeWitness: writeWitness,
+  linkManifest: linkManifest,
+  verifyManifestLink: verifyManifestLink,
 };
 
 // CLI entry point: `node src/audit/index.js report <type> <projectDir>`.

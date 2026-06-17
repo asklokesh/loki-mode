@@ -91,20 +91,27 @@ describe("buildVoterAgentsJson", () => {
 });
 
 describe("buildDevilsAdvocateAgent", () => {
-  it("includes the base findings summary in the prompt", () => {
+  // BLIND REVIEW (BUG-QG-009, mirrors bash completion-council.sh:2090-2091):
+  // the contrarian must NOT be shown the base voters' member verdicts/reasons,
+  // or it is biased toward agreement and the anti-sycophancy gate is defeated.
+  // This function was an unwired primitive until the DA was auto-wired; the
+  // earlier assertion (base findings quoted in the prompt) encoded the bug and
+  // is replaced here with the blind-review contract.
+  it("is blind: does NOT leak the base voters' verdicts or reasons into the prompt", () => {
     const baseFindings: AgentVerdict[] = [
       { role: "requirements-verifier", verdict: "APPROVE", reason: "all met", issues: [] },
       { role: "test-auditor", verdict: "APPROVE", reason: "passing", issues: [] },
       { role: "convergence-voter", verdict: "APPROVE", reason: "stable", issues: [] },
     ];
-    const da = buildDevilsAdvocateAgent(fakeCtx({ iteration: 11 }), baseFindings);
+    const da = buildDevilsAdvocateAgent(fakeCtx({ iteration: 11 }));
     expect(da.model).toBe("opus");
     expect(da.effort).toBe("xhigh");
     expect(da.prompt).toContain("iteration 11");
     expect(da.prompt).toContain("devils-advocate");
+    expect(da.prompt).toContain("unanimous APPROVE");
+    // The per-member reasons must NOT appear -- blind review.
     for (const f of baseFindings) {
-      expect(da.prompt).toContain(f.role);
-      expect(da.prompt).toContain(f.reason);
+      expect(da.prompt).not.toContain(f.reason);
     }
   });
 });

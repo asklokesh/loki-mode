@@ -11,18 +11,20 @@
 //   - devils-advocate        (model=opus,   effort=xhigh)  -- conditional 4th
 //
 // The 3 base voters always run. The 4th (devils-advocate) is constructed via
-// buildDevilsAdvocateAgent and is intended as a SEPARATE conditional second
-// invocation when the first 3 reach unanimous APPROVE. The current Phase C
-// implementation does NOT auto-wire the 4th call -- it is exposed as a typed
-// primitive so a follow-up patch (or test) can drive it directly. The
-// existing councilEvaluate() devil's advocate is the deterministic
-// file-scan-based check at council.ts:293+; we are not replacing it here.
+// buildDevilsAdvocateAgent and is auto-wired as a SEPARATE conditional second
+// invocation when the first 3 reach unanimous APPROVE (council.ts fires it via
+// dispatchDevilsAdvocate, mirroring the bash trigger at
+// completion-council.sh:723). The DA is BLIND (it is not shown the base voters'
+// verdicts/reasoning). If the LLM DA dispatch fails, council.ts falls back to
+// the deterministic file-scan check (councilDevilsAdvocate) so anti-sycophancy
+// is never silently dropped and the loop never hangs.
 //
 // Public API:
 //   AgentSpec                              -- single voter declaration shape
 //   buildVoterAgentsJson(cec)              -> Record<slug, AgentSpec>  (3 base)
-//   buildDevilsAdvocateAgent(cec, base)    -> AgentSpec                (1 extra)
+//   buildDevilsAdvocateAgent(cec)          -> AgentSpec                (1 extra, blind)
 //   dispatchClaudeAgents(cec, runner?)     -> Promise<AgentVerdict[]>  (throws on failure)
+//   dispatchDevilsAdvocate(cec, runner?)   -> Promise<AgentVerdict>    (blind DA re-review)
 //
 // On any failure (claude missing, --agents unsupported, --json-schema
 // unsupported, parse error), dispatchClaudeAgents throws. The caller
@@ -153,20 +155,21 @@ export function buildVoterAgentsJson(cec: CouncilEvaluateContext): Record<string
   };
 }
 
-// Build the conditional 4th voter (anti-sycophancy). Caller supplies the
-// already-collected base findings so the prompt can quote them and push back.
-export function buildDevilsAdvocateAgent(
-  cec: CouncilEvaluateContext,
-  baseFindings: readonly AgentVerdict[],
-): AgentSpec {
+// Build the conditional 4th voter (anti-sycophancy).
+//
+// BLIND REVIEW (mirrors bash completion-council.sh:2090-2091, BUG-QG-009):
+// the devil's-advocate is deliberately NOT shown the base voters' member
+// verdicts/reasons. Leaking the prior votes into the contrarian's prompt
+// biases it toward agreement and defeats the anti-sycophancy purpose -- the
+// exact bug BUG-QG-009 fixed on the bash route. The DA is told only that the
+// council was unanimous APPROVE; it re-derives its own judgment by inspecting
+// the repo/evidence directly (it stays blind to the votes, not to the
+// evidence -- bash still feeds the evidence file). No `baseFindings` param:
+// the function never quotes them, so passing them would be misleading.
+export function buildDevilsAdvocateAgent(cec: CouncilEvaluateContext): AgentSpec {
   const iter = cec.iteration;
-  // Compact summary of the base findings -- one line each, capped per line.
-  const baseSummary = baseFindings
-    .map((f) => {
-      const reason = f.reason.length > 200 ? f.reason.slice(0, 200) + "..." : f.reason;
-      return `- ${f.role}: ${f.verdict} -- ${reason}`;
-    })
-    .join("\n");
+  const prdHint = readPrdHint(cec.ctx.prdPath);
+  const prdLine = prdHint.length > 0 ? `PRD hint: ${prdHint}` : "PRD: (none provided)";
 
   return {
     description: "Devil's advocate -- skeptical reviewer on unanimous APPROVE.",
@@ -174,13 +177,13 @@ export function buildDevilsAdvocateAgent(
     effort: "xhigh",
     prompt: [
       `You are the devils-advocate voter for iteration ${iter}.`,
-      "The base voters reached unanimous APPROVE. Your job is to push back.",
+      prdLine,
+      "The base council reached unanimous APPROVE. Your job is to push back.",
+      "You are NOT shown the base voters' verdicts or reasoning (blind review):",
+      "re-derive your own judgment from the evidence so you are not biased to agree.",
       "",
-      "Base findings under review:",
-      baseSummary,
-      "",
-      "Re-inspect the repo, queue files, test logs, and recent error events.",
-      "Vote REJECT when you find HIGH or CRITICAL signals the base voters missed.",
+      "Re-inspect the repo, queue files in .loki/queue/, test logs, and recent error events.",
+      "Vote REJECT when you find HIGH or CRITICAL signals the base voters may have missed.",
       "Vote APPROVE only when you genuinely cannot find a flaw -- be skeptical.",
       "Vote CANNOT_VALIDATE only when key evidence is unreachable.",
       commonSuffix(VOTER_SLUGS.DEVILS_ADVOCATE),
@@ -315,4 +318,93 @@ export async function dispatchClaudeAgents(
     }
   }
   return verdicts;
+}
+
+// dispatchDevilsAdvocate -- single-shot LLM anti-sycophancy re-review.
+//
+// Mirrors the bash council_devils_advocate provider call
+// (completion-council.sh:2074-2170): on a unanimous APPROVE, invoke ONE
+// contrarian reviewer (model=opus, effort=xhigh) and parse a single
+// schema-validated finding. The reviewer is BLIND to the base votes (see
+// buildDevilsAdvocateAgent / BUG-QG-009) and inspects the repo directly.
+//
+// Throws on any failure (claude missing, --agents/--json-schema unsupported,
+// non-zero exit, malformed/empty/multi response). The caller
+// (councilEvaluate) catches the throw and degrades to the deterministic
+// councilDevilsAdvocate scan -- it never upholds a unanimous APPROVE on a DA
+// dispatch failure (that would silently drop anti-sycophancy).
+//
+// Returns the contrarian AgentVerdict with role normalized to the underscore
+// form "devils_advocate" so the appended vote matches the deterministic-scan
+// role string used elsewhere on the council path.
+export async function dispatchDevilsAdvocate(
+  cec: CouncilEvaluateContext,
+  claudeRunner?: ClaudeRunner,
+): Promise<AgentVerdict> {
+  const runner = claudeRunner ?? defaultClaudeRunner;
+  const injected = claudeRunner !== undefined;
+
+  if (!injected) {
+    await ensureClaudeHelpCache();
+    if (!claudeFlagSupported("--agents")) {
+      throw new Error("claude CLI does not support --agents");
+    }
+    if (!claudeFlagSupported("--json-schema")) {
+      throw new Error("claude CLI does not support --json-schema");
+    }
+  }
+
+  const daAgent = buildDevilsAdvocateAgent(cec);
+  const agentsJson: Record<string, AgentSpec> = {
+    [VOTER_SLUGS.DEVILS_ADVOCATE]: daAgent,
+  };
+  const schemaPath = findingSchemaPath();
+
+  const topPrompt = [
+    `Iteration ${cec.iteration} anti-sycophancy re-review.`,
+    "The base council reached unanimous APPROVE. Dispatch the devils-advocate agent.",
+    "Return ONE JSON object with a 'findings' array containing exactly one entry.",
+    "The JSON must conform to the schema passed via --json-schema.",
+  ].join("\n");
+
+  // Same trust-gate hardening as dispatchClaudeAgents: voters never go through
+  // buildAutoFlags (no autonomy override that would bias toward APPROVE), and
+  // the tree-mutation guard / least-privilege allowlist apply identically.
+  const argv = [
+    "claude",
+    "--dangerously-skip-permissions",
+    "--agents",
+    JSON.stringify(agentsJson),
+    "--json-schema",
+    schemaPath,
+  ];
+  if (
+    process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&
+    claudeFlagSupported("--disallowedTools")
+  ) {
+    argv.push(
+      "--disallowedTools",
+      "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)",
+    );
+  }
+  argv.push(...reviewAllowlistArgv());
+  argv.push("-p", topPrompt);
+
+  const result = await runner(argv);
+  if (result.exitCode !== 0) {
+    throw new Error(`claude exited with code ${result.exitCode}`);
+  }
+  const verdicts = parseMultiResponse(result.stdout);
+  // Exactly one DA finding expected. Best-effort: prefer the devils-advocate
+  // slug, but accept the first finding if the model emitted a different role
+  // string (this is a single-voter dispatch, so any finding is the DA's). This
+  // is intentionally looser than dispatchClaudeAgents' strict missing-slug
+  // throw -- there is only one voter here, so a slug mismatch is not ambiguous.
+  const da = verdicts.find((v) => v.role === VOTER_SLUGS.DEVILS_ADVOCATE) ?? verdicts[0];
+  if (da === undefined) {
+    throw new Error("devil's advocate response contained no finding");
+  }
+  // Normalize role to the underscore form used by the deterministic scan so
+  // the appended council vote is consistent regardless of which path produced it.
+  return { ...da, role: "devils_advocate" };
 }

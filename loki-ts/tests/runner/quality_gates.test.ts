@@ -23,6 +23,7 @@ import {
   runDocQualityGate,
   runLSPDiagnostics,
   runMagicDebateGate,
+  runInvariants,
   runQualityGates,
   runSemanticTests,
   runStaticAnalysis,
@@ -59,6 +60,9 @@ const ENV_KEYS = [
   "LOKI_GATE_SEMANTIC_TESTS",
   "LOKI_STUB_GATE_SEMANTIC_TESTS",
   "LOKI_SEMANTIC_DETECTOR",
+  "LOKI_GATE_INVARIANTS",
+  "LOKI_STUB_GATE_INVARIANTS",
+  "LOKI_INVARIANT_DETECTOR",
 ];
 
 beforeEach(() => {
@@ -974,6 +978,161 @@ describe("runSemanticTests (P1-3 spawn-based gate)", () => {
     const r = await runSemanticTests(makeCtx());
     expect(r.passed).toBe(true);
     expect(existsSync(findingsFile())).toBe(false);
+  });
+});
+
+// --- runInvariants (P1-4 Bun mirror -- spawns the detector script) --------
+//
+// The invariant gate SPAWNS tests/detect-invariant-violations.sh with --strict
+// and maps the detector's exit code: rc 1 -> BLOCK, everything else
+// (0/124/absent/spawn-error/any-other) -> PASS. NOTE the exit-code contract
+// DIFFERS from runSemanticTests (which blocks on rc 2 under --block-high): the
+// invariant detector's --strict mode exits 1 on CRITICAL/HIGH and 0 otherwise
+// (tests/detect-invariant-violations.sh:347-353). To keep the unit tests
+// deterministic and hermetic we point LOKI_INVARIANT_DETECTOR at a tiny fixture
+// detector under `scratch` that exits with a chosen code, exercising the EXACT
+// exit-code mapping without coupling to the detector's heuristics. One
+// integration-flavored test runs the REAL detector against a planted secret to
+// prove the real script + the mapping fire together (non-vacuity).
+describe("runInvariants (P1-4 spawn-based gate)", () => {
+  function fakeDetector(code: number): string {
+    const p = join(scratch, `fake-invariant-detector-${code}.sh`);
+    writeFileSync(p, `#!/usr/bin/env bash\nexit ${code}\n`, { mode: 0o755 });
+    return p;
+  }
+
+  // Silence every other gate so the orchestration outcome isolates invariants.
+  function quietOtherGates(): void {
+    process.env["PHASE_STATIC_ANALYSIS"] = "false";
+    process.env["PHASE_UNIT_TESTS"] = "false";
+    process.env["LOKI_GATE_MOCK"] = "false";
+    process.env["LOKI_GATE_MUTATION"] = "false";
+    process.env["PHASE_CODE_REVIEW"] = "false";
+    process.env["LOKI_GATE_DOC_COVERAGE"] = "false";
+    process.env["LOKI_GATE_MAGIC_DEBATE"] = "false";
+  }
+
+  it("does not run when the gate is off (default) via runQualityGates", async () => {
+    // Default OFF: LOKI_GATE_INVARIANTS unset. Even with a detector that would
+    // BLOCK (rc 1), the orchestrator must never invoke it (zero cost).
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(1);
+    quietOtherGates();
+
+    const outcome = await runQualityGates(makeCtx());
+    expect(outcome.passed).not.toContain("invariants");
+    expect(outcome.failed).not.toContain("invariants");
+    expect(outcome.blocked).toBe(false);
+  });
+
+  it("runs and BLOCKS when on and the detector reports CRITICAL/HIGH (exit 1)", async () => {
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(1);
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("CRITICAL/HIGH");
+  });
+
+  it("passes when on and the detector is clean (exit 0)", async () => {
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(0);
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("no blocking violations");
+  });
+
+  it("passes (deny-filter) when on and the detector times out (exit 124)", async () => {
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(124);
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("timed out");
+  });
+
+  it("passes (deny-filter) when on and the detector exits with any other code", async () => {
+    // rc 2 is NOT the invariant block code (it is the semantic gate's). Under
+    // the invariant --strict contract only rc 1 blocks; rc 2 deny-filters.
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(2);
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("rc 2");
+  });
+
+  it("passes when the detector script is absent (never fabricates a verdict)", async () => {
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = join(scratch, "does-not-exist.sh");
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("detector not found");
+  });
+
+  it("BLOCKS through runQualityGates when on + violation (registered in sequence)", async () => {
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(1);
+    quietOtherGates();
+
+    const outcome = await runQualityGates(makeCtx());
+    expect(outcome.failed).toContain("invariants");
+    expect(outcome.blocked).toBe(true);
+  });
+
+  it("runs the REAL detector against ctx.cwd and BLOCKS on a planted secret (locks LOKI_SCAN_DIR + non-vacuity)", async () => {
+    // Integration-flavored: no LOKI_INVARIANT_DETECTOR override, so the gate
+    // spawns the real tests/detect-invariant-violations.sh. This proves BOTH
+    // the load-bearing LOKI_SCAN_DIR=ctx.cwd wiring (if the gate scanned its own
+    // SCRIPT_DIR/.. instead of ctx.cwd this fixture would be invisible) AND that
+    // the real script + the exit-code mapping fire together (non-vacuity). The
+    // fixture is a realistic AWS access key that deliberately dodges the
+    // detector's placeholder allowlist (NOT the AKIAIOSFODNN7EXAMPLE key).
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    const srcFile = join(scratch, "config.js");
+    writeFileSync(
+      srcFile,
+      [
+        "const aws = {",
+        '  region: "us-east-1",',
+        '  accessKeyId: "AKIA2J4K7LMNPQ6RSTUV",',
+        "};",
+        "module.exports = aws;",
+        "",
+      ].join("\n"),
+    );
+    // ctx.cwd === scratch (makeCtx default), passed as LOKI_SCAN_DIR so the real
+    // detector scans this temp dir only.
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("CRITICAL/HIGH");
+  });
+
+  it("runs the REAL detector against a clean ctx.cwd and PASSES (no false fire)", async () => {
+    // Non-false-fire proof: the real detector against a clean source tree must
+    // NOT block. Mirrors the planted-secret test but with secret-free source.
+    process.env["LOKI_GATE_INVARIANTS"] = "true";
+    const srcFile = join(scratch, "app.js");
+    writeFileSync(
+      srcFile,
+      [
+        "function add(a, b) {",
+        "  return a + b;",
+        "}",
+        "const apiKey = process.env.API_KEY;",
+        '  console.log("service started on port", 3000);',
+        "module.exports = { add };",
+        "",
+      ].join("\n"),
+    );
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("no blocking violations");
+  });
+
+  it("honors the LOKI_STUB_GATE_INVARIANTS escape hatch", async () => {
+    process.env["LOKI_STUB_GATE_INVARIANTS"] = "fail";
+    // Stub wins even with a clean detector.
+    process.env["LOKI_INVARIANT_DETECTOR"] = fakeDetector(0);
+    const r = await runInvariants(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("stub forced fail");
   });
 });
 

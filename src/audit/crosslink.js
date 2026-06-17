@@ -42,6 +42,8 @@ var { execFileSync } = require('child_process');
 var { AuditLog } = require('./log');
 
 var CROSSLINK_ACTION = 'audit_crosslink';
+var MANIFEST_LINK_ACTION = 'audit_manifest_link';
+var MANIFEST_FILE = 'loki-run.json';
 var WITNESS_FILE = 'witness.jsonl';
 var PY_GENESIS = '0'.repeat(64);
 
@@ -400,6 +402,185 @@ function verifyUnified(opts) {
   };
 }
 
+/**
+ * Resolve the path to the run manifest (bill-of-materials) written by
+ * autonomy/run.sh at <project>/.loki/loki-run.json. Override via
+ * opts.manifestPath for tests / non-standard layouts (mirrors the
+ * explicit-override idiom used by witnessFile / dashboardAuditDir).
+ */
+function defaultManifestPath(opts) {
+  opts = opts || {};
+  if (opts.manifestPath) return opts.manifestPath;
+  return path.join((opts.projectDir || process.cwd()), '.loki', MANIFEST_FILE);
+}
+
+/**
+ * Hash the manifest exactly as run.sh's _loki_sha256 does: sha256 over the
+ * raw file BYTES. We deliberately do NOT JSON.parse-then-re-stringify
+ * (that would diverge from the on-disk bytes run.sh hashes and be fragile
+ * to formatting). We additionally best-effort parse the bytes only to lift
+ * the manifest `schema` field into anchor metadata; a malformed manifest
+ * still hashes its bytes and records schema:null rather than aborting.
+ *
+ * @returns {object} { present, sha256, schema } -- present:false when the
+ *   file is absent (no fabricated hash).
+ */
+function hashManifest(manifestPath) {
+  if (!manifestPath || !fs.existsSync(manifestPath)) {
+    return { present: false, sha256: null, schema: null };
+  }
+  var buf = fs.readFileSync(manifestPath);
+  var sha = crypto.createHash('sha256').update(buf).digest('hex');
+  var schema = null;
+  try {
+    var parsed = JSON.parse(buf.toString('utf8'));
+    if (parsed && typeof parsed.schema === 'string') schema = parsed.schema;
+  } catch (_) { /* malformed manifest: hash bytes anyway, schema stays null */ }
+  return { present: true, sha256: sha, schema: schema };
+}
+
+/**
+ * Link the run manifest (loki-run.json, the build bill-of-materials) into
+ * the agent audit chain so the manifest becomes tamper-evident and
+ * verifiable against the evidence chain.
+ *
+ * The manifest already embeds sha256 hashes of the evidence files
+ * (test_results, coverage, ...) computed by run.sh. By recording the
+ * manifest's OWN byte-hash as an `audit_manifest_link` entry, the anchor
+ * is protected by the agent chain's hash linkage, and the evidence hashes
+ * inside the manifest become transitively tamper-evident (mutating the
+ * manifest to point at different evidence changes its byte-hash, which no
+ * longer matches the anchored hash; mutating the anchor breaks chain
+ * verification). We hash the manifest itself only -- we do NOT re-hash the
+ * evidence files here (run.sh already did, and the manifest pins them).
+ *
+ * HONEST behavior:
+ *   - Manifest absent  -> no-op, returns { linked:false, present:false }.
+ *     No fabricated link is recorded.
+ *   - Manifest present -> hash recorded as an anchor; returns
+ *     { linked:true, present:true, anchor, manifestSha256, ... }.
+ *
+ * Note: this records tamper-EVIDENCE (in-place edits are detected), not
+ * tamper-PROOF against a full downstream chain rewrite -- that is what
+ * writeWitness (external witness) is for.
+ *
+ * NOT auto-invoked from run.sh in this wave (integration is the run.sh
+ * owner's territory). Intended call site: after run.sh writes
+ * .loki/loki-run.json in build_completion_summary (autonomy/run.sh ~2895,
+ * just after os.replace(tmp, out)), call
+ *   node -e "require('./src/audit').linkManifest({projectDir:'<dir>'})"
+ * (or the JS API audit.linkManifest()) on every terminal path.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.projectDir]   project dir for the agent log + manifest
+ * @param {string} [opts.logDir]       explicit agent log dir (tests)
+ * @param {string} [opts.manifestPath] explicit manifest path (tests)
+ * @param {string} [opts.who]          actor recorded on the anchor
+ * @returns {object}
+ */
+function linkManifest(opts) {
+  opts = opts || {};
+  var manifestPath = defaultManifestPath(opts);
+  var h = hashManifest(manifestPath);
+  if (!h.present) {
+    return {
+      linked: false, present: false, manifestPath: manifestPath,
+      reason: 'run manifest absent (no-op)',
+    };
+  }
+  var log = new AuditLog(opts);
+  var anchor = log.record({
+    who: opts.who || 'audit-manifest-link',
+    what: MANIFEST_LINK_ACTION,
+    where: manifestPath,
+    why: 'link run manifest (bill-of-materials) into agent audit chain',
+    metadata: {
+      manifestPath: manifestPath,
+      manifestSha256: h.sha256,
+      manifestSchema: h.schema,
+    },
+  });
+  log.flush();
+  log.destroy();
+  return {
+    linked: true, present: true, manifestPath: manifestPath,
+    manifestSha256: h.sha256, manifestSchema: h.schema, anchor: anchor,
+  };
+}
+
+/**
+ * Verify the run-manifest link against the evidence chain.
+ *
+ * Composes TWO checks (mirroring verifyUnified rather than a bare disk-vs
+ * -recorded compare):
+ *   1. Agent chain integrity (AuditLog.verifyChain()). This catches an
+ *      edit to the ANCHOR entry itself (e.g. someone rewrites the recorded
+ *      manifestSha256), not just an edit to the manifest file.
+ *   2. Manifest reconciliation: re-hash the on-disk manifest and require
+ *      it to equal the hash recorded by the MOST RECENT manifest-link
+ *      anchor. A mutated manifest no longer matches -> tamper detected.
+ *
+ * HONEST empty cases (distinguishable from a real pass via `present`):
+ *   - No anchor recorded yet -> { present:false, valid:true, reason:... }.
+ *   - Anchor exists but the manifest file is now gone -> manifest.valid
+ *     is false (the pinned manifest is missing/cannot be reconciled).
+ *
+ * @param {object} [opts] projectDir / logDir / manifestPath as linkManifest.
+ * @returns {object} { valid, present, chain, manifest }
+ */
+function verifyManifestLink(opts) {
+  opts = opts || {};
+  var manifestPath = defaultManifestPath(opts);
+
+  var log = new AuditLog(opts);
+  var chain = log.verifyChain();
+  var entries = log.readEntries();
+  log.destroy();
+
+  var anchors = entries.filter(function (e) {
+    return e.what === MANIFEST_LINK_ACTION;
+  });
+
+  if (anchors.length === 0) {
+    return {
+      valid: !!chain.valid, present: false, chain: chain,
+      manifest: { present: false, valid: true, reason: 'no manifest-link anchor recorded' },
+    };
+  }
+
+  // Most recent anchor pins the current manifest state.
+  var anchor = anchors[anchors.length - 1];
+  var pinned = (anchor.metadata && anchor.metadata.manifestSha256) || null;
+
+  var current = hashManifest(manifestPath);
+  var manifest = {
+    present: true,
+    valid: true,
+    manifestPath: manifestPath,
+    pinnedSha256: pinned,
+    currentSha256: current.sha256,
+    anchorSeq: anchor.seq,
+    error: null,
+  };
+
+  if (!current.present) {
+    manifest.valid = false;
+    manifest.error = 'manifest pinned by anchor seq ' + anchor.seq +
+      ' is missing on disk';
+  } else if (current.sha256 !== pinned) {
+    manifest.valid = false;
+    manifest.error = 'manifest hash mismatch at anchor seq ' + anchor.seq +
+      ' (manifest tampered after linking)';
+  }
+
+  return {
+    valid: !!chain.valid && manifest.valid,
+    present: true,
+    chain: chain,
+    manifest: manifest,
+  };
+}
+
 module.exports = {
   crossLink: crossLink,
   verifyUnified: verifyUnified,
@@ -409,5 +590,10 @@ module.exports = {
   agentChainTip: agentChainTip,
   unifiedRoot: unifiedRoot,
   defaultDashboardAuditDir: defaultDashboardAuditDir,
+  linkManifest: linkManifest,
+  verifyManifestLink: verifyManifestLink,
+  hashManifest: hashManifest,
+  defaultManifestPath: defaultManifestPath,
   CROSSLINK_ACTION: CROSSLINK_ACTION,
+  MANIFEST_LINK_ACTION: MANIFEST_LINK_ACTION,
 };

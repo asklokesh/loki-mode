@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.55.0] - 2026-06-16
+
+### Verification depth: invariant gate + anti-sycophancy parity + manifest tamper-evidence
+
+- **Invariant/property gate wired on both routes**: `tests/detect-invariant-violations.sh`
+  (property/metamorphic checks: idempotency, round-trip, no-secrets-in-output)
+  existed but was never invoked (inert). It is now an opt-in gate via
+  `LOKI_GATE_INVARIANTS` (default off), wired on the bash route
+  (`autonomy/run.sh` enforce_invariant_integrity) and the Bun route
+  (`loki-ts/src/runner/quality_gates.ts` runInvariants) with byte-identical
+  semantics: CRITICAL/HIGH (detector exit 1 under --strict) blocks; clean,
+  timeout, absent, or any other result never fires (deny-filtered); default-off
+  means the detector is not invoked.
+- **Bun devil's-advocate auto-wired (anti-sycophancy parity)**: the Bun council
+  had a built-but-uncalled devil's-advocate voter, so a Bun-route completion
+  council lacked the anti-sycophancy re-review the bash council performs. It now
+  fires automatically on a unanimous APPROVE (mirroring the bash trigger), as a
+  blind review (not shown the base voters' verdicts), and folds in conservatively
+  (only a clean APPROVE upholds; REJECT/CANNOT_VALIDATE flips to CONTINUE). If the
+  LLM dispatch fails it falls back to the deterministic file-scan check, so it
+  never hangs and never silently drops scrutiny.
+- **Run-manifest tamper-evidence (additive)** (`src/audit`): `linkManifest` /
+  `verifyManifestLink` hash the run manifest (`loki-run.json`) and record it into
+  the unified audit chain so the build bill-of-materials becomes tamper-evident
+  and verifiable against the evidence chain. Honest no-op when the manifest is
+  absent; verification fails if the manifest is tampered after recording. Ships
+  as a tested API; not yet auto-invoked (documented).
+
+Gates: local-ci 83/83, bash/Bun parity 6/6 (LOKI_GATE_INVARIANTS now a genuine
+shared toggle, no allow-list exception), 595 Bun tests + 75 audit tests + full
+pytest green, 3-reviewer council unanimous APPROVE.
+
 ## [7.54.0] - 2026-06-16
 
 ### Tech-debt elimination + provider honesty + regression hardening
