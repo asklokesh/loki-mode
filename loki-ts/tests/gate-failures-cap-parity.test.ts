@@ -44,6 +44,35 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
     }
   });
 
+  it("doctor per-provider install hint goes to STDERR (parity with bash, invisible to stdout-only gate)", () => {
+    // Regression lock for v7.63.1: the install hint must be on STDERR, matching
+    // bash run.sh doctor_check_provider (`>&2`). The canonical bun-parity gate
+    // captures STDOUT only (`>out 2>/dev/null`), so a stdout hint appears on the
+    // Bun route but not bash and breaks parity (this exact bug shipped in v7.63.0
+    // and went red on GH Bun Parity). Assert: with all providers absent, the
+    // Bun route's STDOUT contains NO "Install: npm install -g" provider hint.
+    const repoRoot = join(import.meta.dir, "..", "..");
+    // doctor exits non-zero when providers are missing; execFileSync throws on a
+    // non-zero exit but still populates err.stdout. Capture stdout either way
+    // (mirror the gate's `>out 2>/dev/null` -- stdout only).
+    let out: string;
+    try {
+      out = execFileSync("bash", [join(repoRoot, "bin", "loki"), "doctor"], {
+        env: { ...process.env, PATH: "/usr/bin:/bin" },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString();
+    } catch (err: unknown) {
+      out = String((err as { stdout?: Buffer | string }).stdout ?? "");
+    }
+    // The "No AI provider" fallback hint (a single always-shown line) is allowed
+    // on stdout; the PER-PROVIDER hints under each WARN must NOT be. Distinguish by
+    // counting: bash stdout has at most ONE "Install:" line (the fallback), never
+    // four (one per absent provider).
+    const installLines = out.split("\n").filter((l) => l.includes("Install:"));
+    expect(installLines.length).toBeLessThanOrEqual(1);
+  });
+
   it("sub-cap files are returned whole on both routes", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-gfcap-"));
     try {

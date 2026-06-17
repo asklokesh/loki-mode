@@ -486,11 +486,13 @@ async function runText(): Promise<number> {
   process.stdout.write(`${CYAN}AI Providers:${NC}\n`);
   const providerCmds = ["claude", "codex", "cline", "aider"];
   // Per-provider install hint, byte-matching the bash route's
-  // doctor_provider_install_cmd (autonomy/loki). Emitted on the SAME stream as
-  // the provider WARN line so the WARN-then-Install order is stable under the
-  // parity harness's 2>&1 capture (the bash route routes its hint to stderr,
-  // which the harness merges into stdout; emitting here on stdout keeps both
-  // routes byte-identical when an optional provider is absent).
+  // doctor_provider_install_cmd (autonomy/loki:8128). The bash route writes this
+  // hint to STDERR (run.sh doctor_check_provider, `>&2`), so it must go to STDERR
+  // here too: the canonical bun-parity gate (.github/workflows/bun-parity.yml)
+  // captures STDOUT only (`>out 2>/dev/null`), so a stdout hint would appear on
+  // the Bun route but not bash and break parity. On stderr it is invisible to the
+  // stdout-only gate AND aligned under local-ci's 2>&1 capture. The user still
+  // sees the hint (stderr is shown on a real terminal).
   const providerInstall: Record<string, string> = {
     claude: "npm install -g @anthropic-ai/claude-code",
     codex: "npm install -g @openai/codex",
@@ -502,7 +504,7 @@ async function runText(): Promise<number> {
     const c = byCmd.get(cmd)!;
     process.stdout.write(formatToolLine(c) + "\n");
     if (!c.found && providerInstall[cmd]) {
-      process.stdout.write(`         ${YELLOW}Install: ${providerInstall[cmd]}${NC}\n`);
+      process.stderr.write(`         ${YELLOW}Install: ${providerInstall[cmd]}${NC}\n`);
     }
     bump(tally, c.status);
     if (c.found) anyProvider = true;

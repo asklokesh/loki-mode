@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.63.1] - 2026-06-17
+
+### Hotfix: doctor install-hint bash/Bun parity (GH Bun Parity went red on v7.63.0)
+
+v7.63.0 added the per-provider doctor install hint on the Bun route's STDOUT to
+match bash. That matched the local-ci parity harness (which captures 2>&1) but
+broke the canonical GH bun-parity gate, which captures STDOUT only
+(`>out 2>/dev/null`): the bash route emits the hint to STDERR, so on a runner
+with all providers absent the Bun route showed four extra stdout lines and the
+gate went red. Fix: emit the hint on STDERR (matching bash run.sh `>&2`), so it
+is invisible to the stdout-only gate and aligned under 2>&1. Added a regression
+test that captures stdout only (mirroring the gate) and asserts the Bun route
+emits no per-provider Install line on stdout. Verified parity under BOTH capture
+modes (stdout-only and 2>&1).
+
 ## [7.63.0] - 2026-06-17
 
 ### PRD-reuse on rerun + Docker UX (features) plus wave-4 crash/data fixes
