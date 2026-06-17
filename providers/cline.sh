@@ -111,7 +111,11 @@ provider_invoke() {
     local model="${LOKI_CLINE_MODEL:-}"
     local model_args=()
     [[ -n "$model" ]] && model_args=("-m" "$model")
-    cline -y "${model_args[@]}" "$prompt" "$@" 2>&1
+    # Guard the model_args array expansion: when LOKI_CLINE_MODEL is unset the
+    # array is empty, and a bare "${arr[@]}" under `set -u` aborts with "unbound
+    # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
+    # nothing when empty and preserves spaced elements otherwise.
+    cline -y "${model_args[@]+"${model_args[@]}"}" "$prompt" "$@" 2>&1
 }
 
 # Model tier to parameter (Cline uses single model, returns model name)

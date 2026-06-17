@@ -31,6 +31,10 @@ import {
   selectReviewers,
   isHealingActive,
   trackGateFailure,
+  resolveDefaultReviewer,
+  claudeReviewer,
+  stubReviewer,
+  REVIEWER_UNAVAILABLE_MARKER,
 } from "../../src/runner/quality_gates.ts";
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -1471,6 +1475,95 @@ describe("runCodeReview (Phase 5 selection + dispatch + aggregation)", () => {
     );
     expect(txt).toContain("[Critical]");
     expect(txt).toContain("provider down");
+  });
+});
+
+// --- runCodeReview reviewer-dispatch honesty (B5) -------------------------
+//
+// The production default reviewer must be the REAL claude dispatcher when the
+// CLI is present, and an HONEST non-passing UNAVAILABLE result when it is not --
+// never the always-PASS stub. These tests pin that contract so the Bun route can
+// never silently report a verified review that did not happen.
+
+describe("runCodeReview reviewer-dispatch honesty (B5)", () => {
+  function reviewDirs(): string[] {
+    const root = join(scratch, "quality", "reviews");
+    if (!existsSync(root)) return [];
+    return readdirSync(root);
+  }
+
+  it("stubReviewer is NOT the production default (always-PASS stub is test-only)", async () => {
+    // With claude absent, resolveDefaultReviewer must NOT hand back stubReviewer.
+    const prevPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const resolved = await resolveDefaultReviewer();
+      expect(resolved.available).toBe(false);
+      expect(resolved.reviewer).not.toBe(stubReviewer);
+      const out = await resolved.reviewer({
+        reviewer: { name: "x", focus: "f", checks: "c" },
+        diff: "+ const a = 1;\n",
+        files: "src/a.ts\n",
+        prompt: "p",
+      });
+      // The unavailable reviewer must NOT emit a PASS verdict.
+      expect(out).toContain(REVIEWER_UNAVAILABLE_MARKER);
+      expect(out).not.toContain("VERDICT: PASS");
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+    }
+  });
+
+  it("resolves the real claudeReviewer when the claude CLI is on PATH", async () => {
+    // Stand up a fake `claude` on a temp PATH so commandExists resolves it
+    // WITHOUT ever invoking it (resolveDefaultReviewer only probes presence).
+    const binDir = mkdtempSync(join(tmpdir(), "loki-fakebin-"));
+    const fake = join(binDir, "claude");
+    writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${binDir}:/usr/bin:/bin`;
+    try {
+      const resolved = await resolveDefaultReviewer();
+      expect(resolved.available).toBe(true);
+      expect(resolved.reviewer).toBe(claudeReviewer);
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runCodeReview reports honest UNAVAILABLE (not a PASS) when no reviewer CLI exists", async () => {
+    const logged: string[] = [];
+    const prevPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      // No opts.reviewer injected -> production resolution path is exercised.
+      const r = await runCodeReview(makeCtx({ log: (l) => logged.push(l) }), {
+        diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },
+      });
+      // Non-blocking (does not hard-stop a user without claude) but the detail
+      // must say UNAVAILABLE, never claim a passing review.
+      expect(r.passed).toBe(true);
+      expect(r.detail ?? "").toContain("UNAVAILABLE");
+      expect(r.detail ?? "").toContain("no real review performed");
+      expect(r.detail ?? "").not.toContain("pass,");
+      // The operator-facing warning must have fired (non-silent).
+      expect(logged.some((l) => l.includes("no reviewer CLI"))).toBe(true);
+      // Honesty short-circuit: the Devil's-Advocate must NOT run on an
+      // unavailable review (no fake adversarial pass).
+      const dirs = reviewDirs();
+      expect(dirs.length).toBe(1);
+      const dir = join(scratch, "quality", "reviews", dirs[0]!);
+      expect(existsSync(join(dir, "devils-advocate.txt"))).toBe(false);
+      // Per-reviewer files carry the UNAVAILABLE marker for an auditor.
+      const txt = readFileSync(join(dir, "architecture-strategist.txt"), "utf-8");
+      expect(txt).toContain(REVIEWER_UNAVAILABLE_MARKER);
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+    }
   });
 });
 

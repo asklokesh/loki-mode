@@ -161,3 +161,88 @@ def test_cleanup_old_skips_non_dict_entries(engine):
     # raise while iterating the junk-laden patterns to collect referenced ids.
     removed = engine.cleanup_old(days=30)
     assert removed == 0
+
+
+# ---------------------------------------------------------------------------
+# BUG 3: index.json missing the "topics" key must not crash store_pattern
+# ---------------------------------------------------------------------------
+#
+# ``_update_index_with_pattern`` indexed ``index["topics"]`` directly. The
+# ``or {...}`` default only fires when the WHOLE file is falsy, so an index.json
+# that is valid JSON but lacks the ``topics`` key (older/partial writer, or a
+# hand edit) raised ``KeyError: 'topics'`` and aborted ``store_pattern``,
+# losing the index update. The sibling ``_update_index_with_episode`` already
+# guarded this with ``setdefault``; this aligns the pattern path.
+
+
+def test_store_pattern_with_topicless_index_does_not_crash(engine):
+    """store_pattern survives an index.json that omits the 'topics' key."""
+    from memory.schemas import SemanticPattern
+
+    engine.initialize()
+    # Simulate a partial / older index.json: valid JSON, no 'topics' key.
+    engine.storage.write_json(
+        "index.json",
+        {"version": "1.1.0", "total_memories": 0},  # deliberately no 'topics'
+    )
+
+    pattern = SemanticPattern(
+        id="pat-topicless-1",
+        pattern="always write a regression test",
+        category="testing",
+        confidence=0.9,
+    )
+    # Pre-fix this raised KeyError('topics'); post-fix it must complete.
+    engine.store_pattern(pattern)
+
+    index = engine.storage.read_json("index.json") or {}
+    # The topic for the pattern's category must now be present.
+    topic = _topic(index, "testing")
+    assert topic is not None, "topic was not created in a topicless index"
+    assert topic["id"] == "testing"
+
+
+# ---------------------------------------------------------------------------
+# BUG 4: one corrupt episode timestamp must not crash the whole recent-scan
+# ---------------------------------------------------------------------------
+#
+# ``_dict_to_episode`` called ``datetime.fromisoformat`` with no guard. A single
+# episode file with a non-ISO ``timestamp`` value raised ``ValueError`` that
+# propagated out of ``get_recent_episodes`` (and therefore ``retrieve_relevant``
+# on the RARV hot path), so one corrupt file blinded the engine to every other
+# valid episode in the same scan. The parse is now best-effort per episode.
+
+
+def test_recent_episodes_survives_one_corrupt_timestamp(engine):
+    """A single unparseable timestamp does not abort the recent-episodes scan."""
+    import json
+    from datetime import datetime, timezone
+
+    engine.initialize()
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    epdir = Path(engine.base_path) / "episodic" / day
+    epdir.mkdir(parents=True, exist_ok=True)
+
+    # One corrupt episode (bad timestamp) and one valid episode.
+    (epdir / "task-ep-corrupt.json").write_text(
+        json.dumps({"id": "ep-corrupt", "timestamp": "not-a-timestamp", "context": {}})
+    )
+    (epdir / "task-ep-valid.json").write_text(
+        json.dumps(
+            {"id": "ep-valid", "timestamp": "2026-06-15T10:00:00Z",
+             "context": {"goal": "real work"}}
+        )
+    )
+
+    # Pre-fix this raised ValueError before returning anything; post-fix BOTH
+    # episodes come back (the corrupt one with a fallback timestamp).
+    episodes = engine.get_recent_episodes(limit=10)
+    ids = {ep.id for ep in episodes}
+    assert ids == {"ep-corrupt", "ep-valid"}, (
+        f"corrupt timestamp dropped valid episodes; got {sorted(ids)}"
+    )
+    # The corrupt episode's timestamp was replaced with a valid datetime, not
+    # left as a raw string, so downstream sorting/serialization stays sound.
+    corrupt = next(ep for ep in episodes if ep.id == "ep-corrupt")
+    assert isinstance(corrupt.timestamp, datetime)
+    assert corrupt.timestamp.tzinfo is not None

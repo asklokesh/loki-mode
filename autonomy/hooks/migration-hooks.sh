@@ -137,6 +137,35 @@ is_no_test_cmd() {
     [[ "${1:-}" == "__LOKI_NO_TEST_CMD__" ]]
 }
 
+# Resolve the directory used to store pre-edit snapshots for the migration
+# (non-healing) hooks. Prefers LOKI_MIGRATION_DIR; falls back to a per-codebase
+# .loki/migration dir so the snapshot/revert pair works even when no migration
+# dir was exported. Echoes the resolved directory.
+_migration_snapshot_dir() {
+    local codebase_path="${LOKI_CODEBASE_PATH:-.}"
+    local migration_dir="${LOKI_MIGRATION_DIR:-}"
+    if [[ -n "$migration_dir" ]]; then
+        printf '%s' "$migration_dir"
+    else
+        printf '%s' "${codebase_path}/.loki/migration"
+    fi
+}
+
+# Hook: pre_file_edit - runs BEFORE ANY agent modifies a source file.
+# Captures a pre-edit snapshot so post_file_edit can revert ONLY the edit on
+# test failure (instead of a blanket `git checkout` that nukes unrelated
+# uncommitted changes and silently no-ops for untracked files). Mirrors the
+# pairing contract of hook_pre_healing_modify / hook_post_healing_modify.
+hook_pre_file_edit() {
+    local file_path="${1:-}"
+    [[ "${HOOK_POST_FILE_EDIT_ENABLED:-true}" != "true" ]] && return 0
+    [[ -z "$file_path" ]] && return 0
+    local snap_base
+    snap_base=$(_migration_snapshot_dir)
+    _heal_snapshot_save "$snap_base" "$file_path"
+    return 0
+}
+
 # Hook: post_file_edit - runs after ANY agent modifies a source file
 hook_post_file_edit() {
     local file_path="${1:-}"
@@ -165,9 +194,15 @@ hook_post_file_edit() {
 
         case "${HOOK_POST_FILE_EDIT_ON_FAILURE}" in
             block_and_rollback)
-                # Revert the file change
-                git -C "$codebase_path" checkout -- "$file_path" 2>/dev/null || true
-                echo "HOOK_BLOCKED: Tests failed after editing ${file_path}. Change reverted."
+                # Revert ONLY the edit using the pre-edit snapshot captured by
+                # hook_pre_file_edit. Do NOT use `git checkout -- "$file_path"`:
+                # that discards ALL uncommitted changes to the file (not just
+                # this edit) and silently no-ops for an untracked file while
+                # still claiming the change was reverted. Report what happened.
+                local snap_base revert_msg
+                snap_base=$(_migration_snapshot_dir)
+                revert_msg=$(_heal_snapshot_restore "$snap_base" "$file_path") || true
+                echo "HOOK_BLOCKED: Tests failed after editing ${file_path}. ${revert_msg}"
                 echo "Test output: ${test_output}"
                 return 1
                 ;;
@@ -433,7 +468,7 @@ _heal_snapshot_restore() {
         # Pre-edit content snapshot exists: restore exactly that content, which
         # preserves any unrelated uncommitted changes present before the edit.
         if cp "$snap" "$file_path" 2>/dev/null; then
-            echo "Healing edit reverted to pre-edit snapshot."
+            echo "Edit reverted to pre-edit snapshot."
             return 0
         fi
         echo "Could not restore pre-edit snapshot for ${file_path}; file left as-is."
@@ -441,17 +476,17 @@ _heal_snapshot_restore() {
     fi
 
     if [[ -f "$snap.absent" ]]; then
-        # File did not exist pre-edit: the healing edit created it. Remove only
-        # that file, not unrelated state.
+        # File did not exist pre-edit: the edit created it. Remove only that
+        # file, not unrelated state.
         if [[ ! -e "$file_path" ]]; then
-            echo "Healing-added file ${file_path} no longer present; nothing to remove."
+            echo "Added file ${file_path} no longer present; nothing to remove."
             return 0
         fi
         if rm -f "$file_path" 2>/dev/null; then
-            echo "Healing-added file ${file_path} removed."
+            echo "Added file ${file_path} removed."
             return 0
         fi
-        echo "Could not remove healing-added file ${file_path}; file left as-is."
+        echo "Could not remove added file ${file_path}; file left as-is."
         return 1
     fi
 

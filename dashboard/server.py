@@ -6867,6 +6867,23 @@ def _resolve_process_state(pid: Optional[int], last_status: str = "",
                 started_dt = started_dt.replace(tzinfo=timezone.utc)
         except (ValueError, AttributeError):
             pass
+
+    # PID-reuse guard. os.kill(pid, 0) only proves *some* process owns this
+    # numeric pid -- not that it is OUR process. After our process exits the OS
+    # can recycle its pid for an unrelated program, and a bare existence probe
+    # would then report that stranger as our live run forever. Cross-check the
+    # live pid's real OS start time against the recorded `started` reference: a
+    # genuine process was launched at or before we recorded it, so a live pid
+    # whose start time is comfortably AFTER the reference must be a recycled pid
+    # belonging to someone else. Only downgrade on positive evidence (start time
+    # readable AND reference parseable); if either is missing we keep the prior
+    # best-effort behavior rather than guess, biasing against false downgrades.
+    if pid_alive and started_dt is not None:
+        pid_start = _pid_start_time(pid)
+        if pid_start is not None:
+            reference_epoch = started_dt.timestamp()
+            if pid_start > reference_epoch + _APP_RUNNER_PID_RECYCLE_MARGIN_SECONDS:
+                pid_alive = False
     if heartbeat:
         try:
             heartbeat_dt = datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
@@ -7805,6 +7822,30 @@ def _compose_service_labels(svc):
     return {}
 
 
+def _pick_web_port(ports):
+    """From a service's published host ports, pick the one most likely to be HTTP.
+
+    A single service can publish several host ports (e.g. a Spring Boot app that
+    exposes 8080 for HTTP and 8081 for the actuator/management endpoint, or a
+    stack that maps both a debug and a web port). Blindly taking ports[0] is
+    order-dependent and can surface the management/debug port instead of the
+    reachable web URL. Prefer the first port that appears in
+    _COMPOSE_COMMON_WEB_PORTS precedence order (so 8080 wins over a non-common
+    8081), and only fall back to ports[0] when none is a recognized web port.
+
+    This is why Spring Boot's 8080-over-8081 case resolves correctly without
+    parsing application.properties / server.port: the runtime published host
+    port (from compose ps Publishers) is matched against the known web-port
+    family. Returns a port string, or None if ports is empty. Never raises.
+    """
+    if not ports:
+        return None
+    for cp in _COMPOSE_COMMON_WEB_PORTS:
+        if cp in ports:
+            return cp
+    return ports[0]
+
+
 def _identify_compose_web_service(config_services, running_by_service):
     """Pick the primary web service and its published host port.
 
@@ -7817,6 +7858,12 @@ def _identify_compose_web_service(config_services, running_by_service):
     published port comes from the matching RUNNING container (compose ps), since
     only running, published containers can yield a real URL. Returns
     (service_name, port_str) or (None, None). Never raises.
+
+    When a chosen service publishes MULTIPLE host ports, _pick_web_port selects
+    the HTTP one (common web port over a management/debug port) rather than the
+    arbitrary first-listed port -- so a Spring Boot service exposing 8080+8081
+    surfaces 8080, and a stack whose web service is not first in the compose file
+    is still resolved by name (rule 2) or by common-port match (rule 3).
 
     config_services: dict {service_name: service_config_dict} (may be empty).
     running_by_service: dict {service_name: [published_port_str, ...]} for
@@ -7832,26 +7879,30 @@ def _identify_compose_web_service(config_services, running_by_service):
         labels = _compose_service_labels(svc)
         if str(labels.get("loki.primary", "")).lower() == "true":
             ports = running_by_service.get(name)
-            if ports:
-                return (name, ports[0])
+            picked = _pick_web_port(ports)
+            if picked:
+                return (name, picked)
 
     # (2) service named web/app
     for cand in ("web", "app"):
         ports = running_by_service.get(cand)
-        if ports:
-            return (cand, ports[0])
+        picked = _pick_web_port(ports)
+        if picked:
+            return (cand, picked)
 
-    # (3) service publishing a common web port
+    # (3) service publishing a common web port. Iterate services in sorted order
+    # so selection is deterministic when more than one service is a candidate.
     for cp in _COMPOSE_COMMON_WEB_PORTS:
-        for name, ports in running_by_service.items():
-            if cp in ports:
+        for name in sorted(running_by_service.keys()):
+            if cp in running_by_service[name]:
                 return (name, cp)
 
-    # (4) first running service with any published port. Sort for determinism.
+    # (4) first running service with any published port. Sort for determinism;
+    # pick that service's HTTP-most port (not necessarily its first-listed one).
     for name in sorted(running_by_service.keys()):
-        ports = running_by_service[name]
-        if ports:
-            return (name, ports[0])
+        picked = _pick_web_port(running_by_service[name])
+        if picked:
+            return (name, picked)
 
     return (None, None)
 

@@ -1715,6 +1715,13 @@ async def loki_code_search(
 
     collection = _get_chroma_collection()
     if collection is None:
+        # Emit 'complete' to balance the 'start' above. Without this the
+        # per-tool start-time stack in _tool_call_start_times leaks one entry
+        # per call (and ChromaDB-unavailable is the common default path), and
+        # a later successful call would pop a stale start time, producing a
+        # wildly wrong execution_time_ms learning signal.
+        _emit_tool_event_async('loki_code_search', 'complete',
+                               result_status='error', error='ChromaDB not available')
         return json.dumps({
             "error": "ChromaDB not available. Start it with: docker start loki-chroma",
             "hint": "Re-index with: python3.12 tools/index-codebase.py --reset"
@@ -2188,12 +2195,27 @@ async def loki_get_co_changes(
         with safe_open(co_changes_path, 'r') as f:
             pairs = json.load(f)
 
-        # Filter pairs involving the requested file
+        # Filter pairs involving the requested file. The co-changes.json
+        # producer lives outside this repo, so treat its shape as an external
+        # contract: skip malformed entries (not a 2-element pair) instead of
+        # letting one bad row raise and abort the whole tool, and skip
+        # self-pairs (a file is not its own co-change partner) which would
+        # otherwise report file_path against itself.
         results = []
-        for pair_files, count in pairs:
-            if file_path in pair_files:
-                partner = pair_files[0] if pair_files[1] == file_path else pair_files[1]
-                results.append({"partner": partner, "co_changes": count})
+        for entry in pairs:
+            try:
+                pair_files, count = entry
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(pair_files, (list, tuple)) or len(pair_files) != 2:
+                continue
+            a, b = pair_files[0], pair_files[1]
+            if a == b:
+                continue
+            if a == file_path:
+                results.append({"partner": b, "co_changes": count})
+            elif b == file_path:
+                results.append({"partner": a, "co_changes": count})
 
         # Sort by co-change count descending
         results.sort(key=lambda x: x["co_changes"], reverse=True)

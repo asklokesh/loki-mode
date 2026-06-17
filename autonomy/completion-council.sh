@@ -566,8 +566,14 @@ print(str(rc) + ' ' + json.dumps(new_state))
 #     conservative outcome (REJECT / re-iterate).
 _council_parse_vote() {
     local raw="$1"
-    # markdown/whitespace/quote class allowed around the keyword and colon
-    local _pat='[*_> [:space:]]*VOTE[*_ [:space:]]*:[*_> [:space:]]*(APPROVE|REJECT|CANNOT_VALIDATE)([^A-Za-z0-9_]|$)'
+    # markdown/whitespace/quote class allowed around the keyword and colon.
+    # The leading (^|[^A-Za-z0-9_]) anchor is a LEFT word boundary on VOTE so a
+    # VOTE-suffixed token ("REVOTE: APPROVE", "PROVOTE: REJECT") is NOT parsed as
+    # a canonical vote (it previously matched because the keyword had no left
+    # boundary). Mirrors the existing right boundary; "\b" stays avoided for
+    # BSD/GNU grep parity. The second grep below isolates the verdict word, so the
+    # extra captured boundary char is harmless.
+    local _pat='(^|[^A-Za-z0-9_])[*_> [:space:]]*VOTE[*_ [:space:]]*:[*_> [:space:]]*(APPROVE|REJECT|CANNOT_VALIDATE)([^A-Za-z0-9_]|$)'
     printf '%s' "$raw" \
         | grep -oE "$_pat" \
         | grep -oE "APPROVE|REJECT|CANNOT_VALIDATE" \
@@ -739,8 +745,20 @@ print('true' if ratio > budget else 'false')
         else
             log_warn "Anti-sycophancy: Devil's advocate did not confirm unanimous approval (verdict: ${contrarian_vote:-unparseable})"
             log_warn "Overriding to require one more iteration for verification"
-            approve_count=$((approve_count - 1))
-            reject_count=$((reject_count + 1))
+            # The veto MUST drive the verdict below the completion threshold, not
+            # merely decrement by one. A bare `-1` left approve_count at
+            # COUNCIL_SIZE-1, which for any council of size >= 3 is still
+            # >= effective_threshold (ceil(2/3*SIZE)), so the override returned
+            # DONE anyway and the anti-sycophancy check was a silent no-op
+            # (it only happened to work for the size-2 council). Force
+            # approve_count to threshold-1 so the decision at the bottom of this
+            # function returns CONTINUE, and keep approve+reject == COUNCIL_SIZE
+            # so the cumulative state.json sums and transcript stay consistent.
+            # This is the same forced-CONTINUE outcome the parallel
+            # council_evaluate() path already delivers on a DA veto (return 1).
+            approve_count=$((effective_threshold - 1))
+            [ "$approve_count" -lt 0 ] && approve_count=0
+            reject_count=$((COUNCIL_SIZE - approve_count))
             _da_flipped="true"
         fi
     fi

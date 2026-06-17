@@ -30,6 +30,7 @@ export class LokiDashboardGrid extends LokiElement {
     super();
     this._collapsedWidgets = new Set();
     this._fullscreenWidget = null;
+    this._escHandler = null;
   }
 
   connectedCallback() {
@@ -41,6 +42,12 @@ export class LokiDashboardGrid extends LokiElement {
     super.disconnectedCallback();
     if (this._mutationObserver) {
       this._mutationObserver.disconnect();
+    }
+    // Drop the fullscreen Escape handler so a removed grid never leaves a
+    // document-level keydown listener (and its closure over this) behind.
+    if (this._escHandler) {
+      document.removeEventListener('keydown', this._escHandler);
+      this._escHandler = null;
     }
   }
 
@@ -364,16 +371,24 @@ export class LokiDashboardGrid extends LokiElement {
       });
     }
 
-    // Escape key exits fullscreen
+    // Escape key exits fullscreen. render() can fire repeatedly (slot
+    // MutationObserver, theme changes, toggles), and fullscreen can also be
+    // dismissed via the backdrop, so a per-render anonymous handler would stack
+    // duplicate document listeners and orphan one whenever the backdrop closes
+    // the overlay. Keep a single instance handler: always detach the prior one
+    // first, then attach only while a widget is fullscreen.
+    if (this._escHandler) {
+      document.removeEventListener('keydown', this._escHandler);
+      this._escHandler = null;
+    }
     if (this._fullscreenWidget !== null) {
-      const escHandler = (e) => {
+      this._escHandler = (e) => {
         if (e.key === 'Escape') {
           this._fullscreenWidget = null;
           this.render();
-          document.removeEventListener('keydown', escHandler);
         }
       };
-      document.addEventListener('keydown', escHandler);
+      document.addEventListener('keydown', this._escHandler);
     }
   }
 

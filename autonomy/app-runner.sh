@@ -312,6 +312,26 @@ _app_runner_reconcile_port() {
         iter=$(( iter + 1 ))
     done
 
+    # No serving keyword line in the log: the app may sit behind a reverse proxy
+    # or bind quietly on a port we did not choose. Probe app-scoped candidate
+    # ports for a real listener and surface only a port that ACTUALLY responds
+    # (never fabricate a URL for a dead port). Conservative: app-scoped candidates
+    # only, no blind well-known-port scan. See _probe_app_url.
+    if [ -z "$real_port" ]; then
+        local probed
+        probed=$(_probe_app_url "$_APP_RUNNER_PORT")
+        if [ -n "$probed" ]; then
+            local probed_port="${probed##*:}"
+            if [ "$probed_port" != "$_APP_RUNNER_PORT" ]; then
+                log_info "App Runner: surfaced live port $probed_port via probe (reverse-proxy/quiet-bind); recorded was $_APP_RUNNER_PORT"
+                _APP_RUNNER_PORT="$probed_port"
+                _APP_RUNNER_URL="$probed"
+                _rewrite_detection_port
+            fi
+        fi
+        return 0
+    fi
+
     [ -n "$real_port" ] || return 0
     if [ "$real_port" != "$_APP_RUNNER_PORT" ]; then
         # Liveness guard: only overwrite the recorded port when the reconciled
@@ -489,6 +509,64 @@ sys.exit(0)
 ' 2>/dev/null || return 0
 }
 
+# Detect a Next.js standalone build (next.config output: 'standalone'). A
+# standalone build emits a self-contained `.next/standalone/server.js` that is
+# launched with `node server.js` (NOT `next start`) and listens on PORT (default
+# 3000). The presence of `.next/standalone/server.js` is a specific, safe signal:
+# a normal `.next/` build does NOT create that path, so this never false-positives
+# on an ordinary Next.js project. Echoes the run method (relative to TARGET_DIR,
+# which the launcher cd's into) on success, nothing otherwise. The run method is
+# `node .next/standalone/server.js`; modern Next standalone resolves its asset
+# paths from the server.js __dirname, not cwd, so a TARGET_DIR-relative launch is
+# correct without an extra chdir. The `output: 'standalone'` next.config grep is
+# a weaker secondary signal (the build may not have run yet); the built artifact
+# path is authoritative, which is why we key on the file existing.
+_detect_nextjs_standalone() {
+    local dir="${1:-${TARGET_DIR:-.}}"
+    if [ -f "$dir/.next/standalone/server.js" ]; then
+        printf 'node .next/standalone/server.js\n'
+        return 0
+    fi
+    return 0
+}
+
+# Probe app-scoped candidate ports for a live HTTP listener and echo the first
+# port that actually responds, nothing if none do. This handles the case where
+# the app sits behind a reverse proxy or otherwise binds a port we did not
+# choose: rather than fabricate a URL for a port nothing is listening on, we
+# verify liveness with a real HTTP probe before surfacing anything.
+#
+# Conservatism, in order of importance:
+#   - Candidates are APP-SCOPED only (PORT env, the recorded port, and the
+#     framework default passed by the caller). We deliberately do NOT blind-scan
+#     well-known ports like 80/443/8080, because some unrelated local service
+#     answering there is its own form of fabrication.
+#   - Liveness uses the same contract as _app_runner_reconcile_port (curl -s
+#     -o /dev/null -m 2, no -f): any HTTP response (incl. 404/401/500) proves a
+#     server is bound; a connection error (dead/unbound port) is a non-zero exit.
+#   - curl-less hosts cannot verify, so we surface NOTHING (we never guess a URL
+#     we could not probe). This is the conservative direction for this helper:
+#     its whole job is "probe before surfacing", so no curl == no claim.
+# Args: $1 = framework default port (may be empty). Reads $LOKI_APP_PORT and
+# $_APP_RUNNER_PORT from the environment as additional candidates.
+_probe_app_url() {
+    local default_port="$1"
+    command -v curl >/dev/null 2>&1 || return 0
+    local cand seen=" "
+    for cand in "${LOKI_APP_PORT:-}" "${_APP_RUNNER_PORT:-}" "$default_port"; do
+        [ -n "$cand" ] || continue
+        [[ "$cand" =~ ^[0-9]+$ ]] || continue
+        [ "$cand" -ge 1 ] 2>/dev/null && [ "$cand" -le 65535 ] 2>/dev/null || continue
+        case "$seen" in *" $cand "*) continue ;; esac
+        seen="$seen$cand "
+        if curl -s -o /dev/null -m 2 "http://localhost:${cand}/" 2>/dev/null; then
+            printf 'http://localhost:%s\n' "$cand"
+            return 0
+        fi
+    done
+    return 0
+}
+
 # Detect port from project files
 _detect_port() {
     local method="$1"
@@ -644,6 +722,20 @@ app_runner_init() {
     # 3-4. package.json (dev or start)
     if [ -f "$dir/package.json" ]; then
         _install_node_deps "$dir"
+        # 3a. Next.js standalone build (output: 'standalone'). The built artifact
+        #     `.next/standalone/server.js` is a stronger signal than the dev/start
+        #     scripts: when present, the app is launched with `node server.js`
+        #     (listens on PORT, default 3000) rather than `next dev`/`next start`.
+        local njs_method
+        njs_method=$(_detect_nextjs_standalone "$dir")
+        if [ -n "$njs_method" ]; then
+            _APP_RUNNER_METHOD="$njs_method"
+            _detect_port "npm"
+            _write_detection "nextjs-standalone" "$_APP_RUNNER_METHOD"
+            log_info "App Runner: detected Next.js standalone server"
+            _APP_RUNNER_URL="http://localhost:${_APP_RUNNER_PORT}"
+            return 0
+        fi
         if grep -q '"dev"' "$dir/package.json" 2>/dev/null; then
             _APP_RUNNER_METHOD="npm run dev"
             _detect_port "$_APP_RUNNER_METHOD"

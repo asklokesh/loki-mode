@@ -21,18 +21,29 @@
 //
 // Phase 5 status: runStaticAnalysis, runTestCoverage, runDocQualityGate,
 // runMagicDebateGate, and runCodeReview are real ports of the corresponding
-// bash gates. The reviewer dispatcher used by runCodeReview is still a stub
-// (returns "VERDICT: PASS\nFINDINGS:\n- (stub)") pending the providers.ts
-// integration in v7.5.0+; the SELECTION + AGGREGATION orchestration around
-// it is real. The escalation ladder and failure-count persistence are real
-// and final.
+// bash gates, INCLUDING the reviewer dispatcher. The default dispatcher
+// (claudeReviewer) shells out to `claude -p` with the same trust guards as the
+// bash _dispatch_reviewer (autonomy/run.sh:_dispatch_reviewer): no --model
+// (security-sentinel must never route to Fable), --disallowedTools tree-mutation
+// guard, CAVEMAN_DEFAULT_MODE=off so the parsed VERDICT line is not reworded.
+// The SELECTION + AGGREGATION orchestration around it is real, as is the
+// escalation ladder and failure-count persistence.
+//
+// Honesty contract (no verification theater): when no reviewer is injected and
+// the claude CLI is NOT on PATH, the gate does NOT silently report a real
+// review. It returns the documented unavailable verdict (verdict "UNAVAILABLE",
+// non-blocking, but the gate detail says "no reviewer available" and ctx.log
+// emits a loud warning) so an operator can never mistake "claude not installed"
+// for "code was reviewed and approved". The deterministic stubReviewer is
+// retained for tests only and is injected through opts.reviewer; it is never the
+// production default.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
-import { run } from "../util/shell.ts";
+import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
@@ -972,8 +983,9 @@ export async function runInvariants(ctx?: RunnerContext): Promise<GateResult> {
 // Bash source: autonomy/run.sh:6234-6646 (run_code_review, ~413 LOC).
 //
 // Faithful TS port of the SELECTION + DISPATCH + AGGREGATION pipeline. The
-// reviewer dispatch itself remains stubbed pending the providers.ts
-// integration (v7.5.0+); the orchestration around it is real.
+// reviewer dispatch (claudeReviewer) is real: it shells out to `claude -p` with
+// the same trust guards as the bash _dispatch_reviewer. When the claude CLI is
+// absent the runner reports an honest UNAVAILABLE result instead of a fake PASS.
 //
 // Pipeline:
 //   1. git diff HEAD~1 (fall back to git diff --cached, then "")
@@ -1176,11 +1188,79 @@ FINDINGS:
 - None`;
 }
 
-// STUB: Phase 5 next iteration -- real provider dispatch pending.
-// Default reviewer that returns a deterministic PASS so the orchestration is
-// exercisable end-to-end before providers.ts wiring lands. Tests inject their
-// own ReviewerFn to drive specific verdicts.
+// TEST-ONLY reviewer that returns a deterministic PASS. Used by unit tests via
+// opts.reviewer to exercise the selection/aggregation orchestration without
+// spawning a subprocess. NOT the production default: a stub that always PASSes
+// would be verification theater if it ran in production. The production default
+// is resolveDefaultReviewer() below.
 export const stubReviewer: ReviewerFn = async () => "VERDICT: PASS\nFINDINGS:\n- (stub)";
+
+// Sentinel a reviewer emits when no real reviewer could run. parseVerdict maps
+// any non-PASS/FAIL token to "UNKNOWN", so we use an explicit recognizable body
+// here and the runner inspects for it to surface an honest, non-passing gate
+// detail rather than counting it as a real PASS.
+export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
+
+// Real reviewer dispatch -- parity with the bash _dispatch_reviewer (claude arm,
+// autonomy/run.sh). The orchestrator hands a fully self-contained prompt (diff,
+// changed files, checks, strict VERDICT/FINDINGS contract) and expects raw text
+// back, which parseVerdict then parses. Trust guards mirrored from bash:
+//   - NO --model: reviewers run on the account default and are NEVER routed to
+//     Fable. Fable's safety classifiers refuse cybersecurity content and would
+//     end a security-sentinel turn with stop_reason "refusal" (no VERDICT line),
+//     silently breaking the council gate. See the long comment in bash
+//     _dispatch_reviewer.
+//   - --disallowedTools tree-mutation guard (default ON; opt out
+//     LOKI_REVIEW_TOOL_GUARD=0): a reviewer must not casually mutate the tree.
+//     Value is byte-identical to loki_review_guard_denylist in
+//     autonomy/lib/claude-flags.sh.
+//   - CAVEMAN_DEFAULT_MODE=off: this is a parsed trust-gate subcall; a globally
+//     active caveman would reword the VERDICT line and flip the verdict.
+const REVIEW_GUARD_DENYLIST =
+  "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git reset:*),Bash(git push:*),Bash(git checkout:*),Bash(git clean:*),Bash(git rm:*),Bash(git stash:*),Bash(git -C:*),Bash(git --git-dir:*),Bash(git -c:*)";
+
+export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
+  const argv = ["claude", "--dangerously-skip-permissions"];
+  if (process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0") {
+    argv.push("--disallowedTools", REVIEW_GUARD_DENYLIST);
+  }
+  argv.push("-p", prompt, "--output-format", "text");
+
+  // Mirror the bash subcall: cwd-agnostic (the prompt carries the diff), caveman
+  // hard-suppressed, generous timeout for a single review turn.
+  const r = await run(argv, {
+    env: { CAVEMAN_DEFAULT_MODE: "off" },
+    timeoutMs: 600_000,
+  });
+  if (r.exitCode !== 0) {
+    // A failed dispatch must not silently pass. Surface a blocking Critical so a
+    // broken reviewer cannot approve a change by accident (parity with the bash
+    // arm where a non-zero claude leaves an empty file -> NO_VERDICT -> not a PASS).
+    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer dispatch failed (claude exit ${r.exitCode})`;
+  }
+  const out = r.stdout.trim();
+  if (out.length === 0) {
+    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer produced no output`;
+  }
+  return r.stdout;
+};
+
+// Reviewer used when no real reviewer can run (claude CLI absent). Returns the
+// UNAVAILABLE marker, NOT a PASS, so runCodeReview can report the gate honestly.
+const unavailableReviewer: ReviewerFn = async () =>
+  `VERDICT: ${REVIEWER_UNAVAILABLE_MARKER}\nFINDINGS:\n- [Info] no reviewer CLI available; review skipped`;
+
+// Resolve the production default reviewer. When opts.reviewer is omitted, the
+// runner uses this: the real claude dispatcher if the CLI is on PATH, otherwise
+// the honest unavailableReviewer (never the always-PASS stub).
+export async function resolveDefaultReviewer(): Promise<{
+  reviewer: ReviewerFn;
+  available: boolean;
+}> {
+  const claudePath = await commandExists("claude");
+  if (claudePath !== null) return { reviewer: claudeReviewer, available: true };
+  return { reviewer: unavailableReviewer, available: false };
+}
 
 // P0-4 Devil's-Advocate prompt. Built ONLY on a unanimous PASS to stress-test
 // sycophantic agreement. Unlike a specialist reviewer (which looks for issues
@@ -1258,7 +1338,9 @@ async function readDiffAndFiles(cwd: string): Promise<{ diff: string; files: str
 
 export type CodeReviewOpts = {
   // Allow tests to inject a deterministic ReviewerFn instead of calling the
-  // real provider. Production callers omit this and get the stub for now.
+  // real provider. Production callers omit this; the runner then resolves the
+  // real claude dispatcher (claudeReviewer) when the CLI is on PATH, or the
+  // honest unavailableReviewer when it is not (see resolveDefaultReviewer).
   reviewer?: ReviewerFn;
   // Allow tests to inject pre-computed diff/files instead of shelling out to
   // git. When omitted the runner reads from `git -C ctx.cwd diff HEAD~1`.
@@ -1292,7 +1374,23 @@ export async function runCodeReview(
 
   const cwd = ctx.cwd;
   const base = ctx.lokiDir;
-  const reviewer = opts.reviewer ?? stubReviewer;
+  // Production default: real claude dispatch when the CLI is present, otherwise
+  // the honest unavailableReviewer (never the always-PASS stub). Tests inject a
+  // deterministic ReviewerFn via opts.reviewer and bypass this resolution.
+  let reviewerAvailable = true;
+  let reviewer: ReviewerFn;
+  if (opts.reviewer !== undefined) {
+    reviewer = opts.reviewer;
+  } else {
+    const resolved = await resolveDefaultReviewer();
+    reviewer = resolved.reviewer;
+    reviewerAvailable = resolved.available;
+    if (!reviewerAvailable) {
+      ctx.log(
+        "code_review: no reviewer CLI (claude) on PATH -- the gate is reporting UNAVAILABLE, NOT a passing review. Install the claude CLI to enable real code review on the Bun route.",
+      );
+    }
+  }
 
   const { diff, files } = opts.diffOverride ?? (await readDiffAndFiles(cwd));
   if (diff.trim().length === 0) {
@@ -1352,6 +1450,21 @@ export async function runCodeReview(
   };
   atomicWriteText(join(reviewDir, "aggregate.json"), `${JSON.stringify(aggregate, null, 2)}\n`);
 
+  // Honesty short-circuit: no reviewer CLI was available, so NO real review
+  // happened. Do NOT continue into the Devil's-Advocate / override-council
+  // machinery and do NOT report a passing review. The gate is non-blocking (so a
+  // user without the claude CLI is not hard-stopped) but the detail makes the
+  // UNAVAILABLE status explicit -- there is no silent "verified" claim. The
+  // per-reviewer .txt files on disk carry the REVIEWER_UNAVAILABLE_MARKER for an
+  // auditor. parseVerdict counts every UNAVAILABLE verdict as "UNKNOWN", so
+  // passCount/failCount are both 0 here.
+  if (!reviewerAvailable) {
+    return {
+      passed: true,
+      detail: `code_review: UNAVAILABLE - no reviewer CLI on PATH, no real review performed (${reviewId})`,
+    };
+  }
+
   // Phase 1 (v7.5.0) -- persist structured findings to .loki/state/findings-<iter>.json
   // so the next iteration's prompt build (and any out-of-process consumers like
   // the dashboard) can read them without re-parsing per-reviewer *.txt files.
@@ -1386,12 +1499,9 @@ export async function runCodeReview(
   // guard at autonomy/run.sh:8473 ([ "${LOKI_GATE_DEVILS_ADVOCATE:-true}" =
   // "true" ]): default-on, disabled by =false (not only =0).
   //
-  // NOTE: the reviewer dispatcher is still the stub (stubReviewer returns
-  // "VERDICT: PASS") pending the providers.ts integration. Until that lands the
-  // DA dispatch is structurally correct but inert in production (the stub never
-  // returns a blocking verdict). Tests inject a ReviewerFn via opts.reviewer to
-  // exercise the blocking path. TODO(providers.ts): once real provider dispatch
-  // lands, the DA call below automatically becomes a live adversarial review.
+  // The DA call below uses the SAME resolved reviewer as the base council, so in
+  // production (claude CLI present) it is a live adversarial review, not inert.
+  // Tests inject a ReviewerFn via opts.reviewer to exercise the blocking path.
   if (passCount === selection.reviewers.length && failCount === 0) {
     writeFileSync(
       join(reviewDir, "anti-sycophancy.txt"),

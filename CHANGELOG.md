@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.59.0] - 2026-06-17
+
+### Reliability hardening wave (20-agent fleet: bug-hunt + fixes across all subsystems)
+
+Real bugs found and fixed, each with a non-vacuous regression test:
+- Bun code-review reviewer dispatch defaulted to an always-PASS stub (verification
+  theater); now dispatches the real reviewer with honest unavailable handling
+  (loki-ts/src/runner/quality_gates.ts).
+- Completion-council devil's-advocate veto was a silent no-op for councils of size
+  3+ (the decrement never dropped below the 2/3 threshold); now forces CONTINUE
+  on a non-confirming DA (autonomy/completion-council.sh).
+- Memory engine crashed on partial disk state (KeyError on missing index
+  'topics', ValueError on a non-ISO episode timestamp); both hardened (memory/engine.py).
+- MCP server telemetry stack leak + IndexError on malformed co-changes data fixed
+  (mcp/server.py).
+- Event-bus import dropped run.sh event payloads via a schema mismatch (events/bus.py).
+- Provider invoke crashed under set -u on stock macOS bash 3.2 when an optional
+  flag array was empty (providers/claude.sh, cline.sh, codex.sh).
+- Dashboard UI: keydown-listener leak on re-render + spec textarea lost focus/caret
+  every 3s poll (broke multi-line browser PRD input) (dashboard-ui/components).
+- loki status rendered blank counts on an empty-but-valid state file (autonomy/loki).
+- Migration hook block_and_rollback used a blanket git checkout that could nuke
+  unrelated uncommitted edits; now snapshot-scoped (autonomy/hooks/migration-hooks.sh).
+- Standalone dashboard control app exposed unauthenticated state-mutating endpoints;
+  now require_scope-gated (dashboard/control.py).
+- Memory embeddings crashed on a 1-D corpus vector; hardened (memory/embeddings.py).
+
+New features: App Runner now detects Next.js standalone + reverse-proxy URLs and
+Spring Boot multi-port stacks (autonomy/app-runner.sh, dashboard/server.py); PID
+liveness uses process start-time identity to avoid PID-reuse false positives
+(dashboard/server.py); run-start cost estimate + budget-cap disclosure on the
+non-TTY path (autonomy/run.sh). Docs accuracy + license-honesty corrections.
+
 ## [7.58.1] - 2026-06-17
 
 ### Fix: doctor bash-route crash off a TTY (Bun Parity green)

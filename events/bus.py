@@ -79,9 +79,32 @@ class LokiEvent:
 
         Handles compound types like 'session_start' by splitting on underscore
         and using the first token as the event type.
+
+        Tolerates two on-disk schemas:
+          - The pending/archive schema written by bus.py / bus.ts / emit.sh:
+            ``{id, type, source, timestamp, payload, version}``.
+          - The flat events.jsonl schema written by run.sh's emit_event /
+            emit_event_json (and read by the dashboard):
+            ``{timestamp, type, data: {...}}`` -- here ``source`` lives inside
+            ``data`` (or is absent) and the body is ``data``, not ``payload``.
+        Without this fallback, import_from_jsonl() would coerce every
+        run.sh-written line to source=cli with an empty payload, silently
+        dropping the source attribution and the entire event body.
         """
         raw_type = data.get('type', '')
+
+        # Body: prefer the canonical `payload`; fall back to the flat
+        # events.jsonl `data` object so run.sh-written lines keep their fields.
+        payload = data.get('payload')
+        nested = data.get('data')
+        if payload is None:
+            payload = nested if isinstance(nested, dict) else {}
+
+        # Source: prefer top-level `source`; otherwise lift it from the nested
+        # `data.source` used by the flat events.jsonl schema.
         raw_source = data.get('source', '')
+        if not raw_source and isinstance(nested, dict):
+            raw_source = nested.get('source', '')
 
         # Parse event type, handling compound values like "session_start"
         try:
@@ -105,7 +128,7 @@ class LokiEvent:
             type=event_type,
             source=event_source,
             timestamp=data.get('timestamp', ''),
-            payload=data.get('payload', {}),
+            payload=payload,
             version=data.get('version', '1.0')
         )
 

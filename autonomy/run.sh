@@ -13718,6 +13718,100 @@ _loki_sentrux_iteration_end() {
     return 0
 }
 
+# show_run_start_estimate <prd_path>
+#
+# C4 (v7.x): before any real spend, the user must SEE (a) the budget-guard
+# state and (b) a cost/time estimate -- honestly, with no fabricated dollar
+# figures. This is the run.sh-side complement to the loki CLI's auto-plan:
+#
+#   - Budget guard: the hard cap is enforced by check_budget_limit (which
+#     touches .loki/PAUSE at the cap). This helper only DISPLAYS the state;
+#     it never sets a default BUDGET_LIMIT (doing so would change pause
+#     behavior for every user). If BUDGET_LIMIT is set we show the cap and
+#     the pause-at-cap promise; if not, we state plainly that no cap is set
+#     and how to set one. Always shown -- the guard disclosure is universal.
+#
+#   - Estimate: `loki start` on a TTY already prints the estimate via
+#     maybe_show_auto_plan -> show_prd_plan. The genuine gap is the non-TTY
+#     route (Docker, dashboard, piped invocation): there the CLI skips the
+#     plan, so we fill it here. We gate on stdout NOT being a TTY because
+#     run.sh has no signal that `loki start` already showed the plan (no env
+#     marker exists and `loki` is out of scope to edit), and the non-TTY test
+#     is the only one that is both reliable and free of duplication.
+#     KNOWN LIMITATION: a direct `./autonomy/run.sh <prd>` run in a terminal
+#     (TTY, not launched via `loki start`) skips the estimate here AND was
+#     never shown one by the CLI. The budget-guard disclosure above is still
+#     always shown; only the cost/time estimate is missing on that one
+#     power-user path. Closing it cleanly needs a "plan already shown" marker
+#     set in the loki CLI, which is owned elsewhere.
+#     The estimate is best-effort: it shells out to the loki binary with a
+#     hard timeout, parses only real numbers, and prints an honest
+#     "estimate unavailable" line on any failure. It NEVER fails the run and
+#     NEVER fabricates a figure.
+show_run_start_estimate() {
+    local prd_path="$1"
+
+    # --- Budget-guard disclosure (always) ---
+    if [ -n "$BUDGET_LIMIT" ]; then
+        log_info "Budget guard: hard cap \$$BUDGET_LIMIT (run pauses via .loki/PAUSE at the cap; warning at 80%)."
+    else
+        log_info "Budget guard: no cap set (no automatic spend stop). Set LOKI_BUDGET_LIMIT=<usd> to pause at a cap."
+    fi
+
+    # --- Estimate (non-TTY gap only; the loki CLI shows it on a TTY) ---
+    if [ -t 1 ]; then
+        return 0
+    fi
+    # No PRD on disk (codebase-analysis mode) -> nothing to estimate from.
+    [ -n "$prd_path" ] && [ -f "$prd_path" ] || return 0
+
+    local loki_bin="${SCRIPT_DIR}/loki"
+    [ -x "$loki_bin" ] || { command -v loki >/dev/null 2>&1 && loki_bin="loki" || return 0; }
+
+    local plan_json=""
+    plan_json=$(timeout 30 "$loki_bin" plan "$prd_path" --json 2>/dev/null) || plan_json=""
+    [ -n "$plan_json" ] || { log_info "Estimate: unavailable (estimator did not return a result); the run continues."; return 0; }
+
+    # Parse REAL numbers only. argv keeps the JSON out of the script body so
+    # there is no $<digit> heredoc footgun, and a missing field prints nothing.
+    local parsed
+    parsed=$(printf '%s' "$plan_json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+cost = d.get("cost", {}).get("total_usd")
+time_est = d.get("time", {}).get("estimated")
+iters = d.get("iterations", {}).get("estimated")
+tier = d.get("complexity", {}).get("tier", "")
+if cost is None or time_est is None or iters is None:
+    sys.exit(1)
+print("{:.2f}".format(float(cost)))
+print(time_est)
+print(iters)
+print(tier)
+' 2>/dev/null) || parsed=""
+
+    if [ -z "$parsed" ]; then
+        log_info "Estimate: unavailable (estimator did not return a result); the run continues."
+        return 0
+    fi
+
+    local est_cost est_time est_iters est_tier
+    est_cost=$(printf '%s' "$parsed" | sed -n '1p')
+    est_time=$(printf '%s' "$parsed" | sed -n '2p')
+    est_iters=$(printf '%s' "$parsed" | sed -n '3p')
+    est_tier=$(printf '%s' "$parsed" | sed -n '4p')
+
+    if [ -n "$est_tier" ]; then
+        log_info "Estimate (${est_tier} tier): ~\$${est_cost}, ~${est_time}, ~${est_iters} iterations. Actual usage varies with complexity, review cycles, and test failures."
+    else
+        log_info "Estimate: ~\$${est_cost}, ~${est_time}, ~${est_iters} iterations. Actual usage varies with complexity, review cycles, and test failures."
+    fi
+    return 0
+}
+
 run_autonomous() {
     local prd_path="$1"
 
@@ -13819,9 +13913,10 @@ except Exception:
     log_info "Base wait: ${BASE_WAIT}s"
     log_info "Max wait: ${MAX_WAIT}s"
     log_info "Autonomy mode: $AUTONOMY_MODE"
-    if [ -n "$BUDGET_LIMIT" ]; then
-        log_info "Budget limit: \$$BUDGET_LIMIT"
-    fi
+    # C4: always surface the budget-guard state (and, on the non-TTY route, a
+    # cost/time estimate) BEFORE any real spend. This subsumes the old bare
+    # "Budget limit" line so there is exactly one honest disclosure.
+    show_run_start_estimate "$prd_path"
     # Only show Claude-specific features for Claude provider
     if [ "${PROVIDER_NAME:-claude}" = "claude" ]; then
         log_info "Prompt repetition (Haiku): $PROMPT_REPETITION"

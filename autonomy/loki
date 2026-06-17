@@ -2889,12 +2889,26 @@ cmd_status() {
     # Check orchestrator state
     if [ -f "$LOKI_DIR/state/orchestrator.json" ]; then
         echo -e "${CYAN}Orchestrator State:${NC}"
-        jq -r '.currentPhase // "unknown"' "$LOKI_DIR/state/orchestrator.json" 2>/dev/null || echo "unknown"
+        local orch_phase
+        # An empty orchestrator.json makes jq exit 0 with no output, so the
+        # `|| echo unknown` fallback never fires and the phase line is blank.
+        # Capture and normalize an empty result to "unknown".
+        orch_phase=$(jq -r '.currentPhase // "unknown"' "$LOKI_DIR/state/orchestrator.json" 2>/dev/null || echo "unknown")
+        [ -n "$orch_phase" ] || orch_phase="unknown"
+        echo "$orch_phase"
     fi
 
     # Check pending tasks
     if [ -f "$LOKI_DIR/queue/pending.json" ]; then
-        local task_count=$(jq 'if type == "array" then length elif .tasks then .tasks | length else 0 end' "$LOKI_DIR/queue/pending.json" 2>/dev/null || echo "0")
+        local task_count
+        task_count=$(jq 'if type == "array" then length elif .tasks then .tasks | length else 0 end' "$LOKI_DIR/queue/pending.json" 2>/dev/null || echo "0")
+        # An empty or whitespace-only pending.json makes jq exit 0 while
+        # printing nothing, so the `|| echo 0` fallback never fires and the
+        # status line renders a blank count. Normalize any non-numeric result
+        # (empty string, null, parse noise) back to 0.
+        case "$task_count" in
+            ''|*[!0-9]*) task_count=0 ;;
+        esac
         echo -e "${CYAN}Pending Tasks:${NC} $task_count"
     fi
 
@@ -16502,6 +16516,9 @@ with open(p, 'w') as f:
             if [ -f "$LOKI_DIR/queue/failed.json" ]; then
                 local count
                 count=$(jq 'length' "$LOKI_DIR/queue/failed.json" 2>/dev/null || echo "?")
+                # An empty failed.json makes jq exit 0 with no output, so the
+                # `|| echo "?"` fallback never fires; normalize the blank result.
+                [ -n "$count" ] || count="?"
                 rm -f "$LOKI_DIR/queue/failed.json"
                 echo "[]" > "$LOKI_DIR/queue/failed.json"
                 echo -e "${GREEN}Cleared $count failed tasks${NC}"

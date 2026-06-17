@@ -124,6 +124,14 @@ run_test "State Baseline Lifecycle (run 2+ freshness)" "$SCRIPT_DIR/test-state-b
 # a fabricated completion (empty diff or red tests) must be rejected there too.
 run_test "Completion-route Evidence Gate (default path)" "$SCRIPT_DIR/test-completion-route-evidence-gate.sh"
 
+# check_completion_promise gating: structured signal is the default trigger;
+# legacy grep matching is OFF by default and fixed-string (grep -F) when on.
+run_test "Completion-promise Gating (signal vs legacy grep)" "$SCRIPT_DIR/test-completion-promise-gating.sh"
+
+# check_human_intervention signal dispatch + security: STOP -> rc 2; HUMAN_INPUT
+# symlink rejected; prompt injection disabled-by-default quarantines input.
+run_test "Human Intervention Signals (STOP/HUMAN_INPUT security)" "$SCRIPT_DIR/test-human-intervention-signals.sh"
+
 # Regression guards for the v7.51-v7.53 shipped features (SDET hardening):
 #  - coverage.json is written with measured:false even at the default (off).
 #  - run.sh surfaces the council evidence-gate-details (WARN/INFO/silent).

@@ -783,12 +783,37 @@ export class LokiSessionControl extends LokiElement {
       </div>
     `;
 
+    // Preserve focus + caret/selection across the full innerHTML rebuild.
+    // render() fires every 3s from the status poll (both the success and the
+    // server-down paths). Without this, a user composing a multi-line spec in
+    // the Start-a-build textarea loses focus and cursor position every poll,
+    // which makes the browser PRD-input unusable for anything longer than a
+    // one-liner. _specText itself is already preserved (written on every
+    // keystroke), so only focus + selection need restoring.
+    const active = this.shadowRoot.activeElement;
+    const hadSpecFocus = active && active.id === 'spec-input';
+    const selStart = hadSpecFocus ? active.selectionStart : null;
+    const selEnd = hadSpecFocus ? active.selectionEnd : null;
+
     this.shadowRoot.innerHTML = `
       ${styles}
       ${isCompact ? compactContent : fullContent}
     `;
 
     this._attachEventListeners();
+
+    if (hadSpecFocus) {
+      const next = this.shadowRoot.getElementById('spec-input');
+      if (next && !next.disabled) {
+        next.focus();
+        try {
+          next.setSelectionRange(selStart, selEnd);
+        } catch {
+          // setSelectionRange can throw on some input types; focus alone is
+          // still an improvement over losing the field entirely.
+        }
+      }
+    }
   }
 
   _attachEventListeners() {

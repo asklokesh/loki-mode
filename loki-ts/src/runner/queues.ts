@@ -1,12 +1,13 @@
 // Task-queue population for the autonomous runner.
 //
-// Source-of-truth (bash):
-//   populate_bmad_queue()      autonomy/run.sh:9390
-//   populate_openspec_queue()  autonomy/run.sh:9619
-//   populate_mirofish_queue()  autonomy/run.sh:9730
-//   populate_prd_queue()       autonomy/run.sh:9817-10162
+// Source-of-truth (bash). Line numbers drift; re-verify with `grep -n` before
+// relying on them (last checked against run.sh on 2026-06-17):
+//   populate_bmad_queue()      autonomy/run.sh (search "populate_bmad_queue")
+//   populate_openspec_queue()  autonomy/run.sh (search "populate_openspec_queue")
+//   populate_mirofish_queue()  autonomy/run.sh:13207
+//   populate_prd_queue()       autonomy/run.sh:13294
 //
-// Phase 5 second iteration scope:
+// Scope:
 //   - populatePrdQueue: lean checklist/feature extraction from a markdown PRD,
 //     written atomically to .loki/queue/pending.json.
 //   - populateBmadQueue: scans .loki/bmad/ for *.md story files; one task per
@@ -14,7 +15,10 @@
 //     .bmad-populated sentinel.
 //   - populateOpenspecQueue: scans .loki/openspec/ for spec-*.md files; one
 //     task per spec. Idempotent via .openspec-populated sentinel.
-//   - populateMirofishQueue: still a stub (other agent owns it).
+//   - populateMirofishQueue: real port of bash populate_mirofish_queue (see
+//     below). Reads .loki/mirofish-tasks.json, converts each advisory into a
+//     queue task, dedupes by id, merges into pending.json atomically, and
+//     drops a .mirofish-populated sentinel. Idempotent and cross-process safe.
 
 import {
   existsSync,
@@ -31,7 +35,7 @@ import { withFileLock } from "../util/atomic.ts";
 
 // --- MiroFish queue (real) ------------------------------------------------
 //
-// Source: autonomy/run.sh:9730-9817 (populate_mirofish_queue).
+// Source: autonomy/run.sh:13207 (populate_mirofish_queue).
 // Reads .loki/mirofish-tasks.json (advisory data from the MiroFish market-
 // validation step), converts each entry into the shared queue task shape,
 // merges into pending.json (deduping by id), and drops a .mirofish-populated

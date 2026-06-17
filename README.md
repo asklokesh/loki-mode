@@ -106,7 +106,7 @@ loki quick "build a landing page with a signup form"
 | **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
 | **Docker (easiest)** | `loki docker start prd.md` | Host wrapper: runs loki in the published image with zero config. Bind-mounts the current folder so `.loki` state, resume, and continuity work exactly like local. Auto-detects auth (`ANTHROPIC_API_KEY`, else your host Claude Code login). Needs loki + Docker on the host. See DOCKER_README.md |
-| **Docker (raw)** | `docker pull asklokesh/loki-mode:7.50.0 && docker run --rm -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" asklokesh/loki-mode:7.50.0 start prd.md` | Bun + Claude CLI pre-installed; needs an API key, or use docker compose with a .env file, see DOCKER_README.md |
+| **Docker (raw)** | `docker pull asklokesh/loki-mode:7.58.1 && docker run --rm -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" asklokesh/loki-mode:7.58.1 start prd.md` | Bun + Claude CLI pre-installed; needs an API key, or use docker compose with a .env file, see DOCKER_README.md |
 | **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
 
 **Upgrading:**
@@ -166,7 +166,7 @@ The next major release sunsets the Bash runtime entirely. There is no firm calen
 | Method | Command |
 |--------|---------|
 | **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` |
-| **Docker** | `docker pull asklokesh/loki-mode:7.50.0` |
+| **Docker** | `docker pull asklokesh/loki-mode:7.58.1` |
 | **Inside Claude Code** | `claude --dangerously-skip-permissions` then type "Loki Mode" |
 | **Git clone** | `git clone https://github.com/asklokesh/loki-mode.git` |
 
@@ -481,8 +481,8 @@ See [benchmarks/](benchmarks/) for methodology.
 
 ```bash
 git clone https://github.com/asklokesh/loki-mode.git && cd loki-mode
-npm install && npm test              # 683 tests
-python3 -m pytest                    # 631 tests
+npm install && npm test              # CLI + Node test suites
+python3 -m pytest                    # Python test suite
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

@@ -232,10 +232,14 @@ provider_invoke_with_tier() {
 
     LOKI_CODEX_REASONING_EFFORT="$effort" \
     CODEX_MODEL_REASONING_EFFORT="$effort" \
+    # Guard the extra_flags array expansion: with no web-search / output-last
+    # knobs the array is empty, and a bare "${arr[@]}" under `set -u` aborts with
+    # "unbound variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...}
+    # expands to nothing when empty and preserves spaced elements otherwise.
     codex exec \
         --sandbox workspace-write \
         --skip-git-repo-check \
         --model "$model" \
-        "${extra_flags[@]}" \
+        "${extra_flags[@]+"${extra_flags[@]}"}" \
         "$prompt" "$@"
 }

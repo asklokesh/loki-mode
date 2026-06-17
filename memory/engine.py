@@ -917,9 +917,16 @@ class MemoryEngine:
 
         category = pattern.get("category", "general")
 
+        # An index.json that is valid JSON but missing the "topics" key (e.g.
+        # written by an older/partial writer, or hand-edited) would crash here
+        # on index["topics"] because the `or {...}` default only fires when the
+        # whole file is falsy. setdefault matches the defensive pattern used in
+        # the sibling _update_index_with_episode.
+        topics = index.setdefault("topics", [])
+
         # Find or create topic
         topic_found = False
-        for topic in index["topics"]:
+        for topic in topics:
             if topic.get("id") == category:
                 topic["last_accessed"] = datetime.now(timezone.utc).isoformat()
                 topic["relevance_score"] = max(
@@ -930,7 +937,7 @@ class MemoryEngine:
                 break
 
         if not topic_found:
-            index["topics"].append({
+            topics.append({
                 "id": category,
                 "summary": f"Patterns for {category}",
                 "relevance_score": pattern.get("confidence", 0.5),
@@ -970,7 +977,17 @@ class MemoryEngine:
             # Handle ISO format with Z suffix
             if timestamp_str.endswith("Z"):
                 timestamp_str = timestamp_str[:-1]
-            timestamp = datetime.fromisoformat(timestamp_str)
+            # A single corrupt/non-ISO timestamp on one episode file must not
+            # crash the whole scan (get_recent_episodes -> retrieve_relevant is
+            # on the RARV hot path). Fall back to now() for the unparseable one.
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str)
+            except ValueError:
+                logger.warning(
+                    "Episode %s has unparseable timestamp %r; using current time",
+                    data.get("id", "<unknown>"), timestamp_str,
+                )
+                timestamp = datetime.now(timezone.utc)
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)
         elif isinstance(timestamp_str, datetime):

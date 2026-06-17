@@ -265,7 +265,7 @@ Use the [issue templates](https://github.com/asklokesh/loki-mode/issues/new/choo
 
 ## License
 
-Loki Mode is MIT licensed. By contributing, you agree that your contributions will be licensed under MIT.
+Loki Mode is source-available under the [Business Source License 1.1](../LICENSE) (converts to Apache 2.0 on March 19, 2030). External contributions are accepted only under a signed Contributor License Agreement (CLA) per [COMMERCIAL-TERMS.md](../COMMERCIAL-TERMS.md); contributions without a signed CLA grant the Licensor no rights and may be removed.
 
 ---
 

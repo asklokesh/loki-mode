@@ -21,10 +21,40 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+# Auth gating for the standalone control app.
+#
+# This module also defines a self-contained FastAPI `app` whose own docstring
+# invites operators to expose it via `uvicorn dashboard.control:app`. When that
+# happens the state-mutating endpoints (start/stop/pause/resume) MUST honor the
+# same scope checks as the primary dashboard (dashboard/server.py), otherwise a
+# user who follows the docstring stands up an unauthenticated control plane that
+# can launch arbitrary builds and kill running sessions even when
+# LOKI_ENTERPRISE_AUTH / OIDC are configured.
+#
+# auth.require_scope is a no-op (allows access) when no auth method is enabled,
+# so this import is safe for the default anonymous-localhost workflow and only
+# enforces when the operator has explicitly turned auth on. The import is
+# defensive: if the package context is unavailable (e.g. the file is run from a
+# path where the relative import fails) we fall back to a gate that always
+# allows, preserving the prior behavior rather than crashing import.
+try:
+    from . import auth as _auth
+
+    def _require_control_scope():
+        return Depends(_auth.require_scope("control"))
+except Exception:  # pragma: no cover - defensive fallback for non-package runs
+    def _require_control_scope():
+        async def _noop() -> bool:
+            return True
+
+        return Depends(_noop)
+
+_CONTROL_DEP = _require_control_scope()
 
 # Configuration
 LOKI_DIR = Path(os.environ.get("LOKI_DIR", ".loki"))
@@ -363,7 +393,7 @@ async def get_session_status():
     return get_status()
 
 
-@app.post("/api/control/start", response_model=ControlResponse)
+@app.post("/api/control/start", response_model=ControlResponse, dependencies=[_CONTROL_DEP])
 async def start_session(request: StartRequest):
     """
     Start a Loki Mode session.
@@ -435,7 +465,7 @@ async def start_session(request: StartRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/control/stop", response_model=ControlResponse)
+@app.post("/api/control/stop", response_model=ControlResponse, dependencies=[_CONTROL_DEP])
 async def stop_session():
     """
     Stop the current Loki Mode session.
@@ -484,7 +514,7 @@ async def stop_session():
     )
 
 
-@app.post("/api/control/pause", response_model=ControlResponse)
+@app.post("/api/control/pause", response_model=ControlResponse, dependencies=[_CONTROL_DEP])
 async def pause_session():
     """
     Pause the current Loki Mode session.
@@ -513,7 +543,7 @@ async def pause_session():
     )
 
 
-@app.post("/api/control/resume", response_model=ControlResponse)
+@app.post("/api/control/resume", response_model=ControlResponse, dependencies=[_CONTROL_DEP])
 async def resume_session():
     """
     Resume a paused Loki Mode session.

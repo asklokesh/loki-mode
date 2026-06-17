@@ -1,6 +1,9 @@
 // Tests for src/runner/queues.ts.
-// Source-of-truth: autonomy/run.sh:9817-10162 (populate_prd_queue) and
-// the BMAD/OpenSpec/MiroFish stubs at lines 9390/9619/9730.
+// Source-of-truth (bash, line numbers drift; re-grep before relying):
+//   populate_prd_queue()      autonomy/run.sh:13294
+//   populate_mirofish_queue() autonomy/run.sh:13207
+//   populate_bmad_queue() / populate_openspec_queue() (search by name).
+// All four bash functions are fully ported in src/runner/queues.ts.
 
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -348,6 +351,32 @@ describe("populateMirofishQueue", () => {
     expect(tasks[0]?.source).toBe("prd");
     expect(tasks[1]?.id).toBe("mf-007");
     expect(tasks[1]?.source).toBe("mirofish");
+  });
+
+  // Bash parity (run.sh:13207): when every advisory id already exists in
+  // pending.json, bash still rewrites pending.json and `touch`es the
+  // sentinel so the stable advisory file is never re-scanned. The Bun port
+  // (queues.ts added===0 branch) must likewise drop the sentinel and leave
+  // pending.json unchanged (no duplicate tasks).
+  it("drops the sentinel without adding tasks when all advisories already exist", async () => {
+    mkdirSync(join(lokiDir, "queue"), { recursive: true });
+    writeFileSync(
+      join(lokiDir, "queue", "pending.json"),
+      JSON.stringify([{ id: "mf-009", title: "already here", description: "", priority: "high", status: "pending", source: "prd" }]),
+    );
+    writeFileSync(
+      join(lokiDir, "mirofish-tasks.json"),
+      JSON.stringify([{ id: "mf-009", title: "duplicate advisory" }]),
+    );
+    const ctx = makeCtx(undefined);
+    await populateMirofishQueue(ctx);
+    const tasks = JSON.parse(readFileSync(join(lokiDir, "queue", "pending.json"), "utf8")) as Array<{ id: string; source: string }>;
+    expect(tasks.length).toBe(1);
+    expect(tasks[0]?.id).toBe("mf-009");
+    // Original task preserved (not overwritten by the duplicate advisory).
+    expect(tasks[0]?.source).toBe("prd");
+    // Sentinel dropped so the stable advisory file is not re-scanned.
+    expect(existsSync(join(lokiDir, "queue", ".mirofish-populated"))).toBe(true);
   });
 });
 

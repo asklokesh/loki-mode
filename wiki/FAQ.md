@@ -292,7 +292,7 @@ This runs in an isolated Docker container.
 
 ### Is there an enterprise version?
 
-No separate enterprise version. Enterprise features are built into the open source version and enabled via configuration:
+The Loki Mode CLI is source-available (BUSL-1.1). Some enterprise features ship in the CLI and are enabled via configuration (below). The commercial editions for teams and enterprises (Autonomi Cloud, Autonomi Enterprise) are separate offerings sold under the Autonomi brand. Enable the in-CLI enterprise features with:
 
 ```bash
 export LOKI_ENTERPRISE_AUTH=true
@@ -306,7 +306,7 @@ export LOKI_ENTERPRISE_AUDIT=true
 
 ### Can I use this commercially?
 
-Yes, MIT license allows commercial use.
+Loki Mode is source-available under BUSL-1.1, not MIT. The Additional Use Grant covers individual, non-commercial, internal-business (as a tool, not as a product offered to third parties), academic, and evaluation use. Other commercial use requires a separate license, contact founder@autonomi.dev. The license converts to Apache 2.0 on March 19, 2030.
 
 ---
 

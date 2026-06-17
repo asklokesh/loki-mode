@@ -257,8 +257,12 @@ def compute_quality_score(
     non_zero = np.count_nonzero(embedding)
     density = non_zero / len(embedding) if len(embedding) > 0 else 0
 
-    # Variance: measure of embedding diversity
-    variance = float(np.var(embedding))
+    # Variance: measure of embedding diversity. np.var of an empty array is NaN,
+    # and NaN would silently propagate through min(variance * 10, 1.0) (which
+    # returns NaN) into the final score, where min(1.0, NaN) yields a bogus
+    # perfect score of 1.0 for an empty embedding. Treat an empty vector as
+    # zero-variance so the score reflects its (lack of) content.
+    variance = float(np.var(embedding)) if len(embedding) > 0 else 0.0
 
     # Coverage: estimate based on text length vs max tokens
     # Rough estimate: 4 chars per token
@@ -1191,6 +1195,14 @@ class EmbeddingEngine:
 
         if corpus_embeddings.size == 0:
             return []
+
+        # A single corpus vector may arrive 1-D (shape (dimension,)) instead of
+        # the documented 2-D (n, dimension). Without this promotion, np.dot of a
+        # 1-D corpus with the 1-D query collapses to a 0-d scalar, and the
+        # subsequent len(similarities) raises an opaque
+        # "object of type 'numpy.float32' has no len()". atleast_2d is a no-op
+        # on an already-2-D corpus.
+        corpus_embeddings = np.atleast_2d(corpus_embeddings)
 
         # Normalize
         query_norm = self._normalize(query_embedding)

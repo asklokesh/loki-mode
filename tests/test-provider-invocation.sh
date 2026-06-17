@@ -329,6 +329,65 @@ fi
 
 rm -rf "$CODEX_STUB_DIR"
 
+# ===========================================
+# Test 13: empty optional-flag arrays survive `set -u` on bash 3.2 (stock macOS)
+# Regression: bash 3.2's "${arr[@]}" on an EMPTY array aborts with "unbound
+# variable" under `set -u`. autonomy/loki runs `set -euo pipefail`, so a wrapper
+# that sources a provider and calls these invoke functions on /bin/bash (3.2)
+# would die before ever launching the CLI. The guarded ${arr[@]+"${arr[@]}"}
+# expansion must NOT abort. We exercise every invoke path that builds an optional
+# array (codex extra_flags, claude _LOKI_CLAUDE_AUTO_FLAGS, cline model_args)
+# with the array forced empty, on /bin/bash explicitly so we hit the 3.2 path
+# when present. Non-vacuity: the CLI stub must actually run and echo its argv;
+# a regressed function would abort with "unbound variable" instead.
+# ===========================================
+log_test "empty optional-flag arrays survive set -u (bash 3.2 unbound-var regression)"
+
+# Pick the stock macOS /bin/bash (3.2) when present; otherwise the current bash.
+BASH32="/bin/bash"
+[ -x "$BASH32" ] || BASH32="$(command -v bash)"
+
+STUB_DIR_13="$(mktemp -d "${TMPDIR:-/tmp}/loki-prov-stub.XXXXXX")"
+for _c in claude cline codex aider; do
+    printf '#!/usr/bin/env bash\necho "%s-ARGV: $*"\n' "$_c" > "$STUB_DIR_13/$_c"
+    chmod +x "$STUB_DIR_13/$_c"
+done
+
+# Run the empty-array paths in a fresh `set -euo pipefail` shell. Force the
+# arrays empty: no LOKI_CLINE_MODEL (cline model_args empty), no web-search /
+# log file (codex extra_flags empty), and claude's auto-flag builder is gated on
+# `claude --help` so against our trivial stub it emits nothing.
+regr_out="$(
+    PROVIDERS_DIR="$PROVIDERS_DIR" STUB_DIR_13="$STUB_DIR_13" \
+    "$BASH32" -c '
+        set -euo pipefail
+        unset LOKI_CLINE_MODEL LOKI_CODEX_WEB_SEARCH LOKI_LOG_FILE 2>/dev/null || true
+        export LOKI_CODEX_OUTPUT_LAST=false
+        PATH="$STUB_DIR_13:$PATH"
+        source "$PROVIDERS_DIR/codex.sh";  provider_invoke_with_tier development "x"
+        source "$PROVIDERS_DIR/claude.sh"; provider_invoke_with_tier development "x"
+        source "$PROVIDERS_DIR/claude.sh"; provider_invoke "x"
+        source "$PROVIDERS_DIR/cline.sh";  provider_invoke "x"
+        echo "ALL-SURVIVED"
+    ' 2>&1
+)"
+regr_rc=$?
+
+# Non-vacuity: require the explicit survival sentinel AND that each stub actually
+# ran (so we know the function reached the CLI, not that it silently no-op'd).
+if [ "$regr_rc" -eq 0 ] \
+   && echo "$regr_out" | grep -q "ALL-SURVIVED" \
+   && echo "$regr_out" | grep -q "codex-ARGV:" \
+   && echo "$regr_out" | grep -q "claude-ARGV:" \
+   && echo "$regr_out" | grep -q "cline-ARGV:" \
+   && ! echo "$regr_out" | grep -qi "unbound variable"; then
+    log_pass "empty optional-flag arrays survive set -u on $BASH32 (no unbound-variable abort)"
+else
+    log_fail "empty optional-flag array aborted under set -u (rc=$regr_rc): $regr_out"
+fi
+
+rm -rf "$STUB_DIR_13"
+
 echo ""
 echo "========================================"
 echo "Test Summary"

@@ -284,7 +284,11 @@ provider_invoke() {
     local prompt="$1"
     shift
     _loki_build_claude_auto_flags "development" "${LOKI_COMPLEXITY:-standard}" ""
-    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]}" -p "$prompt" "$@"
+    # Guard the auto-flag array expansion: when the builder emits zero flags the
+    # array is empty, and a bare "${arr[@]}" under `set -u` aborts with "unbound
+    # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
+    # nothing when unset/empty and preserves spaced elements otherwise.
+    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@"
 }
 
 # Model tier to Task tool model parameter value
@@ -443,5 +447,8 @@ provider_invoke_with_tier() {
     local model
     model=$(resolve_model_for_tier "$tier")
     _loki_build_claude_auto_flags "$tier" "${LOKI_COMPLEXITY:-standard}" "$model"
-    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]}" -p "$prompt" "$@"
+    # Guard empty auto-flag array under `set -u` on bash 3.2 (stock macOS): a bare
+    # "${arr[@]}" on an empty array aborts with "unbound variable". ${arr[@]+...}
+    # expands to nothing when empty and preserves spaced elements otherwise.
+    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@"
 }
