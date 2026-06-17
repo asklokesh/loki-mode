@@ -509,9 +509,47 @@ function linkManifest(opts) {
 }
 
 /**
+ * Read the witnessed agent-chain high-water mark.
+ *
+ * The witness file (witness.jsonl) records, on each append, the agent
+ * chain's `agentEntries` count at witness time. Because the file is
+ * append-only and the agent chain only grows, the MAX recorded
+ * `agentEntries` is a lower bound on how long the agent chain has ever
+ * legitimately been. If the live chain is now SHORTER than that, the
+ * trailing portion of the chain was truncated -- which a bare
+ * verifyChain() (genesis-to-tip linkage with no count anchor) cannot
+ * detect, because a truncated prefix re-links cleanly.
+ *
+ * @returns {object} { present, highWater } -- highWater:0 and
+ *   present:false when no witness file / no usable counts exist.
+ */
+function witnessAgentHighWater(opts) {
+  opts = opts || {};
+  var witnessFile = opts.witnessFile ||
+    path.join((opts.projectDir || process.cwd()), '.loki', 'audit', WITNESS_FILE);
+  if (!fs.existsSync(witnessFile)) {
+    return { present: false, highWater: 0, witnessFile: witnessFile };
+  }
+  var content = fs.readFileSync(witnessFile, 'utf8').trim();
+  if (!content) return { present: false, highWater: 0, witnessFile: witnessFile };
+  var lines = content.split('\n');
+  var high = 0;
+  var sawCount = false;
+  for (var i = 0; i < lines.length; i++) {
+    var rec;
+    try { rec = JSON.parse(lines[i]); } catch (_) { continue; }
+    if (rec && typeof rec.agentEntries === 'number') {
+      sawCount = true;
+      if (rec.agentEntries > high) high = rec.agentEntries;
+    }
+  }
+  return { present: sawCount, highWater: high, witnessFile: witnessFile };
+}
+
+/**
  * Verify the run-manifest link against the evidence chain.
  *
- * Composes TWO checks (mirroring verifyUnified rather than a bare disk-vs
+ * Composes THREE checks (mirroring verifyUnified rather than a bare disk-vs
  * -recorded compare):
  *   1. Agent chain integrity (AuditLog.verifyChain()). This catches an
  *      edit to the ANCHOR entry itself (e.g. someone rewrites the recorded
@@ -519,14 +557,30 @@ function linkManifest(opts) {
  *   2. Manifest reconciliation: re-hash the on-disk manifest and require
  *      it to equal the hash recorded by the MOST RECENT manifest-link
  *      anchor. A mutated manifest no longer matches -> tamper detected.
+ *   3. Trailing-truncation detection via the append-only witness file.
+ *      verifyChain() validates previousHash linkage from genesis with NO
+ *      count anchor, so an attacker who edits .loki/loki-run.json AND
+ *      truncates .loki/audit/audit.jsonl to drop the trailing
+ *      manifest-link anchor leaves a SHORTER but internally-consistent
+ *      chain that verifies clean (and reports present:false, which a
+ *      caller must NOT read as a pass). We cross-check the witness file's
+ *      recorded agentEntries high-water mark against the live chain
+ *      length: if the chain is now shorter than a previously-witnessed
+ *      count, the trail was truncated and we return valid:false with
+ *      truncationSuspected:true.
  *
- * HONEST empty cases (distinguishable from a real pass via `present`):
- *   - No anchor recorded yet -> { present:false, valid:true, reason:... }.
+ * HONEST empty cases (distinguishable from a real pass via `present` and
+ * `truncationSuspected`):
+ *   - No anchor recorded yet -> { present:false, ... }. valid is true ONLY
+ *     when no witness exists or the chain still meets the witnessed
+ *     high-water mark; a witnessed-then-truncated chain reports
+ *     valid:false + truncationSuspected:true even on this absent-anchor
+ *     path, so an absent anchor can never be silently read as verified.
  *   - Anchor exists but the manifest file is now gone -> manifest.valid
  *     is false (the pinned manifest is missing/cannot be reconciled).
  *
  * @param {object} [opts] projectDir / logDir / manifestPath as linkManifest.
- * @returns {object} { valid, present, chain, manifest }
+ * @returns {object} { valid, present, truncationSuspected, chain, manifest, witness }
  */
 function verifyManifestLink(opts) {
   opts = opts || {};
@@ -537,14 +591,39 @@ function verifyManifestLink(opts) {
   var entries = log.readEntries();
   log.destroy();
 
+  // Trailing-truncation guard: compare the live chain length against the
+  // highest agentEntries count any witness ever recorded. A shrink means
+  // the chain was truncated below a point it provably once reached.
+  var hw = witnessAgentHighWater(opts);
+  var chainLen = typeof chain.entries === 'number' ? chain.entries : entries.length;
+  var truncationSuspected = hw.present && chainLen < hw.highWater;
+  var witnessInfo = {
+    present: hw.present,
+    witnessedHighWater: hw.highWater,
+    currentChainLength: chainLen,
+    truncationSuspected: truncationSuspected,
+  };
+
   var anchors = entries.filter(function (e) {
     return e.what === MANIFEST_LINK_ACTION;
   });
 
   if (anchors.length === 0) {
     return {
-      valid: !!chain.valid, present: false, chain: chain,
-      manifest: { present: false, valid: true, reason: 'no manifest-link anchor recorded' },
+      valid: !!chain.valid && !truncationSuspected,
+      present: false,
+      truncationSuspected: truncationSuspected,
+      chain: chain,
+      witness: witnessInfo,
+      manifest: {
+        present: false,
+        valid: !truncationSuspected,
+        reason: truncationSuspected
+          ? 'audit chain truncated below witnessed length ' + hw.highWater +
+            ' (current ' + chainLen + '); manifest-link anchor may have been ' +
+            'dropped by trailing-truncation -- absent anchor is NOT a pass'
+          : 'no manifest-link anchor recorded',
+      },
     };
   }
 
@@ -574,9 +653,11 @@ function verifyManifestLink(opts) {
   }
 
   return {
-    valid: !!chain.valid && manifest.valid,
+    valid: !!chain.valid && manifest.valid && !truncationSuspected,
     present: true,
+    truncationSuspected: truncationSuspected,
     chain: chain,
+    witness: witnessInfo,
     manifest: manifest,
   };
 }
@@ -592,6 +673,7 @@ module.exports = {
   defaultDashboardAuditDir: defaultDashboardAuditDir,
   linkManifest: linkManifest,
   verifyManifestLink: verifyManifestLink,
+  witnessAgentHighWater: witnessAgentHighWater,
   hashManifest: hashManifest,
   defaultManifestPath: defaultManifestPath,
   CROSSLINK_ACTION: CROSSLINK_ACTION,
