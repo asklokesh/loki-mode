@@ -42,6 +42,19 @@ jobs:
           bash -n autonomy/loki
       - name: Python tests
         run: python3 -m pytest -q
+      - name: Setup Bun
+        # publish-npm and publish-docker ship the loki-ts Bun dist. Gate the
+        # release on a clean TS build + passing bun test so a broken Bun
+        # artifact cannot reach npm/Docker. Mirrors bun-parity.yml setup.
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Bun typecheck + test (protect published loki-ts dist)
+        working-directory: loki-ts
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
 
   release:
     runs-on: ubuntu-latest
