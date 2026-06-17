@@ -9809,9 +9809,16 @@ CPEOF
             old_cp="${checkpoint_dir}/${old_cp}"
             rm -rf "$old_cp" 2>/dev/null || true
         done
-        # Rebuild index atomically from remaining checkpoints (sorted by epoch)
+        # Rebuild index atomically from remaining checkpoints (sorted by epoch).
+        # BUG-ST-012: sort on the checkpoint dir BASENAME, not the full path.
+        # Checkpoint ids are cp-<iter>-<epoch> so basename field 3 is the epoch,
+        # but a full path like .../loki-mode/.loki/.../cp-N-EPOCH/metadata.json has
+        # extra hyphens (e.g. the loki-mode cwd) that shift the epoch out of field 3.
+        # Prefix each path with a basename-derived key, sort on it, then strip it.
         local tmp_index="${index_file}.tmp.$$"
-        for remaining in $(find "$checkpoint_dir" -maxdepth 2 -name "metadata.json" -path "*/cp-*/*" 2>/dev/null | sort -t'-' -k3 -n); do
+        for remaining in $(find "$checkpoint_dir" -maxdepth 2 -name "metadata.json" -path "*/cp-*/*" 2>/dev/null \
+            | while read -r mp; do printf '%s\t%s\n' "$(basename "$(dirname "$mp")")" "$mp"; done \
+            | sort -t'-' -k3 -n | cut -f2-); do
             [ -f "$remaining" ] || continue
             _CP_META="$remaining" python3 -c "
 import json,os
