@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.62.0] - 2026-06-17
+
+### Parallel-worktree cleanup batch (9 isolated fixes, file-disjoint)
+
+Nine fixes developed in parallel isolated git worktrees, each with a non-vacuous
+regression test, merged conflict-free (zero file overlap). Full pytest gate: 1176
+passed; all 6 standalone tests pass.
+
+CI hardening:
+- **Release gate now runs bun typecheck + test** (release.yml): publish-npm and
+  publish-docker ship the loki-ts Bun dist, but the gate was python-only. A broken
+  TS build or failing bun test can no longer reach npm/Docker.
+- **bun-parity stops blanking doctor pass/fail/warning counts** (bun-parity.yml):
+  the blocking gate normalized away the exact count-shift class that broke v7.58.0
+  (doctor crash off-TTY). It now keeps the counts, matching the nightly parity-drift.
+
+Reliability:
+- **App Runner non-compose watchdog runs a health check** (app-runner.sh): a
+  hung-but-alive HTTP app (passes kill -0, no longer serving) is now detected and
+  restarted; the HTTP-fail path writes ok:false instead of a misleading ok:true.
+- **Benchmark harness: atomic results write + resume + dead-flag removal**
+  (run-benchmarks.sh): intermediate results now write via temp+os.replace (a crash
+  mid-write no longer corrupts the file), a new --resume <dir> skips already-solved
+  instances (no redundant paid calls), and the misleading unused --parallel flag is
+  removed.
+- **Checkpoint prune sorts by basename** (run.sh): the index rebuild sorted full
+  metadata paths with -t- -k3, so a hyphen in the cwd path (the repo is literally
+  loki-mode) shifted the epoch field and corrupted rollback ordering. Now sorts on
+  the checkpoint dir basename.
+
+Memory:
+- **Valid ISO timestamps + Layer-2 budget gating** (cross_project.py,
+  knowledge_graph.py, layers/loader.py): dropped the double-Z suffix that produced
+  invalid +00:00Z timestamps (broke fromisoformat), and gated Layer-2 timeline
+  loading on the remaining token budget so an oversized timeline no longer overspends
+  max_tokens.
+- **Index/timeline layer dead cache removed + non-mutating relevance boost**
+  (layers/index_layer.py, timeline_layer.py): removed a _cache field that was written
+  but never read (3 disk reads per query; a real cache would serve stale data across
+  the separate writer/reader processes), and the keyword match boost now lives on a
+  transient match_score so a topic's returned relevance_score reflects its stored
+  value.
+
+Audit + docs:
+- **verifyManifestLink detects trailing-truncation** (src/audit/crosslink.js): a
+  truncated audit chain (dropping the manifest-link anchor) re-linked cleanly and read
+  as valid; it now cross-checks the witness file's agentEntries high-water mark and
+  flags truncation.
+- **Template complexity buckets + stack row corrected** (templates/README.md): the
+  simple-todo-app stack was wrong (listed React/Express/SQLite; it is vanilla
+  JS/localStorage), and the Simple/Standard/Complex gallery now matches how
+  detect_complexity actually classifies each template by section count.
+
 ## [7.61.0] - 2026-06-17
 
 ### Verification-gate honesty + correctness (6 MEDIUM findings)

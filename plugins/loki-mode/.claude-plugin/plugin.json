@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "loki-mode",
   "displayName": "Loki Mode",
-  "version": "7.61.0",
+  "version": "7.62.0",
   "description": "Autonomous spec-to-product build system with a built-in trust layer (RARV-C closure loop, 8 quality gates, completion council). Ships Loki's spec-hardening, drift-detection, and deterministic PR verification commands plus the Loki MCP server.",
   "author": {
     "name": "Autonomi",
