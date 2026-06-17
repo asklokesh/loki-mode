@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.54.0] - 2026-06-16
+
+### Tech-debt elimination + provider honesty + regression hardening
+
+- **Dead-stub removal (P4-3)** (`loki-ts/src/runner/autonomous.ts`): the Bun
+  runner carried logStub/noopCouncil/stubProvider fallbacks for modules that all
+  exist and conform. These were unreachable dead code that silently degraded to
+  wrong results if ever hit. Replaced with a fail-fast `requireModule()` (a
+  missing load-bearing module now errors loudly at resolution time instead of
+  producing a wrong build), while genuine runtime-error fallbacks are preserved.
+- **Antigravity de-listed (P4-5)**: "Antigravity CLI" was advertised across docs
+  as an upcoming Loki provider but had zero implementation, and was misattributed
+  to Anthropic (it is Google's product). Removed from all provider tables/lists
+  (README, SKILL, CLAUDE, wiki, docs/INSTALLATION). Honest competitor references
+  in docs/COMPARISON.md are retained.
+- **Bun semantic-findings consumer wired** (`loki-ts/src/runner/build_prompt.ts`):
+  the Bun semantic-test gate persisted `.loki/quality/semantic-findings.txt` but
+  nothing on the Bun route read it (a writer-with-no-reader). build_prompt.ts now
+  reads and injects those severity-tagged findings into the next-iteration prompt,
+  independent of gate-failures.txt, byte-parity with the bash route. Absent/empty
+  injects nothing.
+- **Policy-context quoting fix** (`autonomy/run.sh` check_policy): `${2:-{}}`
+  brace-eating expansion turned a non-empty JSON context into invalid JSON
+  (`{"a":1}}`), so the policy engine received garbage and returned DENY every
+  iteration when a `.loki/policies.json`/`.yaml` existed (and made the P3-3
+  approval-wait unreachable on the live path). Fixed to a split default yielding
+  valid `{}`; non-empty contexts now pass through unchanged. Users with no policy
+  file are unaffected.
+- **Compliance snapshot scheduler (P3-11, optional)** (`src/audit/compliance-scheduler.js`):
+  a default-disabled helper that periodically persists a compliance snapshot from
+  the real audit chain (honest empty-state, never a fabricated verdict). Ships as
+  a tested helper; not yet auto-invoked (documented).
+- **Regression hardening**: added guards for the v7.51-v7.54 features, notably
+  `tests/test-no-deprecated-codex-flag.sh` (fails if any live `codex exec
+  --full-auto` is reintroduced), plus coverage-artifact, evidence-gate-consumer,
+  approval-phase-gate, and semantic-gate-bash-route regression tests.
+
+Gates: local-ci 83/83, full pytest + bun test (1009 Bun tests) + bash/Bun parity
+green, 3-reviewer council unanimous APPROVE (after a round that correctly caught a
+self-contradicting code comment, now fixed).
+
 ## [7.53.0] - 2026-06-16
 
 ### Verification depth + enterprise compliance surface (P1-2, P1-3, P3-6, P3-11)

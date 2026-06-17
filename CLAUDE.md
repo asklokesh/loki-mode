@@ -101,7 +101,6 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 - **OpenAI Codex CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
 - **Aider** (Tier 3): Degraded mode
 - **Google Gemini CLI**: DEPRECATED starting v7.5.18 (upstream deprecated; runtime removed). `LOKI_PROVIDER=gemini` exits with a migration message.
-- **Anthropic Antigravity CLI**: Coming soon.
 
 ```bash
 # Provider selection
@@ -304,7 +303,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.53.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v7.54.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

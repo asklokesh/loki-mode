@@ -485,6 +485,49 @@ function hasSeverityToken(body: string, token: "HIGH" | "CRITICAL"): boolean {
   return new RegExp(`\\[${token}\\]`, "i").test(body);
 }
 
+// --- semantic-findings.txt persistence (parity with bash, run.sh:8362-8383) ---
+//
+// The bash route writes <lokiDir>/quality/semantic-findings.txt by piping the
+// detector's `2>&1` output through `grep -E '\[(...)\]'`. These helpers mirror
+// that on the Bun route so the on-disk artifact is byte-shape compatible (a
+// header line followed by the matching severity lines, trailing newline). The
+// file path is the same one runMockIntegrity / runMutationIntegrity read.
+
+function semanticFindingsPath(base: string): string {
+  return join(base, "quality", "semantic-findings.txt");
+}
+
+// Return the lines of `output` that match `re` (severity tokens), preserving
+// order and dropping ANSI-only / blank noise. Mirrors `echo "$output" | grep -E`.
+function grepSeverities(output: string, re: RegExp): string[] {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => re.test(line));
+}
+
+// Write the findings file: a header line then the matched severity lines, with
+// a trailing newline (mirrors the bash `{ echo ...; echo "$lines"; } > file`).
+// mkdir -p the quality dir first (bash run.sh:8338 does `mkdir -p`).
+function persistSemanticFindings(base: string, header: string, lines: string[]): void {
+  const dir = join(base, "quality");
+  mkdirSync(dir, { recursive: true });
+  const body = `${header}\n${lines.join("\n")}\n`;
+  writeFileSync(semanticFindingsPath(base), body);
+}
+
+// Remove a stale findings file (mirrors the bash `rm -f "$findings_file"`
+// deny-filter branches). No-op when absent.
+function clearSemanticFindings(base: string): void {
+  const p = semanticFindingsPath(base);
+  if (existsSync(p)) {
+    try {
+      rmSync(p);
+    } catch {
+      // best-effort; a leftover file is harmless (advisory only).
+    }
+  }
+}
+
 // Mirror of bash enforce_mock_integrity -> tests/detect-mock-problems.sh.
 // Reads <lokiDir>/quality/mock-findings.txt. Blocks on CRITICAL or HIGH.
 // Honors LOKI_STUB_GATE_MOCK_INTEGRITY for tests.
@@ -582,19 +625,47 @@ export async function runMutationIntegrity(ctx?: RunnerContext): Promise<GateRes
 // Test injection: LOKI_SEMANTIC_DETECTOR overrides the detector path so tests
 // can point the gate at a fixture detector that returns a deterministic exit
 // code (the same style runStaticAnalysis tests use a hermetic scratch repo).
+//
+// FINDINGS PERSISTENCE (parity with bash enforce_semantic_integrity,
+// run.sh:8362-8383): the bash route captures the detector's FULL output and
+// writes per-finding text to <lokiDir>/quality/semantic-findings.txt -- the
+// CRITICAL/HIGH/MED/LOW lines on a block (rc 2), the MED/LOW advisory lines on
+// a clean-but-advisory pass (rc 0), and REMOVES the file when there is nothing
+// to report (deny-filter: clean with no advisory, timeout, detector absent).
+// The bash build_prompt then surfaces that file into the next iteration's
+// prompt (run.sh:12343, independent of gate-failures.txt). This mirror persists
+// the SAME file at the SAME path with the SAME byte-shape (header line + the
+// grepped severity lines) so the actionable near-miss feedback is captured on
+// the Bun route too.
+//
+// CONSUMER STATUS (honest, no fake consumer): the Bun prompt-builder
+// (build_prompt.ts buildSemanticFindingsBlock, called from
+// buildGateFailureContext) READS this file and injects the severity-tagged
+// lines into the next-iteration prompt, independent of gate-failures.txt --
+// byte-parity with the bash route (run.sh:12349-12353). The semantic
+// completion-promise arm writes no gate token, which is why the consumer
+// surfaces this file independently of gate-failures.txt rather than nesting it.
+// Writer (here) and reader (build_prompt.ts) are both wired: NOT dead output,
+// NOT a writer-with-no-reader.
 export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult> {
   const stubKey = "LOKI_STUB_GATE_SEMANTIC_TESTS";
   const stubVal = process.env[stubKey];
   if (stubVal === "fail" || stubVal === "pass") return stubResult("semantic_tests");
 
   const cwd = ctx?.cwd ?? process.cwd();
+  // Findings file lives under the SAME path the bash route uses:
+  // <lokiDir>/quality/semantic-findings.txt. base mirrors the other findings
+  // gates (runMockIntegrity / runMutationIntegrity), reading ctx.lokiDir.
+  const base = ctx?.lokiDir ?? lokiDir();
   const detector =
     process.env["LOKI_SEMANTIC_DETECTOR"] ??
     join(REPO_ROOT, "tests", "detect-semantic-test-problems.sh");
 
   // Detector absent -> nothing to run. Mirror the bash `if [ ! -f ... ]`
-  // skip; never fabricate a verdict from a missing script.
+  // skip; never fabricate a verdict from a missing script. Bash also clears any
+  // stale findings file here (run.sh:8345); mirror that deny-filter.
   if (!existsSync(detector)) {
+    clearSemanticFindings(base);
     return {
       passed: true,
       detail: "semantic_tests: detector not found -- gate did not run",
@@ -615,6 +686,7 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
   const TIMEOUT_MS = 300_000;
 
   let exitCode: number;
+  let output: string;
   try {
     const r = await run(["bash", detector, "--block-high"], {
       cwd,
@@ -624,29 +696,55 @@ export async function runSemanticTests(ctx?: RunnerContext): Promise<GateResult>
       timeoutMs: TIMEOUT_MS,
     });
     exitCode = r.exitCode;
+    // Bash captures the detector with `2>&1` (run.sh:8351-8352); mirror that by
+    // concatenating stdout + stderr before grepping severity lines.
+    output = `${r.stdout}${r.stderr}`;
   } catch {
-    // Spawn failure -- inconclusive, never block (deny-filter).
+    // Spawn failure -- inconclusive, never block (deny-filter). Clear any stale
+    // findings file so a prior run's text is not mistaken for this run's.
+    clearSemanticFindings(base);
     return {
       passed: true,
       detail: "semantic_tests: detector spawn failed -- inconclusive, not blocking",
     };
   }
 
-  // ONLY an exact exit code of 2 blocks (CRITICAL/HIGH findings).
+  // ONLY an exact exit code of 2 blocks (CRITICAL/HIGH findings). Persist ALL
+  // severity lines (mirrors run.sh:8362-8367: the blocking-header variant).
   if (exitCode === 2) {
+    persistSemanticFindings(
+      base,
+      "# Semantic test-authenticity findings (CRITICAL/HIGH block this completion)",
+      grepSeverities(output, /\[(CRITICAL|HIGH|MEDIUM|LOW)\]/),
+    );
     return {
       passed: false,
       detail: "semantic_tests: CRITICAL/HIGH fake-test problems detected -- BLOCK",
     };
   }
   // rc 124 (timeout) is named for clarity; every other code collapses to PASS.
+  // Bash clears the findings file on timeout (run.sh:8358); mirror that.
   if (exitCode === 124) {
+    clearSemanticFindings(base);
     return {
       passed: true,
       detail: "semantic_tests: detector timed out -- inconclusive, not blocking",
     };
   }
-  // rc 0 (clean) and any other non-2/non-124 code -> PASS (deny-filter).
+  // rc 0 (clean) and any other non-2/non-124 code -> PASS (deny-filter). Route
+  // any MED/LOW advisory findings to the findings file (mirrors run.sh:8374-8383:
+  // the advisory-header variant), else clear it. This is the near-miss feedback
+  // the council flagged as missing on the Bun route.
+  const medLow = grepSeverities(output, /\[(MEDIUM|LOW)\]/);
+  if (medLow.length > 0) {
+    persistSemanticFindings(
+      base,
+      "# Semantic test advisory findings (MED/LOW, non-blocking)",
+      medLow,
+    );
+  } else {
+    clearSemanticFindings(base);
+  }
   return { passed: true, detail: `semantic_tests: no blocking findings (rc ${exitCode})` };
 }
 

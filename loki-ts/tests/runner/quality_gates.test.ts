@@ -896,6 +896,85 @@ describe("runSemanticTests (P1-3 spawn-based gate)", () => {
     expect(r.passed).toBe(false);
     expect(r.detail ?? "").toContain("stub forced fail");
   });
+
+  // --- findings persistence parity (run.sh:8362-8383) --------------------
+  //
+  // The bash route captures the detector's 2>&1 output and writes the matching
+  // severity lines to <lokiDir>/quality/semantic-findings.txt (blocking header
+  // on rc 2, advisory header on rc 0 + MED/LOW), and removes the file otherwise
+  // (deny-filter). These tests lock the Bun mirror to that byte-shape.
+
+  // Fake detector that echoes the given severity lines then exits `code`.
+  // Mirrors how the real detector prints "[HIGH] ..." lines before exiting.
+  function fakeDetectorWithOutput(code: number, lines: string[]): string {
+    const p = join(scratch, `fake-detector-out-${code}.sh`);
+    const echoes = lines.map((l) => `echo ${JSON.stringify(l)}`).join("\n");
+    writeFileSync(p, `#!/usr/bin/env bash\n${echoes}\nexit ${code}\n`, { mode: 0o755 });
+    return p;
+  }
+
+  const findingsFile = () => join(scratch, "quality", "semantic-findings.txt");
+
+  it("persists CRITICAL/HIGH findings with the blocking header on rc 2", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetectorWithOutput(2, [
+      "[HIGH] fake.test.ts:4 literal-via-variable echo verifies nothing",
+      "[MEDIUM] fake.test.ts:9 mock-return echoed back",
+    ]);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(existsSync(findingsFile())).toBe(true);
+    const body = readFileSync(findingsFile(), "utf-8");
+    expect(body).toContain("# Semantic test-authenticity findings (CRITICAL/HIGH block this completion)");
+    expect(body).toContain("[HIGH] fake.test.ts:4 literal-via-variable echo verifies nothing");
+    // All severities captured on a block (matches the bash grep on rc 2).
+    expect(body).toContain("[MEDIUM] fake.test.ts:9 mock-return echoed back");
+  });
+
+  it("persists MED/LOW advisory findings with the advisory header on a clean pass (rc 0)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetectorWithOutput(0, [
+      "[MEDIUM] fake.test.ts:9 mock-return echoed back",
+      "[LOW] fake.test.ts:12 deleted assertion",
+    ]);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(existsSync(findingsFile())).toBe(true);
+    const body = readFileSync(findingsFile(), "utf-8");
+    expect(body).toContain("# Semantic test advisory findings (MED/LOW, non-blocking)");
+    expect(body).toContain("[MEDIUM] fake.test.ts:9 mock-return echoed back");
+    expect(body).toContain("[LOW] fake.test.ts:12 deleted assertion");
+  });
+
+  it("does NOT write the findings file on a clean run with no severity lines (rc 0)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetectorWithOutput(0, [
+      "Semantic test gate: PASS",
+    ]);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(existsSync(findingsFile())).toBe(false);
+  });
+
+  it("clears a stale findings file on a clean run (deny-filter)", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    // Seed a stale findings file from a prior block.
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(findingsFile(), "# stale\n[HIGH] old finding\n");
+    expect(existsSync(findingsFile())).toBe(true);
+    process.env["LOKI_SEMANTIC_DETECTOR"] = fakeDetector(0);
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(existsSync(findingsFile())).toBe(false);
+  });
+
+  it("does NOT write the findings file when the detector is absent", async () => {
+    process.env["LOKI_GATE_SEMANTIC_TESTS"] = "true";
+    process.env["LOKI_SEMANTIC_DETECTOR"] = join(scratch, "does-not-exist.sh");
+    const r = await runSemanticTests(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(existsSync(findingsFile())).toBe(false);
+  });
 });
 
 // --- runCodeReview (real Phase 5 selection + dispatch + aggregation) ------

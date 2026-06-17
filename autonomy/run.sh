@@ -1454,7 +1454,13 @@ stop_enterprise_services() {
 # Exit 0 = ALLOW, Exit 1 = DENY, Exit 2 = REQUIRE_APPROVAL (logged but allowed for now)
 check_policy() {
     local enforcement_point="$1"
-    local context_json="${2:-{}}"
+    # Default to a valid empty-object JSON. Do NOT inline `${2:-{}}`: the
+    # closing brace of the parameter expansion eats the first `}` of the
+    # `{}` default, so a non-empty $2 like {"a":1} would pass through as
+    # {"a":1}} (invalid JSON -> check.js JSON.parse fails -> exit 1 DENY
+    # every iteration). Split the default assignment to avoid the footgun.
+    local context_json="${2:-}"
+    [ -z "$context_json" ] && context_json='{}'
 
     # Only check if policy files exist
     if [ ! -f ".loki/policies.json" ] && [ ! -f ".loki/policies.yaml" ]; then

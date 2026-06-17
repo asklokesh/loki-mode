@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v7.53.0
+**Version:** v7.54.0
 
 ---
 
@@ -312,7 +312,6 @@ Loki Mode supports four active providers across three tiers, plus historical/upc
 | `codex`  | Active | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
 | `aider`  | Active | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
 | `gemini` | DEPRECATED v7.5.18 | -- | Upstream Gemini CLI deprecated by Google. Runtime removed; `LOKI_PROVIDER=gemini` exits with migration message. |
-| `antigravity` | Coming soon | -- | Anthropic Antigravity CLI integration planned. |
 
 ### Configuration
 
@@ -396,7 +395,7 @@ provider works inside the container. Provide auth with your Anthropic API key:
 # Run Loki Mode in Docker (Claude provider, API-key auth)
 docker run --rm -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -v $(pwd):/workspace -w /workspace \
-  asklokesh/loki-mode:7.53.0 start ./my-spec.md
+  asklokesh/loki-mode:7.54.0 start ./my-spec.md
 ```
 
 ##### docker compose + .env (no host install)

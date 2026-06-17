@@ -124,6 +124,18 @@ run_test "State Baseline Lifecycle (run 2+ freshness)" "$SCRIPT_DIR/test-state-b
 # a fabricated completion (empty diff or red tests) must be rejected there too.
 run_test "Completion-route Evidence Gate (default path)" "$SCRIPT_DIR/test-completion-route-evidence-gate.sh"
 
+# Regression guards for the v7.51-v7.53 shipped features (SDET hardening):
+#  - coverage.json is written with measured:false even at the default (off).
+#  - run.sh surfaces the council evidence-gate-details (WARN/INFO/silent).
+#  - check_policy honors the approval wait under enforce knobs; advisory default.
+#  - the semantic gate is default-OFF on the bash route + blocks on HIGH when on.
+#  - no live `codex exec --full-auto` invocation has crept back into the repo.
+run_test "Coverage Artifact Default-Off (v7.51 measured:false)" "$SCRIPT_DIR/test-coverage-artifact-default-off.sh"
+run_test "Evidence-Gate-Details Consumer (v7.51 P1-1)" "$SCRIPT_DIR/test-evidence-gate-details-consumer.sh"
+run_test "Approval Phase-Gate (v7.51 P3-3)" "$SCRIPT_DIR/test-approval-phase-gate.sh"
+run_test "Semantic Gate Bash Route (v7.53 P1-3)" "$SCRIPT_DIR/test-semantic-gate-bash-route.sh"
+run_test "No Deprecated Codex Flag (v7.52 --full-auto guard)" "$SCRIPT_DIR/test-no-deprecated-codex-flag.sh"
+
 # Uncertainty-gated escalation: when >=2 of 3 reused proxies (no-change,
 # diff-hash oscillation, council split) co-occur for N rounds, the decision
 # function escalates once per stuck-episode (debounced); a single noisy proxy

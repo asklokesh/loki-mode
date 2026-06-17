@@ -629,37 +629,71 @@ function loadQueueTasks(cwd: string): string {
 // ---------------------------------------------------------------------------
 
 async function buildGateFailureContext(cwd: string): Promise<string> {
+  let ctx = "";
+
+  // Gate-failure injection (run.sh:9007-9023 / 12296-12331). Guarded on
+  // gate-failures.txt presence: when absent, this whole block is skipped and
+  // ctx stays "" (byte-identical to the prior early-return behavior).
   const gfPath = resolve(cwd, ".loki/quality/gate-failures.txt");
   const failuresRaw = readFileSafe(gfPath);
-  if (failuresRaw === null) return "";
-  // bash `cat <file>` includes trailing newline; we strip it for printf '%s\n'.
-  const failures = failuresRaw.replace(/\n$/, "");
-  let ctx = `QUALITY GATE FAILURES FROM PREVIOUS ITERATION: [${failures}]. `;
+  if (failuresRaw !== null) {
+    // bash `cat <file>` includes trailing newline; we strip it for printf '%s\n'.
+    const failures = failuresRaw.replace(/\n$/, "");
+    ctx = `QUALITY GATE FAILURES FROM PREVIOUS ITERATION: [${failures}]. `;
 
-  const saPath = resolve(cwd, ".loki/quality/static-analysis.json");
-  if (existsSync(saPath)) {
-    const summary = await readSummaryField(saPath);
-    if (summary.length > 0) ctx += `Static analysis: ${summary}. `;
-  }
-  const trPath = resolve(cwd, ".loki/quality/test-results.json");
-  if (existsSync(trPath)) {
-    const summary = await readSummaryField(trPath);
-    if (summary.length > 0) ctx += `Tests: ${summary}. `;
-  }
-
-  // Phase 1 (v7.5.0) -- LOKI_INJECT_FINDINGS=1 appends structured per-finding
-  // records (severity, file:line, reviewer) parsed from the previous
-  // iteration's per-reviewer *.txt files. Default off so existing prompts
-  // are byte-identical when the flag is not set.
-  if (process.env["LOKI_INJECT_FINDINGS"] !== "0") {
-    const findingsBlock = await buildStructuredFindingsBlock(cwd);
-    if (findingsBlock.length > 0) {
-      ctx += `\n\n${findingsBlock}\n`;
+    const saPath = resolve(cwd, ".loki/quality/static-analysis.json");
+    if (existsSync(saPath)) {
+      const summary = await readSummaryField(saPath);
+      if (summary.length > 0) ctx += `Static analysis: ${summary}. `;
     }
+    const trPath = resolve(cwd, ".loki/quality/test-results.json");
+    if (existsSync(trPath)) {
+      const summary = await readSummaryField(trPath);
+      if (summary.length > 0) ctx += `Tests: ${summary}. `;
+    }
+
+    // Phase 1 (v7.5.0) -- LOKI_INJECT_FINDINGS=1 appends structured per-finding
+    // records (severity, file:line, reviewer) parsed from the previous
+    // iteration's per-reviewer *.txt files. Default off so existing prompts
+    // are byte-identical when the flag is not set.
+    if (process.env["LOKI_INJECT_FINDINGS"] !== "0") {
+      const findingsBlock = await buildStructuredFindingsBlock(cwd);
+      if (findingsBlock.length > 0) {
+        ctx += `\n\n${findingsBlock}\n`;
+      }
+    }
+
+    ctx += `FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.`;
   }
 
-  ctx += `FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.`;
+  // P1-3 semantic test-authenticity findings (run.sh:12338-12351). Surfaced
+  // INDEPENDENTLY of gate-failures.txt: the completion-promise arm writes
+  // semantic-findings.txt without appending any gate token, so nesting this
+  // under the gate-failures guard would silently drop exactly that case. The
+  // Bun route's runSemanticTests (quality_gates.ts) writes this file; this is
+  // the consumer that reaches parity with bash. Absent/empty -> nothing added.
+  ctx += buildSemanticFindingsBlock(cwd);
+
   return ctx;
+}
+
+// P1-3 helper: surface the specific semantic test-authenticity findings
+// (which fake test, which line) that quality_gates.ts wrote to
+// .loki/quality/semantic-findings.txt. Byte-for-byte mirror of
+// run.sh:12338-12351 -- grep severity-tagged lines, head -20, prepend the
+// exact bash prefix (including its leading space). Returns "" when the file
+// is absent or has no severity-tagged lines (e.g. only the header line).
+function buildSemanticFindingsBlock(cwd: string): string {
+  const path = resolve(cwd, ".loki/quality/semantic-findings.txt");
+  const raw = readFileSafe(path);
+  if (raw === null) return "";
+  const lines = raw
+    .split("\n")
+    .filter((l) => /\[(CRITICAL|HIGH|MEDIUM|LOW)\]/.test(l))
+    .slice(0, 20);
+  if (lines.length === 0) return "";
+  // Prefix copied verbatim from run.sh:12348, including the leading space.
+  return ` SEMANTIC TEST-AUTHENTICITY FINDINGS (fix the fake tests; an assertion must verify a value that flows through the code under test, not echo a literal back): ${lines.join("\n")}`;
 }
 
 // Phase 1 helper: read structured findings from the most recent review dir

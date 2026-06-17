@@ -16,7 +16,6 @@ import {
   type Clock,
   type CouncilHook,
   type IterationOutcome,
-  type ProviderInvocation,
   type ProviderInvoker,
   type ProviderName,
   type ProviderResult,
@@ -153,31 +152,42 @@ export async function tryImport<T>(spec: string, requiredKeys: readonly string[]
 }
 
 // ---------------------------------------------------------------------------
-// Default fallbacks for unimplemented modules. Each one logs once so the
-// developer can see exactly which Phase-4 agent's work is still pending.
+// Module-resolution contract (fail-fast, no silent stubs).
+//
+// During Phase 4 this file shipped logStub() / noopCouncil / stubProvider
+// no-op fallbacks for the sibling helper modules (state, council, queues,
+// providers, build_prompt) that were still being authored in parallel. All
+// five now EXIST and conform to their tryImport marker keys, so those
+// fallbacks were unreachable dead code: tryImport only returns null on an
+// import FAILURE (missing file) and THROWS on a present-but-nonconforming
+// module. A present, conforming module never yields null.
+//
+// Worse, the fallbacks degraded SILENTLY to WRONG results rather than safe
+// no-ops: stubProvider always returned exitCode 1 (every iteration "fails"),
+// noopCouncil never stopped (the loop can't complete), a skipped queue/state
+// path drops real work, and a missing state writer was already escalated to a
+// hard throw in persistState() below (lines documenting the reviewer-caught
+// stub-schema corruption, v7.4.25). Removing the remaining stubs makes the
+// whole module-resolution policy consistent: a load-bearing helper that
+// cannot be loaded is a fatal contract violation, surfaced loudly, not masked
+// behind a stub that produces a wrong build. The happy path (all modules
+// present, which is the only path that exists today and the one tests
+// exercise via the real modules or explicit overrides) is unchanged.
+//
+// Note: tryImport itself is intentionally left untouched -- its null-on-
+// missing return is directly unit-tested. Fail-fast is enforced at the call
+// sites by requireModule() below.
 // ---------------------------------------------------------------------------
 
-const stubLogged = new Set<string>();
-function logStub(ctx: RunnerContext, name: string): void {
-  if (stubLogged.has(name)) return;
-  stubLogged.add(name);
-  ctx.log(`[runner] stub: ${name} not yet implemented; skipping`);
+function requireModule<T>(mod: T | null, specForError: string): T {
+  if (mod === null) {
+    throw new Error(
+      `[runner] FATAL: required module ${specForError} is not loadable; ` +
+        `refusing to run with a degraded stub (see autonomous.ts module-resolution contract)`,
+    );
+  }
+  return mod;
 }
-
-const noopCouncil: CouncilHook = {
-  async shouldStop(): Promise<boolean> {
-    return false;
-  },
-};
-
-// FakeProvider for the unimplemented case -- always returns exitCode 1 so the
-// loop exercises its retry path. Tests inject a real FakeProvider via
-// RunnerOpts.providerOverride.
-const stubProvider: ProviderInvoker = {
-  async invoke(call: ProviderInvocation): Promise<ProviderResult> {
-    return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
-  },
-};
 
 // v7.5.3: route through the richer intervention.ts module (PAUSE/STOP/INPUT
 // signals, prompt-injection limits, quarantine-on-validation-fail) instead
@@ -297,33 +307,37 @@ async function runAutonomousCore(
   // Phase 1 wiring on top of it) is reachable.
   const gatesMod = await tryImport<GatesMod>("./quality_gates.ts", ["runQualityGates"]);
 
-  if (stateMod) await stateMod.loadStateForRunner(ctx);
-  else logStub(ctx, "state.loadState");
+  // Fail-fast: these helpers are load-bearing. A missing/nonconforming module
+  // is a fatal contract violation, not a degrade-to-stub condition (test
+  // injection still bypasses the real modules via the *Override opts below).
+  await requireModule(stateMod, "./state.ts").loadStateForRunner(ctx);
 
-  if (councilMod) await councilMod.councilInit(ctx.prdPath);
-  else logStub(ctx, "council.councilInit");
+  await requireModule(councilMod, "./council.ts").councilInit(ctx.prdPath);
 
-  if (queueMod) {
-    await queueMod.populateBmadQueue(ctx);
-    await queueMod.populateOpenspecQueue(ctx);
-    await queueMod.populateMirofishQueue(ctx);
-    await queueMod.populatePrdQueue(ctx);
-  } else {
-    logStub(ctx, "queues.populate*");
-  }
+  const queues = requireModule(queueMod, "./queues.ts");
+  await queues.populateBmadQueue(ctx);
+  await queues.populateOpenspecQueue(ctx);
+  await queues.populateMirofishQueue(ctx);
+  await queues.populatePrdQueue(ctx);
 
-  const council: CouncilHook = opts.council ?? councilMod?.defaultCouncil ?? noopCouncil;
+  // Council hook: explicit test override wins; otherwise the real module's
+  // defaultCouncil. councilMod is guaranteed non-null by the requireModule
+  // call above, so there is no silent no-op council fallback.
+  const council: CouncilHook = opts.council ?? requireModule(councilMod, "./council.ts").defaultCouncil;
 
-  // Resolve provider invoker (test override > real module > stub).
-  let provider: ProviderInvoker;
-  if (opts.providerOverride) {
-    provider = opts.providerOverride;
-  } else if (providerMod) {
-    provider = await providerMod.resolveProvider(ctx.provider);
-  } else {
-    logStub(ctx, "providers.resolveProvider");
-    provider = stubProvider;
-  }
+  // Resolve provider invoker (test override > real module). No stub fallback:
+  // a missing providers.ts is fatal, not a fake provider that always fails.
+  const provider: ProviderInvoker = opts.providerOverride
+    ? opts.providerOverride
+    : await requireModule(providerMod, "./providers.ts").resolveProvider(ctx.provider);
+
+  // Hoist the prompt + gate module assertions to resolution time so that
+  // module ABSENCE is fatal here (consistent with the load-bearing helpers
+  // above), while the per-iteration try/catch blocks below wrap only the
+  // EXECUTION of these modules -- preserving the legitimate runtime-error
+  // fallbacks (a transient buildPrompt/gate throw must not kill the loop).
+  const promptModule = requireModule(promptMod, "./build_prompt.ts");
+  const gatesModule = requireModule(gatesMod, "./quality_gates.ts");
 
   // Pre-loop max-iterations gate (run.sh:10303-10306).
   if (ctx.iterationCount >= ctx.maxIterations) {
@@ -399,14 +413,14 @@ async function runAutonomousCore(
 
     // Build prompt (run.sh:10342). Wrap in try/catch -- a thrown buildPrompt
     // would otherwise abort the whole loop with no retry. (Reviewer A3 + DA
-    // findings 2026-04-25.) On failure we use the stub-prompt so the loop
-    // can advance and surface the failure via provider invocation logs.
+    // findings 2026-04-25.) This try/catch wraps only the RUNTIME execution
+    // of an already-resolved builder; module ABSENCE was already made fatal at
+    // resolution time (promptModule via requireModule). On a runtime throw we
+    // fall back to a stub-prompt so the loop can advance and surface the
+    // failure via provider invocation logs.
     let prompt: string;
     try {
-      prompt = promptMod
-        ? await promptMod.buildPrompt(ctx)
-        : `[stub-prompt iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
-      if (!promptMod) logStub(ctx, "build_prompt.buildPrompt");
+      prompt = await promptModule.buildPrompt(ctx);
     } catch (err) {
       log(`[runner] buildPrompt threw: ${(err as Error).message} -- using stub`);
       prompt = `[stub-prompt-fallback iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
@@ -508,16 +522,14 @@ async function runAutonomousCore(
     // v7.5.0: signature corrected -- runQualityGates(ctx) only. The exitCode
     // arg was never consumed by the real implementation; Phase 1 wiring
     // (findings injection, learnings, escalation handoff) hangs off this call.
-    if (gatesMod) {
-      try {
-        await gatesMod.runQualityGates(ctx);
-      } catch (err) {
-        // Gate runner errors are best-effort -- the bash equivalent at
-        // run.sh:10845-10980 logs and continues. Do not crash the loop.
-        log(`[runner] runQualityGates threw (non-fatal): ${(err as Error).message}`);
-      }
-    } else {
-      logStub(ctx, "gates.runQualityGates");
+    try {
+      // Module absence was already made fatal at resolution time (gatesModule
+      // via requireModule); only gate EXECUTION errors are best-effort -- the
+      // bash equivalent at run.sh:10845-10980 logs and continues. Do not crash
+      // the loop on a gate runtime error.
+      await gatesModule.runQualityGates(ctx);
+    } catch (err) {
+      log(`[runner] runQualityGates threw (non-fatal): ${(err as Error).message}`);
     }
 
     if (council.trackIteration) {
