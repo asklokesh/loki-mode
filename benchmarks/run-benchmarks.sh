@@ -18,7 +18,9 @@
 #   --execute       Actually run problems through Claude (vs just setup)
 #   --loki          Use Loki Mode multi-agent system (Architect->Engineer->QA->Reviewer)
 #   --limit N       Only run first N problems (useful for testing)
-#   --parallel N    Run N problems in parallel (default: 1)
+#   --resume DIR    Resume into a prior results dir, skipping SWE-bench
+#                   instances already solved (non-empty patch). Avoids
+#                   redoing paid claude calls. SWE-bench only.
 #   --model MODEL   Claude model to use (default: sonnet)
 #   --timeout N     Timeout per problem in seconds (default: 120)
 #   --retries N     Max RARV retry attempts for --loki mode (default: 3)
@@ -42,7 +44,9 @@ RESULTS_DIR="$SCRIPT_DIR/results/$(date +%Y-%m-%d-%H-%M-%S)"
 EXECUTE_MODE=false
 LOKI_MODE=false  # Use multi-agent Loki Mode vs direct Claude
 PROBLEM_LIMIT=0  # 0 = all problems
-PARALLEL_COUNT=1
+# Benchmarks run serially (one problem at a time) to respect resource limits
+# (10GB Docker VM cap, prior OOM). There is no parallel execution mode.
+RESUME_DIR=""    # When set via --resume, reuse a prior results dir and skip solved instances
 CLAUDE_MODEL="sonnet"
 PROBLEM_TIMEOUT=120
 MAX_RETRIES=3    # RARV retry attempts
@@ -83,8 +87,8 @@ parse_args() {
                 PROBLEM_LIMIT="$2"
                 shift 2
                 ;;
-            --parallel)
-                PARALLEL_COUNT="$2"
+            --resume)
+                RESUME_DIR="$2"
                 shift 2
                 ;;
             --model)
@@ -196,6 +200,14 @@ from datetime import datetime
 SCRIPT_DIR = os.environ.get('SCRIPT_DIR', '.')
 RESULTS_DIR = os.environ.get('RESULTS_DIR', './results')
 
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace,
+    so a crash mid-write leaves the prior file intact."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
 dataset_file = f"{SCRIPT_DIR}/datasets/humaneval.jsonl"
 results_file = f"{RESULTS_DIR}/humaneval-results.json"
 
@@ -216,8 +228,7 @@ results = {
     "sample_problems": [p["task_id"] for p in problems[:5]]
 }
 
-with open(results_file, 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, results_file)
 
 print(f"Results saved to {results_file}")
 print("\nTo run actual benchmarks:")
@@ -262,6 +273,14 @@ CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')
 dataset_file = f"{SCRIPT_DIR}/datasets/humaneval.jsonl"
 results_file = f"{RESULTS_DIR}/humaneval-results.json"
 solutions_dir = f"{RESULTS_DIR}/humaneval-solutions"
+
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace,
+    so a crash mid-write leaves the prior file intact."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
 
 # Load problems
 problems = []
@@ -455,9 +474,8 @@ for i, problem in enumerate(problems):
 
     results["problems"].append(problem_result)
 
-    # Save intermediate results
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
+    # Save intermediate results (atomic so a crash never corrupts the file)
+    atomic_dump(results, results_file)
 
 # Final results
 elapsed_time = time.time() - start_time
@@ -470,8 +488,7 @@ results["errors"] = error_count
 results["pass_rate"] = round(pass_rate, 2)
 results["elapsed_seconds"] = round(elapsed_time, 2)
 
-with open(results_file, 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, results_file)
 
 print(f"\n{'='*60}")
 print(f"  RESULTS")
@@ -540,6 +557,14 @@ MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))
 dataset_file = f"{SCRIPT_DIR}/datasets/humaneval.jsonl"
 results_file = f"{RESULTS_DIR}/humaneval-loki-results.json"
 solutions_dir = f"{RESULTS_DIR}/humaneval-loki-solutions"
+
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace,
+    so a crash mid-write leaves the prior file intact."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
 
 # Load problems
 problems = []
@@ -880,8 +905,7 @@ results["pass_rate"] = (passed_count / len(problems)) * 100 if problems else 0
 results["avg_attempts"] = total_attempts / len(problems) if problems else 0
 results["elapsed_time"] = elapsed_time
 
-with open(results_file, 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, results_file)
 
 pass_rate = results["pass_rate"]
 avg_attempts = results["avg_attempts"]
@@ -982,6 +1006,14 @@ from datetime import datetime
 
 RESULTS_DIR = os.environ.get('RESULTS_DIR', './results')
 
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace,
+    so a crash mid-write leaves the prior file intact."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
 results = {
     "benchmark": "SWE-bench Lite",
     "version": "1.0",
@@ -993,8 +1025,7 @@ results = {
     "evaluation": "python -m swebench.harness.run_evaluation --predictions predictions.json"
 }
 
-with open(f"{RESULTS_DIR}/swebench-results.json", 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, f"{RESULTS_DIR}/swebench-results.json")
 
 print(f"Results saved to {RESULTS_DIR}/swebench-results.json")
 SWEBENCH_SETUP
@@ -1024,13 +1055,15 @@ import tempfile
 import shutil
 from datetime import datetime
 
-try:
-    from datasets import load_dataset
-    from swebench.harness.constants import MAP_REPO_TO_TEST_FRAMEWORK
-except ImportError:
-    print("Installing SWE-bench dependencies...")
-    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'swebench', 'datasets'])
-    from datasets import load_dataset
+# Skip the datasets import entirely when an offline fixture is supplied.
+if not os.environ.get('SWEBENCH_DATASET_FILE'):
+    try:
+        from datasets import load_dataset
+        from swebench.harness.constants import MAP_REPO_TO_TEST_FRAMEWORK
+    except ImportError:
+        print("Installing SWE-bench dependencies...")
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'swebench', 'datasets'])
+        from datasets import load_dataset
 
 SCRIPT_DIR = os.environ.get('SCRIPT_DIR', '.')
 RESULTS_DIR = os.environ.get('RESULTS_DIR', './results')
@@ -1038,9 +1071,39 @@ PROBLEM_LIMIT = int(os.environ.get('PROBLEM_LIMIT', '10'))  # Default to 10 for 
 PROBLEM_TIMEOUT = int(os.environ.get('PROBLEM_TIMEOUT', '300'))
 CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')
 
+RESUME_DIR = os.environ.get('RESUME_DIR', '')
+
 results_file = f"{RESULTS_DIR}/swebench-results.json"
 patches_dir = f"{RESULTS_DIR}/swebench-patches"
+predictions_file = f"{RESULTS_DIR}/swebench-predictions.json"
 os.makedirs(patches_dir, exist_ok=True)
+
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace.
+    A crash mid-write leaves the prior file intact (os.replace is atomic on
+    the same filesystem), so generate_summary never sees a truncated file."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
+def load_resume_predictions():
+    """When resuming, load prior predictions keyed by instance_id with a
+    non-empty model_patch. Those instances are skipped to avoid paid reruns."""
+    if not RESUME_DIR:
+        return {}
+    solved = {}
+    if os.path.exists(predictions_file):
+        try:
+            with open(predictions_file) as f:
+                for pred in json.load(f):
+                    if pred.get("model_patch"):
+                        solved[pred["instance_id"]] = pred
+        except (json.JSONDecodeError, OSError):
+            pass
+    if solved:
+        print(f"Resume: {len(solved)} instances already solved, will skip them")
+    return solved
 
 print(f"\n{'='*60}")
 print(f"  SWE-bench Lite Benchmark Execution")
@@ -1050,8 +1113,16 @@ print(f"{'='*60}\n")
 # Load SWE-bench Lite dataset
 print("Loading SWE-bench Lite dataset...")
 try:
-    dataset = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
-    problems = list(dataset)[:PROBLEM_LIMIT]
+    fixture = os.environ.get('SWEBENCH_DATASET_FILE', '')
+    if fixture:
+        # Offline fixture override (JSON list of problem dicts) for repro/tests.
+        with open(fixture) as f:
+            problems = json.load(f)
+        if PROBLEM_LIMIT:
+            problems = problems[:PROBLEM_LIMIT]
+    else:
+        dataset = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+        problems = list(dataset)[:PROBLEM_LIMIT]
     print(f"Loaded {len(problems)} problems")
 except Exception as e:
     print(f"Error loading dataset: {e}")
@@ -1064,8 +1135,7 @@ except Exception as e:
         "error": str(e),
         "note": "Could not load SWE-bench dataset. Check network and try again."
     }
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
+    atomic_dump(results, results_file)
     sys.exit(1)
 
 def solve_swebench_problem(problem):
@@ -1137,12 +1207,24 @@ results = {
 
 generated_count = 0
 error_count = 0
+skipped_count = 0
 start_time = time.time()
+
+resume_solved = load_resume_predictions()
 
 for i, problem in enumerate(problems):
     instance_id = problem["instance_id"]
 
     print(f"[{i+1}/{len(problems)}] {instance_id}...", end=" ", flush=True)
+
+    # Resume: carry forward a prior non-empty prediction and skip the paid call.
+    if instance_id in resume_solved:
+        print("\033[0;36mSKIPPED (resume)\033[0m")
+        skipped_count += 1
+        generated_count += 1
+        results["predictions"].append(resume_solved[instance_id])
+        atomic_dump(results, results_file)
+        continue
 
     solution = solve_swebench_problem(problem)
 
@@ -1165,14 +1247,11 @@ for i, problem in enumerate(problems):
         "model_name_or_path": f"loki-mode-{CLAUDE_MODEL}"
     })
 
-    # Save intermediate results
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
+    # Save intermediate results (atomic so a crash never corrupts the file)
+    atomic_dump(results, results_file)
 
 # Save predictions file for SWE-bench evaluator
-predictions_file = f"{RESULTS_DIR}/swebench-predictions.json"
-with open(predictions_file, 'w') as f:
-    json.dump(results["predictions"], f, indent=2)
+atomic_dump(results["predictions"], predictions_file)
 
 elapsed_time = time.time() - start_time
 
@@ -1181,15 +1260,16 @@ results["generated"] = generated_count
 results["errors"] = error_count
 results["elapsed_seconds"] = round(elapsed_time, 2)
 results["predictions_file"] = predictions_file
+results["skipped_resume"] = skipped_count
 results["next_step"] = "Run: python -m swebench.harness.run_evaluation --predictions " + predictions_file
 
-with open(results_file, 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, results_file)
 
 print(f"\n{'='*60}")
 print(f"  RESULTS")
 print(f"{'='*60}")
 print(f"  Generated: {generated_count}/{len(problems)}")
+print(f"  Skipped (resume): {skipped_count}")
 print(f"  Errors:    {error_count}/{len(problems)}")
 print(f"  Time:      {elapsed_time:.1f}s")
 print(f"{'='*60}")
@@ -1216,8 +1296,8 @@ run_swebench_loki() {
     log_info "Agents: Architect -> Engineer -> QA -> Reviewer (RARV cycle)"
     log_info "Trajectory logging: ENABLED (for official submission)"
 
-    # Check if swebench is installed
-    if ! python3 -c "import swebench" 2>/dev/null; then
+    # Check if swebench is installed (skipped when an offline fixture is used)
+    if [ -z "${SWEBENCH_DATASET_FILE:-}" ] && ! python3 -c "import swebench" 2>/dev/null; then
         log_warning "SWE-bench package not installed. Installing..."
         pip install -q swebench datasets
     fi
@@ -1233,11 +1313,14 @@ import time
 import re
 from datetime import datetime
 
-try:
-    from datasets import load_dataset
-except ImportError:
-    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'swebench', 'datasets'])
-    from datasets import load_dataset
+# Skip the datasets import entirely when an offline fixture is supplied
+# (used for repro runs and tests); otherwise load/install it lazily.
+if not os.environ.get('SWEBENCH_DATASET_FILE'):
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'swebench', 'datasets'])
+        from datasets import load_dataset
 
 SCRIPT_DIR = os.environ.get('SCRIPT_DIR', '.')
 RESULTS_DIR = os.environ.get('RESULTS_DIR', './results')
@@ -1246,11 +1329,40 @@ PROBLEM_TIMEOUT = int(os.environ.get('PROBLEM_TIMEOUT', '300'))
 CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))
 
+RESUME_DIR = os.environ.get('RESUME_DIR', '')
+
 results_file = f"{RESULTS_DIR}/swebench-loki-results.json"
 patches_dir = f"{RESULTS_DIR}/swebench-loki-patches"
+predictions_file = f"{RESULTS_DIR}/swebench-loki-predictions.json"
 trajs_dir = f"{RESULTS_DIR}/trajs"  # Trajectory logs for official submission
 logs_dir = f"{RESULTS_DIR}/logs"     # Execution logs for official submission
 os.makedirs(patches_dir, exist_ok=True)
+
+def atomic_dump(obj, path):
+    """Write JSON atomically: serialize to a sibling .tmp then os.replace,
+    so a crash mid-write leaves the prior file intact."""
+    tmp = path + ".tmp"
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
+def load_resume_predictions():
+    """When resuming, load prior predictions keyed by instance_id with a
+    non-empty model_patch. Those instances are skipped to avoid paid reruns."""
+    if not RESUME_DIR:
+        return {}
+    solved = {}
+    if os.path.exists(predictions_file):
+        try:
+            with open(predictions_file) as f:
+                for pred in json.load(f):
+                    if pred.get("model_patch"):
+                        solved[pred["instance_id"]] = pred
+        except (json.JSONDecodeError, OSError):
+            pass
+    if solved:
+        print(f"Resume: {len(solved)} instances already solved, will skip them")
+    return solved
 os.makedirs(trajs_dir, exist_ok=True)
 os.makedirs(logs_dir, exist_ok=True)
 
@@ -1263,8 +1375,14 @@ print(f"{'='*70}\n")
 # Load dataset
 print("Loading SWE-bench Lite dataset...")
 try:
-    dataset = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
-    problems = list(dataset)
+    fixture = os.environ.get('SWEBENCH_DATASET_FILE', '')
+    if fixture:
+        # Offline fixture override (JSON list of problem dicts) for repro/tests.
+        with open(fixture) as f:
+            problems = json.load(f)
+    else:
+        dataset = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+        problems = list(dataset)
     if PROBLEM_LIMIT > 0:
         problems = problems[:PROBLEM_LIMIT]
     print(f"Loaded {len(problems)} problems")
@@ -1678,12 +1796,24 @@ start_time = time.time()
 generated_count = 0
 fixed_by_rarv = 0
 error_count = 0
+skipped_count = 0
 total_attempts = 0
+
+resume_solved = load_resume_predictions()
 
 for i, problem in enumerate(problems):
     instance_id = problem["instance_id"]
 
     print(f"[{i+1}/{len(problems)}] {instance_id}...", end=" ", flush=True)
+
+    # Resume: carry forward a prior non-empty prediction and skip the paid call.
+    if instance_id in resume_solved:
+        print("\033[0;36mSKIPPED (resume)\033[0m")
+        skipped_count += 1
+        generated_count += 1
+        results["predictions"].append(resume_solved[instance_id])
+        atomic_dump(results, results_file)
+        continue
 
     result = solve_with_loki_mode(problem)
     total_attempts += result["attempts"]
@@ -1719,22 +1849,25 @@ for i, problem in enumerate(problems):
         "attempts": result["attempts"]
     })
 
+    # Persist incrementally (atomic) so a crash mid-run is resumable and never
+    # leaves a corrupt results file behind.
+    atomic_dump(results, results_file)
+    atomic_dump(results["predictions"], predictions_file)
+
 elapsed_time = time.time() - start_time
 
 # Save results
 results["generated"] = generated_count
 results["fixed_by_rarv"] = fixed_by_rarv
 results["errors"] = error_count
+results["skipped_resume"] = skipped_count
 results["avg_attempts"] = total_attempts / len(problems) if problems else 0
 results["elapsed_time"] = elapsed_time
 
-with open(results_file, 'w') as f:
-    json.dump(results, f, indent=2)
+atomic_dump(results, results_file)
 
 # Save predictions for SWE-bench evaluator
-predictions_file = f"{RESULTS_DIR}/swebench-loki-predictions.json"
-with open(predictions_file, 'w') as f:
-    json.dump(results["predictions"], f, indent=2)
+atomic_dump(results["predictions"], predictions_file)
 
 gen_rate = (generated_count / len(problems)) * 100 if problems else 0
 
@@ -1917,7 +2050,19 @@ main() {
     echo "========================================"
     echo ""
 
-    export SCRIPT_DIR RESULTS_DIR PROJECT_DIR
+    # Resume mode: reuse a prior results dir so already-solved SWE-bench
+    # instances are skipped (no redundant paid claude calls). Results and
+    # predictions are appended in place, preserving existing patch files.
+    if [ -n "$RESUME_DIR" ]; then
+        if [ ! -d "$RESUME_DIR" ]; then
+            log_error "--resume directory does not exist: $RESUME_DIR"
+            exit 1
+        fi
+        RESULTS_DIR="$(cd "$RESUME_DIR" && pwd)"
+        log_info "Resuming into existing results dir: $RESULTS_DIR"
+    fi
+
+    export SCRIPT_DIR RESULTS_DIR PROJECT_DIR RESUME_DIR
 
     setup_environment
 
@@ -1947,4 +2092,8 @@ main() {
     echo ""
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (allows tests to
+# source the script and exercise parse_args / helpers in isolation).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
