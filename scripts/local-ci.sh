@@ -317,6 +317,7 @@ run_check_bg "workflow YAML parse" 'for f in .github/workflows/*.yml; do python3
 # ---------------------------------------------------------------------------
 run_check_bg "no emojis in modified files" '! git diff HEAD --name-only | xargs -I{} grep -lP "[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]" {} 2>/dev/null | grep -v "^$"'
 run_check_bg "no git add -A in workflows" '! grep -rn "git add -A" .github/workflows/ 2>/dev/null | grep -v "^.*#"'
+run_check_bg 'no unescaped $<digit> in python3 -c bodies (v7.41 heredoc footgun)' 'bash tests/check-heredoc-dollar-digit.sh'
 
 # ---------------------------------------------------------------------------
 # Harvest the read-only parallel pool BEFORE the serial-sensitive spine. The

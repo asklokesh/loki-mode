@@ -3865,34 +3865,40 @@ async def get_memory_summary():
 @app.get("/api/memory/episodes")
 async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
     """List episodic memory entries."""
-    # Try SQLite backend first
-    storage = _get_memory_storage()
-    if storage is not None:
-        try:
-            ids = storage.list_episodes(limit=limit)
-            episodes = []
-            for eid in ids:
-                ep = storage.load_episode(eid)
-                if ep:
-                    episodes.append(ep)
-            return episodes
-        except Exception:
-            pass
-
-    # Fallback to JSON files -- use heapq to avoid sorting all files
-    import heapq
-    ep_dir = _get_loki_dir() / "memory" / "episodic"
-    episodes = []
-    if ep_dir.exists():
-        all_files = ep_dir.glob("*.json")
-        # nlargest by filename (timestamps sort lexicographically) avoids full sort
-        files = heapq.nlargest(limit, all_files, key=lambda f: f.name)
-        for f in files:
+    # Both backends below are blocking (SQLite queries / a glob+read loop over
+    # many JSON files) and only build a local list, so offload the whole read
+    # off the event loop to keep status + WS heartbeat responsive.
+    def _load_episodes() -> list:
+        # Try SQLite backend first
+        storage = _get_memory_storage()
+        if storage is not None:
             try:
-                episodes.append(json.loads(f.read_text()))
+                ids = storage.list_episodes(limit=limit)
+                episodes = []
+                for eid in ids:
+                    ep = storage.load_episode(eid)
+                    if ep:
+                        episodes.append(ep)
+                return episodes
             except Exception:
                 pass
-    return episodes
+
+        # Fallback to JSON files -- use heapq to avoid sorting all files
+        import heapq
+        ep_dir = _get_loki_dir() / "memory" / "episodic"
+        episodes = []
+        if ep_dir.exists():
+            all_files = ep_dir.glob("*.json")
+            # nlargest by filename (timestamps sort lexicographically) avoids full sort
+            files = heapq.nlargest(limit, all_files, key=lambda f: f.name)
+            for f in files:
+                try:
+                    episodes.append(json.loads(f.read_text()))
+                except Exception:
+                    pass
+        return episodes
+
+    return await asyncio.to_thread(_load_episodes)
 
 
 @app.get("/api/memory/episodes/{episode_id}", dependencies=[Depends(auth.require_scope("read"))])
@@ -3969,30 +3975,35 @@ async def get_pattern(pattern_id: str):
 @app.get("/api/memory/skills")
 async def list_skills():
     """List procedural skills."""
-    # Try SQLite first
-    storage = _get_memory_storage()
-    if storage is not None:
-        try:
-            ids = storage.list_skills()
-            skills = []
-            for sid in ids:
-                s = storage.load_skill(sid)
-                if s:
-                    skills.append(s)
-            return skills
-        except Exception:
-            pass
-
-    # Fallback to JSON
-    skills_dir = _get_loki_dir() / "memory" / "skills"
-    skills = []
-    if skills_dir.exists():
-        for f in sorted(skills_dir.glob("*.json")):
+    # Blocking SQLite query / glob+read loop; offload the whole read so the
+    # event loop (status + WS heartbeat) stays responsive.
+    def _load_skills() -> list:
+        # Try SQLite first
+        storage = _get_memory_storage()
+        if storage is not None:
             try:
-                skills.append(json.loads(f.read_text()))
+                ids = storage.list_skills()
+                skills = []
+                for sid in ids:
+                    s = storage.load_skill(sid)
+                    if s:
+                        skills.append(s)
+                return skills
             except Exception:
                 pass
-    return skills
+
+        # Fallback to JSON
+        skills_dir = _get_loki_dir() / "memory" / "skills"
+        skills = []
+        if skills_dir.exists():
+            for f in sorted(skills_dir.glob("*.json")):
+                try:
+                    skills.append(json.loads(f.read_text()))
+                except Exception:
+                    pass
+        return skills
+
+    return await asyncio.to_thread(_load_skills)
 
 
 @app.get("/api/memory/skills/{skill_id}", dependencies=[Depends(auth.require_scope("read"))])
@@ -4347,15 +4358,16 @@ async def get_memory_file(
         st = target.stat()
     except Exception:
         raise HTTPException(status_code=500, detail="stat failed")
-    truncated = False
+    truncated = st.st_size > _MEMORY_FILE_MAX_BYTES
+
+    def _read_memory_blob() -> bytes:
+        # Up to a 2 MiB blocking read; offloaded so the single-worker event
+        # loop (and /api/status + WS heartbeat) stays responsive.
+        with open(target, "rb") as fh:
+            return fh.read(_MEMORY_FILE_MAX_BYTES) if truncated else fh.read()
+
     try:
-        if st.st_size > _MEMORY_FILE_MAX_BYTES:
-            with open(target, "rb") as fh:
-                raw = fh.read(_MEMORY_FILE_MAX_BYTES)
-            truncated = True
-        else:
-            with open(target, "rb") as fh:
-                raw = fh.read()
+        raw = await asyncio.to_thread(_read_memory_blob)
         # Decode as UTF-8 with replacement so we never 500 on a stray byte.
         content = raw.decode("utf-8", errors="replace")
     except HTTPException:
@@ -4433,44 +4445,49 @@ async def search_memory(
 @app.get("/api/memory/stats")
 async def get_memory_stats():
     """Get memory system statistics (counts, size, backend info)."""
-    storage = _get_memory_storage()
-    if storage is not None:
-        try:
-            return storage.get_stats()
-        except Exception:
-            pass
+    # SQLite stats query or a directory-walk over many JSON files; both block,
+    # so offload off the event loop.
+    def _compute_stats() -> dict:
+        storage = _get_memory_storage()
+        if storage is not None:
+            try:
+                return storage.get_stats()
+            except Exception:
+                pass
 
-    # Fallback: compute stats from JSON files
-    memory_dir = _get_loki_dir() / "memory"
-    ep_count = 0
-    ep_dir = memory_dir / "episodic"
-    if ep_dir.exists():
-        for d in ep_dir.iterdir():
-            if d.is_dir():
-                ep_count += len(list(d.glob("*.json")))
-            elif d.suffix == ".json":
-                ep_count += 1
+        # Fallback: compute stats from JSON files
+        memory_dir = _get_loki_dir() / "memory"
+        ep_count = 0
+        ep_dir = memory_dir / "episodic"
+        if ep_dir.exists():
+            for d in ep_dir.iterdir():
+                if d.is_dir():
+                    ep_count += len(list(d.glob("*.json")))
+                elif d.suffix == ".json":
+                    ep_count += 1
 
-    pat_count = 0
-    patterns_file = memory_dir / "semantic" / "patterns.json"
-    if patterns_file.exists():
-        try:
-            data = json.loads(patterns_file.read_text())
-            pat_count = len(data) if isinstance(data, list) else len(data.get("patterns", []))
-        except Exception:
-            pass
+        pat_count = 0
+        patterns_file = memory_dir / "semantic" / "patterns.json"
+        if patterns_file.exists():
+            try:
+                data = json.loads(patterns_file.read_text())
+                pat_count = len(data) if isinstance(data, list) else len(data.get("patterns", []))
+            except Exception:
+                pass
 
-    skill_count = 0
-    skills_dir = memory_dir / "skills"
-    if skills_dir.exists():
-        skill_count = len(list(skills_dir.glob("*.json")))
+        skill_count = 0
+        skills_dir = memory_dir / "skills"
+        if skills_dir.exists():
+            skill_count = len(list(skills_dir.glob("*.json")))
 
-    return {
-        "backend": "json",
-        "episode_count": ep_count,
-        "pattern_count": pat_count,
-        "skill_count": skill_count,
-    }
+        return {
+            "backend": "json",
+            "episode_count": ep_count,
+            "pattern_count": pat_count,
+            "skill_count": skill_count,
+        }
+
+    return await asyncio.to_thread(_compute_stats)
 
 
 # Learning/metrics endpoints
@@ -4516,10 +4533,10 @@ async def get_learning_metrics(
     source: Optional[str] = None,
 ):
     """Get learning metrics from events, metrics files, and learning signals."""
-    events = _read_events(timeRange)
+    events = await asyncio.to_thread(_read_events, timeRange)
 
     # Also read from learning signals directory
-    all_signals = _read_learning_signals(limit=10000)
+    all_signals = await asyncio.to_thread(_read_learning_signals, limit=10000)
 
     # Filter by type and source
     if signalType:
@@ -4596,7 +4613,7 @@ async def get_learning_trends(
     source: Optional[str] = None,
 ):
     """Get learning trend data."""
-    events = _read_events(timeRange)
+    events = await asyncio.to_thread(_read_events, timeRange)
     # Group by hour for trend data
     by_hour: dict = {}
     for e in events:
@@ -4618,14 +4635,14 @@ async def get_learning_signals(
     offset: int = Query(default=0, ge=0),
 ):
     """Get raw learning signals from both events.jsonl and learning signals directory."""
-    events = _read_events(timeRange)
+    events = await asyncio.to_thread(_read_events, timeRange)
     if signalType:
         events = [e for e in events if e.get("type") == signalType]
     if source:
         events = [e for e in events if e.get("data", {}).get("source") == source]
 
     # Also read from learning signals directory
-    file_signals = _read_learning_signals(signal_type=signalType, limit=10000)
+    file_signals = await asyncio.to_thread(_read_learning_signals, signal_type=signalType, limit=10000)
     if source:
         file_signals = [s for s in file_signals if s.get("source") == source]
 
@@ -4649,10 +4666,10 @@ async def get_learning_aggregation():
             pass
 
     # Supplement with live data from learning signals directory
-    success_signals = _read_learning_signals(signal_type="success_pattern", limit=500)
-    tool_signals = _read_learning_signals(signal_type="tool_efficiency", limit=500)
-    error_signals = _read_learning_signals(signal_type="error_pattern", limit=500)
-    pref_signals = _read_learning_signals(signal_type="user_preference", limit=500)
+    success_signals = await asyncio.to_thread(_read_learning_signals, signal_type="success_pattern", limit=500)
+    tool_signals = await asyncio.to_thread(_read_learning_signals, signal_type="tool_efficiency", limit=500)
+    error_signals = await asyncio.to_thread(_read_learning_signals, signal_type="error_pattern", limit=500)
+    pref_signals = await asyncio.to_thread(_read_learning_signals, signal_type="user_preference", limit=500)
 
     # Merge success patterns from signals if aggregation file had none
     if not result.get("success_patterns") and success_signals:
@@ -4726,6 +4743,14 @@ async def trigger_aggregation():
     if not _read_limiter.check("learning_aggregate"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
+    # Reads up to 10 MB of events.jsonl, parses every line, then writes the
+    # aggregation.json metrics file. All blocking, all on local state +
+    # filesystem (no shared in-memory state), so offload the whole computation
+    # to a thread to keep the event loop (status + WS heartbeat) responsive.
+    return await asyncio.to_thread(_compute_learning_aggregation)
+
+
+def _compute_learning_aggregation() -> dict:
     events_file = _get_loki_dir() / "events.jsonl"
     preferences: dict = {}
     error_patterns: dict = {}
@@ -4821,10 +4846,10 @@ async def trigger_aggregation():
 @app.get("/api/learning/preferences", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_preferences(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated user preferences from events and learning signals directory."""
-    events = _read_events("30d")
+    events = await asyncio.to_thread(_read_events, "30d")
     prefs = [e for e in events if e.get("type") == "user_preference"]
     # Also read from learning signals directory
-    file_prefs = _read_learning_signals(signal_type="user_preference", limit=limit)
+    file_prefs = await asyncio.to_thread(_read_learning_signals, signal_type="user_preference", limit=limit)
     combined = prefs + file_prefs
     combined.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
     return combined[:limit]
@@ -4833,10 +4858,10 @@ async def get_learning_preferences(limit: int = Query(default=50, ge=1, le=1000)
 @app.get("/api/learning/errors", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_errors(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated error patterns from events and learning signals directory."""
-    events = _read_events("30d")
+    events = await asyncio.to_thread(_read_events, "30d")
     errors = [e for e in events if e.get("type") == "error_pattern"]
     # Also read from learning signals directory
-    file_errors = _read_learning_signals(signal_type="error_pattern", limit=limit)
+    file_errors = await asyncio.to_thread(_read_learning_signals, signal_type="error_pattern", limit=limit)
     combined = errors + file_errors
     combined.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
     return combined[:limit]
@@ -4845,10 +4870,10 @@ async def get_learning_errors(limit: int = Query(default=50, ge=1, le=1000)):
 @app.get("/api/learning/success", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learning_success(limit: int = Query(default=50, ge=1, le=1000)):
     """Get aggregated success patterns from events and learning signals directory."""
-    events = _read_events("30d")
+    events = await asyncio.to_thread(_read_events, "30d")
     successes = [e for e in events if e.get("type") == "success_pattern"]
     # Also read from learning signals directory
-    file_successes = _read_learning_signals(signal_type="success_pattern", limit=limit)
+    file_successes = await asyncio.to_thread(_read_learning_signals, signal_type="success_pattern", limit=limit)
     combined = successes + file_successes
     combined.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
     return combined[:limit]
@@ -4857,10 +4882,10 @@ async def get_learning_success(limit: int = Query(default=50, ge=1, le=1000)):
 @app.get("/api/learning/tools", dependencies=[Depends(auth.require_scope("read"))])
 async def get_tool_efficiency(limit: int = Query(default=50, ge=1, le=1000)):
     """Get tool efficiency rankings from events and learning signals directory."""
-    events = _read_events("30d")
+    events = await asyncio.to_thread(_read_events, "30d")
     tools = [e for e in events if e.get("type") == "tool_efficiency"]
     # Also read from learning signals directory
-    file_tools = _read_learning_signals(signal_type="tool_efficiency", limit=limit)
+    file_tools = await asyncio.to_thread(_read_learning_signals, signal_type="tool_efficiency", limit=limit)
     combined = tools + file_tools
     combined.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
     return combined[:limit]
@@ -5204,7 +5229,16 @@ def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> 
 
 @app.get("/api/cost")
 async def get_cost():
-    """Get cost visibility data from .loki/metrics/efficiency/ and budget.json."""
+    """Get cost visibility data from .loki/metrics/efficiency/ and budget.json.
+
+    The computation globs + reads every per-iteration efficiency JSON file
+    (a blocking multi-file read loop building only local aggregates), so it is
+    offloaded to a thread to keep the event loop responsive.
+    """
+    return await asyncio.to_thread(_compute_cost_snapshot)
+
+
+def _compute_cost_snapshot() -> dict:
     loki_dir = _get_loki_dir()
     efficiency_dir = loki_dir / "metrics" / "efficiency"
     budget_file = loki_dir / "metrics" / "budget.json"
@@ -5471,7 +5505,15 @@ async def get_cost_timeline():
     classifies into ok/warn/exceeded so the UI can warn at 80% before the cap.
     Cost is never fabricated: when nothing was recorded, cost_recorded is False
     and totals are honestly null rather than a misleading $0.00.
+
+    Globs + reads every efficiency iteration file and every proof.json (a
+    blocking multi-file read loop building only local state), so it is offloaded
+    to a thread to keep the event loop responsive.
     """
+    return await asyncio.to_thread(_compute_cost_timeline)
+
+
+def _compute_cost_timeline() -> dict:
     loki_dir = _get_loki_dir()
     efficiency_dir = loki_dir / "metrics" / "efficiency"
 
@@ -5730,51 +5772,59 @@ async def get_council_state():
 
 @app.get("/api/council/verdicts")
 async def get_council_verdicts(limit: int = Query(default=20, ge=1, le=1000)):
-    """Get council vote history (decision log)."""
-    state_file = _get_loki_dir() / "council" / "state.json"
-    verdicts = []
-    if state_file.exists():
-        try:
-            state = json.loads(state_file.read_text())
-            verdicts = state.get("verdicts", [])
-        except Exception:
-            pass
+    """Get council vote history (decision log).
 
-    # Also read individual vote files for detail
-    votes_dir = _get_loki_dir() / "council" / "votes"
-    detailed_verdicts = []
-    if votes_dir.exists():
-        for vote_dir in sorted(votes_dir.iterdir(), reverse=True):
-            if vote_dir.is_dir():
-                verdict_detail = {"iteration": vote_dir.name}
-                # Read evidence
-                evidence_file = vote_dir / "evidence.md"
-                if evidence_file.exists():
-                    try:
-                        verdict_detail["evidence_preview"] = evidence_file.read_text()[:500]
-                    except Exception:
-                        verdict_detail["evidence_preview"] = ""
-                # Read member votes
-                members = []
-                for member_file in sorted(vote_dir.glob("member-*.txt")):
-                    try:
-                        content = member_file.read_text().strip()
-                        members.append({
-                            "member": member_file.stem,
-                            "content": content
-                        })
-                    except Exception:
-                        pass
-                verdict_detail["members"] = members
-                # Read contrarian
-                contrarian_file = vote_dir / "contrarian.txt"
-                if contrarian_file.exists():
-                    verdict_detail["contrarian"] = contrarian_file.read_text().strip()
-                detailed_verdicts.append(verdict_detail)
-                if len(detailed_verdicts) >= limit:
-                    break
+    Walks every vote directory and reads its evidence/member/contrarian files
+    (a blocking multi-file read loop building only local state), so it is
+    offloaded to a thread to keep the event loop responsive.
+    """
+    def _collect_verdicts() -> dict:
+        state_file = _get_loki_dir() / "council" / "state.json"
+        verdicts = []
+        if state_file.exists():
+            try:
+                state = json.loads(state_file.read_text())
+                verdicts = state.get("verdicts", [])
+            except Exception:
+                pass
 
-    return {"verdicts": verdicts, "details": detailed_verdicts}
+        # Also read individual vote files for detail
+        votes_dir = _get_loki_dir() / "council" / "votes"
+        detailed_verdicts = []
+        if votes_dir.exists():
+            for vote_dir in sorted(votes_dir.iterdir(), reverse=True):
+                if vote_dir.is_dir():
+                    verdict_detail = {"iteration": vote_dir.name}
+                    # Read evidence
+                    evidence_file = vote_dir / "evidence.md"
+                    if evidence_file.exists():
+                        try:
+                            verdict_detail["evidence_preview"] = evidence_file.read_text()[:500]
+                        except Exception:
+                            verdict_detail["evidence_preview"] = ""
+                    # Read member votes
+                    members = []
+                    for member_file in sorted(vote_dir.glob("member-*.txt")):
+                        try:
+                            content = member_file.read_text().strip()
+                            members.append({
+                                "member": member_file.stem,
+                                "content": content
+                            })
+                        except Exception:
+                            pass
+                    verdict_detail["members"] = members
+                    # Read contrarian
+                    contrarian_file = vote_dir / "contrarian.txt"
+                    if contrarian_file.exists():
+                        verdict_detail["contrarian"] = contrarian_file.read_text().strip()
+                    detailed_verdicts.append(verdict_detail)
+                    if len(detailed_verdicts) >= limit:
+                        break
+
+        return {"verdicts": verdicts, "details": detailed_verdicts}
+
+    return await asyncio.to_thread(_collect_verdicts)
 
 
 @app.get("/api/council/convergence")
@@ -5849,35 +5899,41 @@ async def get_council_transcripts(
     if not transcripts_dir.exists():
         response: dict = {"transcripts": [], "total": 0, "latest_id": None}
         if type_prefix:
-            response["hook_events"] = _read_events(type_prefix=type_prefix)
+            response["hook_events"] = await asyncio.to_thread(_read_events, type_prefix=type_prefix)
         return response
 
-    records = []
-    for f in sorted(transcripts_dir.glob("iter-*.json"), reverse=True):
-        try:
-            rec = json.loads(f.read_text())
-        except Exception:
-            logger.warning("Skipping corrupt council transcript file: %s", f.name)
-            continue
-        if not isinstance(rec, dict):
-            logger.warning("Skipping non-object council transcript file: %s", f.name)
-            continue
-        if not isinstance(rec.get("iteration_id"), str):
-            logger.warning("Skipping transcript missing iteration_id field: %s", f.name)
-            continue
-        if since_dt is not None:
-            ts_str = rec.get("timestamp", "")
+    def _collect_transcript_records() -> list:
+        # Globs + reads up to `limit` (<=200) JSON transcript files; a blocking
+        # multi-file read loop offloaded so the event loop stays responsive.
+        out: list = []
+        for f in sorted(transcripts_dir.glob("iter-*.json"), reverse=True):
             try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
+                rec = json.loads(f.read_text())
+            except Exception:
+                logger.warning("Skipping corrupt council transcript file: %s", f.name)
                 continue
-            if ts <= since_dt:
+            if not isinstance(rec, dict):
+                logger.warning("Skipping non-object council transcript file: %s", f.name)
                 continue
-        if iter_min is not None and rec.get("iteration", 0) < iter_min:
-            continue
-        records.append(rec)
-        if len(records) >= limit:
-            break
+            if not isinstance(rec.get("iteration_id"), str):
+                logger.warning("Skipping transcript missing iteration_id field: %s", f.name)
+                continue
+            if since_dt is not None:
+                ts_str = rec.get("timestamp", "")
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    continue
+                if ts <= since_dt:
+                    continue
+            if iter_min is not None and rec.get("iteration", 0) < iter_min:
+                continue
+            out.append(rec)
+            if len(out) >= limit:
+                break
+        return out
+
+    records = await asyncio.to_thread(_collect_transcript_records)
 
     response = {
         "transcripts": records,
@@ -5886,7 +5942,7 @@ async def get_council_transcripts(
     }
     # v7.5.22 Phase D: opt-in hook-event passthrough via _read_events filter.
     if type_prefix:
-        response["hook_events"] = _read_events(type_prefix=type_prefix)
+        response["hook_events"] = await asyncio.to_thread(_read_events, type_prefix=type_prefix)
     return response
 
 
@@ -6107,7 +6163,16 @@ def _sanitize_checkpoint_id(checkpoint_id: str) -> str:
 
 @app.get("/api/checkpoints")
 async def list_checkpoints(limit: int = Query(default=20, ge=1, le=200)):
-    """List recent checkpoints from index.jsonl, enriched with metadata when available."""
+    """List recent checkpoints from index.jsonl, enriched with metadata when available.
+
+    Reads index.jsonl plus a metadata.json and a recursive rglob() file count
+    per checkpoint (a blocking multi-file walk building only local state), so
+    it is offloaded to a thread to keep the event loop responsive.
+    """
+    return await asyncio.to_thread(_collect_checkpoints, limit)
+
+
+def _collect_checkpoints(limit: int) -> list:
     loki_dir = _get_loki_dir()
     index_file = loki_dir / "state" / "checkpoints" / "index.jsonl"
     checkpoints_dir = loki_dir / "state" / "checkpoints"
@@ -6558,17 +6623,18 @@ async def get_logs(lines: int = 100, token: Optional[dict] = Depends(auth.get_cu
                 file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime, tz=timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%S"
                 )
-                # Read only the tail to avoid loading huge files into memory
-                tail_lines = []
-                try:
-                    with open(log_file, "rb") as lf:
-                        # Seek from end to find enough lines
+                # Read only the tail to avoid loading huge files into memory.
+                # The up-to-1MB blocking read is offloaded to a thread so the
+                # single-worker event loop (status + WS heartbeat) stays free.
+                def _read_log_tail(lf_path=log_file, n=lines) -> list[str]:
+                    with open(lf_path, "rb") as lf:
                         lf.seek(0, 2)
                         file_size = lf.tell()
-                        # Read at most 1MB from the end (plenty for any reasonable lines count)
                         read_size = min(file_size, 1024 * 1024)
                         lf.seek(max(0, file_size - read_size))
-                        tail_lines = lf.read().decode("utf-8", errors="replace").strip().split("\n")[-lines:]
+                        return lf.read().decode("utf-8", errors="replace").strip().split("\n")[-n:]
+                try:
+                    tail_lines = await asyncio.to_thread(_read_log_tail)
                 except (OSError, UnicodeDecodeError):
                     tail_lines = []
                 for raw_line in tail_lines:
@@ -8035,8 +8101,12 @@ async def get_app_runner_logs(lines: int = Query(default=100, ge=1, le=1000)):
         return {"lines": []}
     try:
         redact = _get_log_redactor()
-        all_lines = _safe_read_text(log_file).splitlines()
-        return {"lines": [redact(ln) for ln in all_lines[-lines:]], "redacted": True}
+        # Reading + redacting the app log is blocking (the log can be large);
+        # offload so the event loop (status + WS heartbeat) is not stalled.
+        def _read_redacted(p=log_file, n=lines):
+            return [redact(ln) for ln in _safe_read_text(p).splitlines()[-n:]]
+        out_lines = await asyncio.to_thread(_read_redacted)
+        return {"lines": out_lines, "redacted": True}
     except OSError:
         return {"lines": []}
 
@@ -8071,8 +8141,10 @@ async def get_app_runner_errors(lines: int = Query(default=50, ge=1, le=500)):
     if log_file.exists():
         try:
             redact = _get_log_redactor()
-            all_lines = _safe_read_text(log_file).splitlines()
-            out_lines = [redact(ln) for ln in all_lines[-lines:]]
+            # Offload the blocking log read + redaction off the event loop.
+            def _read_redacted(p=log_file, n=lines):
+                return [redact(ln) for ln in _safe_read_text(p).splitlines()[-n:]]
+            out_lines = await asyncio.to_thread(_read_redacted)
         except OSError:
             out_lines = []
 
@@ -8790,7 +8862,11 @@ async def get_managed_events(
     """
     try:
         path = _managed_events_path()
-        records = _tail_ndjson(path, limit=limit, since_iso=since, event_type=type)
+        # Tails an ndjson file (rotated at 10MB) via a blocking readlines();
+        # offload so the event loop stays responsive.
+        records = await asyncio.to_thread(
+            _tail_ndjson, path, limit, since, type
+        )
         return {
             "events": records,
             "count": len(records),
@@ -8813,11 +8889,13 @@ async def get_managed_status():
     snapshot = _managed_flags_snapshot()
     # last_fallback_ts is best-effort from the local events file.
     try:
-        events = _tail_ndjson(
+        # Blocking ndjson tail read; offload off the event loop.
+        events = await asyncio.to_thread(
+            _tail_ndjson,
             _managed_events_path(),
-            limit=500,
-            since_iso=None,
-            event_type="managed_agents_fallback",
+            500,
+            None,
+            "managed_agents_fallback",
         )
         snapshot["last_fallback_ts"] = _last_fallback_ts(events)
     except Exception:

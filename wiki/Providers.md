@@ -166,7 +166,7 @@ Degraded mode with sequential execution only.
 
 ```bash
 # Install Cline CLI
-npm install -g @anthropic-ai/cline
+npm install -g cline
 ```
 
 ### Invocation

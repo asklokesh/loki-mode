@@ -1,0 +1,8 @@
+# Durable SWE-bench Pro pilot ledger (reboot-proof per-instance records +
+# patches written by ../../swebench-pro-pilot/run_batch.py). Founder rule:
+# SWE-bench results stay INTERNAL and are never published/committed. This dir is
+# durable on disk (survives /tmp wipes + cleanup globs) but git-ignored, so the
+# data holds without ever landing in a tracked commit. The .gitignore itself is
+# tracked so the directory + this rule exist on a fresh checkout.
+*
+!.gitignore

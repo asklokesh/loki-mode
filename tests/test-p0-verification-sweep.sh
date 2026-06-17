@@ -252,7 +252,7 @@ _repo_grep() {
     grep -rinE "$1" \
         --include="*.md" --include="*.json" --include="*.html" \
         --include="*.py" --include="*.sh" --include="*.ts" "$REPO_ROOT" 2>/dev/null \
-        | grep -viE "P0-SWEEP|CHANGELOG|node_modules|/\.git/|/tests/|/internal/"
+        | grep -viE "P0-SWEEP|CHANGELOG|node_modules|/\.git/|/tests/|/internal/|/artifacts/"
 }
 
 # Guard 1: no claim that the code-review gate blocks on Medium severity.

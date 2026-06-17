@@ -9,6 +9,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.58.0] - 2026-06-17
+
+### Reliability + data-durability + repo hygiene wave (12 fixes)
+
+This release is a quality/reliability pass: dashboard concurrency hardening,
+memory data-integrity fixes, durable SWE-bench instance persistence, doctor UX,
+healing-hook safety, and test-suite hygiene (no more leaked branches/temp dirs).
+No user-facing behavior changes; everything is additive or a bug fix.
+
+#### Memory data integrity
+- **Consolidation merge no longer drops entries** (`memory/consolidation.py`):
+  when two newly-generated patterns merged into the same existing pattern in one
+  consolidation run, the second merge read a stale in-memory copy and the full
+  overwrite silently dropped the first merge's conditions, source episodes, and
+  confidence bump. The in-memory list is now refreshed after each merge, so no
+  entry is lost. Regression-tested (proven non-vacuous: the test fails against
+  the old code with the exact data-loss symptom).
+- **Memory store hardened against malformed input** (`memory/storage.py`,
+  `memory/retrieval.py`): non-dict entries in a pattern list are now skipped
+  instead of raising `AttributeError`; a store missing the `patterns` key
+  degrades to empty instead of `KeyError`; re-saving a pattern stays idempotent
+  (no index double-count). Each failure mode has a regression fixture.
+
+#### SWE-bench instance durability
+- **Completed SWE-bench instances now persist durably and resume** 
+  (`benchmarks/swebench-pro-pilot/run_batch.py`): the pilot harness wrote
+  per-instance results only under `/tmp` and rewrote a single monolithic ledger
+  every iteration, so a reboot or a crash mid-write could lose every completed
+  instance. Results now write incrementally, one atomic file per instance
+  (temp + fsync + rename), to a durable repo-relative ledger under
+  `benchmarks/results/swebench-pro-pilot/` (git-ignored data, tracked
+  `.gitignore`, so it survives reboots but stays internal). Re-runs skip
+  already-completed instances; `--force`/`--rerun` re-runs from scratch. Infra
+  failures and budget placeholders are not frozen as "done", so they stay
+  re-runnable. Cleanup globs (`/tmp`, test-branch pruning) structurally cannot
+  reach the durable results.
+
+### Dashboard concurrency hardening + heredoc CI guard (reliability)
+
+- **Dashboard no longer stalls under concurrent requests** (`dashboard/server.py`):
+  several FastAPI endpoints did blocking filesystem work (event-log reads,
+  learning-signal scans, memory blobs, cost/timeline aggregation, council
+  transcripts, checkpoint listing, log tails) directly on the asyncio event
+  loop. A single slow read could freeze every other in-flight request, so the
+  status poller and live panels could hang while one endpoint did heavy I/O.
+  Those blocking call sites now run via `asyncio.to_thread`, keeping the event
+  loop responsive. Verified: `/api/status` stayed sub-millisecond while a
+  deliberately slow endpoint blocked for seconds; all endpoints still return
+  200. The shared compose-discovery TTL cache reachable from the new concurrent
+  path is `threading.Lock`-guarded (read-modify-write bracketed); the wrapped
+  helpers are pure reads, and no shared-state writer was newly threaded.
+- **CI guard against the v7.41 heredoc `$<digit>` footgun**
+  (`tests/check-heredoc-dollar-digit.sh`, wired into `scripts/local-ci.sh`):
+  scans `autonomy/loki` and `autonomy/run.sh` for unescaped `$1`..`$9` inside
+  `python3 -c "..."` bodies, which `set -u` bash silently expands as positional
+  params (the class of bug that once crashed `loki plan --json` for every user).
+  Non-vacuity proven (the check fires on a planted violation). Runs on every
+  `local-ci` pre-push.
+
+#### Doctor UX
+- **`loki doctor` now prints the exact install command for a missing provider**
+  (`autonomy/loki`): a missing optional provider CLI (claude/codex/cline/aider)
+  previously printed only "not found" with no remedy; it now prints the precise
+  install command under the warning. Bounded network probes (ChromaDB, MiroFish)
+  gained `--connect-timeout`/`--max-time` so a doctor run can no longer hang on a
+  dead endpoint, with transient stderr-only progress feedback (stdout stays
+  byte-identical for bash/Bun parity).
+
+#### Healing-hook safety + test hygiene
+- **Healing hooks regression test for live-tree safety**
+  (`tests/test-healing-hooks-safety.sh`): locks in that a healing revert
+  preserves unrelated uncommitted edits (snapshot-scoped restore, no blanket
+  `git checkout`) and that friction path matching is exact (no substring false
+  hits). The source already had these guards; this test prevents regression and
+  proves non-vacuity against the old destructive behavior.
+- **Test suite no longer leaks git branches or temp dirs**
+  (`tests/test-e2e-features.sh`, `tests/test-stop-process-group.sh`): added
+  unconditional `trap ... EXIT INT TERM` cleanup so an interrupted test can no
+  longer leave a `loki-test-wt-*` worktree/branch in the real repo or a
+  `loki-pgtest-*` temp dir behind. New `scripts/clean-test-branches.sh` safely
+  prunes only test-artifact branches from a sandbox repo (refuses the real repo,
+  protected branches, or while a live run is active).
+
 ## [7.57.0] - 2026-06-17
 
 ### App Runner shows running apps + URLs, intelligent tasks, default-on advisory gates

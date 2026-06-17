@@ -855,6 +855,8 @@ class MemoryRetrieval:
         # Filter semantic patterns by last_used
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
         for pattern in patterns_data.get("patterns", []):
+            if not isinstance(pattern, dict):
+                continue
             last_used = pattern.get("last_used")
             if last_used:
                 try:
@@ -1483,6 +1485,8 @@ class MemoryRetrieval:
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
 
         for pattern in patterns_data.get("patterns", []):
+            if not isinstance(pattern, dict):
+                continue
             pattern_text = pattern.get("pattern", "").lower()
             category = pattern.get("category", "").lower()
             correct = pattern.get("correct_approach", "").lower()
@@ -1566,6 +1570,8 @@ class MemoryRetrieval:
         # what_fails / why / prevention scoring shape.
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
         for pat in patterns_data.get("patterns", []):
+            if not isinstance(pat, dict):
+                continue
             if pat.get("category") != "anti-pattern":
                 continue
             what_fails = (pat.get("incorrect_approach", "")
@@ -1633,6 +1639,8 @@ class MemoryRetrieval:
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
 
         for pattern in patterns_data.get("patterns", []):
+            if not isinstance(pattern, dict):
+                continue
             # Create text for embedding
             text = f"{pattern.get('pattern', '')} {pattern.get('category', '')} {pattern.get('correct_approach', '')}"
 
@@ -1690,6 +1698,8 @@ class MemoryRetrieval:
         # too so embedding-based retrieval sees consolidated anti-patterns.
         patterns_data = self.storage.read_json("semantic/patterns.json") or {}
         for pat in patterns_data.get("patterns", []):
+            if not isinstance(pat, dict):
+                continue
             if pat.get("category") != "anti-pattern":
                 continue
             what_fails = pat.get("incorrect_approach", "") or pat.get("pattern", "")

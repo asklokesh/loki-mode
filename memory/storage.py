@@ -626,6 +626,8 @@ class MemoryStorage:
             # Upsert: update existing pattern or append new
             existing_idx = None
             for i, p in enumerate(patterns_file["patterns"]):
+                if not isinstance(p, dict):
+                    continue
                 if p.get("id") == pattern_id:
                     existing_idx = i
                     break
@@ -672,6 +674,8 @@ class MemoryStorage:
             return None
 
         for pattern in patterns_file.get("patterns", []):
+            if not isinstance(pattern, dict):
+                continue
             if pattern.get("id") == pattern_id:
                 return pattern
 
@@ -695,6 +699,8 @@ class MemoryStorage:
 
         pattern_ids = []
         for pattern in patterns_file.get("patterns", []):
+            if not isinstance(pattern, dict):
+                continue
             if category is None or pattern.get("category") == category:
                 pattern_ids.append(pattern.get("id"))
 
@@ -737,6 +743,8 @@ class MemoryStorage:
             # Find and update pattern
             found = False
             for i, p in enumerate(patterns_file.get("patterns", [])):
+                if not isinstance(p, dict):
+                    continue
                 if p.get("id") == pattern_id:
                     pattern_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                     patterns_file["patterns"][i] = pattern_data
@@ -1364,6 +1372,8 @@ class MemoryStorage:
 
         updated = 0
         for pattern in patterns:
+            if not isinstance(pattern, dict):
+                continue
             original = pattern.get("importance", 0.5)
             self.apply_decay([pattern], decay_rate, half_life_days)
             if abs(pattern.get("importance", 0.5) - original) > 0.001:

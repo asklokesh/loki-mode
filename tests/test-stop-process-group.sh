@@ -64,6 +64,14 @@ $PY -c "import ast; ast.parse(open('$REPO_ROOT/dashboard/server.py').read())" \
 
 # --- A: group-kill reaps a SIGTERM-ignoring child ----------------------------
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-pgtest-XXXXXX")
+# Make the terminal cleanup (pkill + temp-dir removal) unconditional: if the
+# script is interrupted before reaching the end, the EXIT/INT/TERM trap still
+# prunes every loki-pgtest-* sandbox so none leak onto disk.
+pgtest_cleanup() {
+    pkill -f "loki-pgtest" 2>/dev/null || true
+    rm -rf "${TMPDIR:-/tmp}"/loki-pgtest-* 2>/dev/null || true
+}
+trap 'pgtest_cleanup' EXIT INT TERM
 cat > "$WORK/orch.sh" <<'EOF'
 #!/usr/bin/env bash
 # child ignores SIGTERM (worst case), stays in leader's group

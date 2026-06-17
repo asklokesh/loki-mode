@@ -221,10 +221,17 @@ class ConsolidationPipeline:
                 if new_pattern:
                     # Try to merge with existing
                     merged = False
-                    for existing in existing_patterns:
+                    for idx, existing in enumerate(existing_patterns):
                         if self._patterns_similar(new_pattern, existing):
                             merged_pattern = self.merge_with_existing(new_pattern, [existing])
                             self.storage.update_pattern(merged_pattern)
+                            # Refresh the in-memory copy so a later new pattern in
+                            # this same run that also merges into this existing
+                            # pattern builds on the just-merged state. Without this,
+                            # the second merge reads the stale pre-merge base and its
+                            # update_pattern() overwrites storage, silently dropping
+                            # the first merge's conditions/source_episodes/confidence.
+                            existing_patterns[idx] = merged_pattern
                             result.patterns_merged += 1
                             merged = True
                             break
@@ -240,11 +247,16 @@ class ConsolidationPipeline:
         for anti_pattern in anti_patterns:
             # Check if similar anti-pattern already exists
             merged = False
-            for existing in existing_patterns:
+            for idx, existing in enumerate(existing_patterns):
                 if (existing.incorrect_approach and
                     self._patterns_similar(anti_pattern, existing, threshold=0.6)):
                     merged_pattern = self.merge_with_existing(anti_pattern, [existing])
                     self.storage.update_pattern(merged_pattern)
+                    # Refresh in-memory copy (same data-loss guard as the cluster
+                    # merge loop above): a later anti-pattern merging into this same
+                    # existing pattern must build on the just-merged state, not the
+                    # stale pre-merge base.
+                    existing_patterns[idx] = merged_pattern
                     result.patterns_merged += 1
                     merged = True
                     break

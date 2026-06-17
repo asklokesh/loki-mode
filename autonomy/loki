@@ -2044,7 +2044,7 @@ cmd_start() {
         case "$effective_provider" in
             claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
             codex)  echo "  npm install -g @openai/codex" ;;
-            cline)  echo "  npm install -g @anthropic-ai/cline" ;;
+            cline)  echo "  npm install -g cline" ;;
             aider)  echo "  pip install aider-chat" ;;
             *)      echo "  Check the provider documentation for installation." ;;
         esac
@@ -8049,10 +8049,37 @@ cmd_doctor() {
     echo ""
 
     echo -e "${CYAN}AI Providers:${NC}"
-    doctor_check "Claude CLI"          claude   optional || true
-    doctor_check "Codex CLI"           codex    optional || true
-    doctor_check "Cline CLI"           cline    optional || true
-    doctor_check "Aider CLI"           aider    optional || true
+    # C1 (doctor UX): when an individual provider CLI is missing, print the
+    # EXACT install command right under the WARN line so the user never has to
+    # look it up. doctor_check returns 1 when the CLI is absent; we capture that
+    # and emit the canonical install command for that provider. Honest: this
+    # only PRINTS the command -- the offer-to-run path lives below, gated on a
+    # TTY, and only when NO provider at all is installed.
+    doctor_provider_install_cmd() {
+        case "$1" in
+            claude) echo "npm install -g @anthropic-ai/claude-code" ;;
+            codex)  echo "npm install -g @openai/codex" ;;
+            cline)  echo "npm install -g cline" ;;
+            aider)  echo "pip install aider-chat" ;;
+            *)      echo "" ;;
+        esac
+    }
+    doctor_check_provider() {
+        local _label="$1" _cmd="$2"
+        if ! doctor_check "$_label" "$_cmd" optional; then
+            local _install
+            _install=$(doctor_provider_install_cmd "$_cmd")
+            # Route the per-provider install hint to STDERR (fd 2), mirroring the
+            # doctor_probe_note stderr-only pattern above. This keeps the
+            # parity-captured STDOUT byte-identical to the Bun route (which emits
+            # no per-provider Install line) while the user still sees the hint.
+            [ -n "$_install" ] && echo -e "         ${YELLOW}Install: ${_install}${NC}" >&2
+        fi
+    }
+    doctor_check_provider "Claude CLI"  claude || true
+    doctor_check_provider "Codex CLI"   codex  || true
+    doctor_check_provider "Cline CLI"   cline  || true
+    doctor_check_provider "Aider CLI"   aider  || true
 
     # Check if at least one provider is installed (detect_any_provider is the
     # shared helper from provider-offer.sh, extracted from this exact loop).
@@ -8161,11 +8188,30 @@ cmd_doctor() {
         echo -e "  ${YELLOW}WARN${NC}  sentence-transformers - not installed (loki memory vectors setup)"
         warn_count=$((warn_count + 1))
     fi
-    # ChromaDB check
-    if curl -sf http://localhost:8100/api/v2/heartbeat >/dev/null 2>&1; then
+    # C3 (doctor UX): the next checks are bounded network probes, not instant
+    # local lookups. They are the slowest part of doctor (a stale/unreachable
+    # host could otherwise hang on curl's default ~2min connect timeout). We
+    # (a) bound every probe with --connect-timeout/--max-time so a dead host
+    # fails fast, and (b) print a transient progress note to stderr on a TTY so
+    # the user knows doctor is doing network work, not stuck. The note goes to
+    # stderr only -- the parity-captured stdout stays byte-identical across the
+    # bash and Bun routes.
+    doctor_probe_note() {
+        [ -t 2 ] && printf '  %s...\r' "$1" >&2
+    }
+    doctor_probe_clear() {
+        # Erase the transient progress line so it does not linger above the
+        # PASS/WARN result. Only on a TTY (where the note was printed).
+        [ -t 2 ] && printf '\r\033[K' >&2
+    }
+    # ChromaDB check (bounded network probe)
+    doctor_probe_note "Probing ChromaDB (port 8100)"
+    if curl -sf --connect-timeout 2 --max-time 5 http://localhost:8100/api/v2/heartbeat >/dev/null 2>&1; then
+        doctor_probe_clear
         echo -e "  ${GREEN}PASS${NC}  ChromaDB server (port 8100)"
         pass_count=$((pass_count + 1))
     else
+        doctor_probe_clear
         echo -e "  ${YELLOW}WARN${NC}  ChromaDB - not running (docker start loki-chroma)"
         warn_count=$((warn_count + 1))
     fi
@@ -8189,10 +8235,13 @@ cmd_doctor() {
     # MiroFish check (optional service)
     local _mf_url="${LOKI_MIROFISH_URL:-http://localhost:5001}"
     if docker inspect loki-mirofish &>/dev/null 2>&1 || [[ -n "${LOKI_MIROFISH_URL:-}" ]]; then
-        if curl -sf "$_mf_url/health" >/dev/null 2>&1; then
+        doctor_probe_note "Probing MiroFish ($_mf_url)"
+        if curl -sf --connect-timeout 2 --max-time 5 "$_mf_url/health" >/dev/null 2>&1; then
+            doctor_probe_clear
             echo -e "  ${GREEN}PASS${NC}  MiroFish server ($_mf_url)"
             pass_count=$((pass_count + 1))
         else
+            doctor_probe_clear
             echo -e "  ${YELLOW}WARN${NC}  MiroFish - not running (loki start --mirofish-docker <image>)"
             warn_count=$((warn_count + 1))
         fi
@@ -9939,7 +9988,7 @@ QPRDEOF
         case "$_quick_provider" in
             claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
             codex)  echo "  npm install -g @openai/codex" ;;
-            cline)  echo "  npm install -g @anthropic-ai/cline" ;;
+            cline)  echo "  npm install -g cline" ;;
             aider)  echo "  pip install aider-chat" ;;
             *)      echo "  Check the provider documentation for installation." ;;
         esac

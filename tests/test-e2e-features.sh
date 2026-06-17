@@ -226,8 +226,19 @@ echo "Test 4.7: Real worktree create/list/clean cycle"
 cd "$PROJECT_DIR" || exit 1
 # Create a real worktree
 test_branch="loki-test-wt-$$"
-git worktree add -b "$test_branch" ".claude/worktrees/test-wt-$$" HEAD 2>/dev/null
-if [ -d ".claude/worktrees/test-wt-$$" ]; then
+test_wt_path=".claude/worktrees/test-wt-$$"
+# This test operates on the REAL repo (PROJECT_DIR), so an interrupt or an
+# early exit in a later test must not leak the worktree/branch into it.
+# Register an unconditional cleanup trap before creation; clear it once the
+# inline cleanup below has run on the happy path.
+e2e_wt_cleanup() {
+    git -C "$PROJECT_DIR" worktree remove "$test_wt_path" --force 2>/dev/null || true
+    git -C "$PROJECT_DIR" worktree prune 2>/dev/null || true
+    git -C "$PROJECT_DIR" branch -D "$test_branch" 2>/dev/null || true
+}
+trap 'e2e_wt_cleanup' EXIT INT TERM
+git worktree add -b "$test_branch" "$test_wt_path" HEAD 2>/dev/null
+if [ -d "$test_wt_path" ]; then
     # Verify list sees it
     wt_list=$(bash "$CLI" worktree list 2>&1)
     if echo "$wt_list" | grep -q "$test_branch"; then
@@ -236,11 +247,13 @@ if [ -d ".claude/worktrees/test-wt-$$" ]; then
         fail "worktree list" "did not see $test_branch"
     fi
     # Clean up
-    git worktree remove ".claude/worktrees/test-wt-$$" --force 2>/dev/null
+    git worktree remove "$test_wt_path" --force 2>/dev/null
     git branch -D "$test_branch" 2>/dev/null
 else
     fail "worktree create" "could not create test worktree"
 fi
+# Inline cleanup done (or create failed): drop the safety trap.
+trap - EXIT INT TERM
 
 echo ""
 
