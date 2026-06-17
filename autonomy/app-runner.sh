@@ -1374,20 +1374,59 @@ app_runner_health_check() {
         return 1
     fi
 
-    # For HTTP apps, try an HTTP health check
+    # For HTTP apps, try an HTTP health check.
     if [ -n "$_APP_RUNNER_PORT" ] && [ "$_APP_RUNNER_PORT" -gt 0 ] 2>/dev/null; then
-        if curl -sf -o /dev/null -m 5 "http://localhost:${_APP_RUNNER_PORT}/" 2>/dev/null; then
+        # The health signal is "is the server answering HTTP at all", NOT "does /
+        # return 2xx". Loki generates plenty of apps that legitimately serve a
+        # non-2xx on the root path (an API-only FastAPI/Express backend 404s on
+        # `/`, anything behind auth 401s). Those are serving correctly, so a
+        # status-strict probe (curl -f, which fails on >=400) would mark a healthy
+        # backend unhealthy and trigger a needless restart -> a restart storm /
+        # false crash. What genuinely means "no longer serving" -- a hung event
+        # loop, a deadlock, a wedged dev server -- is a connection that times out
+        # or is refused, i.e. NO HTTP response at all. So we read the HTTP status
+        # code: any code returned (2xx/3xx/4xx/5xx) means the server answered and
+        # is alive; "000" is curl's sentinel for connect-failure/timeout/reset
+        # and is the only thing we treat as a crash.
+        # If curl is unavailable we cannot probe HTTP at all; fall back to the
+        # old, more tolerant signal (PID alive == healthy) rather than declaring
+        # every HTTP app wedged and triggering a restart storm. curl is the only
+        # HTTP client this function uses.
+        if ! command -v curl >/dev/null 2>&1; then
+            _write_health "true"
+            _write_app_state "running"
+            return 0
+        fi
+        # On connect-failure/timeout curl already prints "000" via %{http_code}
+        # and exits non-zero; do NOT append our own "000" (a `|| echo 000` would
+        # concatenate to "000000"). The trailing `|| true` swallows the non-zero
+        # exit (matching this file's guarded command-substitution convention, e.g.
+        # the _GIT_DIFF_HASH / port reads) so the watchdog never aborts under a
+        # future `set -e`; the empty fallback then maps to "000".
+        local _http_code
+        _http_code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+            "http://localhost:${_APP_RUNNER_PORT}/" 2>/dev/null || true)
+        _http_code="${_http_code:-000}"
+        if [ "$_http_code" != "000" ]; then
             _write_health "true"
             _write_app_state "running"
             return 0
         else
-            # HTTP failed but process alive -- may be a non-HTTP app or still starting
-            _write_health "true"
-            return 0
+            # No HTTP response: the process is alive (kill -0 passed above) but is
+            # not serving on its declared port -- a wedged/hung/deadlocked server.
+            # Previously this branch wrote ok:true unconditionally, so the HTTP
+            # signal could never report a failure and a wedged server stayed
+            # "healthy" forever. Report the failure honestly so the watchdog can
+            # act on it. We deliberately do NOT flip state.json to "crashed" here
+            # (mirroring the dead-PID precedent above at the kill -0 check); the
+            # watchdog owns the crashed transition after its circuit breaker, so a
+            # single transient blip does not prematurely mark the app crashed.
+            _write_health "false"
+            return 1
         fi
     fi
 
-    # Non-HTTP: PID alive is sufficient
+    # Non-HTTP: PID alive is sufficient (no URL/port to probe)
     _write_health "true"
     return 0
 }
@@ -1477,17 +1516,35 @@ app_runner_watchdog() {
         return 0
     fi
 
-    # Process alive, nothing to do
+    # Process alive: kill -0 only proves the PID exists, not that the app is
+    # actually serving. A hung event loop, a deadlock, or a wedged dev server
+    # all pass kill -0 forever while never answering a request, so the old
+    # "alive == healthy" shortcut let a wedged HTTP app run un-restarted and
+    # left health.json stale. Mirror the compose branch: defer to
+    # app_runner_health_check (HTTP-aware for apps that declared a port), and
+    # treat an unhealthy-but-alive process as a crash so the same circuit
+    # breaker + backoff + restart path handles it.
     if kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
-        # BUG 3 fix: a confirmed-alive observation clears the accumulated crash
-        # count so the breaker fires only on 5 CONSECUTIVE deaths, not on 5
-        # cumulative crashes that were each successfully recovered over a long
-        # session (which would trip the breaker on a HEALTHY app).
-        _APP_RUNNER_CRASH_COUNT=0
-        return 0
+        if app_runner_health_check; then
+            # BUG 3 fix: a confirmed-healthy observation clears the accumulated
+            # crash count so the breaker fires only on 5 CONSECUTIVE failures,
+            # not on 5 cumulative crashes that were each successfully recovered
+            # over a long session (which would trip the breaker on a HEALTHY app).
+            _APP_RUNNER_CRASH_COUNT=0
+            return 0
+        fi
+        # Alive but not healthy (e.g. HTTP probe failed for an app that declared
+        # a port). Fall through to the crash path below, but first terminate the
+        # wedged process: it is still bound to the port, so app_runner_start's
+        # port-conflict guard would otherwise refuse to start and the breaker
+        # would trip while the orphan keeps serving hung responses (a restart
+        # storm). app_runner_stop performs a full process-tree teardown and
+        # clears _APP_RUNNER_PID / app.pid, leaving a clean slate for restart.
+        log_warn "App Runner: process alive but unhealthy (not serving) -- treating as crash"
+        app_runner_stop
     fi
 
-    # Process is dead
+    # Process is dead (or was just torn down because it was alive-but-wedged)
     _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
     log_warn "App Runner: process died (crash #$_APP_RUNNER_CRASH_COUNT)"
 
