@@ -43,7 +43,14 @@ jobs:
         run: |
           mkdir -p coverage
           set +e
-          bun test --coverage --coverage-reporter=lcov --coverage-dir=./coverage 2>&1 | tee coverage/coverage.txt
+          # Emit BOTH reporters: `text` prints the "All files | <pct> | ..." summary
+          # to stdout (captured below into coverage.txt and parsed for the line-%
+          # gate), and `lcov` writes lcov.info for the uploaded artifact. With ONLY
+          # --coverage-reporter=lcov, bun writes the file but pipes no text table,
+          # so the `^All files` parse found nothing and the gate failed every run
+          # ("could not parse line coverage"). Both reporters keep the gate working
+          # and the artifact intact.
+          bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=./coverage 2>&1 | tee coverage/coverage.txt
           ec=${PIPESTATUS[0]}
           set -e
           if [ "$ec" -ne 0 ]; then
@@ -61,7 +68,11 @@ jobs:
         run: |
           # Bun's text summary line: "All files | 87.50 |  80.00 | ..."
           # Extract the "All files" row's first numeric column (lines).
-          PCT=$(grep -E "^All files" coverage/coverage.txt 2>/dev/null \
+          # Strip ANSI color codes first (bun may colorize the table even when
+          # piped, depending on CI TTY detection) so the `^All files` anchor and
+          # the column split are robust.
+          PCT=$(sed -E 's/\x1b\[[0-9;]*m//g' coverage/coverage.txt 2>/dev/null \
+            | grep -E "^All files" \
             | head -1 \
             | awk -F'[|]' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
           if [ -z "$PCT" ]; then

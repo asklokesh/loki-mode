@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.64.0] - 2026-06-17
+
+### Wave-5 bug-hunt fixes (server.py, mcp, app-runner) + coverage gate repair
+
+Eleven bugs found by a read-only adversarial sweep of previously un-hunted live
+surfaces, each re-verified against source and fixed with a non-vacuous regression
+test (proven to fail pre-fix). Plus the every-release Coverage check, red since it
+gained a threshold, root-caused and fixed.
+
+- **Coverage CI gate repaired** (.github/workflows/coverage.yml): the job ran
+  `bun test --coverage --coverage-reporter=lcov`, which writes lcov.info but pipes
+  NO text summary, so the `^All files` line-% parse found nothing and the gate
+  failed every run ("could not parse line coverage"). Now emits BOTH `text` (for
+  the parse) and `lcov` (for the artifact), and strips ANSI before parsing.
+- **/api/logs secret redaction** (dashboard/server.py): the endpoint returned raw
+  session-log lines while its sibling /api/app-runner/logs redacted; now both run
+  through the same redactor (sk-ant-/ghp_/Bearer/AWS secrets no longer leak).
+- **WebSocket broadcast backpressure** (dashboard/server.py): one stalled client
+  could freeze the broadcast + the 2s state pusher for all clients; sends now run
+  concurrently with a per-client timeout and a dead client is dropped.
+- **Cost/metrics/budget endpoints hardened** (dashboard/server.py): a corrupt
+  efficiency or budget file (non-object JSON, non-numeric value) returned 500;
+  now guarded (isinstance + AttributeError) and degrades cleanly.
+- **MCP telemetry start/complete balance** (mcp/server.py): loki_findings and
+  loki_counter_evidence_template emitted 'start' but skipped 'complete' on
+  early-return paths, leaking start-times and corrupting execution-time signals;
+  now balanced on every path.
+- **MCP async loop no longer blocked** (mcp/server.py): loki_code_search ran a
+  synchronous reindex subprocess (up to 300s) and a blocking ChromaDB query
+  directly on the event loop; both offloaded via asyncio.to_thread.
+- **MCP robustness** (mcp/server.py): loki_get_co_changes coerces mixed-type
+  counts before sorting (was a TypeError crash); loki_task_queue_add uses
+  setdefault (was a KeyError on a malformed queue).
+- **app-runner PID-reuse + restart** (autonomy/app-runner.sh): health-check and
+  watchdog now verify a process-identity token (ps lstart+comm) before trusting a
+  reused PID (a foreign process is no longer reported healthy, and the watchdog no
+  longer signals an innocent stranger); a failed restart now logs an error and
+  returns non-zero instead of silently leaving the app stopped.
+
+Gate green: pytest 1196 passed, bun typecheck clean, bun --coverage 1067 pass/0 fail.
+
 ## [7.63.1] - 2026-06-17
 
 ### Hotfix: doctor install-hint bash/Bun parity (GH Bun Parity went red on v7.63.0)

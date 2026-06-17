@@ -436,23 +436,51 @@ class ConnectionManager:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
+    # Per-client send timeout (seconds). A client that does not stop reading
+    # fills its TCP send buffer; without a bound the await blocks indefinitely
+    # and one stalled client would freeze the whole fan-out (and the 2s
+    # _push_loki_state_loop) for every other client. Drop the slow client
+    # instead of blocking everyone.
+    SEND_TIMEOUT_SECONDS = 5.0
+
     async def broadcast(self, message: dict[str, Any]) -> None:
-        """Broadcast a message to all connected clients."""
-        disconnected = []
-        for connection in list(self.active_connections):
+        """Broadcast a message to all connected clients.
+
+        Sends run concurrently with a per-client timeout so a single stalled
+        or dead client is dropped rather than blocking the fan-out.
+        """
+        connections = list(self.active_connections)
+        if not connections:
+            return
+
+        async def _send(conn: WebSocket) -> bool:
             try:
-                await connection.send_json(message)
+                await asyncio.wait_for(
+                    conn.send_json(message), timeout=self.SEND_TIMEOUT_SECONDS
+                )
+                return True
+            except asyncio.TimeoutError:
+                logger.debug("WebSocket send timed out, dropping slow client")
+                return False
             except Exception as e:
                 logger.debug(f"WebSocket send failed, client disconnected: {e}")
-                disconnected.append(connection)
-        # Clean up disconnected clients
-        for conn in disconnected:
-            self.disconnect(conn)
+                return False
+
+        results = await asyncio.gather(*(_send(c) for c in connections))
+        # Clean up clients that timed out or errored.
+        for conn, ok in zip(connections, results):
+            if not ok:
+                self.disconnect(conn)
 
     async def send_personal(self, websocket: WebSocket, message: dict[str, Any]) -> None:
         """Send a message to a specific client."""
         try:
-            await websocket.send_json(message)
+            await asyncio.wait_for(
+                websocket.send_json(message), timeout=self.SEND_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.debug("WebSocket personal send timed out, dropping slow client")
+            self.disconnect(websocket)
         except Exception as e:
             logger.debug(f"WebSocket personal send failed: {e}")
             self.disconnect(websocket)
@@ -5257,6 +5285,11 @@ def _compute_cost_snapshot() -> dict:
         for eff_file in sorted(efficiency_dir.glob("*.json")):
             try:
                 data = json.loads(eff_file.read_text())
+                # A corrupt/truncated efficiency file can parse to a non-object
+                # (list / null / scalar); data.get(...) would then raise
+                # AttributeError. Skip such files rather than 500 the endpoint.
+                if not isinstance(data, dict):
+                    continue
 
                 inp = data.get("input_tokens", 0)
                 out = data.get("output_tokens", 0)
@@ -5284,7 +5317,7 @@ def _compute_cost_snapshot() -> dict:
                 by_model[model]["input_tokens"] += inp
                 by_model[model]["output_tokens"] += out
                 by_model[model]["cost_usd"] += cost
-            except (json.JSONDecodeError, KeyError, TypeError):
+            except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                 pass
 
     # Fallback: read from context tracking if efficiency files have no token data
@@ -5293,7 +5326,13 @@ def _compute_cost_snapshot() -> dict:
         if ctx_file.exists():
             try:
                 ctx = json.loads(ctx_file.read_text())
+                # A corrupt/truncated tracking.json can parse to a non-object;
+                # ctx.get(...) would then raise AttributeError. Skip it.
+                if not isinstance(ctx, dict):
+                    ctx = {}
                 totals = ctx.get("totals", {})
+                if not isinstance(totals, dict):
+                    totals = {}
                 total_input = totals.get("total_input", 0)
                 total_output = totals.get("total_output", 0)
                 if total_input > 0 or total_output > 0:
@@ -5309,7 +5348,7 @@ def _compute_cost_snapshot() -> dict:
                         by_model[model]["input_tokens"] += inp
                         by_model[model]["output_tokens"] += out
                         by_model[model]["cost_usd"] += cost
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                 pass
 
     # Read budget configuration
@@ -5386,13 +5425,26 @@ async def get_budget():
             except (json.JSONDecodeError, KeyError):
                 pass
 
+    # Coerce defensively: a budget.json with a non-numeric budget_used/limit
+    # (e.g. "n/a", null, a list) parses as valid JSON but would crash float()
+    # with ValueError/TypeError. Treat non-numeric values as 0.0 / None so the
+    # endpoint returns a clean payload instead of a 500.
+    def _to_float(value, default=0.0):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    budget_limit_f = _to_float(budget_limit, None) if budget_limit is not None else None
+    budget_used_f = _to_float(budget_used, 0.0)
+
     remaining = None
-    if budget_limit is not None:
-        remaining = max(0.0, float(budget_limit) - float(budget_used))
+    if budget_limit_f is not None:
+        remaining = max(0.0, budget_limit_f - budget_used_f)
 
     return {
-        "budget_limit": float(budget_limit) if budget_limit is not None else None,
-        "current_cost": round(float(budget_used), 4),
+        "budget_limit": budget_limit_f,
+        "current_cost": round(budget_used_f, 4),
         "exceeded": exceeded,
         "exceeded_at": exceeded_at,
         "remaining": round(remaining, 4) if remaining is not None else None,
@@ -6590,9 +6642,16 @@ async def resume_agent(agent_id: str):
 
 @app.get("/api/logs")
 async def get_logs(lines: int = Query(default=100, ge=1, le=10000), token: Optional[dict] = Depends(auth.get_current_token)):
-    """Get recent log entries from session log files."""
+    """Get recent log entries from session log files (redacted)."""
     log_dir = _get_loki_dir() / "logs"
     entries = []
+
+    # Session logs (.loki/logs/*.log) are written raw by run.sh and can contain
+    # secrets an agent/tool echoed to stdout (sk-ant-, ghp_, Bearer, AWS keys).
+    # Redact every returned message exactly like the /api/app-runner/logs and
+    # /errors endpoints do. The response shape is unchanged; only the message
+    # content passes through the redactor.
+    _redact = _get_log_redactor()
 
     # Regex for full timestamp: [2026-02-07T01:32:00] [INFO] msg  or  2026-02-07 01:32:00 INFO msg
     _LOG_TS_FULL = re.compile(
@@ -6661,7 +6720,7 @@ async def get_logs(lines: int = Query(default=100, ge=1, le=10000), token: Optio
                         timestamp = file_mtime
 
                     entries.append({
-                        "message": message,
+                        "message": _redact(message),
                         "level": level,
                         "timestamp": timestamp,
                     })
@@ -7171,6 +7230,10 @@ def _build_metrics_text() -> str:
             for eff_file in efficiency_dir.glob("*.json"):
                 try:
                     data = json.loads(eff_file.read_text())
+                    # Skip non-object (corrupt/truncated) efficiency files so a
+                    # bad file does not 500 the Prometheus scrape.
+                    if not isinstance(data, dict):
+                        continue
                     cost = data.get("cost_usd")
                     if cost is not None:
                         estimated_cost += float(cost)
@@ -7180,7 +7243,7 @@ def _build_metrics_text() -> str:
                         estimated_cost += _calculate_model_cost(
                             data.get("model", "sonnet").lower(), inp, out
                         )
-                except (json.JSONDecodeError, KeyError, TypeError):
+                except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                     pass
         except OSError:
             pass

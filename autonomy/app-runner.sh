@@ -144,6 +144,76 @@ HEALTH_EOF
     mv "$tmp_file" "$_APP_RUNNER_DIR/health.json"
 }
 
+# L5 fix (PID-file reuse race): capture a disambiguating identity token for a
+# live PID, so a later liveness check can tell "our app is still running" apart
+# from "the OS reassigned the crashed app's PID to an unrelated process". A raw
+# `kill -0 $pid` cannot make that distinction: a reused PID reports a foreign
+# process as a healthy app.
+#
+# Token = the process start time (`lstart`) plus its command name (`comm`), one
+# line, read from `ps`. `lstart` is the strong disambiguator: it is constant for
+# a process lifetime and a reused PID is, by definition, a different (later)
+# process with a different start time. `comm` is a weaker secondary signal kept
+# for human readability. We compare the whole line by plain string equality.
+#
+# Portability: the `ps -o lstart=,comm=` field set works on both BSD (macOS) and
+# GNU/Linux. We never parse the format -- we only ever compare two reads taken on
+# the SAME host (capture at start vs read at check), so the BSD-vs-Linux format
+# difference is irrelevant: the two strings either match or they do not. Returns
+# empty on any `ps` miss (dead/foreign pid) so callers can fall back safely.
+_app_runner_pid_token() {
+    local pid="$1"
+    case "$pid" in
+        ''|0|1) return 0 ;;
+    esac
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    # Collapse internal whitespace runs to single spaces so a benign formatting
+    # quirk (e.g. extra padding) never causes a spurious mismatch.
+    ps -o lstart=,comm= -p "$pid" 2>/dev/null | tr -s ' ' ' ' | sed 's/^ *//; s/ *$//'
+}
+
+# Write the captured identity token for the current app PID. Best-effort: if the
+# token cannot be read (no ps output) we remove any stale token file rather than
+# leave a wrong one, which makes the later check fall back to trusting kill -0
+# (no false-DEAD regression).
+_write_app_token() {
+    local pid="$1"
+    local tok
+    tok=$(_app_runner_pid_token "$pid")
+    if [ -n "$tok" ]; then
+        local tmp_file="$_APP_RUNNER_DIR/app.token.tmp.$$"
+        printf '%s\n' "$tok" > "$tmp_file" 2>/dev/null && \
+            mv "$tmp_file" "$_APP_RUNNER_DIR/app.token" 2>/dev/null || \
+            rm -f "$tmp_file" 2>/dev/null
+    else
+        rm -f "$_APP_RUNNER_DIR/app.token" 2>/dev/null
+    fi
+}
+
+# Decide whether the live PID is still OUR app, using the captured token.
+# Returns 0 (yes, ours) when:
+#   - no token file exists (app launched by a pre-fix version, or ps was
+#     unavailable at start) -- fall back to trusting kill -0, OR
+#   - the live PID's token matches the stored token.
+# Returns 1 (NOT ours) ONLY when a token file exists AND the live token differs
+# (the strong "PID was reused by a foreign process" signal). This asymmetry is
+# deliberate: we never declare DEAD on a missing/unreadable token, so a
+# legitimate still-running app is never falsely killed (no false-DEAD
+# regression). The residual: if `ps` is entirely unavailable on the host, the
+# token file is never written and we always fall back to bare kill -0 -- i.e. no
+# worse than the pre-fix behavior, never worse.
+_app_runner_pid_is_ours() {
+    local pid="$1"
+    local token_file="$_APP_RUNNER_DIR/app.token"
+    [ -f "$token_file" ] || return 0
+    local stored live
+    stored=$(cat "$token_file" 2>/dev/null)
+    [ -n "$stored" ] || return 0
+    live=$(_app_runner_pid_token "$pid")
+    [ -n "$live" ] || return 0
+    [ "$live" = "$stored" ]
+}
+
 # Re-derive a detection.json field (type/command) so we can rewrite it after a
 # port reconcile without threading those values through globals. Echoes the raw
 # string value (empty on miss). Mirrors the grep-based read style used by
@@ -1148,6 +1218,10 @@ app_runner_start() {
         # live port even when the app ignored PORT. Mutates globals before the
         # state write below. Bounded; no-op when the app honored the chosen port.
         _app_runner_reconcile_port
+        # L5 fix: capture the identity token now that the child has exec'd into
+        # the real app process, so a later health-check/watchdog can detect a
+        # reused PID (foreign process) instead of trusting it blindly.
+        _write_app_token "$_APP_RUNNER_PID"
         _write_app_state "running"
         log_info "App Runner: application started (PID: $_APP_RUNNER_PID) on port $_APP_RUNNER_PORT"
         return 0
@@ -1271,6 +1345,7 @@ app_runner_stop() {
     fi
 
     rm -f "$_APP_RUNNER_DIR/app.pid"
+    rm -f "$_APP_RUNNER_DIR/app.token"
     _write_app_state "stopped"
     log_info "App Runner: application stopped"
     _APP_RUNNER_PID=""
@@ -1282,7 +1357,20 @@ app_runner_restart() {
     log_step "App Runner: restarting (restart #$_APP_RUNNER_RESTART_COUNT)..."
     app_runner_stop
     sleep 1
+    # L6 fix (non-atomic restart): the old code returned app_runner_start's status
+    # unhandled, so a failed start (e.g. the old port still in TIME_WAIT after the
+    # 1s wait, tripping the port-conflict guard) left the app stopped with only an
+    # internal log_warn -- silent to the caller, which saw the restart "succeed".
+    # Surface the failure loudly via log_error and return the failure status
+    # explicitly so the restart's failure is visible and actionable. The
+    # happy-path behavior (start succeeds -> return 0) is unchanged.
     app_runner_start
+    local _start_rc=$?
+    if [ "$_start_rc" -ne 0 ]; then
+        log_error "App Runner: restart failed -- app stopped but could not be started again (start exit $_start_rc). Check $_APP_RUNNER_DIR/app.log; the previous port may still be held (TIME_WAIT) or the start command may be failing."
+        return "$_start_rc"
+    fi
+    return 0
 }
 
 #===============================================================================
@@ -1370,6 +1458,18 @@ app_runner_health_check() {
 
     # Check PID is alive (non-docker-compose methods)
     if ! kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+        _write_health "false"
+        return 1
+    fi
+
+    # L5 fix (PID-file reuse race): kill -0 only proves SOME process owns this
+    # PID, not that it is OUR app. The OS may have reassigned the crashed app's
+    # PID to an unrelated process. Verify the captured identity token; on a
+    # mismatch the live PID is a foreign process, so the app is DEAD. (When no
+    # token was captured we fall back to trusting kill -0 -- see
+    # _app_runner_pid_is_ours -- so a still-running legitimate app is never
+    # falsely marked dead.)
+    if ! _app_runner_pid_is_ours "$_APP_RUNNER_PID"; then
         _write_health "false"
         return 1
     fi
@@ -1524,7 +1624,15 @@ app_runner_watchdog() {
     # app_runner_health_check (HTTP-aware for apps that declared a port), and
     # treat an unhealthy-but-alive process as a crash so the same circuit
     # breaker + backoff + restart path handles it.
-    if kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+    # L5 fix: gate on BOTH liveness AND identity. If kill -0 succeeds but the
+    # PID is a foreign process the OS reassigned our crashed app's PID to
+    # (_app_runner_pid_is_ours false), we must NOT enter this branch: the
+    # alive-but-unhealthy path below calls app_runner_stop, which would send
+    # TERM/KILL to an innocent stranger. Instead let a reused PID fall through to
+    # the dead path, which only increments the crash count and restarts -- it
+    # never signals the PID. (No token captured -> is_ours returns true ->
+    # behaves exactly as before, so no regression for legitimately-running apps.)
+    if kill -0 "$_APP_RUNNER_PID" 2>/dev/null && _app_runner_pid_is_ours "$_APP_RUNNER_PID"; then
         if app_runner_health_check; then
             # BUG 3 fix: a confirmed-healthy observation clears the accumulated
             # crash count so the breaker fires only on 5 CONSECUTIVE failures,
@@ -1557,6 +1665,7 @@ app_runner_watchdog() {
         done
         _write_app_state "crashed"
         rm -f "$_APP_RUNNER_DIR/app.pid"
+        rm -f "$_APP_RUNNER_DIR/app.token"
         _APP_RUNNER_PID=""
         return 1
     fi

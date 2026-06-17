@@ -15,6 +15,7 @@ Usage:
     python -m mcp.server --transport http   # HTTP mode
 """
 
+import asyncio
 import sys
 import os
 import json
@@ -811,7 +812,10 @@ async def loki_task_queue_add(
             "created_at": datetime.now(timezone.utc).isoformat()
         }
 
-        queue["tasks"].append(task)
+        # Use setdefault so an existing-but-malformed queue dict that lacks a
+        # "tasks" key does not raise KeyError, consistent with the safe
+        # queue.get("tasks", ...) read above.
+        queue.setdefault("tasks", []).append(task)
 
         # Save using StateManager if available
         if manager and STATE_MANAGER_AVAILABLE:
@@ -1710,7 +1714,10 @@ async def loki_code_search(
                                        'type_filter': type_filter})
 
     # Warn-if-stale (default) or opt-in auto-reindex before querying.
-    _maybe_autoreindex_code()
+    # _maybe_autoreindex_code runs a synchronous subprocess (timeout up to
+    # 300s) when LOKI_CODE_INDEX_AUTOREINDEX=1; offload it so it cannot
+    # freeze the MCP event loop while the indexer runs.
+    await asyncio.to_thread(_maybe_autoreindex_code)
     _staleness = _code_index_staleness()
 
     collection = _get_chroma_collection()
@@ -1743,7 +1750,10 @@ async def loki_code_search(
         where = {"$and": where_clauses}
 
     try:
-        results = collection.query(
+        # collection.query is a blocking HTTP call to ChromaDB; offload it so
+        # the MCP event loop is not frozen for the duration of the request.
+        results = await asyncio.to_thread(
+            collection.query,
             query_texts=[query],
             n_results=n_results,
             where=where,
@@ -2209,6 +2219,13 @@ async def loki_get_co_changes(
                 continue
             if not isinstance(pair_files, (list, tuple)) or len(pair_files) != 2:
                 continue
+            # Coerce the count to int so a mixed-type producer (one row's
+            # count a string, another's an int) does not raise TypeError when
+            # results are sorted below. Skip rows whose count is not numeric.
+            try:
+                count = int(count)
+            except (ValueError, TypeError):
+                continue
             a, b = pair_files[0], pair_files[1]
             if a == b:
                 continue
@@ -2323,6 +2340,7 @@ async def loki_findings(iteration: int = -1) -> str:
                 return json.dumps(data)
         reviews_dir = safe_path_join('.loki', 'quality', 'reviews')
         if not os.path.exists(reviews_dir):
+            _emit_tool_event_async('loki_findings', 'complete', result_status='success')
             return json.dumps({"iteration": iteration, "review_id": None, "findings": []})
         candidates = sorted([d for d in os.listdir(reviews_dir)
                              if d.startswith('review-')
@@ -2330,6 +2348,7 @@ async def loki_findings(iteration: int = -1) -> str:
         if iteration >= 0:
             candidates = [c for c in candidates if c.endswith(f'-{iteration}')]
         if not candidates:
+            _emit_tool_event_async('loki_findings', 'complete', result_status='success')
             return json.dumps({"iteration": iteration, "review_id": None, "findings": []})
         latest = candidates[-1]
         review_path = safe_path_join('.loki', 'quality', 'reviews', latest)
@@ -2425,9 +2444,14 @@ async def loki_counter_evidence_template(iteration: int) -> str:
     try:
         findings_data = json.loads(await loki_findings(iteration=iteration))
         if 'error' in findings_data:
+            _emit_tool_event_async('loki_counter_evidence_template', 'complete',
+                                   result_status='error',
+                                   error=findings_data.get('error'))
             return json.dumps(findings_data)
         findings = findings_data.get('findings', [])
         if not findings:
+            _emit_tool_event_async('loki_counter_evidence_template', 'complete',
+                                   result_status='success')
             return json.dumps({"iteration": iteration, "template": None,
                                "message": f"No findings for iteration {iteration}."})
         evidence = []
