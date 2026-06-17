@@ -4,22 +4,34 @@
 #
 # WHAT THIS GUARDS
 #   v7.53.0 wired the semantic detector (tests/detect-semantic-test-problems.sh)
-#   as an opt-in completion gate on BOTH routes. The Bun route's default-off and
-#   blocking semantics are covered by loki-ts/tests/runner/quality_gates.test.ts.
-#   This test covers the BASH route (autonomy/run.sh), which had no run.sh-level
-#   coverage:
-#     A) DEFAULT-OFF, NOT INVOKED: the call site is guarded by
-#        `[ "${LOKI_GATE_SEMANTIC_TESTS:-false}" = "true" ]`, so at the default
-#        the gate never runs (zero cost, cannot deadlock). We assert that guard
-#        literal is present at the completion-promise arm (fails if removed --
-#        i.e. if the gate becomes default-on).
+#   into the BASH route (autonomy/run.sh). v7.57.0 split the posture into two
+#   independent arms (see autonomy/run.sh:8329-8337):
+#     - SURFACING/ADVISORY: now DEFAULT-ON, gated on LOKI_GATE_SEMANTIC_TESTS
+#       (default TRUE). The mid-iteration advisory arm runs every iteration,
+#       writes findings, and only surfaces (track_gate_failure) -- it NEVER
+#       blocks completion.
+#     - COMPLETION-BLOCKING: stays OPT-IN, gated on a SEPARATE flag
+#       LOKI_GATE_SEMANTIC_TESTS_BLOCK (default OFF). Only when set does the
+#       completion-promise elif reject a completion claim on a CRIT/HIGH finding.
+#   The Bun route's semantics are covered by
+#   loki-ts/tests/runner/quality_gates.test.ts. This test covers the BASH route:
+#     A) DEFAULT BEHAVIOR (two static guard-literal assertions):
+#        A1) the mid-iteration advisory arm is DEFAULT-ON -- its guard uses
+#            `${LOKI_GATE_SEMANTIC_TESTS:-true}` (default true). Fails if someone
+#            reverts the default to off (e.g. `:-false`).
+#        A2) the completion-BLOCKING elif is OPT-IN -- it is gated on
+#            `${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false}` (default off). Fails if
+#            the *_BLOCK opt-in is removed (i.e. if blocking became default-on or
+#            was folded back onto LOKI_GATE_SEMANTIC_TESTS).
+#        Net contract: default = gate runs ADVISORY (surfaces, does not block
+#        completion); blocking requires LOKI_GATE_SEMANTIC_TESTS_BLOCK.
 #     B) WHEN ON, BLOCKING SEMANTICS: enforce_semantic_integrity returns 1 on a
 #        CRITICAL/HIGH finding (BLOCK) and 0 on a clean tree / absent detector
 #        (deny-filtered: never false-fires).
 #
 # STRATEGY
-#   (A) is a static guard-literal assertion against run.sh (the knob IS the
-#   call-site guard; there is no separately-invokable "default path").
+#   (A) is two static guard-literal assertions against run.sh (the knobs ARE the
+#   call-site guards; there is no separately-invokable "default path").
 #   (B) extracts enforce_semantic_integrity() from run.sh and drives it against
 #   throwaway TARGET_DIRs, mirroring tests/test-semantic-test-detector.sh
 #   fixtures.
@@ -42,14 +54,29 @@ if [ ! -f "$RUN_SH" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Case A (static): the call site is guarded by LOKI_GATE_SEMANTIC_TESTS==true.
-# If this guard is dropped, the gate would run by default -- a regression.
+# Case A (static): the v7.57.0 default contract.
+#   A1) the mid-iteration advisory arm is DEFAULT-ON: its guard reads
+#       ${LOKI_GATE_SEMANTIC_TESTS:-true} (default true). If someone reverts the
+#       default to off, this assertion fails.
+#   A2) the completion-BLOCKING elif is OPT-IN: it is gated on the SEPARATE flag
+#       ${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false} (default off). If the *_BLOCK
+#       opt-in is removed (blocking made default-on / folded back onto the
+#       surfacing flag), this assertion fails.
+# Together: default = advisory surfacing (no completion block); blocking is
+# opt-in via LOKI_GATE_SEMANTIC_TESTS_BLOCK.
 # ---------------------------------------------------------------------------
-echo "Case A: bash call site is default-OFF (guarded by LOKI_GATE_SEMANTIC_TESTS==true)"
-if grep -Eq '\$\{LOKI_GATE_SEMANTIC_TESTS:-false\}"[[:space:]]*=[[:space:]]*"true"' "$RUN_SH"; then
-    ok "caseA semantic gate call site guarded by LOKI_GATE_SEMANTIC_TESTS==true (default off)"
+echo "Case A1: advisory/surfacing arm is DEFAULT-ON (guarded by \${LOKI_GATE_SEMANTIC_TESTS:-true})"
+if grep -Eq '\$\{LOKI_GATE_SEMANTIC_TESTS:-true\}"[[:space:]]*=[[:space:]]*"true"' "$RUN_SH"; then
+    ok "caseA1 semantic surfacing arm default-ON (LOKI_GATE_SEMANTIC_TESTS:-true)"
 else
-    bad "caseA default-off guard missing" "expected the LOKI_GATE_SEMANTIC_TESTS:-false == true guard at the call site"
+    bad "caseA1 default-on surfacing guard missing" "expected the \${LOKI_GATE_SEMANTIC_TESTS:-true} == true guard at the advisory call site"
+fi
+
+echo "Case A2: completion-BLOCKING elif is OPT-IN (gated by \${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false})"
+if grep -Eq '\$\{LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false\}"[[:space:]]*=[[:space:]]*"true"' "$RUN_SH"; then
+    ok "caseA2 semantic completion-blocking gated by LOKI_GATE_SEMANTIC_TESTS_BLOCK (default off, opt-in)"
+else
+    bad "caseA2 opt-in blocking guard missing" "expected the \${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false} == true guard at the completion-promise elif"
 fi
 
 # ---------------------------------------------------------------------------

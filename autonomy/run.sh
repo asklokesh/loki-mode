@@ -8320,23 +8320,31 @@ enforce_mutation_integrity() {
 }
 
 # ============================================================================
-# Semantic Test-Authenticity Gate (P1-3): wire tests/detect-semantic-test-problems.sh
-# as an OPT-IN completion gate. The detector catches the harder class of fake
-# tests that the regex detectors (gates 5+6) miss: assertions that look real but
-# verify nothing because the asserted value never flows through code under test
-# (literal-via-variable echo HIGH, mock-return echo MED, deleted assertions MED).
+# Semantic Test-Authenticity Gate (P1-3): wire tests/detect-semantic-test-problems.sh.
+# The detector catches the harder class of fake tests that the regex detectors
+# (gates 5+6) miss: assertions that look real but verify nothing because the
+# asserted value never flows through code under test (literal-via-variable echo
+# HIGH, mock-return echo MED, deleted assertions MED).
 #
-# ADVISORY-FIRST POSTURE (no-deadlock contract): this helper is invoked ONLY when
-# LOKI_GATE_SEMANTIC_TESTS=true (the elif guard at the completion-promise arm
-# short-circuits when off, so there is zero runtime cost on the default path).
-# When on, it runs the detector with --block-high (clean exit-code contract:
-# rc 2 iff a CRITICAL/HIGH finding exists). We surface ALL severities to a
-# findings file (advisory) and return nonzero ONLY on rc 2. Every other exit --
-# rc 0 (clean), rc 124 (timeout), detector absent, no test files, malformed
-# output -- returns 0 (pass/fall-through), so the autonomous loop can NEVER
-# deadlock on a clean run. Mirrors enforce_mock_integrity's invocation
-# (cd TARGET_DIR + LOKI_SCAN_DIR=TARGET_DIR + timeout), swapping --strict for
-# --block-high and deciding on the rc-2 contract instead of grepping stdout.
+# POSTURE (v7.57.0): this enforce_* helper is the shared core for TWO callers:
+#   1) the DEFAULT-ON mid-iteration ADVISORY arm (gated on LOKI_GATE_SEMANTIC_TESTS,
+#      default true) -- runs every iteration, writes findings, and on a CRIT/HIGH
+#      result the arm only calls track_gate_failure (surfaces to the next prompt),
+#      NEVER PAUSEs / NEVER rejects completion (clone of the mock arm).
+#   2) the OPT-IN completion-BLOCKING elif (gated on LOKI_GATE_SEMANTIC_TESTS_BLOCK,
+#      default false) -- when set, rejects the completion claim on a CRIT/HIGH.
+# The default-on flip applies ONLY to surfacing; blocking stays opt-in via the
+# separate _BLOCK flag, so surfacing-default-on does NOT make blocking default-on.
+#
+# NO-DEADLOCK CONTRACT: it runs the detector with --block-high (clean exit-code
+# contract: rc 2 iff a CRITICAL/HIGH finding exists). It surfaces ALL severities
+# to a findings file (advisory) and returns nonzero ONLY on rc 2. Every other
+# exit -- rc 0 (clean), rc 124 (timeout), detector absent, no test files,
+# malformed output -- returns 0 (pass/fall-through), so the autonomous loop can
+# NEVER deadlock on a clean run (default-on surfacing is therefore deadlock-safe,
+# exactly as the mock/mutation gates prove in production). Mirrors
+# enforce_mock_integrity's invocation (cd TARGET_DIR + LOKI_SCAN_DIR=TARGET_DIR +
+# timeout), swapping --strict for --block-high and deciding on the rc-2 contract.
 # ============================================================================
 enforce_semantic_integrity() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
@@ -8416,9 +8424,19 @@ _semantic_gate_and_surface() {
 #     redirect the scan).
 # The PLURAL token LOKI_GATE_INVARIANTS is used deliberately to match the Bun
 # readToggles flag name; the detector's own reference comment suggests a
-# singular default-on variant (no trailing S), which is NOT used here (parity
-# needs the plural, and this gate is OPT-IN / default OFF like the semantic
-# gate).
+# singular variant (no trailing S), which is NOT used here (parity needs the
+# plural).
+#
+# POSTURE (v7.57.0): this enforce_* helper is the shared core for TWO callers,
+# mirroring enforce_semantic_integrity:
+#   1) the DEFAULT-ON mid-iteration ADVISORY arm (gated on LOKI_GATE_INVARIANTS,
+#      default true) -- runs every iteration, writes invariant-findings.txt, and
+#      on a CRIT/HIGH result the arm only calls track_gate_failure (surfaces to
+#      the next prompt via the invariant injector in build_prompt), NEVER PAUSEs /
+#      NEVER rejects completion.
+#   2) the OPT-IN completion-BLOCKING elif (gated on LOKI_GATE_INVARIANTS_BLOCK,
+#      default false) -- when set, rejects the completion claim on a CRIT/HIGH.
+# Surfacing-default-on does NOT make blocking default-on (separate _BLOCK flag).
 enforce_invariant_integrity() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
     local quality_dir="$loki_dir/quality"
@@ -12435,6 +12453,21 @@ if d.get('blocked'):
         fi
     fi
 
+    # P1-4 / v7.57.0: surface specific invariant/property findings (which file,
+    # which violated invariant) when the default-on advisory gate (or the opt-in
+    # LOKI_GATE_INVARIANTS_BLOCK gate) wrote them, so a block converges and an
+    # advisory run still informs the next iteration. The file exists only when
+    # the gate ran AND found something (cleared on clean), so this is zero-cost on
+    # a clean run and when the surfacing gate is opted out. Mirrors the semantic
+    # injector above and is independent of gate-failures.txt presence.
+    if [ -f "${TARGET_DIR:-.}/.loki/quality/invariant-findings.txt" ]; then
+        local inv_findings
+        inv_findings=$(grep -E '\[(CRITICAL|HIGH|MEDIUM|LOW)\]' "${TARGET_DIR:-.}/.loki/quality/invariant-findings.txt" 2>/dev/null | head -20 || true)
+        if [ -n "$inv_findings" ]; then
+            gate_failure_context="${gate_failure_context} INVARIANT/PROPERTY FINDINGS (fix the violated invariants; the code must preserve the stated property/metamorphic relation, not just pass example-based tests): ${inv_findings}"
+        fi
+    fi
+
     # P2-2: high-severity spec-assumption context. When DISCOVERY recorded any
     # high-severity assumption (the spec was ambiguous in a high-impact place),
     # surface it to the build agent so it implements with the gap in view (or
@@ -13461,9 +13494,12 @@ if not features:
             continue
         clean_name = strip_numbering(section_name)
         if len(section_content) > 20 and len(clean_name) > 5:
+            # BUG-A fix: store the REAL section/heading key (not a hardcoded
+            # "Requirements") so sections.get(feat["section"]) later resolves
+            # to this section's body and the description is not just the title.
             features.append({
                 "title": clean_name,
-                "section": "Requirements",
+                "section": section_name,
             })
 
 if not features:
@@ -13599,6 +13635,20 @@ PRD_PARSE_EOF
     if [[ $? -ne 0 ]]; then
         log_warn "Failed to parse PRD into tasks"
         return 0
+    fi
+
+    # LLM enrichment post-pass (v7.52.0). The python heredoc above has no model
+    # access, so stub tasks (description == title, or the templated user_story)
+    # are enriched here via one batched provider call. Best-effort: on any
+    # failure (non-claude provider, degraded mode, no binary, timeout, parse
+    # error) the deterministic output is left intact. Never blocks the queue.
+    local _prd_enrich_lib="$SCRIPT_DIR/lib/prd-enrich.sh"
+    if [ -f "$_prd_enrich_lib" ]; then
+        # shellcheck source=lib/prd-enrich.sh
+        source "$_prd_enrich_lib" 2>/dev/null || true
+        if declare -f loki_prd_enrich >/dev/null 2>&1; then
+            loki_prd_enrich ".loki/queue/pending.json" "$effective_prd" || true
+        fi
     fi
 
     touch ".loki/queue/.prd-populated"
@@ -15146,27 +15196,39 @@ if __name__ == "__main__":
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
                 fi
             fi
-            # LSP diagnostics gate (P1-5 bash-route parity, v7.51.0). Closes the
-            # parity gap: the Bun route ships runLSPDiagnostics
-            # (loki-ts/src/runner/quality_gates.ts) with a route-neutral Python
-            # writer (mcp/lsp_proxy.py); the bash route had NO writer/reader.
-            # This block runs the SAME writer and mirrors the TS blocking
-            # semantics byte-for-byte:
-            #   - Gate is OPT-IN: default OFF. Enabled by LOKI_GATE_LSP_DIAGNOSTICS=true
-            #     (the single toggle; mirrors flag("LOKI_GATE_LSP_DIAGNOSTICS", false)
-            #     at quality_gates.ts:1717). No second knob.
-            #   - When enabled, count_errors > 0 -> BLOCK (mirrors
-            #     "if (errorCount > 0) { passed: false }" at quality_gates.ts:1667).
+            # LSP diagnostics gate (P1-5 bash-route parity, v7.51.0; default-on
+            # advisory-surfacing as of v7.57.0). Closes the parity gap: the Bun
+            # route ships runLSPDiagnostics (loki-ts/src/runner/quality_gates.ts)
+            # with a route-neutral Python writer (mcp/lsp_proxy.py); the bash
+            # route had NO writer/reader.
+            #
+            # POSTURE (v7.57.0): DEFAULT-ON SURFACING (no blocking arm exists).
+            # This is the mid-iteration advisory arm -- it RUNS by default (like
+            # the mock/mutation gates), writes lsp-diagnostics.json, and surfaces
+            # errors to the NEXT iteration via track_gate_failure (the
+            # lsp_diagnostics token flows into gate-failures.txt -> build_prompt).
+            # It does NOT reject completion: the "block*" case below only calls
+            # track_gate_failure, never PAUSE / never the completion-promise arm,
+            # exactly like the mock gate. Default-on surfacing CANNOT deadlock
+            # (mock/mutation prove this in production); there is therefore NO
+            # separate blocking knob for LSP (none ever existed on the bash route).
+            #   - Toggle: LOKI_GATE_LSP_DIAGNOSTICS (default TRUE = surfacing on;
+            #     opt out with =false). Accepts "true" or "1". Single knob (no
+            #     blocking arm exists on the bash route, so there is no _BLOCK flag).
+            #   - count_errors > 0 -> surface (track_gate_failure), mirroring the
+            #     TS "errorCount > 0" finding at quality_gates.ts:1667 but WITHOUT
+            #     rejecting completion (advisory-first on the bash route).
             #   - warnings only -> advisory PASS (quality_gates.ts:1673).
-            #   - artifact absent/malformed -> honest pass-through, NEVER block
-            #     (quality_gates.ts:1646 returns passed:true on null artifact).
+            #   - artifact absent/malformed/timeout -> honest pass-through, NEVER
+            #     surface a block, NEVER deadlock (deny-filter; mirrors
+            #     quality_gates.ts:1646 returning passed:true on null artifact).
             # The writer is OPT-OUT-able with LOKI_GATE_LSP_WRITER=0 (operator can
             # supply a pre-built artifact), matching the TS escape hatch
             # (quality_gates.ts:1630). cwd must be the install dir (PROJECT_DIR =
             # $SCRIPT_DIR/.. ) so `-m mcp.lsp_proxy` imports, while --root points
             # at the TARGET project the loop is building (mirrors
             # runLSPDiagnosticsWriter: cwd=REPO_ROOT, --root=ctx.cwd).
-            if [ "${LOKI_GATE_LSP_DIAGNOSTICS:-false}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+            if { [ "${LOKI_GATE_LSP_DIAGNOSTICS:-true}" = "true" ] || [ "${LOKI_GATE_LSP_DIAGNOSTICS:-true}" = "1" ]; } && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: LSP diagnostics..."
                 # WRITER: route-neutral Python, same program as the Bun route.
                 if [ "${LOKI_GATE_LSP_WRITER:-1}" != "0" ]; then
@@ -15227,6 +15289,54 @@ else:
                         log_info "LSP diagnostics: no lsp-diagnostics.json artifact (lsp not available) -- gate did not run"
                         ;;
                 esac
+            fi
+            # Semantic test-authenticity gate -- mid-iteration ADVISORY arm
+            # (v7.57.0 default-on surfacing). Clones the mock arm (~15126)
+            # byte-for-byte: runs enforce_semantic_integrity, which writes
+            # semantic-findings.txt and returns 1 ONLY on a CRITICAL/HIGH
+            # fake-test finding (clean / no-test-files / detector-absent / timeout
+            # / malformed all collapse to rc 0 inside the function -- deny-filter).
+            # On rc 1 we ONLY track_gate_failure (surface to the next prompt via
+            # the semantic-findings injector at build_prompt); we NEVER PAUSE and
+            # NEVER reject completion here. Default-on surfacing cannot deadlock
+            # (mock/mutation prove this in production). The opt-in completion-
+            # BLOCKING arm lives behind LOKI_GATE_SEMANTIC_TESTS_BLOCK at the
+            # completion-promise elif below; this surfacing arm is independent.
+            #   - Toggle: LOKI_GATE_SEMANTIC_TESTS (default TRUE = surfacing on;
+            #     opt out with =false). Accepts "true" or "1".
+            if { [ "${LOKI_GATE_SEMANTIC_TESTS:-true}" = "true" ] || [ "${LOKI_GATE_SEMANTIC_TESTS:-true}" = "1" ]; } && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: semantic test-authenticity (advisory)..."
+                if enforce_semantic_integrity; then
+                    clear_gate_failure "semantic_tests"
+                else
+                    local sem_count
+                    sem_count=$(track_gate_failure "semantic_tests")
+                    gate_failures="${gate_failures}semantic_tests,"
+                    log_warn "Semantic test-authenticity gate FAILED ($sem_count consecutive) - CRITICAL/HIGH fake-test problems (advisory; surfaced to next iteration)"
+                fi
+            fi
+            # Invariant/property gate -- mid-iteration ADVISORY arm (v7.57.0
+            # default-on surfacing). Mirrors the semantic arm above: runs
+            # enforce_invariant_integrity, which writes invariant-findings.txt and
+            # returns 1 ONLY on a CRITICAL/HIGH invariant violation (clean /
+            # detector-absent / timeout / malformed all collapse to rc 0 inside
+            # the function -- deny-filter). On rc 1 we ONLY track_gate_failure
+            # (surfaced to the next prompt via the invariant-findings injector in
+            # build_prompt); we NEVER PAUSE and NEVER reject completion here. The
+            # opt-in completion-BLOCKING arm lives behind LOKI_GATE_INVARIANTS_BLOCK
+            # at the completion-promise elif below.
+            #   - Toggle: LOKI_GATE_INVARIANTS (default TRUE = surfacing on; opt
+            #     out with =false). Accepts "true" or "1".
+            if { [ "${LOKI_GATE_INVARIANTS:-true}" = "true" ] || [ "${LOKI_GATE_INVARIANTS:-true}" = "1" ]; } && [ "$ITERATION_COUNT" -gt 0 ]; then
+                log_info "Quality gate: invariant/property (advisory)..."
+                if enforce_invariant_integrity; then
+                    clear_gate_failure "invariants"
+                else
+                    local inv_count
+                    inv_count=$(track_gate_failure "invariants")
+                    gate_failures="${gate_failures}invariants,"
+                    log_warn "Invariant gate FAILED ($inv_count consecutive) - CRITICAL/HIGH invariant/property violations (advisory; surfaced to next iteration)"
+                fi
             fi
             # Code review gate (upgraded from advisory, with escalation)
             if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
@@ -15534,35 +15644,40 @@ else:
                 log_warn "Completion claim rejected: assumption ledger gate found unresolved high-severity spec assumption(s)."
                 log_warn "  Details under .loki/council/assumption-block.json ; opt out with LOKI_ASSUMPTION_GATE=0"
                 # Fall through; keep iterating until high-sev assumptions resolve.
-            # P1-3: semantic test-authenticity gate (OPT-IN, default OFF). Catches
-            # fake tests that look real but verify nothing (literal-via-variable
-            # echo etc.) that the regex gates 5+6 miss. ADVISORY-FIRST: the arm is
-            # guarded by LOKI_GATE_SEMANTIC_TESTS=true, so by default it never runs
-            # (zero runtime cost, never blocks). When enabled it runs the detector
-            # with --block-high and rejects the completion ONLY on a CRITICAL/HIGH
-            # finding; clean / no-test-files / detector-absent / timeout / malformed
-            # all collapse to a pass inside _semantic_gate_and_surface, so the
-            # autonomous loop can never deadlock on a clean run. Mirrors the
-            # evidence / held-out / assumption arms above.
-            elif [ "$_completion_claimed" = 1 ] && [ "${LOKI_GATE_SEMANTIC_TESTS:-false}" = "true" ] && type _semantic_gate_and_surface &>/dev/null && ! _semantic_gate_and_surface; then
+            # P1-3: semantic test-authenticity completion-BLOCKING gate (OPT-IN,
+            # default OFF). Catches fake tests that look real but verify nothing
+            # (literal-via-variable echo etc.) that the regex gates 5+6 miss.
+            # v7.57.0: the SURFACING of these findings is now default-on (see the
+            # mid-iteration advisory arm above, gated on LOKI_GATE_SEMANTIC_TESTS,
+            # default true). This completion-BLOCKING arm is a SEPARATE opt-in,
+            # gated on LOKI_GATE_SEMANTIC_TESTS_BLOCK (default OFF; accepts "true"
+            # or "1"), so the surfacing-default-on flip does NOT make blocking
+            # default-on. When the BLOCK flag is set it runs the detector with --block-high and
+            # rejects completion ONLY on a CRITICAL/HIGH finding; clean /
+            # no-test-files / detector-absent / timeout / malformed all collapse
+            # to a pass inside _semantic_gate_and_surface, so the autonomous loop
+            # can never deadlock on a clean run. Mirrors the evidence / held-out /
+            # assumption arms above.
+            elif [ "$_completion_claimed" = 1 ] && { [ "${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false}" = "true" ] || [ "${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false}" = "1" ]; } && type _semantic_gate_and_surface &>/dev/null && ! _semantic_gate_and_surface; then
                 log_warn "Completion claim rejected: semantic test-authenticity gate found CRITICAL/HIGH fake-test problem(s)."
-                log_warn "  Details under .loki/quality/semantic-findings.txt ; opt-in gate -- disable with LOKI_GATE_SEMANTIC_TESTS=false"
+                log_warn "  Details under .loki/quality/semantic-findings.txt ; opt-in blocking -- disable with LOKI_GATE_SEMANTIC_TESTS_BLOCK=false"
                 # Fall through; keep iterating until the fake tests are fixed.
-            # P1-4: invariant/property gate (OPT-IN, default OFF). Mirrors the
-            # semantic arm above and the Bun route's invariants toggle
-            # (loki-ts/src/runner/quality_gates.ts:2057). Guarded by
-            # LOKI_GATE_INVARIANTS (PLURAL, to match the Bun readToggles flag
-            # name; the detector's reference-comment singular default-on variant
-            # without the trailing S is deliberately NOT used). Accepts "true" or
-            # "1"; default OFF means the arm never runs (zero cost, never
-            # blocks). When enabled it runs detect-invariant-violations.sh
-            # --strict and rejects completion ONLY on a CRITICAL/HIGH (rc 1)
-            # finding; clean / detector-absent / timeout / malformed all
-            # collapse to a pass inside _invariant_gate_and_surface, so the
-            # autonomous loop can never deadlock on a clean run.
-            elif [ "$_completion_claimed" = 1 ] && { [ "${LOKI_GATE_INVARIANTS:-false}" = "true" ] || [ "${LOKI_GATE_INVARIANTS:-false}" = "1" ]; } && type _invariant_gate_and_surface &>/dev/null && ! _invariant_gate_and_surface; then
+            # P1-4: invariant/property completion-BLOCKING gate (OPT-IN, default
+            # OFF). Mirrors the semantic arm above and the Bun route's invariants
+            # toggle (loki-ts/src/runner/quality_gates.ts:2057). v7.57.0: the
+            # SURFACING of these findings is now default-on (see the mid-iteration
+            # advisory arm above, gated on LOKI_GATE_INVARIANTS, default true).
+            # This completion-BLOCKING arm is a SEPARATE opt-in, gated on
+            # LOKI_GATE_INVARIANTS_BLOCK (default OFF), so the surfacing-default-on
+            # flip does NOT make blocking default-on. Accepts "true" or "1". When
+            # the BLOCK flag is set it runs detect-invariant-violations.sh --strict
+            # and rejects completion ONLY on a CRITICAL/HIGH (rc 1) finding;
+            # clean / detector-absent / timeout / malformed all collapse to a pass
+            # inside _invariant_gate_and_surface, so the autonomous loop can never
+            # deadlock on a clean run.
+            elif [ "$_completion_claimed" = 1 ] && { [ "${LOKI_GATE_INVARIANTS_BLOCK:-false}" = "true" ] || [ "${LOKI_GATE_INVARIANTS_BLOCK:-false}" = "1" ]; } && type _invariant_gate_and_surface &>/dev/null && ! _invariant_gate_and_surface; then
                 log_warn "Completion claim rejected: invariant gate found CRITICAL/HIGH invariant/property violation(s)."
-                log_warn "  Details under .loki/quality/invariant-findings.txt ; opt-in gate -- disable with LOKI_GATE_INVARIANTS=false"
+                log_warn "  Details under .loki/quality/invariant-findings.txt ; opt-in blocking -- disable with LOKI_GATE_INVARIANTS_BLOCK=false"
                 # Fall through; keep iterating until the invariant violations are fixed.
             elif [ "$_completion_claimed" = 1 ]; then
                 echo ""

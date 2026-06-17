@@ -2,18 +2,35 @@
 
 **Never ship code without passing all quality gates.**
 
-## The Quality Gates (8 default-on + 1 opt-in)
+## The Quality Gates (8 blocking default-on + 3 advisory default-on + 1 opt-in)
 
-Every gate below is wired into the orchestration loop (`autonomy/run.sh`). The 8
-numbered gates are default-on and block completion when they fail; the opt-in
-gate (marked below) is default-OFF and runs only when its flag is set. The table
-lists exactly what each gate detects, what it does NOT detect (so you never
-over-trust a green gate), its opt-out flag, and its blocking behavior. Transcribe
-this list verbatim; do not recompute it.
+Every gate below is wired into the orchestration loop (`autonomy/run.sh`). Read
+the count honestly, split by what a gate actually does:
+
+- **8 BLOCKING default-on gates** (the numbered table below): run by default and
+  FAIL the build / block completion when they trip.
+- **3 ADVISORY default-on gates** (LSP diagnostics, semantic test-authenticity,
+  invariant/property; see the advisory table further down): run by default,
+  SURFACE actionable findings into the next iteration's prompt, and never block
+  by default. Two of them gain a blocking arm only via an explicit `*_BLOCK`
+  opt-in flag; LSP diagnostics has no blocking arm at all.
+- **1 OPT-IN gate** (coverage, `LOKI_COVERAGE_GATE`, default OFF): does not run
+  unless explicitly enabled. It is the lone opt-in because it doubles test
+  runtime (instrumented re-run); see the coverage section for why.
+
+So: 8 blocking gates run by default, plus 3 advisory surfacing gates and 1
+opt-in coverage gate. Only the 8 numbered gates block out of the box; the
+advisory gates surface findings without blocking, and the coverage gate is OFF
+unless explicitly enabled. Never count the advisory or opt-in gates as blockers.
+
+The numbered table below lists the 8 BLOCKING default-on gates: exactly what each
+detects, what it does NOT detect (so you never over-trust a green gate), its
+opt-out flag, and its blocking behavior. Transcribe this list verbatim; do not
+recompute it.
 
 | # | Gate | Detects | Does NOT detect | Blocking | Opt-out flag |
 |---|------|---------|-----------------|----------|--------------|
-| 1 | Static Analysis | CodeQL, ESLint/Pylint, type-checker findings on the diff | Logic bugs that pass the linters | Yes (severity ladder) | `PHASE_STATIC_ANALYSIS=false` |
+| 1 | Static Analysis | ESLint/Pylint, type-checker findings on the diff | Logic bugs that pass the linters | Yes (severity ladder) | `PHASE_STATIC_ANALYSIS=false` |
 | 2 | Test Suite (pass/fail) | Whether the project test runner passes or fails (red blocks) | Coverage % (not measured in this release) | Yes (red blocks) | `PHASE_UNIT_TESTS=false` |
 | 3 | Blind Code Review (3-reviewer council + severity blocking) | Correctness/security/design issues via 3 blind reviewers; Critical/High block, Medium/Low advisory | Issues none of the 3 reviewers surface | Yes (Crit/High block) | `PHASE_CODE_REVIEW=false` |
 | 4 | Anti-Sycophancy / Devil's Advocate (on unanimous PASS) | Sycophantic unanimous approvals: a Devil's Advocate re-review on a unanimous PASS; its Crit/High findings block | Problems the Devil's Advocate reviewer also misses | Yes (DA Crit/High block) | `LOKI_GATE_DEVILS_ADVOCATE=false` |
@@ -21,7 +38,12 @@ this list verbatim; do not recompute it.
 | 6 | Test Mutation Detector | Assertion-value churn alongside implementation changes (test-fitting), low assertion density (`tests/detect-test-mutations.sh`); HIGH blocks | Logically-correct-but-weak assertions | Yes (HIGH blocks) | `LOKI_GATE_MUTATION=false` |
 | 7 | Documentation Coverage | README presence, docs freshness within 10 commits, API docs for exported symbols in packages | Whether the docs are accurate or useful | Yes | `LOKI_GATE_DOC_COVERAGE=false` |
 | 8 | Magic Modules Debate | Spec-vs-implementation debate findings on generated Magic Modules; BLOCK-severity findings block | Issues outside the Magic Modules debate scope | Yes (BLOCK severity) | `LOKI_GATE_MAGIC_DEBATE=false` |
-| 9 (opt-in, default OFF) | Semantic Test-Authenticity | Fake tests that look real but verify nothing (literal-via-variable echo, mock-return echo, deleted assertions) that gates 5+6 miss (`tests/detect-semantic-test-problems.sh --block-high`); CRITICAL/HIGH block | Deep dataflow, legitimate computed-literal assertions, Python/shell tests (JS/TS only); MED/LOW are advisory | Only when enabled, and only on CRITICAL/HIGH; runs solely on a completion claim | Opt-IN: `LOKI_GATE_SEMANTIC_TESTS=true` to enable (default off = not invoked, never blocks) |
+
+The three advisory default-on gates (LSP diagnostics, semantic
+test-authenticity, invariant/property) are documented in their own table under
+"Advisory default-on verification gates" below. Semantic test-authenticity used
+to appear here as "gate 9 (opt-in, default OFF)"; it is now a default-on
+advisory gate and has moved to that table. See the migration note there.
 
 **Severity-based blocking** ties the review gates together: any Critical or High
 finding blocks completion. Medium, Low, and cosmetic findings are advisory and
@@ -99,6 +121,108 @@ LOKI_GATE_MUTATION=false  # Disable gate 6 (Test Mutation Detector)
 ```
 
 ---
+
+## Advisory default-on verification gates (LSP, semantic, invariant)
+
+These three gates extend the mock/mutation precedent (gates 5+6: default-on,
+opt-out) into an ADVISORY-FIRST posture. They run by default, surface actionable
+findings into the next iteration's prompt, and only BLOCK completion when their
+opt-in `*_BLOCK` flag is set. LSP diagnostics has no blocking arm at all: it is
+advisory by construction. Coverage is NOT in this group; it remains opt-in (see
+the next section).
+
+This is the FROZEN knob scheme. All flags accept `true` or `1`.
+
+**Route scope (honest disclosure):** Bun-route parity is ACHIEVED for the
+default-ON behavior. The Bun runner
+(`loki-ts/src/runner/quality_gates.ts` `readToggles`) now defaults all three
+advisory gates ON (`LOKI_GATE_SEMANTIC_TESTS`, `LOKI_GATE_INVARIANTS`,
+`LOKI_GATE_LSP_DIAGNOSTICS` each `flag(X, true)`), matching the bash
+`loki start` route (`autonomy/run.sh`), with blocking behind the same opt-in
+`*_BLOCK` flags. Semantic and invariant findings surface into the next
+iteration's prompt via the `build_prompt` readers
+(`buildSemanticFindingsBlock` + `buildInvariantFindingsBlock`). The one real
+remaining gap is a SURFACING ASYMMETRY: LSP runs default-ON on the Bun route,
+but its advisory findings are NOT yet injected into the Bun prompt (LSP
+contributes only the grounding instruction, not its diagnostics block). That
+prompt-injection parity is still pending for LSP on the Bun route. This mirrors
+the "Reachability note" at the end of this file for the v7.5.0 Phase 1 flags.
+
+| Gate | Surfacing (advisory, default-ON, opt-out) | Blocking (opt-in, default-OFF) |
+|------|--------------------------------------------|--------------------------------|
+| LSP diagnostics | `LOKI_GATE_LSP_DIAGNOSTICS=true` | advisory-only, no blocking arm |
+| Semantic test-authenticity | `LOKI_GATE_SEMANTIC_TESTS=true` | `LOKI_GATE_SEMANTIC_TESTS_BLOCK=true` |
+| Invariant / property | `LOKI_GATE_INVARIANTS=true` | `LOKI_GATE_INVARIANTS_BLOCK=true` |
+
+How to read the Surfacing column: each gate is already ON by default. The flag
+shown is the gate's own toggle, and `true`/`1` is its enabled value (the default).
+Set the flag to its off value (`false`/`0`) to OPT OUT of surfacing. Setting the
+`=true` value is a no-op confirmation, not an opt-in: these are not opt-in gates.
+
+How to read the Blocking column: by default these gates never block, they only
+surface. To make a gate also block completion, set its `*_BLOCK` flag (default
+OFF). The blocking arm fires only on a completion claim, and only on the gate's
+high-severity findings; lower-severity findings stay advisory either way.
+
+**What each gate surfaces:**
+
+- **LSP diagnostics** (`LOKI_GATE_LSP_DIAGNOSTICS`, default on): language-server
+  diagnostics (errors/warnings) on the changed files. Advisory only; there is no
+  `_BLOCK` flag and no way to make it block. Inert when no language server is
+  available for the project's languages.
+- **Semantic test-authenticity** (`LOKI_GATE_SEMANTIC_TESTS`, default on):
+  fake tests that look real but verify nothing (literal-via-variable echo,
+  mock-return echo, deleted assertions) that gates 5+6 miss
+  (`tests/detect-semantic-test-problems.sh`). Surfaces by default; blocks on
+  CRITICAL/HIGH only when `LOKI_GATE_SEMANTIC_TESTS_BLOCK=true`. Does NOT detect
+  deep dataflow, legitimate computed-literal assertions, or non-JS/TS tests
+  (JS/TS only).
+- **Invariant / property** (`LOKI_GATE_INVARIANTS`, default on): property and
+  metamorphic invariant findings. Surfaces by default; blocks only when
+  `LOKI_GATE_INVARIANTS_BLOCK=true`.
+
+**Advisory-first posture and deny-filter:** these gates run by default and feed
+their findings into the next iteration's prompt so the agent can act on them.
+They only stop a completion claim when the matching `*_BLOCK` opt-in is set. The
+gates are deny-filtered: a clean result, an absent toolchain (e.g. no language
+server, no test files in scope), or a timeout never fires the gate. The gate
+surfaces or blocks only on real, parseable findings, so a missing toolchain does
+not produce false surfacing or a false block.
+
+### Migration: semantic and invariant flags were repurposed
+
+`LOKI_GATE_SEMANTIC_TESTS` and `LOKI_GATE_INVARIANTS` changed meaning:
+
+- **Before:** these flags were default-OFF opt-ins that, when set, made the gate
+  BLOCK completion. Semantic test-authenticity was documented as "gate 9
+  (opt-in, default OFF)" and blocked on CRITICAL/HIGH when
+  `LOKI_GATE_SEMANTIC_TESTS=true`.
+- **Now:** these flags are default-ON surfacing toggles (set to `false`/`0` to
+  opt OUT of surfacing). They no longer block. Blocking moved to the new
+  `LOKI_GATE_SEMANTIC_TESTS_BLOCK` and `LOKI_GATE_INVARIANTS_BLOCK` opt-ins
+  (default OFF).
+
+**Action required if you relied on the old behavior:** anyone who set
+`LOKI_GATE_SEMANTIC_TESTS=true` (or `LOKI_GATE_INVARIANTS=true`) specifically to
+BLOCK the build must now set `LOKI_GATE_SEMANTIC_TESTS_BLOCK=true` (or
+`LOKI_GATE_INVARIANTS_BLOCK=true`). The old flag set to `true` now only confirms
+the default-on surfacing and will NOT block. This is the one behavior change in
+the migration: a flag that used to block now only surfaces.
+
+### Coverage stays opt-in (the exception)
+
+The coverage gate is the one verification gate that remains OPT-IN
+(`LOKI_COVERAGE_GATE`, default OFF). It is the exception because measuring
+coverage requires an instrumented SECOND test run, which roughly doubles test
+runtime for every iteration. The advisory gates above add no such cost, so they
+default on; coverage's cost is why it does not.
+
+```bash
+LOKI_COVERAGE_GATE=1   # opt in: measure + record coverage. Default OFF because
+                       # it doubles test runtime (instrumented re-run). Even
+                       # when enabled it measures and warns; it does not block
+                       # unless LOKI_ENFORCE_COVERAGE=1 is also set.
+```
 
 ## v7.5.0 Phase 1 environment flags
 
@@ -662,7 +786,7 @@ Initial excitement -> Velocity spike -> Quality degradation accumulates
 ```yaml
 velocity_quality_balance:
   before_commit:
-    - static_analysis: "Run ESLint/Pylint/CodeQL - warnings must not increase"
+    - static_analysis: "Run ESLint/Pylint - warnings must not increase"
     - complexity_check: "Cyclomatic complexity must not increase >10%"
     - test_suite: "Tests must pass (coverage % not measured in this release)"
 

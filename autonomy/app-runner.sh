@@ -109,11 +109,19 @@ _write_app_state() {
     method_escaped=$(_json_escape "${_APP_RUNNER_METHOD}")
     local url_escaped
     url_escaped=$(_json_escape "${_APP_RUNNER_URL}")
+    # v7.51.x: persist the identified primary web service so app-runner-managed
+    # compose runs expose the SAME field the dashboard's compose-stack discovery
+    # synthesizes (primary_service). Empty for non-compose runs (the global is
+    # only set for compose), which is additive and harmless: the field is present
+    # but blank, never absent, so consumers can read it uniformly.
+    local primary_service_escaped
+    primary_service_escaped=$(_json_escape "${_APP_RUNNER_WEB_SERVICE}")
     cat > "$tmp_file" << APPSTATE_EOF
 {
     "main_pid": ${_APP_RUNNER_PID:-0},
     "process_group": "-${_APP_RUNNER_PID:-0}",
     "method": "${method_escaped}",
+    "primary_service": "${primary_service_escaped}",
     "port": $(echo "${_APP_RUNNER_PORT:-0}" | grep -oE '^[0-9]+$' || echo 0),
     "url": "${url_escaped}",
     "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -842,6 +850,82 @@ _app_runner_compose_running_count() {
     return 0
 }
 
+# Read the RUNTIME published host port of the identified primary web service from
+# `docker compose ps` (the live mapping), as opposed to the config-declared port
+# from `docker compose config`. The config port is correct for fixed mappings
+# (e.g. ports: ["8080:80"]) but wrong when the host side is ephemeral/random
+# (ports: ["80"], published: 0, or a range), where Docker assigns the host port
+# only at run time. Parses `docker compose ps --format json` with python3 (we
+# already depend on python3 and on reading `docker compose ps` for health), and
+# echoes the published host port of the web service, or nothing on any failure
+# (caller keeps the recorded port -- no regression). Never hard-fails. Docker's
+# own published mapping is authoritative, so no curl liveness guard is needed
+# here (unlike the non-docker _app_runner_reconcile_port path).
+_app_runner_compose_published_port() {
+    local base="${1:-${TARGET_DIR:-.}}"
+    local service="${2:-}"
+    [ -n "$service" ] || return 0
+    command -v docker >/dev/null 2>&1 || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    local compose_dir
+    compose_dir=$(_app_runner_compose_dir "$base")
+    local ps_json
+    # `docker compose ps --format json` emits either a JSON array or one JSON
+    # object per line (NDJSON) depending on the compose version; the parser below
+    # handles both shapes.
+    ps_json=$(cd "$compose_dir" && docker compose ps --format json 2>/dev/null) || return 0
+    [ -n "$ps_json" ] || return 0
+    printf '%s' "$ps_json" | LOKI_WEB_SERVICE="$service" python3 -c '
+import json, os, sys
+svc = os.environ.get("LOKI_WEB_SERVICE", "")
+raw = sys.stdin.read().strip()
+if not raw or not svc:
+    sys.exit(0)
+
+# Accept a JSON array OR newline-delimited JSON objects.
+entries = []
+try:
+    parsed = json.loads(raw)
+    entries = parsed if isinstance(parsed, list) else [parsed]
+except Exception:
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except Exception:
+            pass
+
+def published_for(entry):
+    # docker compose ps json exposes published ports under "Publishers", each a
+    # dict with "PublishedPort" (host port, 0 when not published to the host).
+    ports = []
+    for pub in (entry.get("Publishers") or []):
+        if not isinstance(pub, dict):
+            continue
+        pp = pub.get("PublishedPort")
+        try:
+            pp = int(pp)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= pp <= 65535:
+            ports.append(pp)
+    return ports
+
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
+    if entry.get("Service") != svc:
+        continue
+    ports = published_for(entry)
+    if ports:
+        print(ports[0])
+        sys.exit(0)
+sys.exit(0)
+' 2>/dev/null || return 0
+}
+
 #===============================================================================
 # Lifecycle
 #===============================================================================
@@ -933,6 +1017,23 @@ app_runner_start() {
         local running_containers
         running_containers=$(_app_runner_compose_running_count "$dir")
         if [ "${running_containers:-0}" -gt 0 ]; then
+            # Reconcile the recorded port with the RUNTIME published host port of
+            # the primary web service (from `docker compose ps`), so the preview
+            # URL and state.json point at the real host port even when the host
+            # side was ephemeral/random in the compose file. The config-declared
+            # port from _detect_port is kept when no valid runtime port is found
+            # (no regression). Docker's published mapping is authoritative, so no
+            # curl liveness guard is needed (cf. _app_runner_reconcile_port).
+            if [ -n "${_APP_RUNNER_WEB_SERVICE:-}" ]; then
+                local _rt_port
+                _rt_port=$(_app_runner_compose_published_port "$dir" "$_APP_RUNNER_WEB_SERVICE")
+                if [ -n "$_rt_port" ] && [[ "$_rt_port" =~ ^[0-9]+$ ]] && \
+                   [ "$_rt_port" != "${_APP_RUNNER_PORT:-}" ]; then
+                    log_info "App Runner: reconciled compose port ${_APP_RUNNER_PORT:-?} -> $_rt_port (runtime published mapping for service $_APP_RUNNER_WEB_SERVICE)"
+                    _APP_RUNNER_PORT="$_rt_port"
+                    _APP_RUNNER_URL="http://localhost:${_rt_port}"
+                fi
+            fi
             _write_app_state "running"
             log_info "App Runner: docker compose started ($running_containers container(s) running)"
             return 0

@@ -147,6 +147,13 @@ export class LokiAppPreview extends LokiElement {
         url: status?.url,
         crash: status?.crash_count,
         errLen: errors?.lines?.length || 0,
+        // Include the externally-managed / discovered signals so the panel
+        // re-renders when an app the runner did not start (e.g. a pre-existing
+        // dev server discovered on the conventional port) is surfaced. These
+        // gate the externally-managed UI (no Restart, "Detected running app"
+        // copy), so a change in either must invalidate the dedup hash.
+        extMgd: status?.externally_managed === true,
+        source: status?.source || null,
         // Include the healthcheck signal so the panel re-renders (and the
         // iframe reloads) when the app transitions from container-up to
         // actually-serving. Without this, an iframe that loaded during the
@@ -264,7 +271,7 @@ export class LokiAppPreview extends LokiElement {
       .btn-primary { background: var(--loki-accent, #2563eb); color: #fff; border-color: var(--loki-accent, #2563eb); }
       .frame-wrap { margin-top: 12px; border: 1px solid var(--loki-border, #e4e4e7); border-radius: 8px; overflow: hidden; background: #fff; }
       .preview-frame { width: 100%; height: 480px; border: 0; display: block; background: #fff; }
-      .state-block { margin-top: 12px; padding: 32px 16px; text-align: center; border: 1px dashed var(--loki-border, #e4e4e7); border-radius: 8px; color: var(--loki-text-muted, #71717a); }
+      .state-block { margin-top: 12px; padding: 24px 16px; text-align: center; border: 1px dashed var(--loki-border, #e4e4e7); border-radius: 8px; color: var(--loki-text-muted, #71717a); }
       .state-block h3 { margin: 0 0 6px 0; font-size: 15px; font-weight: 600; color: var(--loki-text-primary, #201515); }
       .state-block p { margin: 0; font-size: 13px; }
       .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--loki-border, #e4e4e7); border-top-color: var(--loki-accent, #2563eb); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 8px; }
@@ -294,6 +301,17 @@ export class LokiAppPreview extends LokiElement {
     const st = this._status;
     const health = st?.last_health;
     const healthOk = (health && typeof health.ok === 'boolean') ? health.ok : null;
+
+    // An externally-managed or discovered app (one Loki did not start, e.g. a
+    // pre-existing dev server found on the conventional port) does not flow
+    // through Loki's own healthcheck loop, so last_health.ok is not a reliable
+    // signal for it. When such an app reports running with a valid URL, trust
+    // that directly and show it as running rather than holding it amber waiting
+    // for a health signal that may never come from Loki's side.
+    if (status === 'running' && urlValid
+        && (st?.externally_managed === true || st?.source === 'discovered')) {
+      return { view: 'running', healthOk };
+    }
 
     if (status === 'running' && urlValid) {
       if (healthOk === false) {
@@ -325,6 +343,11 @@ export class LokiAppPreview extends LokiElement {
     const rawStatus = st?.status || 'not_initialized';
     const urlValid = this._isValidUrl(st?.url);
     const { view, healthOk } = this._effectiveView(rawStatus, urlValid);
+    // An app Loki did not start itself (externally managed or discovered on the
+    // conventional port). Loki cannot truthfully claim to manage its lifecycle,
+    // so the Restart control is withheld and the copy reflects that it is
+    // running outside Loki.
+    const extMgd = st?.externally_managed === true || st?.source === 'discovered';
     const cfg = STATUS_CONFIG[view] || STATUS_CONFIG.not_initialized;
     // Honest amber label when up-but-unreachable (overrides the generic
     // "Starting" copy so the user knows the process is up but not answering).
@@ -343,12 +366,12 @@ export class LokiAppPreview extends LokiElement {
               ${this._escapeHtml(label)}
             </span>
           </div>
-          ${this._renderToolbar(view, urlValid)}
+          ${this._renderToolbar(view, urlValid, extMgd)}
         </div>
-        ${view === 'running' && urlValid ? `
-          <p class="transport">Running locally - <a href="${this._escapeHtml(st.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(st.url)}</a></p>
+        ${(view === 'running' || view === 'starting') && urlValid ? `
+          <p class="transport">${extMgd ? 'Detected running app' : 'Running locally'} - <a href="${this._escapeHtml(st.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(st.url)}</a>${extMgd ? ' <span style="color: var(--loki-text-muted, #71717a);">(managed outside Loki)</span>' : ''}</p>
         ` : ''}
-        ${this._renderSurface(view, urlValid, healthOk)}
+        ${this._renderSurface(view, urlValid, healthOk, extMgd)}
         ${this._renderErrorBanner(rawStatus)}
         ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
       </div>
@@ -389,23 +412,25 @@ export class LokiAppPreview extends LokiElement {
     }, this._IFRAME_LOAD_TIMEOUT_MS);
   }
 
-  _renderToolbar(status, urlValid) {
+  _renderToolbar(status, urlValid, extMgd) {
     // Refresh / Open-in-browser are useful whenever we have a valid URL and the
     // app is meant to be up (running, or amber starting, or stale), so the user
     // can poke an unreachable app without waiting for the next poll.
     const hasLiveUrl = urlValid && (status === 'running' || status === 'starting' || status === 'stale');
     const canRestart = status === 'running' || status === 'starting' || status === 'stale'
       || status === 'crashed' || status === 'stopped' || status === 'failed';
+    // Loki cannot truthfully restart an app it did not start, so the Restart
+    // control is omitted entirely for an externally-managed / discovered app.
     return `
       <div class="toolbar">
         <button class="btn" data-action="refresh" ${hasLiveUrl ? '' : 'disabled'}>Refresh</button>
         <button class="btn btn-primary" data-action="open-external" ${hasLiveUrl ? '' : 'disabled'}>Open in browser</button>
-        <button class="btn" data-action="restart" ${canRestart ? '' : 'disabled'}>Restart</button>
+        ${extMgd ? '' : `<button class="btn" data-action="restart" ${canRestart ? '' : 'disabled'}>Restart</button>`}
       </div>
     `;
   }
 
-  _renderSurface(status, urlValid, healthOk) {
+  _renderSurface(status, urlValid, healthOk, extMgd) {
     if (status === 'running' && urlValid) {
       const st = this._status;
       if (this._iframeFailed) {
@@ -460,16 +485,19 @@ export class LokiAppPreview extends LokiElement {
       `;
     }
     if (status === 'stale') {
+      // For an externally-managed / discovered app, Loki cannot restart it and
+      // never owned its health loop, so the copy and actions drop the Restart
+      // affordance and point the user to open it in their browser instead.
       const actions = `
         <div class="err-actions" style="justify-content: center; margin-top: 12px;">
-          <button class="btn" data-action="restart">Restart</button>
+          ${extMgd ? '' : '<button class="btn" data-action="restart">Restart</button>'}
           ${urlValid ? '<button class="btn" data-action="open-external">Open in browser</button>' : ''}
         </div>
       `;
       return `
         <div class="state-block">
           <h3>App may no longer be running</h3>
-          <p>Loki has not had a fresh health signal from this app recently and could not confirm it is still alive. Restart it, or open it in your browser to check.</p>
+          <p>Loki has not had a fresh health signal from this app recently and could not confirm it is still alive.${extMgd ? ' It is managed outside Loki - open it in your browser to check.' : ' Restart it, or open it in your browser to check.'}</p>
           ${actions}
         </div>
       `;

@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.57.0] - 2026-06-17
+
+### App Runner shows running apps + URLs, intelligent tasks, default-on advisory gates
+
+- **App Runner now detects externally-launched apps (compose stacks) and shows
+  the service URL** (`dashboard/server.py`, `dashboard/static/index.html` via
+  `dashboard-ui/`): previously the panel showed "Not Started / No app yet" even
+  when a full docker-compose stack was running (e.g. web on :3000 + api on :8000),
+  because the app-runner only recorded state for apps IT launched. The dashboard
+  now discovers a running compose stack for the active project (bounded, fail-open
+  docker probes; ~2.5s cache; offloaded off the event loop), identifies the
+  primary web service, and surfaces a clickable URL + a live-preview iframe with
+  honest status (running/starting). Never fabricates a URL for a non-running
+  container. `autonomy/app-runner.sh` also persists url/primary_service/runtime
+  port for its own compose launches so both paths look consistent.
+- **App Runner UI polish**: one panel instead of three redundant headings, fixed
+  the right-edge content clipping, friendlier empty states, clearer "Agents
+  running / Tasks queued" labels, sidebar name tooltips.
+- **Intelligent task enrichment** (`autonomy/run.sh`, `autonomy/lib/prd-enrich.sh`):
+  PRD-derived tasks no longer show placeholder junk (description == title,
+  "...so that the product delivers its core value" boilerplate). A deterministic
+  fix routes the real spec section body into the description, and an LLM
+  post-pass synthesizes a real description, acceptance criteria, and user story
+  grounded in the spec. Degrades gracefully to the deterministic output when the
+  provider is unavailable; never blocks queue population, never fabricates.
+- **Default-on advisory verification gates**: LSP diagnostics, semantic
+  test-authenticity, and invariant/property gates now run by DEFAULT (advisory
+  surfacing into the next iteration's prompt), extending the mock/mutation
+  precedent, on both routes. Blocking is opt-in via `*_BLOCK` flags. A clean run
+  never newly blocks (deny-filtered); coverage measurement stays opt-in.
+- **Honesty fixes**: removed the CodeQL claim from the static-analysis gate docs
+  (we run ESLint/Pylint/type-checkers, not CodeQL); corrected the Codex CLI flag
+  in README (`--sandbox workspace-write`, the deprecated `--full-auto` replacement).
+
+Gates: local-ci 83/83, bash/Bun parity 6/6, 97 Bun gate tests + full pytest
+green, 3-reviewer council unanimous APPROVE (after rounds that correctly caught a
+built-vs-source divergence and stale docs, both fixed).
+
 ## [7.56.0] - 2026-06-17
 
 ### Reachable audit helpers + invariant-findings prompt surfacing

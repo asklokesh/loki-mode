@@ -322,7 +322,7 @@ Loki's autonomy and quality loop are the product; the underlying coding CLI is s
 | Provider | Status | Autonomous Flag | Parallel Agents | Install |
 |----------|--------|:-:|:-:|---------|
 | **Claude Code** | Active (Tier 1, E2E-verified) | `--dangerously-skip-permissions` | Yes (10+) | `npm i -g @anthropic-ai/claude-code` |
-| **Codex CLI** | Experimental (Tier 3) | `--full-auto --skip-git-repo-check` | Sequential | `npm i -g @openai/codex` |
+| **Codex CLI** | Experimental (Tier 3) | `--sandbox workspace-write --skip-git-repo-check` | Sequential | `npm i -g @openai/codex` |
 | **Cline CLI** | Experimental (Tier 2) | `-y` | Sequential | `npm i -g @anthropic-ai/cline` |
 | **Aider** | Experimental (Tier 3) | `--yes-always` | Sequential | `pip install aider-chat` |
 | **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | Upstream deprecated; runtime removed. `LOKI_PROVIDER=gemini` exits with migration message. |

@@ -773,11 +773,11 @@ export class LokiSessionControl extends LokiElement {
         <div class="stats-row">
           <div class="stat-item">
             <div class="stat-value">${this._status.activeAgents}</div>
-            <div class="stat-label">Agents</div>
+            <div class="stat-label">Agents running</div>
           </div>
           <div class="stat-item">
             <div class="stat-value">${this._status.pendingTasks}</div>
-            <div class="stat-label">Pending</div>
+            <div class="stat-label">Tasks queued</div>
           </div>
         </div>
       </div>

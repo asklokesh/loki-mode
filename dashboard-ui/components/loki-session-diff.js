@@ -323,6 +323,12 @@ export class LokiSessionDiff extends LokiElement {
     const d = this._data || {};
     const period = this._escapeHtml(d.period || '--');
     const counts = d.counts || {};
+    // Before the first build iteration the server has no counts to report, so
+    // a grid of bare "--" cells reads like a broken panel. Detect the
+    // genuinely-empty case (no count field present at all) and show a single
+    // honest "populates later" line instead of four placeholder dashes.
+    const hasCounts = counts.tasks_created != null || counts.tasks_completed != null
+      || counts.tasks_blocked != null || counts.errors != null;
     const highlights = d.highlights || [];
     const decisions = d.decisions || [];
 
@@ -368,6 +374,7 @@ export class LokiSessionDiff extends LokiElement {
           <span class="diff-period">${period}</span>
         </div>
 
+        ${hasCounts ? `
         <div class="summary-grid">
           <div class="summary-item">
             <div class="summary-label">Created</div>
@@ -385,7 +392,10 @@ export class LokiSessionDiff extends LokiElement {
             <div class="summary-label">Errors</div>
             <div class="summary-value ${(counts.errors || 0) > 0 ? 'error-count' : ''}">${counts.errors != null ? counts.errors : '--'}</div>
           </div>
-        </div>
+        </div>` : `
+        <div style="text-align: center; padding: 14px 8px; font-size: 12px; color: var(--loki-text-muted, #939084);">
+          Populates after the first build iteration
+        </div>`}
 
         ${highlightsHtml}
         ${decisionsHtml}

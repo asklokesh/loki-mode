@@ -408,7 +408,7 @@ function generateStandaloneHTML(bundleCode) {
       color: var(--loki-text-primary);
     }
     .project-stop-row .project-stop-name {
-      max-width: 160px;
+      max-width: 200px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -457,6 +457,8 @@ function generateStandaloneHTML(bundleCode) {
     .main-content {
       padding: 28px 32px;
       overflow-y: auto;
+      overflow-x: hidden;
+      min-width: 0;
       height: 100vh;
     }
 
@@ -1182,7 +1184,6 @@ function generateStandaloneHTML(bundleCode) {
           <h2 class="section-page-title">App Runner</h2>
         </div>
         <loki-app-preview id="app-preview"></loki-app-preview>
-        <loki-app-status id="app-status"></loki-app-status>
       </div>
 
       <!-- Completion Council -->
@@ -1362,6 +1363,10 @@ document.addEventListener('DOMContentLoaded', function() {
         var name = document.createElement('span');
         name.className = 'project-stop-name';
         name.textContent = p.name || p.path || 'project';
+        // v7.51: full name on hover so aggressively-truncated chip names
+        // (e.g. "instance_element-hq__elem...") are still readable. The
+        // clickable branch below overrides this with a "Switch to ..." hint.
+        name.setAttribute('title', p.name || p.path || 'project');
         // v7.35: the chip name is now a clickable affordance that focuses
         // that project (same path as the dropdown). The Stop button keeps its
         // own handler; clicking the name never triggers Stop. is_active chips
@@ -1509,7 +1514,7 @@ document.addEventListener('DOMContentLoaded', function() {
       'memory-browser',
       'learning-dashboard',
       'checklist-viewer',
-      'app-status',
+      'app-preview',
       'council-dashboard',
       'cost-dashboard',
       'checkpoint-viewer',

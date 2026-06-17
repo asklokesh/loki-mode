@@ -451,6 +451,10 @@ export class LokiOverview extends LokiElement {
           align-items: center;
           gap: 8px;
           line-height: 1.2;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .card-value.small-text {
@@ -525,7 +529,7 @@ export class LokiOverview extends LokiElement {
           </div>
 
           <div class="overview-card">
-            <div class="card-label">Agents</div>
+            <div class="card-label">Agents running</div>
             <div class="card-value">${agents}</div>
           </div>
 
