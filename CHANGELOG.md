@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.59.2] - 2026-06-17
+
+### Fix: release gate broken by test-isolation pollution (v7.59.0/.1 stranded)
+
+- tests/dashboard/test_control_app_auth.py (added in v7.59.0) called
+  importlib.reload(dashboard.auth), which rebinds auth.get_current_token to a
+  new function object. FastAPI dependency_overrides are keyed by callable
+  identity, so after the reload all 20 tenant-isolation tests overrode a stale
+  callable and hit real auth (401) instead of the tenant check (403), failing
+  the full-suite Release gate (v7.59.0 and v7.59.1 tags stranded; npm stuck at
+  7.58.1). Fixed by running the enterprise-auth assertions in subprocesses so
+  the parent interpreter never reloads dashboard modules. Full pytest tree now
+  1167 passed, 0 failed (verified locally, the exact release-gate command).
+
 ## [7.59.1] - 2026-06-17
 
 ### Fix: v7.59.0 release gate broke on numpy-less CI env
