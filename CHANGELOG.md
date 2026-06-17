@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.61.0] - 2026-06-17
+
+### Verification-gate honesty + correctness (6 MEDIUM findings)
+
+Lead theme: gates that silently pass when they should fail (the on-brand-critical class).
+- **Coverage gate fails loudly on parse drift** (.github/workflows/coverage.yml):
+  an unparseable coverage line printed a warning and exit 0, silently disabling
+  the 70% threshold. Now exit 1 (::error::).
+- **License audit checks the PINNED version, not @latest** (scripts/license-audit.sh):
+  the audit queried the bare (latest) package license and used the pinned range
+  only as a fallback, so it could pass a non-permissive version that actually
+  ships. The pinned/resolved range is now queried first.
+- **Benchmark patch-validation is no longer a no-op** (benchmarks/run-benchmarks.sh):
+  `has_changes = "+" in patch or "-" in patch` was always true (every diff has
+  +++/--- headers), so the empty-patch QA gate could never fire. Now counts real
+  change lines only.
+- **Memory retrieval correctness** (memory/retrieval.py, token_economics.py):
+  detect_task_type crashed on a present-but-None goal/action/phase; skills step
+  joins crashed on null/non-str steps; and a token budget threw away task-aware
+  ranking (optimize_context re-ranked on raw score, ignoring the computed
+  weighted score). All fixed; weighted-score order now preserved under budget.
+- **emit.sh now writes events.jsonl** (events/emit.sh): events emitted via the
+  shell helper landed only in the pending dir and were invisible to the
+  dashboard (which reads .loki/events.jsonl). Now appends the flat-schema record
+  the dashboard consumes.
+- **get_logs lines param bounded** (dashboard/server.py): a negative/zero lines
+  value inverted the tail contract; now Query(ge=1, le=10000) -> clean 422.
+
+Each fix ships with a non-vacuous regression test. Full pytest gate: 1176 passed.
+
 ## [7.60.0] - 2026-06-17
 
 ### Security hardening: 5 HIGH findings from the adversarial sweep

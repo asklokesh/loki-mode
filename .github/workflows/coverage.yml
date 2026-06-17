@@ -65,8 +65,8 @@ jobs:
             | head -1 \
             | awk -F'[|]' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
           if [ -z "$PCT" ]; then
-            echo "::warning::could not parse line coverage from bun test output; skipping threshold gate"
-            exit 0
+            echo "::error::could not parse line coverage from bun test output; coverage format may have drifted. Failing the gate rather than silently disabling it."
+            exit 1
           fi
           # Compare as integers (floor). awk handles float arithmetic.
           BELOW=$(awk -v p="$PCT" -v m="$MIN_LINE_PCT" 'BEGIN{ print (p+0 < m+0) ? "1" : "0" }')

@@ -1386,7 +1386,7 @@ def qa_agent(patch):
     has_hunk_header = "@@" in patch
     checks.append({"check": "hunk_headers", "passed": has_hunk_header})
 
-    has_changes = "+" in patch or "-" in patch
+    has_changes = any(l.startswith(('+', '-')) and not l.startswith(('+++', '---')) for l in patch.splitlines())
     checks.append({"check": "has_changes", "passed": has_changes})
 
     # Check for markdown wrapping (common error)

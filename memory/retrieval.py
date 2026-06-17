@@ -372,9 +372,9 @@ class MemoryRetrieval:
         Returns:
             One of: exploration, implementation, debugging, review, refactoring
         """
-        goal = context.get("goal", "").lower()
-        action = context.get("action_type", "").lower()
-        phase = context.get("phase", "").lower()
+        goal = (context.get("goal") or "").lower()
+        action = (context.get("action_type") or "").lower()
+        phase = (context.get("phase") or "").lower()
 
         scores: Dict[str, int] = {}
 
@@ -1523,7 +1523,9 @@ class MemoryRetrieval:
 
             name = data.get("name", "").lower()
             description = data.get("description", "").lower()
-            steps_text = " ".join(data.get("steps", [])).lower()
+            steps_text = " ".join(
+                s for s in (data.get("steps") or []) if isinstance(s, str)
+            ).lower()
 
             score = sum(2 for kw in keywords if kw in name)
             score += sum(1 for kw in keywords if kw in description)
@@ -1664,7 +1666,9 @@ class MemoryRetrieval:
                 continue
 
             # Create text for embedding
-            steps = " ".join(data.get("steps", []))
+            steps = " ".join(
+                s for s in (data.get("steps") or []) if isinstance(s, str)
+            )
             text = f"{data.get('name', '')} {data.get('description', '')} {steps}"
 
             # Generate embedding

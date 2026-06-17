@@ -6589,7 +6589,7 @@ async def resume_agent(agent_id: str):
 
 
 @app.get("/api/logs")
-async def get_logs(lines: int = 100, token: Optional[dict] = Depends(auth.get_current_token)):
+async def get_logs(lines: int = Query(default=100, ge=1, le=10000), token: Optional[dict] = Depends(auth.get_current_token)):
     """Get recent log entries from session log files."""
     log_dir = _get_loki_dir() / "logs"
     entries = []

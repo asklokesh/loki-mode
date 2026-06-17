@@ -62,17 +62,20 @@ lookup_license() {
   local version_range="$2"
 
   local raw license
-  # Try the bare package name first (returns the latest dist-tag's license
-  # as a single bare line, which is the easiest to parse). If that fails,
-  # fall back to the version-pinned form and parse the multi-line output.
-  raw="$(npm view "${name}" license 2>/dev/null | tr -d '\r')" || true
+  # Query the RESOLVED/pinned version FIRST so the audit reflects what
+  # actually SHIPS per package.json's range, not whatever @latest happens
+  # to be. The bare-name (latest) lookup is only a fallback for the rare
+  # case where the pinned query returns nothing (e.g. a range that matches
+  # no published version). npm prints `pkg@ver 'License'` per matching
+  # version; when several versions match the range we keep the LAST line,
+  # which is the highest matching version -- i.e. the one npm will install.
+  raw="$(npm view "${name}@${version_range}" license 2>/dev/null | tr -d '\r')" || true
 
-  # Take the LAST non-empty line (npm prints `pkg@ver 'License'` per version
-  # when the range matches several versions; the last is the newest).
+  # Take the LAST non-empty line (highest version matching the range).
   license="$(printf '%s\n' "$raw" | awk 'NF{last=$0} END{print last}')"
 
   if [[ -z "$license" ]]; then
-    raw="$(npm view "${name}@${version_range}" license 2>/dev/null | tr -d '\r')" || true
+    raw="$(npm view "${name}" license 2>/dev/null | tr -d '\r')" || true
     license="$(printf '%s\n' "$raw" | awk 'NF{last=$0} END{print last}')"
   fi
 

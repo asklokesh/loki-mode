@@ -164,5 +164,23 @@ if [ -f "$EVENTS_LOG" ]; then
     fi
 fi
 
+# Append a flat-schema record to .loki/events.jsonl for dashboard consumption.
+#
+# The dashboard reads .loki/events.jsonl directly (dashboard/server.py
+# _read_events) and run.sh's emit_event/emit_event_json write the FLAT schema
+# {"timestamp","type","data"} -- NOT the nested pending schema written to the
+# per-event file above. Without this append, events emitted via emit.sh land
+# only in the pending dir and stay INVISIBLE to the dashboard.
+#
+# Mapping: data = the existing PAYLOAD object (mirrors emit_event_json, where
+# `data` is a JSON object). `source` is intentionally dropped from the flat
+# record (not part of the dashboard schema); the pending file above preserves
+# it for other consumers. PAYLOAD is already newline-free (built on lines
+# 127-135), so the record is a single compact line. The helper appends its own
+# trailing newline. `|| true` keeps observability from ever aborting the emit
+# under `set -e` (matches autonomy/run.sh:9896).
+FLAT_EVENT="{\"timestamp\":\"$TIMESTAMP\",\"type\":\"$TYPE_ESC\",\"data\":$PAYLOAD}"
+safe_append_event_jsonl "$EVENTS_LOG" "$FLAT_EVENT" 2>/dev/null || true
+
 # Output event ID
 echo "$EVENT_ID"

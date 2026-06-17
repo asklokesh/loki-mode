@@ -223,8 +223,16 @@ def optimize_context(
             except (ValueError, TypeError):
                 pass
 
-        # Get relevance score (already computed by retrieval)
-        relevance = memory.get("_score", 0.5)
+        # Get relevance score (already computed by retrieval).
+        # Prefer the task-aware _weighted_score (task-strategy weight x
+        # importance x confidence x recency) when retrieval has computed it,
+        # so that token-budget trimming preserves the task-aware ranking
+        # instead of re-ranking from scratch on the raw _score. Fall back to
+        # _score only when _weighted_score is absent.
+        if "_weighted_score" in memory:
+            relevance = memory.get("_weighted_score", 0.5)
+        else:
+            relevance = memory.get("_score", 0.5)
         if relevance > 1.0:
             # Normalize high scores
             relevance = min(1.0, relevance / 10.0)
