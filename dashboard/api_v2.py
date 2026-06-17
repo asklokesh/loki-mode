@@ -251,6 +251,25 @@ def resolve_tenant_context(
     )
 
 
+def _require_global_admin(tenant_ctx: TenantContext) -> None:
+    """Gate a tenant-lifecycle operation behind global-admin authority.
+
+    Creating, updating, or deleting a tenant is a global-admin-only operation:
+    it manages the isolation boundaries themselves, so a tenant-scoped caller
+    (even one holding the `control` scope, which does NOT imply `admin`) must
+    not perform it. A global admin is allowed. When auth is disabled there is
+    no caller identity to isolate -- single-user local mode -- so the operation
+    is permitted, mirroring TenantContext.enforce so legitimate single-tenant
+    and local flows are not broken.
+    """
+    if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Tenant lifecycle operations require global admin",
+    )
+
+
 async def _enforce_project_tenant(
     db: AsyncSession, tenant_ctx: TenantContext, project_id: int
 ) -> None:
@@ -306,8 +325,10 @@ async def create_tenant(
     db: AsyncSession = Depends(get_db),
     _auth: None = Depends(auth.require_scope("control")),
     token_info: Optional[dict] = Depends(auth.get_current_token),
+    tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Create a new tenant."""
+    """Create a new tenant (global-admin only)."""
+    _require_global_admin(tenant_ctx)
     tenant = await tenants_mod.create_tenant(
         db, name=body.name, description=body.description, settings=body.settings,
     )
@@ -366,8 +387,8 @@ async def update_tenant(
     token_info: Optional[dict] = Depends(auth.get_current_token),
     tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Update an existing tenant."""
-    tenant_ctx.enforce(tenant_id)
+    """Update an existing tenant (global-admin only)."""
+    _require_global_admin(tenant_ctx)
     tenant = await tenants_mod.update_tenant(
         db, tenant_id,
         name=body.name, description=body.description, settings=body.settings,
@@ -392,8 +413,8 @@ async def delete_tenant(
     token_info: Optional[dict] = Depends(auth.get_current_token),
     tenant_ctx: TenantContext = Depends(resolve_tenant_context),
 ):
-    """Delete a tenant."""
-    tenant_ctx.enforce(tenant_id)
+    """Delete a tenant (global-admin only)."""
+    _require_global_admin(tenant_ctx)
     deleted = await tenants_mod.delete_tenant(db, tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Tenant not found")

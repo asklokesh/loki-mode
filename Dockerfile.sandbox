@@ -65,9 +65,25 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | g
 # Note: These are placeholder package names - update when official packages are available
 WORKDIR /opt/cli-install
 
-# Claude CLI (Anthropic official)
-RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
-    echo "Claude CLI not available on npm, will need manual install"
+# Claude CLI (Anthropic official) -- Tier-1 default provider.
+# This MUST succeed: without the claude binary the runtime image ships the Loki
+# runtime but no provider CLI, so `loki start` dies at the first `claude -p` with
+# "No AI provider CLI found" (dead-image regression). We deliberately do NOT
+# swallow failures here (no `2>/dev/null || echo ...`) and validate the install
+# with `claude --version` so a broken install fails the build instead of
+# shipping silently.
+#
+# NOTE: claude is installed WITHOUT --ignore-scripts (unlike the optional
+# CLIs below). The current @anthropic-ai/claude-code package fetches a
+# platform-native binary in its postinstall; with --ignore-scripts the `claude`
+# launcher installs but fails at runtime ("claude native binary not installed"),
+# which is precisely the silent-broken-install this validation now blocks. The
+# single-stage Dockerfile likewise installs claude without --ignore-scripts.
+# This is the official Anthropic package (trusted source), so running its
+# postinstall is acceptable; the optional codex/gemini installs below keep
+# --ignore-scripts as defense in depth.
+RUN npm install -g @anthropic-ai/claude-code \
+    && claude --version
 
 # Codex CLI (OpenAI) - install if available
 RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
@@ -83,8 +99,8 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.59.2"
-LABEL org.opencontainers.image.version="7.59.2"
+LABEL version="7.60.0"
+LABEL org.opencontainers.image.version="7.60.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
@@ -133,6 +149,16 @@ COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 COPY --from=builder /usr/bin/npm /usr/bin/npm
 COPY --from=builder /usr/bin/npx /usr/bin/npx
 
+# Copy the Claude Code CLI launcher from the builder. The builder's
+# `npm install -g @anthropic-ai/claude-code` creates the global bin entry at
+# /usr/bin/claude (NodeSource npm global bin dir) pointing into the
+# /usr/lib/node_modules copy above. Without this COPY the runtime stage has the
+# claude package files but no `claude` on PATH, so `command -v claude` fails and
+# `loki start` dies with "No AI provider CLI found" -- the dead-image regression
+# this multi-stage build previously shipped (the single-stage Dockerfile is
+# unaffected because it npm-installs in its final stage).
+COPY --from=builder /usr/bin/claude /usr/bin/claude
+
 # Copy GitHub CLI from builder
 COPY --from=builder /usr/bin/gh /usr/bin/gh
 
@@ -147,6 +173,12 @@ COPY --from=builder /usr/local/bin/bun /usr/local/bin/bun
 # Create symlinks for node binaries
 RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm 2>/dev/null || true \
     && ln -sf /usr/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx 2>/dev/null || true
+
+# Validate the Claude CLI is on PATH and runnable in the runtime stage. This
+# fails the build if the copy above did not land a working binary, preventing a
+# silently dead image (mirrors the single-stage Dockerfile's `claude --version`
+# validation right after its global install).
+RUN command -v claude && claude --version
 
 #-------------------------------------------------------------------------------
 # Security: Create non-root user
@@ -190,10 +222,14 @@ COPY --chown=loki:loki templates/ ./templates/
 COPY --chown=loki:loki integrations/ ./integrations/
 COPY --chown=loki:loki completions/ ./completions/
 
-# Bun runtime artifacts: shim + pre-built TypeScript bundle.
+# Bun runtime artifacts: shim + pre-built TypeScript bundle + rolling data.
 # loki-ts/dist/loki.js is built by `bun run build` and committed to the repo.
+# loki-ts/data/ holds rolling tables (e.g. model-pricing.json) that budget.ts
+# reads at runtime; shipping the dir keeps cost/budget on real pricing instead
+# of the stale built-in fallback (matches the single-stage Dockerfile).
 COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
+COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
 # Copy docs
 COPY --chown=loki:loki docs/ ./docs/

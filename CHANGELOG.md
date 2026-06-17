@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.60.0] - 2026-06-17
+
+### Security hardening: 5 HIGH findings from the adversarial sweep
+
+- **Policy enforcement now fails CLOSED on a malformed policy file**
+  (src/policies/check.js, engine.js): a corrupt .loki/policies.json previously
+  caused check.js to return ALLOW with a misleading "No policies configured"
+  reason, silently disabling all policy enforcement. A present-but-unparseable
+  policy file now denies (exit 1). A genuinely absent policy file still allows.
+- **Tenant lifecycle ops are global-admin-only** (dashboard/api_v2.py):
+  create_tenant required only the control scope and skipped tenant enforcement,
+  so a tenant-scoped (non-admin) token could create arbitrary tenants outside
+  any isolation boundary. create/update/delete tenant now require global admin.
+- **Authorization/Cookie headers are now redacted** (autonomy/lib/proof_redact.py):
+  a negative lookahead + Bearer-only rule meant `Authorization: Basic ...`,
+  lowercase auth headers, and `Cookie:`/`Set-Cookie:` leaked their credentials
+  in proofs and crash reports. A header-line rule now redacts the value (scheme
+  word preserved) without over-redacting normal lines.
+- **Dockerfile.sandbox dead-image fixed** (Dockerfile.sandbox): the runtime
+  stage never put the claude binary on PATH (loki start died "No AI provider CLI
+  found"), the claude install was unvalidated, and loki-ts/data/ was missing
+  (stale fallback pricing). All three fixed and verified with a real build +
+  `claude --version` in-container.
+- **cmd_magic python-literal injection closed** (autonomy/loki): magic
+  generate/update interpolated raw --description/--tags/--name into a python -c
+  body; now passed via environment variables (the established LOKI_MEM_QUERY
+  pattern) plus --name validation. cmd_memory export filename hardened too.
+
+Each fix ships with a non-vacuous regression test. Full pytest gate: 1172 passed.
+
 ## [7.59.2] - 2026-06-17
 
 ### Fix: release gate broken by test-isolation pollution (v7.59.0/.1 stranded)

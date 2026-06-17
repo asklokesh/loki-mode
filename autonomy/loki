@@ -16876,7 +16876,11 @@ PYEOF
         export)
             local output="${2:-learnings-export.json}"
 
-            LOKI_LEARNINGS_DIR="$learnings_dir" python3 -c "
+            # BUG-PU-010: pass the output filename via an environment variable
+            # rather than interpolating $output into the python -c source, so a
+            # filename containing quotes/backslashes/newlines cannot break out of
+            # the string literal or inject python.
+            LOKI_LEARNINGS_DIR="$learnings_dir" LOKI_LEARNINGS_OUT="$output" python3 -c "
 import json
 import os
 
@@ -16894,9 +16898,10 @@ for category in ['patterns', 'mistakes', 'successes']:
                         result[category].append(e)
                 except: pass
 
-with open('$output', 'w') as f:
+_out = os.environ['LOKI_LEARNINGS_OUT']
+with open(_out, 'w') as f:
     json.dump(result, f, indent=2)
-print(f'Exported to $output')
+print(f'Exported to {_out}')
 " 2>/dev/null
             ;;
 
@@ -25244,8 +25249,14 @@ generate_component(
 
     # 4. Register in registry
     log_info "Registering component"
+    # BUG-PU-010: pass free-text description/tags via environment variables and
+    # read them with os.environ in the python body, instead of interpolating raw
+    # user input into the python -c source (a value containing triple-quotes,
+    # backslashes, newlines, or $(...) would crash the script or inject code).
+    # Mirrors the LOKI_MEM_QUERY pattern in the memory-search path.
+    LOKI_MAGIC_DESC="$description" LOKI_MAGIC_TAGS="$tags" \
     PYTHONPATH="$(_magic_pypath)" "$py" -c "
-import sys
+import os, sys
 try:
     from magic.core.registry import register_component
 except Exception as exc:
@@ -25259,8 +25270,8 @@ register_component(
     react_path='.loki/magic/generated/react/${name}.tsx' if '$target' in ('react','both') else '',
     webcomponent_path='.loki/magic/generated/webcomponent/${name}.js' if '$target' in ('webcomponent','both') else '',
     test_path='.loki/magic/generated/tests/${name}.test.tsx',
-    description='''$description'''.strip(),
-    tags=[t.strip() for t in '''$tags'''.split(',') if t.strip()],
+    description=os.environ.get('LOKI_MAGIC_DESC', '').strip(),
+    tags=[t.strip() for t in os.environ.get('LOKI_MAGIC_TAGS', '').split(',') if t.strip()],
     placement='${placement}' or None,
 )
 " || {
@@ -25305,13 +25316,22 @@ _magic_update() {
         esac
     done
 
+    # BUG-PU-010: validate --name (defense in depth, mirroring _magic_generate)
+    # so a malicious value cannot reach the python body, AND pass it via an
+    # environment variable instead of interpolating it into the python -c source.
+    if [ -n "$name" ] && ! _magic_valid_name "$name"; then
+        log_error "Invalid component name: '$name' (must start with a letter, contain only letters, digits, _ or -)"
+        return 1
+    fi
+
     _magic_ensure_dirs
     local py
     py=$(_magic_python)
 
     log_info "Updating components from specs (name=${name:-<all>}, force=$force)"
+    LOKI_MAGIC_NAME="$name" \
     PYTHONPATH="$(_magic_pypath)" "$py" -c "
-import sys
+import os, sys
 try:
     from magic.core.generator import update_components
 except Exception as exc:
@@ -25319,7 +25339,7 @@ except Exception as exc:
     sys.exit(2)
 update_components(
     registry_path='.loki/magic/registry.json',
-    name='${name}' or None,
+    name=os.environ.get('LOKI_MAGIC_NAME', '') or None,
     force=$([ "$force" = "true" ] && echo True || echo False),
 )
 " || {

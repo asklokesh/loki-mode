@@ -79,6 +79,33 @@ _PATTERNS = [
 # Bearer tokens: keep the scheme, redact the credential.
 _BEARER = re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}")
 
+# HTTP auth/cookie HEADER lines: redact the credential VALUE for the whole line.
+# This owns the header-line form of Authorization (any scheme: Basic, Bearer,
+# Digest, raw token) plus Cookie / Set-Cookie, which the keyword-based
+# _ENV_ASSIGN rule does not cover (Authorization is excluded there via the
+# AUTH(?!ORIZATION) lookahead, and Cookie/session are not secret keywords).
+#
+# Anchored with (?im):
+#   - re.IGNORECASE so "authorization"/"Authorization"/"COOKIE" all match.
+#   - re.MULTILINE so an interior header line inside a multi-line blob (crash
+#     reports, stack traces, env dumps) matches, not just offset 0. "." does
+#     not cross newlines, so the value run stops at end-of-line and adjacent
+#     normal lines are left untouched.
+#
+# Group layout:
+#   1 -> line prefix up through the "header:" separator (leading whitespace +
+#        header name + colon + following whitespace), preserved verbatim.
+#   2 -> optional auth scheme word (Basic/Bearer/Digest/Negotiate/NTLM) plus
+#        its trailing space, preserved so "Authorization: Basic [REDACTED]"
+#        keeps the scheme. Empty for Cookie / raw-token forms.
+# Everything after that (the credential) is replaced with [REDACTED].
+_AUTH_HEADER = re.compile(
+    r"(?im)"
+    r"^([ \t]*(?:authorization|cookie|set-cookie)[ \t]*:[ \t]*)"   # 1: header prefix
+    r"((?:Basic|Bearer|Digest|Negotiate|NTLM)[ \t]+)?"             # 2: optional scheme
+    r"\S.*$"                                                        # the credential value
+)
+
 # PEM PRIVATE KEY blocks (any -----BEGIN ... PRIVATE KEY----- ... END block).
 # DOTALL so the body spanning newlines is matched and dropped whole.
 _PEM = re.compile(
@@ -129,6 +156,14 @@ _ENV_ASSIGN = re.compile(
     r"(\s*[=:]\s*)"                      # 3: separator
     r"(\"[^\"]*\"|'[^']*'|\S+)"          # 4: quoted-or-bare value
 )
+
+
+def _auth_header_sub(m):
+    """Redact an HTTP auth/cookie header VALUE, keeping the header name and
+    (when present) the auth scheme word. Group 1 is the "header:" prefix, group
+    2 is the optional scheme (with trailing space) or None."""
+    prefix, scheme = m.group(1), m.group(2)
+    return prefix + (scheme or "") + "[REDACTED]"
 
 
 def _env_assign_sub(m):
@@ -229,6 +264,12 @@ def _redact_value(s):
     s, n = _AWS_SECRET_ASSIGN.subn(
         lambda m: m.group(1) + "=[REDACTED:AWS_SECRET]", s
     )
+    total += n
+
+    # HTTP auth/cookie header lines: redact the whole credential value before
+    # token-level rules run, so a token inside the header value is not matched
+    # (and double-counted) separately. Keeps the header name + scheme word.
+    s, n = _AUTH_HEADER.subn(_auth_header_sub, s)
     total += n
 
     # Token patterns (ordered most-specific-first).

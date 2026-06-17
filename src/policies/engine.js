@@ -591,6 +591,26 @@ class PolicyEngine {
   }
 
   /**
+   * Whether a policy file is present on disk but could not be parsed/loaded
+   * into a usable policy object.
+   *
+   * This is the fail-closed discriminator: it is true only when a policy file
+   * exists (_policyPath set) yet parsing failed (_policies === null). It is
+   * deliberately NOT keyed off getValidationErrors() length, because a valid
+   * policy file can still carry soft warnings (e.g. an unrecognized rule
+   * string) while parsing cleanly into a non-null _policies object. Those
+   * warnings must not disable enforcement.
+   *
+   * When no policy file exists at all, _policyPath is null and this returns
+   * false, preserving the legitimate "no policies -> allow" behavior.
+   *
+   * @returns {boolean}
+   */
+  hasLoadErrors() {
+    return this._policyPath !== null && this._policies === null;
+  }
+
+  /**
    * Stop watching the policy file.
    */
   destroy() {
