@@ -195,6 +195,14 @@ run_test "Hybrid Codebase Search (manifest + RRF + budget + fallback)" "$SCRIPT_
 # cost-degrade, set -u safety, _hud_fmt_secs formatting, and ETA gating.
 run_test "Live Build HUD (TTY gate + degrade + parity)" "$SCRIPT_DIR/test-build-hud.sh"
 
+# Public Preview Tunnel (FEAT-PREVIEW-LINK): `loki preview --public` wraps the
+# user's OWN cloudflared/ngrok CLI behind a consent-gated, default-OFF flow.
+# Covers the pure URL extractors, preconditions (no app / not-running / dead
+# port), consent (interactive decline + non-TTY refuse), provider allowlist,
+# the honest CLI-absent install hint, FAKE-binary URL capture + SIGTERM
+# teardown (no real tunnel ever opened), and the plain-preview regression.
+run_test "Public Preview Tunnel (--public consent + tunnel wrap)" "$SCRIPT_DIR/test-preview-public.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

@@ -5207,42 +5207,14 @@ cmd_web_status() {
     echo "Purple Lab is not running."
 }
 
-# Open the running app preview (the app Loki built and started locally).
-# Surfaces the existing app-runner state; does not start or change the app.
-cmd_preview() {
-    local open_browser=true
-    case "${1:-}" in
-        --help|-h|help)
-            echo -e "${BOLD}Loki Mode -- open the running app preview${NC}"
-            echo ""
-            echo "Usage: loki preview [--no-open]"
-            echo "       loki open      (alias)"
-            echo ""
-            echo "Prints the URL of the app Loki built and started locally, then"
-            echo "opens it in your browser. The app runner starts the app after the"
-            echo "first successful build iteration. This serves a real local build"
-            echo "from localhost on your machine; it is not hosted."
-            echo ""
-            echo "Options:"
-            echo "  --no-open    Print the URL and status only; do not open a browser"
-            echo "  --help, -h   Show this help and exit"
-            return 0
-            ;;
-        --no-open)
-            open_browser=false
-            ;;
-    esac
-
-    local state_file="${LOKI_DIR}/app-runner/state.json"
-    if [ ! -f "$state_file" ]; then
-        echo "No app running. The app runner starts after the first successful build iteration."
-        echo "Run 'loki status' to check the current run."
-        return 0
-    fi
-
-    # Parse url/status/port. Prefer python3 (used throughout); fall back to grep.
-    # Pass the path as argv (not inline interpolation) so a path with quotes
-    # cannot break the script, and parse all three fields in one invocation.
+# Read app-runner state.json and echo url, status, port (one per line, in that
+# order). Shared by the plain preview browser path and the --public tunnel path
+# so there is no parse drift between them. Path is passed as argv (not inline
+# interpolation) so a path with quotes cannot break the script. Always exits 0;
+# callers re-split with sed -n '1p/2p/3p'. Logic is byte-identical to the
+# original inline parse in cmd_preview (do not "clean up" -- behavior-neutral).
+_read_app_state() {
+    local state_file="$1"
     local url status port parsed
     if command -v python3 &> /dev/null; then
         parsed=$(python3 -c "import json,sys
@@ -5261,6 +5233,404 @@ except Exception:
         status=$(grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$state_file" 2>/dev/null | head -1 | sed 's/.*"status"[[:space:]]*:[[:space:]]*"//;s/"$//')
         port=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$state_file" 2>/dev/null | head -1 | grep -oE '[0-9]+$')
     fi
+    printf '%s\n%s\n%s\n' "$url" "$status" "$port"
+}
+
+# Pure extractor: pull the first cloudflared quick-tunnel URL out of a log file.
+# Reads a FILE (not a live process) so it is unit-testable. Echoes the URL or
+# nothing. Always returns 0 -- a no-match must not abort the caller under
+# `set -o pipefail` (grep exits 1 on no match, so the pipeline is `|| true`d).
+_extract_tunnel_url_cloudflared() {
+    local logfile="${1:-}"
+    [ -f "$logfile" ] || return 0
+    grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$logfile" 2>/dev/null | head -1 || true
+}
+
+# Pure extractor: pull the public_url out of an ngrok 4040 API JSON dump.
+# Reads a FILE so it is unit-testable. Prefers the https tunnel. Uses python3
+# json (path passed as argv -- no shell interpolation into the heredoc), with a
+# grep fallback if python3 is absent or the parse fails. Echoes URL or nothing;
+# always returns 0.
+_extract_tunnel_url_ngrok() {
+    local json_file="${1:-}"
+    [ -f "$json_file" ] || return 0
+    local out=""
+    if command -v python3 >/dev/null 2>&1; then
+        out=$(python3 - "$json_file" <<'PYEXTRACT' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+tunnels = data.get("tunnels", []) if isinstance(data, dict) else []
+urls = [t.get("public_url", "") for t in tunnels if isinstance(t, dict) and t.get("public_url")]
+https = [u for u in urls if u.startswith("https://")]
+chosen = https[0] if https else (urls[0] if urls else "")
+if chosen:
+    print(chosen)
+PYEXTRACT
+)
+    fi
+    if [ -z "$out" ]; then
+        # Grep fallback: take https public_url values first, else any public_url.
+        out=$(grep -oE '"public_url"[[:space:]]*:[[:space:]]*"https://[^"]*"' "$json_file" 2>/dev/null | head -1 | grep -oE 'https://[^"]*' || true)
+        if [ -z "$out" ]; then
+            out=$(grep -oE '"public_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$json_file" 2>/dev/null | head -1 | sed 's/.*"public_url"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
+        fi
+    fi
+    printf '%s' "$out"
+}
+
+# Teardown for a launched tunnel: TERM, brief grace, then KILL, then remove the
+# log. All steps are `|| true` so the EXIT/INT/TERM trap is set -e safe and never
+# leaves an orphaned public tunnel. Args: tunnel_pid [logfile].
+_preview_public_teardown() {
+    local tunnel_pid="${1:-}"
+    local logfile="${2:-}"
+    if [ -n "$tunnel_pid" ]; then
+        kill -TERM "$tunnel_pid" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$tunnel_pid" 2>/dev/null || true
+    fi
+    if [ -n "$logfile" ]; then
+        rm -f "$logfile" 2>/dev/null || true
+    fi
+}
+
+# Expose the already-running local app over a PUBLIC URL by wrapping the user's
+# OWN tunnel CLI (cloudflared or ngrok). Consent-gated, default-OFF. Loki never
+# proxies traffic and never bundles a binary. Args: provider yes no_host_rewrite.
+# Returns non-zero on any precondition failure or declined/refused consent
+# (except an interactive decline, which is a clean exit 0).
+_preview_public() {
+    local provider="${1:-}"
+    local assume_yes="${2:-false}"
+    local no_host_rewrite="${3:-false}"
+
+    local state_file="${LOKI_DIR}/app-runner/state.json"
+
+    # Precondition 1: state.json must exist.
+    if [ ! -f "$state_file" ]; then
+        echo "No app running. Nothing to expose." >&2
+        echo "Start a build (loki start) or check status (loki status) first." >&2
+        return 1
+    fi
+
+    # Read url/status/port via the shared helper (same parse as plain preview).
+    local _state url status port
+    _state=$(_read_app_state "$state_file")
+    url=$(printf '%s\n' "$_state" | sed -n '1p')
+    status=$(printf '%s\n' "$_state" | sed -n '2p')
+    port=$(printf '%s\n' "$_state" | sed -n '3p')
+
+    # Precondition 2: status must be running.
+    if [ "$status" != "running" ]; then
+        echo "App is not running (status: ${status:-unknown}). Refusing to expose." >&2
+        echo "The app runner starts the app after a successful build iteration." >&2
+        return 1
+    fi
+
+    # Precondition 3: resolve URL/port (fallback mirrors the plain path).
+    if [ -z "$url" ]; then
+        url="http://localhost:${port:-3000}"
+    fi
+    local probe_port="${port:-3000}"
+
+    # Precondition 4: PORT must actually be reachable. Never tunnel a dead port.
+    # Reuses the curl-readiness poll pattern (autonomy/loki:4979).
+    local retries=0
+    local port_ready=false
+    while [ $retries -lt 6 ]; do
+        if curl -s "http://localhost:${probe_port}" > /dev/null 2>&1; then
+            port_ready=true
+            break
+        fi
+        sleep 0.5
+        retries=$((retries + 1))
+    done
+    if [ "$port_ready" != true ]; then
+        echo "Port ${probe_port} is not responding. Refusing to expose a dead port." >&2
+        echo "Confirm the app is up locally (loki preview) before sharing it." >&2
+        return 1
+    fi
+
+    # Consent (default-OFF). Print the full warning every time (even with --yes).
+    echo "WARNING: This makes the app running on THIS machine reachable by ANYONE who has"
+    echo "the URL, over the public internet, using YOUR tunnel account."
+    echo "- The app may have NO authentication. Anyone with the link can use it."
+    echo "- Traffic flows through your own cloudflared/ngrok account, not through Loki."
+    echo "- This stays up until you stop it. Stop it when you are done."
+    echo ""
+
+    if [ "$assume_yes" = true ]; then
+        : # --yes: warning printed above; skip the prompt.
+    elif [ -t 0 ]; then
+        # Interactive TTY. Default-N: only ^[Yy] proceeds. (Deliberately NOT the
+        # default-Y idiom at :1894 -- public exposure is unsafe by default.)
+        local confirm=""
+        echo -e "Expose this app publicly? [y/N] \c"
+        read -r confirm || true
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
+            echo "Aborted. App was not exposed."
+            return 0
+        fi
+    else
+        # Non-TTY without --yes: never silently expose.
+        echo "Refusing to expose a public tunnel non-interactively without --yes." >&2
+        return 1
+    fi
+
+    # === SEAM (Agent B): provider detection + tunnel launch + URL extraction ===
+
+    # Provider detection (SS5). command -v based so a PATH stub works in tests.
+    # If $provider was requested, require exactly that one; else prefer
+    # cloudflared (no account needed for quick tunnels) then ngrok.
+    local chosen_provider=""
+    if [ -n "$provider" ]; then
+        # Allowlist: only cloudflared/ngrok are supported. Without this guard an
+        # arbitrary on-PATH binary name (e.g. --provider ls) would set
+        # chosen_provider and fall through to the ngrok launch branch below.
+        case "$provider" in
+            cloudflared|ngrok) ;;
+            *)
+                echo -e "${RED}Unsupported tunnel provider: ${provider}${NC}" >&2
+                echo "Supported providers: cloudflared, ngrok" >&2
+                return 1
+                ;;
+        esac
+        if command -v "$provider" >/dev/null 2>&1; then
+            chosen_provider="$provider"
+        fi
+    else
+        if command -v cloudflared >/dev/null 2>&1; then
+            chosen_provider="cloudflared"
+        elif command -v ngrok >/dev/null 2>&1; then
+            chosen_provider="ngrok"
+        fi
+    fi
+
+    if [ -z "$chosen_provider" ]; then
+        # Honest install hint (mirrors the gh-missing block). Never pretend
+        # success, never download a binary. Loki wraps YOUR OWN client.
+        if [ -n "$provider" ]; then
+            echo -e "${RED}Requested tunnel provider not found: ${provider}${NC}" >&2
+        else
+            echo -e "${RED}No tunnel CLI found (cloudflared or ngrok)${NC}" >&2
+        fi
+        echo "" >&2
+        echo "Loki wraps YOUR OWN tunnel client. It never downloads or bundles one." >&2
+        echo "Install one of the following, then re-run:" >&2
+        echo "" >&2
+        echo "  cloudflared (no account needed for quick tunnels):" >&2
+        echo "    brew install cloudflared                        # macOS" >&2
+        echo "    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/  # all platforms" >&2
+        echo "" >&2
+        echo "  ngrok (needs a free authtoken):" >&2
+        echo "    brew install ngrok                              # macOS" >&2
+        echo "    https://ngrok.com/download                      # all platforms" >&2
+        return 1
+    fi
+
+    # State dir, parallel to app-runner/.
+    mkdir -p "${LOKI_DIR}/preview" 2>/dev/null || true
+    local log_file="${LOKI_DIR}/preview/${chosen_provider}.log"
+
+    # Build the launch command (SS7/SS8). Host-header rewrite is default-ON to
+    # fix the #1 dev-server "Invalid Host header" failure; --no-host-rewrite
+    # opts out.
+    local -a tunnel_cmd=()
+    if [ "$chosen_provider" = "cloudflared" ]; then
+        tunnel_cmd=(cloudflared tunnel --url "http://localhost:${probe_port}")
+        if [ "$no_host_rewrite" != true ]; then
+            tunnel_cmd+=(--http-host-header localhost)
+        fi
+    else
+        # ngrok
+        tunnel_cmd=(ngrok http "${probe_port}")
+        if [ "$no_host_rewrite" != true ]; then
+            tunnel_cmd+=(--host-header=rewrite)
+        fi
+    fi
+
+    echo ""
+    echo "Starting ${chosen_provider} tunnel for http://localhost:${probe_port} ..."
+
+    # Launch redirected to a log, in the background; capture its pid.
+    "${tunnel_cmd[@]}" > "$log_file" 2>&1 &
+    local tunnel_pid=$!
+
+    # Install teardown immediately so no exit path leaves an orphaned tunnel.
+    trap '_preview_public_teardown "$tunnel_pid" "$log_file"' EXIT INT TERM
+
+    # Poll for the public URL. cloudflared writes it to its log; ngrok exposes
+    # it via the local 4040 API. Bounded loop (~20 x sleep 0.5 = ~10s). Also
+    # detect early tunnel-process death so we fail honestly instead of hanging.
+    local public_url=""
+    local tries=0
+    while [ $tries -lt 20 ]; do
+        # Early death detection: if the tunnel process is gone, report and bail.
+        if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+            echo -e "${RED}${chosen_provider} exited; see ${log_file}${NC}" >&2
+            # Surface the tail of the log for context.
+            tail -n 10 "$log_file" 2>/dev/null >&2 || true
+            if [ "$chosen_provider" = "ngrok" ]; then
+                echo "If this is an auth error, add your token: ngrok config add-authtoken <token>" >&2
+            fi
+            # The EXIT trap fires at SHELL exit, not function return, so reap the
+            # process now and clear the trap. Keep the log for inspection (the
+            # message points at it), so omit the log arg to teardown.
+            _preview_public_teardown "$tunnel_pid"
+            trap - EXIT INT TERM
+            return 1
+        fi
+
+        if [ "$chosen_provider" = "cloudflared" ]; then
+            public_url=$(_extract_tunnel_url_cloudflared "$log_file")
+        else
+            local api_json="${LOKI_DIR}/preview/ngrok-api.json"
+            if curl -s "http://127.0.0.1:4040/api/tunnels" -o "$api_json" 2>/dev/null; then
+                public_url=$(_extract_tunnel_url_ngrok "$api_json")
+            fi
+            rm -f "$api_json" 2>/dev/null || true
+        fi
+
+        if [ -n "$public_url" ]; then
+            break
+        fi
+        sleep 0.5
+        tries=$((tries + 1))
+    done
+
+    if [ -z "$public_url" ]; then
+        echo -e "${RED}Timed out waiting for a public URL from ${chosen_provider}.${NC}" >&2
+        tail -n 10 "$log_file" 2>/dev/null >&2 || true
+        if [ "$chosen_provider" = "ngrok" ]; then
+            echo "ngrok may be missing an authtoken: ngrok config add-authtoken <token>" >&2
+        fi
+        # Reap now (the EXIT trap fires only at shell exit, not function return,
+        # which would orphan the tunnel back in cmd_preview/main). Keep the log
+        # for inspection, so omit the log arg.
+        _preview_public_teardown "$tunnel_pid"
+        trap - EXIT INT TERM
+        return 1
+    fi
+
+    # URL captured. Print it clearly and re-print the live warning.
+    echo ""
+    echo -e "${GREEN}Public preview URL:${NC} ${public_url}"
+    echo ""
+    echo "WARNING: This URL is live and reachable by ANYONE who has it, over the"
+    echo "public internet, through YOUR ${chosen_provider} account. The app may have no"
+    echo "authentication. This stays up until you stop it."
+    echo ""
+    echo "Press Ctrl+C to stop sharing."
+
+    # Foreground-block on the tunnel. Ctrl+C delivers INT -> trap -> teardown.
+    # `wait` returns 130 on signal; guard so set -e does not abort the clean exit.
+    wait "$tunnel_pid" 2>/dev/null || true
+
+    # Idempotent final teardown (the INT trap may already have run) + remove the
+    # log on this success/Ctrl+C path. Clear the trap so it does not re-fire at
+    # shell exit with out-of-scope locals.
+    _preview_public_teardown "$tunnel_pid" "$log_file"
+    trap - EXIT INT TERM
+
+    echo ""
+    echo "Tunnel stopped."
+    return 0
+}
+
+# Open the running app preview (the app Loki built and started locally).
+# Surfaces the existing app-runner state; does not start or change the app.
+cmd_preview() {
+    local open_browser=true
+    local public=false
+    local provider=""
+    local assume_yes=false
+    local no_host_rewrite=false
+
+    # Parse options. Loop so flag combos like `--public --yes` work; preserve
+    # the existing leniency on unknown args (no hard error -> no behavior drift).
+    while [ $# -gt 0 ]; do
+        case "${1:-}" in
+            --help|-h|help)
+                echo -e "${BOLD}Loki Mode -- open the running app preview${NC}"
+                echo ""
+                echo "Usage: loki preview [--no-open]"
+                echo "       loki preview --public [--provider cloudflared|ngrok] [--yes] [--no-host-rewrite]"
+                echo "       loki open      (alias)"
+                echo ""
+                echo "Prints the URL of the app Loki built and started locally, then"
+                echo "opens it in your browser. The app runner starts the app after the"
+                echo "first successful build iteration. This serves a real local build"
+                echo "from localhost on your machine; it is not hosted."
+                echo ""
+                echo "Options:"
+                echo "  --no-open          Print the URL and status only; do not open a browser"
+                echo "  --public           Expose the running app over a PUBLIC URL via your own"
+                echo "                     tunnel CLI (cloudflared or ngrok). Consent-gated,"
+                echo "                     default-OFF. Loki never proxies traffic or bundles a"
+                echo "                     binary; it wraps YOUR OWN tunnel client."
+                echo "  --provider NAME    Tunnel provider for --public: cloudflared or ngrok"
+                echo "                     (default: auto-detect, cloudflared first)"
+                echo "  --yes              Skip the --public consent prompt (warning is still"
+                echo "                     printed). Required to use --public non-interactively"
+                echo "  --no-host-rewrite  Do not rewrite the Host header on the tunnel"
+                echo "  --help, -h         Show this help and exit"
+                echo ""
+                echo "WARNING (--public): exposes THIS machine's app to ANYONE with the URL,"
+                echo "over the public internet, through your own tunnel account. The app may"
+                echo "have no authentication. It stays up until you stop it."
+                return 0
+                ;;
+            --no-open)
+                open_browser=false
+                ;;
+            --public)
+                public=true
+                ;;
+            --provider)
+                provider="${2:-}"
+                # Guard the value-consuming shift: if --provider is the LAST arg
+                # (no value), an unguarded shift here plus the loop's trailing
+                # shift would underflow and abort under set -e. Only consume a
+                # value when one is actually present.
+                [ $# -ge 2 ] && shift
+                ;;
+            --yes)
+                assume_yes=true
+                ;;
+            --no-host-rewrite)
+                no_host_rewrite=true
+                ;;
+        esac
+        shift
+    done
+
+    # --public branches into the tunnel path BEFORE the browser-open logic.
+    # Capture the exit code (set -e safe: a bare non-zero return on the call
+    # line would trip set -e before `return` runs).
+    if [ "$public" = true ]; then
+        local rc=0
+        _preview_public "$provider" "$assume_yes" "$no_host_rewrite" || rc=$?
+        return $rc
+    fi
+
+    local state_file="${LOKI_DIR}/app-runner/state.json"
+    if [ ! -f "$state_file" ]; then
+        echo "No app running. The app runner starts after the first successful build iteration."
+        echo "Run 'loki status' to check the current run."
+        return 0
+    fi
+
+    # Parse url/status/port via the shared helper, then re-split (same logic the
+    # inline parse used; behavior-neutral for the plain preview path).
+    local url status port _state
+    _state=$(_read_app_state "$state_file")
+    url=$(printf '%s\n' "$_state" | sed -n '1p')
+    status=$(printf '%s\n' "$_state" | sed -n '2p')
+    port=$(printf '%s\n' "$_state" | sed -n '3p')
 
     if [ "$status" != "running" ]; then
         echo "App is not running (status: ${status:-unknown})."

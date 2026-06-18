@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.72.0] - 2026-06-18
+
+### Public preview link: share the app Loki built
+
+`loki preview --public` creates a PUBLIC URL for the app Loki built and is
+running locally, by wrapping YOUR OWN tunnel client (cloudflared or ngrok), so
+you can send a teammate or client a link to the live build. Loki never proxies
+the traffic and never bundles or downloads a tunnel binary -- your tunnel
+account is what egresses, by your explicit choice, preserving the
+"your keys, nothing leaves your network" model.
+
+```
+loki preview --public                 # auto-detect cloudflared, then ngrok
+loki preview --public --provider ngrok
+loki preview --public --yes           # skip the consent prompt (warning still shown)
+```
+
+- Consent-gated, default-OFF: it always prints a clear warning (the app may have
+  no auth; anyone with the URL can reach it; it stays up until you stop it), and
+  on an interactive terminal asks `[y/N]` (default no). Non-interactive use
+  requires `--yes`; without it on a non-TTY, it refuses rather than silently
+  exposing anything.
+- Preconditions: the app must be running (state.json present, status running) and
+  its local port must actually respond -- a dead port is never tunneled.
+- Provider allowlist (cloudflared|ngrok only), honest install hint when neither
+  is present (never a fake success), and a foreground lifecycle with Ctrl+C +
+  trap teardown so a failed or finished attempt never leaves an orphaned public
+  tunnel. Host-header rewrite is on by default (fixes the common dev-server
+  "Invalid Host header"); disable with --no-host-rewrite.
+- Architect-planned (docs/PREVIEW-LINK-PLAN.md), reviewed by a 3-reviewer council
+  to unanimous approve (consent-unbypassable, no-orphan-tunnel, and no-injection
+  all independently verified). bash-only; no dist behavior change.
+
 ## [7.71.0] - 2026-06-18
 
 ### Live in-terminal build HUD
