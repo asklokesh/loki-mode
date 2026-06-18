@@ -64,6 +64,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Undo any mock.module() a test installed (e.g. the H2 tests stub
+  // learnings_writer to throw). mock.module is GLOBAL in Bun and persists
+  // across files; an inline restore at the end of a test body is skipped if the
+  // test throws first, leaking the throwing stub into sibling tests (notably
+  // learnings_writer's own suite) -- which manifested as a nondeterministic
+  // "synthetic total failure" only under `bun test --coverage` execution
+  // ordering. Restoring in afterEach guarantees cleanup regardless of outcome.
+  mock.restore();
   if (originalLokiDir === undefined) delete process.env["LOKI_DIR"];
   else process.env["LOKI_DIR"] = originalLokiDir;
   if (originalRealJudge === undefined) delete process.env["LOKI_OVERRIDE_REAL_JUDGE"];
