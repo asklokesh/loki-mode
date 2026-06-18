@@ -476,10 +476,20 @@ class MemoryRetrieval:
         # Apply recency boost
         merged = self._apply_recency_boost(merged, boost_factor=0.1)
 
-        # Boost importance for retrieved memories (use it or lose it)
+        # Boost importance for retrieved memories (use it or lose it). The
+        # in-memory boost shapes the returned ranking; persist_boost writes the
+        # reinforcement to disk (retrieval-F1: boost_on_retrieval alone never
+        # persisted). Persistence is best-effort: a locked/missing record must
+        # never break retrieval, so failures are swallowed (mirrors other
+        # best-effort writes).
         if hasattr(self.storage, 'boost_on_retrieval'):
             for memory in merged[:top_k]:
                 self.storage.boost_on_retrieval(memory, boost=0.05)
+                if hasattr(self.storage, 'persist_boost'):
+                    try:
+                        self.storage.persist_boost(memory, boost=0.05)
+                    except Exception:
+                        pass
 
         # Apply token budget optimization if specified
         if token_budget is not None and token_budget > 0:

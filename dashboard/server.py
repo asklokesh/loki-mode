@@ -8675,6 +8675,17 @@ def _get_migration_imports():
     return _migration_imports
 
 
+def _get_migration_terminal_phase():
+    """Return the last phase in the migration PHASE_ORDER (the terminal phase),
+    or None if the migration engine is unavailable. Used to let the terminal
+    phase be advanced/completed without a successor to_phase (WAVE9 F1)."""
+    try:
+        from dashboard.migration_engine import PHASE_ORDER
+        return PHASE_ORDER[-1] if PHASE_ORDER else None
+    except (ImportError, IndexError):
+        return None
+
+
 @app.get("/api/migration/list", dependencies=[Depends(auth.require_scope("read"))])
 def list_migrations_endpoint():
     """List all migrations."""
@@ -8825,7 +8836,16 @@ def advance_migration(migration_id: str, request_body: dict):
     MigrationPipeline, list_migrations = imports
     from_phase = request_body.get("from_phase")
     to_phase = request_body.get("to_phase")
-    if not from_phase or not to_phase:
+    # The terminal phase (the last in PHASE_ORDER, e.g. "verify") has no
+    # successor, so check_phase_gate can never pass for it and to_phase is
+    # meaningless. Without this carve-out the terminal phase could never be
+    # completed via the API, so overall_status could never reach "completed"
+    # (WAVE9 migration-F1). For the terminal phase we require only from_phase
+    # and skip the gate; advance_phase still validates the phase and the
+    # (ValueError, RuntimeError) -> 409 handler below preserves idempotency.
+    terminal_phase = _get_migration_terminal_phase()
+    is_terminal = terminal_phase is not None and from_phase == terminal_phase
+    if not from_phase or (not to_phase and not is_terminal):
         raise HTTPException(status_code=400, detail="from_phase and to_phase are required")
     # Load pipeline and check phase gate before the try/except to let
     # HTTPException and FileNotFoundError propagate naturally.
@@ -8833,9 +8853,10 @@ def advance_migration(migration_id: str, request_body: dict):
         pipeline = MigrationPipeline.load(migration_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Migration not found: {migration_id}")
-    passed, reason = pipeline.check_phase_gate(from_phase, to_phase)
-    if not passed:
-        raise HTTPException(status_code=409, detail=reason)
+    if not is_terminal:
+        passed, reason = pipeline.check_phase_gate(from_phase, to_phase)
+        if not passed:
+            raise HTTPException(status_code=409, detail=reason)
     try:
         result = pipeline.advance_phase(from_phase)
         return asdict(result) if hasattr(result, '__dataclass_fields__') else result

@@ -244,5 +244,99 @@ def test_c1_merge_rereads_fresh_usage_count(tmp_path):
     )
 
 
+# ---------------------------------------------------------------------------
+# C4: re-running consolidate() over an unchanged episode set must be a no-op
+# for pattern confidence (idempotency). Pre-fix, merge_with_existing applied a
+# flat +0.05 boost on every run because consolidate() reloads every in-window
+# episode each run (storage.list_episodes has no consolidated-state filter), so
+# identical patterns re-matched and confidence ratcheted up with no new data.
+# ---------------------------------------------------------------------------
+
+
+def _confidence_of_only_pattern(storage):
+    """Return the confidence of the single semantic (non-anti) pattern on disk.
+
+    The fixtures below produce exactly one created pattern, so this both fetches
+    the value under test and asserts the store shape is what the test assumes.
+    """
+    pattern_ids = storage.list_patterns()
+    patterns = [
+        SemanticPattern.from_dict(storage.load_pattern(pid))
+        for pid in pattern_ids
+    ]
+    # Ignore anti-patterns; the success episodes produce one positive pattern.
+    positive = [p for p in patterns if not p.incorrect_approach]
+    assert len(positive) == 1, (
+        f"expected exactly one positive pattern, found {len(positive)}"
+    )
+    return positive[0].confidence
+
+
+def test_c4_rerun_does_not_inflate_confidence(tmp_path):
+    """Run consolidate() twice over the SAME episodes.
+
+    Run 1 (clean store): creates a pattern -> patterns_created >= 1. Capture its
+    confidence c1 (proves the test is non-vacuous: consolidation did real work).
+
+    Run 2 (unchanged episodes): the same episodes re-cluster into the same
+    pattern, which re-matches the now-existing pattern -> the merge branch fires
+    (patterns_merged >= 1). Because no NEW source episode is present, confidence
+    must stay exactly c1.
+
+    Pre-fix: run 2 applied a flat +0.05 -> confidence == c1 + 0.05 -> FAILS.
+    Post-fix: the source_episodes diff is empty -> no boost -> confidence == c1.
+    """
+    storage = MemoryStorage(base_path=str(tmp_path))
+    for i in range(2):
+        storage.save_episode(_episode(f"ep-s{i}", "build api endpoints", ["Edit", "Read"]))
+
+    pipe = ConsolidationPipeline(storage=storage, embedding_engine=None, base_path=str(tmp_path))
+
+    r1 = pipe.consolidate(since_hours=24 * 365)
+    assert r1.patterns_created >= 1, "run 1 created no pattern; test would be vacuous"
+    c1 = _confidence_of_only_pattern(storage)
+
+    r2 = pipe.consolidate(since_hours=24 * 365)
+    # The merge path MUST have executed; otherwise the assertion below would pass
+    # trivially (nothing happened). This is the discriminating guard.
+    assert r2.patterns_merged >= 1, "run 2 did not merge; test would be vacuous"
+    c2 = _confidence_of_only_pattern(storage)
+
+    assert c2 == pytest.approx(c1), (
+        f"confidence inflated on re-run with no new episodes: {c1} -> {c2} "
+        "(consolidation-C4 idempotency regression)"
+    )
+
+
+def test_c4_new_episode_still_boosts_confidence(tmp_path):
+    """The idempotency fix must NOT suppress legitimate reinforcement.
+
+    After an initial pattern exists, a genuinely NEW similar episode arriving in
+    a later run introduces a new source_episodes id, so the merge SHOULD still
+    boost confidence. This proves the fix gates on new evidence rather than
+    blanket-disabling the boost.
+    """
+    storage = MemoryStorage(base_path=str(tmp_path))
+    for i in range(2):
+        storage.save_episode(_episode(f"ep-s{i}", "build api endpoints", ["Edit", "Read"]))
+
+    pipe = ConsolidationPipeline(storage=storage, embedding_engine=None, base_path=str(tmp_path))
+
+    pipe.consolidate(since_hours=24 * 365)
+    c1 = _confidence_of_only_pattern(storage)
+
+    # A new, similar success episode arrives. Its id is not in the pattern's
+    # source_episodes, so the merge introduces new evidence and should boost.
+    storage.save_episode(_episode("ep-s2", "build api endpoints", ["Edit", "Read"]))
+    r2 = pipe.consolidate(since_hours=24 * 365)
+    assert r2.patterns_merged >= 1, "run 2 did not merge; test would be vacuous"
+    c2 = _confidence_of_only_pattern(storage)
+
+    assert c2 > c1, (
+        f"a new similar episode should reinforce confidence, but {c1} -> {c2} "
+        "(fix wrongly suppressed legitimate reinforcement)"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
