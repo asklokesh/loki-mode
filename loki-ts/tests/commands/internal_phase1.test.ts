@@ -1,7 +1,7 @@
 // v7.5.3 tests for `loki internal phase1-hooks` -- the hidden Bun
 // subcommand bash autonomy/run.sh calls between iterations.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,6 +157,83 @@ describe("v7.5.3 loki internal phase1-hooks", () => {
     // Find the file under .loki/escalations/
     const escDir = join(scratch, "escalations");
     expect(existsSync(escDir)).toBe(true);
+  });
+
+  it("H2: one throwing appendFromGateFailure does not drop the other findings", async () => {
+    // Bug-hunt H2 (batch-abort). Pre-fix, runReflect looped
+    // `await appendFromGateFailure(...)` inside the single outer try, so the
+    // first throw aborted the loop: earlier appends persisted but every
+    // remaining finding was silently dropped AND the command exited 1.
+    //
+    // We seed 3 blocking findings and mock the learnings_writer so the SECOND
+    // append throws. Post-fix: the 1st and 3rd still persist, the command
+    // surfaces the failure count, and exit code stays 0 (not all failed).
+    seedReview(20, [
+      "[Critical] bug one at src/a.ts:1",
+      "[High] bug two at src/b.ts:2",
+      "[Critical] bug three at src/c.ts:3",
+    ]);
+
+    // Mock learnings_writer.appendFromGateFailure: throw on the 2nd finding
+    // (src/b.ts), persist a real learning for the others so we can assert
+    // they survived.
+    const realWriter = await import("../../src/runner/learnings_writer.ts");
+    const persisted: string[] = [];
+    mock.module("../../src/runner/learnings_writer.ts", () => ({
+      ...realWriter,
+      appendFromGateFailure: async (
+        _base: string,
+        _iter: number,
+        finding: { file: string | null },
+      ) => {
+        if (finding.file === "src/b.ts") {
+          throw new Error("synthetic append failure for b.ts");
+        }
+        persisted.push(finding.file ?? "");
+        return { id: "stub" };
+      },
+    }));
+
+    try {
+      const stop = capture();
+      const code = await runInternalPhase1Hooks(["reflect", "20"]);
+      const out = stop();
+      // The one throwing finding must NOT abort the loop or fail the command.
+      expect(code).toBe(0);
+      // The two good findings still persisted (the bug dropped #3).
+      expect(persisted).toContain("src/a.ts");
+      expect(persisted).toContain("src/c.ts");
+      expect(persisted.length).toBe(2);
+      // Failure is surfaced honestly, not swallowed silently.
+      expect(out.stderr).toContain("learning append failed");
+      expect(out.stdout).toContain("(1 failed)");
+      // findings-20.json was still written for all 3 findings.
+      expect(existsSync(join(scratch, "state", "findings-20.json"))).toBe(true);
+    } finally {
+      mock.module("../../src/runner/learnings_writer.ts", () => realWriter);
+    }
+  });
+
+  it("H2: command exits 1 only when EVERY append fails", async () => {
+    seedReview(21, ["[Critical] only bug at src/only.ts:1"]);
+    const realWriter = await import("../../src/runner/learnings_writer.ts");
+    mock.module("../../src/runner/learnings_writer.ts", () => ({
+      ...realWriter,
+      appendFromGateFailure: async () => {
+        throw new Error("synthetic total failure");
+      },
+    }));
+    try {
+      const stop = capture();
+      const code = await runInternalPhase1Hooks(["reflect", "21"]);
+      const out = stop();
+      expect(code).toBe(1);
+      expect(out.stderr).toContain("all 1 learning appends failed");
+      // findings file still persisted before the learnings step.
+      expect(existsSync(join(scratch, "state", "findings-21.json"))).toBe(true);
+    } finally {
+      mock.module("../../src/runner/learnings_writer.ts", () => realWriter);
+    }
   });
 
   it("unknown subcommand exits 2", async () => {

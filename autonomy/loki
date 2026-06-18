@@ -2204,6 +2204,72 @@ _kill_pid() {
     fi
 }
 
+# v7.7.34 group-kill, factored (loki-stop-F1). Reaps the orchestrator's whole
+# process group via the recorded pgid so the autonomous agent (claude/codex/
+# aider), which shares the orchestrator group and would otherwise reparent to
+# init and keep editing files, is killed atomically. This is the SAME logic the
+# no-arg `loki stop` path used inline; it is now shared so the by-id path
+# (`loki stop <session-id>`) gets identical reaping instead of skipping it.
+#
+# Args: one or more pgid-file paths. Each is read, validated (numeric, > 1, NOT
+# this shell's own group), and group-killed; the file is removed after. A
+# protected-pid conflict (dashboard / app-runner / registered pids that happen
+# to share the group) downgrades the kill to a per-pid kill that excludes the
+# protected pids, so a group-kill never tears down the dashboard. Every kill is
+# `|| true` guarded -- safe under set -e (killing an already-dead member, or an
+# empty group, returns non-zero legitimately).
+_stop_group_by_pgid_files() {
+    local _stop_pgid_file
+    for _stop_pgid_file in "$@"; do
+        [ -f "$_stop_pgid_file" ] || continue
+        local _spgid
+        _spgid=$(cat "$_stop_pgid_file" 2>/dev/null | tr -d ' ')
+        case "$_spgid" in ''|*[!0-9]*) continue ;; esac
+        [ "$_spgid" -gt 1 ] 2>/dev/null || continue
+        local _my_pgid
+        _my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+        [ "$_spgid" = "$_my_pgid" ] && continue   # never kill our own group
+        # Collect protected pids (dashboard, app-runner, registered pids) so
+        # a group-kill never takes down the dashboard if it happens to share
+        # the orchestrator group. Mirrors the dashboard Python route.
+        local _protected=" "
+        local _pf
+        if [ -d "$LOKI_DIR/pids" ]; then
+            for _pf in "$LOKI_DIR/pids"/*.json; do
+                [ -f "$_pf" ] || continue
+                _protected="${_protected}$(basename "$_pf" .json) "
+            done
+        fi
+        for _pf in "$LOKI_DIR/dashboard/dashboard.pid" "${HOME}/.loki/dashboard/dashboard.pid"; do
+            [ -f "$_pf" ] && _protected="${_protected}$(cat "$_pf" 2>/dev/null | tr -d ' ') "
+        done
+        # Does any protected pid share this group?
+        local _conflict=0 _gp
+        for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+            case "$_protected" in *" $_gp "*) _conflict=1; break ;; esac
+        done
+        if [ "$_conflict" = "1" ]; then
+            # Per-pid kill of group members EXCLUDING protected pids.
+            for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+                case "$_protected" in *" $_gp "*) continue ;; esac
+                [ "$_gp" = "$$" ] && continue
+                kill -TERM "$_gp" 2>/dev/null || true
+            done
+            sleep 1
+            for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
+                case "$_protected" in *" $_gp "*) continue ;; esac
+                [ "$_gp" = "$$" ] && continue
+                kill -KILL "$_gp" 2>/dev/null || true
+            done
+        else
+            kill -TERM -- -"$_spgid" 2>/dev/null || true
+            sleep 1
+            kill -KILL -- -"$_spgid" 2>/dev/null || true
+        fi
+        rm -f "$_stop_pgid_file" 2>/dev/null || true
+    done
+}
+
 # Stop a specific session by its session ID
 _stop_session_by_id() {
     local sid="$1"
@@ -2296,6 +2362,29 @@ cmd_stop() {
     # Stop a specific session by ID
     if [ -n "$target_session" ]; then
         if is_session_running "$target_session"; then
+            # loki-stop-F1: group-kill FIRST (v7.7.34 discipline), scoped to THIS
+            # session's recorded pgid. Without this the by-id path reaped only the
+            # orchestrator pid (via _stop_session_by_id -> _kill_pid), leaving the
+            # autonomous agent (claude/codex/aider) -- which shares the
+            # orchestrator's process group -- to reparent to init and keep editing
+            # files. That is exactly the v7.7.34 orphaned-agent bug, reopened on
+            # the by-id path. The pgid is session-scoped: run.sh writes it next to
+            # the session pid as ${pid_file%.pid}.pgid, so we only ever touch THIS
+            # session's group (modern sessions/<id>/loki.pgid + legacy
+            # run-<id>.pgid), never a sibling session or another folder.
+            #
+            # Deliberately NOT mirrored from the no-arg path: the docker reap,
+            # session.json->stopped, and dashboard registry mark are folder/global
+            # side effects (the docker container is named by workspace sha with no
+            # per-session container; registry.mark_project_stopped marks the whole
+            # project; session.json is the folder-level skill session). Firing them
+            # on a by-id stop would mismark the project / kill a docker run while a
+            # sibling session in the same folder is still building. The group-kill
+            # alone closes the stated orphaned-agent hole; folder-global teardown
+            # stays on the no-arg / --all paths.
+            _stop_group_by_pgid_files \
+                "$LOKI_DIR/sessions/$target_session/loki.pgid" \
+                "$LOKI_DIR/run-${target_session}.pgid"
             _stop_session_by_id "$target_session"
             echo "Stopped session: $target_session"
         else
@@ -2381,56 +2470,9 @@ cmd_stop() {
         # session leader), so signaling the whole group reaps the orchestrator
         # AND the agent child atomically. Killing only the orchestrator pid lets
         # the agent reparent to init and keep editing files -- the reported bug.
-        # Guards: only a numeric pgid > 1 that is NOT this shell's own group.
-        local _stop_pgid_file
-        for _stop_pgid_file in "$LOKI_DIR/loki.pgid" "$LOKI_DIR/run.pgid"; do
-            [ -f "$_stop_pgid_file" ] || continue
-            local _spgid
-            _spgid=$(cat "$_stop_pgid_file" 2>/dev/null | tr -d ' ')
-            case "$_spgid" in ''|*[!0-9]*) continue ;; esac
-            [ "$_spgid" -gt 1 ] 2>/dev/null || continue
-            local _my_pgid
-            _my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
-            [ "$_spgid" = "$_my_pgid" ] && continue   # never kill our own group
-            # Collect protected pids (dashboard, app-runner, registered pids) so
-            # a group-kill never takes down the dashboard if it happens to share
-            # the orchestrator group. Mirrors the dashboard Python route.
-            local _protected=" "
-            local _pf
-            if [ -d "$LOKI_DIR/pids" ]; then
-                for _pf in "$LOKI_DIR/pids"/*.json; do
-                    [ -f "$_pf" ] || continue
-                    _protected="${_protected}$(basename "$_pf" .json) "
-                done
-            fi
-            for _pf in "$LOKI_DIR/dashboard/dashboard.pid" "${HOME}/.loki/dashboard/dashboard.pid"; do
-                [ -f "$_pf" ] && _protected="${_protected}$(cat "$_pf" 2>/dev/null | tr -d ' ') "
-            done
-            # Does any protected pid share this group?
-            local _conflict=0 _gp
-            for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
-                case "$_protected" in *" $_gp "*) _conflict=1; break ;; esac
-            done
-            if [ "$_conflict" = "1" ]; then
-                # Per-pid kill of group members EXCLUDING protected pids.
-                for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
-                    case "$_protected" in *" $_gp "*) continue ;; esac
-                    [ "$_gp" = "$$" ] && continue
-                    kill -TERM "$_gp" 2>/dev/null || true
-                done
-                sleep 1
-                for _gp in $(ps -axo pid=,pgid= 2>/dev/null | awk -v g="$_spgid" '$2==g{print $1}'); do
-                    case "$_protected" in *" $_gp "*) continue ;; esac
-                    [ "$_gp" = "$$" ] && continue
-                    kill -KILL "$_gp" 2>/dev/null || true
-                done
-            else
-                kill -TERM -- -"$_spgid" 2>/dev/null || true
-                sleep 1
-                kill -KILL -- -"$_spgid" 2>/dev/null || true
-            fi
-            rm -f "$_stop_pgid_file" 2>/dev/null || true
-        done
+        # Factored into _stop_group_by_pgid_files (loki-stop-F1) so the by-id stop
+        # path performs identical reaping. Here we pass the GLOBAL pgid files.
+        _stop_group_by_pgid_files "$LOKI_DIR/loki.pgid" "$LOKI_DIR/run.pgid"
 
         local killed_pid=""
         for pid_file in "$LOKI_DIR/loki.pid" "$LOKI_DIR/run.pid"; do

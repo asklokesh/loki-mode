@@ -1,0 +1,248 @@
+"""Wave-8 regression tests for memory/consolidation.py.
+
+Covers two findings:
+
+C2 (MEDIUM, null-field crashes): an explicit JSON null goal/tool reaches the
+consolidation helpers as None (EpisodeTrace.from_dict uses .get(key, default),
+which returns None on an explicit null, not the default). Several str ops and
+joins crashed on None. These tests prove the helpers and the full consolidate()
+run survive None goals and None tools.
+
+C1 (HIGH, lost-update): consolidate() snapshots all patterns once, then performs
+separately-locked merge writes. A concurrent usage bump landing after the
+snapshot was clobbered because merge_with_existing() built the merged record from
+the stale snapshot's usage_count/last_used. The fix re-reads the target pattern
+fresh immediately before each merge. This test forces the merge branch and asserts
+the merged result reflects the freshly-read usage_count, not the snapshot value.
+
+Run:
+    cd /Users/lokesh/git/loki-mode && python3.12 -m pytest tests/test-consolidation-wave8.py -q
+"""
+
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+import pytest
+
+# Make the repo root importable so `import memory.*` works regardless of cwd.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from memory.consolidation import (  # noqa: E402
+    ConsolidationPipeline,
+    compress_episode_to_summary,
+    compress_episodes_to_pattern_desc,
+)
+from memory.schemas import (  # noqa: E402
+    ActionEntry,
+    EpisodeTrace,
+    SemanticPattern,
+)
+from memory.storage import MemoryStorage  # noqa: E402
+
+
+def _episode(ep_id, goal, tools, outcome="success"):
+    """Build an EpisodeTrace with the given goal and tool list.
+
+    goal may be None (simulating an explicit-null goal). Each entry in `tools`
+    may be None (simulating an explicit-null tool key).
+    """
+    return EpisodeTrace(
+        id=ep_id,
+        task_id="t-1",
+        timestamp=datetime.now(timezone.utc),
+        duration_seconds=1,
+        agent="dev",
+        phase="ACT",
+        goal=goal,
+        action_log=[ActionEntry(tool=t, input="x", output="y", timestamp=0) for t in tools],
+        outcome=outcome,
+    )
+
+
+# ---------------------------------------------------------------------------
+# C2: null goal / null tool must not crash
+# ---------------------------------------------------------------------------
+
+
+def _pipeline(tmp_path):
+    storage = MemoryStorage(base_path=tmp_path)
+    # embedding_engine=None forces the text/task-type fallback path, exercising
+    # _generate_cluster_label / _infer_task_type / extract_common_pattern.
+    return ConsolidationPipeline(storage=storage, embedding_engine=None, base_path=tmp_path)
+
+
+def test_c2_episode_to_text_null_goal(tmp_path):
+    """_episode_to_text joins parts; a None goal crashed the join pre-fix."""
+    pipe = _pipeline(str(tmp_path))
+    ep = _episode("ep-1", None, ["Read", None, "Edit"])
+    # Pre-fix: TypeError sequence item 0: expected str instance, NoneType found.
+    text = pipe._episode_to_text(ep)
+    assert isinstance(text, str)
+
+
+def test_c2_generate_cluster_label_null_goal(tmp_path):
+    """_generate_cluster_label calls episode.goal.lower(); None crashed pre-fix."""
+    pipe = _pipeline(str(tmp_path))
+    eps = [_episode("ep-1", None, ["Read"]), _episode("ep-2", None, ["Edit"])]
+    label = pipe._generate_cluster_label(eps)
+    assert isinstance(label, str)
+
+
+def test_c2_extract_common_pattern_null_tool(tmp_path):
+    """extract_common_pattern builds common_tools then joins; None tool crashed."""
+    pipe = _pipeline(str(tmp_path))
+    # Two episodes with a None tool and a None goal; cluster size >= 2.
+    eps = [_episode("ep-1", None, [None, None]), _episode("ep-2", None, [None, None])]
+    pattern = pipe.extract_common_pattern(eps)
+    # Should not raise; returns a SemanticPattern (or None, but never crash).
+    assert pattern is None or isinstance(pattern, SemanticPattern)
+
+
+def test_c2_extract_anti_patterns_null_tool(tmp_path):
+    """extract_anti_patterns feeds tools into _summarize_actions join."""
+    from memory.schemas import ErrorEntry
+
+    pipe = _pipeline(str(tmp_path))
+    ep = EpisodeTrace(
+        id="ep-f1",
+        task_id="t-1",
+        timestamp=datetime.now(timezone.utc),
+        duration_seconds=1,
+        agent="dev",
+        phase="ACT",
+        goal=None,
+        action_log=[ActionEntry(tool=None, input="x", output="y", timestamp=0)],
+        outcome="failure",
+        errors_encountered=[ErrorEntry(error_type="TypeError", message="boom", resolution="")],
+    )
+    anti = pipe.extract_anti_patterns([ep])
+    assert isinstance(anti, list)
+
+
+def test_c2_compress_functions_null_goal():
+    """Module-level compress_* slice/lower episode.goal; None crashed pre-fix."""
+    ep = _episode("ep-1", None, ["Read"])
+    assert isinstance(compress_episode_to_summary(ep), str)
+    # Single-episode branch (f-string, no slice).
+    assert isinstance(compress_episodes_to_pattern_desc([ep]), str)
+    # Multi-episode branch hits both .lower() and the [:100] fallback slice.
+    eps = [_episode("ep-1", None, ["Read"]), _episode("ep-2", None, ["Edit"])]
+    assert isinstance(compress_episodes_to_pattern_desc(eps), str)
+
+
+def test_c2_full_consolidate_with_null_fields(tmp_path):
+    """End-to-end: a stored episode with explicit-null goal and tool must not
+    crash the whole consolidation run."""
+    storage = MemoryStorage(base_path=str(tmp_path))
+    # Persist two success episodes (same null goal) so they cluster together and
+    # form a pattern, plus a failure episode for the anti-pattern path. We write
+    # the raw dict with explicit JSON nulls to exercise from_dict's None return.
+    for i in range(2):
+        d = _episode(f"ep-s{i}", "build api", ["Read"]).to_dict()
+        d["context"]["goal"] = None
+        d["action_log"][0]["action"] = None  # explicit-null tool
+        # Round-trip through from_dict so the stored episode carries the None
+        # goal/tool exactly as a JSON-null load would produce.
+        storage.save_episode(EpisodeTrace.from_dict(d))
+    pipe = ConsolidationPipeline(storage=storage, embedding_engine=None, base_path=str(tmp_path))
+    # Pre-fix this raised TypeError/AttributeError deep in the pipeline.
+    result = pipe.consolidate(since_hours=24 * 365)
+    assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# C1: merge must re-read fresh state, not the stale snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_c1_merge_rereads_fresh_usage_count(tmp_path):
+    """Force the cluster-merge branch and simulate a concurrent usage bump that
+    lands after the step-4 snapshot. The merged pattern must carry the bumped
+    usage_count (read fresh), not the stale snapshot value.
+
+    Pre-fix: merge_with_existing built from the snapshot copy (usage_count=0),
+    so the merged record clobbered the concurrent bump -> assertion fails.
+    Post-fix: _reload_pattern re-reads the current record (usage_count=42), so
+    the merge preserves it.
+    """
+    storage = MemoryStorage(base_path=str(tmp_path))
+
+    # An existing on-disk pattern with usage_count=0 (the snapshot value).
+    existing = SemanticPattern.create(
+        pattern="build api endpoints",
+        category="implementation",
+        conditions=["When building"],
+        correct_approach="Use Edit",
+    )
+    existing.usage_count = 0
+    storage.save_pattern(existing)
+
+    # Two success episodes that will cluster and produce a candidate pattern.
+    for i in range(2):
+        storage.save_episode(_episode(f"ep-s{i}", "build api endpoints", ["Edit", "Read"]))
+
+    pipe = ConsolidationPipeline(storage=storage, embedding_engine=None, base_path=str(tmp_path))
+
+    # Force the merge branch deterministically (avoids depending on the exact
+    # similarity score clearing 0.8). Both gates must be forced: _patterns_similar
+    # selects the existing pattern in the loop, and _pattern_similarity_score
+    # (used inside merge_with_existing) must clear 0.5 or merge returns the new
+    # pattern unchanged under its own id.
+    pipe._patterns_similar = lambda a, b, threshold=0.8: True
+    pipe._pattern_similarity_score = lambda a, b: 1.0
+
+    # Simulate the concurrent usage bump that landed AFTER the step-4 snapshot.
+    # The step-4 snapshot loads each pattern once (usage_count=0 here). A
+    # concurrent engine.increment_pattern_usage() then bumps usage_count to 42 on
+    # disk. We model this with a per-id call counter: the FIRST load of the
+    # existing id (the snapshot) returns the old value (0); every SUBSEQUENT load
+    # (the in-merge re-read introduced by the fix) returns the bumped value (42).
+    #
+    # This is what makes the test discriminating:
+    #   - Pre-fix: merge builds from the stale snapshot copy -> usage_count=0.
+    #   - Post-fix: merge re-reads -> sees the second load -> usage_count=42.
+    real_load = storage.load_pattern
+    load_calls = {"existing": 0}
+
+    def bumped_load(pattern_id):
+        data = real_load(pattern_id)
+        if data and data.get("id") == existing.id:
+            load_calls["existing"] += 1
+            data = dict(data)
+            # First load (snapshot) sees old value; later loads see the bump.
+            data["usage_count"] = 0 if load_calls["existing"] == 1 else 42
+        return data
+
+    # Capture what gets persisted by the merge write.
+    persisted = {}
+    real_update = storage.update_pattern
+
+    def capture_update(pattern):
+        # Capture only the merge write to the existing pattern id (ignore any
+        # step-7 link updates to other ids).
+        if pattern.id == existing.id:
+            persisted["pattern"] = pattern
+        return real_update(pattern)
+
+    storage.load_pattern = bumped_load
+    storage.update_pattern = capture_update
+
+    pipe.consolidate(since_hours=24 * 365)
+
+    assert "pattern" in persisted, "merge branch did not fire; test would be vacuous"
+    merged = persisted["pattern"]
+    assert merged.id == existing.id
+    # The crux: merged usage_count reflects the fresh re-read (42), not the
+    # stale snapshot (0). This is the lost-update guard.
+    assert merged.usage_count == 42, (
+        f"expected merged usage_count=42 from fresh re-read, got {merged.usage_count} "
+        "(merge built from stale snapshot -> C1 lost-update regression)"
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

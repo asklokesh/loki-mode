@@ -41,10 +41,14 @@ function learningsFile(): string {
   return join(scratch, "state", "relevant-learnings.json");
 }
 
-function expectedId(trigger: string, rootCause: string): string {
-  // Source uses a NUL byte separator, not a space (verified via od on the
-  // module bytes). Keep this in sync with learnings_writer.ts learningId().
-  return createHash("sha256").update(`${trigger}\0${rootCause}`).digest("hex").slice(0, 16);
+function expectedId(trigger: string, rootCause: string, file: string | undefined): string {
+  // v7.x bug-hunt M2: the dedup key now folds in evidence.file so distinct
+  // findings sharing the same description in different files no longer
+  // collapse. Keep this in sync with learnings_writer.ts learningId().
+  return createHash("sha256")
+    .update(`${trigger} ${rootCause} ${file ?? ""}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 describe("appendLearning", () => {
@@ -62,7 +66,11 @@ describe("appendLearning", () => {
       { episodeBridge: null },
     );
 
-    const expectedHash = expectedId("gate_failure", "static analysis flagged unused var");
+    const expectedHash = expectedId(
+      "gate_failure",
+      "static analysis flagged unused var",
+      "src/x.ts",
+    );
     expect(result.id).toBe(expectedHash);
     expect(result.id.length).toBe(16);
     expect(typeof result.timestamp).toBe("string");
@@ -78,7 +86,10 @@ describe("appendLearning", () => {
     expect(parsed.learnings[0]!["iteration"]).toBe(3);
   });
 
-  it("dedupes on (trigger, rootCause): updates timestamp+iteration but does not add a duplicate", async () => {
+  it("dedupes on (trigger, rootCause, file): updates timestamp+iteration but does not add a duplicate", async () => {
+    // v7.x bug-hunt M2: the dedup key now folds in evidence.file. Same
+    // trigger + rootCause + file still dedupes (this test); a different file
+    // produces a distinct learning (covered in learnings_writer_concurrency).
     const first = await appendLearning(
       scratch,
       {
@@ -103,7 +114,7 @@ describe("appendLearning", () => {
         rootCause: "shared cause",
         fix: "fix v2",
         preventInFuture: "test even more",
-        evidence: { file: "b.ts" },
+        evidence: { file: "a.ts" },
       },
       { episodeBridge: null },
     );
@@ -117,7 +128,7 @@ describe("appendLearning", () => {
     const entry = parsed.learnings[0]!;
     // iteration updated to most recent
     expect(entry["iteration"]).toBe(7);
-    // first-seen evidence preserved (a.ts, not b.ts)
+    // first-seen evidence preserved
     expect((entry["evidence"] as Record<string, unknown>)["file"]).toBe("a.ts");
     // fix preserved (first-seen)
     expect(entry["fix"]).toBe("fix v1");

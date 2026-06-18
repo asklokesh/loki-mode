@@ -1725,12 +1725,25 @@ detect_complexity() {
             # Markdown PRD: count headers and checkboxes
             feature_count=$(grep -c "^##\|^- \[" "$prd_path" 2>/dev/null || echo "0")
         fi
+        # WAVE8 FIX run.sh-provider-F1 (HIGH): grep -c prints "0" AND exits 1 on
+        # zero matches; with the '|| echo "0"' fallback that yields "0\n0", which
+        # crashes the integer tests below ([: 0\n0: integer expression expected)
+        # and silently drops complexity from simple->standard. Strip to digits
+        # after every assignment path (jq, both greps), mirroring file_count:1688.
+        # "0\n0" -> "00" -> arithmetically 0.
+        feature_count="${feature_count:-0}"
+        feature_count="${feature_count//[^0-9]/}"
+        feature_count="${feature_count:-0}"
 
         # Count distinct sections (h2/h3 headers) for structural complexity (#74)
         local section_count=0
         if [[ "$prd_path" != *.json ]]; then
             section_count=$(grep -c "^##\|^###" "$prd_path" 2>/dev/null || echo "0")
         fi
+        # WAVE8 FIX run.sh-provider-F1: same grep -c double-output guard.
+        section_count="${section_count:-0}"
+        section_count="${section_count//[^0-9]/}"
+        section_count="${section_count:-0}"
 
         # PRD complexity uses content length, feature count, AND structural depth (#74)
         # A PRD with multiple sections or substantial content is not "simple" even with few project files
@@ -8927,6 +8940,63 @@ _dispatch_reviewer() {
     esac
 }
 
+# WAVE8 FIX run.sh-F1/F3 (CRITICAL/HIGH): SAFE-DEFAULT verdict classification.
+# Given a reviewer file, extract the VERDICT: line (tolerant of leading
+# markdown like '**VERDICT:**' or '# VERDICT:' so fewer reviewers fall to
+# NO_VERDICT) and classify it as one of: FAIL, PASS, AMBIGUOUS, NONE.
+#   FAIL   -> verdict text contains FAIL/REJECT/BLOCK (verbose suffixes like
+#             "FAIL - [Critical] SQLi", "FAIL.", "FAIL (3 criticals)" all match)
+#   PASS   -> verdict text contains PASS/APPROVE (and NOT a fail token); this
+#             preserves the deliberate "PASS with concerns" = pass semantics.
+#   AMBIGUOUS -> a VERDICT: line exists but matches neither (unparseable token).
+#                Callers MUST treat this as non-passing (safe direction), never pass.
+#   NONE   -> no parseable VERDICT: line at all (empty / missing).
+# FAIL-first ordering means a verdict naming both (rare) blocks -- the safe way.
+# Mirrors the council's _council_parse_vote: parse-miss defaults to the safe
+# (blocking) direction, never to pass.
+_classify_verdict() {
+    local file="$1"
+    [ -f "$file" ] && [ -s "$file" ] || { echo "NONE"; return 0; }
+    local verdict
+    # Tolerant anchor: optional leading whitespace, then optional markdown
+    # markers (* # >), then optional whitespace, then VERDICT:. This rescues
+    # '**VERDICT:** FAIL', '# VERDICT: PASS', '> VERDICT: FAIL' that the strict
+    # '^VERDICT:' anchor missed (those previously became NO_VERDICT and dropped
+    # the reviewer's dissent).
+    verdict=$(grep -iE "^[[:space:]]*[*#>]*[[:space:]]*VERDICT:" "$file" \
+        | head -1 \
+        | sed -E 's/^[[:space:]]*[*#>]*[[:space:]]*[Vv][Ee][Rr][Dd][Ii][Cc][Tt]:[*[:space:]]*//' \
+        | tr '[:lower:]' '[:upper:]')
+    # Classify on the FIRST verdict TOKEN only, not a substring scan of the whole
+    # despaced line. A whole-line scan is asymmetric and wrong: "PASS, no failures
+    # found" or "PASS - no blocking issues" contain FAIL/BLOCK as substrings and
+    # would misclassify a valid PASS as FAIL (a false-block, and worse, it breaks
+    # the unanimous-PASS Devil's-Advocate trigger -> indirect false-PASS). Take
+    # the leading alphabetic run as the verdict word: "FAIL - [Critical] x" ->
+    # FAIL, "PASS, no failures" -> PASS. Strip leading markdown emphasis first.
+    verdict=$(printf '%s' "$verdict" | sed -E 's/^[*_`[:space:]]+//')
+    local _vtok
+    _vtok=$(printf '%s' "$verdict" | sed -E 's/[^A-Z].*$//')
+    if [ -z "$_vtok" ]; then echo "NONE"; return 0; fi
+    case "$_vtok" in
+        FAIL|FAILED|FAILURE|REJECT|REJECTED|BLOCK|BLOCKED) echo "FAIL" ;;
+        PASS|PASSED|APPROVE|APPROVED|OK)                   echo "PASS" ;;
+        *)                                                  echo "AMBIGUOUS" ;;
+    esac
+}
+
+# WAVE8 FIX run.sh-F2 (HIGH): SAFE-DEFAULT severity detection. Returns 0
+# (blocking) if the reviewer file names a Critical or High severity finding in
+# any realistic emitted form: bracketed '[Critical]', bold '**Critical**',
+# 'Severity: High', or a bullet line '- Critical' / '* High'. The strict
+# bracket-only match previously missed unbracketed forms, so a FAIL naming an
+# unbracketed Critical was treated as non-blocking. BSD/GNU portable (no \b).
+_severity_is_blocking() {
+    local file="$1"
+    [ -f "$file" ] || return 1
+    grep -qiE '(\[(critical|high)\])|(\*\*[[:space:]]*(critical|high)[[:space:]]*\*\*)|(severity:?[[:space:]]*(critical|high))|(^[[:space:]]*[-*][[:space:]]+(critical|high)([[:space:]:.,*]|$))' "$file"
+}
+
 run_code_review() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
     local review_dir="$loki_dir/quality/reviews"
@@ -9284,21 +9354,27 @@ BUILD_PROMPT
             continue
         fi
 
-        # Extract verdict
+        # Extract + classify verdict (WAVE8 FIX run.sh-F1/F3). _classify_verdict
+        # uses a markdown-tolerant anchor (rescues '**VERDICT:** FAIL') and a
+        # SAFE-DEFAULT contract: FAIL=any FAIL/REJECT/BLOCK token (so verbose
+        # "FAIL - [Critical] SQLi" / "FAIL." / "FAIL (3 criticals)" all count as
+        # FAIL, previously mis-counted as PASS); PASS=PASS/APPROVE; AMBIGUOUS=a
+        # verdict line that parses to neither; NONE=no parseable verdict line.
         local verdict
-        verdict=$(grep -i "^VERDICT:" "$review_output" | head -1 | sed 's/^VERDICT:[[:space:]]*//' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+        verdict=$(_classify_verdict "$review_output")
 
-        # FIX A2: a "real verdict" is the PRESENCE of a non-empty VERDICT: line,
-        # not a specific token. A non-empty file with NO VERDICT line (garbage or
-        # a truncated reply) previously counted as PASS and could approve the gate
-        # on a meaningless file; now it is a non-verdict (not real, not a pass).
-        # We deliberately keep the original non-FAIL=pass semantics for any file
-        # that DOES carry a verdict line (PASS, APPROVE, "PASS with concerns",
-        # etc. all count as pass) so verbose-but-real verdicts are never
-        # false-blocked. The only added block relative to shipped behavior is the
-        # zero-real-verdicts (all-empty) case.
-        if [ -z "$verdict" ]; then
-            log_warn "Reviewer $reviewer_name produced no VERDICT line (empty or unparseable reply)"
+        # FIX A2 + WAVE8 FIX run.sh-F1/F3: a "real verdict" is a parseable
+        # VERDICT line that classifies cleanly to PASS or FAIL. NONE (no usable
+        # verdict line) AND AMBIGUOUS (a verdict line whose token is neither PASS
+        # nor FAIL, e.g. "VERDICT: UNCLEAR") are BOTH routed to the NO_VERDICT
+        # path. This is the SAFE-DEFAULT contract: an unparseable token must NOT
+        # silently pass. It cannot count toward pass_count, and merely bumping
+        # fail_count would be inert (only has_blocking / review_inconclusive gate
+        # the return). So we treat it as a non-real verdict; the
+        # real_verdict_count < reviewer_count check below then makes the review
+        # inconclusive -> bounded retry -> block (FIX 3 machinery).
+        if [ "$verdict" = "NONE" ] || [ "$verdict" = "AMBIGUOUS" ]; then
+            log_warn "Reviewer $reviewer_name returned no usable verdict (empty, unparseable, or ambiguous token)"
             verdicts_summary="${verdicts_summary}${reviewer_name}:NO_VERDICT "
             ((no_output_count++))
             continue
@@ -9306,8 +9382,9 @@ BUILD_PROMPT
         ((real_verdict_count++))
         if [ "$verdict" = "FAIL" ]; then
             ((fail_count++))
-            # Check for Critical/High severity findings
-            if grep -qiE "\[(Critical|High)\]" "$review_output"; then
+            # Check for Critical/High severity findings (bracketed OR unbracketed
+            # OR bold OR 'Severity:' OR bullet form -- WAVE8 FIX run.sh-F2).
+            if _severity_is_blocking "$review_output"; then
                 has_blocking=true
                 log_error "BLOCKING: $reviewer_name found Critical/High severity issues"
             else
@@ -9320,16 +9397,25 @@ BUILD_PROMPT
         verdicts_summary="${verdicts_summary}${reviewer_name}:${verdict:-UNKNOWN} "
     done
 
-    # Finding #596 FIX A2: zero real verdicts when reviewers were expected =>
-    # INCONCLUSIVE => blocking. Optional bounded retry first (LOKI_REVIEW_RETRY=1,
-    # default on) so a transient empty-output blip does not hard-block; the retry
-    # re-runs the whole review with the (now .loki-excluded) diff. Opt out of the
-    # block entirely with LOKI_REVIEW_INCONCLUSIVE_BLOCK=0 (records, never blocks).
+    # Finding #596 FIX A2 + WAVE8 FIX run.sh-F3: a review is INCONCLUSIVE (=>
+    # blocking) whenever FEWER reviewers returned a usable verdict than were
+    # dispatched. The original gate only fired on real_verdict_count==0 (ALL
+    # reviewers empty); a MIXED review (e.g. 1 of 3 NO_VERDICT, 2 PASS) silently
+    # passed on the surviving majority and dropped the malformed reviewer's
+    # potential dissent (Devil's Advocate never fired). Now ANY NO_VERDICT
+    # reviewer makes the review inconclusive: a dropped reviewer is a dropped
+    # vote, and the safe direction is to refuse to pass on a partial council.
+    # The markdown-tolerant anchor in _classify_verdict already rescues most
+    # real-but-wrapped verdicts, so this fires only on genuinely unusable output.
+    # Optional bounded retry first (LOKI_REVIEW_RETRY=1, default on) so a
+    # transient empty-output blip does not hard-block; the retry re-runs the
+    # whole review with the (now .loki-excluded) diff. Opt out of the block
+    # entirely with LOKI_REVIEW_INCONCLUSIVE_BLOCK=0 (records, never blocks).
     local review_inconclusive=false
-    if [ "$reviewer_count" -gt 0 ] && [ "$real_verdict_count" -eq 0 ]; then
+    if [ "$reviewer_count" -gt 0 ] && [ "$real_verdict_count" -lt "$reviewer_count" ]; then
         review_inconclusive=true
-        log_error "CODE REVIEW INCONCLUSIVE: 0 of $reviewer_count reviewers returned a usable verdict (no_output=$no_output_count)"
-        log_error "  An all-empty review proves nothing; refusing to pass the gate on zero real verdicts."
+        log_error "CODE REVIEW INCONCLUSIVE: only $real_verdict_count of $reviewer_count reviewers returned a usable verdict (no_output=$no_output_count)"
+        log_error "  A partial review drops dissent; refusing to pass the gate without every reviewer's verdict."
         if [ "${LOKI_REVIEW_RETRY:-1}" = "1" ] && [ "${_LOKI_REVIEW_RETRYING:-0}" != "1" ]; then
             log_warn "  Retrying code review once (LOKI_REVIEW_RETRY=1)..."
             _LOKI_REVIEW_RETRYING=1 run_code_review
@@ -9437,9 +9523,12 @@ BUILD_DA_PROMPT
             _dispatch_reviewer "$da_prompt_text" "$da_output" || true
 
             if [ -f "$da_output" ] && [ -s "$da_output" ]; then
+                # WAVE8 FIX run.sh-F1/F2: classify with the shared SAFE-DEFAULT
+                # helpers so a verbose DA "VERDICT: FAIL - [Critical] ..." (and
+                # AMBIGUOUS tokens) and an unbracketed Critical/High both block.
                 local da_verdict
-                da_verdict=$(grep -i "^VERDICT:" "$da_output" | head -1 | sed 's/^VERDICT:[[:space:]]*//' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
-                if [ "$da_verdict" = "FAIL" ] && grep -qiE "\[(Critical|High)\]" "$da_output"; then
+                da_verdict=$(_classify_verdict "$da_output")
+                if { [ "$da_verdict" = "FAIL" ] || [ "$da_verdict" = "AMBIGUOUS" ]; } && _severity_is_blocking "$da_output"; then
                     has_blocking=true
                     # Audit accuracy: aggregate.json was written above (line ~8429)
                     # with has_blocking=false (entering this block requires a
@@ -9465,7 +9554,7 @@ DA_AGG_PATCH
                     log_error "DEVIL'S ADVOCATE: found Critical/High issue the unanimous council missed -- BLOCK"
                     {
                         echo "DEVILS_ADVOCATE_BLOCK: Critical/High found after unanimous PASS"
-                        grep -iE "\[(Critical|High)\]" "$da_output" || true
+                        grep -iE '(\[(critical|high)\])|(\*\*[[:space:]]*(critical|high)[[:space:]]*\*\*)|(severity:?[[:space:]]*(critical|high))|(^[[:space:]]*[-*][[:space:]]+(critical|high)([[:space:]:.,*]|$))' "$da_output" || true
                     } >> "$review_dir/$review_id/anti-sycophancy.txt"
                 else
                     log_info "Devil's Advocate: no additional Critical/High issues found"
@@ -9487,16 +9576,16 @@ DA_AGG_PATCH
         return 1
     fi
 
-    # Finding #596 FIX A2: an inconclusive review (zero real verdicts, retry
-    # already exhausted or disabled) blocks unless explicitly opted out. This is
-    # the 'verified before done' promise: a review that produced no usable verdict
-    # cannot stand in for a real review.
+    # Finding #596 FIX A2 + WAVE8 FIX run.sh-F3: an inconclusive review (fewer
+    # usable verdicts than reviewers, retry already exhausted or disabled) blocks
+    # unless explicitly opted out. This is the 'verified before done' promise: a
+    # review missing any reviewer's verdict cannot stand in for a full review.
     if [ "$review_inconclusive" = "true" ]; then
         if [ "${LOKI_REVIEW_INCONCLUSIVE_BLOCK:-1}" = "0" ]; then
-            log_warn "Code review inconclusive (0/$reviewer_count real verdicts) but LOKI_REVIEW_INCONCLUSIVE_BLOCK=0 - not blocking"
+            log_warn "Code review inconclusive ($real_verdict_count/$reviewer_count real verdicts) but LOKI_REVIEW_INCONCLUSIVE_BLOCK=0 - not blocking"
             return 0
         fi
-        log_error "CODE REVIEW BLOCKED: inconclusive (0/$reviewer_count reviewers returned a usable verdict)"
+        log_error "CODE REVIEW BLOCKED: inconclusive ($real_verdict_count/$reviewer_count reviewers returned a usable verdict)"
         log_error "  Review details: $review_dir/$review_id/ ; opt out with LOKI_REVIEW_INCONCLUSIVE_BLOCK=0"
         return 1
     fi

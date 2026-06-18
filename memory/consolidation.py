@@ -223,7 +223,17 @@ class ConsolidationPipeline:
                     merged = False
                     for idx, existing in enumerate(existing_patterns):
                         if self._patterns_similar(new_pattern, existing):
-                            merged_pattern = self.merge_with_existing(new_pattern, [existing])
+                            # Re-read the target pattern fresh immediately before
+                            # merging (BUG-MEM C1, lost-update). The whole-run
+                            # snapshot at step 4 can be stale by now: a concurrent
+                            # engine.increment_pattern_usage() (load_pattern then
+                            # save_pattern) may have bumped usage_count/last_used
+                            # AFTER the snapshot. merge_with_existing() builds the
+                            # merged record from best_match.usage_count/last_used,
+                            # so merging from the stale snapshot clobbers that bump.
+                            # Re-reading narrows the window to this single write.
+                            merge_base = self._reload_pattern(existing)
+                            merged_pattern = self.merge_with_existing(new_pattern, [merge_base])
                             self.storage.update_pattern(merged_pattern)
                             # Refresh the in-memory copy so a later new pattern in
                             # this same run that also merges into this existing
@@ -262,7 +272,11 @@ class ConsolidationPipeline:
             for idx, existing in enumerate(existing_patterns):
                 if (existing.incorrect_approach and
                     self._patterns_similar(anti_pattern, existing, threshold=0.6)):
-                    merged_pattern = self.merge_with_existing(anti_pattern, [existing])
+                    # Re-read fresh before merge (same C1 lost-update guard as the
+                    # cluster merge loop above): merge from current on-disk state,
+                    # not the potentially-stale step-4 snapshot.
+                    merge_base = self._reload_pattern(existing)
+                    merged_pattern = self.merge_with_existing(anti_pattern, [merge_base])
                     self.storage.update_pattern(merged_pattern)
                     # Refresh in-memory copy (same data-loss guard as the cluster
                     # merge loop above): a later anti-pattern merging into this same
@@ -304,6 +318,35 @@ class ConsolidationPipeline:
 
         result.duration_seconds = time.time() - start_time
         return result
+
+    def _reload_pattern(self, fallback: SemanticPattern) -> SemanticPattern:
+        """Re-read a pattern fresh from storage immediately before merging.
+
+        Used by the merge branches to avoid the C1 lost-update: the step-4
+        snapshot may be stale (a concurrent usage bump can land after it), and
+        merge_with_existing() copies usage_count/last_used from the base. Reading
+        the current on-disk record makes the merge build on live state.
+
+        Mirrors the snapshot's dict/object handling. If load_pattern returns
+        nothing (e.g. the record vanished), fall back to the in-memory copy so the
+        merge still proceeds rather than crashing.
+
+        Residual limitation (honest): load_pattern and update_pattern are SEPARATE
+        lock acquisitions, so a bump landing between this re-read and the write is
+        still lost. This narrows the race window from the whole run to a single
+        write; it is a mitigation, not cross-process atomicity. A full fix needs a
+        compare-and-set or merge-callback update in storage, which is out of scope
+        for this file (storage.py is frozen this batch).
+        """
+        try:
+            fresh = self.storage.load_pattern(fallback.id)
+        except Exception:
+            return fallback
+        if not fresh:
+            return fallback
+        if isinstance(fresh, dict):
+            return SemanticPattern.from_dict(fresh)
+        return fresh
 
     # -------------------------------------------------------------------------
     # Clustering Methods
@@ -475,7 +518,10 @@ class ConsolidationPipeline:
 
     def _episode_to_text(self, episode: EpisodeTrace) -> str:
         """Convert episode to text for embedding."""
-        parts = [episode.goal]
+        # Guard explicit-null goal (C2): from_dict's .get(key, default) returns
+        # None on a JSON null, and the " ".join(parts) below crashes on a None
+        # member. Mirror the wave-6 (episode.goal or "") idiom.
+        parts = [episode.goal or ""]
 
         # Add action summaries (handle both ActionEntry objects and dicts)
         for action in episode.action_log[:5]:  # Limit to first 5 actions
@@ -505,7 +551,8 @@ class ConsolidationPipeline:
         # Find common words in goals
         all_words: Dict[str, int] = defaultdict(int)
         for episode in episodes:
-            for word in episode.goal.lower().split():
+            # Guard explicit-null goal (C2): None has no .lower().
+            for word in (episode.goal or "").lower().split():
                 if len(word) > 3:
                     all_words[word] += 1
 
@@ -562,7 +609,11 @@ class ConsolidationPipeline:
         tool_counts: Dict[str, int] = defaultdict(int)
         for episode in cluster:
             for action in episode.action_log:
-                tool_counts[action.tool] += 1
+                # Skip explicit-null tools (C2): an explicit JSON null tool would
+                # become a None dict key here, harmless until ", ".join(common_tools)
+                # at the end of _extract_correct_approach crashes on it.
+                if action.tool:
+                    tool_counts[action.tool] += 1
 
         # Filter to tools used in most episodes
         common_tools = [
@@ -641,8 +692,10 @@ class ConsolidationPipeline:
             for episode in episodes:
                 # Get actions before error
                 if episode.action_log:
+                    # Filter explicit-null tools (C2): pre_error_actions feeds
+                    # _summarize_actions, whose ", ".join crashes on a None member.
                     pre_error_actions.extend(
-                        [a.tool for a in episode.action_log[-3:]]  # Last 3 actions
+                        [a.tool for a in episode.action_log[-3:] if a.tool]  # Last 3 actions
                     )
 
                 # Collect resolutions
@@ -718,7 +771,9 @@ class ConsolidationPipeline:
             for i, tool in enumerate(common_seq[:5], 1):
                 steps.append(f"{i}. Use {tool}")
 
-        return "; ".join(steps) if steps else f"Use: {', '.join(common_tools)}"
+        # Defensively drop any None tool before join (C2): callers filter Nones,
+        # but guard here too since this join crashes on a None member.
+        return "; ".join(steps) if steps else f"Use: {', '.join(t for t in common_tools if t)}"
 
     def _summarize_actions(self, actions: List[str]) -> str:
         """Summarize a list of actions into a description."""
@@ -981,7 +1036,8 @@ def compress_episode_to_summary(episode: EpisodeTrace) -> str:
     action_count = len(episode.action_log)
     error_count = len(episode.errors_encountered)
 
-    summary = f"Task '{episode.goal[:50]}' {outcome}"
+    # Guard explicit-null goal (C2): None is not subscriptable.
+    summary = f"Task '{(episode.goal or '')[:50]}' {outcome}"
 
     if action_count > 0:
         summary += f" after {action_count} actions"
@@ -1012,10 +1068,13 @@ def compress_episodes_to_pattern_desc(episodes: List[EpisodeTrace]) -> str:
         return "Unknown pattern"
 
     if len(episodes) == 1:
-        return f"Pattern from: {episodes[0].goal}"
+        # No slice here, so a None goal would f-string as "None" without crashing;
+        # normalize to "" for cleaner output (C2).
+        return f"Pattern from: {episodes[0].goal or ''}"
 
     # Find common goal elements
-    goals = [ep.goal.lower() for ep in episodes]
+    # Guard explicit-null goal (C2): None has no .lower().
+    goals = [(ep.goal or "").lower() for ep in episodes]
 
     # Find common words
     word_counts: Dict[str, int] = defaultdict(int)
@@ -1035,4 +1094,5 @@ def compress_episodes_to_pattern_desc(episodes: List[EpisodeTrace]) -> str:
         return f"Pattern for {theme} tasks ({len(episodes)} instances)"
 
     # Fallback to first episode's goal
-    return f"Pattern: {episodes[0].goal[:100]} (and {len(episodes)-1} similar)"
+    # Guard explicit-null goal (C2): None is not subscriptable.
+    return f"Pattern: {(episodes[0].goal or '')[:100]} (and {len(episodes)-1} similar)"

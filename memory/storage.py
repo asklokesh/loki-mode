@@ -595,8 +595,32 @@ class MemoryStorage:
                             lock_path.unlink()
                     except OSError:
                         pass
-                    # Clean up any remaining lock files before checking if dir is empty
+                    # Clean up any remaining lock files before checking if dir
+                    # is empty. A blanket unlink of every *.lock here is the same
+                    # flock+unlink inode-replacement race fixed in _file_lock and
+                    # _cleanup_stale_locks: a lock held by a concurrent writer of
+                    # a DIFFERENT episode in this same date dir would have its
+                    # inode unlinked, letting a third writer create a new inode
+                    # and enter the critical section concurrently (data loss).
+                    # Only unlink a lock we can take ourselves (nobody holds it);
+                    # held locks are left in place (their writer is still active).
                     for stale_lock in date_dir.glob("*.lock"):
+                        probe_fd = None
+                        try:
+                            probe_fd = open(stale_lock, "a")
+                            fcntl.flock(probe_fd.fileno(),
+                                        fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except (OSError, BlockingIOError):
+                            # Held by a live writer -- leave it alone.
+                            continue
+                        finally:
+                            if probe_fd is not None:
+                                try:
+                                    fcntl.flock(probe_fd.fileno(),
+                                                fcntl.LOCK_UN)
+                                except OSError:
+                                    pass
+                                probe_fd.close()
                         try:
                             stale_lock.unlink()
                         except OSError:

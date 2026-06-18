@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.67.0] - 2026-06-17
+
+### Trust-surface + data-integrity hardening (wave-8 bug-hunt)
+
+A 12-agent read-only hunt across previously un-hunted surfaces, then a fix fleet.
+The headline is a CRITICAL false-pass in the LIVE bash code-review gate. Reviewed
+by a 3-reviewer council (2 Opus + 1 Sonnet) to unanimous approve (a council
+CONCERN caught a regression in the first fix and was resolved before ship). Full
+Python suite: 1261 passed, 7 skipped; bun: 1080 passed.
+
+Code-review gate (live bash route, the CRITICAL fix):
+- A code-review verdict of `VERDICT: FAIL` with ANY suffix ("FAIL - [Critical]
+  SQLi", "FAIL.", "FAIL (3 criticals)") was exact-matched against the literal
+  string "FAIL" and, failing that, counted as PASS. A real Critical/High review
+  was silently waved through and completion proceeded. The verdict is now
+  classified on its leading token with a safe default: any FAIL/REJECT/BLOCK
+  token blocks, and any unparseable/ambiguous verdict is treated as non-passing
+  (never silently passed), mirroring the completion council's parse-miss-to-REJECT
+  contract. The token classifier also avoids the inverse error (a valid
+  "PASS, no failures found" is no longer misread as FAIL).
+- Severity detection no longer requires literal `[Critical]`/`[High]` brackets;
+  it now also matches `**Critical**`, `Severity: High`, and `- Critical:` forms
+  (without over-matching prose like "highly readable"), at both the council and
+  Devil's-Advocate sites.
+- A single reviewer whose verdict line is unparseable no longer has their dissent
+  silently dropped while the gate passes on the surviving majority: any dropped
+  reviewer now makes the review inconclusive (retry, then block).
+- detect_complexity no longer misclassifies a simple PRD as standard: the
+  `grep -c ... || echo 0` idiom emitted a two-line "0\n0" that broke the integer
+  comparison; feature_count and section_count are now digit-sanitized.
+
+App runner (live):
+- The Dockerfile path built the image but never started the container: the method
+  was launched as `bash -lc "exec docker build ... && docker run ..."`, and `exec`
+  replaced the shell with `docker build` so `&& docker run` never executed (image
+  rebuilt forever, dead preview URL). The `exec` optimization is now applied only
+  to single commands; compound methods run in full. The Dockerfile image tag is
+  now project-hashed (was a shared `loki-app` that clobbered across projects), and
+  the verify/health/watchdog paths gained a Dockerfile-container branch.
+
+CLI:
+- `loki stop <session-id>` now performs the same process-group kill as the no-arg
+  `loki stop`, scoped to that session's process group. Previously the by-id path
+  returned early and left the autonomous agent (which shares the orchestrator's
+  group and reparents to init) running and still editing files (the v7.7.34
+  orphaned-agent bug, which had survived on the by-id route).
+
+Memory data-integrity:
+- storage.py delete_episode no longer unconditionally unlinks every lock file in
+  the date directory (the flock+unlink inode-replacement race fixed in v7.66.1 for
+  _file_lock); it now probes each lock and skips any held by a live writer.
+- consolidation.py no longer crashes the whole run on an episode with an explicit
+  null goal/tool (null-guard sweep of the remaining v7.61.0-class sites), and the
+  cluster-merge now re-reads each target pattern fresh before merging so a
+  concurrent usage-count bump is not clobbered from a stale snapshot.
+- The Bun-route learnings writer (live via `loki internal phase1-hooks`) now holds
+  a cross-process file lock across the full read-modify-write of
+  relevant-learnings.json (was an in-process mutex only, dropping entries under
+  concurrent phase1-hook processes); the reflect loop isolates per-finding
+  failures so one bad finding no longer drops the rest; and the learning dedup key
+  now includes the file so distinct same-worded findings in different files are
+  not collapsed.
+
 ## [7.66.1] - 2026-06-17
 
 ### Memory file-lock concurrency fix + CI test deflake

@@ -778,7 +778,12 @@ app_runner_init() {
             local _project_hash
             _project_hash=$(echo "$dir" | (md5sum 2>/dev/null || md5 -r 2>/dev/null || echo "$$") | cut -c1-8)
             _APP_RUNNER_DOCKER_CONTAINER="loki-app-${_project_hash}"
-            _APP_RUNNER_METHOD="docker build -t loki-app . && docker run -d -p ${_APP_RUNNER_PORT}:${_APP_RUNNER_PORT} --name ${_APP_RUNNER_DOCKER_CONTAINER} loki-app"
+            # Hash the image tag the same way the container name is hashed so two
+            # Dockerfile-based projects do not clobber each other's image (an
+            # unhashed `loki-app` tag would be shared across every project). Build
+            # tag and run image arg MUST stay identical.
+            local _image_tag="loki-app-${_project_hash}"
+            _APP_RUNNER_METHOD="docker build -t ${_image_tag} . && docker run -d -p ${_APP_RUNNER_PORT}:${_APP_RUNNER_PORT} --name ${_APP_RUNNER_DOCKER_CONTAINER} ${_image_tag}"
             _APP_RUNNER_IS_DOCKER=true
             _write_detection "dockerfile" "$_APP_RUNNER_METHOD"
             log_info "App Runner: detected Dockerfile"
@@ -1012,6 +1017,59 @@ _app_runner_compose_running_count() {
     return 0
 }
 
+# Decide whether to prepend `exec` to the launched method. `exec` replaces the
+# bash wrapper with the command so the captured PID is the app itself (PID
+# identity for npm start / python app.py etc.). That is ONLY valid for a SINGLE
+# command. A compound method like `docker build ... && docker run ...` must NOT
+# be exec'd: `exec docker build` would replace the shell and the `&& docker run`
+# half would never run (the verified HIGH-1 bug -- image builds, no container).
+# Detection runs on the METHOD STRING ONLY, never the assembled launch line: the
+# assembled line always contains `;` (from the PORT env prefix and the pgid
+# `echo $$`), so testing it would mark every method compound and silently drop
+# the exec optimization for single commands.
+# Echoes "exec " for a single command, or "" (empty) for a compound command.
+_app_runner_exec_prefix() {
+    local method="$1"
+    case "$method" in
+        *"&&"*|*"||"*|*";"*)
+            # Compound: let bash run the full sequence as a child (no exec).
+            printf '%s' ""
+            ;;
+        *)
+            printf '%s' "exec "
+            ;;
+    esac
+}
+
+# Liveness predicate for the Dockerfile (single-image `docker run -d`) path,
+# which -- unlike compose -- has a project-hashed container name in
+# $_APP_RUNNER_DOCKER_CONTAINER. The method is a compound `docker build && docker
+# run -d` launched WITHOUT exec, so the captured PID is the short-lived bash
+# wrapper: it stays alive for the (possibly multi-minute) build, then exits right
+# after `docker run -d` detaches. Therefore liveness is:
+#   alive  = container running  OR  wrapper PID still alive (build in progress)
+#   dead   = wrapper PID dead   AND container not running
+# This tolerates a slow-but-succeeding build while a genuinely broken Dockerfile
+# still trips the watchdog breaker (wrapper dies, no container, 5x). Returns 0
+# when alive, 1 when dead. Never hard-fails (guarded for set -u / future set -e).
+_app_runner_dockerfile_container_running() {
+    local _name="${_APP_RUNNER_DOCKER_CONTAINER:-}"
+    [ -z "$_name" ] && return 1
+    if command -v docker >/dev/null 2>&1; then
+        local _state
+        _state=$(docker inspect -f '{{.State.Running}}' "$_name" 2>/dev/null || true)
+        if [ "$_state" = "true" ]; then
+            return 0
+        fi
+    fi
+    # Container not (yet) running: the build may still be in progress. The wrapper
+    # PID being alive is the build-in-progress signal.
+    if [ -n "${_APP_RUNNER_PID:-}" ] && kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # Read the RUNTIME published host port of the identified primary web service from
 # `docker compose ps` (the live mapping), as opposed to the config-declared port
 # from `docker compose config`. The config port is correct for fixed mappings
@@ -1127,6 +1185,25 @@ app_runner_start() {
         _port_env_prefix="export PORT=$_APP_RUNNER_PORT HTTP_PORT=$_APP_RUNNER_PORT SERVER_PORT=$_APP_RUNNER_PORT APP_PORT=$_APP_RUNNER_PORT; "
     fi
 
+    # Conditional exec (HIGH-1 fix): only `exec` a SINGLE command. A compound
+    # method (`docker build ... && docker run ...`) must run as a child so BOTH
+    # halves execute -- `exec docker build` would replace the shell and never
+    # reach `&& docker run`. Computed on the method string ONLY (see
+    # _app_runner_exec_prefix), not the assembled launch line.
+    local _exec_prefix
+    _exec_prefix=$(_app_runner_exec_prefix "$_APP_RUNNER_METHOD")
+
+    # Dockerfile path: `docker run --name <hashed>` fails if a stale (exited)
+    # container with that name still exists. This happens on a watchdog restart
+    # (the prior run's container was stopped, not removed) and would make every
+    # auto-restart fail with "name already in use". Remove any stale container
+    # by name before launch. Idempotent and safe when none exists. Compose has no
+    # _APP_RUNNER_DOCKER_CONTAINER, so this is Dockerfile-path only.
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && [ -n "${_APP_RUNNER_DOCKER_CONTAINER:-}" ] \
+       && command -v docker >/dev/null 2>&1; then
+        docker rm -f "$_APP_RUNNER_DOCKER_CONTAINER" >/dev/null 2>&1 || true
+    fi
+
     # Start the process in a new process group
     if command -v setsid >/dev/null 2>&1; then
         _APP_RUNNER_HAS_SETSID=true
@@ -1136,7 +1213,7 @@ app_runner_start() {
         # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
         # The `--` after `bash -lc` prevents flag injection if the assembled
         # script string ever begins with a `-`.
-        (cd "$dir" && setsid bash -lc -- "$_port_env_prefix"'echo $$ > "'"$_pgid_file"'"; exec '"$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        (cd "$dir" && setsid bash -lc -- "$_port_env_prefix"'echo $$ > "'"$_pgid_file"'"; '"$_exec_prefix$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         local _subshell_pid=$!
         # Wait briefly for the pgid file to appear, then read the real PGID
         local _pgid_wait=0
@@ -1154,7 +1231,7 @@ app_runner_start() {
         _APP_RUNNER_HAS_SETSID=false
         # Note: $_APP_RUNNER_METHOD has passed _validate_app_command (whitelist).
         # The `--` after `bash -lc` prevents flag injection.
-        (cd "$dir" && bash -lc -- "${_port_env_prefix}exec $_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
+        (cd "$dir" && bash -lc -- "${_port_env_prefix}${_exec_prefix}$_APP_RUNNER_METHOD" >> "$_APP_RUNNER_DIR/app.log" 2>&1) &
         _APP_RUNNER_PID=$!
     fi
     # Register with central PID registry if available
@@ -1208,6 +1285,24 @@ app_runner_start() {
             log_error "App Runner: docker compose containers failed to start (no containers in running state after retries)"
             log_error "App Runner: docker compose ps output:"
             printf '%s\n' "$diag" | while IFS= read -r line; do log_error "  $line"; done
+            _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
+            _write_app_state "failed"
+            return 1
+        fi
+    elif [ "$_APP_RUNNER_IS_DOCKER" = true ] && [ -n "${_APP_RUNNER_DOCKER_CONTAINER:-}" ]; then
+        # Dockerfile path (HIGH-1): `docker build && docker run -d` is compound, so
+        # it is launched WITHOUT exec and the captured PID is the short-lived bash
+        # wrapper that exits once the detached container is up. Liveness keys on the
+        # container (or the wrapper still building), NOT the wrapper PID -- the same
+        # reasoning as the compose branch above. Port mapping is the fixed
+        # `-p PORT:PORT` from detection and the URL is already set, so no port
+        # reconciliation or PID identity token is needed here.
+        if _app_runner_dockerfile_container_running; then
+            _write_app_state "running"
+            log_info "App Runner: Dockerfile container '$_APP_RUNNER_DOCKER_CONTAINER' starting/running on port $_APP_RUNNER_PORT"
+            return 0
+        else
+            log_error "App Runner: Dockerfile container failed to start (no running container, build wrapper exited)"
             _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
             _write_app_state "failed"
             return 1
@@ -1456,6 +1551,23 @@ app_runner_health_check() {
         return 0
     fi
 
+    # Dockerfile path (HIGH-1): the detached `docker run -d` container's liveness
+    # is the container running (or the build wrapper still building), NOT the
+    # ephemeral bash wrapper PID. Without this branch the wrapper PID dies after
+    # the build detaches the container and the PID check below would report the
+    # live container as crashed -> watchdog tears it down and rebuilds forever.
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && [ -n "${_APP_RUNNER_DOCKER_CONTAINER:-}" ]; then
+        if _app_runner_dockerfile_container_running; then
+            _write_health "true"
+            _write_app_state "running"
+            return 0
+        else
+            _write_health "false"
+            _write_app_state "crashed"
+            return 1
+        fi
+    fi
+
     # Check PID is alive (non-docker-compose methods)
     if ! kill -0 "$_APP_RUNNER_PID" 2>/dev/null; then
         _write_health "false"
@@ -1580,7 +1692,16 @@ app_runner_watchdog() {
     # This is what makes the service-aware health logic actually fire in the
     # live monitoring loop (not just in isolation). On an unhealthy web service
     # it restarts the stack under the same crash-count circuit breaker.
-    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && echo "$_APP_RUNNER_METHOD" | grep -q "docker compose"; then
+    # Detached-docker paths (compose stacks AND the Dockerfile `docker run -d`
+    # container) both exit their captured wrapper PID once the container is up, so
+    # `kill -0` is the wrong liveness signal. Delegate to app_runner_health_check,
+    # whose container-aware branches (compose web service / hashed Dockerfile
+    # container) own the real liveness check, under the same crash-count circuit
+    # breaker. Without including the Dockerfile container here, the wrapper PID
+    # would read as dead after the build detaches and the watchdog would tear the
+    # live container down and rebuild forever (the HIGH-1 symptom).
+    if [ "$_APP_RUNNER_IS_DOCKER" = true ] && \
+       { echo "$_APP_RUNNER_METHOD" | grep -q "docker compose" || [ -n "${_APP_RUNNER_DOCKER_CONTAINER:-}" ]; }; then
         if app_runner_health_check; then
             # BUG 3 fix: the breaker is meant to fire on 5 CONSECUTIVE failures.
             # A confirmed-healthy observation clears any accumulated count so a
@@ -1590,7 +1711,7 @@ app_runner_watchdog() {
             return 0
         fi
         _APP_RUNNER_CRASH_COUNT=$(( _APP_RUNNER_CRASH_COUNT + 1 ))
-        log_warn "App Runner: compose web service unhealthy (crash #$_APP_RUNNER_CRASH_COUNT)"
+        log_warn "App Runner: docker container unhealthy (crash #$_APP_RUNNER_CRASH_COUNT)"
         if [ "$_APP_RUNNER_CRASH_COUNT" -ge 5 ]; then
             log_error "App Runner: crash limit reached (5), marking as crashed"
             tail -20 "$_APP_RUNNER_DIR/app.log" 2>/dev/null | while IFS= read -r line; do
@@ -1601,9 +1722,9 @@ app_runner_watchdog() {
         fi
         local _c_backoff=$(( 1 << _APP_RUNNER_CRASH_COUNT ))
         [ "$_c_backoff" -gt 30 ] && _c_backoff=30
-        log_info "App Runner: restarting compose stack in ${_c_backoff}s..."
+        log_info "App Runner: restarting docker app in ${_c_backoff}s..."
         sleep "$_c_backoff"
-        app_runner_start || log_warn "App Runner: compose auto-restart failed"
+        app_runner_start || log_warn "App Runner: docker auto-restart failed"
         return 0
     fi
 
