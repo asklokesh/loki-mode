@@ -156,7 +156,6 @@ class ProgressiveLoader:
             remaining_tokens -= layer2_tokens
 
             # Collect timeline context for each relevant topic
-            topic_ids = {t.id for t in relevant_topics}
             timeline_context: Dict[str, List[Dict[str, Any]]] = {}
 
             for topic in relevant_topics:
@@ -177,12 +176,17 @@ class ProgressiveLoader:
                 self._metrics.calculate_savings(index.get("total_tokens_available", 0))
                 return memories, self._metrics
 
-        # Layer 3: Load full memories for high-relevance topics
+        # Layer 3: Load full memories for high-relevance topics.
+        # Gate on effective_score (boosted match score when set, else stored
+        # relevance), not the stored relevance_score. The Layer-1 keyword
+        # boost lives on the transient match_score precisely so a strongly
+        # matching topic can clear this Layer-3 gate; reading the un-boosted
+        # relevance_score here would silently drop exactly those topics the
+        # boost was meant to surface.
         if remaining_tokens > 0:
-            # Sort topics by relevance
             high_relevance = [
                 t for t in relevant_topics
-                if t.relevance_score >= self.HIGH_RELEVANCE_THRESHOLD
+                if t.effective_score >= self.HIGH_RELEVANCE_THRESHOLD
             ]
 
             storage = self._get_storage()

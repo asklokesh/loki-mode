@@ -50,8 +50,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
-  unlinkSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -303,20 +303,20 @@ function persistUserPrd(
   const dest = generatedPrdPath(lokiDir);
   // Atomic copy: write to a per-process tmp then rename into place, so a
   // concurrent reader never sees a half-written PRD.
+  //
+  // v7.68 bug-fix: the prior implementation read the tmp into a Buffer and
+  // wrote it back via atomicWriteFileSync(dest, content.toString("binary")).
+  // That round-trips the bytes through latin1 (binary) and back out as utf8,
+  // which CORRUPTS any PRD containing multi-byte UTF-8 (smart quotes, accents,
+  // emoji, CJK). The persisted generated-prd.md then differed from the source
+  // file, and its hash no longer matched the recorded prd_sha on the next run.
+  // tmp and dest live in the same directory (lokiDir), so a plain rename(2) is
+  // atomic on POSIX and byte-exact -- no string transcoding involved.
   const tmp = `${dest}.tmp.${process.pid}`;
   copyFileSync(originPath, tmp);
-  // Rename via the standard atomicWriteFileSync contract: read the tmp content
-  // and write atomically, then remove tmp. We read+atomicWrite (instead of a
-  // raw rename) so we reuse the locked, cross-device-safe writer used elsewhere
-  // in the runner.
+  // Read the exact bytes for the prd_sha hash BEFORE the rename consumes tmp.
   const content = readFileSync(tmp);
-  atomicWriteFileSync(dest, content.toString("binary"));
-  try {
-    // best-effort tmp cleanup
-    unlinkSync(tmp);
-  } catch {
-    // tmp may already be gone
-  }
+  renameSync(tmp, dest);
 
   const prdSha = hash16(content);
   const signature = computeCodebaseSignature(cwd);

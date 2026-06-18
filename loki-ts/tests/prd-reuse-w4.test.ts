@@ -24,6 +24,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 let tmp: string;
 let cwd: string;
@@ -84,6 +85,40 @@ describe("resolvePrdForRun: user file persistence", () => {
     expect(sig!.prd_sha.length).toBe(16);
     expect(typeof sig!.generated_at).toBe("string");
     expect(sig!.generated_at.endsWith("Z")).toBe(true);
+  });
+
+  it("persists a UTF-8 PRD with multi-byte characters byte-for-byte (no latin1 corruption)", () => {
+    // Regression: persistUserPrd previously round-tripped the file through
+    // Buffer.toString("binary") (latin1) and wrote it back as utf8, corrupting
+    // any non-ASCII content. Use smart quotes, an accented char, an emoji, and
+    // CJK so a latin1 mangle is unambiguous. Compare bytes, not decoded strings.
+    const userPrd = join(tmp, "utf8-prd.md");
+    const body =
+      "# PRD\n\nFeature: café with smart quote “hello” and emoji \u{1F600} CJK 你好\n";
+    writeFileSync(userPrd, body, "utf8");
+    const srcBytes = readFileSync(userPrd); // Buffer, exact bytes
+
+    const res = resolvePrdForRun({
+      prdPath: userPrd,
+      cwd,
+      lokiDirOverride: lokiDir,
+    });
+    expect(res.action).toBe("user_persist");
+    expect(res.prdPath).toBe(genPath());
+
+    // Byte-for-byte identical -- the load-bearing assertion. A latin1 mangle
+    // inflates the byte length and changes the content.
+    const dstBytes = readFileSync(genPath());
+    expect(dstBytes.equals(srcBytes)).toBe(true);
+    expect(readFileSync(genPath(), "utf8")).toBe(body);
+
+    // And the recorded prd_sha must match a fresh hash of the persisted file,
+    // so a same-spec rerun is correctly classified as reuse (not user_owned
+    // due to a phantom "hand edit" introduced by the corruption).
+    const sig = readPrdSignature(lokiDir);
+    expect(sig).not.toBeNull();
+    const reHash = createHash("sha256").update(dstBytes).digest("hex").slice(0, 16);
+    expect(sig!.prd_sha).toBe(reHash);
   });
 
   it("a new file over an existing persisted PRD overwrites it and keeps source=user", () => {

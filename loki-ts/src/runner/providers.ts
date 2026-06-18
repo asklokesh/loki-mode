@@ -342,10 +342,18 @@ function codexTierToEffort(tier: SessionTier): string {
   }
 }
 
-// Apply LOKI_MAX_TIER ceiling. Mirrors codex.sh:163-171
-// (resolve_model_for_tier maxTier branch).
+// Apply LOKI_MAX_TIER ceiling. Mirrors codex.sh resolve_model_for_tier maxTier
+// branch.
+//
+// Parity: bash normalizes the ceiling with trim + lowercase (codex.sh, mirroring
+// claude.sh:356) BEFORE the case match, so a user-typed cap like "Haiku" or
+// " haiku " (settings.json maxTier exports verbatim) is honored. This port
+// previously switched on the RAW env value, so "Haiku" missed the "haiku" arm,
+// fell through to the default, and left effort uncapped -- silently bypassing the
+// cost ceiling for codex while claude (applyMaxTierCeiling:158) honored it.
+// Normalize once, treat empty as no ceiling. Matches applyMaxTierCeiling:158.
 function applyCodexMaxTier(effort: string): string {
-  const maxTier = process.env["LOKI_MAX_TIER"];
+  const maxTier = (process.env["LOKI_MAX_TIER"] ?? "").trim().toLowerCase();
   if (!maxTier) return effort;
   switch (maxTier) {
     case "haiku":

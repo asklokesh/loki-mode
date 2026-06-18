@@ -89,7 +89,7 @@ PROVIDER_COST_OUTPUT_FAST=0.015
 PROVIDER_DEGRADED=true
 PROVIDER_DEGRADED_REASONS=(
     "No subagent support"
-    "Sequential execution only"
+    "Sequential execution only - no parallel agents (PROVIDER_MAX_PARALLEL=1)"
     "No Task tool or MCP"
 )
 
