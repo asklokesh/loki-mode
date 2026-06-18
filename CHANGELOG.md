@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.73.0] - 2026-06-18
+
+### Feature-branch by default + advisory PR (enterprise-ready git flow)
+
+`loki start` now works out of a feature branch by default. It branches off the
+branch you ran it from (no longer hardcoded to main), commits the work at session
+end, and PRINTS the exact `git push` + `gh pr create` commands for YOU to open the
+pull request. This is the enterprise path: for teams whose existing CI/CD pipeline
+deploys on push/merge, "git commit + open a PR" IS the deploy, and Loki now leaves
+you on a committed branch ready to PR.
+
+- Branch is created off the run-from branch and persisted as the PR base (fixes the
+  prior hardcoded `main`). Detached HEAD and non-git directories no-op honestly.
+- Session-end commit is gated to Loki-minted `loki/session-*` branches only; a
+  branch you named yourself is never auto-committed.
+- Resume reuses the existing agent branch instead of minting a new one.
+- Secret-safe staging: `.loki/` runtime state is self-ignored, and every staged
+  file is scanned (filename heuristic + content patterns, including URI-embedded
+  credentials like `postgres://user:pass@host` and `redis://:pass@host`). If a
+  possible secret is detected the commit ABORTS, leaving your work uncommitted with
+  an honest message naming the file -- it never commits a possible secret.
+- PR is advisory by default (Loki prints, you run it). `LOKI_AUTO_PR=1` restores
+  auto-push + auto-PR for anyone who wants it (now with the correct `--base`).
+- `LOKI_BRANCH_PROTECTION=false` remains a full opt-out (prior behavior preserved).
+
+### `loki deploy`: advisory, print-only deploy guidance (CI/CD-aware)
+
+New `loki deploy` detects your project type and your installed cloud CLI, and
+PRINTS the exact deploy command for you to run. It NEVER deploys, NEVER runs a
+cloud CLI (not even `--version`), and NEVER runs `git push` -- Loki does not access
+your cloud account. When a CI/CD pipeline config is detected (GitHub Actions,
+GitLab CI, Jenkins, CircleCI, Azure Pipelines, Bitbucket), the primary advice is
+the git push + pull-request path, because your pipeline deploys on merge; cloud-CLI
+options (vercel/netlify/fly/wrangler) are shown as secondary. Best-effort clipboard
+copy of the idiomatic command.
+
 ## [7.72.0] - 2026-06-18
 
 ### Public preview link: share the app Loki built

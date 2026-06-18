@@ -541,9 +541,15 @@ verify_secret_scan_file() {
     local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
     # Bearer tokens: "Bearer <>=20 high-entropy chars>".
     local bearer='[Bb]earer[[:space:]]+[A-Za-z0-9_.\-]{20,}'
+    # URI-embedded credentials: scheme://user:password@host (DATABASE_URL=
+    # postgres://u:pass@h, mongodb+srv://, redis://). The #1 12-factor leak
+    # vector. Runs through the deny filter so ${VAR}-ref URIs are ignored.
+    # Username segment is optional (*) so the password-only form redis://:pass@host
+    # (Redis < 6 / Heroku Redis / Redis Cloud emit exactly this) is caught too.
+    local uricred='[a-z][a-z0-9+.\-]*://[^/[:space:]:@]*:[^/[:space:]:@]+@'
 
     local surviving
-    surviving="$(LC_ALL=C grep -EiI "$tier2|$bearer" "$file" 2>/dev/null \
+    surviving="$(LC_ALL=C grep -EiI "$tier2|$bearer|$uricred" "$file" 2>/dev/null \
         | LC_ALL=C grep -Eiv "$deny" 2>/dev/null)"
     if [ -n "$surviving" ]; then
         return 0

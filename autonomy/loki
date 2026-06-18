@@ -115,6 +115,16 @@ if [ -f "$_LOKI_SCRIPT_DIR/quickstart.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/quickstart.sh"
 fi
 
+# Shared PRINT-ONLY pull-request advisory (provides print_pr_advice and its
+# origin/compare-URL helpers). Single source of truth sourced by BOTH this CLI
+# (cmd_deploy CI/CD path) and autonomy/run.sh (create_session_pr) so the two
+# surfaces print byte-identical, correct git push + PR commands and cannot drift.
+# Self-guarded against double-source. Existence-guarded matching the pattern above.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh" ]; then
+    # shellcheck source=autonomy/lib/git-pr-advisory.sh
+    source "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -725,7 +735,7 @@ show_help() {
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
-    echo "More commands (grill, spec, cleanup, init, watch, demo, web, api,"
+    echo "More commands (grill, spec, deploy, cleanup, init, watch, demo, web, api,"
     echo "logs, github, import, council, proof, audit, compliance, agent, template,"
     echo "magic, docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
     echo "failover, monitor, remote, ...) are dispatchable and documented via"
@@ -5656,6 +5666,396 @@ cmd_preview() {
             echo "Please open in browser: $url"
         fi
     fi
+}
+
+# =============================================================================
+# loki deploy -- ADVISORY / PRINT-ONLY deploy command (FEAT-DEPLOY).
+#
+# WHY ITS OWN COMMAND (not a preview flag): `loki preview` is "show me the local
+# app I already built and started" and is GATED on a running app (state.json
+# status=running, a live reachable port). `loki deploy` is conceptually distinct:
+# it is a STATIC, FILESYSTEM-ONLY advisory about the project's type and the user's
+# installed cloud CLI / CI-CD pipeline. It must work with nothing running and no
+# build started, so it has NO running-app precondition. Folding it into preview
+# would force preview's running-app gate onto a feature that must not have one.
+#
+# HARD INVARIANT (DEPLOY-PLAN LOCK 5 + BRANCH-LIFECYCLE LOCK B4): PRINT-ONLY.
+# cmd_deploy NEVER runs a cloud CLI (vercel/netlify/flyctl/wrangler) -- not even
+# `--version` -- and NEVER runs `git push` or `gh pr create`. Tool detection is
+# `command -v` ONLY. Loki advises; the human runs the printed command. This keeps
+# the README promise ("Does not deploy -- human runs deploy commands") literally
+# true. Only the clipboard tools (pbcopy/wl-copy/...) and `command -v` may run.
+#
+# This whole block is contiguous (helpers + cmd_deploy) so a test can extract it
+# by name anchor, mirroring tests/test-preview-public.sh.
+# =============================================================================
+
+# _deploy_detect_type <dir>
+# Echoes the PRIMARY project-type label (one of: nextjs, static, docker, node,
+# python) or empty if none detected. Read-only file/dir existence + grep on
+# package.json. Always returns 0 (caller treats empty as "no project"). First
+# match wins for the primary label; cmd_deploy still offers multiple provider
+# options per type. set -e safe: every grep is `|| true`-guarded.
+_deploy_detect_type() {
+    local dir="${1:-.}"
+    local pkg="$dir/package.json"
+
+    # 1. Next.js -- source signal ("next" dep or a next.config.*), NOT the build
+    #    artifact (.next/standalone), since the build may not have run yet.
+    if [ -f "$pkg" ] && grep -q '"next"' "$pkg" 2>/dev/null; then
+        printf '%s' "nextjs"; return 0
+    fi
+    if [ -f "$dir/next.config.js" ] || [ -f "$dir/next.config.mjs" ] || [ -f "$dir/next.config.ts" ]; then
+        printf '%s' "nextjs"; return 0
+    fi
+
+    # 2. Static / SPA -- a built dist/ or build/ dir containing index.html, OR a
+    #    Vite / CRA source signal in package.json.
+    if { [ -d "$dir/dist" ] && [ -f "$dir/dist/index.html" ]; } || \
+       { [ -d "$dir/build" ] && [ -f "$dir/build/index.html" ]; }; then
+        printf '%s' "static"; return 0
+    fi
+    if [ -f "$pkg" ] && { grep -q '"vite"' "$pkg" 2>/dev/null || grep -q '"react-scripts"' "$pkg" 2>/dev/null; }; then
+        printf '%s' "static"; return 0
+    fi
+
+    # 3. Dockerfile / containerized server.
+    if [ -f "$dir/Dockerfile" ]; then
+        printf '%s' "docker"; return 0
+    fi
+
+    # 4. Generic Node server -- package.json with a start (or dev) script.
+    if [ -f "$pkg" ] && { grep -q '"start"' "$pkg" 2>/dev/null || grep -q '"dev"' "$pkg" 2>/dev/null; }; then
+        printf '%s' "node"; return 0
+    fi
+
+    # 5. Python.
+    if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ]; then
+        printf '%s' "python"; return 0
+    fi
+
+    printf '%s' ""
+    return 0
+}
+
+# _deploy_options_for_type <type>
+# Pure, DIR-BLIND helper: echoes the ordered candidate rows for a project type,
+# one per line, as `provider|cli|command|docs`. Idiomatic provider first per
+# DEPLOY-PLAN LOCK 2. Lists the FULL ordered candidate set for the type
+# UNCONDITIONALLY (no dir awareness, no CLI-installed filtering -- cmd_deploy does
+# the `command -v` filtering). The command strings are the EXACT canonical forms
+# from DEPLOY-PLAN LOCK 3 (a wrong flag is worse than no feature; do not
+# paraphrase). Project-dependent dirs stay as `<...>` placeholders the user fills.
+# Note: the Fly CLI binary is `flyctl` but the canonical deploy verb is
+# `fly deploy` -- "fly" not "flyctl" here is CORRECT, intentional, not a typo.
+_deploy_options_for_type() {
+    local type="${1:-}"
+    case "$type" in
+        nextjs)
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
+            printf '%s\n' "Netlify|netlify|netlify deploy --prod|https://docs.netlify.com/cli/get-started/"
+            # fly not flyctl - correct: binary is flyctl, deploy verb is `fly deploy`.
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            ;;
+        static)
+            printf '%s\n' "Netlify|netlify|netlify deploy --prod --dir=<build-output>|https://docs.netlify.com/cli/get-started/"
+            printf '%s\n' "Cloudflare Pages|wrangler|wrangler pages deploy <build-output>|https://developers.cloudflare.com/workers/wrangler/install-and-update/"
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
+            ;;
+        docker)
+            # fly not flyctl - correct (see note above).
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            printf '%s\n' "Cloudflare|wrangler|wrangler deploy|https://developers.cloudflare.com/workers/wrangler/install-and-update/"
+            ;;
+        node)
+            # fly not flyctl - correct (see note above).
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
+            ;;
+        python)
+            # fly not flyctl - correct (see note above).
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            ;;
+    esac
+    return 0
+}
+
+# _deploy_detect_cicd <dir>
+# Returns 0 + echoes the detected CI/CD system name(s) (space-separated) if ANY
+# pipeline config exists (BRANCH-LIFECYCLE LOCK B1); returns 1 + echoes nothing
+# if none. Read-only file existence only. The `[ -e "$f" ]` guard inside the glob
+# loop makes the no-match literal-glob case set -e safe (an unmatched glob expands
+# to the literal pattern, which `[ -e ]` then rejects without aborting).
+_deploy_detect_cicd() {
+    local dir="${1:-.}"
+    local found=""
+    local systems=""
+
+    # GitHub Actions: any .yml or .yaml under .github/workflows/.
+    local f
+    for f in "$dir"/.github/workflows/*.yml "$dir"/.github/workflows/*.yaml; do
+        if [ -e "$f" ]; then found=1; systems="${systems} GitHub-Actions"; break; fi
+    done
+
+    [ -f "$dir/.gitlab-ci.yml" ] && { found=1; systems="${systems} GitLab-CI"; }
+    [ -f "$dir/Jenkinsfile" ] && { found=1; systems="${systems} Jenkins"; }
+    [ -f "$dir/.circleci/config.yml" ] && { found=1; systems="${systems} CircleCI"; }
+    [ -f "$dir/azure-pipelines.yml" ] && { found=1; systems="${systems} Azure-Pipelines"; }
+    [ -f "$dir/bitbucket-pipelines.yml" ] && { found=1; systems="${systems} Bitbucket-Pipelines"; }
+
+    if [ -n "$found" ]; then
+        # Trim the leading space and echo the names.
+        printf '%s' "${systems# }"
+        return 0
+    fi
+    printf '%s' ""
+    return 1
+}
+
+# _deploy_copy_clipboard <cmd>
+# Best-effort clipboard copy of a SINGLE command (DEPLOY-PLAN LOCK 4). TTY-gated,
+# command-v guarded, ALWAYS returns 0 and never fatal. Echoes a confirmation note
+# only if a copy tool actually ran. These clipboard tools ARE allowed to run; only
+# the four cloud CLIs are forbidden.
+_deploy_copy_clipboard() {
+    local cmd="${1:-}"
+    [ -n "$cmd" ] || return 0
+    [ -t 1 ] || return 0
+    local copied=""
+    if command -v pbcopy >/dev/null 2>&1; then
+        printf '%s' "$cmd" | pbcopy >/dev/null 2>&1 && copied="1" || true
+    elif command -v wl-copy >/dev/null 2>&1; then
+        printf '%s' "$cmd" | wl-copy >/dev/null 2>&1 && copied="1" || true
+    elif command -v xclip >/dev/null 2>&1; then
+        printf '%s' "$cmd" | xclip -selection clipboard >/dev/null 2>&1 && copied="1" || true
+    elif command -v xsel >/dev/null 2>&1; then
+        printf '%s' "$cmd" | xsel --clipboard --input >/dev/null 2>&1 && copied="1" || true
+    elif command -v clip >/dev/null 2>&1; then
+        printf '%s' "$cmd" | clip >/dev/null 2>&1 && copied="1" || true
+    fi
+    if [ -n "$copied" ]; then
+        printf '%s\n' "  (copied to clipboard: ${cmd})"
+    fi
+    return 0
+}
+
+# _deploy_print_install_hint <type>
+# Honest install hints (brew + official URL) for the candidate providers of a
+# type. NEVER fabricates success, NEVER downloads a binary. Mirrors the
+# tunnel-missing / gh-missing block. Caller redirects to stderr.
+_deploy_print_install_hint() {
+    local type="${1:-}"
+    echo "No deploy CLI found for this ${type} project."
+    echo "Loki never accesses your cloud account or runs deploy for you -- you run"
+    echo "the printed command. Install one of the following, then re-run 'loki deploy':"
+    echo ""
+    local options provider cli command docs
+    options="$(_deploy_options_for_type "$type")"
+    while IFS='|' read -r provider cli command docs; do
+        [ -n "$provider" ] || continue
+        case "$cli" in
+            vercel)   echo "  Vercel:      brew install vercel       |  ${docs}" ;;
+            netlify)  echo "  Netlify:     brew install netlify-cli  |  ${docs}" ;;
+            flyctl)   echo "  Fly.io:      brew install flyctl       |  ${docs}" ;;
+            wrangler) echo "  Cloudflare:  npm i -g wrangler         |  ${docs}" ;;
+            *)        echo "  ${provider}:  ${docs}" ;;
+        esac
+    done <<EOF
+$options
+EOF
+    return 0
+}
+
+# _deploy_print_cloud_options <dir> <type> <do_clip> <hint_on_none>
+# Prints every installed (project-type x CLI) option block, idiomatic first.
+# Best-effort copies the FIRST installed command when do_clip=true. Returns 0 if
+# at least one CLI was printed. If NONE installed: when hint_on_none=true, prints
+# the honest install hint (to stderr) and returns 1; when false (pipeline path,
+# where cloud is secondary), prints nothing and returns 1 silently.
+_deploy_print_cloud_options() {
+    local dir="${1:-.}"
+    local type="${2:-}"
+    local do_clip="${3:-true}"
+    local hint_on_none="${4:-true}"
+
+    local options=""
+    options="$(_deploy_options_for_type "$type")"
+
+    local printed=false
+    local first_cmd=""
+    local provider cli command docs
+    while IFS='|' read -r provider cli command docs; do
+        [ -n "$cli" ] || continue
+        if command -v "$cli" >/dev/null 2>&1; then
+            if [ "$printed" != true ]; then
+                echo -e "${BOLD}Detected ${type} project. Deploy options (run one yourself):${NC}"
+                echo ""
+                printed=true
+            fi
+            echo "  ${provider}:"
+            echo "    ${command}"
+            echo "    docs: ${docs}"
+            echo ""
+            if [ -z "$first_cmd" ]; then
+                first_cmd="$command"
+            fi
+        fi
+    done <<EOF
+$options
+EOF
+
+    if [ "$printed" = true ]; then
+        echo "Loki does not deploy for you. Review, then run the command yourself."
+        if [ "$do_clip" = true ] && [ -n "$first_cmd" ]; then
+            _deploy_copy_clipboard "$first_cmd"
+        fi
+        return 0
+    fi
+
+    # No installed CLI for this type.
+    if [ "$hint_on_none" = true ]; then
+        _deploy_print_install_hint "$type" >&2
+        return 1
+    fi
+    return 1
+}
+
+# cmd_deploy [--dir <path>] [--no-clip] [--help]
+# Advisory orchestration: detect project type + CI/CD pipeline + installed cloud
+# CLIs, then PRINT the canonical deploy command(s). PRINT-ONLY (see block header).
+# Placed LAST in the contiguous deploy block (all helpers above it) so the SDET
+# can extract from the first helper def to the close of cmd_deploy and capture the
+# whole self-contained unit (mirrors test-preview-public.sh, where cmd_preview is
+# the terminal function).
+cmd_deploy() {
+    local dir="${TARGET_DIR:-.}"
+    local do_clip=true
+
+    # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
+    while [ $# -gt 0 ]; do
+        case "${1:-}" in
+            --help|-h|help)
+                echo -e "${BOLD}Loki Mode -- advisory deploy command (print-only)${NC}"
+                echo ""
+                echo "Usage: loki deploy [--dir <path>] [--no-clip]"
+                echo ""
+                echo "Detects your project type and your installed cloud CLI (and any"
+                echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
+                echo "It is advisory only: it NEVER deploys, NEVER runs a cloud CLI (not"
+                echo "even --version), and NEVER runs 'git push'. Loki does not access your"
+                echo "cloud account. You run the printed command. Detection is read-only."
+                echo ""
+                echo "If a CI/CD pipeline (GitHub Actions, GitLab CI, Jenkins, CircleCI,"
+                echo "Azure Pipelines, Bitbucket) is detected, the primary advice is the"
+                echo "git push + pull-request path, because your pipeline deploys on merge."
+                echo ""
+                echo "Options:"
+                echo "  --dir <path>   Project directory to scan (default: current dir)"
+                echo "  --no-clip      Do not copy the idiomatic command to the clipboard"
+                echo "  --help, -h     Show this help and exit"
+                return 0
+                ;;
+            --dir)
+                dir="${2:-.}"
+                # Guard the value-consuming shift: if --dir is the LAST arg (no
+                # value), an unguarded shift plus the loop's trailing shift would
+                # underflow and abort under set -e. Consume a value only if present.
+                [ $# -ge 2 ] && shift
+                ;;
+            --no-clip)
+                do_clip=false
+                ;;
+        esac
+        shift
+    done
+
+    # Resolve to '.' if the chosen dir does not exist (honest, no crash).
+    [ -d "$dir" ] || dir="."
+
+    # Detect CI/CD pipeline FIRST (BRANCH-LIFECYCLE LOCK B3 precedence).
+    local cicd=""
+    cicd="$(_deploy_detect_cicd "$dir" || true)"
+    local has_pipeline=false
+    [ -n "$cicd" ] && has_pipeline=true
+
+    # Detect project type (filesystem-only; LOCK 6 -- not gated on a running app).
+    local type=""
+    type="$(_deploy_detect_type "$dir")"
+
+    # ---- Pipeline path (LOCK B3): git push + PR advised FIRST, cloud secondary.
+    if [ "$has_pipeline" = true ]; then
+        echo -e "${BOLD}CI/CD pipeline detected (${cicd})${NC}"
+        echo "Your pipeline deploys on push/merge, so the primary deploy path is"
+        echo "commit + push + pull request:"
+        echo ""
+
+        # Derive base/head for the PR advice. set -e safe: every git call is
+        # 2>/dev/null with a fallback so a non-zero git never aborts the shell.
+        local head="" base=""
+        head="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+        [ -n "$head" ] || head="HEAD"
+        case "$head" in
+            loki/*)
+                # On a loki branch: prefer the persisted base, else origin default.
+                if [ -s "$dir/.loki/state/base-branch.txt" ]; then
+                    base="$(head -n1 "$dir/.loki/state/base-branch.txt" 2>/dev/null || echo "")"
+                fi
+                ;;
+        esac
+        if [ -z "$base" ]; then
+            # Best-effort: origin's default branch (e.g. origin/main -> main).
+            local origin_head=""
+            origin_head="$(git -C "$dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || echo "")"
+            if [ -n "$origin_head" ]; then
+                base="${origin_head##*/}"
+            fi
+        fi
+
+        if [ -n "$base" ] && declare -F print_pr_advice >/dev/null 2>&1; then
+            print_pr_advice "$base" "$head" "$dir"
+        elif declare -F print_pr_advice >/dev/null 2>&1; then
+            echo "  Could not determine the PR base branch automatically."
+            echo "  Set your PR base manually when opening the pull request for: ${head}"
+            print_pr_advice "manually-set-base" "$head" "$dir"
+        else
+            echo "  git push -u origin ${head}"
+            echo "  Open a pull request for ${head} (set the base branch manually)."
+        fi
+        echo ""
+
+        # Cloud CLI options are SECONDARY when a pipeline exists. Print them if a
+        # project type + installed CLI match, but never fail the command on their
+        # absence (the git/PR advice above is the real deliverable here).
+        if [ -n "$type" ]; then
+            # Pass do_clip=false here: in the pipeline path the git push line is
+            # the PRIMARY advice (LOCK B3) and print_pr_advice already copied it to
+            # the clipboard, so the secondary cloud command must NOT overwrite it.
+            local printed_any=false
+            _deploy_print_cloud_options "$dir" "$type" "false" "false" && printed_any=true || true
+            if [ "$printed_any" != true ]; then
+                : # No installed cloud CLI; the pipeline path already advised. Fine.
+            fi
+        fi
+        return 0
+    fi
+
+    # ---- No-pipeline path: cloud-CLI advisory exactly per DEPLOY-PLAN.md.
+    # Honest failure: no project type detected.
+    if [ -z "$type" ]; then
+        {
+            echo "No deployable project detected in: ${dir}"
+            echo "Looked for: package.json (Next.js/Vite/CRA/Node), Dockerfile,"
+            echo "dist/ or build/ with index.html, requirements.txt, pyproject.toml."
+            echo "Run 'loki deploy --dir <path>' to point at your project directory."
+        } >&2
+        return 1
+    fi
+
+    # Print cloud options; clipboard the idiomatic one. Returns non-zero (with an
+    # honest install hint) when NO matching CLI is installed.
+    local rc=0
+    _deploy_print_cloud_options "$dir" "$type" "$do_clip" "true" || rc=$?
+    return $rc
 }
 
 # Import GitHub issues
@@ -14965,6 +15365,9 @@ main() {
             ;;
         preview)
             cmd_preview "$@"
+            ;;
+        deploy)
+            cmd_deploy "$@"
             ;;
         open)
             # CLI consolidation (Phase A): 'open' is a deprecated alias of 'preview'.

@@ -444,7 +444,7 @@ See [benchmarks/](benchmarks/) for methodology.
 | Area | What Works | What Doesn't (Yet) |
 |------|-----------|---------------------|
 | **Code Gen** | Full-stack apps from PRDs | Complex domain logic may need human review |
-| **Deploy** | Generates configs, Dockerfiles, CI/CD | Does not deploy -- human runs deploy commands |
+| **Deploy** | Generates configs, Dockerfiles, CI/CD; `loki deploy` prints the exact deploy command | Does not deploy -- human runs the printed deploy command (Loki never runs a cloud CLI or git push) |
 | **Testing** | 8 automated quality gates | Test quality depends on AI assertions |
 | **Providers** | 5 providers with auto-failover | Non-Claude providers lack parallel agents |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |

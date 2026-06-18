@@ -156,9 +156,11 @@
 #                           Set to "true" only in trusted environments
 #
 # Branch Protection (agent isolation):
-#   LOKI_BRANCH_PROTECTION     - Create feature branch for agent changes (default: false)
+#   LOKI_BRANCH_PROTECTION     - Create feature branch for agent changes (default: true)
 #                                Agent works on loki/session-<timestamp>-<pid> branch
-#                                Creates PR on session end if gh CLI is available
+#                                Set to "false" to opt out and work on the current branch
+#   LOKI_AUTO_PR               - Auto push + open a PR on session end (default: off)
+#                                Default behavior PRINTS the PR command (advisory, no push)
 #
 # Process Supervision (opt-in):
 #   LOKI_WATCHDOG              - Enable process health monitoring (default: false)
@@ -638,6 +640,13 @@ LOCK_LIB="$SCRIPT_DIR/lib/lock.sh"
 if [ -f "$LOCK_LIB" ]; then
     # shellcheck source=lib/lock.sh
     source "$LOCK_LIB"
+fi
+
+# Git PR advisory (shared print-only helper for create_session_pr and loki deploy)
+GIT_PR_ADVISORY_LIB="$SCRIPT_DIR/lib/git-pr-advisory.sh"
+if [ -f "$GIT_PR_ADVISORY_LIB" ]; then
+    # shellcheck source=lib/git-pr-advisory.sh
+    source "$GIT_PR_ADVISORY_LIB"
 fi
 
 # Completion Council (v5.25.0) - Multi-agent completion verification
@@ -4908,15 +4917,40 @@ compute_codebase_signature() {
     local dir="${1:-.}"
     ( cd "$dir" 2>/dev/null || exit 0
       if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-          local head dirty porcelain
-          head=$(git rev-parse HEAD 2>/dev/null || echo "nohead")
-          porcelain=$(git status --porcelain 2>/dev/null | grep -vE '(^...?\.loki/|/\.loki/| \.loki/|\.git/)' || true)
-          if [ -z "$porcelain" ]; then
-              dirty="clean"
-          else
-              dirty=$(printf '%s' "$porcelain" | _loki_hash_stdin)
+          # Content-identity signature (gitc:): the hash is over the WORKING-TREE
+          # CONTENT of every tracked + untracked-not-ignored file, independent of
+          # the commit boundary. Whether a file is committed or sitting dirty in
+          # the worktree yields the SAME value. This is what makes reuse robust to
+          # Loki's OWN session commit (commit_session_changes, default-on as of
+          # v7.73.0): a rerun whose only "change" is that the prior run committed
+          # work it had already analyzed still classifies as reuse, not a spurious
+          # "codebase changed -> update". A genuine source edit (committed OR
+          # uncommitted) changes a blob hash and is still detected, and a new
+          # untracked file is detected too. .loki/ is excluded (runtime state).
+          # Paths are enumerated NUL-safe, .loki dropped, sorted, then hashed in
+          # ONE batched `git hash-object --stdin-paths` pass (order-preserving),
+          # so cost is one git process regardless of file count.
+          local gitc gitc_paths gitc_deleted
+          # Tracked files removed from the worktree (but not staged): they have no
+          # content to hash and would make the batched hash-object abort mid-list,
+          # truncating the output and misaligning the path<->hash pairing. Drop
+          # them; their removal from the list is itself the detected change.
+          gitc_deleted=$(git ls-files --deleted -z 2>/dev/null | tr '\0' '\n')
+          gitc_paths=$( { git ls-files -z 2>/dev/null; git ls-files --others --exclude-standard -z 2>/dev/null; } \
+              | tr '\0' '\n' | grep -vE '(^|/)\.loki(/|$)' | LC_ALL=C sort -u )
+          if [ -n "$gitc_deleted" ]; then
+              gitc_paths=$(printf '%s\n' "$gitc_paths" | grep -vxF -f <(printf '%s\n' "$gitc_deleted") || true)
           fi
-          echo "git:${head}:${dirty}"
+          if [ -z "$gitc_paths" ]; then
+              # No tracked or untracked content (empty/fresh repo): a stable
+              # constant so two empty-tree runs still compare equal (reuse).
+              gitc=$(printf '' | _loki_hash_stdin)
+          else
+              gitc=$(printf '%s\n' "$gitc_paths" | git hash-object --stdin-paths 2>/dev/null \
+                  | paste -d'\t' - <(printf '%s\n' "$gitc_paths") \
+                  | LC_ALL=C sort | _loki_hash_stdin)
+          fi
+          echo "gitc:${gitc}"
       else
           local listing count total_sz budget maxfiles
           listing=$(find . \
@@ -4965,6 +4999,27 @@ compute_codebase_signature() {
               echo "files-sampled:$(printf '%s' "$listing" | _loki_hash_stdin):${count}:${sample_hash}"
           fi
       fi
+    )
+}
+
+# Recompute the PRE-content-hash git-mode signature ("git:<HEAD>:<dirty>") for a
+# one-time format transition: a signature recorded by an older Loki (HEAD +
+# porcelain) must still be comparable on the first run after the upgrade to the
+# new content-identity "gitc:" format, or decide would falsely flip to "update".
+# Echoes the legacy-format value, or "" when not inside a git work tree.
+_loki_compute_legacy_git_signature() {
+    local dir="${1:-.}"
+    ( cd "$dir" 2>/dev/null || exit 0
+      git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+      local head dirty porcelain
+      head=$(git rev-parse HEAD 2>/dev/null || echo "nohead")
+      porcelain=$(git status --porcelain 2>/dev/null | grep -vE '(^...?\.loki/|/\.loki/| \.loki/|\.git/)' || true)
+      if [ -z "$porcelain" ]; then
+          dirty="clean"
+      else
+          dirty=$(printf '%s' "$porcelain" | _loki_hash_stdin)
+      fi
+      echo "git:${head}:${dirty}"
     )
 }
 
@@ -5097,6 +5152,27 @@ except Exception:
                     esac
                 fi
                 ;;
+            git:*)
+                # git-mode format transition: a stored pre-content-hash signature
+                # ("git:<HEAD>:<dirty>") cannot be compared directly against the
+                # new content-identity "gitc:" format, so the first run after the
+                # upgrade would falsely claim "codebase changed". Recompute the
+                # OLD-format signature and compare against the stored value: if it
+                # matches, the tree is unchanged at the old format's trust level
+                # (HEAD + dirty porcelain) -> reuse, honestly. The next persist
+                # upgrades the stored format to "gitc:". Only honor this when the
+                # current signature is the new git format (a real format change),
+                # never when both are old git: (that path already matched above).
+                case "$current" in
+                    gitc:*)
+                        local legacy
+                        legacy=$(_loki_compute_legacy_git_signature "${TARGET_DIR:-.}")
+                        if [ -n "$legacy" ] && [ "$legacy" = "$stored" ]; then
+                            echo "reuse"; return 0
+                        fi
+                        ;;
+                esac
+                ;;
         esac
         echo "update"
     fi
@@ -5125,18 +5201,45 @@ persist_prd_signature_if_present() {
     sig=$(compute_codebase_signature "${TARGET_DIR:-.}")
     [ -n "$sig" ] || return 0
     mkdir -p "$loki_dir/state" 2>/dev/null || return 0
-    local mode="files"; case "$sig" in git:*) mode="git" ;; esac
+    local mode="files"; case "$sig" in git:*|gitc:*) mode="git" ;; esac
     # Record the content hash of the PRD file Loki just wrote so a later
     # hand-edit by the user is detectable (decide_generated_prd_action). This
     # runs AFTER the agent's own PRD writes, so Loki's updates are not mistaken
     # for user edits.
     local prd_sha; prd_sha=$(_loki_prd_file_hash "${TARGET_DIR:-.}")
     local tmp="$loki_dir/state/.prd-signature.json.tmp.$$"
+    # git-mode format upgrade (old "git:<HEAD>:<dirty>" -> new content-identity
+    # "gitc:..."): when this run is a reuse honored via the decide transition
+    # (the recomputed legacy signature still matches the stored one), the PRD
+    # content did not change, so the generated_at date must be preserved across
+    # the upgrade, exactly like the files: -> files-sampled: upgrade clauses.
+    # Recompute the legacy value once and pass a match flag to the persist below.
+    local git_upgrade_match=""
+    case "$sig" in
+        gitc:*)
+            local _stored_sig
+            _stored_sig=$(LOKI_SIG_FILE="$loki_dir/state/prd-signature.json" python3 -c "
+import json, os
+try:
+    print(json.load(open(os.environ['LOKI_SIG_FILE'])).get('signature',''))
+except Exception:
+    print('')
+" 2>/dev/null)
+            case "$_stored_sig" in
+                git:*)
+                    local _legacy
+                    _legacy=$(_loki_compute_legacy_git_signature "${TARGET_DIR:-.}")
+                    [ -n "$_legacy" ] && [ "$_legacy" = "$_stored_sig" ] && git_upgrade_match=1
+                    ;;
+            esac
+            ;;
+    esac
     # Preserve generated_at when the codebase signature is unchanged so the
     # reuse disclosure ("generated on <date>") stays honest across reuse runs;
     # only stamp a new date when the PRD content actually changed (sig differs).
     LOKI_SIG="$sig" LOKI_SIG_MODE="$mode" LOKI_SIG_VER="$(get_version 2>/dev/null || echo unknown)" \
     LOKI_PRD_SHA="$prd_sha" LOKI_SIG_FILE="$loki_dir/state/prd-signature.json" \
+    LOKI_GIT_UPGRADE_MATCH="$git_upgrade_match" \
     python3 -c "
 import json, os, datetime
 sig = os.environ['LOKI_SIG']
@@ -5164,7 +5267,16 @@ _sampled_upgrade = (
     and prev_sig.count(':') == 2
     and sig.startswith('files-sampled:' + prev_sig[len('files-shallow:'):] + ':')
 )
-if prev_at and (prev_sig == sig or _legacy_upgrade or _sampled_upgrade):
+# git-mode format upgrade (old 'git:<HEAD>:<dirty>' -> new content-identity
+# 'gitc:...'): the caller recomputed the legacy signature and confirmed it still
+# matches the stored one (decide returned reuse), so the PRD content did not
+# change: preserve the date across the one-time upgrade.
+_git_upgrade = (
+    bool(os.environ.get('LOKI_GIT_UPGRADE_MATCH'))
+    and isinstance(prev_sig, str) and prev_sig.startswith('git:')
+    and sig.startswith('gitc:')
+)
+if prev_at and (prev_sig == sig or _legacy_upgrade or _sampled_upgrade or _git_upgrade):
     generated_at = prev_at
 else:
     generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
@@ -5219,7 +5331,7 @@ persist_user_prd() {
     local prd_sha sig mode
     prd_sha=$(_loki_prd_file_hash "${TARGET_DIR:-.}")
     sig=$(compute_codebase_signature "${TARGET_DIR:-.}")
-    mode="files"; case "$sig" in git:*) mode="git" ;; esac
+    mode="files"; case "$sig" in git:*|gitc:*) mode="git" ;; esac
 
     local sig_tmp="$loki_dir/state/.prd-signature.json.tmp.$$"
     LOKI_SIG="$sig" LOKI_SIG_MODE="$mode" \
@@ -6230,27 +6342,80 @@ audit_log() {
 #===============================================================================
 
 setup_agent_branch() {
-    # Create an isolated feature branch for agent changes.
-    # This prevents agents from committing directly to the main branch.
-    # Controlled by LOKI_BRANCH_PROTECTION env var (default: false).
-    local branch_protection="${LOKI_BRANCH_PROTECTION:-false}"
+    # Create an isolated feature branch for agent changes off the branch Loki
+    # was run from. This keeps the user's working branch clean and leaves work
+    # on a feature branch ready to PR.
+    # Controlled by LOKI_BRANCH_PROTECTION env var (default: true). Set it to
+    # "false" to opt out fully and work on the current branch (back-compat).
+    local branch_protection="${LOKI_BRANCH_PROTECTION:-true}"
 
     if [ "$branch_protection" != "true" ]; then
         log_info "Branch protection disabled (LOKI_BRANCH_PROTECTION=${branch_protection})"
         return 0
     fi
 
+    # Need git to do anything here.
+    command -v git >/dev/null 2>&1 || { log_warn "git not available - skipping branch protection"; return 0; }
+
     # Ensure we are inside a git repository
-    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         log_warn "Not a git repository - skipping branch protection"
         return 0
     fi
 
+    # Self-ignore .loki/ so NO git add (ours or the user's own `git add -A`)
+    # can ever stage runtime state (checkpoints, semantic memory, etc.). This is
+    # robust regardless of the repo's own .gitignore and applies brownfield and
+    # greenfield. Idempotent: write only when missing. Never fatal.
+    mkdir -p .loki 2>/dev/null || true
+    [ -f .loki/.gitignore ] || printf '*\n' > .loki/.gitignore 2>/dev/null || true
+
+    # Capture the ref Loki was run from. Detached HEAD yields the literal "HEAD".
+    local cur=""
+    cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+
+    # Detached HEAD: do NOT branch, do NOT fabricate a base (LOCK A2/A6).
+    if [ "$cur" = "HEAD" ]; then
+        log_info "Detached HEAD; staying on current commit, no feature branch created"
+        return 0
+    fi
+
+    # Already on a loki branch (session-* or delegate-*): idempotent reuse, do
+    # not nest a branch off a loki branch (LOCK A5/A7).
+    case "$cur" in
+        loki/*)
+            log_info "Already on loki branch ${cur}"
+            mkdir -p .loki/state 2>/dev/null || true
+            printf '%s\n' "$cur" > .loki/state/agent-branch.txt 2>/dev/null || true
+            return 0
+            ;;
+    esac
+
+    # Resume reuse: if a prior session recorded a checkout-able branch, reuse it
+    # instead of minting a new one (LOCK A5).
+    local recorded=""
+    if [ -s .loki/state/agent-branch.txt ]; then
+        recorded="$(cat .loki/state/agent-branch.txt 2>/dev/null || true)"
+        if [ -n "$recorded" ] && git rev-parse --verify "$recorded" >/dev/null 2>&1; then
+            if git checkout "$recorded" >/dev/null 2>&1; then
+                log_info "Resuming on recorded agent branch: ${recorded}"
+                return 0
+            fi
+            log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one"
+        fi
+    fi
+
+    # Fresh run: persist the base branch (fresh-run-only) BEFORE branching, then
+    # mint and check out the feature branch (LOCK A2).
     local timestamp
     timestamp=$(date +%s)
     local branch_name="loki/session-${timestamp}-$$"
 
-    log_info "Branch protection enabled - creating agent branch: $branch_name"
+    mkdir -p .loki/state 2>/dev/null || true
+    # Persist the base only once per run tree; never overwrite an existing base.
+    [ ! -s .loki/state/base-branch.txt ] && printf '%s\n' "$cur" > .loki/state/base-branch.txt 2>/dev/null
+
+    log_info "Branch protection enabled - creating agent branch: $branch_name (base: $cur)"
 
     # Create and checkout the feature branch
     if ! git checkout -b "$branch_name" 2>/dev/null; then
@@ -6259,17 +6424,217 @@ setup_agent_branch() {
     fi
 
     # Store the branch name for later use (PR creation, cleanup)
-    mkdir -p .loki/state
-    echo "$branch_name" > .loki/state/agent-branch.txt
+    printf '%s\n' "$branch_name" > .loki/state/agent-branch.txt 2>/dev/null
 
     log_info "Agent branch created: $branch_name"
     audit_log "BRANCH_PROTECTION" "branch=$branch_name"
     echo "$branch_name"
 }
 
+_commit_scan_secret_file() {
+    # Two-tier secret matcher. Returns 0 if a high-confidence secret is found in
+    # the file, 1 otherwise. Patterns copied verbatim from the shipped scanner
+    # (autonomy/verify.sh verify_secret_scan_file) so the commit-time gate matches
+    # the verification gate's behavior. Top-level (not nested) so tests can
+    # override it for the mutation/non-vacuity proof.
+    local file="${1:-}"
+    [ -n "$file" ] && [ -f "$file" ] || return 1
+
+    # TIER 1: specific formats. No deny filter -- a format match is a finding.
+    local tier1=(
+        'AKIA[0-9A-Z]{16}'                          # AWS access key id
+        'ASIA[0-9A-Z]{16}'                          # AWS temporary (STS) key id
+        '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'     # PEM private key block
+        'gh[pousr]_[A-Za-z0-9]{36,}'                # GitHub token (ghp_/gho_/...)
+        'github_pat_[A-Za-z0-9_]{60,}'              # GitHub fine-grained PAT
+        'xox[baprs]-[A-Za-z0-9-]{10,}'              # Slack token (xoxb-/xoxp-/...)
+        'sk-[A-Za-z0-9]{20,}'                       # OpenAI-style secret key
+        'AIza[0-9A-Za-z_-]{35}'                     # Google API key
+        'glpat-[A-Za-z0-9_-]{20,}'                  # GitLab personal access token
+    )
+    local p
+    for p in "${tier1[@]}"; do
+        # -e terminates option parsing so a pattern beginning with '-' (the PEM
+        # block) is not mistaken for a flag.
+        if LC_ALL=C grep -Eq -e "$p" "$file" 2>/dev/null; then
+            return 0
+        fi
+    done
+
+    # Deny filter for TIER 2: a matched line is IGNORED if it is plainly a
+    # placeholder or an environment-variable reference rather than a literal.
+    local deny='(\$\{|\$[A-Za-z_]|process\.env|os\.(environ|getenv)|%[A-Za-z_]+%|your[-_]|redacted|changeme|change[-_]me|placeholder|example|dummy|sample|fake|<[^>]*>|x{4,}|\*{4,})'
+
+    # TIER 2: generic assignments + bearer tokens + connection-string creds.
+    local tier2='(api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|auth)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+.=-]{16,}'
+    local bearer='[Bb]earer[[:space:]]+[A-Za-z0-9_.\-]{20,}'
+    # URI-embedded credentials: scheme://user:password@host. The #1 leak vector
+    # in 12-factor apps (DATABASE_URL=postgres://u:pass@h, mongodb+srv://, redis://).
+    # Runs through the deny filter below, so ${VAR}-ref URIs are correctly ignored.
+    # Username segment is optional (*) so the password-only form redis://:pass@host
+    # (Redis < 6 / Heroku Redis / Redis Cloud emit exactly this) is caught too.
+    local uricred='[a-z][a-z0-9+.\-]*://[^/[:space:]:@]*:[^/[:space:]:@]+@'
+
+    local surviving
+    surviving="$(LC_ALL=C grep -EiI "$tier2|$bearer|$uricred" "$file" 2>/dev/null \
+        | LC_ALL=C grep -Eiv "$deny" 2>/dev/null)"
+    if [ -n "$surviving" ]; then
+        return 0
+    fi
+    return 1
+}
+
+_commit_path_looks_secret() {
+    # Filename/path heuristic. Returns 0 if the path looks like a credential or
+    # secret file ANYWHERE in the tree (basename OR any directory component),
+    # 1 otherwise. This is the PRIMARY commit-time guard: it catches likely-secret
+    # files regardless of where they sit and regardless of how weak the value
+    # inside looks, closing the nested-path gap that a top-level glob (':!credentials*')
+    # and a content-pattern scan both miss (e.g. secrets/credentials.json holding
+    # {"key":"sk-secret"}). The content scan (_commit_scan_secret_file) remains the
+    # complementary layer 2 for strong secrets hiding in non-obvious filenames.
+    #
+    # Safe-default bias: this runs only for the session-end AUTO-commit. A false
+    # positive merely leaves the file uncommitted for the user to commit by hand,
+    # which is acceptable and honest. So we err toward caution.
+    #
+    # Top-level (not nested) so tests can override it for the non-vacuity proof.
+    local p="${1:-}"
+    [ -n "$p" ] || return 1
+    # Case-insensitive match: lower the full path AND the basename, test both.
+    local lower base
+    lower="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
+    base="${lower##*/}"
+    local cand
+    for cand in "$lower" "$base"; do
+        case "$cand" in
+            # dotenv files (basename or any path component ending in them)
+            .env|.env.*|*/.env|*/.env.*|*.env) return 0 ;;
+            # credential(s) anywhere (basename or any segment): secrets/credentials.json,
+            # aws-credentials, my-credential.txt, .git-credentials
+            *credential*) return 0 ;;
+            # a "secret"/"secrets" segment anywhere: secrets/anything, config/secret.json
+            *secret*) return 0 ;;
+            # private-key / keystore / cert material (extension-anchored so we do
+            # NOT match innocuous names like config.js or monkey.js)
+            *.pem|*.key|*.p12|*.keystore|*.pfx|*.jks|*.ppk) return 0 ;;
+            id_rsa|id_rsa.*|*/id_rsa|*/id_rsa.*) return 0 ;;
+            id_ed25519*|*/id_ed25519*) return 0 ;;
+            # token files: extension (*.token) OR "token" as a whole word/segment
+            # (delimited by /, -, _, or .). Deliberately NOT a bare *token*: that
+            # would flag ubiquitous innocuous frontend/parser names (tokenizer.js,
+            # tokens.css, design-tokens.json), and since the scan aborts the WHOLE
+            # session auto-commit on any single offender, one such file would block
+            # committing all of the user's work. Segment-style still catches real
+            # token files: api.token, auth_token, id-token, github.token, oauth-token.json.
+            *.token) return 0 ;;
+            token|token.*|token-*|token_*) return 0 ;;
+            *-token|*_token|*.token.*) return 0 ;;
+            *-token.*|*_token.*|*/token|*/token.*) return 0 ;;
+            *-token-*|*_token_*|*-token_*|*_token-*) return 0 ;;
+            # package/registry/cloud credential configs
+            .npmrc|*/.npmrc|.pypirc|*/.pypirc|.netrc|*/.netrc) return 0 ;;
+            *.kubeconfig|kubeconfig|*/kubeconfig) return 0 ;;
+            .dockercfg|*/.dockercfg|.docker/config.json|*/.docker/config.json) return 0 ;;
+            # service-account / gcp key json
+            service-account*.json|*/service-account*.json|*serviceaccount*) return 0 ;;
+            gcp-key*.json|*/gcp-key*.json) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+commit_session_changes() {
+    # Squash the session's work into one honest session-end commit on the agent
+    # branch (LOCK A3/A4/A8). Commit-always (incl. failed runs) so the user is
+    # left with committed work to inspect/PR. Clean no-op when nothing changed.
+    command -v git >/dev/null 2>&1 || return 0
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+    # Only act when a session feature branch was set up. This preserves the
+    # LOCK A1 opt-out contract (LOKI_BRANCH_PROTECTION=false -> no agent-branch.txt
+    # -> we never commit on the user's own branch), and also no-ops the detached
+    # -HEAD case (setup writes no agent-branch.txt there).
+    [ -s .loki/state/agent-branch.txt ] || return 0
+
+    # The worktree/parallel path already commits and merges back (run.sh:3403);
+    # skip the squash commit there to avoid a redundant commit on the merge.
+    [ "${PARALLEL_MODE:-false}" = "true" ] && return 0
+
+    # Only auto-commit on a branch Loki itself MINTED (loki/session-<ts>-<pid>).
+    # If the user manually checked out a self-named loki/* branch (e.g.
+    # loki/experiment), recorded it via the idempotent-reuse path, do NOT
+    # auto-commit on their behalf. Honest skip.
+    # symbolic-ref resolves the branch name even on an UNBORN branch (fresh
+    # greenfield `git init` with zero commits, where rev-parse HEAD fails);
+    # fall back to rev-parse for older edge cases. Detached HEAD yields nothing.
+    local cur=""
+    cur="$(git symbolic-ref --short -q HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+    case "$cur" in
+        loki/session-*) : ;;  # Loki-minted: proceed.
+        *)
+            log_info "Not on a Loki-minted session branch (${cur}); skipping auto-commit"
+            return 0
+            ;;
+    esac
+
+    # Stage everything except .loki/ runtime state and a secret-path denylist.
+    # These excludes are defense-in-depth ONLY for the top-level cases git
+    # pathspec handles cleanly. We deliberately do NOT add nested globs like
+    # ':!secrets/**' or ':!**/credentials*' here: in this `git add -A` context a
+    # leading ':!**/' / ':!secrets/**' exclude WOULD drop the nested file before
+    # it is ever staged, which would mask the file from the scan loop below and
+    # make the scan-loop's nested-secret guarantee untestable (the file must be
+    # STAGED so the loop can prove it catches it). The scan-and-abort loop below
+    # (_commit_path_looks_secret + _commit_scan_secret_file over EVERY staged
+    # file) is the actual guarantee for nested/weak secrets; these excludes are a
+    # cheap first cut for the obvious top-level files only.
+    git add -A \
+        ':!.loki' ':!.loki/' \
+        ':!.env' ':!.env.*' ':!*.env' \
+        ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
+        ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
+
+    # Nothing staged = clean no-op, never an error.
+    if git diff --cached --quiet 2>/dev/null; then
+        return 0
+    fi
+
+    # Secret scan the STAGED files. If ANY staged file matches a secret pattern,
+    # ABORT: unstage (git reset -- keeps the working tree changes), print an
+    # honest message naming the offending file(s), and return 0 so the run
+    # continues with the work PRESERVED uncommitted (safe default: never commit
+    # a possible secret). -z handles paths with spaces/newlines.
+    # Two complementary layers, OR-ed per staged file:
+    #   layer 1 (path heuristic, cheaper, runs first): catches likely-secret
+    #           files anywhere in the tree regardless of value strength
+    #           (e.g. secrets/credentials.json with {"key":"sk-secret"}).
+    #   layer 2 (content scan): catches strong secrets in non-obvious filenames.
+    local offenders=""
+    local f
+    while IFS= read -r -d '' f; do
+        [ -f "$f" ] || continue
+        if _commit_path_looks_secret "$f" || _commit_scan_secret_file "$f"; then
+            offenders="${offenders}${offenders:+, }${f}"
+        fi
+    done < <(git diff --cached --name-only -z 2>/dev/null)
+
+    if [ -n "$offenders" ]; then
+        git reset >/dev/null 2>&1 || true
+        log_warn "Left uncommitted: possible secret detected in ${offenders}. Review and commit manually."
+        audit_agent_action "git_commit_aborted" "Aborted session commit; possible secret" "files=${offenders}" || true
+        return 0
+    fi
+
+    git commit -m "Loki Mode session changes (${ITERATION_COUNT:-0} iterations, result=${result:-0})" 2>/dev/null || true
+    audit_agent_action "git_commit" "Committed session changes" "iterations=${ITERATION_COUNT:-0},result=${result:-0}" || true
+    return 0
+}
+
 create_session_pr() {
-    # Push the agent branch and create a PR if gh CLI is available.
-    # Called during session cleanup to submit agent changes for review.
+    # Advise the user how to open a PR for the agent branch. PRINT-ONLY by
+    # default (no push, no PR). LOKI_AUTO_PR=1 restores the legacy auto behavior.
+    # Called during session cleanup, after commit_session_changes.
     local branch_file=".loki/state/agent-branch.txt"
 
     if [ ! -f "$branch_file" ]; then
@@ -6284,18 +6649,37 @@ create_session_pr() {
         return 0
     fi
 
-    log_info "Pushing agent branch: $branch_name"
-
-    # Check if there are any commits on this branch beyond the base
-    local commit_count
-    commit_count=$(git rev-list --count HEAD ^"$(git merge-base HEAD main 2>/dev/null || echo HEAD)" 2>/dev/null || echo "0")
-
-    if [ "$commit_count" = "0" ]; then
-        log_info "No commits on agent branch - skipping PR creation"
+    # Read the base branch captured at session start. Do NOT fabricate one.
+    local base=""
+    if [ -s .loki/state/base-branch.txt ]; then
+        base="$(cat .loki/state/base-branch.txt 2>/dev/null || true)"
+    fi
+    if [ -z "$base" ]; then
+        log_info "No recorded base branch; skipping PR advice"
         return 0
     fi
 
-    # Push the branch
+    # Count commits relative to the CAPTURED base (not a hardcoded main).
+    local commit_count
+    commit_count=$(git rev-list --count HEAD ^"$(git merge-base HEAD "$base" 2>/dev/null || echo HEAD)" 2>/dev/null || echo "0")
+
+    if [ "$commit_count" = "0" ]; then
+        log_info "No commits to PR on agent branch ${branch_name}"
+        return 0
+    fi
+
+    # DEFAULT: advisory only. Print the exact commands; never push, never PR.
+    if [ "${LOKI_AUTO_PR:-0}" != "1" ]; then
+        if declare -f print_pr_advice >/dev/null 2>&1; then
+            print_pr_advice "$base" "$branch_name"
+        else
+            log_info "To open a pull request: git push -u origin ${branch_name}, then open a PR (base: ${base})"
+        fi
+        return 0
+    fi
+
+    # OPT-IN (LOKI_AUTO_PR=1): legacy auto push + PR, now with the correct base.
+    log_info "Pushing agent branch: $branch_name"
     if ! git push -u origin "$branch_name" 2>/dev/null; then
         log_warn "Failed to push agent branch: $branch_name"
         return 1
@@ -6311,6 +6695,7 @@ create_session_pr() {
 Branch: \`$branch_name\`
 Session PID: $$
 Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --base "$base" \
             --head "$branch_name" 2>/dev/null) || true
 
         if [ -n "$pr_url" ]; then
@@ -17460,7 +17845,10 @@ main() {
         print_ttfv_next_steps "${LOKI_TTFV}" "$result" || true
     fi
 
-    # Create PR from agent branch if branch protection was enabled
+    # Commit the session's work to the agent branch (squashed, honest message),
+    # then advise the user how to open a PR. Both are no-ops when no agent branch
+    # was set up (LOKI_BRANCH_PROTECTION=false) or nothing changed.
+    commit_session_changes
     create_session_pr
     audit_agent_action "session_stop" "Session ended" "result=$result,iterations=$ITERATION_COUNT"
 

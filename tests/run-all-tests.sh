@@ -203,6 +203,20 @@ run_test "Live Build HUD (TTY gate + degrade + parity)" "$SCRIPT_DIR/test-build-
 # teardown (no real tunnel ever opened), and the plain-preview regression.
 run_test "Public Preview Tunnel (--public consent + tunnel wrap)" "$SCRIPT_DIR/test-preview-public.sh"
 
+# Branch Lifecycle (FEAT-BRANCH-DEFAULT): loki start works out of a feature
+# branch by default (base != main), squashes one honest session-end commit, and
+# ADVISES the PR (print-only, no push) unless LOKI_AUTO_PR=1. Extracts the three
+# branch functions from run.sh + the shared advisory lib; headline test proves
+# the advisory prints push+PR commands and does NOT push (real bare remote, zero
+# refs after), with a mutation check proving that assertion is non-vacuous.
+run_test "Branch Lifecycle (default-on, base!=main, commit, advisory no-push)" "$SCRIPT_DIR/test-branch-lifecycle.sh"
+
+# Deploy Advisory (FEAT-DEPLOY): `loki deploy` detects project type + CI/CD
+# pipeline and PRINTS the deploy command(s); print-only (NEVER runs a cloud CLI,
+# NEVER git push). Drives the real binary with fake cloud-CLI stubs; headline
+# proves non-execution + CI/CD git-advice precedence over cloud options.
+run_test "Deploy advisory (print-only, CI/CD precedence)" "$SCRIPT_DIR/test-deploy.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

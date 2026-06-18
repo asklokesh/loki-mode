@@ -28,7 +28,15 @@ RUN_SH="$REPO_ROOT/autonomy/run.sh"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-prdstub-XXXXXX")
 BIN=$(mktemp -d "${TMPDIR:-/tmp}/loki-prdstub-bin-XXXXXX")
-cleanup() { rm -rf "$WORK" "$BIN"; }
+# Harness scratch (run stdout/stderr capture + the analysis counter) lives
+# OUTSIDE $WORK so it never pollutes the git tree Loki operates on. With
+# feature-branch-by-default (v7.73.0) Loki commits the work tree at session end;
+# if the harness wrote its own .run.out/.run.err/count files INTO $WORK they
+# would be committed and their content would differ run-to-run, making the
+# codebase signature change between runs and spuriously flipping reuse->update.
+# Keeping them out of $WORK keeps the tree honest (only real codebase content).
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/loki-prdstub-out-XXXXXX")
+cleanup() { rm -rf "$WORK" "$BIN" "$OUT"; }
 trap cleanup EXIT INT TERM
 
 # --- a tiny real git project (so signature uses git mode) --------------------
@@ -68,7 +76,7 @@ exit 0
 STUB
 chmod +x "$BIN/claude"
 
-COUNT_FILE="$WORK/.stub-analysis-count"
+COUNT_FILE="$OUT/.stub-analysis-count"
 echo 0 > "$COUNT_FILE"
 
 run_once() {
@@ -93,7 +101,7 @@ run_once() {
        LOKI_TELEMETRY_DISABLED=1 \
        LOKI_NO_NEW_SESSION=1 \
        CI=true \
-       timeout "$_to" bash "$RUN_SH" 2>"$WORK/.run.err" >"$WORK/.run.out"
+       timeout "$_to" bash "$RUN_SH" 2>"$OUT/.run.err" >"$OUT/.run.out"
   )
 }
 
@@ -101,7 +109,7 @@ run_once() {
 echo 0 > "$COUNT_FILE"
 run_once
 N1=$(cat "$COUNT_FILE")
-if [ "$N1" -ge 1 ]; then ok "run 1 (no PRD): provider received CODEBASE_ANALYSIS_MODE (${N1} calls)"; else bad "run 1: expected >=1 analysis call, got $N1 (see $WORK/.run.err)"; fi
+if [ "$N1" -ge 1 ]; then ok "run 1 (no PRD): provider received CODEBASE_ANALYSIS_MODE (${N1} calls)"; else bad "run 1: expected >=1 analysis call, got $N1 (see $OUT/.run.err)"; fi
 [ -f "$WORK/.loki/generated-prd.md" ] && ok "run 1: generated-prd.md written" || bad "run 1: no generated-prd.md"
 [ -f "$WORK/.loki/state/prd-signature.json" ] && ok "run 1: prd-signature.json recorded (provenance)" || bad "run 1: no prd-signature.json"
 PRD_HASH1=$(shasum -a 256 "$WORK/.loki/generated-prd.md" 2>/dev/null | cut -d' ' -f1)
@@ -113,7 +121,7 @@ N2=$(cat "$COUNT_FILE")
 [ "$N2" -eq 0 ] && ok "run 2 (reuse): ZERO CODEBASE_ANALYSIS_MODE provider calls" || bad "run 2: expected 0 re-analysis calls, got $N2 (reuse not honored)"
 PRD_HASH2=$(shasum -a 256 "$WORK/.loki/generated-prd.md" 2>/dev/null | cut -d' ' -f1)
 [ -n "$PRD_HASH1" ] && [ "$PRD_HASH1" = "$PRD_HASH2" ] && ok "run 2: generated-prd.md byte-identical (not regenerated)" || bad "run 2: generated PRD changed on reuse"
-grep -q 'Reusing the PRD last generated or updated on\|Reusing the generated PRD' "$WORK/.run.out" \
+grep -q 'Reusing the PRD last generated or updated on\|Reusing the generated PRD' "$OUT/.run.out" \
   && ok "run 2: reuse disclosure printed to the user" || bad "run 2: no reuse disclosure in output"
 
 echo ""
