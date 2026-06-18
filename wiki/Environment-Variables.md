@@ -13,6 +13,7 @@ Complete reference for all Loki Mode environment variables.
 | `LOKI_BASE_WAIT` | `60` | Base wait time (seconds) |
 | `LOKI_MAX_WAIT` | `3600` | Maximum wait time (seconds) |
 | `LOKI_SKIP_PREREQS` | `false` | Skip prerequisite checks |
+| `LOKI_HUD` | `1` | Live in-terminal build HUD: a single per-iteration status line (phase, iter N/max, cost, files changed, timing). Shown only on an interactive TTY foreground run; off-TTY/CI/`--bg` output is byte-identical. Set `0` to disable. |
 
 ---
 

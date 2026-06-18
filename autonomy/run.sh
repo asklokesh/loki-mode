@@ -1005,6 +1005,129 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 log_debug() { [[ "${LOKI_DEBUG:-}" == "true" ]] && echo -e "${CYAN}[DEBUG]${NC} $*" >&2 || true; }
 
+# Live Build HUD (v7.71.0): a single append-only per-iteration status line on the
+# interactive TTY path. Pure additive stdout decoration -- never piped into any
+# tee, so the dashboard agent.log and the stream-json parser are untouched. The
+# whole function is structured so any internal failure still returns 0; it can
+# never abort the iteration loop. Gated: TTY + not background + LOKI_HUD != 0.
+# Usage: render_build_hud <iter> <phase> <duration_secs>
+render_build_hud() {
+    # Gate first: emit nothing unless interactive TTY, not --bg, and not opted out.
+    # Inverted into an early return so the off-TTY path is byte-identical (no output).
+    if ! { [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ] && [ "${LOKI_HUD:-1}" != "0" ]; }; then
+        return 0
+    fi
+
+    local _iter="${1:-0}" _phase="${2:-?}" _dur="${3:-0}"
+    [ -z "$_phase" ] && _phase="?"
+    # Sanitize numerics so set -u arithmetic/format below can never error out.
+    case "$_dur" in (*[!0-9]*|'') _dur=0 ;; esac
+    local _max="${MAX_ITERATIONS:-0}"
+    case "$_max" in (*[!0-9]*|'') _max=0 ;; esac
+
+    # Field list: each field is appended only when its data is present. Missing
+    # data => the field is omitted entirely (never a fabricated value).
+    local _fields="$_phase"
+    _fields="${_fields} | iter ${_iter}/${_max}"
+
+    # Cost from the context tracker totals (the same field the dashboard shows).
+    # NOTE: tracking.json totals accumulate across runs in the same dir (not reset
+    # on a fresh `loki start`), so this is cumulative cost for the project dir, not
+    # strictly this single run. Labeled plainly "$" / "cost" to avoid overclaiming.
+    # OMIT entirely when empty/missing/non-Claude.
+    local _cost=""
+    if command -v python3 >/dev/null 2>&1; then
+        _cost="$(python3 -c "
+import json
+try:
+    t = json.load(open('.loki/context/tracking.json'))
+    c = t.get('totals', {}).get('total_cost_usd', 0)
+    c = float(c)
+    if c > 0:
+        print('%.2f' % c)
+except Exception:
+    pass
+" 2>/dev/null || true)"
+    fi
+    [ -n "$_cost" ] && _fields="${_fields} | \$${_cost}"
+
+    # Files changed (+ins/-del and file count) vs the run start SHA. Reuse the
+    # build_completion_summary diff approach incl. the .loki/.git exclude pathspec.
+    # OMIT when no start sha, not a git repo, or no diff data.
+    local _start_sha="${_LOKI_RUN_START_SHA:-}"
+    if [ -n "$_start_sha" ]; then
+        local _shortstat _ins _del _files
+        _shortstat="$( (cd "${TARGET_DIR:-.}" && git diff --shortstat "${_start_sha}..HEAD" -- . ':(exclude).loki/' ':(exclude).git/' ':(exclude)**/.loki/**') 2>/dev/null || true )"
+        if [ -n "$_shortstat" ]; then
+            _files="$(printf '%s\n' "$_shortstat" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' | head -1 2>/dev/null || true)"
+            _ins="$(printf '%s\n' "$_shortstat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' | head -1 2>/dev/null || true)"
+            _del="$(printf '%s\n' "$_shortstat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1 2>/dev/null || true)"
+            [ -z "$_files" ] && _files=0
+            [ -z "$_ins" ] && _ins=0
+            [ -z "$_del" ] && _del=0
+            _fields="${_fields} | +${_ins}/-${_del} (${_files} files)"
+        fi
+    fi
+
+    # Per-iteration time (the duration arg). Labeled "took" (not "iter") so it
+    # does not collide with the "iter N/max" iteration-count field above.
+    _fields="${_fields} | took $(_hud_fmt_secs "$_dur")"
+
+    # Elapsed time for the whole run, from the once-captured run-start epoch.
+    local _start_epoch="${_LOKI_RUN_START_EPOCH:-}"
+    case "$_start_epoch" in (*[!0-9]*|'') _start_epoch="" ;; esac
+    if [ -n "$_start_epoch" ]; then
+        local _now _elapsed
+        _now="$(date +%s 2>/dev/null || true)"
+        case "$_now" in (*[!0-9]*|'') _now="" ;; esac
+        if [ -n "$_now" ] && [ "$_now" -ge "$_start_epoch" ] 2>/dev/null; then
+            _elapsed=$(( _now - _start_epoch ))
+            _fields="${_fields} | elapsed $(_hud_fmt_secs "$_elapsed")"
+        fi
+    fi
+
+    # ETA (PO lock #1): omit by default. Only a SMALL user-set LOKI_MAX_ITERATIONS
+    # (not the 1000 default) yields a meaningful target, so that is the single ETA
+    # trigger here. A LOKI_BUDGET_LIMIT cap is also an allowed trigger per the
+    # plan, but a budget-derived ETA needs cost-rate math that is easy to get
+    # wrong; per "keep it simple and safe, when unsure omit", budget ETA is left
+    # out rather than rendered approximately.
+    local _lmi="${LOKI_MAX_ITERATIONS:-}"
+    case "$_lmi" in (*[!0-9]*|'') _lmi="" ;; esac
+    if [ -n "$_lmi" ] && [ "$_lmi" -gt 0 ] 2>/dev/null && [ "$_lmi" -lt 1000 ] 2>/dev/null \
+       && [ "$_iter" -gt 0 ] 2>/dev/null && [ "$_iter" -lt "$_lmi" ] 2>/dev/null \
+       && [ -n "$_start_epoch" ]; then
+        local _now2 _el2 _per _remain_iters _eta
+        _now2="$(date +%s 2>/dev/null || true)"
+        case "$_now2" in (*[!0-9]*|'') _now2="" ;; esac
+        if [ -n "$_now2" ] && [ "$_now2" -ge "$_start_epoch" ] 2>/dev/null; then
+            _el2=$(( _now2 - _start_epoch ))
+            _per=$(( _el2 / _iter ))
+            _remain_iters=$(( _lmi - _iter ))
+            _eta=$(( _per * _remain_iters ))
+            [ "$_eta" -gt 0 ] 2>/dev/null && _fields="${_fields} | eta ~$(_hud_fmt_secs "$_eta")"
+        fi
+    fi
+
+    echo -e "${CYAN}[HUD]${NC} ${_fields}"
+    return 0
+}
+
+# Format a whole-seconds integer as a compact duration: 37s, 2m11s, 1h03m.
+# Best-effort and set -u safe; any odd input degrades to "0s".
+_hud_fmt_secs() {
+    local _s="${1:-0}"
+    case "$_s" in (*[!0-9]*|'') _s=0 ;; esac
+    if [ "$_s" -lt 60 ] 2>/dev/null; then
+        printf '%ds' "$_s"
+    elif [ "$_s" -lt 3600 ] 2>/dev/null; then
+        printf '%dm%02ds' "$(( _s / 60 ))" "$(( _s % 60 ))"
+    else
+        printf '%dh%02dm' "$(( _s / 3600 ))" "$(( (_s % 3600) / 60 ))"
+    fi
+    return 0
+}
+
 #===============================================================================
 # Process Registry (PID Supervisor)
 # Central registry of all spawned child processes for reliable cleanup
@@ -14156,6 +14279,13 @@ except Exception:
     _LOKI_RUN_START_SHA="$(cat "$_start_sha_file" 2>/dev/null || echo "")"
     export _LOKI_RUN_START_SHA
 
+    # Live Build HUD (v7.71.0): capture the run-start epoch ONCE for the elapsed
+    # field. Pure assignment (`:` builtin), emits no output, so the non-TTY/CI/Bun
+    # parity surface is byte-identical. := preserves a value across a resume only
+    # within the same process; a fresh run stamps now.
+    : "${_LOKI_RUN_START_EPOCH:=$(date +%s)}"
+    export _LOKI_RUN_START_EPOCH
+
     # Session-scope the mid-flight model override (model-honesty fix). The
     # override file (.loki/state/model-override) is a LIVE-RUN control: the
     # dashboard UI and docs state it "applies to the current run". A leftover
@@ -15779,6 +15909,13 @@ else:
         if [ $exit_code -eq 0 ]; then
             # Episode trace already captured by auto_capture_episode above (v6.15.0)
 
+            # Live Build HUD (v7.71.0): one append-only status line per successful
+            # iteration. At the top of the success branch so it fires for ALL
+            # success sub-paths (incl. perpetual mode / completion). TTY-gated and
+            # `|| true` so it can never abort the loop. Never tee'd -> dashboard
+            # agent.log + stream parser untouched.
+            render_build_hud "${ITERATION_COUNT:-0}" "${rarv_phase:-?}" "${duration:-0}" || true
+
             # Perpetual mode: NEVER stop, always continue
             if [ "$PERPETUAL_MODE" = "true" ]; then
                 log_info "Perpetual mode: Ignoring exit, continuing immediately..."
@@ -16033,6 +16170,12 @@ else:
 
         # Only apply retry logic for ERRORS (non-zero exit code)
         # Episode trace already captured by auto_capture_episode above (v6.15.0)
+
+        # Live Build HUD (v7.71.0): a failing iteration still shows motion (lock
+        # #3). At the top of the failure fall-through so it fires for ALL failure
+        # sub-paths, incl. the rate-limit/failover branch that `continue`s before
+        # the "Will retry" log_warn below. TTY-gated, `|| true`, never tee'd.
+        render_build_hud "${ITERATION_COUNT:-0}" "${rarv_phase:-?}" "${duration:-0}" || true
 
         # Checkpoint failed iteration state (v5.57.0)
         create_checkpoint "iteration-${ITERATION_COUNT} failed (exit=$exit_code)" "iteration-${ITERATION_COUNT}-fail"

@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.71.0] - 2026-06-18
+
+### Live in-terminal build HUD
+
+`loki start ./prd.md` now shows a live per-iteration status line in an interactive
+terminal, so the build is no longer silent between the start banner and the end
+summary. Each iteration prints one clean line:
+
+```
+[HUD] REASON | iter 3/1000 | $0.42 | +180/-24 (4 files) | took 37s | elapsed 2m11s
+```
+
+- Fields: RARV phase, iteration N/max, cumulative cost (the same total the
+  dashboard shows), files changed (+/-) since the run started, this iteration's
+  duration, and total elapsed. ETA is shown only when an explicit small
+  LOKI_MAX_ITERATIONS is set. Any field whose data is unavailable (non-Claude
+  provider with no cost, non-git dir) is omitted rather than faked.
+- TTY-gated and opt-out: the HUD renders only on an interactive foreground TTY
+  and never in CI, pipes, or `--bg`. Off-TTY output is byte-identical to before
+  (verified). Set LOKI_HUD=0 to disable.
+- It is an append-only line at each iteration boundary (not a repainting status
+  bar), so it does not fight the agent's streamed output, and it is never written
+  to the logs or dashboard. Reviewed by a 3-reviewer council to unanimous approve.
+
 ## [7.70.0] - 2026-06-18
 
 ### Deep bug-hunt sweep (wave-11): cross-route trust guards + fail-closed healing gate + 6 more

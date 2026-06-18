@@ -188,6 +188,13 @@ run_test "Delegate Notify (all terminal states)" "$SCRIPT_DIR/test-delegate-noti
 # tests run without a live ChromaDB; live-index parts skip cleanly when absent.
 run_test "Hybrid Codebase Search (manifest + RRF + budget + fallback)" "$SCRIPT_DIR/test-hybrid-search.sh"
 
+# Live Build HUD (FEAT-HUD): render_build_hud() emits a single per-iteration
+# status line ONLY on an interactive TTY (foreground, not --bg, LOKI_HUD != 0);
+# off-TTY/CI output is byte-identical (zero added bytes). Drives the helper under
+# a pseudo-tty to prove the gate both fires (emits [HUD]) and suppresses, plus
+# cost-degrade, set -u safety, _hud_fmt_secs formatting, and ETA gating.
+run_test "Live Build HUD (TTY gate + degrade + parity)" "$SCRIPT_DIR/test-build-hud.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
