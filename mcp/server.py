@@ -1358,14 +1358,17 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
             try:
                 resolved = validate_path(prd_path, allowed_dirs=['.'])
             except PathTraversalError as e:
+                _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error=str(e))
                 return json.dumps({"error": str(e)})
             if os.path.exists(resolved) and os.path.isfile(resolved):
                 with open(resolved, 'r', encoding='utf-8') as f:
                     content = f.read()
             else:
+                _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error='PRD file not found')
                 return json.dumps({"error": f"PRD file not found: {prd_path}"})
 
         if not content:
+            _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error='No PRD content or path provided')
             return json.dumps({"error": "No PRD content or path provided"})
 
         # Initialize project state using safe path operations
@@ -1390,6 +1393,7 @@ async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
         _emit_tool_event_async('loki_start_project', 'complete', result_status='success')
         return json.dumps({"success": True, **project})
     except PathTraversalError as e:
+        _emit_tool_event_async('loki_start_project', 'complete', result_status='error', error='Access denied')
         return json.dumps({"error": f"Access denied: {e}"})
     except Exception as e:
         logger.error(f"Start project failed: {e}")
@@ -1440,6 +1444,7 @@ async def loki_project_status() -> str:
         _emit_tool_event_async('loki_project_status', 'complete', result_status='success')
         return json.dumps(status, default=str)
     except PathTraversalError:
+        _emit_tool_event_async('loki_project_status', 'complete', result_status='error', error='Access denied')
         return json.dumps({"error": "Access denied"})
     except Exception as e:
         logger.error(f"Project status failed: {e}")
@@ -1478,6 +1483,7 @@ async def loki_agent_metrics() -> str:
         _emit_tool_event_async('loki_agent_metrics', 'complete', result_status='success')
         return json.dumps(metrics, default=str)
     except PathTraversalError:
+        _emit_tool_event_async('loki_agent_metrics', 'complete', result_status='error', error='Access denied')
         return json.dumps({"error": "Access denied"})
     except Exception as e:
         logger.error(f"Agent metrics failed: {e}")
@@ -1500,6 +1506,7 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
     try:
         cp_dir = safe_path_join('.loki', 'state', 'checkpoints')
         if not os.path.isdir(cp_dir):
+            _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='success')
             return json.dumps({"checkpoints": [], "message": "No checkpoints directory"})
 
         checkpoints = []
@@ -1518,6 +1525,7 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
         # Find and restore specific checkpoint
         target = next((c for c in checkpoints if c["id"] == checkpoint_id), None)
         if not target:
+            _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='error', error='Checkpoint not found')
             return json.dumps({"error": f"Checkpoint not found: {checkpoint_id}"})
 
         # Write checkpoint state as current state, stripping the injected "id" field
@@ -1529,6 +1537,7 @@ async def loki_checkpoint_restore(checkpoint_id: str = "") -> str:
         _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='success')
         return json.dumps({"restored": True, "checkpoint_id": checkpoint_id})
     except PathTraversalError:
+        _emit_tool_event_async('loki_checkpoint_restore', 'complete', result_status='error', error='Access denied')
         return json.dumps({"error": "Access denied"})
     except Exception as e:
         logger.error(f"Checkpoint restore failed: {e}")
@@ -1569,6 +1578,7 @@ async def loki_quality_report() -> str:
         _emit_tool_event_async('loki_quality_report', 'complete', result_status='success')
         return json.dumps(report, default=str)
     except PathTraversalError:
+        _emit_tool_event_async('loki_quality_report', 'complete', result_status='error', error='Access denied')
         return json.dumps({"error": "Access denied"})
     except Exception as e:
         logger.error(f"Quality report failed: {e}")
@@ -2057,6 +2067,7 @@ async def mem_get(
 
         id_list = [i.strip() for i in ids.split(",") if i.strip()]
         if not id_list:
+            _emit_tool_event_async('mem_get', 'complete', result_status='error', error='No IDs provided')
             return json.dumps({"entries": {}, "error": "No IDs provided"})
 
         # Cap at 20 to prevent abuse
@@ -2401,6 +2412,7 @@ async def loki_learnings(limit: int = 50) -> str:
     try:
         path = safe_path_join('.loki', 'state', 'relevant-learnings.json')
         if not os.path.exists(path):
+            _emit_tool_event_async('loki_learnings', 'complete', result_status='success')
             return json.dumps({"version": 1, "learnings": [], "total": 0})
         try:
             with safe_open(path, 'r') as f:

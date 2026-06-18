@@ -367,6 +367,34 @@ describe("budget.checkBudgetLimit circuit breaker", () => {
     expect(r.limit).toBeNull();
   });
 
+  // Bug-hunt (parity): a multi-dot BUDGET_LIMIT must be treated as NO LIMIT.
+  // Bash cleans `${BUDGET_LIMIT//[^0-9.]/}` then validates with python float(),
+  // which raises ValueError on "10.0.0"/"1.2.3.4"/"1..2" -> check_budget_limit
+  // returns 1 (no limit, breaker disabled). The previous Bun code used
+  // Number.parseFloat which truncates "10.0.0" -> 10 and would ENFORCE a $10 cap
+  // the user never validly set, tripping the circuit breaker wrongly and
+  // diverging from the bash route. spend $5 with raw cap "10.0.0" must NOT trip.
+  it("treats a multi-dot BUDGET_LIMIT as no-limit (matches bash python float())", () => {
+    const opts = setup(0, [{ cost_usd: 5 }]);
+    const r = checkBudgetLimit({ ...opts, budgetLimit: "10.0.0" });
+    expect(r.limit).toBeNull();
+    expect(r.exceeded).toBe(false);
+    expect(existsSync(opts.pauseFile)).toBe(false);
+  });
+
+  it("treats other multi-dot forms as no-limit (1.2.3.4, 1..2)", () => {
+    expect(checkBudgetLimit({ budgetLimit: "1.2.3.4" }).limit).toBeNull();
+    expect(checkBudgetLimit({ budgetLimit: "1..2" }).limit).toBeNull();
+  });
+
+  // Guard the still-valid forms keep working after the parser change: a single
+  // decimal, a trailing dot, and a leading dot all parse the same as python.
+  it("still accepts valid single-decimal forms (5.5, 10., .5)", () => {
+    expect(checkBudgetLimit({ budgetLimit: "5.5" }).limit).toBe(5.5);
+    expect(checkBudgetLimit({ budgetLimit: "10." }).limit).toBe(10);
+    expect(checkBudgetLimit({ budgetLimit: ".5" }).limit).toBe(0.5);
+  });
+
   it("does NOT write budget.json when current_cost is zero (matches bash guard)", () => {
     const opts = setup(10, []);
     const r = checkBudgetLimit(opts);

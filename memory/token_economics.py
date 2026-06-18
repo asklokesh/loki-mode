@@ -256,6 +256,15 @@ def optimize_context(
             relevance = memory.get("_weighted_score", 0.5)
         else:
             relevance = memory.get("_score", 0.5)
+        # Guard against an explicit null score in a corrupt/hand-edited
+        # record: .get(key, default) returns None when the key is present
+        # but null, and the `relevance > 1.0` comparison below would then
+        # raise "'>' not supported between instances of 'NoneType' and
+        # 'float'". Use an is-None check (not `or`) so a legitimate stored
+        # 0.0 relevance is preserved, mirroring the confidence guard above
+        # and retrieval.py's own base_score guard.
+        if relevance is None:
+            relevance = 0.5
         if relevance > 1.0:
             # Normalize high scores
             relevance = min(1.0, relevance / 10.0)

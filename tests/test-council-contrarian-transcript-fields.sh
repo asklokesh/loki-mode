@@ -152,12 +152,15 @@ assert_case() {
 # ---------------------------------------------------------------------------
 # Case 1 (the regression): 3-member unanimous APPROVE, DA returns REJECT (flip).
 # Pre-fix this recorded triggered=false/flipped=false. Post-fix: true/true.
-# Live vote: approve drops 3 -> 2, threshold = ceil(2/3*3) = 2, 2 >= 2 still
-# APPROVED, so return 0. (The flip removes the unanimous-only safety margin but
-# a 3-member council still meets the 2-vote quorum -- this is the live decision
-# and the fix must NOT change it.)
+# Live vote (current SAFE-DEFAULT behavior, completion-council.sh:754-767): a DA
+# veto MUST drive the verdict below the completion threshold, not merely
+# decrement by one. The code forces approve_count = effective_threshold - 1
+# (= 1 for a 3-member council, threshold ceil(2/3*3)=2), so 1 < 2 -> REJECTED ->
+# return 1 (CONTINUE). The earlier "decrement by 1 leaves 2 >= 2 -> return 0"
+# expectation was the v7.41.3-era no-op the forced-CONTINUE block deliberately
+# fixed: a devil's-advocate veto on a unanimous approval must always re-iterate.
 # ---------------------------------------------------------------------------
-assert_case "unanimous + DA flips" "APPROVE" "REJECT" 3 "true" "true" 0
+assert_case "unanimous + DA flips" "APPROVE" "REJECT" 3 "true" "true" 1
 
 # ---------------------------------------------------------------------------
 # Case 1b: 2-member unanimous APPROVE, DA returns REJECT (flip). threshold =

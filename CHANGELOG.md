@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.69.0] - 2026-06-18
+
+### Deep bug-hunt sweep (wave-10): 9 fixes across council, app-runner, MCP, dashboard, memory, Bun runner, CLI
+
+A 12-agent file-sharded verify-then-fix hunt over previously deep-un-hunted
+surfaces. Every finding was reproduced before fixing; STALE findings were
+refuted with evidence. Reviewed by a 3-reviewer council (2 Opus + 1 Sonnet) to
+unanimous approve. local-ci 84/84; bun 1087, python 1336.
+
+Trust surfaces (the headline fixes):
+- Completion council (bash): a provider TIMEOUT on the force-review path yielded
+  EMPTY output that fell through to the heuristic reviewer, which defaults to
+  APPROVE on benign evidence -- so a full provider timeout could produce a 2/3
+  or 3/3 APPROVE and mark the project COMPLETE. A timeout (rc 124/137/143) now
+  forces VOTE:REJECT before the heuristic fallback. The legitimate no-provider
+  degraded mode (rc 0, CLI absent) is untouched.
+- Override council (Bun): two distinct blocking findings from the same reviewer
+  whose raw text differed only after char 80 collapsed to one canonicalFindingId,
+  so a finding with no counter-evidence of its own could be lifted on a sibling's
+  evidence. Any findingId shared by more than one finding is now force-rejected
+  (the BLOCK stays) without calling judges. The id formula (a dev-agent emit
+  contract) is unchanged.
+
+Memory subsystem:
+- engine.py: cleanup_old and rebuild_index no longer crash on a record with an
+  explicit-null source_episodes/timestamp (one bad record aborted the whole
+  pass); get_stats total_memories no longer undercounts (the incremental updater
+  disagreed with rebuild_index, now counts every episode).
+- token_economics.py: optimize_context no longer crashes on a record with an
+  explicit-null score (null-on-.get class, matching the existing confidence guard).
+- vector_index.py: a missing numpy now raises a clear ImportError at construction
+  instead of an opaque AttributeError deep inside save/add (the NUMPY_AVAILABLE
+  flag was dead).
+
+Server surfaces:
+- MCP server: the per-tool timing stack leaked on early-return paths (file
+  not found, empty input, path-traversal handlers) across 7 tools -- an unbounded
+  slow memory leak in the long-running stdio server and a source of wrong timing
+  signals under concurrency. Every orphan return now emits its completion event.
+- Dashboard: the shared rate-limiter mutated its dict without a lock, so
+  concurrent requests (sync handlers run in Starlette's threadpool) could raise
+  "dictionary changed size during iteration" and 500 a trivial rate-limit guard.
+  Now guarded by a per-instance lock.
+
+App runner + CLI:
+- app-runner.sh: two restart/cleanup paths removed app.pid without the paired
+  app.token, leaving stale identity state; both now remove the token.
+- loki: loki onboard --format json|yaml and loki cluster run no longer produce
+  malformed output / silently skip work when a value (project name, cluster id)
+  contains a quote or apostrophe (heredoc-interpolation injection class; values
+  now passed via the environment). The inert spawn_timeout/spawn_retries config
+  knobs (no consumer since the run.sh timeout-helper removal) are now marked
+  deprecated and no longer export dead env vars.
+
+Refuted (verified STALE, no change): app-runner BSD grep \\s portability and the
+image-tag edge case, the completion-council no-provider heuristic-APPROVE mode
+(supported degraded mode), and several memory/Bun candidates. Deferred as
+separate scoped follow-ups (cross-file): codex LOKI_MAX_TIER case-normalization
+parity, the quality_gates.ts stub-judge artifact check, and read-scope on GET
+dashboard routes in enterprise mode.
+
 ## [7.68.0] - 2026-06-18
 
 ### Queued bug-hunt tail (wave-9) + CI test-isolation repair

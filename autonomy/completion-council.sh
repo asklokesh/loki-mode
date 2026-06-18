@@ -1971,6 +1971,9 @@ council_member_review() {
     fi
 
     local verdict=""
+    # bash-F4: exit code of the provider subcall (0 when no subcall ran, i.e.
+    # no-provider degraded mode). 124/137/143 => timeout => conservative REJECT.
+    local _provider_rc=0
     local role_instruction=""
     case "$role" in
         requirements_verifier)
@@ -2059,33 +2062,61 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 # CAVEMAN_DEFAULT_MODE=off suppression is preserved (see above).
                 # bash-F3: timeout-guard the provider subcall so a hung CLI can
                 # not stall the whole council. Default 600s matches the Bun route
-                # (council.ts LOKI_COUNCIL_TIMEOUT_MS=600000). A timeout yields
-                # empty output, which the [ -z "$verdict" ] fallback below turns
-                # into a conservative heuristic review.
+                # (council.ts LOKI_COUNCIL_TIMEOUT_MS=600000).
+                # bash-F4 (WAVE10 SAFE-DEFAULT): capture the subcall exit code so a
+                # timeout (124) is NOT silently routed into council_heuristic_review.
+                # The heuristic fallback defaults to APPROVE on benign evidence, so
+                # a full provider timeout used to let a 2-of-3 heuristic APPROVE mark
+                # the project COMPLETE (force-review path) -- the opposite of the
+                # required safe default. pipefail (run.sh:172) makes the assignment's
+                # $? equal timeout's 124 when the CLI is killed. _provider_rc is read
+                # after the case to force a conservative REJECT on timeout.
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" env CAVEMAN_DEFAULT_MODE=off claude "${_cm_argv[@]}" -p 2>/dev/null)
+                _provider_rc=$?
             fi
             ;;
         codex)
             if command -v codex &>/dev/null; then
                 verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" codex exec --sandbox workspace-write "$prompt" 2>/dev/null)
+                _provider_rc=$?
             fi
             ;;
         gemini)
             if command -v gemini &>/dev/null; then
                 verdict=$(echo "$prompt" | timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" gemini 2>/dev/null)
+                _provider_rc=$?
             fi
             ;;
         cline)
             if command -v cline &>/dev/null; then
                 verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" cline -y "$prompt" 2>/dev/null)
+                _provider_rc=$?
             fi
             ;;
         aider)
             if command -v aider &>/dev/null; then
                 verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
+                _provider_rc=$?
             fi
             ;;
     esac
+
+    # bash-F4 (WAVE10 SAFE-DEFAULT): a provider timeout (124, incl. 128+SIGTERM
+    # variants 137/143 if a wrapper kills it) must NEVER fall through to the
+    # APPROVE-leaning heuristic review. A reviewer whose CLI hung produced NO
+    # judgement, so the only safe verdict is REJECT (conservative re-iterate).
+    # Note: when no provider CLI is installed, the command -v guard above means
+    # the subcall never runs and _provider_rc stays 0, so legitimate no-provider
+    # degraded mode still reaches the heuristic fallback unchanged.
+    if [ "$_provider_rc" -eq 124 ] || [ "$_provider_rc" -eq 137 ] || [ "$_provider_rc" -eq 143 ]; then
+        # run.sh's log_warn writes to STDOUT (see bash-F2 note); council_member_review's
+        # stdout is captured as the verdict, so redirect to stderr to keep the
+        # captured verdict clean (the log line carries no VOTE: token, so the
+        # parse stays REJECT regardless, but this avoids polluting the capture).
+        log_warn "Council member $member_id ($role): provider review timed out (rc=$_provider_rc); defaulting to REJECT" >&2
+        verdict="VOTE:REJECT
+REASON: Provider review timed out (rc=$_provider_rc); no judgement produced, defaulting to conservative REJECT"
+    fi
 
     # Fallback: if no AI provider available, use heuristic-based review
     if [ -z "$verdict" ]; then

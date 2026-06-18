@@ -122,32 +122,43 @@ class _RateLimiter:
         self._window = window_seconds
         self._max_keys = max_keys
         self._calls: dict[str, list[float]] = defaultdict(list)
+        # Sync route handlers (plain `def`) run in Starlette's threadpool, so
+        # check() can be entered by several threads at once against this one
+        # shared instance. Without a guard, one thread iterating self._calls
+        # (the empty-key prune or the LRU-eviction sort) while another inserts
+        # or deletes a key raises "dictionary changed size during iteration",
+        # which surfaces to the caller as a 500 on a trivial rate-limit guard.
+        # The lock is held only around the in-memory bookkeeping (no I/O, no
+        # await), so contention is negligible and it cannot deadlock async
+        # callers that reach this via run_in_threadpool.
+        self._lock = threading.Lock()
 
     def check(self, key: str) -> bool:
         now = time.time()
-        # Prune old timestamps for this key
-        self._calls[key] = [t for t in self._calls[key] if now - t < self._window]
+        with self._lock:
+            # Prune old timestamps for this key
+            self._calls[key] = [t for t in self._calls[key] if now - t < self._window]
 
-        # Remove keys with empty timestamp lists
-        empty_keys = [k for k, v in self._calls.items() if not v]
-        for k in empty_keys:
-            del self._calls[k]
-
-        # Evict least-recently-accessed keys if max_keys exceeded
-        if len(self._calls) > self._max_keys:
-            # Sort by last-access time (most recent timestamp), evict least recent
-            sorted_keys = sorted(
-                self._calls.items(),
-                key=lambda x: max(x[1]) if x[1] else 0
-            )
-            keys_to_remove = len(self._calls) - self._max_keys
-            for k, _ in sorted_keys[:keys_to_remove]:
+            # Remove keys with empty timestamp lists
+            empty_keys = [k for k, v in self._calls.items() if not v]
+            for k in empty_keys:
                 del self._calls[k]
 
-        if len(self._calls[key]) >= self._max_calls:
-            return False
-        self._calls[key].append(now)
-        return True
+            # Evict least-recently-accessed keys if max_keys exceeded
+            if len(self._calls) > self._max_keys:
+                # Sort by last-access time (most recent timestamp), evict least recent
+                sorted_keys = sorted(
+                    self._calls.items(),
+                    key=lambda x: max(x[1]) if x[1] else 0
+                )
+                keys_to_remove = len(self._calls) - self._max_keys
+                for k, _ in sorted_keys[:keys_to_remove]:
+                    del self._calls[k]
+
+            if len(self._calls[key]) >= self._max_calls:
+                return False
+            self._calls[key].append(now)
+            return True
 
 
 _control_limiter = _RateLimiter(max_calls=10, window_seconds=60)

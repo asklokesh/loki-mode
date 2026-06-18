@@ -148,8 +148,35 @@ export async function runOverrideCouncil(
     evidenceById.set(e.findingId, e);
   }
 
+  // W10 bug-hunt -- canonicalFindingId COLLISION SAFETY.
+  // canonicalFindingId truncates finding.raw to the first 80 chars, so two
+  // DISTINCT blocking findings from the same reviewer whose raw text differs
+  // only after char 80 collapse to ONE id. Without this guard, a single
+  // counter-evidence entry keyed by that shared id would be looked up for
+  // EVERY colliding finding, lifting a BLOCK on a finding that supplied no
+  // evidence of its own (the unsafe, toward-approve direction). We do NOT
+  // change the id formula (it is the documented dev-agent emit contract --
+  // strengthening it would silently stop every legitimate override from
+  // matching). Instead we DETECT the collision and force every colliding
+  // finding to rejected (BLOCK stays) without calling any judge -- a finding
+  // whose id is ambiguous can never be safely overridden. The count is over
+  // ALL findings at an id (not just distinct ones): a duplicate of the same
+  // finding also trips the guard, which is intentionally conservative -- it
+  // only ever keeps a BLOCK (the safe direction), never lifts one.
+  const findingCountById = new Map<string, number>();
   for (const f of findings) {
     const fid = canonicalFindingId(f);
+    findingCountById.set(fid, (findingCountById.get(fid) ?? 0) + 1);
+  }
+
+  for (const f of findings) {
+    const fid = canonicalFindingId(f);
+    if ((findingCountById.get(fid) ?? 0) > 1) {
+      // Ambiguous id shared by >1 distinct finding -- never lift on a sibling's
+      // evidence. Keep the BLOCK; do not fan out judges for this finding.
+      rejected.add(fid);
+      continue;
+    }
     const ev = evidenceById.get(fid);
     if (!ev) {
       // No counter-evidence supplied -- finding stays rejected (BLOCK stays).

@@ -254,13 +254,26 @@ function isoNow(d: Date = new Date()): string {
 // ---------------------------------------------------------------------------
 
 // Parse BUDGET_LIMIT input. Bash strips non-numeric chars then float()-checks
-// (run.sh:7857). Returns null when no limit set / invalid.
+// (run.sh:10889 -- `python3 -c "float('${BUDGET_LIMIT//[^0-9.]/}')"`). Returns
+// null when no limit set / invalid.
+//
+// Parity (bug-hunt): bash validates the CLEANED string with python `float()`,
+// which REJECTS a multi-dot string (e.g. "10.0.0", "1.2.3.4", "1..2" all raise
+// ValueError -> check_budget_limit returns 1 = no limit, breaker disabled).
+// `Number.parseFloat` is lenient: it stops at the second dot and returns a
+// truncated number ("10.0.0" -> 10), which would ENFORCE a limit the user never
+// validly set and trip the circuit breaker wrongly. Mirror python `float()` by
+// rejecting any cleaned string that does not parse as a single decimal (at most
+// one dot). `Number(cleaned)` (unlike parseFloat) is whole-string and yields NaN
+// for multi-dot input, exactly matching python's all-or-nothing float().
 function parseBudgetLimit(v: number | string | null | undefined): number | null {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   const cleaned = v.replace(/[^0-9.]/g, "");
   if (!cleaned) return null;
-  const n = Number.parseFloat(cleaned);
+  // Number() is whole-string (rejects "10.0.0" as NaN) where parseFloat would
+  // truncate to 10. This matches bash's python float() all-or-nothing parse.
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 

@@ -42,7 +42,20 @@ class VectorIndex:
         Args:
             dimension: The dimensionality of vectors. Default is 384
                       which matches MiniLM embedding size.
+
+        Raises:
+            ImportError: If numpy is not installed. Every operation in this
+                index (add, search, save, load) relies on numpy, so fail
+                fast with a clear message here rather than letting a later
+                call crash with an opaque ``AttributeError: 'NoneType'
+                object has no attribute ...`` once ``np`` is None. The
+                module-level NUMPY_AVAILABLE flag is what gates this check.
         """
+        if not NUMPY_AVAILABLE:
+            raise ImportError(
+                "numpy is required for the vector index. "
+                "Install it with: pip install numpy"
+            )
         self.dimension = dimension
         self.embeddings: List[np.ndarray] = []
         self.ids: List[str] = []
