@@ -244,7 +244,11 @@ class MemoryEngine:
         for pattern in patterns_data.get("patterns", []):
             if not isinstance(pattern, dict):
                 continue
-            referenced_ids.update(pattern.get("source_episodes", []))
+            # `or []` guards an explicit null source_episodes (corrupt or
+            # hand-edited record): .get(..., []) returns None on a stored
+            # null, and set.update(None) raises TypeError, crashing the whole
+            # cleanup pass. A null and an empty list are equivalent here.
+            referenced_ids.update(pattern.get("source_episodes") or [])
 
         # Scan episodic directories
         episodic_path = Path(self.base_path) / "episodic"
@@ -376,17 +380,28 @@ class MemoryEngine:
                         "last_accessed": now,
                         "relevance_score": 0.5,
                     })
-                    index["total_memories"] = index.get("total_memories", 0) + 1
+                    # total_memories counts memories (episodes), not topics, to
+                    # match the canonical rebuild_index semantics
+                    # (total_memories += 1 per episode at line ~860). Previously
+                    # this only incremented when a NEW topic was created, so N
+                    # episodes sharing one phase reported total_memories=1 until
+                    # the user ran rebuild_index, which then jumped it to N
+                    # (two functions in this file disagreeing on the same field,
+                    # surfaced by get_stats). Increment per distinct episode.
+                    if episode_id:
+                        index["total_memories"] = index.get("total_memories", 0) + 1
                 else:
                     # Only count a given episode once. On resume/checkpoint the same
                     # trace id can be re-saved; without this guard episode_count,
-                    # total_cost_usd, and total_tokens would inflate on every re-save
-                    # even though episode_ids is already de-duplicated.
+                    # total_cost_usd, total_tokens, and total_memories would inflate
+                    # on every re-save even though episode_ids is already
+                    # de-duplicated.
                     if episode_id and episode_id not in found.get("episode_ids", []):
                         found.setdefault("episode_ids", []).append(episode_id)
                         found["episode_count"] = found.get("episode_count", 0) + 1
                         found["total_cost_usd"] = float(found.get("total_cost_usd", 0) or 0) + cost
                         found["total_tokens"] = int(found.get("total_tokens", 0) or 0) + tokens
+                        index["total_memories"] = index.get("total_memories", 0) + 1
                     merged = set(found.get("files_touched", []) or []) | set(files[:20])
                     found["files_touched"] = sorted(merged)[:50]
                     found["last_accessed"] = now
@@ -878,7 +893,12 @@ class MemoryEngine:
                             }
 
                         topics[phase]["token_count"] += tokens
-                        if data.get("timestamp", "") > topics[phase].get("last_accessed", ""):
+                        # `or ""` on BOTH sides: an episode with a missing or
+                        # explicit-null timestamp leaves last_accessed=None (set
+                        # from data.get("timestamp") above), and `str > None`
+                        # raises TypeError, crashing rebuild_index. A single
+                        # such episode is enough to break the whole rebuild.
+                        if (data.get("timestamp") or "") > (topics[phase].get("last_accessed") or ""):
                             topics[phase]["last_accessed"] = data.get("timestamp")
 
         # Index semantic patterns

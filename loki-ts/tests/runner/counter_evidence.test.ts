@@ -432,6 +432,91 @@ describe("recordOverrideOutcome", () => {
   });
 });
 
+// --- canonicalFindingId collision safety (W10 bug-hunt) -------------------
+//
+// Two distinct blocking findings from the SAME reviewer whose `raw` text
+// differs only after the first 80 chars collapse to ONE canonicalFindingId
+// (`${reviewer}::${raw.slice(0,80)}`). Before the fix, runOverrideCouncil
+// looked up a SINGLE evidence entry by that shared id and judged BOTH
+// findings against it, so a blocker that had NO evidence of its own could be
+// lifted using a sibling's evidence -- the unsafe (toward-approve) direction
+// for a BLOCK gate. The fix detects the collision and forces ALL colliding
+// findings to rejected (BLOCK stays) WITHOUT calling judges, preserving the
+// safe default and the documented id-emit contract (formula unchanged).
+
+describe("runOverrideCouncil -- canonicalFindingId collision safety", () => {
+  // 80-char shared prefix; the two findings diverge only afterward. The id
+  // formula is `${reviewer}::${raw.slice(0,80)}` so identical first-80 chars
+  // collide regardless of what follows.
+  const sharedPrefix = "[Critical] insecure deserialization in src/handler/very/deeply/nested/xyzABCabcd";
+
+  function collidingPair(): { f1: Finding; f2: Finding } {
+    expect(sharedPrefix.length).toBe(80); // guard: prefix must be exactly 80 chars
+    const f1 = makeFinding({
+      reviewer: "security-sentinel",
+      raw: sharedPrefix + "AAAA.ts:10",
+      description: "insecure deserialization (variant 1)",
+    });
+    const f2 = makeFinding({
+      reviewer: "security-sentinel",
+      raw: sharedPrefix + "BBBB.ts:99",
+      description: "insecure deserialization (variant 2)",
+    });
+    return { f1, f2 };
+  }
+
+  it("two findings sharing a canonical id collapse to one (collision precondition)", () => {
+    const { f1, f2 } = collidingPair();
+    expect(canonicalFindingId(f1)).toBe(canonicalFindingId(f2));
+  });
+
+  it("does NOT lift a colliding blocker that has no evidence of its own", async () => {
+    const { f1, f2 } = collidingPair();
+    const fid = canonicalFindingId(f1); // shared id
+    // Only ONE evidence entry, semantically for f1. f2 supplied no evidence.
+    const evidenceFile: CounterEvidenceFile = {
+      iteration: 1,
+      evidence: [makeEvidence({ findingId: fid })],
+    };
+    // A judge that would APPROVE every override it is asked to vote on.
+    const outcome = await runOverrideCouncil([f1, f2], evidenceFile, approveJudge());
+    // SAFE DEFAULT: an id shared by >1 distinct finding must NOT lift the BLOCK.
+    // Pre-fix this asserted-true (fid landed in approvedFindingIds via the
+    // sibling's evidence); post-fix the BLOCK is preserved.
+    expect(outcome.approvedFindingIds.has(fid)).toBe(false);
+    expect(outcome.rejectedFindingIds.has(fid)).toBe(true);
+  });
+
+  it("does NOT call judges on a collided id (no evidence is trusted across siblings)", async () => {
+    const { f1, f2 } = collidingPair();
+    const fid = canonicalFindingId(f1);
+    const evidenceFile: CounterEvidenceFile = {
+      iteration: 1,
+      evidence: [makeEvidence({ findingId: fid })],
+    };
+    let judgeCalls = 0;
+    const countingJudge: OverrideJudgeFn = async ({ judge }) => {
+      judgeCalls++;
+      return { judge, verdict: "APPROVE_OVERRIDE", reasoning: "ok" };
+    };
+    await runOverrideCouncil([f1, f2], evidenceFile, countingJudge);
+    // No judge fan-out for the ambiguous collided id.
+    expect(judgeCalls).toBe(0);
+  });
+
+  it("still lifts a non-colliding finding with its own evidence (no regression)", async () => {
+    const f = makeFinding({ reviewer: "architecture-strategist" });
+    const fid = canonicalFindingId(f);
+    const evidenceFile: CounterEvidenceFile = {
+      iteration: 1,
+      evidence: [makeEvidence({ findingId: fid })],
+    };
+    const outcome = await runOverrideCouncil([f], evidenceFile, approveJudge());
+    expect(outcome.approvedFindingIds.has(fid)).toBe(true);
+    expect(outcome.rejectedFindingIds.has(fid)).toBe(false);
+  });
+});
+
 // --- DEFAULT_OVERRIDE_JUDGES ----------------------------------------------
 
 describe("DEFAULT_OVERRIDE_JUDGES", () => {

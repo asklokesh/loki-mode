@@ -854,3 +854,44 @@ class TestEdgeCases:
         ]
         result = optimize_context(memories, 100000)
         assert result[0]["id"] == "used"
+
+    def test_optimize_context_null_weighted_score(self):
+        """
+        REGRESSION: a corrupt/hand-edited record with an explicit null
+        ``_weighted_score`` crashed optimize_context with
+        "'>' not supported between instances of 'NoneType' and 'float'"
+        (the `relevance > 1.0` comparison). The confidence/usage_count
+        siblings were already null-guarded; _weighted_score/_score were not.
+
+        Non-vacuous: assert the call returns the record (no crash) rather
+        than merely "no exception" being implied.
+        """
+        memories = [{"id": "m1", "_weighted_score": None, "text": "x"}]
+        result = optimize_context(memories, 100000)
+        assert len(result) == 1
+        assert result[0]["id"] == "m1"
+
+    def test_optimize_context_null_score(self):
+        """REGRESSION: same null-score crash via the ``_score`` fallback."""
+        memories = [{"id": "m1", "_score": None, "text": "x"}]
+        result = optimize_context(memories, 100000)
+        assert len(result) == 1
+        assert result[0]["id"] == "m1"
+
+    def test_optimize_context_legitimate_zero_score_preserved(self):
+        """
+        Guard the fix: a legitimate stored relevance of 0.0 must NOT be
+        coerced to the 0.5 default. If a future "cleanup" replaces the
+        is-None check with `or`, a real 0.0 would silently become 0.5 and
+        re-rank the item, so pin the distinction. A high-relevance item and
+        a zero-relevance item (otherwise identical) must rank in that order.
+        """
+        memories = [
+            {"id": "zero", "_score": 0.0, "confidence": 0.5, "usage_count": 0},
+            {"id": "high", "_score": 1.0, "confidence": 0.5, "usage_count": 0},
+        ]
+        result = optimize_context(memories, 100000)
+        assert result[0]["id"] == "high", (
+            "0.0 relevance must be preserved (not coerced to 0.5); "
+            "the 1.0-relevance item must rank first"
+        )

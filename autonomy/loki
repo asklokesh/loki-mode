@@ -7358,8 +7358,8 @@ cmd_config() {
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
-            echo "  spawn_timeout        Provider spawn timeout in seconds (default: 120)"
-            echo "  spawn_retries        Provider spawn retry count (default: 2)"
+            echo "  spawn_timeout        [DEPRECATED] No effect since WAVE9 (no consumer); accepted for back-compat"
+            echo "  spawn_retries        [DEPRECATED] No effect since WAVE9 (no consumer); accepted for back-compat"
             echo "  notify.slack         Slack webhook URL"
             echo "  notify.discord       Discord webhook URL"
             echo "  budget               Cost budget limit in USD"
@@ -7437,6 +7437,7 @@ cmd_config_set() {
             if ! echo "$value" | grep -qE '^[0-9]+$'; then
                 echo -e "${RED}Invalid $key: $value (expected: integer)${NC}"; return 1
             fi
+            echo -e "${YELLOW}Note: '$key' is deprecated and has no effect since WAVE9 (no consumer in the runtime). Accepted for back-compat only.${NC}" >&2
             ;;
         budget)
             if ! echo "$value" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
@@ -7518,8 +7519,8 @@ SET_CONFIG
         provider)         export LOKI_PROVIDER="$value" ;;
         blind_validation) export LOKI_BLIND_VALIDATION="$value" ;;
         adversarial_testing) export LOKI_ADVERSARIAL_TESTING="$value" ;;
-        spawn_timeout)    export LOKI_SPAWN_TIMEOUT="$value" ;;
-        spawn_retries)    export LOKI_SPAWN_RETRIES="$value" ;;
+        # spawn_timeout / spawn_retries: deprecated, no runtime consumer (WAVE9);
+        # intentionally not exported.
         budget)           export LOKI_BUDGET_LIMIT="$value" ;;
     esac
 }
@@ -7626,8 +7627,8 @@ cmd_config_show() {
     echo "  maxTier:              ${LOKI_MAX_TIER:-(unlimited)}"
     echo "  blind_validation:     ${LOKI_BLIND_VALIDATION:-true}"
     echo "  adversarial_testing:  ${LOKI_ADVERSARIAL_TESTING:-true}"
-    echo "  spawn_timeout:        ${LOKI_SPAWN_TIMEOUT:-120}s"
-    echo "  spawn_retries:        ${LOKI_SPAWN_RETRIES:-2}"
+    echo "  spawn_timeout:        (deprecated, no effect)"
+    echo "  spawn_retries:        (deprecated, no effect)"
     echo "  issue_provider:       ${LOKI_ISSUE_PROVIDER:-(auto-detect)}"
     echo "  budget:               ${LOKI_BUDGET_LIMIT:-(no limit)}"
     echo ""
@@ -13012,47 +13013,60 @@ else:
                 return 1
             fi
 
-            # Fire lifecycle hooks and record state
-            PYTHONPATH="${SKILL_DIR:-.}" python3 -c "
-import json, sys
-sys.path.insert(0, '${SKILL_DIR:-.}')
+            # Fire lifecycle hooks and record state.
+            # WAVE10: pass cluster_id / template_name / template_file / SKILL_DIR
+            # via os.environ instead of interpolating into the python source.
+            # A --cluster-id containing a single quote (e.g. "o'brien") made the
+            # heredoc body a SyntaxError, skipping all state recording while the
+            # green "Cluster: ..." line still printed (silent false success).
+            _LOKI_SKILL_DIR="${SKILL_DIR:-.}" \
+            _LOKI_TEMPLATE_FILE="${template_file}" \
+            _LOKI_CLUSTER_ID="${cluster_id}" \
+            _LOKI_TEMPLATE_NAME="${template_name}" \
+            _LOKI_DO_RESUME="${do_resume}" \
+            PYTHONPATH="${SKILL_DIR:-.}" python3 -c '
+import json, sys, os
+skill_dir = os.environ["_LOKI_SKILL_DIR"]
+sys.path.insert(0, skill_dir)
 from swarm.patterns import ClusterLifecycleHooks
 from state.sqlite_backend import SqliteStateBackend
 
 # Load template hooks config
-with open('${template_file}') as f:
+with open(os.environ["_LOKI_TEMPLATE_FILE"]) as f:
     tpl = json.load(f)
 
-hooks = ClusterLifecycleHooks(tpl.get('hooks', {}))
+hooks = ClusterLifecycleHooks(tpl.get("hooks", {}))
 db = SqliteStateBackend()
 
-cluster_id = '${cluster_id}'
-resume = '${do_resume}' == 'true'
+cluster_id = os.environ["_LOKI_CLUSTER_ID"]
+template_name = os.environ["_LOKI_TEMPLATE_NAME"]
+resume = os.environ["_LOKI_DO_RESUME"] == "true"
 
 if resume:
-    events = db.query_events(event_type='cluster_state', migration_id=cluster_id, limit=1)
+    events = db.query_events(event_type="cluster_state", migration_id=cluster_id, limit=1)
     if events:
-        print(f'Resuming cluster {cluster_id} from last checkpoint')
+        print(f"Resuming cluster {cluster_id} from last checkpoint")
     else:
-        print(f'No previous state found for {cluster_id}. Starting fresh.')
+        print(f"No previous state found for {cluster_id}. Starting fresh.")
 
 # Fire pre_run hooks
-results = hooks.fire('pre_run', {'cluster_id': cluster_id, 'template': '${template_name}'})
+results = hooks.fire("pre_run", {"cluster_id": cluster_id, "template": template_name})
 for r in results:
-    if not r['success']:
-        print(f'Pre-run hook failed: {r[\"output\"]}')
+    if not r["success"]:
+        print("Pre-run hook failed: " + str(r.get("output", "")))
 
 # Record cluster start
-db.record_event('cluster_start', {
-    'cluster_id': cluster_id,
-    'template': '${template_name}',
-    'agents': len(tpl.get('agents', [])),
-    'resume': resume,
+db.record_event("cluster_start", {
+    "cluster_id": cluster_id,
+    "template": template_name,
+    "agents": len(tpl.get("agents", [])),
+    "resume": resume,
 }, migration_id=cluster_id)
 
-print(f'Cluster {cluster_id} initialized with {len(tpl.get(\"agents\", []))} agents')
-print('Template validated. Lifecycle hooks active.')
-" 2>&1
+_n_agents = len(tpl.get("agents", []))
+print(f"Cluster {cluster_id} initialized with {_n_agents} agents")
+print("Template validated. Lifecycle hooks active.")
+' 2>&1
 
             echo -e "${GREEN}Cluster: $cluster_id${NC}"
             echo -e "Template: $template_name"
@@ -23325,10 +23339,10 @@ except: pass
         output=$(cat <<ENDJSON
 {
   "project": {
-    "name": "$project_name",
+    "name": $(_VAL="$project_name" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$project_name\""),
     "description": $(_DESC="$project_description" python3 -c "import json, os; print(json.dumps(os.environ.get('_DESC','')))" 2>/dev/null || echo "\"$project_description\""),
-    "version": "$project_version",
-    "path": "$target_path"
+    "version": $(_VAL="$project_version" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$project_version\""),
+    "path": $(_VAL="$target_path" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$target_path\"")
   },
   "languages": "$(echo $languages | sed 's/  */ /g')",
   "frameworks": "$(echo $frameworks | sed 's/  */ /g')",
@@ -23342,9 +23356,9 @@ except: pass
     "docs": $doc_count
   },
   "commands": {
-    "build": "$build_cmd",
-    "run": "$run_cmd",
-    "test": "$test_cmd"
+    "build": $(_VAL="$build_cmd" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$build_cmd\""),
+    "run": $(_VAL="$run_cmd" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$run_cmd\""),
+    "test": $(_VAL="$test_cmd" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$test_cmd\"")
   },
   "depth": $depth
 }
@@ -23354,10 +23368,10 @@ ENDJSON
         # YAML output
         output=$(cat <<ENDYAML
 project:
-  name: $project_name
-  description: "$project_description"
-  version: "$project_version"
-  path: $target_path
+  name: $(_VAL="$project_name" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$project_name\"")
+  description: $(_VAL="$project_description" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$project_description\"")
+  version: $(_VAL="$project_version" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$project_version\"")
+  path: $(_VAL="$target_path" python3 -c "import json, os; print(json.dumps(os.environ.get('_VAL','')))" 2>/dev/null || echo "\"$target_path\"")
 languages: $languages
 frameworks: $frameworks
 build_system: $build_system

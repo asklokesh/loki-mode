@@ -1799,8 +1799,14 @@ app_runner_watchdog() {
     log_info "App Runner: auto-restarting in ${backoff}s..."
     sleep "$backoff"
 
-    # Clear PID and restart
+    # Clear PID and restart. Remove the identity token alongside app.pid (LOW-3):
+    # the token belongs to the now-dead process, and if the upcoming start fails
+    # (e.g. the old port is still held) no new token is written, so a leftover
+    # token would outlive its pid and could mislead a later _app_runner_pid_is_ours
+    # check. Every site that removes app.pid removes app.token (cf. stop:1443,
+    # watchdog crash-limit:1789).
     rm -f "$_APP_RUNNER_DIR/app.pid"
+    rm -f "$_APP_RUNNER_DIR/app.token"
     _APP_RUNNER_PID=""
     app_runner_start || log_warn "App Runner: auto-restart failed"
 }
@@ -1829,8 +1835,14 @@ app_runner_cleanup() {
         fi
     fi
 
-    # Remove PID file
+    # Remove PID file and its paired identity token (LOW-3). app_runner_stop
+    # above removes both when a pid is present, but it early-returns without
+    # touching either when called with no pid (the post-failed-restart leftover
+    # state: token present, app.pid already gone). Removing the token here too
+    # guarantees no stale token survives session end regardless of how cleanup
+    # was reached.
     rm -f "$_APP_RUNNER_DIR/app.pid"
+    rm -f "$_APP_RUNNER_DIR/app.token"
 
     # Update state
     _write_app_state "stopped"
