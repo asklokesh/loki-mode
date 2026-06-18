@@ -11473,7 +11473,11 @@ try:
     storage = MemoryStorage(f'{target_dir}/.loki/memory')
     retriever = MemoryRetrieval(storage)
     context = {'goal': goal, 'phase': phase}
-    results = retriever.retrieve_task_aware(context, top_k=3)
+    # The autonomous RARV loop opts into persist_boost so retrieved memories are
+    # reinforced on disk ("use it or lose it"). Manual surfaces (loki memory CLI,
+    # dashboard, MCP) keep the default persist_boost=False so a human browsing
+    # memories does not silently inflate their importance.
+    results = retriever.retrieve_task_aware(context, top_k=3, persist_boost=True)
     if results:
         print('RELEVANT MEMORIES:')
         for r in results[:3]:

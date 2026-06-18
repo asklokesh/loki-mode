@@ -99,6 +99,7 @@ def test_retrieval_boost_is_persisted_to_disk():
         results = retriever.retrieve_task_aware(
             {"goal": "payment", "task_type": "implementation"},
             top_k=5,
+            persist_boost=True,
         )
         assert any(r.get("id") == episode_id for r in results), (
             "test setup: the seeded episode must be among the retrieved results "
@@ -177,6 +178,37 @@ def test_persist_boost_does_not_clobber_concurrent_content_edit():
         )
 
 
+def test_default_retrieval_does_not_persist_boost():
+    """The default retrieve_task_aware (persist_boost=False) must NOT write to
+    disk -- manual/on-demand surfaces (loki memory CLI, dashboard, MCP) should
+    not silently reinforce importance. Only the autonomous RARV loop opts in.
+
+    Non-vacuity: with persist_boost=True the sibling test above proves the disk
+    importance rises; here, omitting the flag must leave the stored importance
+    unchanged.
+    """
+    with tempfile.TemporaryDirectory(prefix="loki-test-boost-default-") as base:
+        storage = MemoryStorage(base_path=base)
+        episode_id = _seed_episode(storage, importance=0.5)
+        before = _stored_importance(storage, episode_id)
+        assert before == 0.5, "test setup: seeded importance should be 0.5"
+
+        retriever = MemoryRetrieval(storage=storage, base_path=base)
+        results = retriever.retrieve_task_aware(
+            {"goal": "payment", "task_type": "implementation"},
+            top_k=5,
+        )
+        assert any(r.get("id") == episode_id for r in results), (
+            "test setup: the seeded episode must be among the retrieved results"
+        )
+
+        after = _stored_importance(storage, episode_id)
+        assert after == before, (
+            "default retrieval (persist_boost=False) must NOT persist the boost: "
+            "stored importance should stay %r but disk shows %r" % (before, after)
+        )
+
+
 def _run_standalone():
     """Print the observed before/after stored importance without pytest.
 
@@ -192,6 +224,7 @@ def _run_standalone():
         results = retriever.retrieve_task_aware(
             {"goal": "payment", "task_type": "implementation"},
             top_k=5,
+            persist_boost=True,
         )
         retrieved = any(r.get("id") == episode_id for r in results)
         after = _stored_importance(storage, episode_id)
