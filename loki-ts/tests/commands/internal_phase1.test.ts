@@ -120,7 +120,7 @@ describe("v7.5.3 loki internal phase1-hooks", () => {
     expect(out.stdout).toContain("no counter-evidence");
   });
 
-  it("override <iter> with trusted proofType lifts BLOCK", async () => {
+  it("override <iter> with trusted proofType + artifact lifts BLOCK", async () => {
     seedReview(9, ["[Critical] dup code at sdk/python/x.py:1"]);
     // Compute the expected findingId via the canonical algorithm.
     const ce = await import("../../src/runner/counter_evidence.ts");
@@ -139,7 +139,9 @@ describe("v7.5.3 loki internal phase1-hooks", () => {
             findingId: fid,
             claim: "dead duplicate",
             proofType: "duplicate-code-path",
-            artifacts: [],
+            // A non-empty artifact is what makes a trusted proofType
+            // mechanically falsifiable (grep target / dead-path proof).
+            artifacts: ["sdk/python/x.py is never imported (grep miss)"],
           },
         ],
       }),
@@ -151,6 +153,63 @@ describe("v7.5.3 loki internal phase1-hooks", () => {
     expect(code).toBe(0);
     expect(out.stdout).toContain("LIFTED");
     expect(existsSync(join(scratch, "state", "relevant-learnings.json"))).toBe(true);
+  });
+
+  it("override <iter> with trusted proofType but EMPTY artifacts does NOT lift (cross-route trust guard)", async () => {
+    // Cross-route trust bug: the live Bun bash-hook override path
+    // (loki internal phase1-hooks override) decided APPROVE_OVERRIDE purely on
+    // TRUSTED.has(proofType), ignoring evidence.artifacts. A counter-evidence
+    // file with a trusted proofType but empty/whitespace-only artifacts (an
+    // unverifiable or forged claim) therefore lifted a BLOCK with zero real
+    // verification. Mirrors the sibling guard in quality_gates.ts: a trusted
+    // proofType yields APPROVE_OVERRIDE only when it carries >=1 non-empty
+    // artifact. Empty -> REJECT_OVERRIDE, BLOCK stays (the safe direction).
+    seedReview(11, ["[Critical] dup code at sdk/python/y.py:1"]);
+    const ce = await import("../../src/runner/counter_evidence.ts");
+    const fInjector = await import("../../src/runner/findings_injector.ts");
+    const findings = fInjector.loadPreviousFindings(scratch, 11).findings;
+    expect(findings.length).toBe(1);
+    const fid = ce.canonicalFindingId(findings[0]!);
+
+    mkdirSync(join(scratch, "state"), { recursive: true });
+    writeFileSync(
+      join(scratch, "state", "counter-evidence-11.json"),
+      JSON.stringify({
+        iteration: 11,
+        evidence: [
+          {
+            findingId: fid,
+            claim: "dead duplicate (no proof supplied)",
+            proofType: "duplicate-code-path",
+            // Whitespace-only artifacts are not real proof; must not lift.
+            artifacts: ["", "   "],
+          },
+        ],
+      }),
+    );
+
+    const stop = capture();
+    const code = await runInternalPhase1Hooks(["override", "11"]);
+    const out = stop();
+    expect(code).toBe(0);
+    // Pre-fix this printed LIFTED; post-fix the BLOCK is kept.
+    expect(out.stdout).toContain("BLOCKED");
+    expect(out.stdout).not.toContain("LIFTED");
+
+    // Audit transcript records a REJECT for the (otherwise trusted) finding,
+    // proving the rejection came from the artifact guard, not a missing match.
+    const reviewsRoot = join(scratch, "quality", "reviews", "review-test-11");
+    const override = JSON.parse(
+      readFileSync(join(reviewsRoot, "override-11.json"), "utf-8"),
+    ) as {
+      approved_finding_ids: string[];
+      rejected_finding_ids: string[];
+      votes: Record<string, Array<{ verdict: string; reasoning: string }>>;
+    };
+    expect(override.approved_finding_ids).toEqual([]);
+    expect(override.rejected_finding_ids).toContain(fid);
+    expect(override.votes[fid]!.every((v) => v.verdict === "REJECT_OVERRIDE")).toBe(true);
+    expect(override.votes[fid]![0]!.reasoning).toContain("no artifact supplied");
   });
 
   it("handoff <gate> <count> <iter> writes a handoff doc", async () => {

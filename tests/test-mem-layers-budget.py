@@ -186,12 +186,74 @@ def test_layer2_loads_when_affordable():
           % (len(timeline_mem), metrics.layer2_tokens))
 
 
+class _FakeStorage:
+    """Storage stub that can load any topic id as an episode."""
+
+    def load_episode(self, topic_id):
+        return {"id": topic_id, "content": "full memory body"}
+
+    def load_pattern(self, topic_id):
+        return None
+
+    def load_skill(self, topic_id):
+        return None
+
+
+def test_layer3_gate_uses_effective_score():
+    """A keyword-boosted topic must clear the Layer-3 high-relevance gate.
+
+    After WT9 the keyword boost lives on the transient match_score
+    (effective_score), never on the stored relevance_score. The loader's
+    Layer-3 gate must therefore test effective_score, not relevance_score.
+
+    Scenario: a topic with stored relevance 0.6 but a query boost lifting
+    effective_score to 0.9 (>= the 0.8 high-relevance gate). The timeline is
+    empty (no timeline context), so the run must fall through to Layer 3 and
+    load the topic's full memory.
+
+    Non-vacuity: pre-fix the gate read relevance_score (0.6 < 0.8), so the
+    topic was filtered out of high_relevance and NO full memory was loaded;
+    this assertion FAILS. Post-fix the gate reads effective_score (0.9 >= 0.8)
+    and the full memory is loaded.
+    """
+    # Stored relevance below the gate; boosted match_score above it.
+    topic = Topic(id="t1", summary="deploy kubernetes",
+                  relevance_score=0.6, token_count=20, match_score=0.9)
+    assert topic.relevance_score < ProgressiveLoader.HIGH_RELEVANCE_THRESHOLD
+    assert topic.effective_score >= ProgressiveLoader.HIGH_RELEVANCE_THRESHOLD
+
+    loader = ProgressiveLoader(
+        base_path=tempfile.mkdtemp(prefix="loki-mem-test-"),
+        index_layer=_FakeIndexLayer(50, [topic], total_available=10000),
+        # Empty timeline so get_recent_for_topic yields nothing and the run
+        # falls through to Layer 3 instead of returning timeline context.
+        timeline_layer=_FakeTimelineLayer(100, entries_per_topic=[]),
+    )
+    loader._storage = _FakeStorage()
+
+    memories, metrics = loader.load_relevant_context("deploy kubernetes",
+                                                     max_tokens=2000)
+    full = [m for m in memories if m.get("type") in ("episode", "pattern", "skill")]
+    assert full, (
+        "Layer-3 gate dropped a keyword-boosted topic (effective_score=%.2f); "
+        "gate must use effective_score, not stored relevance_score"
+        % topic.effective_score
+    )
+    assert metrics.layer3_tokens == topic.token_count, (
+        "boosted topic was not charged to Layer 3: layer3_tokens=%d"
+        % metrics.layer3_tokens
+    )
+    print("PASS test_layer3_gate_uses_effective_score:",
+          "full=%d layer3_tokens=%d" % (len(full), metrics.layer3_tokens))
+
+
 def main():
     tests = [
         test_cross_project_timestamps_parse,
         test_knowledge_graph_timestamps_parse,
         test_layer2_respects_budget,
         test_layer2_loads_when_affordable,
+        test_layer3_gate_uses_effective_score,
     ]
     for t in tests:
         t()

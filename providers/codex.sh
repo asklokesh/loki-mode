@@ -161,6 +161,13 @@ resolve_model_for_tier() {
     esac
 
     local max_tier="${LOKI_MAX_TIER:-}"
+    # Normalize EXACTLY like claude.sh:356 (loki_apply_max_tier_clamp): trim +
+    # lowercase BEFORE the case match. Without this, a user-typed cap like "Haiku"
+    # or " haiku " (settings.json maxTier exports verbatim) fell through to the
+    # default arm and the cost ceiling was silently bypassed for codex while
+    # claude honored it. Both routes (this + applyCodexMaxTier in providers.ts)
+    # normalize identically. Parity fix.
+    max_tier="$(printf '%s' "$max_tier" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     local effort=""
 
     case "$tier" in

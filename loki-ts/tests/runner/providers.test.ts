@@ -252,19 +252,36 @@ describe("codexProvider invocation", () => {
     expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("xhigh");
   });
 
-  // v7.41.4 parity guard (deliberate deviation lock): unlike claude.sh:352,
-  // codex.sh:163-171 does NOT trim/lowercase LOKI_MAX_TIER -- it switches on the
-  // RAW value. applyCodexMaxTier was therefore left switching on the raw env var
-  // too. Normalizing the Bun codex side alone would CREATE drift with bash codex
-  // (mixed-case "Haiku" would cap to low on Bun but stay xhigh on bash). This
-  // asserts the non-normalized contract holds: "Haiku" matches no arm -> no cap.
-  it("LOKI_MAX_TIER='Haiku' (mixed case) does NOT cap effort -- codex is raw (codex.sh:163-171)", async () => {
+  // Parity fix (cross-file): codex.sh:163 and applyCodexMaxTier now normalize
+  // LOKI_MAX_TIER with trim + lowercase BEFORE the case/switch, mirroring
+  // claude.sh:356 (loki_apply_max_tier_clamp) and applyMaxTierCeiling:158. A
+  // user-typed cap like "Haiku" or " haiku " (settings.json maxTier exports
+  // verbatim) previously fell through to the default arm on BOTH codex routes,
+  // silently bypassing the cost ceiling for codex while claude honored it. These
+  // assert both routes now cap identically for mixed-case and whitespace input.
+  it("LOKI_MAX_TIER='Haiku' (mixed case) caps planning(xhigh) -> low (parity with claude)", async () => {
     process.env["LOKI_MAX_TIER"] = "Haiku";
     writeCodexStub();
     const p = codexProvider();
     await p.invoke(makeCall({ provider: "codex", tier: "planning" }));
-    // planning -> xhigh; raw "Haiku" matches no case arm -> no cap -> stays xhigh.
-    expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("xhigh");
+    // planning -> xhigh; normalized "haiku" -> cap everything to low.
+    expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("low");
+  });
+
+  it("LOKI_MAX_TIER=' haiku ' (whitespace) caps planning(xhigh) -> low (parity with claude)", async () => {
+    process.env["LOKI_MAX_TIER"] = " haiku ";
+    writeCodexStub();
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", tier: "planning" }));
+    expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("low");
+  });
+
+  it("LOKI_MAX_TIER='Sonnet' (mixed case) caps planning(xhigh) -> high (parity with claude)", async () => {
+    process.env["LOKI_MAX_TIER"] = "Sonnet";
+    writeCodexStub();
+    const p = codexProvider();
+    await p.invoke(makeCall({ provider: "codex", tier: "planning" }));
+    expect(readCodexEnv()["LOKI_CODEX_REASONING_EFFORT"]).toBe("high");
   });
 
   it("propagates non-zero exit code", async () => {

@@ -184,6 +184,66 @@ else
     fail "myapp.py should BLOCK against myapp.py:10 friction" "rc=$rc_b2 out=$out_b2"
 fi
 
+# -----------------------------------------------------------------------------
+# Test C (BUG 3, fail-open safety gate): a corrupt or empty friction-map.json
+# must FAIL CLOSED (block the healing edit), never silently ALLOW it.
+#
+#   The friction-classification gate exists to block removal of unclassified
+#   business-rule friction. The python check used `... 2>/dev/null || echo "OK"`,
+#   so ANY python error (corrupt JSON, empty file, json.load raising, python3
+#   missing) collapsed to the "OK" fallback -> the gate returned 0 (ALLOW). A
+#   safety gate that fails OPEN on a parse-miss is the worst class of bug: an
+#   unclassified-business-rule removal slips through whenever friction-map.json
+#   is even slightly malformed. The fix flips the fallback to a BLOCKED
+#   sentinel so the error path fails closed.
+#
+# NON-VACUITY: against the OLD `|| echo "OK"` fallback, a corrupt/empty
+#   friction-map produced rc=0 and no HOOK_BLOCKED. These assertions require
+#   rc!=0 + HOOK_BLOCKED, so the old behavior fails them.
+# -----------------------------------------------------------------------------
+echo "Test C: corrupt/empty friction-map.json fails CLOSED (blocks the healing edit)"
+DIR_C="$WORKROOT/dir-c"
+mkdir -p "$DIR_C/.loki/healing"
+
+# C1: corrupt (malformed JSON)
+printf '{ this is not valid json' > "$DIR_C/.loki/healing/friction-map.json"
+out_c1=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$DIR_C" \
+    hook_pre_healing_modify "app.py" 2>&1)
+rc_c1=$?
+if [[ "$rc_c1" -ne 0 ]] && echo "$out_c1" | grep -q "HOOK_BLOCKED"; then
+    pass "corrupt friction-map.json BLOCKS the healing edit (fail-closed)"
+else
+    fail "corrupt friction-map.json must FAIL CLOSED (rc!=0 + HOOK_BLOCKED)" \
+        "rc=$rc_c1 out=$out_c1"
+fi
+
+# C2: empty file (json.load raises)
+printf '' > "$DIR_C/.loki/healing/friction-map.json"
+out_c2=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$DIR_C" \
+    hook_pre_healing_modify "app.py" 2>&1)
+rc_c2=$?
+if [[ "$rc_c2" -ne 0 ]] && echo "$out_c2" | grep -q "HOOK_BLOCKED"; then
+    pass "empty friction-map.json BLOCKS the healing edit (fail-closed)"
+else
+    fail "empty friction-map.json must FAIL CLOSED (rc!=0 + HOOK_BLOCKED)" \
+        "rc=$rc_c2 out=$out_c2"
+fi
+
+# C3 (control): a VALID friction-map with no matching friction still ALLOWS,
+# proving the fail-closed change did not just block everything.
+cat > "$DIR_C/.loki/healing/friction-map.json" <<'EOF'
+{"frictions":[{"id":"F9","location":"other.py:3","classification":"business_rule","safe_to_remove":false}]}
+EOF
+out_c3=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$DIR_C" \
+    hook_pre_healing_modify "app.py" 2>&1)
+rc_c3=$?
+if [[ "$rc_c3" -eq 0 ]] && ! echo "$out_c3" | grep -q "HOOK_BLOCKED"; then
+    pass "valid friction-map with no matching friction still ALLOWS (not over-blocking)"
+else
+    fail "valid non-matching friction-map should ALLOW the edit" \
+        "rc=$rc_c3 out=$out_c3"
+fi
+
 echo ""
 echo "==============================="
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"

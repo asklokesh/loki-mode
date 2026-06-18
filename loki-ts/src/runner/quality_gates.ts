@@ -1852,13 +1852,26 @@ async function maybeRunOverrideCouncil(args: {
       evidence: import("./counter_evidence.ts").CounterEvidence;
       judge: string;
     }) => {
-      const trusted = TRUSTED_PROOFS.has(input.evidence.proofType);
+      // A trusted proofType is only mechanically falsifiable if it actually
+      // carries an artifact to check (a file path to grep, test output, a
+      // scope rule). Counter-evidence with a trusted proofType but no
+      // non-empty artifact is an unverifiable claim, so approving it would
+      // lift a BLOCK with zero verification (the unsafe, toward-approve
+      // direction on a trust gate). Require >=1 non-empty artifact; otherwise
+      // fail-safe to REJECT_OVERRIDE and keep the BLOCK.
+      const hasArtifact = input.evidence.artifacts.some(
+        (a) => a.trim().length > 0,
+      );
+      const trusted =
+        TRUSTED_PROOFS.has(input.evidence.proofType) && hasArtifact;
       return {
         judge: input.judge,
         verdict: trusted ? ("APPROVE_OVERRIDE" as const) : ("REJECT_OVERRIDE" as const),
         reasoning: trusted
-          ? `[stub] proofType=${input.evidence.proofType} trusted`
-          : `[stub] proofType=${input.evidence.proofType} requires manual review`,
+          ? `[stub] proofType=${input.evidence.proofType} trusted with artifact`
+          : !hasArtifact && TRUSTED_PROOFS.has(input.evidence.proofType)
+            ? `[stub] proofType=${input.evidence.proofType} trusted but no artifact supplied`
+            : `[stub] proofType=${input.evidence.proofType} requires manual review`,
       };
     };
 

@@ -188,4 +188,93 @@ describe("Phase 1 v7.5.0 override council on BLOCK", () => {
     expect(r2.passed).toBe(false);
     expect(r2.detail).toContain("blocking severity present");
   });
+
+  // Deferred trust bug: the stub-judge approved an override on a TRUSTED
+  // proofType WITHOUT inspecting artifacts, so counter-evidence with a
+  // trusted proofType but EMPTY artifacts lifted a BLOCK with no real
+  // verification (the unsafe, toward-approve direction). The fix requires
+  // at least one non-empty artifact before a trusted proofType yields
+  // APPROVE_OVERRIDE; an artifact-less evidence must keep the BLOCK.
+  it("does NOT lift BLOCK on a trusted proofType with EMPTY artifacts", async () => {
+    process.env["LOKI_INJECT_FINDINGS"] = "1";
+    process.env["LOKI_OVERRIDE_COUNCIL"] = "1";
+
+    const ctx1 = ctxAt(9);
+    await runCodeReview(ctx1, {
+      reviewer: failReviewer,
+      diffOverride: { diff: "+ const z = 3;\n", files: "src/z.ts\n" },
+    });
+    const persisted = JSON.parse(
+      readFileSync(join(scratch, "state", "findings-9.json"), "utf-8"),
+    ) as { findings: Array<{ raw: string; reviewer: string }> };
+
+    const fid = canonicalFindingId({
+      raw: persisted.findings[0]!.raw,
+      reviewer: persisted.findings[0]!.reviewer,
+    } as any);
+    // Trusted proofType, but artifacts is empty -- no real proof supplied.
+    writeFileSync(
+      join(scratch, "state", "counter-evidence-9.json"),
+      JSON.stringify({
+        iteration: 9,
+        evidence: [
+          {
+            findingId: fid,
+            claim: "trust me, this path is dead",
+            proofType: "duplicate-code-path",
+            artifacts: [],
+          },
+        ],
+      }),
+    );
+
+    const r2 = await runCodeReview(ctxAt(9), {
+      reviewer: failReviewer,
+      diffOverride: { diff: "+ const z = 3;\n", files: "src/z.ts\n" },
+    });
+    expect(r2.passed).toBe(false);
+    expect(r2.detail).toContain("blocking severity present");
+  });
+
+  // Companion to the empty-artifacts case: a trusted proofType carrying only
+  // whitespace artifacts is also no proof and must keep the BLOCK.
+  it("does NOT lift BLOCK on a trusted proofType with whitespace-only artifacts", async () => {
+    process.env["LOKI_INJECT_FINDINGS"] = "1";
+    process.env["LOKI_OVERRIDE_COUNCIL"] = "1";
+
+    const ctx1 = ctxAt(10);
+    await runCodeReview(ctx1, {
+      reviewer: failReviewer,
+      diffOverride: { diff: "+ const w = 4;\n", files: "src/w.ts\n" },
+    });
+    const persisted = JSON.parse(
+      readFileSync(join(scratch, "state", "findings-10.json"), "utf-8"),
+    ) as { findings: Array<{ raw: string; reviewer: string }> };
+
+    const fid = canonicalFindingId({
+      raw: persisted.findings[0]!.raw,
+      reviewer: persisted.findings[0]!.reviewer,
+    } as any);
+    writeFileSync(
+      join(scratch, "state", "counter-evidence-10.json"),
+      JSON.stringify({
+        iteration: 10,
+        evidence: [
+          {
+            findingId: fid,
+            claim: "trust me",
+            proofType: "file-exists",
+            artifacts: ["   ", "\t"],
+          },
+        ],
+      }),
+    );
+
+    const r2 = await runCodeReview(ctxAt(10), {
+      reviewer: failReviewer,
+      diffOverride: { diff: "+ const w = 4;\n", files: "src/w.ts\n" },
+    });
+    expect(r2.passed).toBe(false);
+    expect(r2.detail).toContain("blocking severity present");
+  });
 });

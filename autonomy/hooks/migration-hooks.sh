@@ -393,7 +393,7 @@ for friction in data.get('frictions', []):
             print(f'BLOCKED (strict): Friction {friction.get(\"id\", \"?\")} in {loc} - strict mode requires explicit approval')
             sys.exit(0)
 print('OK')
-" "$file_path" "$strict" "$heal_dir/friction-map.json" 2>/dev/null || echo "OK")
+" "$file_path" "$strict" "$heal_dir/friction-map.json" 2>/dev/null || echo "BLOCKED: friction-map check failed (corrupt/unreadable friction-map.json or python3 unavailable) -- failing closed")
 
         if [[ "$blocked" == BLOCKED* ]]; then
             echo "HOOK_BLOCKED: $blocked"

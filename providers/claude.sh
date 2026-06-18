@@ -377,7 +377,15 @@ loki_apply_max_tier_clamp() {
 
 # Dynamic model resolution (v6.0.0)
 # Resolves a capability tier to a concrete model name at runtime.
-# Respects LOKI_MAX_TIER to cap cost (e.g., maxTier=sonnet prevents opus usage).
+# Respects LOKI_MAX_TIER to cap cost via loki_apply_max_tier_clamp. NOTE the
+# ceiling clamps DOWN to the provider's configured tier model, not to the alias
+# named by the cap: with the stock config (CLAUDE_DEFAULT_DEVELOPMENT=opus, see
+# line 56), LOKI_MAX_TIER=sonnet resolves planning/fable DOWN to
+# PROVIDER_MODEL_DEVELOPMENT, which is still opus. To actually pin sonnet as the
+# ceiling, also set LOKI_ALLOW_HAIKU=true (which makes PROVIDER_MODEL_DEVELOPMENT
+# sonnet) or override LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet. This is intentional
+# and is mirrored byte-for-byte by the dashboard/estimator ports (parity-locked
+# in tests/test-model-override.sh).
 # Capability aliases: "best" -> planning tier, "fast" -> fast tier, "balanced" -> development tier
 resolve_model_for_tier() {
     local tier="$1"

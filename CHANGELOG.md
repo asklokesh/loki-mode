@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.70.0] - 2026-06-18
+
+### Deep bug-hunt sweep (wave-11): cross-route trust guards + fail-closed healing gate + 6 more
+
+A 12-agent file-sharded verify-then-fix hunt covering the deferred cross-file
+follow-ups from wave-10 plus fresh surfaces. Every finding reproduced before
+fixing; STALE findings refuted with evidence (the rarv/autonomous/state Bun
+runner was hunted and found parity-correct, no changes). Council 3/3; local-ci
+84/84 (now including a dist-freshness gate); bun 1093, python 1337.
+
+Trust surfaces:
+- Override stub-judge artifact check (BOTH routes): the deterministic override
+  judge (used when the LLM judge panel is unavailable) approved an override
+  purely on a trusted proofType, never checking evidence.artifacts. So
+  counter-evidence with a trusted proofType but empty/whitespace-only/forged
+  artifacts lifted a BLOCK with zero real verification. Both the Bun
+  quality_gates.ts path and the live `loki internal phase1-hooks override` path
+  (internal_phase1.ts) now require at least one non-empty artifact before a
+  trusted proofType yields APPROVE_OVERRIDE; empty -> the BLOCK stays.
+- Healing friction gate (bash): hook_pre_healing_modify, whose job is to BLOCK
+  removal of unclassified business-rule friction, failed OPEN on a corrupt or
+  empty friction-map.json (the python check ended with `|| echo "OK"`). It now
+  fails closed (BLOCK) on a parse error, matching every sibling gate in the file.
+
+Provider cost ceiling:
+- LOKI_MAX_TIER is now honored case-insensitively for the Codex provider on both
+  routes (providers/codex.sh resolve_model_for_tier and providers.ts
+  applyCodexMaxTier). Previously a mixed-case or whitespace value ("Haiku",
+  " haiku ") capped Claude but fell through to the default on Codex, silently
+  bypassing the cost ceiling. Normalization mirrors the Claude precedent exactly.
+
+PRD reuse:
+- Persisting a user PRD that contains non-ASCII characters (smart quotes,
+  accents, CJK, emoji) no longer corrupts it: the persist did a lossy latin1
+  round-trip (`toString("binary")` then utf8 write), which also made the next
+  same-spec run misclassify the PRD as hand-edited. Now a byte-exact rename.
+
+Memory:
+- Progressive-disclosure Layer-3 gate now uses the keyword-boosted effective
+  score (not the un-boosted stored relevance), so the topics most relevant to
+  the query are actually loaded into full detail (sibling of the WT9 fix); plus
+  a dead local removed.
+
+Honesty:
+- The Aider provider now discloses its no-parallel limitation in its degraded
+  reasons; a misleading Claude max-tier comment was corrected (behavior
+  unchanged, parity-locked).
+
+### CI
+- local-ci now gates dist freshness: it rebuilds loki-ts/dist/loki.js and
+  asserts the committed bundle matches a fresh build (ignoring the per-build
+  debugId line), so a forgotten rebuild can no longer ship stale runtime
+  behavior (the class that affected v7.68.0 and was caught in v7.69.0 review).
+
 ## [7.69.0] - 2026-06-18
 
 ### Deep bug-hunt sweep (wave-10): 9 fixes across council, app-runner, MCP, dashboard, memory, Bun runner, CLI
