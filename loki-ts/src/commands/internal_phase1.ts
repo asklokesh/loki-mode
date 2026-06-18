@@ -27,6 +27,20 @@ import { join, resolve } from "node:path";
 
 import { lokiDir } from "../util/paths.ts";
 import { atomicWriteJson } from "../util/atomic.ts";
+import type { appendFromGateFailure as AppendFromGateFailure } from "../runner/learnings_writer.ts";
+
+// Test-only seam (NOT for production use). The H2 bug-hunt tests must drive
+// appendFromGateFailure into a failure mid-loop to prove a single throw does
+// not abort the batch. They previously used Bun's `mock.module`, but that
+// registry is GLOBAL and has no reliable per-test revert (mock.restore() does
+// not touch it), so the throwing stub leaked into the learnings_writer suite
+// under cross-file discovery ordering and produced a nondeterministic CI red.
+// A plain mutable property is restored deterministically in afterEach and
+// never escapes this module. When null (always, in production) the real
+// learnings_writer.appendFromGateFailure is used.
+export const __testAppendHook: { fn: typeof AppendFromGateFailure | null } = {
+  fn: null,
+};
 
 const HELP = `loki internal phase1-hooks <subcommand>
 
@@ -98,9 +112,10 @@ async function runReflect(argv: readonly string[]): Promise<number> {
       const blocking = result.findings.filter(
         (f) => f.severity === "Critical" || f.severity === "High",
       );
+      const append = __testAppendHook.fn ?? learn.appendFromGateFailure;
       for (const f of blocking) {
         try {
-          await learn.appendFromGateFailure(base, iter, f, { episodeBridge: null });
+          await append(base, iter, f, { episodeBridge: null });
           learningsAppended += 1;
         } catch (err) {
           learningsFailed += 1;
