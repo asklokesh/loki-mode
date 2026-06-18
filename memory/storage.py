@@ -1383,6 +1383,142 @@ class MemoryStorage:
 
         return memory
 
+    def persist_boost(
+        self,
+        memory: Dict[str, Any],
+        boost: float = 0.1,
+    ) -> bool:
+        """
+        Persist a retrieval-time boost to disk ("use it or lose it").
+
+        boost_on_retrieval mutates an in-memory dict only; without this the
+        stored importance/access_count never rises, so repeated retrieval can
+        never reinforce a memory against decay (retrieval-F1). This method
+        applies the SAME boost math to the record as it currently exists on
+        disk, under one exclusive _file_lock spanning a FRESH read -> mutate
+        -> _atomic_write (mirrors _decay_episodic / _decay_semantic).
+
+        Race-safety: the boost is applied to the freshly-read record, NOT to
+        the passed-in `memory` dict. So a concurrent content edit landed by
+        another writer is preserved (we only overwrite importance,
+        access_count, last_accessed), and no retrieval-only transient fields
+        (_score, _source, _collection) leak into the stored record. This is
+        the lost-update-safe pattern WAVE6 established for decay.
+
+        Keyed by memory["id"] and the collection marker retrieval attaches
+        (_source, falling back to _collection). Covers episodic (per-file) and
+        semantic patterns.json. Collections without an updater degrade
+        gracefully (return False, no crash):
+          - skills are keyed on disk by name, not id, so an id-keyed boost
+            cannot reliably target the file; skipped honestly.
+          - the legacy semantic/anti-patterns.json store has NO updater
+            anywhere in this module, so there is nothing to write back to;
+            skipped honestly rather than fabricating a writer.
+
+        Args:
+            memory: A retrieved memory dict (must carry "id" and a source
+                marker). The dict itself is not written to disk.
+            boost: Amount to boost importance (default 0.1).
+
+        Returns:
+            True if a record was found and persisted, False otherwise.
+        """
+        memory_id = memory.get("id")
+        if not memory_id:
+            return False
+
+        source = memory.get("_source") or memory.get("_collection") or ""
+
+        if source == "episodic":
+            return self._persist_boost_episodic(str(memory_id), boost)
+        if source == "semantic":
+            return self._persist_boost_semantic(str(memory_id), boost)
+
+        # skills (keyed by name on disk) and the legacy anti-patterns.json
+        # store (no updater exists in this module) cannot be safely targeted
+        # by an id-keyed boost; skip rather than fabricate a writer.
+        return False
+
+    def _persist_boost_episodic(self, memory_id: str, boost: float) -> bool:
+        """Apply and persist a boost to one episodic record, keyed by id.
+
+        Locates the per-file record (task-<id>.json across date dirs) then does
+        a lock-spanning fresh-read -> boost -> atomic-write, mirroring
+        _decay_episodic. The id is sanitized exactly as save_episode does so a
+        sanitized-on-write filename is still found.
+        """
+        episodic_dir = self.base_path / "episodic"
+        if not episodic_dir.exists():
+            return False
+
+        safe_id = "".join(
+            c if c.isalnum() or c in "-_" else "_"
+            for c in memory_id
+        )
+
+        for date_dir in episodic_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            file_path = date_dir / f"task-{safe_id}.json"
+            if not file_path.exists():
+                continue
+
+            # One exclusive lock spanning read-mutate-write. boost_on_retrieval
+            # mutates the freshly-read record in place (importance/access_count/
+            # last_accessed only), so a concurrent content edit on disk is
+            # preserved. _atomic_write re-enters the same reentrant lock.
+            with self._file_lock(file_path, exclusive=True):
+                if not file_path.exists():
+                    return False
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                    return False
+                if not data:
+                    return False
+                self.boost_on_retrieval(data, boost=boost)
+                self._atomic_write(file_path, data)
+            return True
+
+        return False
+
+    def _persist_boost_semantic(self, memory_id: str, boost: float) -> bool:
+        """Apply and persist a boost to one semantic pattern, keyed by id.
+
+        Patterns live in a single semantic/patterns.json list. Lock-spanning
+        fresh read -> boost the matching entry -> atomic write, mirroring
+        _decay_semantic / save_pattern.
+        """
+        patterns_path = self.base_path / "semantic" / "patterns.json"
+        if not patterns_path.exists():
+            return False
+
+        with self._file_lock(patterns_path, exclusive=True):
+            if not patterns_path.exists():
+                return False
+            try:
+                with open(patterns_path, "r", encoding="utf-8") as f:
+                    patterns_file = json.load(f)
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                return False
+            if not patterns_file:
+                return False
+
+            patterns = patterns_file.get("patterns", [])
+            for pattern in patterns:
+                if not isinstance(pattern, dict):
+                    continue
+                if pattern.get("id") == memory_id:
+                    self.boost_on_retrieval(pattern, boost=boost)
+                    patterns_file["last_updated"] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                    self._atomic_write(patterns_path, patterns_file)
+                    return True
+
+        return False
+
     def batch_apply_decay(
         self,
         collection: str = "all",

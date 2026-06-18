@@ -3071,7 +3071,7 @@ cmd_status_json() {
     local dashboard_port="${LOKI_DASHBOARD_PORT:-57374}"
     local env_provider="${LOKI_PROVIDER:-claude}"
 
-    python3 -c "
+    if ! python3 -c "
 import json, os, sys, time
 
 skill_dir = sys.argv[1]
@@ -3359,9 +3359,14 @@ if os.path.isfile(gate_count_file):
 result['phase1'] = phase1
 
 print(json.dumps(result, indent=2))
-" "$skill_dir" "$loki_dir" "$dashboard_port" "$env_provider"
-
-    if [ $? -ne 0 ]; then
+" "$skill_dir" "$loki_dir" "$dashboard_port" "$env_provider"; then
+        # WAVE8 loki-F2: under `set -euo pipefail` a bare python3 call aborts
+        # the whole function on non-zero exit, so the old post-call
+        # `if [ $? -ne 0 ]` fallback was DEAD code -- a missing/broken python3
+        # crashed `loki status --json` instead of degrading. Guarding the call
+        # with `if ! ...; then` catches the non-zero exit and emits the honest
+        # error object. (Most malformed state files already degrade internally
+        # via per-file try/except; this covers the interpreter-failure case.)
         echo '{"error": "Failed to generate JSON status. Ensure python3 is available."}' >&2
         return 1
     fi
@@ -12485,18 +12490,27 @@ for f in data.get('frictions', []):
 
     # Initialize or update healing progress
     if [[ ! -f "$heal_dir/healing-progress.json" ]] || [ "$do_resume" != "true" ]; then
+        # WAVE8 loki-est: pass codebase/phase/strict/out-path via env instead of
+        # interpolating raw bash into the python source. A codebase path or phase
+        # containing an apostrophe made this a SyntaxError; under `|| true` the
+        # progress file was then silently never written (and the later
+        # prev_phase read would fail), breaking healing resume.
+        LOKI_HEAL_CODEBASE="$codebase_path" \
+        LOKI_HEAL_PHASE_VAL="$phase" \
+        LOKI_HEAL_STRICT_VAL="$strict" \
+        LOKI_HEAL_OUT="$heal_dir/healing-progress.json" \
         python3 -c "
-import json
+import json, os
 from datetime import datetime
 progress = {
-    'codebase': '$codebase_path',
+    'codebase': os.environ.get('LOKI_HEAL_CODEBASE', ''),
     'started': datetime.now().isoformat(),
-    'current_phase': '$phase',
-    'strict_mode': $( [ "$strict" = "true" ] && echo "True" || echo "False" ),
+    'current_phase': os.environ.get('LOKI_HEAL_PHASE_VAL', ''),
+    'strict_mode': os.environ.get('LOKI_HEAL_STRICT_VAL', '') == 'true',
     'components': [],
     'overall_health': 0.0
 }
-with open('$heal_dir/healing-progress.json', 'w') as f:
+with open(os.environ['LOKI_HEAL_OUT'], 'w') as f:
     json.dump(progress, f, indent=2)
 " || true
     fi
@@ -12504,7 +12518,7 @@ with open('$heal_dir/healing-progress.json', 'w') as f:
     # BUG-HEAL-004: Validate phase gate when resuming from a previous phase
     if [ "$do_resume" = "true" ] && [[ -f "$heal_dir/healing-progress.json" ]] && type hook_healing_phase_gate &>/dev/null; then
         local prev_phase
-        prev_phase=$(python3 -c "import json; print(json.load(open('$heal_dir/healing-progress.json')).get('current_phase', 'archaeology'))" 2>/dev/null || echo "archaeology")
+        prev_phase=$(LOKI_HEAL_PROG="$heal_dir/healing-progress.json" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_HEAL_PROG'])).get('current_phase', 'archaeology'))" 2>/dev/null || echo "archaeology")
         if [[ "$prev_phase" != "$phase" ]]; then
             local gate_result
             if ! gate_result=$(hook_healing_phase_gate "$prev_phase" "$phase" 2>&1); then
@@ -22834,35 +22848,39 @@ cmd_onboard() {
         fi
         # Extract metadata from package.json
         if command -v python3 &>/dev/null; then
+            # WAVE8 loki-est (same class as cmd_explain): pass the repo path via
+            # env (os.environ) instead of interpolating into the python source.
+            # A path with an apostrophe made each heredoc a SyntaxError, silently
+            # dropping the package.json name/version/description under `|| true`.
             local pkg_name
-            pkg_name=$(python3 -c "
-import json, sys
+            pkg_name=$(LOKI_ONB_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_ONB_PKG']))
     print(d.get('name', ''))
 except: pass
 " 2>/dev/null || true)
             if [ -n "$pkg_name" ]; then
                 project_name="$pkg_name"
             fi
-            project_description=$(python3 -c "
-import json, sys
+            project_description=$(LOKI_ONB_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_ONB_PKG']))
     print(d.get('description', ''))
 except: pass
 " 2>/dev/null || true)
-            project_version=$(python3 -c "
-import json, sys
+            project_version=$(LOKI_ONB_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_ONB_PKG']))
     print(d.get('version', ''))
 except: pass
 " 2>/dev/null || true)
-            entry_points=$(python3 -c "
-import json, sys
+            entry_points=$(LOKI_ONB_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_ONB_PKG']))
     main = d.get('main', '')
     if main: print(main)
     scripts = d.get('scripts', {})
@@ -23242,10 +23260,11 @@ $imports"
     if [ -f "$target_path/package.json" ]; then
         if command -v python3 &>/dev/null; then
             local scripts_json
-            scripts_json=$(python3 -c "
-import json
+            # WAVE8 loki-est: env-passed path (see cmd_onboard metadata block).
+            scripts_json=$(LOKI_ONB_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_ONB_PKG']))
     s = d.get('scripts', {})
     for k in ['build', 'dev', 'start', 'test', 'lint', 'format', 'check', 'typecheck']:
         if k in s:
@@ -23637,10 +23656,14 @@ cmd_explain() {
 
         if command -v python3 &>/dev/null; then
             local pkg_meta
-            pkg_meta=$(python3 -c "
-import json
+            # WAVE8 loki-est: pass the path via env (os.environ) instead of
+            # interpolating into the python source -- a repo path containing an
+            # apostrophe broke the string literal and dropped all package.json
+            # metadata.
+            pkg_meta=$(LOKI_EXP_PKG="$target_path/package.json" python3 -c "
+import json, os
 try:
-    d = json.load(open('$target_path/package.json'))
+    d = json.load(open(os.environ['LOKI_EXP_PKG']))
     print(d.get('name', ''))
     print(d.get('description', ''))
     print(d.get('version', ''))
@@ -23869,17 +23892,67 @@ $devdeps_list"
 
     # --- JSON output ---
     if [ "$output_json" = true ]; then
+        # WAVE8 loki-est: pass every value via the environment and read it with
+        # os.environ instead of interpolating raw bash into the python source.
+        # Interpolation broke on any apostrophe/quote/newline in a project name,
+        # version, description, or path (e.g. a dir named `my'app`), silently
+        # degrading real analysis to `{"error": "JSON generation failed"}`.
+        # env-passing is injection-proof and keeps the same output shape.
+        LOKI_EXP_NAME="$project_name" \
+        LOKI_EXP_DESC="$project_description" \
+        LOKI_EXP_VERSION="$project_version" \
+        LOKI_EXP_PATH="$target_path" \
+        LOKI_EXP_LANGUAGES="$languages" \
+        LOKI_EXP_FRAMEWORKS="$frameworks" \
+        LOKI_EXP_BUILD="$build_system" \
+        LOKI_EXP_PKGMGR="$package_manager" \
+        LOKI_EXP_TESTFW="$test_framework" \
+        LOKI_EXP_CI="$ci_system" \
+        LOKI_EXP_PATTERNS="$detected_patterns" \
+        LOKI_EXP_TOTAL="$total_files" \
+        LOKI_EXP_SRC="$src_count" \
+        LOKI_EXP_TEST="$test_count" \
+        LOKI_EXP_DOC="$doc_count" \
+        LOKI_EXP_CONFIG="$config_count" \
+        LOKI_EXP_BUILDCMD="$build_cmd" \
+        LOKI_EXP_RUNCMD="$run_cmd" \
+        LOKI_EXP_TESTCMD="$test_cmd" \
+        LOKI_EXP_LINTCMD="$lint_cmd" \
+        LOKI_EXP_ENTRY="$major_files" \
+        LOKI_EXP_MONOREPO="$is_monorepo" \
+        LOKI_EXP_DOCKER="$has_docker" \
         python3 -c "
-import json
+import json, os
+
+def _s(name):
+    return os.environ.get(name, '')
+
+def _list(name):
+    v = _s(name).strip()
+    return v.split() if v else []
+
+def _opt(name):
+    v = _s(name).strip()
+    return v or None
+
+def _int(name):
+    try:
+        return int(_s(name).strip())
+    except (ValueError, TypeError):
+        return 0
+
+def _bool(name):
+    return _s(name).strip() == 'true'
+
 data = {
-    'project': {'name': '$project_name', 'description': '''$(echo "$project_description" | sed "s/'/\\\\'/g")''', 'version': '$project_version', 'path': '$target_path'},
-    'stack': {'languages': '${languages}'.split() if '${languages}'.strip() else [], 'frameworks': '${frameworks}'.split() if '${frameworks}'.strip() else [], 'build_system': '$build_system' or None, 'package_manager': '$package_manager' or None, 'test_framework': '${test_framework}'.split() if '${test_framework}'.strip() else [], 'ci': '${ci_system}'.strip() or None},
-    'patterns': '${detected_patterns}'.split() if '${detected_patterns}'.strip() else [],
-    'files': {'total': $total_files, 'source': $src_count, 'test': $test_count, 'docs': $doc_count, 'config': $config_count},
-    'commands': {'build': '${build_cmd}' or None, 'run': '${run_cmd}' or None, 'test': '${test_cmd}' or None, 'lint': '${lint_cmd}' or None},
-    'entry_points': '${major_files}'.split() if '${major_files}'.strip() else [],
-    'monorepo': $( [ "$is_monorepo" = true ] && echo "True" || echo "False" ),
-    'has_docker': $( [ "$has_docker" = true ] && echo "True" || echo "False" )
+    'project': {'name': _s('LOKI_EXP_NAME'), 'description': _s('LOKI_EXP_DESC'), 'version': _s('LOKI_EXP_VERSION'), 'path': _s('LOKI_EXP_PATH')},
+    'stack': {'languages': _list('LOKI_EXP_LANGUAGES'), 'frameworks': _list('LOKI_EXP_FRAMEWORKS'), 'build_system': _opt('LOKI_EXP_BUILD'), 'package_manager': _opt('LOKI_EXP_PKGMGR'), 'test_framework': _list('LOKI_EXP_TESTFW'), 'ci': _opt('LOKI_EXP_CI')},
+    'patterns': _list('LOKI_EXP_PATTERNS'),
+    'files': {'total': _int('LOKI_EXP_TOTAL'), 'source': _int('LOKI_EXP_SRC'), 'test': _int('LOKI_EXP_TEST'), 'docs': _int('LOKI_EXP_DOC'), 'config': _int('LOKI_EXP_CONFIG')},
+    'commands': {'build': _opt('LOKI_EXP_BUILDCMD'), 'run': _opt('LOKI_EXP_RUNCMD'), 'test': _opt('LOKI_EXP_TESTCMD'), 'lint': _opt('LOKI_EXP_LINTCMD')},
+    'entry_points': _list('LOKI_EXP_ENTRY'),
+    'monorepo': _bool('LOKI_EXP_MONOREPO'),
+    'has_docker': _bool('LOKI_EXP_DOCKER')
 }
 print(json.dumps(data, indent=2))
 " 2>/dev/null || echo '{"error": "JSON generation failed"}'

@@ -414,6 +414,7 @@ class MemoryRetrieval:
         context: Dict[str, Any],
         top_k: int = 5,
         token_budget: Optional[int] = None,
+        persist_boost: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve memories with task-type-aware weighting.
@@ -427,6 +428,12 @@ class MemoryRetrieval:
             token_budget: Optional maximum token budget for returned memories.
                          If specified, results will be optimized to fit within
                          this budget using importance/recency/relevance scoring.
+            persist_boost: When True, persist the retrieval-time importance boost
+                         to disk ("use it or lose it" reinforcement). Default
+                         False so manual/on-demand retrievals (dashboard, MCP)
+                         do NOT silently reinforce importance; only the autonomous
+                         RARV loop opts in. The in-memory boost that shapes the
+                         returned ranking is applied either way.
 
         Returns:
             List of memory items with source field indicating origin
@@ -476,10 +483,20 @@ class MemoryRetrieval:
         # Apply recency boost
         merged = self._apply_recency_boost(merged, boost_factor=0.1)
 
-        # Boost importance for retrieved memories (use it or lose it)
+        # Boost importance for retrieved memories (use it or lose it). The
+        # in-memory boost shapes the returned ranking; persist_boost writes the
+        # reinforcement to disk (retrieval-F1: boost_on_retrieval alone never
+        # persisted). Persistence is best-effort: a locked/missing record must
+        # never break retrieval, so failures are swallowed (mirrors other
+        # best-effort writes).
         if hasattr(self.storage, 'boost_on_retrieval'):
             for memory in merged[:top_k]:
                 self.storage.boost_on_retrieval(memory, boost=0.05)
+                if persist_boost and hasattr(self.storage, 'persist_boost'):
+                    try:
+                        self.storage.persist_boost(memory, boost=0.05)
+                    except Exception:
+                        pass
 
         # Apply token budget optimization if specified
         if token_budget is not None and token_budget > 0:

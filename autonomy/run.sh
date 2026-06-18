@@ -1932,60 +1932,31 @@ get_provider_tier_param() {
 }
 
 #===============================================================================
-# Provider Spawn Timeout (v6.0.0)
-# Wraps provider invocation with timeout + retries.
-# Default: 120s timeout, 2 retries.
+# Provider Spawn Timeout (removed WAVE9 / provider-F2)
+#
+# A former invoke_with_timeout() helper (v6.0.0) wrapped a command in
+# `timeout <s> "$@"` with a retry loop. It was never wired to the main
+# provider invocation and is intentionally not revived, for two reasons:
+#
+#   1. No safe generous default. The main provider call is a long-running
+#      autonomous coding agent. Any fixed timeout short enough to catch a
+#      hang would also kill legitimate multi-minute iterations, and there is
+#      no "generous enough" value that is both safe and useful by default.
+#   2. Wrong retry semantics. The helper re-ran the same command on timeout.
+#      Re-running a coding agent mid-work (it may have already edited files)
+#      is actively harmful, not protective.
+#
+# The main invocation is also a pipeline (`claude | tee | python3`), which a
+# positional-arg `timeout "$@"` wrapper cannot wrap at all. Interrupting a
+# hung provider is handled by the SIGINT trap (kill_provider_child) instead.
+#
+# The `loki config spawn_timeout` / `spawn_retries` knobs (autonomy/loki) and
+# the config->env mapping in this file (`'spawn_timeout':'LOKI_SPAWN_TIMEOUT'`
+# in the config loader) still export LOKI_SPAWN_TIMEOUT / LOKI_SPAWN_RETRIES,
+# but nothing consumes them now. The mapping line is intentionally left in place
+# (a config-schema test may enumerate it); the full inert-knob removal spans
+# autonomy/loki too and is a separate cross-file follow-up.
 #===============================================================================
-
-PROVIDER_SPAWN_TIMEOUT=${LOKI_SPAWN_TIMEOUT:-120}
-PROVIDER_SPAWN_RETRIES=${LOKI_SPAWN_RETRIES:-2}
-
-# Invoke a command with timeout and retry logic
-# Usage: invoke_with_timeout <timeout_seconds> <retries> <command...>
-invoke_with_timeout() {
-    local timeout="$1"
-    local max_retries="$2"
-    shift 2
-
-    local attempt=0
-    while [ $attempt -le $max_retries ]; do
-        if [ $attempt -gt 0 ]; then
-            log_warn "Provider spawn retry $attempt/$max_retries..."
-        fi
-
-        local exit_code=0
-        # Use timeout command if available (GNU coreutils or macOS)
-        if command -v timeout &>/dev/null; then
-            timeout "$timeout" "$@"
-            exit_code=$?
-        elif command -v gtimeout &>/dev/null; then
-            gtimeout "$timeout" "$@"
-            exit_code=$?
-        else
-            # Fallback: no timeout wrapper, run directly
-            log_warn "timeout/gtimeout not available - running without timeout enforcement"
-            "$@"
-            exit_code=$?
-        fi
-
-        # Exit code 124 = timeout
-        if [ $exit_code -eq 124 ]; then
-            log_warn "Provider spawn timed out after ${timeout}s (attempt $((attempt+1))/$((max_retries+1)))"
-            ((attempt++))
-            continue
-        fi
-
-        return $exit_code
-    done
-
-    log_error "Provider spawn failed after $((max_retries+1)) attempts (timeout=${timeout}s)"
-    # Crash friction (retry_loop): provider spawn exhausted all retries -- a
-    # clear threshold (not a single retry). Best-effort, never blocks.
-    if type loki_crash_friction &>/dev/null; then
-        loki_crash_friction "retry_loop" "provider spawn failed after $((max_retries+1)) attempts" >/dev/null 2>&1 || true
-    fi
-    return 124
-}
 
 #===============================================================================
 # GitHub Integration Functions (v4.1.0)
@@ -9978,6 +9949,16 @@ CPEOF
         find "$checkpoint_dir" -maxdepth 1 -type d -name "cp-*" 2>/dev/null \
             | while read -r p; do basename "$p"; done | sort -t'-' -k3 -n \
             | head -n "$to_remove" | while read -r old_cp; do
+            # WAVE9 (checkpoint leak): also delete the anchored worktree-snapshot
+            # ref so its stash commit becomes eligible for `git gc`. Without this,
+            # refs/loki/cp/<id> (and its commit) leaked forever even after the
+            # checkpoint directory was pruned. Targeted deletion of exactly the
+            # ids being pruned ONLY -- never a blanket refs/loki/cp/* sweep, since
+            # git refs are shared across worktrees of one repo while checkpoint
+            # dirs are per-TARGET_DIR; a parallel worktree may still need a ref we
+            # are not pruning here. `|| true` because not every checkpoint has a
+            # ref (only those where `git stash create` returned a non-empty sha).
+            git update-ref -d "refs/loki/cp/${old_cp}" 2>/dev/null || true
             old_cp="${checkpoint_dir}/${old_cp}"
             rm -rf "$old_cp" 2>/dev/null || true
         done
@@ -11492,7 +11473,11 @@ try:
     storage = MemoryStorage(f'{target_dir}/.loki/memory')
     retriever = MemoryRetrieval(storage)
     context = {'goal': goal, 'phase': phase}
-    results = retriever.retrieve_task_aware(context, top_k=3)
+    # The autonomous RARV loop opts into persist_boost so retrieved memories are
+    # reinforced on disk ("use it or lose it"). Manual surfaces (loki memory CLI,
+    # dashboard, MCP) keep the default persist_boost=False so a human browsing
+    # memories does not silently inflate their importance.
+    results = retriever.retrieve_task_aware(context, top_k=3, persist_boost=True)
     if results:
         print('RELEVANT MEMORIES:')
         for r in results[:3]:

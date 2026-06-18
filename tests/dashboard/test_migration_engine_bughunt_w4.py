@@ -263,6 +263,128 @@ class MigrationEngineBughuntW4(unittest.TestCase):
         p.create_manifest()
         MigrationPipeline.load(p.migration_id)  # must not raise
 
+    # -- F1: terminal phase completes; overall_status reaches "completed" --
+
+    def _pass_all_gates(self, migration_id: str) -> None:
+        """Write the artifacts every phase gate requires so all four advance.
+
+        understand->guardrail needs docs/ + seams.json; guardrail->migrate needs
+        features.json with all features passing; migrate->verify needs
+        migration-plan.json with all steps completed.
+        """
+        mdir = Path(self.migrations_dir) / migration_id
+        (mdir / "docs").mkdir(parents=True, exist_ok=True)
+        (mdir / "docs" / "overview.md").write_text("overview\n", encoding="utf-8")
+        (mdir / "seams.json").write_text("[]", encoding="utf-8")
+        (mdir / "features.json").write_text(
+            '[{"id": "f1", "description": "d", "passes": true}]', encoding="utf-8"
+        )
+        (mdir / "migration-plan.json").write_text(
+            '{"steps": [{"id": "s1", "status": "completed", "tests_required": ["t"]}]}',
+            encoding="utf-8",
+        )
+
+    def test_f1_terminal_verify_phase_completes_via_engine(self):
+        """Driving all four phases via advance_phase() completes the terminal
+        'verify' phase and overall_status reaches "completed".
+
+        This anchors the engine's correct handling of the terminal phase:
+        advance_phase('verify') has next_phase=None, so it skips the gate, flips
+        verify to 'completed', and get_progress() then sees all phases completed
+        (len(completed_phases) == len(PHASE_ORDER)) and reports status
+        "completed". Passes with NO change to migration_engine.py -- the F1
+        finding ("verify can never be completed, overall_status never reaches
+        done") does NOT reproduce at the engine layer; the engine is correct.
+
+        The user-facing defect is in the REST endpoint
+        /api/migration/{id}/advance, which requires a to_phase and runs the
+        phase gate even for the terminal phase (no successor exists), so it
+        409s before advance_phase is ever reached. That is a server.py defect,
+        out of scope for this engine-level fix.
+        """
+        migration_id = self._new_migration()
+        self._pass_all_gates(migration_id)
+
+        for phase in me.PHASE_ORDER:
+            result = MigrationPipeline.load(migration_id).advance_phase(phase)
+            self.assertEqual(
+                result.status, "completed",
+                f"advance_phase({phase!r}) did not complete the phase",
+            )
+
+        progress = MigrationPipeline.load(migration_id).get_progress()
+        self.assertEqual(
+            progress["phases"]["verify"]["status"], "completed",
+            "terminal 'verify' phase did not reach 'completed'",
+        )
+        self.assertEqual(
+            progress["status"], "completed",
+            f"overall_status did not reach 'completed': {progress['status']!r}",
+        )
+        self.assertEqual(
+            progress["completed_phases"], list(me.PHASE_ORDER),
+            "not all phases recorded as completed",
+        )
+
+    def test_f1_terminal_verify_completes_via_rest_advance_endpoint(self):
+        """End-to-end via TestClient: driving all phases through the REST
+        /api/migration/{id}/advance endpoint completes the terminal 'verify'
+        phase and overall_status reaches 'completed' (WAVE9 migration-F1).
+
+        Pre-fix the endpoint required a to_phase AND ran check_phase_gate for
+        every advance. The terminal phase 'verify' has no successor, so the gate
+        could never pass and any to_phase 409'd before advance_phase ran -- so
+        verify could never be completed via the API and overall_status was stuck.
+        The fix lets the terminal phase advance with only from_phase and no gate.
+        """
+        if not self._migration_imports_available():
+            self.skipTest("fastapi TestClient / httpx not available")
+
+        from fastapi.testclient import TestClient
+        from dashboard.server import app
+
+        migration_id = self._new_migration()
+        self._pass_all_gates(migration_id)
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # Advance the three non-terminal phases with explicit to_phase.
+        for from_phase, to_phase in (
+            ("understand", "guardrail"),
+            ("guardrail", "migrate"),
+            ("migrate", "verify"),
+        ):
+            resp = client.post(
+                f"/api/migration/{migration_id}/advance",
+                json={"from_phase": from_phase, "to_phase": to_phase},
+            )
+            self.assertEqual(
+                resp.status_code, 200,
+                f"advance {from_phase}->{to_phase} failed: {resp.text}",
+            )
+
+        # The terminal phase: advance with ONLY from_phase, no to_phase.
+        # Pre-fix this 400'd (to_phase required) or 409'd (gate). Post-fix: 200.
+        terminal = client.post(
+            f"/api/migration/{migration_id}/advance",
+            json={"from_phase": "verify"},
+        )
+        self.assertEqual(
+            terminal.status_code, 200,
+            f"terminal verify advance via REST should be 200, got "
+            f"{terminal.status_code}: {terminal.text}",
+        )
+
+        progress = MigrationPipeline.load(migration_id).get_progress()
+        self.assertEqual(
+            progress["phases"]["verify"]["status"], "completed",
+            "terminal 'verify' phase not completed via REST endpoint",
+        )
+        self.assertEqual(
+            progress["status"], "completed",
+            f"overall_status not 'completed' via REST: {progress['status']!r}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

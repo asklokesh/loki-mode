@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.68.0] - 2026-06-18
+
+### Queued bug-hunt tail (wave-9) + CI test-isolation repair
+
+A file-sharded verify-then-fix fleet cleared the WAVE8 queued MED/LOW findings.
+Each finding was reproduced before fixing; STALE findings were refuted with
+evidence rather than "fixed". Reviewed by a 3-reviewer council (2 Opus + 1
+Sonnet) to unanimous approve. local-ci 84/84 on a quiet box.
+
+CI / test-isolation:
+- The two `loki internal phase1-hooks` H2 batch-abort tests stubbed
+  learnings_writer via Bun's `mock.module`, a GLOBAL registry with no reliable
+  per-test revert (`mock.restore()` does not touch it). Under cross-file test
+  discovery ordering on Linux the throwing stub leaked into the learnings_writer
+  suite, producing a nondeterministic CI red on the Tests and Coverage workflows
+  (green on macOS where readdir order differs). Replaced with a module-local
+  test seam reset deterministically in afterEach. Production behavior unchanged.
+
+Memory subsystem:
+- Consolidation no longer inflates pattern confidence on idempotent re-runs: the
+  +0.05 merge boost is now gated on genuinely new source_episodes, so
+  re-running consolidate() over an unchanged episode set is a no-op for
+  confidence (was ratcheting +0.05 per run).
+- Retrieval-time importance boost is now persisted to disk via a lock-spanning
+  read-mutate-write keyed by id+source (mirrors the decay path), closing the
+  "use it or lose it" asymmetry where decay persisted but the boost never did.
+  Persistence is opt-in (persist_boost): only the autonomous RARV loop reinforces
+  importance; manual surfaces (loki memory CLI, dashboard, MCP) do not silently
+  inflate it. A failed boost-write never breaks retrieval.
+
+Dashboard / migration:
+- The terminal migration phase (verify) can now be advanced and completed via
+  POST /api/migration/{id}/advance with only from_phase (it has no successor, so
+  to_phase and the phase gate are meaningless for it). Previously the endpoint
+  required to_phase and ran the gate for every phase, so verify could never be
+  completed via the API and overall_status could never reach "completed". The
+  409/idempotency semantics for already-advanced phases are preserved.
+
+CLI / runtime (bash):
+- `loki status --json` no longer crashes on a malformed status file: the
+  JSON-error fallback was dead under `set -e` (a bare python3 call aborted the
+  function before the fallback ran); it is now guarded so a parse error degrades
+  to an honest error object.
+- `loki explain --json`, `loki heal`, and `loki onboard` pass values to their
+  python helpers via the environment instead of interpolating raw bash values
+  into `python3 -c` heredocs, fixing a quote/apostrophe-injection class that
+  silently degraded output (e.g. a project path containing an apostrophe).
+- Removed the dead `invoke_with_timeout` helper and its unused spawn-config vars
+  from run.sh (never wired to the provider invocation; kept route parity with
+  the Bun side, which has no such wrapper).
+- Checkpoint pruning now deletes the matching `refs/loki/cp/<id>` git refs (and
+  their anchored stash commits) for pruned checkpoints, which previously leaked
+  unbounded.
+
+Refuted (verified STALE, no change): a PERPETUAL_MODE gate in run.sh (compounding
+it would disable the completion council on every default run) and the crash.ts
+global unhandledRejection handler (intentional, documented fail-fast).
+
 ## [7.67.0] - 2026-06-17
 
 ### Trust-surface + data-integrity hardening (wave-8 bug-hunt)

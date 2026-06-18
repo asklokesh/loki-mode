@@ -839,6 +839,20 @@ class ConsolidationPipeline:
         if best_match is None or best_similarity < 0.5:
             return new_pattern
 
+        # Idempotency guard (consolidation-C4): only boost confidence when the
+        # merge actually introduces NEW evidence. consolidate() reloads every
+        # episode in the since-window on each run (storage.list_episodes has no
+        # consolidated-state filter), so re-running over an unchanged episode set
+        # re-extracts identical patterns that re-match this existing pattern. A
+        # flat +0.05 every time would ratchet confidence up artificially with no
+        # new data. Comparing source_episodes (which round-trips through storage)
+        # makes the merge a no-op for confidence when no new source episode is
+        # present, while still rewarding a genuinely new similar episode.
+        new_source_episodes = (
+            set(new_pattern.source_episodes) - set(best_match.source_episodes)
+        )
+        confidence_boost = 0.05 if new_source_episodes else 0.0
+
         # Merge patterns
         merged = SemanticPattern(
             id=best_match.id,
@@ -847,7 +861,7 @@ class ConsolidationPipeline:
             conditions=list(set(best_match.conditions + new_pattern.conditions)),
             correct_approach=best_match.correct_approach or new_pattern.correct_approach,
             incorrect_approach=best_match.incorrect_approach or new_pattern.incorrect_approach,
-            confidence=min(best_match.confidence + 0.05, 0.99),
+            confidence=min(best_match.confidence + confidence_boost, 0.99),
             source_episodes=list(set(best_match.source_episodes + new_pattern.source_episodes)),
             usage_count=best_match.usage_count,
             last_used=best_match.last_used,
