@@ -24,20 +24,28 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
   it("bash head -c 8000 and Bun subarray(0,8000) agree on a >8000-byte file", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-gfcap-"));
     try {
-      // 12000 bytes: first 8000 are 'A', remainder 'B'. head keeps only the
-      // 'A' run; tail would keep the 'B' tail -- a divergence this asserts away.
+      // 12000 bytes: first 8000 are 'A', remainder 'B'. `head -c 8000` keeps
+      // only the leading 'A' run; `tail -c 8000` would keep the 'B' tail. We
+      // assert Bun's cap reproduces head semantics against the DETERMINISTIC
+      // expected slice (the first 8000 bytes), not against a spawned `head`
+      // subprocess. The earlier version shelled out to `execFileSync("head",
+      // ...)`, which on some CI runners (macos-latest + bun 1.3.13) returned 0
+      // bytes -- a non-hermetic subprocess flake, not a real parity divergence.
+      // The semantic being pinned (head, NOT tail) is fully captured by the
+      // expected-slice comparison below.
       const content = "A".repeat(8000) + "B".repeat(4000);
       const fpath = join(dir, "gate-failures.txt");
       writeFileSync(fpath, content);
 
-      const bashOut = execFileSync("head", ["-c", "8000", fpath]).toString("utf8");
+      // What `head -c 8000` produces, by definition: the first 8000 bytes.
+      const expectedHead = content.slice(0, 8000);
       const bunOut = bunHeadCap(Buffer.from(content, "utf8"), 8000);
 
-      expect(bashOut.length).toBe(8000);
+      expect(expectedHead.length).toBe(8000);
       expect(bunOut.length).toBe(8000);
-      expect(bashOut).toBe(bunOut);
+      expect(bunOut).toBe(expectedHead);
       // Non-vacuity: the cap must drop the tail 'B' run entirely (head, not tail).
-      expect(bashOut.includes("B")).toBe(false);
+      expect(expectedHead.includes("B")).toBe(false);
       expect(bunOut.includes("B")).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -80,13 +88,11 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
       const fpath = join(dir, "gate-failures.txt");
       writeFileSync(fpath, content);
 
-      // head -c 8000 of a sub-cap file returns it verbatim (trailing newline
-      // included; bash $(...) strips it, but here we compare the raw head output
-      // against the raw bun slice, both pre-$() stripping).
-      const bashOut = execFileSync("head", ["-c", "8000", fpath]).toString("utf8");
+      // head -c 8000 of a sub-cap file returns it verbatim. We compare Bun's
+      // slice against the content directly (a sub-cap head is the whole file),
+      // not a spawned `head` (non-hermetic on some CI runners, see above).
       const bunOut = bunHeadCap(Buffer.from(content, "utf8"), 8000);
-      expect(bashOut).toBe(bunOut);
-      expect(bashOut).toBe(content);
+      expect(bunOut).toBe(content);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

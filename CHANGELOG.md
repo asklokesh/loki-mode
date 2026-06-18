@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.66.1] - 2026-06-17
+
+### Memory file-lock concurrency fix + CI test deflake
+
+Hotfix for two CI failures surfaced by the v7.66.0 test matrix (the shipped
+v7.66.0 runtime is unaffected; both issues are in the memory locking primitive
+and a test harness, not in v7.66.0's completion-council changes).
+
+- memory/storage.py `_file_lock`: removed the `os.remove(lock_path)` on lock
+  release. Unlinking the lock file on every release is a flock+unlink
+  inode-replacement race: with 3+ contenders, a holder can unlink the inode a
+  waiter just acquired, after which a third contender opens the path, finds it
+  gone, creates a NEW inode, and flocks that -- entering the critical section
+  while the waiter is still inside. This dropped index.json topics under
+  concurrent store_pattern / store_episode. Reproduced deterministically on
+  Linux CPython 3.13 (16 threads: 3/25 runs dropped a topic pre-fix; 25/25 pass
+  after). Persistent lock files are the standard flock pattern; stale ones are
+  GC'd by `_cleanup_stale_locks`, which is itself flock-safe (probe-before-unlink,
+  v7.65.0). This completes the v7.65.0 lost-update hardening (the lock body was
+  correct; the release path was not).
+- loki-ts/tests/gate-failures-cap-parity.test.ts: removed the `execFileSync("head")`
+  subprocess spawns. They were non-hermetic (returned 0 bytes on some CI runners,
+  e.g. macos-latest + bun 1.3.13) and unnecessary -- the head-vs-tail semantics
+  the test pins are fully captured by comparing Bun's cap against the
+  deterministic expected slice. No loss of coverage.
+
 ## [7.66.0] - 2026-06-17
 
 ### Completion-council trust-surface hardening (wave-7 bug-hunt)

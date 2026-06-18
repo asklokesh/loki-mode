@@ -317,10 +317,16 @@ class MemoryStorage:
             if lock_file is not None:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
                 lock_file.close()
-                try:
-                    os.remove(lock_path)
-                except OSError:
-                    pass
+                # Do NOT os.remove(lock_path) here. Unlinking the lock file on
+                # release is a flock+unlink inode-replacement race: with 3+
+                # contenders, holder A unlinks inode-1 after B (blocked on it)
+                # acquires it, then C opens the path, finds it gone, creates
+                # inode-2, and flocks inode-2 -- entering the critical section
+                # while B is still inside. That dropped index.json topics under
+                # concurrent store_pattern/store_episode (reproduced on Linux
+                # py3.13, 16 threads). Persistent lock files are the standard
+                # flock pattern; stale ones are GC'd by _cleanup_stale_locks,
+                # which is itself flock-safe (probe-before-unlink, wave-6).
 
     def _atomic_write(self, path: Path, data: dict) -> None:
         """
