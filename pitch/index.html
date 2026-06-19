@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Mode by Autonomi -- Investor Experience</title>
+<meta name="description" content="Autonomi's Loki Mode: the autonomous spec-to-product engine. Interactive demo, pitch deck, and the path to a USD 100B category.">
+<meta name="theme-color" content="#09090B">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23553DE9'/><text x='50' y='72' font-size='62' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>L</text></svg>" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --purple:#553DE9;--purple-light:#7B68EE;--purple-dark:#3D2DB5;--violet:#c084fc;
+  --bg:#09090B;--bg-2:#0C0B14;--bg-card:#111114;--bg-card-hover:#18181D;--bg-inset:#0D0D10;
+  --border:#27272A;--border-soft:rgba(39,39,42,.6);
+  --text:#FAFAFA;--text-muted:#A1A1AA;--text-dim:#71717A;
+  --green:#22C55E;--amber:#FBBF24;--red:#EF4444;--cyan:#38BDF8;--orange:#f97316;
+  --radius:14px;--mono:'JetBrains Mono',ui-monospace,monospace;
+}
+html{scroll-behavior:smooth;font-size:16px}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+::selection{background:rgba(85,61,233,.4)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:#2a2a32;border-radius:8px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a3a45}
+
+/* ---------- TOP NAV ---------- */
+nav{position:fixed;top:0;left:0;right:0;z-index:200;padding:.85rem 2rem;display:flex;align-items:center;justify-content:space-between;background:rgba(9,9,11,.82);backdrop-filter:blur(18px);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:.7rem;font-weight:800;font-size:1.15rem;letter-spacing:-.02em}
+.logo-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--purple),var(--purple-light));display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:1.15rem;box-shadow:0 0 22px rgba(85,61,233,.45);flex-shrink:0}
+.brand .lo{background:linear-gradient(135deg,#fff,#cfc8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.brand small{display:block;font-size:.62rem;font-weight:500;letter-spacing:.16em;color:var(--text-dim);text-transform:uppercase;line-height:1}
+.tabs{display:flex;gap:.35rem;align-items:center;background:rgba(17,17,20,.6);padding:.3rem;border-radius:12px;border:1px solid var(--border)}
+.tab{font-size:.82rem;color:var(--text-muted);padding:.5rem .95rem;border-radius:9px;cursor:pointer;transition:all .2s;font-weight:500;border:none;background:none;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab.active{background:var(--purple);color:#fff;box-shadow:0 4px 14px rgba(85,61,233,.4)}
+.nav-right{display:flex;align-items:center;gap:1rem}
+.ver-pill{font-family:var(--mono);font-size:.72rem;color:var(--purple-light);border:1px solid var(--purple);border-radius:100px;padding:.25rem .7rem;background:rgba(85,61,233,.08)}
+.nav-toggle{display:none;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.4rem .6rem;cursor:pointer;font-size:.8rem}
+
+/* ---------- PAGE SYSTEM ---------- */
+.page{display:none;animation:fade .5s ease;padding-top:64px}
+.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+section{padding:5rem 2rem}
+.container{max-width:1160px;margin:0 auto}
+.eyebrow{text-transform:uppercase;font-size:.74rem;font-weight:700;letter-spacing:.13em;color:var(--purple-light);margin-bottom:.7rem}
+h2.title{font-size:clamp(1.7rem,4vw,2.7rem);font-weight:800;letter-spacing:-.025em;margin-bottom:1rem;line-height:1.12}
+.sub{color:var(--text-muted);max-width:620px;font-size:1.05rem;line-height:1.7}
+.gr{background:linear-gradient(135deg,var(--purple-light),var(--violet),var(--purple));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+/* ---------- HERO ---------- */
+.hero{position:relative;min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center;text-align:center;padding:5rem 2rem;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 55% at 50% 18%,rgba(85,61,233,.28),transparent 70%),radial-gradient(ellipse 55% 45% at 75% 85%,rgba(123,104,238,.12),transparent)}
+.grid-bg{position:absolute;inset:0;background-image:linear-gradient(rgba(85,61,233,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(85,61,233,.06) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(ellipse 80% 70% at 50% 30%,#000,transparent 75%);-webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 30%,#000,transparent 75%)}
+.hero-inner{position:relative;max-width:880px;z-index:2}
+.badge{display:inline-flex;align-items:center;gap:.5rem;padding:.4rem 1rem;border:1px solid var(--border);border-radius:100px;font-size:.78rem;color:var(--text-muted);margin-bottom:1.6rem;background:rgba(17,17,20,.7)}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{opacity:.5;box-shadow:0 0 0 5px rgba(34,197,94,0)}}
+.hero h1{font-size:clamp(2.5rem,6.5vw,4.6rem);font-weight:900;line-height:1.05;letter-spacing:-.035em;margin-bottom:1.3rem}
+.hero p.lead{font-size:clamp(1.05rem,2vw,1.3rem);color:var(--text-muted);max-width:620px;margin:0 auto 2.4rem;line-height:1.65}
+.hero-cta{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.85rem 1.8rem;border-radius:11px;font-size:.95rem;font-weight:600;transition:all .2s;border:none;cursor:pointer;font-family:inherit}
+.btn-primary{background:#fff;color:var(--bg);box-shadow:0 0 30px rgba(85,61,233,.35)}
+.btn-primary:hover{box-shadow:0 0 46px rgba(85,61,233,.6);transform:translateY(-2px)}
+.btn-outline{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.22)}
+.btn-outline:hover{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.04)}
+.btn-violet{background:var(--purple);color:#fff}
+.btn-violet:hover{background:var(--purple-dark);transform:translateY(-2px)}
+.hero-stats{display:flex;justify-content:center;gap:3rem;margin-top:3.5rem;flex-wrap:wrap}
+.hero-stat .n{font-size:1.9rem;font-weight:800;letter-spacing:-.02em}
+.hero-stat .l{color:var(--text-dim);font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-top:.2rem}
+
+/* ---------- GENERIC CARDS ---------- */
+.grid{display:grid;gap:1.25rem}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.6rem;transition:border-color .3s,transform .3s}
+.card:hover{border-color:var(--purple);transform:translateY(-2px)}
+.card h3{font-size:1.05rem;font-weight:700;margin-bottom:.45rem;display:flex;align-items:center;gap:.5rem}
+.card p{color:var(--text-muted);font-size:.88rem;line-height:1.6}
+.ico{width:42px;height:42px;border-radius:11px;background:rgba(85,61,233,.15);display:flex;align-items:center;justify-content:center;margin-bottom:1rem;font-size:1.2rem}
+.tag{display:inline-block;font-family:var(--mono);font-size:.68rem;padding:.15rem .5rem;border-radius:6px;background:rgba(85,61,233,.12);color:var(--purple-light);border:1px solid rgba(85,61,233,.25);margin-left:.4rem}
+.tag.green{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.25)}
+.tag.amber{background:rgba(251,191,36,.12);color:var(--amber);border-color:rgba(251,191,36,.25)}
+
+/* ---------- BUILD STRIP ---------- */
+.strip{background:var(--bg-2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.ticker{display:flex;gap:1rem;flex-wrap:wrap;justify-content:center}
+.chip{font-family:var(--mono);font-size:.78rem;color:var(--text-muted);background:var(--bg-card);border:1px solid var(--border);border-radius:100px;padding:.4rem 1rem}
+.chip b{color:var(--green)}
+
+/* ---------- DEMO / CONFIGURATOR ---------- */
+.demo-wrap{display:grid;grid-template-columns:340px 1fr;gap:1.5rem;margin-top:2rem}
+.config{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;align-self:start;position:sticky;top:88px}
+.cfg-group{margin-bottom:1.4rem}
+.cfg-group>label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);font-weight:600;margin-bottom:.6rem}
+.opt-row{display:flex;flex-wrap:wrap;gap:.4rem}
+.opt{font-size:.78rem;padding:.45rem .7rem;border-radius:8px;border:1px solid var(--border);background:var(--bg-inset);color:var(--text-muted);cursor:pointer;transition:all .18s;font-family:inherit}
+.opt:hover{border-color:var(--purple-light);color:var(--text)}
+.opt.sel{background:var(--purple);border-color:var(--purple);color:#fff;font-weight:600}
+.opt small{display:block;font-size:.62rem;opacity:.75;font-weight:400}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:.4rem 0;font-size:.82rem;color:var(--text-muted);border-bottom:1px solid var(--border-soft)}
+.toggle-row:last-child{border-bottom:none}
+.sw{position:relative;width:38px;height:21px;border-radius:100px;background:#2a2a32;cursor:pointer;transition:background .2s;flex-shrink:0}
+.sw.on{background:var(--purple)}
+.sw::after{content:'';position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:transform .2s}
+.sw.on::after{transform:translateX(17px)}
+.perm-counter{margin-top:.4rem;padding:.9rem;background:var(--bg-inset);border:1px solid var(--border);border-radius:10px;text-align:center}
+.perm-counter .pc-n{font-size:1.55rem;font-weight:800;font-family:var(--mono);letter-spacing:-.02em;color:var(--purple-light)}
+.perm-counter .pc-l{font-size:.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em}
+.run-btn{width:100%;margin-top:1rem;padding:.85rem;border-radius:10px;background:linear-gradient(135deg,var(--purple),var(--purple-light));color:#fff;font-weight:700;border:none;cursor:pointer;font-size:.92rem;transition:all .2s;font-family:inherit}
+.run-btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(85,61,233,.4)}
+.run-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+.stage{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;min-height:560px;display:flex;flex-direction:column}
+.stage-head{display:flex;align-items:center;gap:.5rem;padding:.7rem 1rem;border-bottom:1px solid var(--border);background:var(--bg-inset)}
+.dotbar{display:flex;gap:.4rem}
+.dotbar i{width:11px;height:11px;border-radius:50%;display:block}
+.dotbar i:nth-child(1){background:#ff5f57}.dotbar i:nth-child(2){background:#febc2e}.dotbar i:nth-child(3){background:#28c840}
+.stage-title{font-family:var(--mono);font-size:.76rem;color:var(--text-dim);margin-left:.5rem}
+.stage-spec{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--purple-light)}
+.console{flex:1;padding:1rem 1.2rem;font-family:var(--mono);font-size:.78rem;line-height:1.85;overflow-y:auto;max-height:520px}
+.ln{opacity:0;animation:lnIn .25s forwards;white-space:pre-wrap;word-break:break-word}
+@keyframes lnIn{to{opacity:1}}
+.ln .t{color:var(--text-dim)}
+.ln .ph{color:var(--purple-light);font-weight:600}
+.ln .ok{color:var(--green)}
+.ln .warn{color:var(--amber)}
+.ln .err{color:var(--red)}
+.ln .info{color:var(--cyan)}
+.ln .mut{color:var(--text-dim)}
+.ln .acc{color:var(--orange)}
+.cursor-blink{display:inline-block;width:8px;height:14px;background:var(--purple-light);animation:blink 1s steps(2) infinite;vertical-align:middle}
+@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+.empty-stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text-dim);gap:1rem;padding:2rem}
+.empty-stage .big{font-size:3rem;opacity:.3}
+.rarv{display:flex;gap:.5rem;justify-content:center;margin-top:1rem;flex-wrap:wrap}
+.rarv span{font-family:var(--mono);font-size:.7rem;padding:.3rem .7rem;border-radius:100px;border:1px solid var(--border);color:var(--text-dim)}
+.rarv span.live{border-color:var(--purple);color:var(--purple-light);background:rgba(85,61,233,.1)}
+.rarv span.done{border-color:var(--green);color:var(--green);background:rgba(34,197,94,.08)}
+
+.result-bar{display:none;padding:1rem 1.2rem;border-top:1px solid var(--border);background:var(--bg-inset);gap:1.5rem;align-items:center;flex-wrap:wrap}
+.result-bar.show{display:flex}
+.rstat{display:flex;flex-direction:column}
+.rstat .rn{font-size:1.15rem;font-weight:800;font-family:var(--mono)}
+.rstat .rl{font-size:.66rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em}
+
+/* ---------- DECK ---------- */
+.deck-stage{max-width:1100px;margin:0 auto;padding:2rem}
+.slide{display:none;background:linear-gradient(160deg,var(--bg-card),var(--bg-2));border:1px solid var(--border);border-radius:20px;padding:3.5rem;min-height:62vh;position:relative;overflow:hidden}
+.slide.active{display:block;animation:slideIn .45s ease}
+@keyframes slideIn{from{opacity:0;transform:scale(.985) translateY(10px)}to{opacity:1;transform:none}}
+.slide::after{content:'';position:absolute;top:-30%;right:-10%;width:420px;height:420px;background:radial-gradient(circle,rgba(85,61,233,.18),transparent 65%);pointer-events:none}
+.slide-num{position:absolute;top:1.5rem;right:2rem;font-family:var(--mono);font-size:.78rem;color:var(--text-dim)}
+.slide .kicker{font-family:var(--mono);font-size:.78rem;color:var(--purple-light);letter-spacing:.1em;text-transform:uppercase;margin-bottom:1rem}
+.slide h2{font-size:clamp(1.8rem,3.6vw,2.8rem);font-weight:800;letter-spacing:-.025em;line-height:1.12;margin-bottom:1.3rem;position:relative;z-index:2}
+.slide p.big{font-size:1.2rem;color:var(--text-muted);line-height:1.6;max-width:760px;position:relative;z-index:2}
+.slide ul{list-style:none;margin-top:1.4rem;display:flex;flex-direction:column;gap:.85rem;position:relative;z-index:2}
+.slide ul li{display:flex;gap:.75rem;font-size:1.02rem;color:var(--text-muted);line-height:1.5}
+.slide ul li::before{content:'';width:20px;height:20px;border-radius:6px;background:rgba(85,61,233,.18);border:1px solid rgba(85,61,233,.4);flex-shrink:0;margin-top:.15rem;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237B68EE' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center;background-size:11px}
+.slide .metric-row{display:flex;gap:2.5rem;margin-top:2rem;flex-wrap:wrap;position:relative;z-index:2}
+.slide .metric .mn{font-size:2.4rem;font-weight:900;letter-spacing:-.03em}
+.slide .metric .ml{color:var(--text-dim);font-size:.82rem;margin-top:.2rem}
+.deck-nav{display:flex;align-items:center;justify-content:center;gap:1.2rem;margin-top:1.5rem}
+.deck-nav button{background:var(--bg-card);border:1px solid var(--border);color:var(--text);width:42px;height:42px;border-radius:11px;cursor:pointer;font-size:1.1rem;transition:all .2s}
+.deck-nav button:hover{border-color:var(--purple);background:var(--bg-card-hover)}
+.dots{display:flex;gap:.4rem}
+.dots i{width:8px;height:8px;border-radius:50%;background:#2a2a32;cursor:pointer;transition:all .2s}
+.dots i.on{background:var(--purple-light);width:22px;border-radius:100px}
+.deck-hint{text-align:center;color:var(--text-dim);font-size:.76rem;margin-top:.8rem;font-family:var(--mono)}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:2rem;position:relative;z-index:2;margin-top:1.4rem}
+.col-box{background:rgba(13,13,16,.6);border:1px solid var(--border);border-radius:12px;padding:1.4rem}
+.col-box h4{font-size:.92rem;margin-bottom:.7rem;color:var(--text)}
+.col-box.bad h4{color:var(--red)}
+.col-box.good h4{color:var(--green)}
+.col-box ul{margin-top:.4rem}
+.col-box ul li{font-size:.9rem}
+.col-box.bad ul li::before{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23EF4444' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='18' y1='6' x2='6' y2='18'/%3E%3Cline x1='6' y1='6' x2='18' y2='18'/%3E%3C/svg%3E")}
+
+/* ---------- VISION ---------- */
+.timeline{position:relative;margin-top:2.5rem;padding-left:2rem}
+.timeline::before{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:linear-gradient(180deg,var(--purple),var(--purple-light),transparent)}
+.tl-item{position:relative;margin-bottom:2rem}
+.tl-item::before{content:'';position:absolute;left:-2rem;top:4px;width:16px;height:16px;border-radius:50%;background:var(--bg);border:3px solid var(--purple-light);box-shadow:0 0 14px rgba(123,104,238,.6)}
+.tl-item .when{font-family:var(--mono);font-size:.78rem;color:var(--purple-light);font-weight:600}
+.tl-item h4{font-size:1.15rem;margin:.3rem 0 .4rem}
+.tl-item p{color:var(--text-muted);font-size:.92rem}
+.moat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1.25rem;margin-top:2rem}
+.moat{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.6rem;position:relative;overflow:hidden}
+.moat::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:linear-gradient(180deg,var(--purple),var(--purple-light))}
+.moat .lock{font-size:.7rem;font-family:var(--mono);color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.5rem}
+.moat h4{font-size:1.08rem;margin-bottom:.5rem}
+.moat p{color:var(--text-muted);font-size:.88rem;line-height:1.6}
+.tam{display:flex;align-items:flex-end;gap:1.5rem;margin-top:2.5rem;flex-wrap:wrap}
+.tam-ring{flex:1;min-width:260px}
+.bar-row{display:flex;align-items:center;gap:1rem;margin-bottom:1rem}
+.bar-label{width:130px;font-size:.82rem;color:var(--text-muted);flex-shrink:0}
+.bar-track{flex:1;height:30px;background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.bar-fill{height:100%;border-radius:8px 0 0 8px;display:flex;align-items:center;padding:0 .7rem;font-size:.76rem;font-weight:700;color:#fff;font-family:var(--mono);white-space:nowrap}
+
+/* ---------- ASK BANNER ---------- */
+.ask{background:linear-gradient(135deg,rgba(85,61,233,.16),rgba(123,104,238,.06));border:1px solid var(--purple);border-radius:20px;padding:3rem;text-align:center;margin-top:2rem}
+.ask h2{font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;margin-bottom:1rem}
+.ask .amount{font-size:clamp(2.4rem,6vw,3.6rem);font-weight:900;letter-spacing:-.03em;margin:.5rem 0}
+.ask p{color:var(--text-muted);max-width:560px;margin:.5rem auto 0}
+
+/* ---------- HONESTY FOOTER ---------- */
+.honesty{background:var(--bg-2);border-top:1px solid var(--border);padding:2.5rem 2rem;text-align:center}
+.honesty p{color:var(--text-dim);font-size:.8rem;max-width:760px;margin:0 auto;line-height:1.7}
+footer{background:var(--bg);border-top:1px solid var(--border);padding:2.5rem 2rem;text-align:center;color:var(--text-dim);font-size:.82rem}
+footer .brand{justify-content:center;margin-bottom:.8rem}
+
+@media(max-width:980px){
+  .demo-wrap{grid-template-columns:1fr}
+  .config{position:static}
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:1fr}
+  .two-col,.moat-grid{grid-template-columns:1fr}
+  .tabs{display:none}
+  .nav-toggle{display:block}
+  .tabs.mobile-open{display:flex;position:fixed;top:60px;left:1rem;right:1rem;flex-direction:column;background:var(--bg-card);padding:.6rem;border-radius:12px;z-index:300}
+  .slide{padding:2rem 1.4rem}
+}
+@media(max-width:560px){
+  section{padding:3.5rem 1.2rem}
+  .g4,.g2{grid-template-columns:1fr}
+  .hero-stats{gap:1.5rem}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<nav>
+  <a class="brand" onclick="go('overview')" style="cursor:pointer">
+    <span class="logo-mark">L</span>
+    <span><span class="lo">Loki Mode</span><small>by Autonomi</small></span>
+  </a>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-page="overview" onclick="go('overview')">Overview</button>
+    <button class="tab" data-page="demo" onclick="go('demo')">Live Demo</button>
+    <button class="tab" data-page="deck" onclick="go('deck')">Pitch Deck</button>
+    <button class="tab" data-page="vision" onclick="go('vision')">Vision 2028</button>
+    <button class="tab" data-page="moat" onclick="go('moat')">Moat &amp; IP</button>
+  </div>
+  <div class="nav-right">
+    <span class="ver-pill">v7.56.0</span>
+    <button class="nav-toggle" onclick="document.getElementById('tabs').classList.toggle('mobile-open')">Menu</button>
+  </div>
+</nav>
+
+<!-- ============ PAGE: OVERVIEW ============ -->
+<div class="page active" id="page-overview">
+  <div class="hero">
+    <div class="grid-bg"></div>
+    <div class="hero-inner">
+      <div class="badge"><span class="dot"></span> Autonomi flagship &middot; shipping continuously &middot; v7.56.0</div>
+      <h1>Spec in. <span class="gr">Product out.</span></h1>
+      <p class="lead">Loki Mode is the autonomous spec-to-product engine. Hand it a PRD, a GitHub issue, an OpenAPI file, or one sentence, and it reasons, builds, reviews, and ships, gated by a verification stack that makes the output trustworthy enough to run unattended.</p>
+      <div class="hero-cta">
+        <button class="btn btn-primary" onclick="go('demo')">Run the live demo</button>
+        <button class="btn btn-outline" onclick="go('deck')">Open the pitch deck</button>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat"><div class="n gr">RARV&#8209;C</div><div class="l">Closed-loop engine</div></div>
+        <div class="hero-stat"><div class="n">8+1</div><div class="l">Quality gates</div></div>
+        <div class="hero-stat"><div class="n">4</div><div class="l">Providers, agnostic</div></div>
+        <div class="hero-stat"><div class="n">100%</div><div class="l">Source-available</div></div>
+      </div>
+    </div>
+  </div>
+
+  <section class="strip"><div class="container ticker" id="ticker"></div></section>
+
+  <section>
+    <div class="container">
+      <div class="eyebrow">What it actually does</div>
+      <h2 class="title">A category, not a feature</h2>
+      <p class="sub">Copilots assist a human in an editor. Loki owns the outcome end to end, then proves the outcome is correct before it ships.</p>
+      <div class="grid g3" style="margin-top:2.5rem">
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><h3>Any spec, any source</h3><p>PRD file, GitHub issue (<span class="tag">owner/repo#123</span>), OpenAPI/JSON/YAML, or a one-line brief. The living-spec layer detects drift between intent and build.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></div><h3>The RARV-C loop</h3><p>Reason, Act, Reflect, Verify, then Closure: findings injection, an override council, structured learnings, and a handoff doc on every iteration.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>Verification stack</h3><p>Eight gates plus opt-in semantic and invariant gates: blind 3-reviewer review, anti-sycophancy, mock-integrity and test-mutation detectors.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg></div><h3>Compounding memory</h3><p>Episodic, semantic, and procedural memory with cross-project transfer and RAG injection. It learns your codebase the longer it runs.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M4 20V8l8-5 8 5v12"/><path d="M9 20v-6h6v6"/></svg></div><h3>Legacy healing mode</h3><p><span class="tag">loki heal</span> Archaeology, friction-as-semantics, characterization tests, and a backward-compatibility auditor for code nobody can replace.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg></div><h3>Audit &amp; compliance</h3><p>Tamper-evident audit chain, run-manifest linking, and a live SOC2 / ISO27001 / GDPR report generated from real evidence, never a fabricated verdict.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="strip">
+    <div class="container">
+      <div class="eyebrow">Shipped recently</div>
+      <h2 class="title">What changed in the last releases</h2>
+      <p class="sub">Verification depth and enterprise trust surface, all real and in the changelog through v7.56.0.</p>
+      <div class="grid g2" style="margin-top:2rem">
+        <div class="card"><h3>Invariant &amp; property gate <span class="tag green">v7.55</span></h3><p>Metamorphic checks (idempotency, round-trip, no-secrets-in-output) wired byte-identically on both the bash and Bun routes as an opt-in gate.</p></div>
+        <div class="card"><h3>Anti-sycophancy parity <span class="tag green">v7.55</span></h3><p>The Bun council now auto-fires a blind devil's-advocate voter on unanimous APPROVE, with a deterministic file-scan fallback so scrutiny is never silently dropped.</p></div>
+        <div class="card"><h3>Run-manifest tamper-evidence <span class="tag green">v7.55</span></h3><p>The build bill-of-materials is hashed into the unified audit chain and verifiable, so a tampered manifest is detectable after the fact.</p></div>
+        <div class="card"><h3>Reachable audit + compliance CLI <span class="tag green">v7.56</span></h3><p><span class="tag">loki audit link-manifest</span> <span class="tag">verify-manifest</span> <span class="tag">compliance snapshot</span> on-demand, honest no-op when no manifest exists.</p></div>
+        <div class="card"><h3>Findings surfaced into the prompt <span class="tag green">v7.56</span></h3><p>Invariant and semantic findings are now injected into the next-iteration prompt, closing writer-with-no-reader gaps so the loop actually acts on them.</p></div>
+        <div class="card"><h3>Provider honesty + dead-code purge <span class="tag green">v7.54</span></h3><p>Fail-fast module loading replaces silent stub fallbacks, and unimplemented providers were de-listed. We document what works, not what is aspirational.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container" style="text-align:center">
+      <div class="eyebrow">Provider-agnostic by design</div>
+      <h2 class="title">Picks and shovels on a commoditizing input</h2>
+      <p class="sub" style="margin:0 auto 2rem">We are not long or short any single model lab. When the next frontier model ships, Loki gets faster and cheaper for free.</p>
+      <div class="grid g4">
+        <div class="card"><h3>Claude Code</h3><p>Tier 1: full features, subagents, parallel Task tool, MCP.</p></div>
+        <div class="card"><h3>OpenAI Codex CLI</h3><p>Tier 3: sequential degraded mode, sandbox workspace-write.</p></div>
+        <div class="card"><h3>Cline</h3><p>Tier 2: reduced parallelism, full loop.</p></div>
+        <div class="card"><h3>Aider</h3><p>Tier 3: degraded mode, full loop.</p></div>
+      </div>
+      <div style="margin-top:2.5rem"><button class="btn btn-violet" onclick="go('demo')">See every permutation run live &rarr;</button></div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ PAGE: DEMO ============ -->
+<div class="page" id="page-demo">
+  <section>
+    <div class="container">
+      <div class="eyebrow">Interactive demo</div>
+      <h2 class="title">Configure a run. Watch the loop close.</h2>
+      <p class="sub">Pick any combination of spec source, provider, mode, and gates. Loki has billions of valid run permutations; this is a faithful simulation of the real RARV-C pipeline so you can see how the system behaves before you install it.</p>
+
+      <div class="demo-wrap">
+        <!-- CONFIG -->
+        <div class="config">
+          <div class="cfg-group">
+            <label>Spec source</label>
+            <div class="opt-row" data-group="spec">
+              <button class="opt sel" data-v="prd">PRD file<small>./prd.md</small></button>
+              <button class="opt" data-v="issue">GitHub issue<small>owner/repo#123</small></button>
+              <button class="opt" data-v="openapi">OpenAPI<small>spec.yaml</small></button>
+              <button class="opt" data-v="brief">One-liner<small>plain text</small></button>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <label>Provider</label>
+            <div class="opt-row" data-group="provider">
+              <button class="opt sel" data-v="claude">Claude<small>Tier 1</small></button>
+              <button class="opt" data-v="codex">Codex<small>Tier 3</small></button>
+              <button class="opt" data-v="cline">Cline<small>Tier 2</small></button>
+              <button class="opt" data-v="aider">Aider<small>Tier 3</small></button>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <label>Mode</label>
+            <div class="opt-row" data-group="mode">
+              <button class="opt sel" data-v="build">Greenfield build</button>
+              <button class="opt" data-v="heal">Legacy heal</button>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <label>Project complexity</label>
+            <div class="opt-row" data-group="complexity">
+              <button class="opt" data-v="simple">Simple</button>
+              <button class="opt sel" data-v="standard">Standard</button>
+              <button class="opt" data-v="complex">Complex</button>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <label>Quality gates</label>
+            <div id="gateList"></div>
+          </div>
+          <div class="perm-counter">
+            <div class="pc-n" id="permN">0</div>
+            <div class="pc-l">distinct run permutations</div>
+          </div>
+          <button class="run-btn" id="runBtn" onclick="runLoki()">Run Loki Mode</button>
+        </div>
+
+        <!-- STAGE -->
+        <div class="stage">
+          <div class="stage-head">
+            <div class="dotbar"><i></i><i></i><i></i></div>
+            <span class="stage-title">loki &mdash; autonomous run</span>
+            <span class="stage-spec" id="stageSpec"></span>
+          </div>
+          <div class="empty-stage" id="emptyStage">
+            <div class="big"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg></div>
+            <div>Configure your run on the left, then press <b style="color:var(--text)">Run Loki Mode</b>.</div>
+            <div class="rarv" id="rarvIdle">
+              <span>Reason</span><span>Act</span><span>Reflect</span><span>Verify</span><span>Closure</span>
+            </div>
+          </div>
+          <div class="console" id="console" style="display:none"></div>
+          <div class="result-bar" id="resultBar">
+            <div class="rstat"><span class="rn ok" id="rIter">&mdash;</span><span class="rl">Iterations</span></div>
+            <div class="rstat"><span class="rn" id="rGates">&mdash;</span><span class="rl">Gates passed</span></div>
+            <div class="rstat"><span class="rn info" id="rFiles">&mdash;</span><span class="rl">Files written</span></div>
+            <div class="rstat"><span class="rn" style="color:var(--purple-light)" id="rCouncil">&mdash;</span><span class="rl">Council vote</span></div>
+            <div class="rstat"><span class="rn ok" id="rStatus">&mdash;</span><span class="rl">Status</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ PAGE: DECK ============ -->
+<div class="page" id="page-deck">
+  <div class="deck-stage">
+    <div class="eyebrow" style="text-align:center">Pre-seed pitch &middot; founder narrative</div>
+    <div id="slides">
+      <!-- 1 -->
+      <div class="slide active">
+        <div class="slide-num">01 / 10</div>
+        <div class="kicker">Autonomi presents</div>
+        <h2>Loki Mode<br><span class="gr">Spec in. Product out.</span></h2>
+        <p class="big">The autonomous spec-to-product engine. We are building the trust layer for autonomous software engineering, the layer that turns agentic code generation from a demo into something an enterprise will run unsupervised.</p>
+        <div class="metric-row">
+          <div class="metric"><div class="mn gr">USD 10M</div><div class="ml">Raising (pre-seed)</div></div>
+          <div class="metric"><div class="mn">10%</div><div class="ml">Equity offered</div></div>
+          <div class="metric"><div class="mn">v7.56</div><div class="ml">Shipped product, today</div></div>
+        </div>
+      </div>
+      <!-- 2 -->
+      <div class="slide">
+        <div class="slide-num">02 / 10</div>
+        <div class="kicker">The problem</div>
+        <h2>Generation got solved. <span class="gr">Trust didn't.</span></h2>
+        <p class="big">Models can write code. They cannot yet be trusted to ship it unattended, because left alone an agent will fake a passing test, weaken an assertion, or declare victory early.</p>
+        <ul>
+          <li>Copilots cap out at the human-in-the-loop bottleneck: a person still reads every line.</li>
+          <li>Autonomous agents hit a wall of trust, not capability.</li>
+          <li>The trillion-dollar pool is legacy code that can't be opened in an editor and refactored by hand.</li>
+        </ul>
+      </div>
+      <!-- 3 -->
+      <div class="slide">
+        <div class="slide-num">03 / 10</div>
+        <div class="kicker">The solution</div>
+        <h2>A closed loop that <span class="gr">proves its own work</span></h2>
+        <p class="big">RARV-C: Reason, Act, Reflect, Verify, Closure. Every iteration runs eight quality gates plus opt-in semantic and invariant gates, then a council votes on whether the work is genuinely done.</p>
+        <ul>
+          <li>Blind 3-reviewer code review with severity blocking.</li>
+          <li>Anti-sycophancy devil's advocate that argues against a unanimous pass.</li>
+          <li>Mock-integrity and test-mutation detectors that catch the model cheating.</li>
+          <li>Tamper-evident audit chain and live compliance reporting from real evidence.</li>
+        </ul>
+      </div>
+      <!-- 4 -->
+      <div class="slide">
+        <div class="slide-num">04 / 10</div>
+        <div class="kicker">Why now</div>
+        <h2>Capital moved to <span class="gr">agents that own outcomes</span></h2>
+        <p class="big">The market is past copilots. The thesis every serious AI fund is underwriting is agentic systems that do the job, not assist the job. Loki is built natively for that world, and we already shipped the closed loop the labs are still publishing papers about.</p>
+        <div class="metric-row">
+          <div class="metric"><div class="mn gr">Agentic</div><div class="ml">Where the capital is flowing</div></div>
+          <div class="metric"><div class="mn">Falling</div><div class="ml">Model prices: our input cost</div></div>
+          <div class="metric"><div class="mn">Rising</div><div class="ml">Demand for verified autonomy</div></div>
+        </div>
+      </div>
+      <!-- 5 -->
+      <div class="slide">
+        <div class="slide-num">05 / 10</div>
+        <div class="kicker">The moat</div>
+        <h2>The asset is the <span class="gr">scar tissue</span></h2>
+        <div class="two-col">
+          <div class="col-box bad"><h4>What anyone can copy</h4><ul><li>Raw code generation</li><li>The idea of a quality gate</li><li>A wrapper on a frontier model</li></ul></div>
+          <div class="col-box good"><h4>What they can't copy in a week</h4><ul><li>Years of failure data: how autonomy goes wrong</li><li>Per-customer compounding memory</li><li>Provider-agnostic neutrality</li><li>The legacy-healing motion</li></ul></div>
+        </div>
+      </div>
+      <!-- 6 -->
+      <div class="slide">
+        <div class="slide-num">06 / 10</div>
+        <div class="kicker">Incumbent question</div>
+        <h2>"Can't Cursor just <span class="gr">build this?</span>"</h2>
+        <p class="big">They could hire the engineers. They won't build it, because their entire product is a human in an editor accepting suggestions. Loki's thesis is that the human leaves the editor, which cannibalizes their core. That's the innovator's dilemma, and it protects the category opener.</p>
+        <ul>
+          <li>Incumbents don't knife their crown jewel on a thesis bet.</li>
+          <li>The failure corpus doesn't compress into a sprint.</li>
+          <li>Greenfield is the demo; the legacy market is the contract, and IDE companies don't want it.</li>
+        </ul>
+      </div>
+      <!-- 7 -->
+      <div class="slide">
+        <div class="slide-num">07 / 10</div>
+        <div class="kicker">Market</div>
+        <h2>A path to a <span class="gr">USD 100B</span> category</h2>
+        <p class="big">Global software development spend is measured in trillions. Autonomous, verified engineering is the layer that compresses it. We don't need all of it; we need the trust layer on top of the legacy slice.</p>
+        <div class="tam" style="margin-top:1.5rem">
+          <div class="tam-ring">
+            <div class="bar-row"><div class="bar-label">Dev tools today</div><div class="bar-track"><div class="bar-fill" style="width:30%;background:linear-gradient(90deg,#3D2DB5,#553DE9)">~USD 30B</div></div></div>
+            <div class="bar-row"><div class="bar-label">+ Autonomous build</div><div class="bar-track"><div class="bar-fill" style="width:62%;background:linear-gradient(90deg,#553DE9,#7B68EE)">expanding</div></div></div>
+            <div class="bar-row"><div class="bar-label">+ Legacy modernization</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#7B68EE,#c084fc)">USD 100B vision</div></div></div>
+          </div>
+        </div>
+      </div>
+      <!-- 8 -->
+      <div class="slide">
+        <div class="slide-num">08 / 10</div>
+        <div class="kicker">Traction &amp; honesty</div>
+        <h2>What's real <span class="gr">today</span></h2>
+        <div class="two-col">
+          <div class="col-box good"><h4>Real and shipped</h4><ul><li>Working product, v7.56.0, continuous releases</li><li>npm, Docker, and Homebrew distribution</li><li>SWE-bench + HumanEval harnesses</li><li>Source-available, self-hostable</li></ul></div>
+          <div class="col-box bad"><h4>Not yet</h4><ul><li>Zero revenue</li><li>No paid design partners yet</li><li>Pre product-market-fit</li></ul></div>
+        </div>
+        <p class="big" style="margin-top:1.4rem">You're not pricing revenue. You're pricing a multi-year head start on the verification-and-memory stack that gates the whole category.</p>
+      </div>
+      <!-- 9 -->
+      <div class="slide">
+        <div class="slide-num">09 / 10</div>
+        <div class="kicker">Use of funds</div>
+        <h2>18 months to <span class="gr">escape velocity</span></h2>
+        <ul>
+          <li><b style="color:var(--text)">Land 3 paid legacy-modernization design partners</b> &mdash; the budget already exists for the mainframe nobody can touch.</li>
+          <li><b style="color:var(--text)">Ship the managed cloud product</b> &mdash; convert open distribution into seats and recurring revenue.</li>
+          <li><b style="color:var(--text)">Prove net revenue retention above 120%</b> &mdash; the one metric that resolves every doubt.</li>
+        </ul>
+        <p class="big" style="margin-top:1.2rem">Hit those and the next round is a markup that makes today's price look like a gift.</p>
+      </div>
+      <!-- 10 -->
+      <div class="slide">
+        <div class="slide-num">10 / 10</div>
+        <div class="kicker">The ask</div>
+        <h2>Fund the <span class="gr">trust layer</span></h2>
+        <div class="ask" style="margin-top:1rem">
+          <div class="amount gr">USD 10M for 10%</div>
+          <p>Flexible on structure, priced round or a SAFE with a cap. Firm on the team and the 18-month roadmap. I'd take 8 from a lead and leave 2 for a strategic angel who can open enterprise doors.</p>
+          <div style="margin-top:1.5rem"><button class="btn btn-primary" onclick="go('vision')">See the 2-year vision &rarr;</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="deck-nav">
+      <button onclick="slidePrev()">&larr;</button>
+      <div class="dots" id="deckDots"></div>
+      <button onclick="slideNext()">&rarr;</button>
+    </div>
+    <div class="deck-hint">Use &larr; &rarr; arrow keys to navigate</div>
+  </div>
+</div>
+
+<!-- ============ PAGE: VISION ============ -->
+<div class="page" id="page-vision">
+  <section>
+    <div class="container">
+      <div class="eyebrow">Founder's lens &middot; forward-looking</div>
+      <h2 class="title">Where Loki is in <span class="gr">two years</span></h2>
+      <p class="sub">Not a roadmap of features. A picture of the company when the trust layer becomes the default substrate for how software gets built and maintained.</p>
+
+      <div class="timeline">
+        <div class="tl-item"><div class="when">NOW &mdash; 2026</div><h4>Shipped engine, source-available</h4><p>RARV-C loop, 8+ gates, multi-provider, legacy healing, audit and compliance surface. The hard technical bet is already in users' hands.</p></div>
+        <div class="tl-item"><div class="when">+6 MONTHS</div><h4>First paid legacy design partners</h4><p>Three enterprises running Loki against code they can't replace. Healing mode walks into the modernization budget that already exists.</p></div>
+        <div class="tl-item"><div class="when">+12 MONTHS</div><h4>Managed cloud product live</h4><p>Hosted memory, team dashboards, fleet orchestration. Open distribution becomes the funnel; the cloud is the wall people pay to step over.</p></div>
+        <div class="tl-item"><div class="when">+18 MONTHS</div><h4>Net revenue retention above 120%</h4><p>The memory flywheel makes us stickier weekly; legacy expands system by system inside each account. The metric that unlocks the markup round.</p></div>
+        <div class="tl-item"><div class="when">2028</div><h4>The default substrate</h4><p>Loki is the trust layer a meaningful slice of the world's software is built and healed through, model-agnostic, self-improving, with a failure corpus no one can reconstruct.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="strip">
+    <div class="container">
+      <div class="eyebrow">Scale &amp; possibilities</div>
+      <h2 class="title">What the engine unlocks at scale</h2>
+      <div class="grid g3" style="margin-top:2rem">
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg></div><h3>Fleet autonomy</h3><p>Hundreds of parallel Loki streams across worktrees, auto-merging verified slices. One operator supervises an org's worth of throughput.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/></svg></div><h3>Self-improving memory</h3><p>Every run, every customer, every caught failure feeds the cross-project knowledge graph. The product compounds while we sleep.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20V9l-6 4V9l-6 4V4H4z"/><line x1="2" y1="20" x2="2" y2="4"/></svg></div><h3>Enterprise legacy at scale</h3><p>Banks, insurers, governments: the COBOL and mainframe estate, healed incrementally with behavioral preservation guarantees.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></div><h3>Verified supply chain</h3><p>Tamper-evident build manifests and continuous SOC2/ISO/GDPR evidence make autonomous output auditable by default.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></div><h3>Provider arbitrage</h3><p>As models commoditize, Loki routes each task to the cheapest capable provider. Margin expands as the input deflates.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#7B68EE" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></div><h3>Spec marketplace</h3><p>Reusable, verified specs and healing playbooks become a network: every solved problem makes the next one faster.</p></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ============ PAGE: MOAT & IP ============ -->
+<div class="page" id="page-moat">
+  <section>
+    <div class="container">
+      <div class="eyebrow">Defensibility</div>
+      <h2 class="title">What no one can copy, and what we can <span class="gr">own</span></h2>
+      <p class="sub">A great wrapper is copied in a week. These are the assets that compound, plus the ones we can defend with IP and trademark.</p>
+
+      <div class="moat-grid">
+        <div class="moat"><div class="lock">Trade secret &middot; data</div><h4>The failure corpus</h4><p>Years of adversarial negative examples: every way an autonomous agent cheats a test, weakens an assertion, or fakes completion, and the encoded catch. Nobody else collects the unhappy path at this depth.</p></div>
+        <div class="moat"><div class="lock">Trade secret &middot; data</div><h4>Cross-project memory graph</h4><p>Per-customer episodic and semantic memory that compounds with use. Switching cost rises every week; the dataset is non-replicable because it's earned, not scraped.</p></div>
+        <div class="moat"><div class="lock">Patentable &middot; method</div><h4>RARV-C closure loop</h4><p>The specific method of findings injection, override-council voting, and verified completion is a defensible process claim, not a generic prompt.</p></div>
+        <div class="moat"><div class="lock">Patentable &middot; method</div><h4>Verification gate ensemble</h4><p>Mock-integrity, test-mutation, and semantic/invariant authenticity detection combined into a blocking, deny-filtered ensemble is novel and specifiable.</p></div>
+        <div class="moat"><div class="lock">Patentable &middot; method</div><h4>Legacy friction-as-semantics</h4><p>Treating undocumented friction in legacy systems as preserved meaning, with characterization-test gating, is a concrete, claimable healing method.</p></div>
+        <div class="moat"><div class="lock">Trademark &middot; brand</div><h4>Loki Mode &amp; Autonomi</h4><p>Brand, the gradient mark, RARV-C as a named methodology, and the spec-in-product-out positioning, registrable and ownable as category-defining marks.</p></div>
+      </div>
+
+      <div class="card" style="margin-top:2rem;border-color:var(--purple)">
+        <h3 style="font-size:1.15rem">The defensibility thesis in one line</h3>
+        <p style="margin-top:.5rem;font-size:.98rem">Capability is commoditizing and will keep commoditizing. <b style="color:var(--text)">Trust is the scarce asset</b>, and trust is built from a failure corpus and a compounding memory graph that take years and real customer data to accumulate. We are first, we are model-neutral, and the incumbents are structurally disincentivized from following us into the legacy market. That is the moat.</p>
+      </div>
+
+      <div class="ask">
+        <h2>The future, in founder terms</h2>
+        <div class="amount gr">Own the trust layer.</div>
+        <p>Whoever makes autonomous engineering trustworthy enough to run unsupervised owns the category, and the category is all of software. That's the company. That's the USD 100B.</p>
+        <div style="margin-top:1.5rem"><button class="btn btn-primary" onclick="go('deck')">Back to the pitch &rarr;</button></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="honesty">
+    <p><b>Honesty note (founder's commitment to the cap table):</b> The product, version, architecture, RARV-C loop, quality gates, multi-provider support, legacy healing, memory system, and audit/compliance surface described here are real and shipped in the codebase. The financials, valuation, market sizing, timelines, IP/patent/trademark status, and net-retention targets are forward-looking founder projections for this raise, not current facts. There is no revenue and no paid customer today. The "Live Demo" is a faithful simulation of the real pipeline's behavior, not a live execution of your repository.</p>
+  </div>
+</div>
+
+<footer>
+  <div class="brand" style="display:inline-flex"><span class="logo-mark" style="width:28px;height:28px;font-size:1rem">L</span> <span class="lo" style="font-size:1rem">Loki Mode</span></div>
+  <div>Autonomi &middot; Autonomous spec-to-product &middot; Source-available, self-hostable</div>
+  <div style="margin-top:.4rem;font-family:var(--mono);font-size:.74rem;color:#52525b">npm i -g loki-mode &nbsp;|&nbsp; docker pull asklokesh/loki-mode &nbsp;|&nbsp; brew install loki-mode</div>
+</footer>
+
+<script>
+// ---------- TAB ROUTING ----------
+function go(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.page===page));
+  document.getElementById('tabs').classList.remove('mobile-open');
+  window.scrollTo({top:0,behavior:'instant'});
+}
+
+// ---------- TICKER ----------
+const tickerItems=[
+  ['RARV-C','closed-loop'],['8+1','quality gates'],['3-reviewer','blind council'],
+  ['anti-sycophancy','devils advocate'],['mock-integrity','detector'],['test-mutation','detector'],
+  ['invariant gate','metamorphic'],['tamper-evident','audit chain'],['SOC2 / ISO / GDPR','live report'],
+  ['4 providers','agnostic'],['legacy heal','mode'],['cross-project','memory']
+];
+document.getElementById('ticker').innerHTML=tickerItems.map(i=>`<span class="chip"><b>${i[0]}</b> &middot; ${i[1]}</span>`).join('');
+
+// ---------- DEMO CONFIG ----------
+const state={spec:'prd',provider:'claude',mode:'build',complexity:'standard',gates:{}};
+const GATES=[
+  ['static','Static analysis',true],['tests','Test suite',true],['review','3-reviewer review',true],
+  ['sycophancy','Anti-sycophancy',true],['mock','Mock-integrity',true],['mutation','Test-mutation',true],
+  ['docs','Documentation',true],['debate','Magic Modules debate',true],
+  ['semantic','Semantic tests (opt-in)',false],['invariant','Invariant gate (opt-in)',false]
+];
+const gateList=document.getElementById('gateList');
+GATES.forEach(g=>{
+  state.gates[g[0]]=g[2];
+  const row=document.createElement('div');row.className='toggle-row';
+  row.innerHTML=`<span>${g[1]}</span><div class="sw ${g[2]?'on':''}" data-gate="${g[0]}"></div>`;
+  gateList.appendChild(row);
+});
+gateList.querySelectorAll('.sw').forEach(sw=>sw.addEventListener('click',()=>{
+  const k=sw.dataset.gate;state.gates[k]=!state.gates[k];sw.classList.toggle('on',state.gates[k]);updatePerm();
+}));
+document.querySelectorAll('.opt-row').forEach(row=>{
+  row.querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+    row.querySelectorAll('.opt').forEach(x=>x.classList.remove('sel'));
+    o.classList.add('sel');state[row.dataset.group]=o.dataset.v;updatePerm();
+  }));
+});
+// permutation count: spec(4) x provider(4) x mode(2) x complexity(3) x 2^gates(10) x iteration-orderings
+function updatePerm(){
+  const gateCombos=Math.pow(2,GATES.length);            // 1024 gate on/off states
+  const base=4*4*2*3*gateCombos;                          // structural permutations
+  const withOrder=base*120;                               // x iteration/agent orderings (illustrative 5!)
+  const el=document.getElementById('permN');
+  animateNum(el,withOrder);
+}
+function animateNum(el,target){
+  const fmt=n=>n.toLocaleString('en-US');
+  let cur=parseInt(el.dataset.cur||'0',10);
+  const step=Math.max(1,Math.round((target-cur)/18));
+  clearInterval(el._t);
+  el._t=setInterval(()=>{
+    cur+=step;
+    if((step>0&&cur>=target)||(step<0&&cur<=target)){cur=target;clearInterval(el._t);}
+    el.textContent=fmt(cur);el.dataset.cur=cur;
+  },22);
+}
+updatePerm();
+
+// ---------- DEMO RUN ENGINE ----------
+const SPEC_LABEL={prd:'./prd.md',issue:'owner/repo#123',openapi:'openapi.yaml',brief:'"build me a ..."'};
+const PROVIDER_LABEL={claude:'Claude Code (Tier 1)',codex:'OpenAI Codex CLI (Tier 3)',cline:'Cline (Tier 2)',aider:'Aider (Tier 3)'};
+const GATE_LABEL={static:'Static analysis (CodeQL/ESLint)',tests:'Test suite',review:'Blind 3-reviewer review',sycophancy:'Anti-sycophancy devil\'s advocate',mock:'Mock-integrity detector',mutation:'Test-mutation detector',docs:'Documentation coverage',debate:'Magic Modules debate',semantic:'Semantic test-authenticity',invariant:'Invariant / property gate'};
+let running=false;
+
+function line(html,delay,cls){return {html,delay,cls};}
+function runLoki(){
+  if(running)return;running=true;
+  const btn=document.getElementById('runBtn');btn.disabled=true;btn.textContent='Running...';
+  document.getElementById('emptyStage').style.display='none';
+  document.getElementById('resultBar').classList.remove('show');
+  const con=document.getElementById('console');con.style.display='block';con.innerHTML='';
+  document.getElementById('stageSpec').textContent=SPEC_LABEL[state.spec]+' · '+state.provider;
+
+  const tierSlow=(state.provider==='codex'||state.provider==='aider');
+  const iters=state.complexity==='simple'?2:state.complexity==='complex'?4:3;
+  const activeGates=GATES.map(g=>g[0]).filter(k=>state.gates[k]);
+  const seq=[];
+  const T=tierSlow?1.6:1;
+  const p=(s,c)=>seq.push(line(s,Math.round((180+Math.random()*120)*T),c));
+
+  p(`<span class="t">$</span> loki ${state.mode==='heal'?'heal':'start'} ${SPEC_LABEL[state.spec]} --provider ${state.provider}`,'');
+  p(`<span class="info">[loki]</span> v7.56.0  ·  ${PROVIDER_LABEL[state.provider]}`,'');
+  if(tierSlow)p(`<span class="warn">[provider]</span> degraded tier: sequential execution, no parallel Task tool`,'');
+  p(`<span class="info">[spec]</span> ingesting ${state.spec==='issue'?'GitHub issue':state.spec==='openapi'?'OpenAPI contract':state.spec==='brief'?'one-line brief':'PRD'} → living-spec locked`,'');
+  p(`<span class="info">[complexity]</span> auto-detected: <b>${state.complexity}</b>  →  ${iters} planned iterations`,'');
+  if(state.mode==='heal'){
+    p(`<span class="acc">[heal]</span> phase: archaeology → mapping friction-as-semantics`,'');
+    p(`<span class="acc">[heal]</span> writing characterization tests to pin current behavior`,'ok');
+  }
+  p(``,'');
+
+  for(let i=1;i<=iters;i++){
+    p(`<span class="ph">── Iteration ${i}/${iters} ──</span>`,'');
+    const tier=i===1?'Opus (architecture)':i<iters?'Sonnet (implementation)':'Sonnet + Haiku (test/verify)';
+    p(`<span class="mut">[R] Reason</span>   model tier: ${tier}`,'');
+    p(`<span class="mut">[A] Act</span>      writing code, wiring modules...`,'');
+    const files=Math.floor(3+Math.random()*6);
+    p(`           <span class="ok">+ ${files} files</span>, tests authored`,'ok');
+    p(`<span class="mut">[R] Reflect</span>  self-critique against checklist + memory`,'');
+    p(`<span class="mut">[V] Verify</span>  running ${activeGates.length} gates...`,'');
+    // gate results - introduce a realistic block on a middle iteration if mock/mutation on
+    let blocked=false;
+    activeGates.forEach(g=>{
+      const willBlock=(i===Math.max(1,iters-1))&&(g==='mock'||g==='review')&&!blocked&&Math.random()>0.45;
+      if(willBlock){
+        blocked=true;
+        p(`           <span class="err">FAIL ${GATE_LABEL[g]} — HIGH: hollowed function under test</span>`,'err');
+      }else{
+        p(`           <span class="ok">PASS ${GATE_LABEL[g]}</span>`,'ok');
+      }
+    });
+    if(blocked){
+      p(`<span class="warn">[gate]</span> BLOCK → finding injected into next iteration prompt`,'warn');
+      if(state.gates.sycophancy)p(`<span class="info">[council]</span> override council convened on BLOCK verdict`,'info');
+    }
+    if(state.mode==='heal')p(`<span class="acc">[heal]</span> backward-compat auditor: behavior preserved [ok]`,'ok');
+    p(``,'');
+  }
+
+  // completion council
+  p(`<span class="ph">── Completion council ──</span>`,'');
+  const votes=['Reviewer A (Opus)','Reviewer B (Opus)','Reviewer C (Sonnet)'];
+  votes.forEach(v=>p(`           <span class="ok">PASS ${v}: APPROVE</span>`,'ok'));
+  if(state.gates.sycophancy)p(`<span class="info">[anti-sycophancy]</span> blind devil's advocate on unanimous PASS → upheld`,'ok');
+  p(`<span class="info">[audit]</span> run-manifest hashed into tamper-evident chain`,'info');
+  p(`<span class="info">[closure]</span> findings → learnings → handoff.md written`,'info');
+  p(``,'');
+  p(`<span class="ok">PASS COMPLETE</span> — ${state.mode==='heal'?'legacy system healed, behavior preserved':'product built, verified, ready to deploy'}`,'ok');
+  p(`<span class="mut"># .loki/ state persisted · council vote 3/3 · gates ${activeGates.length}/${activeGates.length}</span>`,'mut');
+
+  // render with timing
+  let t=0,totalFiles=0;
+  seq.forEach((s,idx)=>{
+    t+=s.delay;
+    setTimeout(()=>{
+      const div=document.createElement('div');div.className='ln';div.innerHTML=s.html||'&nbsp;';
+      con.appendChild(div);con.scrollTop=con.scrollHeight;
+      if(idx===seq.length-1)finishRun(iters,activeGates.length);
+    },t);
+  });
+  // results computed
+  finishData={iters,gates:activeGates.length,files:Math.floor(iters*5+Math.random()*8)};
+}
+let finishData={};
+function finishRun(iters,gates){
+  running=false;
+  const btn=document.getElementById('runBtn');btn.disabled=false;btn.textContent='Run again';
+  document.getElementById('rIter').textContent=finishData.iters;
+  document.getElementById('rGates').textContent=finishData.gates+'/'+finishData.gates;
+  document.getElementById('rGates').className='rn ok';
+  document.getElementById('rFiles').textContent=finishData.files;
+  document.getElementById('rCouncil').textContent='3/3';
+  document.getElementById('rStatus').textContent=state.mode==='heal'?'HEALED':'DEPLOYED';
+  document.getElementById('resultBar').classList.add('show');
+}
+
+// ---------- DECK ----------
+let cur=0;
+const slides=document.querySelectorAll('#slides .slide');
+const dotsWrap=document.getElementById('deckDots');
+slides.forEach((s,i)=>{const d=document.createElement('i');if(i===0)d.classList.add('on');d.onclick=()=>showSlide(i);dotsWrap.appendChild(d);});
+const dots=dotsWrap.querySelectorAll('i');
+function showSlide(n){
+  cur=(n+slides.length)%slides.length;
+  slides.forEach((s,i)=>s.classList.toggle('active',i===cur));
+  dots.forEach((d,i)=>d.classList.toggle('on',i===cur));
+}
+function slideNext(){showSlide(cur+1);}
+function slidePrev(){showSlide(cur-1);}
+document.addEventListener('keydown',e=>{
+  if(!document.getElementById('page-deck').classList.contains('active'))return;
+  if(e.key==='ArrowRight')slideNext();
+  if(e.key==='ArrowLeft')slidePrev();
+});
+</script>
+</body>
+</html>
