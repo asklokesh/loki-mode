@@ -1,4 +1,14 @@
-{{- if ne .Values.worker.mode "deployment" }}
+{{- /* Worker config preflight runs once here, unconditionally, so an unknown
+worker.mode or a conflicting autoscaler combo fails the whole render even though
+this template itself only emits in mode=job. */}}
+{{- include "autonomi.worker.preflight" . }}
+{{- /*
+The run-to-completion worker Job. Renders ONLY in the default worker.mode=job.
+mode=deployment renders a long-running Deployment instead; mode=serverless renders
+a KEDA ScaledJob instead. Previously this gated on ne "deployment", which would
+have wrongly rendered alongside the serverless ScaledJob.
+*/}}
+{{- if eq .Values.worker.mode "job" }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -54,6 +64,14 @@ spec:
       restartPolicy: Never
       securityContext:
         {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      {{- if and .Values.workspace.initClone.enabled .Values.persistence.checkpoints.enabled }}
+      # Optional repo-clone init-container (workspace.initClone.enabled). Seeds
+      # /workspace before the worker runs so a fresh PVC is not empty. Renders
+      # only when the durable workspace volume is also enabled (nothing to seed
+      # otherwise). Credentials come from the secret, never inlined.
+      initContainers:
+        {{- include "autonomi.workspace.initContainer" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: worker
           image: {{ include "autonomi.image" . }}

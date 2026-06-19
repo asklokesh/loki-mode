@@ -1,0 +1,120 @@
+{{- /*
+Long-running queue-consumer Deployment. Renders ONLY in worker.mode=deployment.
+The default mode is "job" (a run-to-completion batch Job in job-worker.yaml); in
+that default this template renders nothing. This is the steady-throughput model:
+a persistent pod drains a work queue and runs a build per item.
+
+HONESTY: the chart does not run a queue, and the default loki image does not ship
+a queue-consumer entrypoint. Set queue.command to your consumer and run a queue.
+Replica count is managed by the worker.autoscaling HPA or the keda ScaledObject
+when either is enabled; otherwise it is the static worker.replicas.
+*/}}
+{{- if eq .Values.worker.mode "deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "autonomi.fullname" . }}-worker
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not (or .Values.worker.autoscaling.enabled .Values.keda.enabled) }}
+  # Static replicas only when neither an HPA nor a KEDA ScaledObject owns the
+  # replica count (both manage spec.replicas themselves).
+  replicas: {{ .Values.worker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "autonomi.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "autonomi.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "autonomi.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "autonomi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.queue.command }}
+          # Queue-draining consumer command. The default loki image does NOT ship
+          # one; supply queue.command (and a matching image if needed). With no
+          # command set, the container falls back to its image default, which is
+          # NOT a consumer -- this mode is not turnkey.
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "autonomi.fullname" . }}
+            - secretRef:
+                name: {{ include "autonomi.secretName" . }}
+          env:
+            # Same durable-state contract as the Job: per-build state is written
+            # under /workspace (the WORKDIR), backed by the durable volume below.
+            - name: LOKI_DURABLE_STATE
+              value: "1"
+            - name: LOKI_RUN_ID
+              value: {{ include "autonomi.fullname" . | quote }}
+            {{- if .Values.storage.backend }}
+            - name: LOKI_STORAGE_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            {{- if .Values.storage.bucket }}
+            - name: LOKI_STORAGE_BUCKET
+              value: {{ .Values.storage.bucket | quote }}
+            {{- end }}
+            {{- if .Values.storage.prefix }}
+            - name: LOKI_STORAGE_PREFIX
+              value: {{ .Values.storage.prefix | quote }}
+            {{- end }}
+            {{- if .Values.storage.region }}
+            - name: LOKI_STORAGE_REGION
+              value: {{ .Values.storage.region | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.queue.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.worker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.persistence.checkpoints.enabled }}
+            - name: workspace
+              mountPath: /workspace
+            {{- end }}
+      volumes:
+        {{- if .Values.persistence.checkpoints.enabled }}
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.checkpoints.existingClaim | default (printf "%s-checkpoints" (include "autonomi.fullname" .)) }}
+        {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

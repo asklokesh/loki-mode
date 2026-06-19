@@ -1,0 +1,33 @@
+{{- /*
+KEDA ScaledObject for the queue-consumer Deployment. Renders ONLY when
+worker.mode=deployment AND keda.enabled. Scales the worker Deployment by queue
+depth. KEDA must be installed in-cluster (keda.sh CRDs); the chart renders the
+CRD, it does not install the operator. Mutually exclusive with the plain HPA:
+KEDA creates and owns its own HPA, so do not also set worker.autoscaling.enabled.
+*/}}
+{{- if and (eq .Values.worker.mode "deployment") .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "autonomi.fullname" . }}-worker
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "autonomi.fullname" . }}-worker
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  triggers:
+    {{- if .Values.keda.triggers }}
+    {{- toYaml .Values.keda.triggers | nindent 4 }}
+    {{- else }}
+    # HONESTY: no keda.triggers supplied. This object is inert and never scales
+    # until you add at least one trigger (see keda.triggers in values.yaml).
+    []
+    {{- end }}
+{{- end }}

@@ -1,0 +1,127 @@
+{{- /*
+KEDA ScaledJob for the serverless, scale-to-zero worker fleet. Renders ONLY when
+worker.mode=serverless. KEDA creates a fresh run-to-completion Job per queued
+item and scales the fleet from zero on demand, so there is no idle cost. KEDA
+must be installed in-cluster (keda.sh CRDs); the chart renders the CRD, it does
+not install the operator.
+
+HONESTY: needs a queue + KEDA, and each per-item Job inherits the same
+empty-/workspace caveat as the default Job (pre-seed the volume or use
+workspace.initClone). The per-item command defaults to queue.command; the default
+loki image does NOT ship a queue-consumer, so supply your own.
+*/}}
+{{- if eq .Values.worker.mode "serverless" }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: {{ include "autonomi.fullname" . }}-worker
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCountScaledJob }}
+  jobTargetRef:
+    backoffLimit: {{ .Values.worker.backoffLimit }}
+    activeDeadlineSeconds: {{ .Values.worker.activeDeadlineSeconds }}
+    template:
+      metadata:
+        {{- with .Values.worker.podAnnotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        labels:
+          {{- include "autonomi.worker.selectorLabels" . | nindent 10 }}
+      spec:
+        {{- with .Values.imagePullSecrets }}
+        imagePullSecrets:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        serviceAccountName: {{ include "autonomi.serviceAccountName" . }}
+        restartPolicy: Never
+        securityContext:
+          {{- toYaml .Values.security.podSecurityContext | nindent 10 }}
+        {{- if and .Values.workspace.initClone.enabled .Values.persistence.checkpoints.enabled }}
+        # Optional repo-clone init-container, identical to the Job path: seeds
+        # /workspace before the worker runs so a per-item Job is not empty.
+        initContainers:
+          {{- include "autonomi.workspace.initContainer" . | nindent 10 }}
+        {{- end }}
+        containers:
+          - name: worker
+            image: {{ include "autonomi.image" . }}
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            {{- with .Values.queue.command }}
+            # Per-item consumer command. The default loki image does NOT ship a
+            # queue-consumer; supply queue.command (and a matching image if needed).
+            command:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+            envFrom:
+              - configMapRef:
+                  name: {{ include "autonomi.fullname" . }}
+              - secretRef:
+                  name: {{ include "autonomi.secretName" . }}
+            env:
+              - name: LOKI_DURABLE_STATE
+                value: "1"
+              - name: LOKI_RUN_ID
+                value: {{ include "autonomi.fullname" . | quote }}
+              {{- if .Values.storage.backend }}
+              - name: LOKI_STORAGE_BACKEND
+                value: {{ .Values.storage.backend | quote }}
+              {{- if .Values.storage.bucket }}
+              - name: LOKI_STORAGE_BUCKET
+                value: {{ .Values.storage.bucket | quote }}
+              {{- end }}
+              {{- if .Values.storage.prefix }}
+              - name: LOKI_STORAGE_PREFIX
+                value: {{ .Values.storage.prefix | quote }}
+              {{- end }}
+              {{- if .Values.storage.region }}
+              - name: LOKI_STORAGE_REGION
+                value: {{ .Values.storage.region | quote }}
+              {{- end }}
+              {{- end }}
+              {{- with .Values.queue.extraEnv }}
+              {{- toYaml . | nindent 14 }}
+              {{- end }}
+              {{- with .Values.worker.extraEnv }}
+              {{- toYaml . | nindent 14 }}
+              {{- end }}
+            resources:
+              {{- toYaml .Values.worker.resources | nindent 14 }}
+            securityContext:
+              {{- toYaml .Values.security.containerSecurityContext | nindent 14 }}
+            volumeMounts:
+              {{- if .Values.persistence.checkpoints.enabled }}
+              - name: workspace
+                mountPath: /workspace
+              {{- end }}
+        volumes:
+          {{- if .Values.persistence.checkpoints.enabled }}
+          - name: workspace
+            persistentVolumeClaim:
+              claimName: {{ .Values.persistence.checkpoints.existingClaim | default (printf "%s-checkpoints" (include "autonomi.fullname" .)) }}
+          {{- end }}
+        {{- with .Values.worker.nodeSelector }}
+        nodeSelector:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.affinity }}
+        affinity:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.tolerations }}
+        tolerations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+  {{- if .Values.keda.triggers }}
+  triggers:
+    {{- toYaml .Values.keda.triggers | nindent 4 }}
+  {{- else }}
+  # HONESTY: no keda.triggers supplied. This ScaledJob is inert and never scales
+  # until you add at least one trigger (see keda.triggers in values.yaml).
+  triggers: []
+  {{- end }}
+{{- end }}

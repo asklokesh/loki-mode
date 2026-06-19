@@ -850,6 +850,10 @@ function generateStandaloneHTML(bundleCode) {
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Overview
         </button>
+        <button class="nav-link" data-section="fleet" id="nav-fleet">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Fleet
+        </button>
         <button class="nav-link" data-section="insights" id="nav-insights">
           <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Insights
@@ -936,6 +940,15 @@ function generateStandaloneHTML(bundleCode) {
           </div>
           <loki-task-board id="task-board"></loki-task-board>
         </div>
+      </div>
+
+      <!-- Fleet: cross-project build observability (v1 polls the shared
+           metadata store; not a controller). -->
+      <div class="section-page" id="page-fleet">
+        <div class="section-page-header">
+          <h2 class="section-page-title">Fleet</h2>
+        </div>
+        <loki-fleet id="fleet-panel"></loki-fleet>
       </div>
 
       <!-- Insights: Logs + Memory + Learning (combined) -->
@@ -1834,7 +1847,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.addEventListener('keydown', function(e) {
     if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
       e.preventDefault();
-      var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
+      var sections = ['overview', 'fleet', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
       var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
       if (idx < sections.length) switchSection(sections[idx]);
     }
@@ -1875,7 +1888,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Skip if modifier keys are held (let browser defaults work)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-    var sections = ['overview', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
+    var sections = ['overview', 'fleet', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
 
     switch (e.key) {
       // Section navigation: 1-9, 0

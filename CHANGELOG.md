@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.80.0] - 2026-06-19
+
+### Fleet + retrieval + scale: the second enterprise foundation release
+
+Builds on v7.79.0. Everything new is opt-in; local-first and default behavior are
+unchanged. Council 3/3 after an adversarial bug-hunt that caught and closed real
+defects (a Helm autoscaler collision and a latent recursion DoS) before ship.
+
+Features
+- Fleet observability: a cross-project view of every run (status, cost,
+  iteration, duration) at GET /api/fleet/runs + /summary + /runs/{id}, with a
+  control-scoped cancel and a new dashboard "Fleet" panel. Built by REUSING the
+  existing project registry and per-project .loki state (no new database, no k8s
+  operator). Honest scope: v1 polls the shared metadata store; a Job-watching
+  controller/CRD and cross-project retry are future work (cancel only today).
+- Hierarchical, structure-aware retrieval (the PageIndex pattern, native and
+  optional): a table-of-contents tree over the code index and large specs plus an
+  LLM-reasoning tree search, as an opt-in retrieval mode (LOKI_RETRIEVAL_MODE=tree)
+  alongside the existing keyword and vector paths. OFF by default (default
+  retrieval is byte-unchanged and the tree modules are not even imported on the
+  default path), no new heavy dependencies, no external service, tree cache via
+  the local store. Honest benchmark: on a no-LLM micro-benchmark recall is
+  COMPARABLE to keyword (no improvement claimed); the structure-aware value is
+  LLM-guided descent on large trees.
+- Helm scale modes (opt-in): a long-running queue-consumer Deployment with an
+  optional KEDA ScaledObject (worker.mode=deployment), and a scale-to-zero,
+  event-driven KEDA ScaledJob (worker.mode=serverless), alongside the default
+  run-to-completion Job. Each mode's tradeoffs are documented honestly (the scale
+  modes need a queue + KEDA installed + a consumer command; they are not turnkey).
+  A render-time guard fails loudly on an unknown worker.mode or on enabling both
+  a plain HPA and KEDA (which would thrash replicas).
+- Helm init-container repo clone (opt-in, workspace.initClone.enabled): seeds the
+  /workspace volume with a repo checkout and spec before the worker runs, closing
+  the empty-volume gap on a fresh install. The token is read from a Secret at
+  runtime, never inlined into the manifest.
+- loki why: an actionable failure/outcome diagnosis that reads the already-captured
+  run state, completion record, and handoff to explain what happened and what to
+  do next (--json for the raw record). Read-only; never fabricates.
+- Enterprise identity roadmap (docs/ENTERPRISE-IDENTITY-ROADMAP.md): an honest
+  current-vs-roadmap scoping of SSO/SAML, SCIM, tenant RBAC, and SOC2, with every
+  shipped claim cited to a real auth function. These remain roadmap, not shipped.
+
+Fixes
+- Packaging: the lokistore/ package (a runtime dependency of the opt-in
+  object-store sync) is now included in the npm files list (it was omitted in
+  v7.79.0, so enabling a cloud backend on an npm install would have failed to
+  import).
+- Helm: the worker image tag now follows Chart.appVersion (single source of
+  truth) instead of a literal that had drifted to a stale version.
+- Hardening from the bug-hunt: tree builders cap nesting depth and the tree-cache
+  deserializer rejects a pathologically deep forged cache (no recursion DoS); the
+  manifest fingerprint uses a collision-free encoding; the fleet cancel verifies a
+  pid still belongs to the project before signaling it (never kills a stale-reused
+  pid) and the Cancel button confirms first.
+
 ## [7.79.0] - 2026-06-19
 
 ### Enterprise + local foundation: one config knob, pluggable storage, hardened webhooks, real auth gating

@@ -87,6 +87,7 @@ export { LokiAnalytics } from './components/loki-analytics.js';
 export { LokiQualityGates } from './components/loki-quality-gates.js';
 export { LokiRarvTimeline } from './components/loki-rarv-timeline.js';
 export { LokiRunManager } from './components/loki-run-manager.js';
+export { LokiFleet } from './components/loki-fleet.js';
 export { LokiAuditViewer } from './components/loki-audit-viewer.js';
 export { LokiApiKeys } from './components/loki-api-keys.js';
 export { LokiTenantSwitcher } from './components/loki-tenant-switcher.js';
@@ -158,6 +159,7 @@ const componentModules = [
   './components/loki-quality-gates.js',
   './components/loki-rarv-timeline.js',
   './components/loki-run-manager.js',
+  './components/loki-fleet.js',
   './components/loki-audit-viewer.js',
   './components/loki-api-keys.js',
   './components/loki-tenant-switcher.js',

@@ -5253,6 +5253,9 @@ print_ttfv_next_steps() {
         echo "    loki start ./prd.md        # build from a full PRD"
         echo "    loki start \"<one line>\"    # fast first pass from a brief"
     fi
+    # Frictionless discovery: surface 'loki why' so users learn the
+    # what-happened/what-to-do diagnosis without having to know it exists.
+    echo "    loki why                   # explain this outcome + what to do next"
     echo ""
     return 0
 }

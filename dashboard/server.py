@@ -2390,6 +2390,118 @@ async def get_cross_project_learnings():
 
 
 # =============================================================================
+# Fleet Observability (v1: poll the shared metadata store)
+# =============================================================================
+#
+# HONEST SCOPE: these endpoints aggregate the data `loki start` already writes
+# -- the machine-global registry (~/.loki/dashboard/projects.json) plus each
+# project's own .loki/ state files. There is NO controller, CRD, or Kubernetes
+# Job-watcher; a real operator watching Jobs is future work. One registered
+# project maps to one fleet "run" (its current / most-recent build), which is
+# the granularity the registry tracks. Cancel reuses the same STOP-file + pid
+# teardown as the per-project switcher Stop. Retry is intentionally NOT exposed
+# here: there is no clean cross-project re-launch primitive in the registry
+# path (the original spec source lives only in each project's CWD), so retry is
+# a follow-up.
+
+
+class FleetRunResponse(BaseModel):
+    """One fleet run = one registered project's current/most-recent build."""
+    id: Optional[str] = None
+    name: str
+    path: str
+    status: str
+    running: bool
+    phase: str = ""
+    iteration: int = 0
+    cost_usd: float = 0.0
+    started_at: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    port: Optional[int] = None
+
+
+class FleetSummaryResponse(BaseModel):
+    """Fleet-wide totals across all registered projects."""
+    total_runs: int
+    running_runs: int
+    stopped_runs: int
+    total_cost_usd: float
+
+
+@app.get(
+    "/api/fleet/runs",
+    response_model=list[FleetRunResponse],
+    dependencies=[Depends(auth.require_scope("read"))],
+)
+async def list_fleet_runs(include_inactive: bool = True):
+    """List all builds across every registered project (fleet view).
+
+    v1 polls the shared metadata store (registry + per-project .loki/ state);
+    it is not a controller. Never raises: registry problems degrade to [].
+    """
+    if not _read_limiter.check("fleet_runs"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    return await asyncio.to_thread(registry.get_fleet_runs, include_inactive)
+
+
+@app.get(
+    "/api/fleet/summary",
+    response_model=FleetSummaryResponse,
+    dependencies=[Depends(auth.require_scope("read"))],
+)
+async def get_fleet_summary(include_inactive: bool = True):
+    """Fleet-wide totals (counts + summed cost) across registered projects."""
+    if not _read_limiter.check("fleet_summary"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    return await asyncio.to_thread(registry.get_fleet_summary, include_inactive)
+
+
+@app.get(
+    "/api/fleet/runs/{identifier}",
+    response_model=FleetRunResponse,
+    dependencies=[Depends(auth.require_scope("read"))],
+)
+async def get_fleet_run(identifier: str):
+    """Get a single fleet run by registry id / path / alias.
+
+    Resolves the identifier through the registry (never a caller-supplied
+    arbitrary path), then returns that project's current build snapshot.
+    """
+    project = await asyncio.to_thread(registry.get_project, identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="Run not found in fleet")
+    pid = project.get("pid")
+    running = registry._pid_alive(pid)
+    snap = registry._read_project_run_snapshot(project.get("path", ""))
+    duration_seconds = None
+    started_at = snap.get("started_at")
+    if started_at:
+        try:
+            st = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+            if st.tzinfo is None:
+                st = st.replace(tzinfo=timezone.utc)
+            duration_seconds = max(
+                0, int((datetime.now(timezone.utc) - st).total_seconds())
+            )
+        except (ValueError, TypeError):
+            duration_seconds = None
+    path = project.get("path", "")
+    return FleetRunResponse(
+        id=project.get("id"),
+        name=project.get("name") or (os.path.basename(path) if path else "project"),
+        path=path,
+        status="running" if running else (project.get("status") or "unknown"),
+        running=running,
+        phase=snap.get("phase", ""),
+        iteration=snap.get("iteration", 0),
+        cost_usd=snap.get("cost_usd", 0.0),
+        started_at=started_at,
+        duration_seconds=duration_seconds,
+        port=project.get("port"),
+    )
+
+
+# =============================================================================
 # Active Project Focus (for AI Chat / cross-directory usage)
 # =============================================================================
 
@@ -3201,6 +3313,130 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
         "project_id": project_id,
         "stopped": stopped,
         "already_stopped": False,
+    }
+
+
+@app.post(
+    "/api/fleet/runs/{identifier}/cancel",
+    dependencies=[Depends(auth.require_scope("control"))],
+)
+async def cancel_fleet_run(request: Request, identifier: str):
+    """Cancel ONE build in the fleet view.
+
+    Resolves the run via the registry (by id / path / alias), then runs the
+    same teardown the per-project switcher Stop uses: write a STOP file into the
+    registry-resolved .loki dir (the only path ever written -- never a
+    caller-supplied one) for a clean runner exit, SIGTERM->poll->SIGKILL the
+    recorded orchestrator pid, group-kill + cwd-scoped reap as backstop, then
+    mark the registry/session stopped.
+
+    Retry is intentionally NOT exposed: there is no clean cross-project
+    re-launch primitive in the registry path (the original spec source lives
+    only in each project's CWD). Retry is a documented follow-up.
+    """
+    if not _control_limiter.check("control"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    project = registry.get_project(identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="Run not found in fleet")
+
+    project_id = project.get("id")
+    audit.log_event(
+        action="cancel",
+        resource_type="fleet_run",
+        details={"source": "api", "project_id": project_id},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    # Only ever operate on the registry-stored path.
+    path = project.get("path", "")
+    loki_dir = None
+    if path:
+        p = _Path(path)
+        if p.is_dir() and (p / ".loki").is_dir():
+            loki_dir = p / ".loki"
+
+    # STOP file: clean runner teardown (also stops a containerized `loki docker`
+    # build polling the bind-mounted .loki/STOP).
+    stop_signaled = False
+    if loki_dir is not None:
+        try:
+            (loki_dir / "STOP").write_text(datetime.now(timezone.utc).isoformat())
+            stop_signaled = True
+        except OSError:
+            pass
+
+    pid = project.get("pid")
+    stopped = False
+    # Ownership guard (hardening): only direct-kill the registry pid if it is STILL
+    # a process whose cwd is this project's path. A stale pid reused by an unrelated
+    # host process after a crash must NOT be SIGKILLed. If ownership cannot be
+    # confirmed, skip the direct kill and let the cwd-scoped reaper below handle it.
+    if isinstance(pid, int) and pid > 0:
+        _owned = True
+        try:
+            _cwd = _pid_cwd(pid)
+            if _cwd is not None and path:
+                _owned = os.path.realpath(_cwd) == os.path.realpath(path)
+        except Exception:
+            _owned = True  # best-effort: if we cannot tell, preserve prior behavior
+        if not _owned:
+            pid = None  # do not direct-kill a pid that is not this project's
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.kill(pid, 15)  # SIGTERM
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    stopped = True
+                    break
+            if not stopped:
+                try:
+                    os.kill(pid, 9)  # SIGKILL
+                    stopped = True
+                except (OSError, ProcessLookupError):
+                    stopped = True
+        except (ValueError, OSError, ProcessLookupError):
+            stopped = True
+    else:
+        # No host pid (genuinely stopped, or a docker build): the STOP write is
+        # the cancel signal. Treat a successful STOP write as cancelled.
+        stopped = stop_signaled
+
+    # Group-kill + cwd-scoped reaper backstop against a stale pid.
+    if loki_dir is not None:
+        proj_dir = loki_dir.parent
+        _pgid = _read_pgid(loki_dir)
+        if _pgid is not None:
+            await asyncio.to_thread(
+                _killpg_project, _pgid, _collect_protected_pids(loki_dir)
+            )
+        found_any, all_gone = await asyncio.to_thread(
+            _reap_orchestrators_until_clear, proj_dir, str(proj_dir)
+        )
+        if found_any:
+            stopped = all_gone
+
+        # Mark session.json stopped.
+        session_file = loki_dir / "session.json"
+        if session_file.exists():
+            try:
+                sd = json.loads(session_file.read_text())
+                sd["status"] = "stopped"
+                atomic_write_json(session_file, sd, use_lock=True)
+            except Exception:
+                pass
+
+    registry.mark_project_stopped(project_id)
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "cancelled": stopped,
+        "stop_signaled": stop_signaled,
     }
 
 

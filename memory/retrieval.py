@@ -1483,6 +1483,153 @@ class MemoryRetrieval:
     # Private Helper Methods
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # Optional structure-aware tree retrieval (PageIndex pattern, OFF by default)
+    # -------------------------------------------------------------------------
+
+    def retrieve_tree(
+        self,
+        context: Dict[str, Any],
+        top_k: int = 5,
+        manifest: Optional[Dict[str, Any]] = None,
+        store: Optional[Any] = None,
+        llm: Optional[Callable[[str], str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Structure-aware tree retrieval over the code-index manifest.
+
+        Third, parallel, OPTIONAL retrieval path alongside keyword and vector.
+        It is NEVER reached unless a caller invokes it (directly or through the
+        LOKI_RETRIEVAL_MODE=tree dispatcher in retrieve_dispatch). The default
+        retrieve_task_aware path is byte-unchanged.
+
+        Builds (or loads from the LokiStore cache) a TOC tree from the code
+        index manifest, then reasons down it for the query. Degrades to a
+        deterministic keyword scorer when no LLM callable is available, and
+        further degrades to the existing keyword retrieval path when the
+        manifest itself is absent.
+
+        Args:
+            context: query context (goal, phase, action_type, files).
+            top_k: maximum number of results.
+            manifest: parsed code-index manifest. When None, it is loaded from
+                .loki/state/code-index-manifest.json (relative to the store).
+            store: a LokiStore for caching the built tree. When None, one is
+                built via lokistore.get_store() (local default, no new deps).
+            llm: optional LLM callable (prompt -> response) for reasoning
+                descent. When None, the keyword scorer is used.
+
+        Returns:
+            A ranked list of result dicts. Each carries "_source": "tree".
+            On any failure or a missing manifest, falls back to the existing
+            keyword retrieval so the caller always gets results.
+        """
+        # Local imports keep these optional modules off the default import path.
+        try:
+            from .tree_index import build_or_load_manifest_tree
+            from .tree_search import tree_search
+        except ImportError as exc:  # pragma: no cover - defensive
+            logger.warning("tree retrieval modules unavailable: %s", exc)
+            return self._tree_keyword_fallback(context, top_k)
+
+        if store is None:
+            try:
+                from lokistore import get_store
+
+                store = get_store()
+            except Exception as exc:  # noqa: BLE001 - degrade, never abort
+                logger.warning("could not obtain LokiStore for tree cache: %s", exc)
+                store = None
+
+        if manifest is None:
+            manifest = self._load_code_index_manifest(store)
+
+        if not manifest or not (manifest.get("files") or {}):
+            # No structure to reason over: fall back to keyword retrieval so
+            # the caller still gets results.
+            return self._tree_keyword_fallback(context, top_k)
+
+        query = self._build_query_from_context(context)
+
+        try:
+            if store is not None:
+                tree = build_or_load_manifest_tree(manifest, store)
+            else:
+                from .tree_index import build_tree_from_manifest
+
+                tree = build_tree_from_manifest(manifest)
+            return tree_search(tree, query, top_k=top_k, llm=llm)
+        except Exception as exc:  # noqa: BLE001 - degrade, never abort
+            logger.warning("tree retrieval failed (%s); using keyword fallback", exc)
+            return self._tree_keyword_fallback(context, top_k)
+
+    def retrieve_dispatch(
+        self,
+        context: Dict[str, Any],
+        top_k: int = 5,
+        token_budget: Optional[int] = None,
+        mode: Optional[str] = None,
+        **tree_kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        """Dispatch to a retrieval mode, defaulting to the existing path.
+
+        Mode resolution (first non-empty wins):
+          1. explicit `mode` argument
+          2. LOKI_RETRIEVAL_MODE env var
+          3. "task_aware" (the existing default path)
+
+        Only mode == "tree" diverges; every other value (including the default)
+        calls retrieve_task_aware UNCHANGED, so local devs who set nothing get
+        byte-identical behavior. Unknown modes also fall through to the default.
+        """
+        import os as _os
+
+        resolved = (mode or _os.environ.get("LOKI_RETRIEVAL_MODE") or "task_aware")
+        resolved = resolved.strip().lower()
+
+        if resolved == "tree":
+            return self.retrieve_tree(context, top_k=top_k, **tree_kwargs)
+
+        # Default and any unknown mode: existing behavior, untouched.
+        return self.retrieve_task_aware(
+            context, top_k=top_k, token_budget=token_budget
+        )
+
+    def _load_code_index_manifest(
+        self, store: Optional[Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Load the code-index manifest, preferring the LokiStore.
+
+        Tries the store key "state/code-index-manifest.json" first (so it
+        honors LOKI_DIR / TARGET_DIR resolution), then a direct filesystem
+        read as a fallback. Returns None when no manifest is found.
+        """
+        manifest_key = "state/code-index-manifest.json"
+        if store is not None:
+            try:
+                if store.exists(manifest_key):
+                    raw = store.get(manifest_key)
+                    return json.loads(raw.decode("utf-8"))
+            except (FileNotFoundError, OSError, ValueError, UnicodeDecodeError):
+                pass
+        # Filesystem fallback relative to the configured base path.
+        candidate = Path(".loki/state/code-index-manifest.json")
+        try:
+            if candidate.is_file():
+                return json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _tree_keyword_fallback(
+        self, context: Dict[str, Any], top_k: int
+    ) -> List[Dict[str, Any]]:
+        """Fallback used by tree retrieval: the existing keyword path.
+
+        Reuses retrieve_task_aware so a tree-mode caller is never worse off
+        than the default mode when the manifest or an LLM is unavailable.
+        """
+        return self.retrieve_task_aware(context, top_k=top_k)
+
     def _build_query_from_context(self, context: Dict[str, Any]) -> str:
         """Build a query string from context dictionary."""
         parts = []

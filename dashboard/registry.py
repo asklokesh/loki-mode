@@ -525,6 +525,218 @@ def get_cross_project_tasks(project_ids: Optional[list[str]] = None) -> list[dic
     return all_tasks
 
 
+def _pid_alive(pid) -> bool:
+    """Return True if pid is a positive int naming a live process.
+
+    Mirrors the liveness probe used by the dashboard's running-projects view:
+    signal 0 delivered -> alive; EPERM (owned by another user) -> alive; ESRCH
+    -> dead. Never raises.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+def _read_project_run_snapshot(path: str) -> dict:
+    """Read a single project's live run snapshot from its .loki/ state files.
+
+    HONEST SCOPE: this polls the shared on-disk metadata that `loki start`
+    already writes per project (no new store, no controller). It reads:
+      - .loki/dashboard-state.json (phase, iteration; written ~every 2s)
+      - .loki/session.json         (status, startedAt fallback)
+      - .loki/metrics/efficiency/*.json (summed cost_usd) with a
+        .loki/context/tracking.json fallback (totals.total_cost_usd)
+
+    Returns a dict with phase, iteration, cost_usd, started_at, and ended_at
+    (best-effort; missing values default to None/0). Never raises: any file
+    problem degrades the affected field to its default.
+    """
+    snap = {
+        "phase": "",
+        "iteration": 0,
+        "cost_usd": 0.0,
+        "started_at": None,
+        "ended_at": None,
+    }
+    if not path:
+        return snap
+    loki_dir = Path(path) / ".loki"
+
+    # Phase + iteration from dashboard-state.json (the live writer).
+    state_file = loki_dir / "dashboard-state.json"
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text())
+            if isinstance(state, dict):
+                _p = state.get("phase", "")
+                snap["phase"] = _p if isinstance(_p, str) else ""
+                _i = state.get("iteration", 0)
+                snap["iteration"] = _i if isinstance(_i, int) else 0
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+
+    # Timestamps from session.json (startedAt; endedAt when present).
+    session_file = loki_dir / "session.json"
+    if session_file.exists():
+        try:
+            sd = json.loads(session_file.read_text())
+            if isinstance(sd, dict):
+                _sa = sd.get("startedAt") or sd.get("started_at")
+                snap["started_at"] = _sa if isinstance(_sa, str) else None
+                _ea = sd.get("endedAt") or sd.get("ended_at")
+                snap["ended_at"] = _ea if isinstance(_ea, str) else None
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+
+    # Cost: sum per-iteration efficiency files; fall back to context tracking.
+    cost = 0.0
+    found_cost = False
+    eff_dir = loki_dir / "metrics" / "efficiency"
+    if eff_dir.is_dir():
+        try:
+            for eff_file in eff_dir.glob("*.json"):
+                try:
+                    data = json.loads(eff_file.read_text())
+                    if not isinstance(data, dict):
+                        continue
+                    c = data.get("cost_usd")
+                    if isinstance(c, (int, float)):
+                        cost += float(c)
+                        found_cost = True
+                except (json.JSONDecodeError, OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+    if not found_cost:
+        ctx_file = loki_dir / "context" / "tracking.json"
+        if ctx_file.exists():
+            try:
+                ctx = json.loads(ctx_file.read_text())
+                if isinstance(ctx, dict):
+                    totals = ctx.get("totals", {})
+                    if isinstance(totals, dict):
+                        tc = totals.get("total_cost_usd")
+                        if isinstance(tc, (int, float)):
+                            cost = float(tc)
+            except (json.JSONDecodeError, OSError, ValueError):
+                pass
+    snap["cost_usd"] = round(cost, 6)
+    return snap
+
+
+def get_fleet_runs(include_inactive: bool = True) -> list[dict]:
+    """Build a fleet-wide view of builds across ALL registered projects.
+
+    v1 SCOPE (honest): this polls the shared metadata store that `loki start`
+    already maintains -- the machine-global registry (~/.loki/dashboard/
+    projects.json) plus each project's own .loki/ state files. There is NO
+    controller, CRD, or Job-watcher here; a real k8s operator watching Jobs is
+    future work. One registered project maps to one "run" entry (its current /
+    most-recent build), which is the granularity the registry tracks.
+
+    Each entry carries: id, name, path, status (running|stopped|<registry
+    status>), running (live pid probe), phase, iteration, cost_usd, started_at,
+    duration_seconds, port. Never raises: registry problems degrade to an empty
+    list and per-project read problems degrade that entry's fields.
+    """
+    try:
+        projects = list_projects(include_inactive=include_inactive)
+    except Exception:
+        return []
+
+    out = []
+    for p in projects:
+        path = p.get("path", "")
+        pid = p.get("pid")
+        running = _pid_alive(pid)
+        snap = _read_project_run_snapshot(path)
+
+        # A live pid is authoritative for "running"; otherwise reflect the
+        # registry status (stopped/active/missing). This mirrors the
+        # running-projects endpoint's pid-first precedence.
+        if running:
+            status = "running"
+        else:
+            status = p.get("status") or "unknown"
+
+        # Duration: wall time from started_at to ended_at (or now if running).
+        duration_seconds = None
+        started_at = snap.get("started_at")
+        if started_at:
+            try:
+                st = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+                if st.tzinfo is None:
+                    st = st.replace(tzinfo=timezone.utc)
+                end_ref = None
+                ended_at = snap.get("ended_at")
+                if ended_at and not running:
+                    try:
+                        end_ref = datetime.fromisoformat(
+                            str(ended_at).replace("Z", "+00:00")
+                        )
+                        if end_ref.tzinfo is None:
+                            end_ref = end_ref.replace(tzinfo=timezone.utc)
+                    except (ValueError, TypeError):
+                        end_ref = None
+                if end_ref is None:
+                    end_ref = datetime.now(timezone.utc)
+                duration_seconds = max(0, int((end_ref - st).total_seconds()))
+            except (ValueError, TypeError):
+                duration_seconds = None
+
+        out.append({
+            "id": p.get("id"),
+            "name": p.get("name") or (os.path.basename(path) if path else "project"),
+            "path": path,
+            "status": status,
+            "running": running,
+            "phase": snap.get("phase", ""),
+            "iteration": snap.get("iteration", 0),
+            "cost_usd": snap.get("cost_usd", 0.0),
+            "started_at": started_at,
+            "duration_seconds": duration_seconds,
+            "port": p.get("port"),
+        })
+
+    # Running builds first, then by most-recent start time.
+    out.sort(
+        key=lambda r: (
+            0 if r.get("running") else 1,
+            r.get("started_at") or "",
+        ),
+        reverse=False,
+    )
+    # Within the same running-group, most recent start first.
+    out.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    out.sort(key=lambda r: 0 if r.get("running") else 1)
+    return out
+
+
+def get_fleet_summary(include_inactive: bool = True) -> dict:
+    """Aggregate fleet-wide totals from get_fleet_runs().
+
+    Returns counts (total / running / stopped) and a summed cost across all
+    registered projects. v1 polls the shared metadata store (see
+    get_fleet_runs); not a controller. Never raises.
+    """
+    runs = get_fleet_runs(include_inactive=include_inactive)
+    total = len(runs)
+    running = sum(1 for r in runs if r.get("running"))
+    total_cost = round(sum(float(r.get("cost_usd") or 0.0) for r in runs), 6)
+    return {
+        "total_runs": total,
+        "running_runs": running,
+        "stopped_runs": total - running,
+        "total_cost_usd": total_cost,
+    }
+
+
 def get_cross_project_learnings() -> dict:
     """
     Get learnings from the global learnings database.

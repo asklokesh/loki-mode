@@ -238,6 +238,7 @@ run_test "Unified config-file (--config precedence + formats)" "$SCRIPT_DIR/test
 run_test "validate_yaml_value injection guard (#691 security fix)" "$SCRIPT_DIR/test-validate-yaml-value.sh"
 run_test "ALLOWED_PATHS partial enforcement (A5: sandbox mount + command)" "$SCRIPT_DIR/test-allowed-paths-a5.sh"
 run_test "Multi-build state isolation (A6: LOKI_SESSION_ID namespacing)" "$SCRIPT_DIR/test-state-isolation-a6.sh"
+run_test "loki why (B5: failure/outcome diagnosis)" "$SCRIPT_DIR/test-loki-why.sh"
 
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

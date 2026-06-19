@@ -2927,6 +2927,133 @@ cmd_resume() {
     fi
 }
 
+# loki why -- actionable failure/outcome diagnosis (B5).
+# Reads the already-captured run artifacts (no new state): the terminal run state
+# (.loki/<autonomy-state>.json: status, lastExitCode, iterationCount), the durable
+# completion record (.loki/state/completion.json: outcome, branch, files, pr_url),
+# and the latest structured handoff (.loki/memory/handoffs/*.md). Produces an
+# honest "what happened + what to do" report. Read-only; never fabricates -- if a
+# field was not captured it says so. --json emits the machine-readable record.
+cmd_why() {
+    local as_json=0
+    case "${1:-}" in
+        --json) as_json=1 ;;
+        --help|-h) echo "Usage: loki why [--json]  -- explain the last build's outcome and what to do next"; return 0 ;;
+        "" ) : ;;
+        *) echo -e "${RED}Unknown flag: $1${NC}"; echo "Usage: loki why [--json]"; return 1 ;;
+    esac
+
+    local loki_dir="${LOKI_DIR:-.loki}"
+    # Session-namespaced state when LOKI_SESSION_ID is set (mirrors run.sh A6).
+    local state_file="$loki_dir/autonomy-state.json"
+    if [ -n "${LOKI_SESSION_ID:-}" ] && [ -f "$loki_dir/sessions/${LOKI_SESSION_ID}/autonomy-state.json" ]; then
+        state_file="$loki_dir/sessions/${LOKI_SESSION_ID}/autonomy-state.json"
+    fi
+    local completion_file="$loki_dir/state/completion.json"
+
+    if [ ! -f "$state_file" ] && [ ! -f "$completion_file" ]; then
+        echo "loki why: no run found here yet (no $state_file or $completion_file)." >&2
+        echo "Run a build first: loki start <spec>" >&2
+        return 1
+    fi
+
+    if [ "$as_json" = "1" ]; then
+        _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" python3 - <<'WHYJSON'
+import json, os
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception: return {}
+state = load(os.environ.get("_LOKI_WHY_STATE", ""))
+comp = load(os.environ.get("_LOKI_WHY_COMPLETION", ""))
+print(json.dumps({"state": state, "completion": comp}, indent=2))
+WHYJSON
+        return 0
+    fi
+
+    # Human-readable report. The diagnosis maps the terminal status to a plain
+    # explanation + a concrete next action; everything is sourced from the files,
+    # nothing is invented.
+    _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
+    _LOKI_WHY_HANDOFFS="$loki_dir/memory/handoffs" python3 - <<'WHYTXT'
+import json, os, glob
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception: return {}
+state = load(os.environ.get("_LOKI_WHY_STATE", ""))
+comp = load(os.environ.get("_LOKI_WHY_COMPLETION", ""))
+status = state.get("status") or comp.get("outcome") or "unknown"
+exit_code = state.get("lastExitCode")
+iters = state.get("iterationCount")
+
+# status -> (one-line meaning, suggested next action). Honest + specific.
+GUIDE = {
+    "council_approved": ("The completion council agreed the work is done and verified.",
+                         "Review the diff and open a PR (git push + gh pr create, or LOKI_AUTO_PR=1)."),
+    "council_force_approved": ("Completion was force-approved (council could not fully converge).",
+                               "Review the diff carefully before merging -- convergence was not unanimous."),
+    "completion_promise_fulfilled": ("The agent declared its explicit completion promise fulfilled.",
+                                     "Verify the promised outcome, then review and PR."),
+    "max_iterations_reached": ("The build hit the iteration cap before the council approved it.",
+                               "Inspect what is left (loki status), raise LOKI_MAX_ITERATIONS or narrow the spec, and resume."),
+    "max_retries_exceeded": ("The build exhausted its retry budget on a repeating failure.",
+                             "Read .loki/logs for the recurring error (rate limit? failing test?), fix the root cause, then re-run."),
+    "failed": ("The build ended in a failure state.",
+               "Read .loki/logs/ + the handoff below for the failure, fix it, then re-run."),
+    "policy_blocked": ("A policy/trust gate blocked completion.",
+                       "Review the blocking finding; address it or use the documented override path."),
+    "budget_exceeded": ("The cost budget breaker paused the build.",
+                        "Raise LOKI_BUDGET_LIMIT or accept the partial result, then resume."),
+    "paused": ("The build is paused (human-intervention signal).",
+               "Resume with: loki resume."),
+    "interrupted": ("The build was interrupted before a terminal state.",
+                    "Resume with: loki resume."),
+    "stopped": ("The build was stopped by the operator.",
+                "Start a new build with loki start, or resume if you meant to continue."),
+    "force_stopped": ("The build was force-stopped.",
+                      "Start a new build, or investigate why a force-stop was needed."),
+    "running": ("The recorded state says a build is still running (or crashed mid-run).",
+                "If no build is active it likely crashed; in durable mode (LOKI_DURABLE_STATE=1) a restart resumes, else loki start re-runs."),
+}
+meaning, action = GUIDE.get(status, ("No diagnosis mapping for this status; see the raw fields below.",
+                                     "Check loki status and .loki/logs/ for detail."))
+
+print("Loki: why")
+print("=" * 60)
+print(f"  Outcome     : {status}")
+if exit_code is not None:
+    print(f"  Exit code   : {exit_code}")
+if iters is not None:
+    print(f"  Iterations  : {iters}")
+if comp.get("branch"):
+    print(f"  Branch      : {comp['branch']}")
+if comp.get("files_changed") is not None:
+    print(f"  Changes     : {comp.get('files_changed',0)} files (+{comp.get('insertions',0)}/-{comp.get('deletions',0)})")
+if comp.get("pr_url"):
+    print(f"  PR          : {comp['pr_url']}")
+print()
+print(f"  What happened: {meaning}")
+print(f"  What to do   : {action}")
+
+# Surface the latest structured handoff (already-captured context), honestly.
+hd = sorted(glob.glob(os.path.join(os.environ.get("_LOKI_WHY_HANDOFFS",""), "*.md")))
+if hd:
+    print()
+    print(f"  Latest handoff: {hd[-1]}")
+    try:
+        with open(hd[-1]) as f:
+            head = "".join(f.readlines()[:8]).rstrip()
+        for line in head.splitlines():
+            print(f"    {line}")
+    except Exception:
+        pass
+print()
+print("  (loki why --json for the raw record; loki status for live state.)")
+WHYTXT
+    return 0
+}
+
 # Show current status
 cmd_status() {
     # Check for flags
@@ -15480,6 +15607,9 @@ main() {
             ;;
         status)
             cmd_status "$@"
+            ;;
+        why)
+            cmd_why "$@"
             ;;
         stats)
             # CLI consolidation (Phase A): 'stats' is a deprecated alias of
