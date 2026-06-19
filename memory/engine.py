@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -303,6 +304,13 @@ class MemoryEngine:
             date_str = timestamp[:10]  # Extract YYYY-MM-DD
         else:
             date_str = timestamp.strftime("%Y-%m-%d")
+
+        # Reject a junk date directory derived from a poisoned/round-tripped
+        # timestamp (mirrors storage.save_episode). Traversal is already
+        # contained by _resolve_path; this just stops non-date dirs being
+        # created. Only an exact YYYY-MM-DD string is allowed.
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         episode_id = trace_dict.get("id", f"ep-{date_str}-{self._generate_id()}")
         trace_dict["id"] = episode_id

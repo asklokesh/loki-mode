@@ -297,6 +297,14 @@ class MemoryRetrieval:
 
     # Track which legacy entries we've already warned about to avoid log spam.
     _LEGACY_WARN_LIMIT = 5
+
+    # Cap on episode files read per keyword scan. The episodic store grows
+    # unbounded over a long-lived project, so an uncapped scan reads+parses
+    # every episode on every keyword query. Date dirs are walked newest-first,
+    # so the cap retains the most recent episodes (the natural relevance order)
+    # and only stops unbounded IO; it does not change scoring of retained
+    # candidates.
+    _KEYWORD_SCAN_MAX_EPISODES = 2000
     _legacy_warned_count: int = 0
 
     def _belongs_to_namespace(self, result: Dict[str, Any]) -> bool:
@@ -1509,7 +1517,14 @@ class MemoryRetrieval:
         if not date_dirs:
             return results
 
+        # Bound the scan so an unbounded episodic store does not force a
+        # read+parse of every episode on each query (see
+        # _KEYWORD_SCAN_MAX_EPISODES). Newest date dirs first keeps the most
+        # recent episodes.
+        scanned = 0
         for date_dir in sorted(date_dirs, reverse=True):
+            if scanned >= self._KEYWORD_SCAN_MAX_EPISODES:
+                break
             if not date_dir.is_dir():
                 continue
 
@@ -1519,7 +1534,10 @@ class MemoryRetrieval:
             for episode_file in episode_files:
                 if episode_file.name == "index.json":
                     continue
+                if scanned >= self._KEYWORD_SCAN_MAX_EPISODES:
+                    break
 
+                scanned += 1
                 data = self.storage.read_json(
                     f"episodic/{date_dir.name}/{episode_file.name}"
                 )

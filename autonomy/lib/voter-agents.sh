@@ -256,7 +256,22 @@ loki_council_dispatch_agents() {
     # default-off export in claude-flags.sh (sourced above) already covers this;
     # the inline prefix is belt-and-suspenders, self-documenting, and a no-op when
     # caveman is absent.
-    response=$(CAVEMAN_DEFAULT_MODE=off claude --dangerously-skip-permissions \
+    #
+    # timeout-guard the dispatch (parity with the heuristic council path in
+    # completion-council.sh:2074 and :2200, same LOKI_COUNCIL_REVIEW_TIMEOUT:-600
+    # knob). The heuristic loop this dispatch replaced wrapped every claude
+    # subcall in `timeout`; this helper did not, so a hung `claude --agents`
+    # would stall the entire run indefinitely. `timeout` precedes the env-var
+    # assignment, so `env` is used to set CAVEMAN_DEFAULT_MODE for the child.
+    # On timeout, `timeout` exits 124; that exit is the command-substitution exit
+    # (no pipe here), captured into rc via `|| rc=$?`. The existing rc check below
+    # then routes any non-zero exit (timeout 124 or any other claude failure) to
+    # `return 1` -- the heuristic fallback the caller falls through to
+    # (completion-council.sh:2792). Fail-closed: a hung or timed-out council can
+    # never become a false COMPLETE; it always degrades to the heuristic path
+    # (which has its own timeout + conservative defaults).
+    response=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
+                      env CAVEMAN_DEFAULT_MODE=off claude --dangerously-skip-permissions \
                       -p "$prompt" \
                       --agents "$agents_json" \
                       --json-schema "$schema_path" 2>"$stderr_log") || rc=$?

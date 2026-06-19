@@ -20,8 +20,10 @@
 // intentionally NOT touched -- they remain on the legacy bare-PAUSE path
 // under LOKI_LEGACY_BASH=1. That is a Phase 6-of-Part-A concern.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { durableWriteThenRename } from "../util/atomic.ts";
 
 import type { Finding } from "./findings_injector.ts";
 import { loadPreviousFindings } from "./findings_injector.ts";
@@ -116,12 +118,15 @@ export type WriteHandoffOpts = {
 // crash mid-write left a truncated handoff -- the operator's only post-
 // mortem artifact. Now: keep millisecond resolution + per-process counter
 // in the filename, and write via tmp+rename (atomic POSIX semantics).
+//
+// v7.77.0 (W77-D MED): delegate to durableWriteThenRename so the handoff doc is
+// fsync'd before the rename and the directory entry is fsync'd after -- the
+// operator's only post-mortem artifact must survive a crash, not just an
+// orderly exit. The per-process counter in the target filename already makes
+// each handoff path unique, so the shared helper's own tmp suffix is enough.
 let _handoffCounter = 0;
 function _atomicWrite(target: string, body: string): void {
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${++_handoffCounter}`;
-  writeFileSync(tmp, body);
-  renameSync(tmp, target);
+  durableWriteThenRename(target, body);
 }
 
 // Produce + write the handoff doc. Returns the path so callers can log it.

@@ -34,6 +34,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
+import { readStreamCapped } from "../util/shell.ts";
 import { parseMultiResponse } from "./finding_schema.ts";
 import {
   claudeFlagSupported,
@@ -257,7 +258,10 @@ async function defaultClaudeRunner(argv: string[]): Promise<{ stdout: string; ex
     signal: AbortSignal.timeout(councilTimeoutMs()),
     env: { ...process.env, CAVEMAN_DEFAULT_MODE: cavemanSuppressEnv() },
   });
-  const stdout = await new Response(proc.stdout).text();
+  // v7.77.0 (W77-D LOW): bounded read so a runaway claude child cannot OOM the
+  // parent. The AbortSignal.timeout above still bounds wall-clock; this only
+  // bounds heap. Verdict output is tiny in practice, well under the cap.
+  const stdout = await readStreamCapped(proc.stdout as ReadableStream<Uint8Array>);
   const exitCode = await proc.exited;
   return { stdout, exitCode };
 }

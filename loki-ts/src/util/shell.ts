@@ -15,6 +15,51 @@ export type ShellOpts = {
   cwd?: string;
 };
 
+// v7.77.0 (W77-D LOW): cap how many bytes we slurp from a child's stdout.
+// Children here are trusted + time-bounded, so this is a defensive ceiling
+// against a runaway producer wedging the parent's heap, not a security
+// boundary. 16MB is far above any real CLI output (claude/codex verdicts,
+// git/docker/jq output) we parse. Output beyond the cap is truncated.
+export const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
+
+// Read a ReadableStream of bytes into a UTF-8 string, stopping once
+// MAX_STDOUT_BYTES have been accumulated. The stream is cancelled after the
+// cap so the producer is not left blocked on a full pipe. Returns the decoded
+// (possibly truncated) text.
+export async function readStreamCapped(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = MAX_STDOUT_BYTES,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // Keep only the slice that fits under the cap, then stop.
+        const keep = value.byteLength - (total - maxBytes);
+        out += decoder.decode(value.subarray(0, keep), { stream: true });
+        break;
+      }
+      out += decoder.decode(value, { stream: true });
+    }
+    out += decoder.decode();
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // stream already closed -- ignore
+    }
+    reader.releaseLock();
+  }
+  return out;
+}
+
 export class ShellError extends Error {
   constructor(
     public override readonly message: string,
@@ -73,7 +118,9 @@ export async function run(
 
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
+      // v7.77.0 (W77-D LOW): bounded read so a runaway child cannot OOM the
+      // parent. Timeout behavior above is preserved -- the cap is independent.
+      readStreamCapped(proc.stdout as ReadableStream<Uint8Array>),
       new Response(proc.stderr).text(),
       proc.exited,
     ]);

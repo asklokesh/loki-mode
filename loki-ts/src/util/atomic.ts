@@ -18,6 +18,7 @@
 import {
   closeSync,
   fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -26,25 +27,63 @@ import {
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
 let _tmpCounter = 0;
 
-export function atomicWriteJson(target: string, data: unknown): void {
+// v7.77.0 (W77-D MED): durable tmp+rename. The prior writeFileSync + renameSync
+// pair gives rename ordering but NOT durability -- a crash in the post-rename
+// window can surface a zero-length or lost-rename file because the page cache
+// had not been flushed. We now write the body through an explicit fd, fsync
+// that fd BEFORE the rename (so the data is on stable storage before the name
+// points at it), then fsync the parent directory AFTER the rename (so the
+// rename itself is durable). Directory fsync is best-effort: some platforms
+// reject opening a directory for fsync, in which case we degrade to the prior
+// rename-only durability rather than failing the write.
+export function durableWriteThenRename(target: string, body: string | Uint8Array): void {
   mkdirSync(dirname(target), { recursive: true });
   const tmp = `${target}.tmp.${process.pid}.${++_tmpCounter}`;
-  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
+  const fd = openSync(tmp, "w");
+  try {
+    writeSync(fd, body as never);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, target);
+  fsyncParentDir(target);
+}
+
+// Best-effort fsync of the directory containing `target` so the rename entry is
+// durable. Opening a directory for fsync is not portable (Windows rejects it),
+// so any failure is swallowed -- the data fsync above already covers the file
+// contents; this only hardens the rename metadata.
+export function fsyncParentDir(target: string): void {
+  let dfd: number | null = null;
+  try {
+    dfd = openSync(dirname(target), "r");
+    fsyncSync(dfd);
+  } catch {
+    // directory fsync unsupported or failed -- rename-only durability stands
+  } finally {
+    if (dfd !== null) {
+      try {
+        closeSync(dfd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+export function atomicWriteJson(target: string, data: unknown): void {
+  durableWriteThenRename(target, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 export function atomicWriteText(target: string, body: string): void {
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${++_tmpCounter}`;
-  writeFileSync(tmp, body);
-  renameSync(tmp, target);
+  durableWriteThenRename(target, body);
 }
 
 const _appendChains = new Map<string, Promise<void>>();

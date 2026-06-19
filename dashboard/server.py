@@ -863,6 +863,111 @@ app.include_router(api_v2_router)
 # in web-app/server.py for `loki web` (port 57375). One source of truth, no
 # duplicated UIs. Import is best-effort: if web-app is missing (e.g. partial
 # install) the dashboard still starts; /lab/* returns 404 with a clear hint.
+class _MountAuthGuard:
+    """ASGI wrapper that enforces the dashboard's scope auth at a mount boundary.
+
+    Starlette does NOT propagate the parent app's route dependencies to a
+    mounted sub-app, so without this wrapper the Purple Lab routes (including
+    file write/delete and a process-spawn endpoint in web-app/server.py) are
+    reachable UNAUTHENTICATED when enterprise auth is enabled. This wrapper
+    runs the same token validation as the dashboard's own require_scope("read")
+    dependency before delegating to the sub-app.
+
+    When enterprise auth (and OIDC) are OFF, get_current_token returns None and
+    has_scope is never reached: the request passes through unchanged, so local
+    default-mode behavior is identical to an unguarded mount.
+    """
+
+    def __init__(self, app, required_scope: str = "read") -> None:
+        self._app = app
+        self._required_scope = required_scope
+
+    @staticmethod
+    def _validate_ws_token(token_str: "str | None") -> "dict | None":
+        # Mirror the HTTP get_current_token order: try OIDC first for a non-loki_
+        # token (JWTs do not carry the loki_ prefix), then fall back to loki token
+        # auth. This keeps WS auth consistent with the HTTP path so an OIDC-only
+        # deployment can authenticate WS clients too (not just loki_ tokens).
+        if not token_str:
+            return None
+        if auth.is_oidc_mode() and not token_str.startswith("loki_"):
+            oidc_info = auth.validate_oidc_token(token_str)
+            if oidc_info:
+                return oidc_info
+        if auth.is_enterprise_mode():
+            return auth.validate_token(token_str)
+        return None
+
+    @staticmethod
+    def _ws_token_from_scope(scope) -> "str | None":
+        # A browser WebSocket cannot set an Authorization header, so accept the
+        # token either from an Authorization: Bearer header (programmatic clients)
+        # or from a ?token= / ?access_token= query parameter (browser clients),
+        # matching how scoped WS clients pass credentials elsewhere.
+        for raw_name, raw_val in scope.get("headers", []) or []:
+            if raw_name == b"authorization":
+                val = raw_val.decode("latin-1", "ignore")
+                if val.lower().startswith("bearer "):
+                    return val[7:].strip() or None
+                return val.strip() or None
+        from urllib.parse import parse_qs
+        qs = scope.get("query_string", b"") or b""
+        params = parse_qs(qs.decode("latin-1", "ignore"))
+        for key in ("token", "access_token"):
+            if params.get(key):
+                return params[key][0] or None
+        return None
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "lifespan":
+            # Lifespan has no client request; nothing to authenticate.
+            await self._app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            # The Purple Lab sub-app exposes WebSocket endpoints (a PTY terminal
+            # and an HMR proxy). Starlette does not run the parent auth on them,
+            # so without this branch /lab/ws/* would be reachable unauthenticated
+            # when enterprise auth is on (a PTY login shell with no auth). Validate
+            # the same scoped token as the HTTP path; on failure close the
+            # handshake with policy-violation 1008 BEFORE delegating to the sub-app.
+            if not auth.is_enterprise_mode() and not auth.is_oidc_mode():
+                await self._app(scope, receive, send)
+                return
+            token_str = self._ws_token_from_scope(scope)
+            token_info = self._validate_ws_token(token_str)
+            if token_info is None or not auth.has_scope(token_info, self._required_scope):
+                # ASGI websocket reject: accept-then-close is the portable way to
+                # surface a policy violation to the client before any sub-app code
+                # runs. 1008 = policy violation.
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            await self._app(scope, receive, send)
+            return
+        from starlette.requests import Request as _StarletteRequest
+        request = _StarletteRequest(scope, receive)
+        # Reuse the exact dashboard auth path: get_current_token is a no-op
+        # (returns None) when auth is disabled, raises 401 on missing/bad
+        # credentials when enabled.
+        try:
+            credentials = await auth.security(request)
+            token_info = await auth.get_current_token(request, credentials)
+        except HTTPException as exc:
+            await JSONResponse(
+                {"detail": exc.detail},
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )(scope, receive, send)
+            return
+        # token_info is None only when auth is disabled -> allow through.
+        if token_info is not None and not auth.has_scope(token_info, self._required_scope):
+            await JSONResponse(
+                {"detail": f"Insufficient permissions. Required scope: {self._required_scope}"},
+                status_code=403,
+            )(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
 _PURPLE_LAB_MOUNTED = False
 try:
     import sys as _sys
@@ -871,7 +976,9 @@ try:
     if str(_webapp_dir) not in _sys.path:
         _sys.path.insert(0, str(_webapp_dir))
     import server as _purple_lab_server  # type: ignore[import-not-found]
-    app.mount("/lab", _purple_lab_server.app)
+    # Gate the mount so /lab/* requires the same scoped token as the dashboard's
+    # own endpoints when enterprise auth is on (no-op when auth is off).
+    app.mount("/lab", _MountAuthGuard(_purple_lab_server.app, "read"))
     _PURPLE_LAB_MOUNTED = True
     logger.info("Purple Lab mounted at /lab/ (Phase Merge-4)")
 except Exception as _e:  # noqa: BLE001
@@ -6510,8 +6617,8 @@ async def rollback_checkpoint(checkpoint_id: str):
 # Agent Management API (v5.25.0)
 # =============================================================================
 
-@app.get("/api/agents")
-async def get_agents(token: Optional[dict] = Depends(auth.get_current_token)):
+@app.get("/api/agents", dependencies=[Depends(auth.require_scope("read"))])
+async def get_agents():
     """Get all active and recent agents."""
     agents_file = _get_loki_dir() / "state" / "agents.json"
     agents = []
@@ -6651,8 +6758,8 @@ async def resume_agent(agent_id: str):
     return {"success": True, "message": f"Resume signal sent to agent {agent_id}"}
 
 
-@app.get("/api/logs")
-async def get_logs(lines: int = Query(default=100, ge=1, le=10000), token: Optional[dict] = Depends(auth.get_current_token)):
+@app.get("/api/logs", dependencies=[Depends(auth.require_scope("read"))])
+async def get_logs(lines: int = Query(default=100, ge=1, le=10000)):
     """Get recent log entries from session log files (redacted)."""
     log_dir = _get_loki_dir() / "logs"
     entries = []
@@ -6775,8 +6882,8 @@ async def get_secrets_status():
 # =============================================================================
 
 
-@app.get("/api/github/status")
-async def get_github_status(token: Optional[dict] = Depends(auth.get_current_token)):
+@app.get("/api/github/status", dependencies=[Depends(auth.require_scope("read"))])
+async def get_github_status():
     """Get GitHub integration status and configuration."""
     loki_dir = _get_loki_dir()
     result: dict[str, Any] = {
@@ -6835,8 +6942,8 @@ async def get_github_status(token: Optional[dict] = Depends(auth.get_current_tok
     return result
 
 
-@app.get("/api/github/tasks")
-async def get_github_tasks(token: Optional[dict] = Depends(auth.get_current_token)):
+@app.get("/api/github/tasks", dependencies=[Depends(auth.require_scope("read"))])
+async def get_github_tasks():
     """Get all GitHub-sourced tasks and their sync status."""
     loki_dir = _get_loki_dir()
     tasks: list[dict] = []
@@ -6875,10 +6982,9 @@ async def get_github_tasks(token: Optional[dict] = Depends(auth.get_current_toke
     return {"tasks": tasks, "total": len(tasks)}
 
 
-@app.get("/api/github/sync-log")
+@app.get("/api/github/sync-log", dependencies=[Depends(auth.require_scope("read"))])
 async def get_github_sync_log(
     limit: int = Query(default=50, ge=1, le=500),
-    token: Optional[dict] = Depends(auth.get_current_token)
 ):
     """Get the GitHub sync log (status updates sent to issues)."""
     loki_dir = _get_loki_dir()
@@ -7007,8 +7113,8 @@ def _resolve_process_state(pid: Optional[int], last_status: str = "",
     return result
 
 
-@app.get("/api/health/processes")
-async def get_process_health(token: Optional[dict] = Depends(auth.get_current_token)):
+@app.get("/api/health/processes", dependencies=[Depends(auth.require_scope("read"))])
+async def get_process_health():
     """Get health status of all loki processes (dashboard, session, agents).
 
     Returns honest state labels: RUNNING, STALE, COMPLETED, FAILED, CRASHED, UNKNOWN.

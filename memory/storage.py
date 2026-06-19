@@ -429,6 +429,21 @@ class MemoryStorage:
     # Episode Storage
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _sanitize_episode_id(episode_id) -> str:
+        """
+        Sanitize an episode id for use in a filename.
+
+        Separators and "." segments cannot leak into the path (mirrors
+        save_skill). save_episode and load_episode must use the SAME transform
+        or a round-tripped id with ":", "/", or "." chars would write to one
+        file and read from another.
+        """
+        return "".join(
+            c if c.isalnum() or c in "-_" else "_"
+            for c in str(episode_id)
+        )
+
     def save_episode(self, episode: EpisodeTrace) -> str:
         """
         Save an episode trace to storage.
@@ -475,10 +490,7 @@ class MemoryStorage:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
             date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        safe_episode_id = "".join(
-            c if c.isalnum() or c in "-_" else "_"
-            for c in str(episode_id)
-        )
+        safe_episode_id = self._sanitize_episode_id(episode_id)
 
         date_dir = self.base_path / "episodic" / date_str
         date_dir.mkdir(parents=True, exist_ok=True)
@@ -507,10 +519,14 @@ class MemoryStorage:
         if not episodic_dir.exists():
             return None
 
+        # Sanitize the same way save_episode does so an id carrying ":", "/",
+        # or "." chars resolves to the file it was actually written to.
+        safe_episode_id = self._sanitize_episode_id(episode_id)
+
         # Search all date directories
         for date_dir in episodic_dir.iterdir():
             if date_dir.is_dir():
-                file_path = date_dir / f"task-{episode_id}.json"
+                file_path = date_dir / f"task-{safe_episode_id}.json"
                 if file_path.exists():
                     data = self._load_json(file_path)
                     if data:

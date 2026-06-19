@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.77.0] - 2026-06-19
+
+### WAVE13-TAIL hardening: council timeout, /lab auth, memory + durability
+
+Final wave-13 bug-fix batch. Council 3/3.
+
+- Council dispatch timeout (HIGH regression): the Phase C completion-council
+  dispatch (autonomy/lib/voter-agents.sh) invoked `claude --agents` with no
+  timeout, so a hung dispatch stalled the entire run indefinitely. It is now
+  wrapped in `timeout ${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}` (parity with the
+  heuristic path); a timeout (exit 124) or any non-zero exit falls back to the
+  heuristic council and can never become a false COMPLETE.
+- Dashboard /lab auth (HIGH, enterprise-auth mode): the Purple Lab sub-app
+  mounted at /lab bypassed the dashboard's auth because Starlette does not
+  propagate a parent app's auth to a mounted sub-app, leaving file write/delete
+  and process-spawn routes reachable unauthenticated when LOKI_ENTERPRISE_AUTH
+  was on. A mount-boundary ASGI guard now enforces the same scoped token as the
+  dashboard for all /lab/* requests; with auth off it is a pass-through (local
+  dashboards unchanged). Read endpoints that were missing require_scope("read")
+  (and /api/logs) are now consistent with their gated siblings.
+- Memory: bounded the keyword-search episodic scan (was unbounded); removed the
+  consolidation lock-file unlink that reintroduced a flock+unlink inode race
+  (two consolidations could run concurrently); load_episode now sanitizes the
+  episode id symmetrically with save_episode; store_episode validates the date
+  string.
+- Bun runtime durability: atomic writers now fsync the temp file before rename
+  and fsync the parent directory after, so tmp+rename gives durability not just
+  ordering. Subprocess stdout reads are capped at 16 MB.
+
+local-ci 85/0. Memory 28 + 9 tests, loki-ts 1098 tests, council quorum 7/7 all
+green; dashboard auth behavior verified (off = pass-through, on = 401/403/200).
+
 ## [7.76.0] - 2026-06-19
 
 ### Memory data-integrity fixes + dashboard UX

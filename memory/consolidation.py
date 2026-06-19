@@ -157,10 +157,15 @@ class ConsolidationPipeline:
             if lock_file is not None:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
                 lock_file.close()
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
+                # Do NOT unlink the lock inode here. Unlinking on release is a
+                # flock+unlink inode-replacement race: waiter B blocked on
+                # inode-1 acquires it after holder A unlinks inode-1, then a
+                # third consolidation C opens the path, finds it gone, creates
+                # inode-2 and flocks inode-2 -- entering _consolidate_locked
+                # while B is still inside, breaking the BUG-MEM-003
+                # single-consolidation guarantee. Same class fixed in
+                # storage._file_lock. Persistent lock files are the standard
+                # flock pattern; the file is reused across runs.
 
     def _consolidate_locked(self, since_hours: int) -> ConsolidationResult:
         """Run the consolidation pipeline under an exclusive lock."""

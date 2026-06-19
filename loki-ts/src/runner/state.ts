@@ -17,9 +17,12 @@
 // bash treats absent state as "fresh start", we mirror that).
 
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -29,7 +32,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { lokiDir } from "../util/paths.ts";
-import { withFileLockSync } from "../util/atomic.ts";
+import { fsyncParentDir, withFileLockSync } from "../util/atomic.ts";
 
 // --- injectable fs primitives (test-only) ----------------------------------
 //
@@ -179,6 +182,29 @@ function statusTxtPath(dir: string): string {
 const LOCK_TTL_MS = 120_000;         // mtime threshold for declaring a lock stale
 const LOCK_MAX_WAIT_MS = 5_000;      // total time we'll wait for a contended lock
 
+// v7.77.0 (W77-D MED): fsync a file by path via a fresh fd. Best-effort -- a
+// failure (e.g. the path was already renamed away, or the platform rejects the
+// fsync) is swallowed because the rename ordering still holds; this only adds
+// durability on top. Deliberately does NOT route through the _writeFileSync
+// test seam so EXDEV simulation stays unaffected.
+function fsyncFileByPath(path: string): void {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    fsyncSync(fd);
+  } catch {
+    // best-effort -- rename ordering already guarantees correctness
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export function atomicWriteFileSync(targetPath: string, contents: string): void {
   // v7.4.7 (W2-R3 LOW): reject targets that end in `.lock` -- they would
   // collide with the lockfile naming convention used by another writer
@@ -200,8 +226,18 @@ export function atomicWriteFileSync(targetPath: string, contents: string): void 
       // initial write to tmp may interleave on crash, which is exactly what
       // load_state's orphan sweep is designed to clean up.
       _writeFileSync(tmpPath, contents);
+      // v7.77.0 (W77-D MED): fsync the tmp file before the rename so the state
+      // bytes are on stable storage before the name points at them, and fsync
+      // the parent dir after the rename so the rename entry itself is durable.
+      // Without this, a crash in the post-rename window can surface a
+      // zero-length state.json -- load_state degrades SAFE (reset-to-fresh) but
+      // a durable write avoids needless work loss. The tmp fsync goes via a
+      // fresh fd open (not the _writeFileSync seam) so the test EXDEV seam is
+      // untouched; a failure to fsync is swallowed -- the rename still proceeds.
+      fsyncFileByPath(tmpPath);
       try {
         _renameSync(tmpPath, targetPath);
+        fsyncParentDir(targetPath);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code;
         if (code === "EXDEV") {
@@ -210,6 +246,8 @@ export function atomicWriteFileSync(targetPath: string, contents: string): void 
           // collecting the leftover tmp file.
           try {
             _copyFileSync(tmpPath, targetPath);
+            fsyncFileByPath(targetPath);
+            fsyncParentDir(targetPath);
             try { _unlinkSync(tmpPath); } catch { /* orphan sweep handles it */ }
             return;
           } catch (copyErr) {
