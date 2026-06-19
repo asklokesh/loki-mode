@@ -251,20 +251,21 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
     <span><span class="name">Loki Mode</span><small>by Autonomi</small></span>
   </div>
   <div class="tabs" id="tabs" role="tablist" aria-label="Sections">
-    <button class="tab active" role="tab" aria-selected="true" data-page="overview" onclick="go('overview')">Overview</button>
-    <button class="tab" role="tab" aria-selected="false" data-page="demo" onclick="go('demo')">Live Demo</button>
-    <button class="tab" role="tab" aria-selected="false" data-page="deck" onclick="go('deck')">Pitch Deck</button>
-    <button class="tab" role="tab" aria-selected="false" data-page="vision" onclick="go('vision')">Vision 2028</button>
-    <button class="tab" role="tab" aria-selected="false" data-page="moat" onclick="go('moat')">Moat &amp; IP</button>
+    <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="page-overview" data-page="overview" onclick="go('overview')">Overview</button>
+    <button class="tab" id="tab-demo" role="tab" aria-selected="false" aria-controls="page-demo" data-page="demo" onclick="go('demo')">Live Demo</button>
+    <button class="tab" id="tab-deck" role="tab" aria-selected="false" aria-controls="page-deck" data-page="deck" onclick="go('deck')">Pitch Deck</button>
+    <button class="tab" id="tab-vision" role="tab" aria-selected="false" aria-controls="page-vision" data-page="vision" onclick="go('vision')">Vision 2028</button>
+    <button class="tab" id="tab-moat" role="tab" aria-selected="false" aria-controls="page-moat" data-page="moat" onclick="go('moat')">Moat &amp; IP</button>
   </div>
   <div class="nav-right">
+    <!-- Keep this version string in sync with VERSION / package.json on every release. -->
     <span class="ver-pill">v7.56.0</span>
     <button class="nav-toggle" aria-controls="tabs" aria-expanded="false" onclick="this.setAttribute('aria-expanded', document.getElementById('tabs').classList.toggle('mobile-open'))">Menu</button>
   </div>
 </nav>
 
 <!-- OVERVIEW -->
-<div class="page active" id="page-overview">
+<div class="page active" id="page-overview" role="tabpanel" aria-labelledby="tab-overview">
   <div class="hero">
     <div class="grid-bg" aria-hidden="true"></div>
     <div class="hero-inner">
@@ -335,7 +336,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 </div>
 
 <!-- DEMO -->
-<div class="page" id="page-demo">
+<div class="page" id="page-demo" role="tabpanel" aria-labelledby="tab-demo">
   <section>
     <div class="container">
       <div class="eyebrow">Interactive demo</div>
@@ -384,7 +385,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
           <div class="perm-counter">
             <div class="pc-n" id="permN">0</div>
             <div class="pc-l">distinct run permutations</div>
-            <div class="pc-foot">config combinations &times; iteration/agent orderings</div>
+            <div class="pc-foot">config combinations &times; iteration/agent orderings (illustrative)</div>
           </div>
           <button class="run-btn" id="runBtn" onclick="runLoki()">Run Loki Mode</button>
         </div>
@@ -415,7 +416,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 </div>
 
 <!-- DECK -->
-<div class="page" id="page-deck">
+<div class="page" id="page-deck" role="tabpanel" aria-labelledby="tab-deck">
   <div class="deck-stage">
     <div class="eyebrow" style="justify-content:center">Pre-seed pitch &middot; founder narrative</div>
     <div id="slides">
@@ -537,7 +538,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 </div>
 
 <!-- VISION -->
-<div class="page" id="page-vision">
+<div class="page" id="page-vision" role="tabpanel" aria-labelledby="tab-vision">
   <section>
     <div class="container">
       <div class="eyebrow">Founder's lens &middot; forward-looking</div>
@@ -569,7 +570,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 </div>
 
 <!-- MOAT -->
-<div class="page" id="page-moat">
+<div class="page" id="page-moat" role="tabpanel" aria-labelledby="tab-moat">
   <section>
     <div class="container">
       <div class="eyebrow">Defensibility</div>
@@ -616,7 +617,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 (function(){
   "use strict";
   // ---- module-scoped state (no globals leak) ----
-  var running=false, finishData={}, cur=0;
+  var running=false, finishData={}, cur=0, pendingTimeouts=[];
 
   function go(page){
     document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
@@ -710,6 +711,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
 
   function runLoki(){
     if(running)return;running=true;
+    pendingTimeouts.forEach(clearTimeout);pendingTimeouts=[];  // cancel any stragglers before a fresh run
     var btn=document.getElementById('runBtn');btn.disabled=true;btn.textContent='Running...';
     document.getElementById('emptyStage').style.display='none';
     document.getElementById('resultBar').classList.remove('show');
@@ -764,11 +766,11 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
     var t=0;
     seq.forEach(function(s,idx){
       t+=s.delay;
-      setTimeout(function(){
+      pendingTimeouts.push(setTimeout(function(){
         var div=document.createElement('div');div.className='ln';div.innerHTML=s.html||'&nbsp;';
         con.appendChild(div);con.scrollTop=con.scrollHeight;
         if(idx===seq.length-1)finishRun();
-      },t);
+      },t));
     });
     finishData={iters:iters,gates:activeGates.length,files:Math.floor(iters*5+Math.random()*8)};
   }
