@@ -2812,8 +2812,34 @@ council_evaluate() {
         # Re-derive complete count from the round file
         local round_file="$COUNCIL_STATE_DIR/votes/round-${ITERATION_COUNT}.json"
         local complete_count=0
+        local members_present=0
         if [ -f "$round_file" ]; then
             complete_count=$(_RF="$round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('complete_votes', 0))" 2>/dev/null || echo "0")
+            # WAVE13 CRITICAL quorum gate: how many voters actually responded
+            # (total_members records the ACTUAL returned count -- see
+            # voter-agents.sh). A degraded/partial dispatch response must never
+            # be honored as COMPLETE even if its (now quorum-aware) verdict
+            # somehow read COMPLETE. This is defense-in-depth: the parser
+            # already forces CONTINUE on undercount, but the completion-detection
+            # trust core must independently assert full quorum before stopping.
+            members_present=$(_RF="$round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('total_members', 0))" 2>/dev/null || echo "0")
+        fi
+        # Normalize to integers (guard against empty/non-numeric on read failure)
+        case "$complete_count" in (''|*[!0-9]*) complete_count=0 ;; esac
+        case "$members_present" in (''|*[!0-9]*) members_present=0 ;; esac
+
+        # Quorum-presence gate (distinct from the DA-unanimity trigger below):
+        # a COMPLETE verdict only stands when EXACTLY the expected council
+        # responded. Any mismatch is a degraded response and fails closed:
+        #   - undercount (< COUNCIL_SIZE): missing voters are non-approval.
+        #   - overcount (> COUNCIL_SIZE): extra/unprompted findings (e.g. a
+        #     model adding a 4th 'devils-advocate' finding) would otherwise let
+        #     a low-approval-ratio response clear the fixed threshold=2. Both
+        #     directions must CONTINUE, so we assert exact quorum (== not <).
+        if [ "$members_present" -ne "$COUNCIL_SIZE" ]; then
+            log_warn "Council evaluate: COMPLETE rejected -- quorum mismatch ($members_present voters present, expected $COUNCIL_SIZE); failing closed to CONTINUE"
+            council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "false" "false" "$_eval_threshold"
+            return 1  # CONTINUE
         fi
 
         if [ "$complete_count" -eq "$COUNCIL_SIZE" ] && [ "$COUNCIL_SIZE" -ge 2 ]; then

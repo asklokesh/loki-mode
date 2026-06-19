@@ -10,6 +10,7 @@
     "findings": {
       "type": "array",
       "minItems": 1,
+      "description": "One finding per dispatched council voter. minItems is intentionally kept at 1 because this schema is SHARED with non-council consumers (loki-ts council.ts validateFinding and loki_finding_schema_path). It is NOT raised to the council size, since doing so would break those consumers. The real quorum gate lives in autonomy/lib/voter-agents.sh: the embedded parser judges the verdict against the EXPECTED council size (COUNCIL_SIZE) and forces CONTINUE when fewer voters respond than expected (fail closed). completion-council.sh additionally asserts full quorum (total_members == COUNCIL_SIZE) before honoring a COMPLETE verdict. WAVE13: a degraded response that returns fewer findings than the council size can NEVER produce COMPLETE.",
       "items": {
         "type": "object",
         "additionalProperties": false,

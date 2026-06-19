@@ -128,6 +128,13 @@ run_test "Completion-route Evidence Gate (default path)" "$SCRIPT_DIR/test-compl
 # legacy grep matching is OFF by default and fixed-string (grep -F) when on.
 run_test "Completion-promise Gating (signal vs legacy grep)" "$SCRIPT_DIR/test-completion-promise-gating.sh"
 
+# WAVE13 CRITICAL: completion-council live-vote quorum. The voter-agents.sh
+# dispatch parser must judge COMPLETE/CONTINUE against the EXPECTED council
+# size (COUNCIL_SIZE), never the number of findings the model returned, so a
+# degraded/partial response can never reach COMPLETE on a returned subset (fail
+# closed). Includes a mutation guard proving non-vacuity.
+run_test "Council Live-Vote Quorum (WAVE13 fail-closed)" "$SCRIPT_DIR/test-council-quorum-wave13.sh"
+
 # check_human_intervention signal dispatch + security: STOP -> rc 2; HUMAN_INPUT
 # symlink rejected; prompt injection disabled-by-default quarantines input.
 run_test "Human Intervention Signals (STOP/HUMAN_INPUT security)" "$SCRIPT_DIR/test-human-intervention-signals.sh"

@@ -7396,10 +7396,10 @@ cmd_watch() {
                 return 0
                 ;;
             --once) run_once=true; shift ;;
-            --interval) poll_interval="${2:-2}"; shift 2 ;;
+            --interval) poll_interval="${2:-2}"; [ $# -ge 2 ] && shift 2 || shift ;;
             --interval=*) poll_interval="${1#*=}"; shift ;;
             --no-auto-start) no_auto_start=true; shift ;;
-            --debounce) debounce="${2:-3}"; shift 2 ;;
+            --debounce) debounce="${2:-3}"; [ $# -ge 2 ] && shift 2 || shift ;;
             --debounce=*) debounce="${1#*=}"; shift ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
@@ -19877,11 +19877,11 @@ else:
                 case "$1" in
                     --name|-n)
                         name="${2:-}"
-                        shift 2
+                        if [ $# -ge 2 ]; then shift 2; else shift; fi
                         ;;
                     --alias|-a)
                         alias="${2:-}"
-                        shift 2
+                        if [ $# -ge 2 ]; then shift 2; else shift; fi
                         ;;
                     *)
                         shift
@@ -19897,10 +19897,21 @@ else:
                 exit 1
             fi
 
-            _REGISTRY_FILE="$registry_file" _PROJ_PATH="$path" _PROJ_NAME="$name" _PROJ_ALIAS="$alias" python3 -c "
+            # Route the read-modify-write through dashboard/registry.py so the
+            # mutation is serialized under its fcntl lock and written atomically
+            # (tempfile + os.replace), matching the v7.45.1 hardening that
+            # run.sh registration and mark_project_stopped already use. The
+            # inline open(...,'w') path here was unlocked and truncating, which
+            # could lose a concurrent writer's entry or expose a 0-byte file to
+            # a reader. Falls back to an atomic temp-file write if registry.py
+            # cannot be imported at runtime (never a bare truncating open).
+            _REGISTRY_FILE="$registry_file" _PROJ_PATH="$path" _PROJ_NAME="$name" _PROJ_ALIAS="$alias" \
+            _REGISTRY_SKILL="${SKILL_DIR:-$_LOKI_SCRIPT_DIR/..}" python3 -c "
 import json
 import os
+import sys
 import hashlib
+import tempfile
 from datetime import datetime, timezone
 
 registry_file = os.environ['_REGISTRY_FILE']
@@ -19908,41 +19919,62 @@ path = os.environ['_PROJ_PATH']
 name = os.environ['_PROJ_NAME'] or os.path.basename(path)
 alias = os.environ['_PROJ_ALIAS'] or None
 
-# Generate project ID
-project_id = hashlib.md5(path.encode()).hexdigest()[:12]
+sys.path.insert(0, os.environ.get('_REGISTRY_SKILL', '.'))
+try:
+    from dashboard import registry
+except Exception:
+    registry = None
 
-# Load registry
-with open(registry_file, 'r') as f:
-    data = json.load(f)
-
-projects = data.get('projects', {})
-now = datetime.now(timezone.utc).isoformat()
-
-if project_id in projects:
-    # Update existing
-    projects[project_id]['name'] = name
-    if alias:
-        projects[project_id]['alias'] = alias
-    projects[project_id]['updated_at'] = now
-    print(f'Updated: {name}')
+if registry is not None:
+    existing = registry.get_project(path)
+    project = registry.register_project(path, name, alias)
+    print('Updated: ' + name if existing else 'Registered: ' + name)
 else:
-    # Add new
-    projects[project_id] = {
-        'id': project_id,
-        'path': path,
-        'name': name,
-        'alias': alias,
-        'registered_at': now,
-        'updated_at': now,
-        'last_accessed': None,
-        'has_loki_dir': os.path.isdir(os.path.join(path, '.loki')),
-        'status': 'active',
-    }
-    print(f'Registered: {name}')
-
-data['projects'] = projects
-with open(registry_file, 'w') as f:
-    json.dump(data, f, indent=2)
+    # Fallback: atomic temp-file write (no truncating open) if registry.py
+    # is unavailable. Mirrors register_project semantics (sha256 id).
+    project_id = hashlib.sha256(path.encode()).hexdigest()[:12]
+    try:
+        with open(registry_file, 'r') as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {'version': '1.0', 'projects': {}}
+    projects = data.get('projects', {})
+    now = datetime.now(timezone.utc).isoformat()
+    if project_id in projects:
+        projects[project_id]['name'] = name
+        if alias:
+            projects[project_id]['alias'] = alias
+        projects[project_id]['updated_at'] = now
+        print(f'Updated: {name}')
+    else:
+        projects[project_id] = {
+            'id': project_id,
+            'path': path,
+            'name': name,
+            'alias': alias,
+            'registered_at': now,
+            'updated_at': now,
+            'last_accessed': None,
+            'has_loki_dir': os.path.isdir(os.path.join(path, '.loki')),
+            'status': 'active',
+        }
+        print(f'Registered: {name}')
+    data['projects'] = projects
+    reg_dir = os.path.dirname(registry_file) or '.'
+    os.makedirs(reg_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=reg_dir, prefix='.projects.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, registry_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 print(f'  Path: {path}')
 if alias:
@@ -19958,34 +19990,69 @@ if alias:
                 exit 1
             fi
 
-            _REGISTRY_FILE="$registry_file" _IDENTIFIER="$identifier" python3 -c "
+            # Route through registry.unregister_project so the delete is
+            # serialized + atomic. Look the name up first to preserve the
+            # "Removed: {name}" output. Falls back to an atomic temp-file write
+            # if registry.py cannot be imported (never a truncating open).
+            _REGISTRY_FILE="$registry_file" _IDENTIFIER="$identifier" \
+            _REGISTRY_SKILL="${SKILL_DIR:-$_LOKI_SCRIPT_DIR/..}" python3 -c "
 import json
 import os
+import sys
+import tempfile
 
 registry_file = os.environ['_REGISTRY_FILE']
 identifier = os.environ['_IDENTIFIER']
 
-with open(registry_file, 'r') as f:
-    data = json.load(f)
+sys.path.insert(0, os.environ.get('_REGISTRY_SKILL', '.'))
+try:
+    from dashboard import registry
+except Exception:
+    registry = None
 
-projects = data.get('projects', {})
-found_id = None
-
-for pid, project in projects.items():
-    if pid == identifier or project['path'] == identifier or project.get('alias') == identifier:
-        found_id = pid
-        break
-
-if found_id:
-    name = projects[found_id]['name']
-    del projects[found_id]
-    data['projects'] = projects
-    with open(registry_file, 'w') as f:
-        json.dump(data, f, indent=2)
-    print(f'Removed: {name}')
+if registry is not None:
+    existing = registry.get_project(identifier)
+    if existing and registry.unregister_project(identifier):
+        print('Removed: ' + existing['name'])
+    else:
+        print(f'Not found: {identifier}')
+        sys.exit(1)
 else:
-    print(f'Not found: {identifier}')
-    exit(1)
+    # Fallback: atomic temp-file write if registry.py is unavailable.
+    try:
+        with open(registry_file, 'r') as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {'version': '1.0', 'projects': {}}
+    projects = data.get('projects', {})
+    found_id = None
+    for pid, project in projects.items():
+        if pid == identifier or project['path'] == identifier or project.get('alias') == identifier:
+            found_id = pid
+            break
+    if found_id:
+        name = projects[found_id]['name']
+        del projects[found_id]
+        data['projects'] = projects
+        reg_dir = os.path.dirname(registry_file) or '.'
+        os.makedirs(reg_dir, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=reg_dir, prefix='.projects.', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, registry_file)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        print(f'Removed: {name}')
+    else:
+        print(f'Not found: {identifier}')
+        sys.exit(1)
 "
             ;;
 
@@ -20051,87 +20118,119 @@ else:
             echo -e "${BOLD}Syncing Project Registry${NC}"
             echo ""
 
-            python3 -c "
+            # Route through registry.sync_registry_with_discovery so the
+            # discover->merge->save is serialized + atomic and uses the same
+            # sha256 ids as the rest of the registry. Reproduce the prior
+            # stdout (per-project "Added:" lines + summary) from its return
+            # value. Falls back to an atomic temp-file write if registry.py
+            # cannot be imported (never a truncating open).
+            _REGISTRY_FILE="$registry_file" \
+            _REGISTRY_SKILL="${SKILL_DIR:-$_LOKI_SCRIPT_DIR/..}" python3 -c "
 import json
 import os
+import sys
 import hashlib
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
-registry_file = '$registry_file'
-home = Path.home()
+registry_file = os.environ['_REGISTRY_FILE']
 
-# Load registry
-with open(registry_file, 'r') as f:
-    data = json.load(f)
-projects = data.get('projects', {})
+sys.path.insert(0, os.environ.get('_REGISTRY_SKILL', '.'))
+try:
+    from dashboard import registry
+except Exception:
+    registry = None
 
-# Discover projects
-search_paths = [
-    home / 'git',
-    home / 'projects',
-    home / 'code',
-    home / 'dev',
-    home / 'workspace',
-    home / 'src',
-]
-
-discovered = []
-
-def search_dir(path, depth=0, max_depth=3):
-    if depth > max_depth:
-        return
+if registry is not None:
+    result = registry.sync_registry_with_discovery()
+    for project in result['details']['added']:
+        print(f\"  Added: {project['name']}\")
+    print('')
+    print(f\"Added: {result['added']}, Missing: {result['missing']}, Total: {result['total']}\")
+else:
+    # Fallback: atomic temp-file write if registry.py is unavailable.
+    home = Path.home()
     try:
-        if not path.is_dir():
+        with open(registry_file, 'r') as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {'version': '1.0', 'projects': {}}
+    projects = data.get('projects', {})
+    search_paths = [
+        home / 'git',
+        home / 'projects',
+        home / 'code',
+        home / 'dev',
+        home / 'workspace',
+        home / 'src',
+    ]
+    discovered = []
+
+    def search_dir(path, depth=0, max_depth=3):
+        if depth > max_depth:
             return
-        loki_dir = path / '.loki'
-        if loki_dir.is_dir():
-            discovered.append(str(path))
-            return
-        for child in path.iterdir():
-            if child.is_dir() and not child.name.startswith('.'):
-                search_dir(child, depth + 1, max_depth)
-    except (PermissionError, OSError):
-        pass
+        try:
+            if not path.is_dir():
+                return
+            loki_dir = path / '.loki'
+            if loki_dir.is_dir():
+                discovered.append(str(path))
+                return
+            for child in path.iterdir():
+                if child.is_dir() and not child.name.startswith('.'):
+                    search_dir(child, depth + 1, max_depth)
+        except (PermissionError, OSError):
+            pass
 
-for search_path in search_paths:
-    if search_path.exists():
-        search_dir(search_path)
+    for search_path in search_paths:
+        if search_path.exists():
+            search_dir(search_path)
 
-# Add new projects
-added = 0
-now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for path in discovered:
+        project_id = hashlib.sha256(path.encode()).hexdigest()[:12]
+        if project_id not in projects:
+            projects[project_id] = {
+                'id': project_id,
+                'path': path,
+                'name': os.path.basename(path),
+                'alias': None,
+                'registered_at': now,
+                'updated_at': now,
+                'last_accessed': None,
+                'has_loki_dir': True,
+                'status': 'active',
+            }
+            added += 1
+            print(f'  Added: {os.path.basename(path)}')
 
-for path in discovered:
-    project_id = hashlib.md5(path.encode()).hexdigest()[:12]
-    if project_id not in projects:
-        projects[project_id] = {
-            'id': project_id,
-            'path': path,
-            'name': os.path.basename(path),
-            'alias': None,
-            'registered_at': now,
-            'updated_at': now,
-            'last_accessed': None,
-            'has_loki_dir': True,
-            'status': 'active',
-        }
-        added += 1
-        print(f'  Added: {os.path.basename(path)}')
+    missing = 0
+    for pid, project in list(projects.items()):
+        if not os.path.isdir(project['path']):
+            project['status'] = 'missing'
+            missing += 1
 
-# Check for missing
-missing = 0
-for pid, project in list(projects.items()):
-    if not os.path.isdir(project['path']):
-        project['status'] = 'missing'
-        missing += 1
+    data['projects'] = projects
+    reg_dir = os.path.dirname(registry_file) or '.'
+    os.makedirs(reg_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=reg_dir, prefix='.projects.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, registry_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
-data['projects'] = projects
-with open(registry_file, 'w') as f:
-    json.dump(data, f, indent=2)
-
-print('')
-print(f'Added: {added}, Missing: {missing}, Total: {len(projects)}')
+    print('')
+    print(f'Added: {added}, Missing: {missing}, Total: {len(projects)}')
 " 2>/dev/null
             ;;
 
@@ -22546,11 +22645,18 @@ _context_add() {
         local loki_dir="${LOKI_DIR:-.loki}"
         mkdir -p "$loki_dir/state"
         local ctx_files="$loki_dir/state/context-files.json"
-        python3 -c "
+        # Pass values via env vars (not string interpolation) so a filename
+        # with an apostrophe or other special char cannot break the python
+        # source (was a swallowed SyntaxError -> set -e abort -> file silently
+        # not added). Matches the safe pattern used by the registry commands.
+        _CTX_PATH="$file_path" _CTX_TOKENS="$est_tokens" _CTX_SIZE="$size" \
+        _CTX_LINES="$lines" _CTX_FILE="$ctx_files" python3 -c "
 import json, os
-path = '$file_path'
-tokens = $est_tokens
-ctx_file = '$ctx_files'
+path = os.environ['_CTX_PATH']
+tokens = int(os.environ['_CTX_TOKENS'])
+ctx_file = os.environ['_CTX_FILE']
+size = int(os.environ['_CTX_SIZE'])
+lines = int(os.environ['_CTX_LINES'])
 try:
     with open(ctx_file) as f:
         files = json.load(f)
@@ -22558,7 +22664,7 @@ except:
     files = []
 # Avoid duplicates
 files = [f for f in files if f.get('path') != path]
-files.append({'path': path, 'estimated_tokens': tokens, 'size': $size, 'lines': $lines})
+files.append({'path': path, 'estimated_tokens': tokens, 'size': size, 'lines': lines})
 with open(ctx_file, 'w') as f:
     json.dump(files, f, indent=2)
 " 2>/dev/null
@@ -29753,7 +29859,7 @@ cmd_docker() {
     local -a fwd=()
     while [ $# -gt 0 ]; do
         case "$1" in
-            --image) shift; export LOKI_DOCKER_IMAGE="${1:-}"; shift ;;
+            --image) [ $# -ge 2 ] && { shift; export LOKI_DOCKER_IMAGE="$1"; } || { echo "loki docker --image requires a value" >&2; return 1; }; shift ;;
             --dry-run) dry_run=1; shift ;;
             --api) with_api=1; fwd+=("$1"); shift ;;
             *) fwd+=("$1"); shift ;;

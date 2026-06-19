@@ -10,7 +10,18 @@
 // Closest existing precedent: `councilEvaluate` in council.ts:373 (3-voter
 // pattern). The override-on-REJECT direction is new architecture.
 //
-// Default off: only fires when LOKI_OVERRIDE_COUNCIL=1.
+// Default ON: the live bash route (run.sh, LOKI_OVERRIDE_COUNCIL:-1) runs the
+// override council whenever a .loki/state/counter-evidence-<iter>.json file is
+// present for the iteration. Set LOKI_OVERRIDE_COUNCIL=0 to disable.
+//
+// WAVE13 trust fix: the counter-evidence file is authored by the GATED AGENT
+// itself, so on the bash route the stub judge in commands/internal_phase1.ts
+// fails CLOSED -- it auto-approves nothing and a Critical/High code_review
+// BLOCK is never lifted by self-supplied evidence. counter-evidence is still
+// recorded here for audit, but it does not self-lift a trust-gate block. The
+// only adjudicated override that may legitimately lift a BLOCK is the Bun-route
+// real-LLM judge (quality_gates.ts maybeRunOverrideCouncil), which uses an
+// adjudicator the agent does not control.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

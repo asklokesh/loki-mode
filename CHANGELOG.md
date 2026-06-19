@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.74.0] - 2026-06-18
+
+### Trust-gate hardening (completion + override + registry)
+
+A deep-hunt wave found and fixed trust-surface defects on the live `loki start` path.
+
+- Override council fail-closed: the agent-authored counter-evidence override (the
+  stub route reached by `loki start`) previously lifted a real Critical/High
+  code_review BLOCK when the gated agent supplied a trusted proofType plus any
+  artifact string. Because the gated agent authors the counter-evidence file
+  itself, this was self-certification: a trust gate the gated party can bypass is
+  not a gate. The stub route now lifts NOTHING. A code_review BLOCK is cleared only
+  by the operator (review and fix, or the human-escape path), or by the real
+  multi-judge override council (an adjudicator the agent does not control), which
+  is unchanged. Escalation and docs re-framed to stop promising that self-supplied
+  counter-evidence lifts a block.
+- Completion-council quorum fix: the live multi-agent vote computed its quorum
+  denominator from the number of findings the model returned, not the expected
+  council size, so a degraded response with a single APPROVE could declare a run
+  COMPLETE and silently skip the anti-sycophancy devil's-advocate. The quorum is
+  now computed against the expected council size with an exact-quorum assertion;
+  a partial or malformed response fails closed (never COMPLETE).
+- Project registry corruption fix: `loki projects add|remove|sync` now go through
+  the locked, atomic registry API (matching the v7.45.1 hardening) instead of an
+  unlocked truncating write that could lose updates or expose a partial file to a
+  concurrent reader.
+- Smaller fixes in the CLI: honest errors instead of silent set -e aborts when a
+  value flag is the last argument (`loki docker --image`, `loki watch --interval`
+  / `--debounce`), and `loki context add` no longer crashes on filenames with an
+  apostrophe.
+
 ## [7.73.0] - 2026-06-18
 
 ### Feature-branch by default + advisory PR (enterprise-ready git flow)

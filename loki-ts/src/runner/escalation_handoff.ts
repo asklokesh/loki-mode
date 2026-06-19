@@ -91,12 +91,13 @@ export function renderHandoff(
 
   lines.push("## What the human must decide");
   lines.push("");
-  lines.push("- Approve override? Write `.loki/state/counter-evidence-<iter>.json` with one entry per finding to dispute, then `rm .loki/PAUSE` to resume.");
+  lines.push("- Fix the finding? Address it in the code, then `rm .loki/PAUSE` to resume. A code_review BLOCK is NOT lifted by self-supplied counter-evidence -- the gated agent authors that file, so it cannot self-certify a trust-gate finding away.");
+  lines.push("- Override after your own review? You (the operator) are the escape path: review the finding and, if you accept it, `rm .loki/PAUSE` to resume. To direct the agent on resume, `echo \"instructions\" > .loki/HUMAN_INPUT.md` first.");
   lines.push("- Disable a gate? Set `LOKI_GATE_<NAME>=false` in env (see skills/quality-gates.md).");
   lines.push("- Tweak escalation? Set `LOKI_GATE_PAUSE_LIMIT` or `LOKI_GATE_ESCALATE_LIMIT`.");
   lines.push("- Roll back? Switch to `LOKI_LEGACY_BASH=1` and re-run; the bash route does not consult this handoff doc.");
   lines.push("");
-  lines.push("To resume: address the findings (or supply counter-evidence) and `rm .loki/PAUSE`.");
+  lines.push("To resume: fix the findings (or, after your own review, accept them), then `rm .loki/PAUSE`.");
 
   return lines.join("\n");
 }

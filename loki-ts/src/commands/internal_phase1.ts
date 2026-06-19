@@ -22,7 +22,7 @@
 //   loki internal phase1-hooks handoff <gate-name> <consecutive-failures> <iter>
 //      Write the structured handoff doc before bash writes .loki/PAUSE.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { lokiDir } from "../util/paths.ts";
@@ -146,6 +146,38 @@ async function runReflect(argv: readonly string[]): Promise<number> {
   }
 }
 
+// WAVE13 trust fix -- the agent-authored stub route fails CLOSED.
+//
+// Root cause: this bash-route override hook (loki internal phase1-hooks
+// override) ran a synchronous "stub judge" that could lift a Critical/High
+// code_review BLOCK on counter-evidence the GATED AGENT WROTE ITSELF.
+// escalation_handoff used to tell the agent: "Write
+// .loki/state/counter-evidence-<iter>.json". The same actor that disputes a
+// finding also supplies the "proof", so every mechanically-checkable proofType
+// is forgeable by construction: file-exists -> touch any file; grep-miss ->
+// write an empty file; test-passes -> write "0 failed". Mechanical verification
+// of self-authored artifacts is not verification, and an earlier WAVE13 attempt
+// that "verified each artifact on disk" did NOT close the hole -- the same
+// party controls the disk. A trust gate the gated party can bypass is not a
+// gate.
+//
+// Fix: on this agent-authored stub route the stub judge auto-approves NOTHING.
+// Every counter-evidence record returns REJECT_OVERRIDE, so a Critical/High
+// code_review BLOCK is never lifted by self-certification. The legitimate ways
+// forward are (a) fix the finding, or (b) the human-escape path -- the operator
+// reviews and resumes via `rm .loki/PAUSE` (optionally directing the agent with
+// `.loki/HUMAN_INPUT.md`), both confirmed in autonomy/run.sh.
+//
+// The only adjudicated override that may legitimately lift a BLOCK is the
+// Bun-route real-LLM judge (quality_gates.ts maybeRunOverrideCouncil), which
+// uses an adjudicator the agent does not control; that path is unchanged here.
+// counter-evidence on this bash route is still recorded for audit (transcript
+// written below) but never self-lifts.
+//
+// The stub stays synchronous (no grep subprocess, no test runner, no network)
+// to preserve the no-hung-provider property of the bash-driven loop, and the
+// collision-guard in runOverrideCouncil is preserved.
+
 async function runOverride(argv: readonly string[]): Promise<number> {
   const iter = parseIter(argv[0]);
   if (iter === null) {
@@ -170,41 +202,29 @@ async function runOverride(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
-    // Always use the stub-judge path here -- bash invokes this hook
-    // synchronously between iterations, and a hung provider call would
-    // wedge the autonomous loop. Real provider judges run inside the
-    // Bun route's runCodeReview where the loop already tolerates async.
-    const TRUSTED = new Set([
-      "duplicate-code-path",
-      "file-exists",
-      "test-passes",
-      "grep-miss",
-      "out-of-scope",
-    ]);
+    // Agent-authored stub route -- FAIL CLOSED. Bash invokes this hook
+    // synchronously between iterations, and a hung provider call would wedge the
+    // autonomous loop, so no real adjudicator runs here. Critically, the gated
+    // agent both DISPUTES the finding and WRITES the counter-evidence file, so
+    // any "proof" on disk is self-supplied and forgeable. Self-certification can
+    // never lift a Critical/High trust-gate BLOCK: this stub auto-approves
+    // NOTHING -- every record returns REJECT_OVERRIDE (the safe direction). The
+    // legitimate adjudicated override is the Bun-route real-LLM judge
+    // (quality_gates.ts maybeRunOverrideCouncil), which the agent does not
+    // control; to proceed on this route the operator must fix the finding or use
+    // the human-escape path (rm .loki/PAUSE, optionally .loki/HUMAN_INPUT.md).
     const stubJudge = async (input: {
       finding: import("../runner/findings_injector.ts").Finding;
       evidence: import("../runner/counter_evidence.ts").CounterEvidence;
       judge: string;
     }) => {
-      // A trusted proofType is only mechanically falsifiable if it actually
-      // carries an artifact to check (a file path to grep, test output, a
-      // scope rule). Counter-evidence with a trusted proofType but no
-      // non-empty artifact is an unverifiable claim, so approving it would
-      // lift a BLOCK with zero verification (the unsafe, toward-approve
-      // direction on a trust gate). Require >=1 non-empty artifact; otherwise
-      // fail-safe to REJECT_OVERRIDE and keep the BLOCK.
-      const hasArtifact = input.evidence.artifacts.some(
-        (a) => a.trim().length > 0,
-      );
-      const trusted = TRUSTED.has(input.evidence.proofType) && hasArtifact;
       return {
         judge: input.judge,
-        verdict: trusted ? ("APPROVE_OVERRIDE" as const) : ("REJECT_OVERRIDE" as const),
-        reasoning: trusted
-          ? `[stub] proofType=${input.evidence.proofType} trusted with artifact`
-          : !hasArtifact && TRUSTED.has(input.evidence.proofType)
-            ? `[stub] proofType=${input.evidence.proofType} trusted but no artifact supplied`
-            : `[stub] proofType=${input.evidence.proofType} requires manual review`,
+        verdict: "REJECT_OVERRIDE" as const,
+        reasoning:
+          `[stub] proofType=${input.evidence.proofType}: self-supplied counter-evidence cannot lift a trust-gate BLOCK on the agent-authored route. ` +
+          `Fix the finding, or use the human-escape path (rm .loki/PAUSE; optionally .loki/HUMAN_INPUT.md). ` +
+          `The only adjudicated override is the Bun-route real-LLM judge.`,
       };
     };
 
