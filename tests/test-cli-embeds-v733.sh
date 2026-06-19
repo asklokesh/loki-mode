@@ -314,14 +314,10 @@ else
   bad "EMBED3: reviewer site guard wiring" "block did not show guard helper"
 fi
 
-# Adversarial site (run_adversarial_testing, ~8019) appends --bare AND the guard.
-adv_block=$(awk '/Adversarial probe subcall/{f=1} f{print} /-p "\$adversarial_prompt"/{if(f)exit}' "$RUN_SH")
-if printf '%s' "$adv_block" | grep -q '_adv_argv+=("--bare")' \
-   && printf '%s' "$adv_block" | grep -q 'loki_review_guard_denylist'; then
-  ok "EMBED2+3: adversarial site appends --bare + --disallowedTools"
-else
-  bad "EMBED2+3: adversarial site wiring" "block did not show both"
-fi
+# NOTE: the standalone adversarial probe subcall lived inside run.sh's
+# run_adversarial_testing(), removed as dead code (zero callers) in v7.78.0. There
+# is no live adversarial site to assert; the reviewer-council site above and the
+# USAGE-regen site below remain the live --bare/guard embed sites.
 
 # USAGE-regen site (_intelligent_usage_regen, ~10046) appends --bare, NOT guard.
 usage_block=$(awk '/USAGE.md-regen prompt/{f=1} f{print} /claude "\$\{_ic_argv\[@\]\}" -p -/{if(f)exit}' "$RUN_SH")

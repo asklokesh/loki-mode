@@ -7,10 +7,12 @@
 //   run_doc_staleness_check()    autonomy/run.sh:5852
 //   run_doc_quality_gate()       autonomy/run.sh:5884
 //   run_magic_debate_gate()      autonomy/run.sh:5941
-//   track_gate_failure()         autonomy/run.sh:5639
-//   clear_gate_failure()         autonomy/run.sh:5660
-//   get_gate_failure_count()     autonomy/run.sh:5680
-//   gate orchestration block     autonomy/run.sh:10848-10963
+//   track_gate_failure()         autonomy/run.sh
+//   clear_gate_failure()         autonomy/run.sh
+//   gate orchestration block     autonomy/run.sh
+// (The bash get_gate_failure_count() read accessor was removed as dead code in
+//  v7.78.0; the live count is tracked by track/clear_gate_failure. This TS
+//  getCount() remains the canonical read view.)
 //
 // Escalation ladder (autonomy/run.sh:725-727 and :10894-10921, code_review only
 // in bash today; this module applies the ladder uniformly to every gate so the
@@ -202,7 +204,8 @@ export function clearGateFailure(name: string, lokiDirOverride?: string): void {
   });
 }
 
-// Read-only view of the current count. Mirror of bash get_gate_failure_count().
+// Read-only view of the current count. (The bash get_gate_failure_count mirror
+// was removed as dead code in v7.78.0; this is now the canonical read accessor.)
 export function getGateFailureCount(name: string, lokiDirOverride?: string): number {
   const counts = readCounts(resolveBase(lokiDirOverride));
   return counts[name] ?? 0;

@@ -135,15 +135,14 @@ test_run_sh_contains_guard() {
     else
         bad "run.sh missing LOKI_MONOREPO_TEST_CMD whitelist guard"
     fi
-    if grep -q "sed -e 's/\[\\\\\\\\&|/\]/\\\\\\\\&/g'" "$RUN_SH"; then
-        ok "run.sh contains sed-escape for project_name/project_path"
+    # The live dashboard-state writer (write_dashboard_state) sed-escapes the
+    # project name + path before embedding them in JSON. (The old generate_dashboard
+    # helper that used *_sed locals was removed as dead code in v7.78.0; the live
+    # escape uses project_name_escaped / project_path_escaped.)
+    if grep -q 'project_name_escaped' "$RUN_SH" && grep -q 'project_path_escaped' "$RUN_SH"; then
+        ok "run.sh contains sed-escape locals for project_name/project_path"
     else
-        # Looser fallback check (handles shell-escape twists across platforms)
-        if grep -q 'project_name_sed' "$RUN_SH" && grep -q 'project_path_sed' "$RUN_SH"; then
-            ok "run.sh contains project_name_sed/project_path_sed escape locals"
-        else
-            bad "run.sh missing sed-escape for project_name/project_path"
-        fi
+        bad "run.sh missing sed-escape for project_name/project_path"
     fi
 }
 

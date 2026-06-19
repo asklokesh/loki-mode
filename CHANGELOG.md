@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.78.0] - 2026-06-19
+
+### Dead-code removal + ALLOWED_PATHS honesty
+
+Cleanup release. No behavior change for any live path.
+
+- Removed 18 orphan bash functions from autonomy/run.sh (~946 lines), each proven
+  to have zero callers across the whole repo including dynamic dispatch
+  (eval / `type fn && fn` from autonomy/loki / traps / export -f / hook patterns)
+  and the bash<->Bun parity mirrors. Removed: the unused notify_task_* /
+  notify_phase_complete / notify_all_complete wrappers (the live helpers are
+  notify_intervention_needed / notify_rate_limit), spawn_feature_stream,
+  load_learnings_context, set_phase, save_learning, get_gate_failure_count,
+  generate_dashboard (the largest dead block, ~431 lines; the CLI uses
+  cmd_dashboard / server.py), list_checkpoints + rollback_to_checkpoint (the live
+  path is the cmd_rollback CLI), get_phase_names, get_complexity_phases,
+  enrich_from_knowledge_graph, store_to_knowledge_graph, and run_adversarial_testing.
+  Functions that LOOK orphan but are reachable (export_tasks_to_github via the
+  loki dispatch, check_command_allowed for external sandbox/hook callers) were
+  kept.
+- ALLOWED_PATHS honesty: LOKI_ALLOWED_PATHS was documented as a path-restriction
+  security control but the value was read from config and never enforced by any
+  runtime check. The docs/comments now state plainly that it is reserved and NOT
+  enforced (agent writes are constrained by the OS user + container sandbox, not
+  by this var), so no one relies on a control that does not exist. Wiring real
+  enforcement is deferred to a dedicated, tested feature. (The sibling
+  check_command_allowed / BLOCKED_COMMANDS helper is defined but, like
+  ALLOWED_PATHS, is not invoked by the live run.sh loop today; it is retained for
+  external callers such as sandbox.sh / hooks. Both are unchanged here.)
+- Reconciled stale references to the removed functions in loki-ts comments
+  (quality_gates.ts, checkpoint.ts), two bash tests, and NOTIFY_INTEGRATION.md.
+
+local-ci 85/0. Full bash + memory + dashboard + loki-ts test sweep green.
+
 ## [7.77.0] - 2026-06-19
 
 ### WAVE13-TAIL hardening: council timeout, /lab auth, memory + durability

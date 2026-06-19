@@ -2,6 +2,15 @@
 
 This document describes how to integrate multi-channel notifications (Slack, Discord, Webhook) into run.sh.
 
+> Note (v7.78.0): the convenience wrappers `notify_task_started`,
+> `notify_task_completed`, `notify_task_failed`, `notify_phase_complete`, and
+> `notify_all_complete` were never wired into the runtime and were removed as dead
+> code. The live notification helpers are `notify_intervention_needed` and
+> `notify_rate_limit` (plus the `notify_channels` snippets shown below). Snippets
+> in this guide that reference the removed wrappers are illustrative of where a
+> notification COULD be emitted; use `notify_channels` (or the live helpers) when
+> actually wiring one.
+
 ## Quick Start
 
 ```bash

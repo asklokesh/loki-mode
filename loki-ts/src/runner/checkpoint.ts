@@ -1,6 +1,8 @@
 // Checkpoint subsystem -- byte-identical port of bash create_checkpoint().
-// Source of truth: autonomy/run.sh:6899-6997 (create_checkpoint),
-// autonomy/run.sh:6999-7052 (rollback_to_checkpoint),
+// Source of truth: autonomy/run.sh create_checkpoint(). Rollback on the bash
+// route is the CLI cmd_rollback in autonomy/loki (the standalone bash
+// rollback_to_checkpoint/list_checkpoints helpers in run.sh were removed as dead
+// code in v7.78.0; cmd_rollback is the live path).
 // spec: loki-ts/docs/phase4-research/checkpoint_budget.md sections 1-5.
 //
 // On-disk layout (must match bash exactly):
@@ -35,7 +37,7 @@ import { run } from "../util/shell.ts";
 import { withFileLockSync } from "../util/atomic.ts";
 
 // Schema mirrors metadata.json exactly. Field names and types are load-bearing
-// (consumed by rollback_to_checkpoint and the dashboard). Do not rename.
+// (consumed by the rollback CLI path and the dashboard). Do not rename.
 export type CheckpointMetadata = {
   id: string;
   timestamp: string;
@@ -681,8 +683,8 @@ export function executeRollback(plan: RollbackPlan): { restored: number; errors:
 
 // R6 re-undoability invariant: every user-facing rollback must first capture a
 // forced pre-rollback snapshot of the CURRENT state, so the rollback is itself
-// trivially undoable. The bash `rollback_to_checkpoint` does this via
-// create_checkpoint("pre-rollback snapshot", "rollback"); the Bun CLI previously
+// trivially undoable. The bash rollback CLI path (cmd_rollback in autonomy/loki)
+// does this via create_checkpoint("pre-rollback snapshot", "rollback"); the Bun CLI previously
 // did NOT (executePlan called executeRollback directly). This wrapper closes that
 // gap. forceCreate is used because the working tree may be clean (no uncommitted
 // changes) yet the .loki/ state we are about to overwrite still needs preserving.
