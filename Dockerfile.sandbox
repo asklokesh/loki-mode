@@ -99,8 +99,8 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.80.1"
-LABEL org.opencontainers.image.version="7.80.1"
+LABEL version="7.81.0"
+LABEL org.opencontainers.image.version="7.81.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
@@ -243,7 +243,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     -r mcp/requirements.txt
 
 # Make scripts executable
-RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki 2>/dev/null || true \
+RUN chmod +x autonomy/run.sh autonomy/loki autonomy/sandbox.sh autonomy/serve.sh autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh autonomy/queue-consumer.sh bin/loki 2>/dev/null || true \
     && chmod +x providers/*.sh 2>/dev/null || true
 
 # Create necessary directories with proper permissions

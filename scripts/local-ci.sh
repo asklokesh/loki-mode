@@ -459,6 +459,9 @@ run_check "tests/test-stop-scoping.sh (stop scoping + per-project stop)" "bash t
 # break from A6 went green locally and red in CI. Mirror them so local-ci is a
 # true pre-push gate for this class.
 run_check "tests/test-state-baseline-lifecycle.sh (run 2+ baseline freshness)" "bash tests/test-state-baseline-lifecycle.sh 2>&1 | tail -3"
+run_check "tests/test-checkpoint-worktree-bundle-sync.py (V2 refs/loki/cp bundle sync)" "python3 tests/test-checkpoint-worktree-bundle-sync.py 2>&1 | tail -3"
+run_check "tests/test-allowed-paths-sandbox-mount.sh (V3 sandbox workspace fail-closed)" "bash tests/test-allowed-paths-sandbox-mount.sh 2>&1 | tail -3"
+run_check "tests/test-queue-consumer.sh (V5 redis/file consumer + flag-injection guard)" "bash tests/test-queue-consumer.sh 2>&1 | tail -3"
 run_check "tests/test-loki-why.sh (B5 failure/outcome diagnosis)" "bash tests/test-loki-why.sh 2>&1 | tail -3"
 run_check "tests/test-bench-honest-degrade.sh (L4 packaged-install bench UX)" "bash tests/test-bench-honest-degrade.sh 2>&1 | tail -3"
 

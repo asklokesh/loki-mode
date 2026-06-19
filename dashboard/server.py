@@ -3316,6 +3316,224 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
     }
 
 
+def _recover_spec_source(path: str) -> Optional[_Path]:
+    """Find a re-launchable spec source inside a registry-stored project path.
+
+    Retry re-runs `loki start` from a project's own working directory, so the
+    spec must already live there. This never accepts a caller-supplied path: the
+    project path comes from the registry and only well-known in-tree locations
+    are probed. Returns the first existing spec as an absolute Path, or None when
+    nothing re-launchable is found (the caller then refuses honestly rather than
+    spawning a run that would no-op).
+
+    Probe order (highest fidelity first):
+      1. A hand-authored PRD in the project root or docs/ (PRD.md, prd.md,
+         docs/PRD.md, docs/prd.md) -- the same set check_project_health uses.
+      2. A previously generated PRD (.loki/generated-prd.md / .json) written by
+         a prior no-PRD codebase-analysis run.
+      3. The most recent dashboard inline spec (.loki/specs/*.md) written by the
+         browser PRD-input flow.
+    """
+    if not path:
+        return None
+    try:
+        base = _Path(path)
+    except (TypeError, ValueError):
+        return None
+    if not base.is_dir():
+        return None
+
+    # 1. Hand-authored PRD.
+    for rel in ("PRD.md", "prd.md", "docs/PRD.md", "docs/prd.md"):
+        candidate = base / rel
+        if candidate.is_file():
+            return candidate.resolve()
+
+    loki_dir = base / ".loki"
+
+    # 2. Previously generated PRD.
+    for rel in ("generated-prd.md", "generated-prd.json"):
+        candidate = loki_dir / rel
+        if candidate.is_file():
+            return candidate.resolve()
+
+    # 3. Most recent dashboard inline spec.
+    specs_dir = loki_dir / "specs"
+    if specs_dir.is_dir():
+        try:
+            specs = sorted(
+                (s for s in specs_dir.glob("*.md") if s.is_file()),
+                key=lambda s: s.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            specs = []
+        if specs:
+            return specs[0].resolve()
+
+    return None
+
+
+@app.post(
+    "/api/fleet/runs/{identifier}/retry",
+    dependencies=[Depends(auth.require_scope("control"))],
+)
+async def retry_fleet_run(request: Request, identifier: str):
+    """Re-launch ONE finished/failed build in the fleet view.
+
+    Resolves the run via the registry (by id / path / alias), exactly like
+    cancel_fleet_run, so the caller identifier is NEVER treated as a filesystem
+    path. Retry re-runs `loki start` (via run.sh) from the project's own stored
+    working directory against a spec source recovered from that directory.
+
+    Guards:
+      - Refuses with 409 if the project is currently running (live pid probe or a
+        fresh session.json), so a retry never double-launches an active build.
+      - Refuses with 409 if no re-launchable spec source exists in the project
+        directory (an honest refusal: retry needs the original spec or working
+        dir; we do not fabricate a launch that would no-op).
+
+    On success the runner re-registers the project as running with its own pid
+    (loki_register_running_project in run.sh); we also flip the registry status
+    to running immediately so the fleet view reflects the relaunch without
+    waiting for the runner's first registry write.
+    """
+    if not _control_limiter.check("control"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    project = registry.get_project(identifier)
+    if not project:
+        raise HTTPException(status_code=404, detail="Run not found in fleet")
+
+    project_id = project.get("id")
+    audit.log_event(
+        action="retry",
+        resource_type="fleet_run",
+        details={"source": "api", "project_id": project_id},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    # Only ever operate on the registry-stored path (never the identifier).
+    path = project.get("path", "")
+    if not path:
+        raise HTTPException(
+            status_code=409,
+            detail="Project has no recorded working directory; retry needs the original working dir",
+        )
+    proj_dir = _Path(path)
+    if not proj_dir.is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project directory no longer exists: {path}",
+        )
+    proj_dir = proj_dir.resolve()
+    loki_dir = proj_dir / ".loki"
+
+    # Recover a re-launchable spec from the project's own directory FIRST (before
+    # the claim, so we can refuse honestly without holding the lock). Honest
+    # refusal when nothing usable is present (no fabricated no-op launch).
+    spec_file = await asyncio.to_thread(_recover_spec_source, str(proj_dir))
+    if spec_file is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No re-launchable spec found in the project directory. Retry "
+                "needs the original spec (PRD.md, .loki/generated-prd.md, or a "
+                "prior dashboard spec) or the original working dir."
+            ),
+        )
+
+    # Locate run.sh (same resolver start_build uses).
+    skill_dir = find_skill_dir()
+    run_sh = skill_dir / "autonomy" / "run.sh"
+    if not run_sh.exists():
+        raise HTTPException(status_code=500, detail=f"run.sh not found at {run_sh}")
+
+    # Atomic check-and-CLAIM (closes the double-launch TOCTOU). Two concurrent
+    # retry calls on the same stopped project must not both spawn. Under the
+    # registry lock we re-read the live entry, refuse if it is running (pid alive,
+    # the project's own session staleness window, or already "launching" -- a
+    # sibling that just claimed it), else stamp status="launching" + save. The
+    # lock + persisted "launching" marker make the window indivisible: the second
+    # caller sees "launching" and is refused before it can spawn.
+    _live_pid = project.get("pid")
+    if registry._pid_alive(_live_pid):
+        raise HTTPException(
+            status_code=409,
+            detail="Project is currently running; cancel it before retrying",
+        )
+    if loki_dir.is_dir() and _project_run_active(loki_dir) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A build is already running in this project",
+        )
+    with registry._registry_lock():
+        reg = registry._load_registry()
+        entry = reg.get("projects", {}).get(project_id)
+        if entry is not None:
+            cur_status = entry.get("status")
+            cur_pid = entry.get("pid")
+            if cur_status == "launching" or registry._pid_alive(cur_pid):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A retry for this project is already in progress",
+                )
+            entry["status"] = "launching"
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            registry._save_registry(reg)
+
+    # Re-launch from the project's own CWD, mirroring start_build's spawn.
+    args = [str(run_sh), "--bg", str(spec_file)]
+    try:
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(proj_dir),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        # Release the "launching" claim so a failed spawn does not wedge the
+        # project (else every future retry would be refused as in-progress).
+        try:
+            with registry._registry_lock():
+                reg = registry._load_registry()
+                entry = reg.get("projects", {}).get(project_id)
+                if entry is not None and entry.get("status") == "launching":
+                    entry["status"] = "stopped"
+                    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    registry._save_registry(reg)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to retry build: {e}")
+
+    # Flip the registry status to running immediately. The runner also
+    # re-registers with its own pid on startup, but updating here gives the
+    # fleet view an instant, accurate reflection of the relaunch. The
+    # load->mutate->save runs under the registry lock so it does not lost-update
+    # against the runner's concurrent re-registration.
+    try:
+        with registry._registry_lock():
+            reg = registry._load_registry()
+            if project_id in reg.get("projects", {}):
+                reg["projects"][project_id]["status"] = "running"
+                reg["projects"][project_id]["pid"] = process.pid
+                reg["projects"][project_id]["updated_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+                registry._save_registry(reg)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "retried": True,
+        "pid": process.pid,
+        "spec": str(spec_file),
+    }
+
+
 @app.post(
     "/api/fleet/runs/{identifier}/cancel",
     dependencies=[Depends(auth.require_scope("control"))],
@@ -3330,9 +3548,10 @@ async def cancel_fleet_run(request: Request, identifier: str):
     recorded orchestrator pid, group-kill + cwd-scoped reap as backstop, then
     mark the registry/session stopped.
 
-    Retry is intentionally NOT exposed: there is no clean cross-project
-    re-launch primitive in the registry path (the original spec source lives
-    only in each project's CWD). Retry is a documented follow-up.
+    Retry (re-launch) is exposed separately at
+    POST /api/fleet/runs/{identifier}/retry, which re-runs `loki start` from
+    the registry-stored project directory against a spec recovered from that
+    directory (refuses honestly when none exists).
     """
     if not _control_limiter.check("control"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")

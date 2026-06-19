@@ -1156,6 +1156,33 @@ start_sandbox() {
         log_info "  Seccomp:  enabled"
     fi
 
+    # A5+: workspace-mount allowlist enforcement (opt-in via LOKI_ALLOWED_PATHS).
+    #
+    # The workspace bind-mount below is where provider-driven agent file writes
+    # actually land (the agent writes inside /workspace, which is $PROJECT_DIR on
+    # the host). Unlike the custom --mount surface, this mount was previously
+    # always made writable regardless of LOKI_ALLOWED_PATHS, so an allowlist that
+    # did not include the project dir was silently ignored for the main write
+    # surface.
+    #
+    # When LOKI_ALLOWED_PATHS is set and the workspace itself is OUTSIDE the
+    # allowlist, fail closed: refuse to start rather than bind-mount it writable.
+    # This is genuinely enforceable because docker mount mode (rw vs ro) and which
+    # host paths get bound are decided HERE, before the container exists -- the
+    # kernel enforces the resulting mount, not a wrapper check. We refuse rather
+    # than auto-downgrade to :ro because a read-only workspace cannot be written
+    # by the agent at all and would silently produce a no-op build; refusing makes
+    # the misconfiguration visible. (Allowlisted extra paths are still mounted via
+    # the custom --mount surface above, which also enforces the allowlist.)
+    #
+    # When LOKI_ALLOWED_PATHS is empty (default), _sandbox_path_within_allowed
+    # returns 0 unconditionally, so this is byte-identical to prior behavior.
+    if ! _sandbox_path_within_allowed "$PROJECT_DIR"; then
+        log_error "Workspace is outside LOKI_ALLOWED_PATHS, refusing to mount it writable: $PROJECT_DIR"
+        log_error "  Add the project directory to LOKI_ALLOWED_PATHS, or unset LOKI_ALLOWED_PATHS to disable path enforcement."
+        return 1
+    fi
+
     # Mount project directory
     if [[ "$SANDBOX_READONLY" == "true" ]]; then
         docker_args+=("--volume" "$PROJECT_DIR:/workspace:ro")

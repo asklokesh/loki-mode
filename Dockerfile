@@ -6,12 +6,12 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.80.1"
+LABEL version="7.81.0"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="7.80.1"
+LABEL org.opencontainers.image.version="7.81.0"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
@@ -143,7 +143,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     -r mcp/requirements.txt
 
 # Make scripts executable
-RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh bin/loki
+RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh autonomy/queue-consumer.sh bin/loki
 
 # Set up symlinks for loki user. /usr/local/bin/loki points at the bin/loki
 # shim so ported commands route through Bun while unported commands fall

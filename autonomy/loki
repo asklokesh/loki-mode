@@ -1501,6 +1501,17 @@ cmd_start() {
             --config=*|--vars=*|--env-file=*)
                 shift
                 ;;
+            --)
+                # End-of-options: everything after is positional. Lets a caller
+                # pass an untrusted spec that might start with '-' safely, e.g.
+                # `loki start -- "$spec"` from the queue consumer, so a crafted
+                # work item can never be parsed as a flag.
+                shift
+                if [ -z "$positional_arg" ] && [ "$#" -ge 1 ]; then
+                    positional_arg="$1"
+                fi
+                break
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 exit 1

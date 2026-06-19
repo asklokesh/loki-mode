@@ -4,10 +4,11 @@ The default mode is "job" (a run-to-completion batch Job in job-worker.yaml); in
 that default this template renders nothing. This is the steady-throughput model:
 a persistent pod drains a work queue and runs a build per item.
 
-HONESTY: the chart does not run a queue, and the default loki image does not ship
-a queue-consumer entrypoint. Set queue.command to your consumer and run a queue.
-Replica count is managed by the worker.autoscaling HPA or the keda ScaledObject
-when either is enabled; otherwise it is the static worker.replicas.
+HONESTY: the chart does not run a queue (you must run Redis/SQS/etc yourself), but
+the default loki image now ships a reference redis/file queue-consumer
+(autonomy/queue-consumer.sh, the queue.command default); override it only for a
+different backend. Replica count is managed by the worker.autoscaling HPA or the
+keda ScaledObject when either is enabled; otherwise it is the static worker.replicas.
 */}}
 {{- if eq .Values.worker.mode "deployment" }}
 apiVersion: apps/v1
@@ -49,10 +50,11 @@ spec:
           image: {{ include "autonomi.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.queue.command }}
-          # Queue-draining consumer command. The default loki image does NOT ship
-          # one; supply queue.command (and a matching image if needed). With no
-          # command set, the container falls back to its image default, which is
-          # NOT a consumer -- this mode is not turnkey.
+          # Queue-draining consumer command. Defaults to the shipped reference
+          # consumer (autonomy/queue-consumer.sh) in LOOP mode: a long-running
+          # pod that pulls items and runs a build per item until SIGTERM. Override
+          # for a different queue backend. (One-shot mode is only for the
+          # serverless ScaledJob; this Deployment intentionally loops.)
           command:
             {{- toYaml . | nindent 12 }}
           {{- end }}

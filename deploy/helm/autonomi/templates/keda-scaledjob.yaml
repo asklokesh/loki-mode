@@ -7,8 +7,10 @@ not install the operator.
 
 HONESTY: needs a queue + KEDA, and each per-item Job inherits the same
 empty-/workspace caveat as the default Job (pre-seed the volume or use
-workspace.initClone). The per-item command defaults to queue.command; the default
-loki image does NOT ship a queue-consumer, so supply your own.
+workspace.initClone). The per-item command defaults to queue.command, which ships
+a reference redis/file consumer (autonomy/queue-consumer.sh); supply your own only
+for a different queue backend. This template forces it into one-shot mode so each
+Job processes exactly one item.
 */}}
 {{- if eq .Values.worker.mode "serverless" }}
 apiVersion: keda.sh/v1alpha1
@@ -52,8 +54,9 @@ spec:
             image: {{ include "autonomi.image" . }}
             imagePullPolicy: {{ .Values.image.pullPolicy }}
             {{- with .Values.queue.command }}
-            # Per-item consumer command. The default loki image does NOT ship a
-            # queue-consumer; supply queue.command (and a matching image if needed).
+            # Per-item consumer command. The default loki image ships a reference
+            # redis/file queue-consumer (autonomy/queue-consumer.sh, the
+            # queue.command default); override for a different backend or image.
             command:
               {{- toYaml . | nindent 14 }}
             {{- end }}
@@ -63,6 +66,13 @@ spec:
               - secretRef:
                   name: {{ include "autonomi.secretName" . }}
             env:
+              # Serverless ScaledJob = ONE work item per Job. Force the reference
+              # consumer into one-shot mode so it pulls a single item and exits,
+              # instead of draining the whole queue in a single Job (which would
+              # defeat the per-item scale-to-zero model). Deployment (loop) mode
+              # does NOT set this, so the long-running consumer keeps looping.
+              - name: LOKI_QUEUE_ONESHOT
+                value: "1"
               - name: LOKI_DURABLE_STATE
                 value: "1"
               - name: LOKI_RUN_ID

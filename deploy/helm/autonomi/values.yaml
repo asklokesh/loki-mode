@@ -236,22 +236,51 @@ workspace:
 # The deployment (queue-consumer) and serverless (ScaledJob) modes pull build
 # work items from a queue. This block is IGNORED in the default job mode.
 #
-# HONESTY: the chart does not run a queue for you, and the default loki image
-# does NOT ship a queue-consumer entrypoint. You must (a) run the queue (Redis,
-# RabbitMQ, SQS, Kafka, ...), (b) supply a command/image that drains it, and (c)
-# install KEDA if you want queue-depth scaling. These are infrastructure
-# prerequisites, not turnkey features.
+# HONESTY: the chart does not run a queue for you, but the loki image now SHIPS a
+# reference queue-consumer entrypoint (autonomy/queue-consumer.sh) with two REAL
+# backends: redis (BLPOP/LPOP a list) and file (pop the oldest file from a queue
+# dir, for testing/airgapped clusters). Other brokers (SQS, Pub/Sub, RabbitMQ,
+# Kafka, ...) are BRING-YOUR-OWN: override queue.command with your own consumer.
+# You still must (a) run the queue itself, and (b) install KEDA if you want
+# queue-depth scaling. Those are infrastructure prerequisites, not turnkey.
 queue:
-  # Command run by the deployment consumer / serverless per-item Job. Override
-  # with your queue-draining entrypoint. The default is a safe placeholder that
-  # documents the gap rather than pretending a consumer exists.
-  command: []
-  #   - /usr/local/bin/loki-consume
-  #   - --queue
-  #   - redis://redis:6379/0
+  # Command run by the deployment consumer (loop forever) / serverless per-item
+  # Job (one item then exit). Defaults to the shipped reference consumer. The
+  # serverless ScaledJob sets LOKI_QUEUE_ONESHOT=1 so each Job processes exactly
+  # one item; the deployment consumer loops until SIGTERM. Override this with
+  # your own entrypoint to drain a broker the reference consumer does not support.
+  command:
+    - bash
+    - /opt/loki-mode/autonomy/queue-consumer.sh
+  # Reference-consumer configuration (read by autonomy/queue-consumer.sh). These
+  # are documented here; set them via queue.extraEnv (or the worker secret for
+  # connection strings). The consumer is set -u safe and falls back sensibly.
+  #
+  #   LOKI_QUEUE_BACKEND  redis | file. Default: redis if redis-cli is present in
+  #                       the image, else file. Only redis + file are implemented;
+  #                       other backends are bring-your-own (override command).
+  #   LOKI_QUEUE_KEY      redis list key to drain. Default: loki-builds.
+  #   LOKI_QUEUE_URL      redis-cli -u connection URL. Default: $REDIS_URL or
+  #                       redis://127.0.0.1:6379. Put real URLs in the secret.
+  #   LOKI_QUEUE_DIR      file-backend root (pending/processing/done/failed live
+  #                       under it). Default: .loki/queue (on the /workspace PVC).
+  #   LOKI_QUEUE_ONESHOT  1 = pull one item then exit (set automatically in
+  #                       serverless mode). Unset/0 = loop forever (deployment).
+  #
+  # A work item is a `loki start` spec: a path/brief, a GitHub issue ref
+  # (owner/repo#N), or a JSON object {"spec": "..."}.
+  #
+  # HONEST DELIVERY SEMANTICS: the redis backend is at-most-once (LPOP-then-run,
+  # no visibility timeout); a crashed build loses that item from the queue. The
+  # file backend is at-least-once (a crashed build leaves the item in
+  # processing/ for manual re-drive). For stronger guarantees bring a real broker.
   # Additional environment for the consumer (queue connection info, etc.). Put
   # secrets in the Secret and reference them via worker.extraEnv valueFrom, not here.
   extraEnv: []
+  #   - name: LOKI_QUEUE_BACKEND
+  #     value: redis
+  #   - name: LOKI_QUEUE_KEY
+  #     value: loki-builds
 
 # ---------------------------------------------------------------------------
 # KEDA autoscaling (deployment ScaledObject / serverless ScaledJob)

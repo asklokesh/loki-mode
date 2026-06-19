@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.81.0] - 2026-06-19
+
+### Gap-closure: honest-gaps and known issues from the two-release arc, closed
+
+Every item is opt-in; local-first and default behavior are unchanged. Council 3/3
+after an adversarial bug-hunt that found (and this release fixes) a queue-item flag
+injection and a retry double-launch race.
+
+- Object-store checkpoint sync now also syncs the git refs/loki/cp/* worktree
+  snapshots (opt-in, storage.backend != local). Previously only the .loki
+  checkpoint metadata transferred, so a fresh-node resume could not restore the
+  working tree. Each snapshot is exported as a git bundle and re-fetched + the ref
+  re-created on hydrate. Best-effort; gated on git; snapshots capture tracked
+  changes only (same limit as the local checkpoint).
+- ALLOWED_PATHS is now genuinely enforced for the sandboxed write path: with
+  LOKI_ALLOWED_PATHS set and sandbox mode on, the worker refuses (fail-closed) to
+  mount the workspace writable if it is outside the allowlist, instead of always
+  mounting it. The non-sandbox host path remains unmediated and is documented as
+  such (no overclaim).
+- Fleet view gains retry: POST /api/fleet/runs/{id}/retry re-launches a finished
+  build from its own project directory against a recovered in-tree spec (control
+  scope; honest 409 when no spec is recoverable or a build is already running). A
+  check-and-claim under the registry lock prevents two concurrent retries from
+  double-launching.
+- Helm deployment and serverless modes are now usable, not just documented: the
+  image ships a reference redis/file queue-consumer (autonomy/queue-consumer.sh),
+  wired as the default queue.command, in loop mode for the Deployment and one-shot
+  mode for the serverless ScaledJob. Other queue backends remain bring-your-own.
+- loki bench degrades honestly on a packaged install (carried from 7.80.1).
+
+Security and hardening (from the bug-hunt)
+- Queue-item flag injection closed: a work item that is a single loki flag (e.g.
+  "--ship") was parsed by `loki start` as a flag and could change build mode. The
+  consumer now rejects a leading-dash spec as malformed, and `loki start` gained a
+  `--` end-of-options handler so an untrusted spec can never be read as a flag.
+- Retry double-launch race (TOCTOU) closed via the lock-held check-and-claim above.
+- Checkpoint-bundle ref-injection guard (_safe_cp_id) rejects git-special ref
+  forms from a crafted object-store key, applied symmetrically on sync and hydrate.
+
+Honesty
+- The hierarchical (PageIndex-pattern) tree retrieval was benchmarked against a
+  real LLM: guided descent measured WORSE than plain keyword on the current tree
+  shape (recall 2/6 vs 6/6) at higher cost. No improvement is claimed; the mode
+  stays opt-in and experimental. The benchmark records the result and the root
+  cause (intermediate tree nodes do not advertise descendant symbol names).
+- README enterprise-auth wording corrected from "OIDC/SSO" to "OIDC bearer-token
+  validation (the foundation for SSO; browser SAML login is roadmap)", matching
+  docs/ENTERPRISE-IDENTITY-ROADMAP.md. SSO/SAML/SCIM/SOC2 remain roadmap.
+
+local-ci green; full test suite (1408 pytest + bash suites) green; helm lint clean
+across all worker modes.
+
 ## [7.80.1] - 2026-06-19
 
 ### Post-release hardening (UX + test integrity)

@@ -279,7 +279,9 @@ Real-time monitoring, agent status, task queue, WebSocket streaming, and Live Ap
 <td width="33%" valign="top">
 
 ### Enterprise Layer
-TLS, OIDC/SSO, RBAC, OTEL tracing, policy engine, audit trails. Activated via env vars.
+TLS, OIDC bearer-token validation (the foundation for SSO; browser SAML login is
+roadmap), scoped RBAC, OTEL tracing, policy engine, audit trails. Activated via
+env vars. See [Enterprise Identity Roadmap](docs/ENTERPRISE-IDENTITY-ROADMAP.md).
 
 [Enterprise Guide](docs/enterprise/architecture.md)
 
@@ -305,7 +307,7 @@ The historical feature set (platform pages, Monaco IDE workspace, AI chat panel)
 | 5 AI provider failover | Yes | No | No | No |
 | 8 quality gates | Yes | No | No | No |
 | Blind code review | Yes | No | No | No |
-| Enterprise auth (SSO/RBAC) | Yes | No | Yes | No |
+| Enterprise auth (OIDC token + scoped RBAC) | Yes | No | Yes | No |
 | Air-gapped deployment | Yes | No | No | No |
 | Docker + CI/CD generation | Yes | No | Yes | No |
 | Source-available (BUSL-1.1) | Yes | No | No | No |
