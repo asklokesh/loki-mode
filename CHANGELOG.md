@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.81.1] - 2026-06-19
+
+### Fix: CI Shell-tests green (V2 python test runner-contract)
+
+- The v7.81.0 worktree-bundle python test was registered in tests/run-all-tests.sh
+  as `run_test "..." "python3 <file>"`, but that runner invokes the entry via
+  `bash "$file"` (it expects a single bash-executable file, not a command string),
+  so it ran `bash "python3 <file>"` -> "No such file or directory" and the CI
+  "Shell tests" job failed. local-ci passed because its run_check runs the entry
+  as a shell command string (different contract), masking the bug.
+- Fixed with a bash wrapper (tests/run-checkpoint-worktree-bundle-tests.sh) that
+  exec's the python test, registered uniformly in both gates -- matching the
+  existing python-test wrapper pattern. No product code changed; the test itself
+  always passed (10/10). Full run-all-tests.sh now green (61 suites).
+
 ## [7.81.0] - 2026-06-19
 
 ### Gap-closure: honest-gaps and known issues from the two-release arc, closed

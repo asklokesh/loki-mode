@@ -240,7 +240,7 @@ run_test "ALLOWED_PATHS partial enforcement (A5: sandbox mount + command)" "$SCR
 run_test "ALLOWED_PATHS sandbox workspace mount (V3: fail-closed refuse)" "$SCRIPT_DIR/test-allowed-paths-sandbox-mount.sh"
 run_test "Multi-build state isolation (A6: LOKI_SESSION_ID namespacing)" "$SCRIPT_DIR/test-state-isolation-a6.sh"
 run_test "loki why (B5: failure/outcome diagnosis)" "$SCRIPT_DIR/test-loki-why.sh"
-run_test "Checkpoint worktree-bundle sync (V2: refs/loki/cp via git bundle)" "python3 $SCRIPT_DIR/test-checkpoint-worktree-bundle-sync.py"
+run_test "Checkpoint worktree-bundle sync (V2: refs/loki/cp via git bundle)" "$SCRIPT_DIR/run-checkpoint-worktree-bundle-tests.sh"
 run_test "Queue-consumer (V5: redis/file backend + flag-injection guard)" "$SCRIPT_DIR/test-queue-consumer.sh"
 run_test "loki bench honest degrade (L4: packaged-install UX)" "$SCRIPT_DIR/test-bench-honest-degrade.sh"
 
