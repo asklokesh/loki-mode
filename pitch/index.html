@@ -638,6 +638,19 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
   }
   window.go=go;
 
+  // Arrow-key navigation within the tablist (ARIA Authoring Practices)
+  var tabEls=Array.prototype.slice.call(document.querySelectorAll('#tabs .tab'));
+  document.getElementById('tabs').addEventListener('keydown',function(e){
+    var idx=tabEls.indexOf(document.activeElement);
+    if(idx<0)return;
+    var n=null;
+    if(e.key==='ArrowRight'||e.key==='ArrowDown')n=(idx+1)%tabEls.length;
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp')n=(idx-1+tabEls.length)%tabEls.length;
+    else if(e.key==='Home')n=0;
+    else if(e.key==='End')n=tabEls.length-1;
+    if(n!==null){e.preventDefault();tabEls[n].focus();go(tabEls[n].dataset.page);}
+  });
+
   // ---- SVG icons (indigo line, injected) ----
   function svg(p){return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#4F46E5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>';}
   var ICONS={
