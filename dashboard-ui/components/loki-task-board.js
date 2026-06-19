@@ -47,8 +47,44 @@ export class LokiTaskBoard extends LokiElement {
     this._selectedTasks = new Set();
     this._bulkMode = false;
     this._activeFilter = 'all';
+    this._searchQuery = '';
+    // Per-column visible page count. Keyed by status; each column starts
+    // capped at PAGE_SIZE and grows by PAGE_SIZE when "Show more" is used.
+    // This bounds the DOM so a status with many tasks (e.g. dozens of pending
+    // PRD items) does not become an endless vertical scroll.
+    this._visibleCounts = {};
     this._api = null;
     this._state = getState();
+  }
+
+  /** Number of cards rendered per column page before "Show more" appears. */
+  static get PAGE_SIZE() {
+    return 10;
+  }
+
+  _getVisibleCount(status) {
+    const n = this._visibleCounts[status];
+    return typeof n === 'number' && n > 0 ? n : LokiTaskBoard.PAGE_SIZE;
+  }
+
+  _showMore(status) {
+    this._visibleCounts[status] = this._getVisibleCount(status) + LokiTaskBoard.PAGE_SIZE;
+    this.render();
+  }
+
+  _columnIcon(status) {
+    switch (status) {
+      case 'pending':
+        return '<circle cx="12" cy="12" r="10"/>';
+      case 'in_progress':
+        return '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>';
+      case 'review':
+        return '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+      case 'done':
+        return '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';
+      default:
+        return '<circle cx="12" cy="12" r="10"/>';
+    }
   }
 
   connectedCallback() {
@@ -267,7 +303,23 @@ export class LokiTaskBoard extends LokiElement {
 
   _setFilter(filter) {
     this._activeFilter = filter;
+    // Narrowing the set resets per-column paging so "Show more" state from a
+    // wider view does not carry over to the narrower one.
+    this._visibleCounts = {};
     this.render();
+  }
+
+  _setSearch(query) {
+    this._searchQuery = query || '';
+    this._visibleCounts = {};
+    // Re-render the list region only; preserve focus + caret in the search box.
+    this._renderTaskRegion();
+    const input = this.shadowRoot.getElementById('task-search');
+    if (input) {
+      input.focus();
+      const len = input.value.length;
+      try { input.setSelectionRange(len, len); } catch (e) { /* non-text input */ }
+    }
   }
 
   _getFilteredTasks() {
@@ -297,6 +349,19 @@ export class LokiTaskBoard extends LokiElement {
         break;
       default:
         break;
+    }
+
+    const q = this._searchQuery.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter(t => {
+        const haystack = [
+          t.id,
+          t.title,
+          t.description,
+          t.type,
+        ].map(v => String(v ?? '').toLowerCase()).join(' ');
+        return haystack.includes(q);
+      });
     }
 
     return filtered;
@@ -649,7 +714,7 @@ export class LokiTaskBoard extends LokiElement {
           background: var(--loki-bg-card);
           border: 1px solid var(--loki-border);
           border-radius: 4px;
-          padding: 10px;
+          padding: 8px 10px;
           cursor: pointer;
           transition: transform 0.3s ease, opacity 0.3s ease, box-shadow 0.3s ease, border-color 0.2s ease;
           animation: cardFadeIn 0.3s ease;
@@ -693,7 +758,7 @@ export class LokiTaskBoard extends LokiElement {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
         }
 
         .task-id {
@@ -729,16 +794,27 @@ export class LokiTaskBoard extends LokiElement {
         .task-title {
           font-size: 12px;
           font-weight: 500;
-          margin-bottom: 6px;
-          line-height: 1.4;
+          margin-bottom: 4px;
+          line-height: 1.35;
           color: var(--loki-text-primary);
+          /* Compact-by-default: clamp the title to two lines so a long PRD
+             title does not balloon the card. Full text is in the detail modal. */
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
 
         .task-desc {
           font-size: 11px;
           color: var(--loki-text-muted);
-          line-height: 1.4;
-          margin-bottom: 6px;
+          line-height: 1.35;
+          margin-bottom: 4px;
+          /* One-line preview only; "More" or the detail modal shows the rest. */
+          display: -webkit-box;
+          -webkit-line-clamp: 1;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
 
         .task-meta {
@@ -1274,12 +1350,77 @@ export class LokiTaskBoard extends LokiElement {
           align-items: center;
           gap: 6px;
           margin-bottom: 12px;
+          flex-wrap: wrap;
         }
 
         .filter-label {
           font-size: 11px;
           color: var(--loki-text-muted);
           font-weight: 500;
+        }
+
+        /* Text search: narrows tasks across all columns (reuses _getFilteredTasks) */
+        .search-wrap {
+          position: relative;
+          display: flex;
+          align-items: center;
+          margin-left: auto;
+        }
+
+        .search-icon {
+          position: absolute;
+          left: 8px;
+          width: 13px;
+          height: 13px;
+          color: var(--loki-text-muted);
+          pointer-events: none;
+        }
+
+        .task-search {
+          font-size: 11px;
+          padding: 5px 8px 5px 26px;
+          border-radius: 9999px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-secondary);
+          color: var(--loki-text-primary);
+          width: 160px;
+          transition: border-color var(--loki-transition), width var(--loki-transition);
+        }
+
+        .task-search::placeholder {
+          color: var(--loki-text-muted);
+        }
+
+        .task-search:focus {
+          outline: none;
+          border-color: var(--loki-accent);
+          width: 200px;
+        }
+
+        /* Per-column "Show more" pagination control */
+        .show-more-btn {
+          width: 100%;
+          margin-top: 8px;
+          padding: 6px 10px;
+          font-size: 11px;
+          font-weight: 500;
+          border-radius: 4px;
+          border: 1px solid var(--loki-border);
+          background: var(--loki-bg-tertiary);
+          color: var(--loki-text-secondary);
+          cursor: pointer;
+          transition: all var(--loki-transition);
+        }
+
+        .show-more-btn:hover {
+          background: var(--loki-bg-hover);
+          border-color: var(--loki-accent);
+          color: var(--loki-accent);
+        }
+
+        .show-more-btn:focus-visible {
+          outline: 2px solid var(--loki-border-focus, var(--loki-accent));
+          outline-offset: 2px;
         }
 
         .filter-pill {
@@ -1366,27 +1507,60 @@ export class LokiTaskBoard extends LokiElement {
       </style>
     `;
 
-    const columnIcon = (status) => {
-      switch (status) {
-        case 'pending':
-          return '<circle cx="12" cy="12" r="10"/>';
-        case 'in_progress':
-          return '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>';
-        case 'review':
-          return '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
-        case 'done':
-          return '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';
-        default:
-          return '<circle cx="12" cy="12" r="10"/>';
-      }
-    };
+    const content = this._buildContent();
 
-    let content;
+    this.shadowRoot.innerHTML = `
+      ${styles}
+      <div class="board-container">
+        <div class="board-header">
+          <h2 class="board-title">Task Queue</h2>
+          <div class="board-actions">
+            <button class="btn btn-secondary" id="bulk-toggle-btn" aria-label="Toggle bulk selection">
+              <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+              </svg>
+              ${this._bulkMode ? 'Cancel' : 'Select'}
+            </button>
+            <button class="btn btn-secondary" id="refresh-btn" aria-label="Refresh task board">
+              <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+              </svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="board-region">${content}</div>
+      </div>
+      ${this._selectedTask ? this._renderTaskDetailModal(this._selectedTask) : ''}
+    `;
+
+    this._attachEventListeners();
+  }
+
+  // Re-render only the filter/search/board region. Used by live search so the
+  // search input keeps focus (a full render() would rebuild the input node).
+  _renderTaskRegion() {
+    const region = this.shadowRoot.querySelector('.board-region');
+    if (!region) {
+      this.render();
+      return;
+    }
+    region.innerHTML = this._buildContent();
+    this._attachEventListeners();
+  }
+
+  _buildContent() {
     if (this._loading) {
-      content = '<div class="loading">Loading tasks...</div>';
-    } else if (this._error && this._tasks.length === 0) {
-      content = `<div class="error">Error: ${this._escapeHtml(this._error)}</div>`;
-    } else {
+      return '<div class="loading">Loading tasks...</div>';
+    }
+    if (this._error && this._tasks.length === 0) {
+      return `<div class="error">Error: ${this._escapeHtml(this._error)}</div>`;
+    }
+
+    {
       const readonly = this.hasAttribute('readonly');
       const filters = [
         { id: 'all', label: 'All' },
@@ -1426,12 +1600,20 @@ export class LokiTaskBoard extends LokiElement {
         `;
       };
 
-      content = `
+      return `
         <div class="filter-bar">
           <span class="filter-label">Filter:</span>
           ${filters.map(f => `
             <button class="filter-pill ${this._activeFilter === f.id ? 'active' : ''}" data-filter="${f.id}">${f.label}</button>
           `).join('')}
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+            </svg>
+            <input type="search" id="task-search" class="task-search"
+                   placeholder="Search tasks..." aria-label="Search tasks"
+                   value="${this._escapeHtml(this._searchQuery)}" />
+          </div>
         </div>
 
         ${this._bulkMode && this._selectedTasks.size > 0 ? `
@@ -1445,20 +1627,23 @@ export class LokiTaskBoard extends LokiElement {
 
         <div class="kanban-board">
           ${COLUMNS.map(col => {
-            const tasks = this._getTasksByStatus(col.status);
+            const allTasks = this._getTasksByStatus(col.status);
+            const visibleCount = this._getVisibleCount(col.status);
+            const tasks = allTasks.slice(0, visibleCount);
+            const hiddenCount = allTasks.length - tasks.length;
             return `
               <div class="kanban-column" data-status="${col.status}">
                 <div class="kanban-column-header">
                   <span class="kanban-column-title">
                     <svg class="column-icon" viewBox="0 0 24 24" style="color: ${col.color}">
-                      ${columnIcon(col.status)}
+                      ${this._columnIcon(col.status)}
                     </svg>
                     ${col.label}
                   </span>
-                  <span class="kanban-column-count">${tasks.length}</span>
+                  <span class="kanban-column-count">${allTasks.length}</span>
                 </div>
                 <div class="kanban-tasks" data-status="${col.status}">
-                  ${tasks.length === 0 ? `<div class="empty-column">No tasks</div>` : ''}
+                  ${allTasks.length === 0 ? `<div class="empty-column">No tasks</div>` : ''}
                   ${tasks.map(task => {
                     const taskIdStr = String(task.id || '');
                     const isExpanded = this._expandedCards.has(taskIdStr);
@@ -1502,6 +1687,12 @@ export class LokiTaskBoard extends LokiElement {
                     </div>
                   `;}).join('')}
                 </div>
+                ${hiddenCount > 0 ? `
+                  <button class="show-more-btn" data-show-more="${col.status}"
+                          aria-label="Show ${Math.min(hiddenCount, LokiTaskBoard.PAGE_SIZE)} more in ${col.label}">
+                    Show ${Math.min(hiddenCount, LokiTaskBoard.PAGE_SIZE)} more (${hiddenCount} hidden)
+                  </button>
+                ` : ''}
                 ${!readonly && col.status === 'pending' ? `
                   <button class="add-task-btn" data-status="${col.status}" aria-label="Add new task to ${col.label}">+ Add Task</button>
                 ` : ''}
@@ -1511,36 +1702,6 @@ export class LokiTaskBoard extends LokiElement {
         </div>
       `;
     }
-
-    this.shadowRoot.innerHTML = `
-      ${styles}
-      <div class="board-container">
-        <div class="board-header">
-          <h2 class="board-title">Task Queue</h2>
-          <div class="board-actions">
-            <button class="btn btn-secondary" id="bulk-toggle-btn" aria-label="Toggle bulk selection">
-              <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
-                <polyline points="9 11 12 14 22 4"/>
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-              </svg>
-              ${this._bulkMode ? 'Cancel' : 'Select'}
-            </button>
-            <button class="btn btn-secondary" id="refresh-btn" aria-label="Refresh task board">
-              <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
-                <polyline points="23 4 23 10 17 10"/>
-                <polyline points="1 20 1 14 7 14"/>
-                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-              </svg>
-              Refresh
-            </button>
-          </div>
-        </div>
-        ${content}
-      </div>
-      ${this._selectedTask ? this._renderTaskDetailModal(this._selectedTask) : ''}
-    `;
-
-    this._attachEventListeners();
   }
 
   _attachEventListeners() {
@@ -1559,6 +1720,17 @@ export class LokiTaskBoard extends LokiElement {
     // Filter pills
     this.shadowRoot.querySelectorAll('.filter-pill').forEach(pill => {
       pill.addEventListener('click', () => this._setFilter(pill.dataset.filter));
+    });
+
+    // Search box (live filter; re-renders only the list region to keep focus)
+    const search = this.shadowRoot.getElementById('task-search');
+    if (search) {
+      search.addEventListener('input', (e) => this._setSearch(e.target.value));
+    }
+
+    // Show-more (per-column pagination)
+    this.shadowRoot.querySelectorAll('.show-more-btn').forEach(btn => {
+      btn.addEventListener('click', () => this._showMore(btn.dataset.showMore));
     });
 
     // Bulk action buttons

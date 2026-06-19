@@ -226,9 +226,9 @@ class ConsolidationPipeline:
                             # Re-read the target pattern fresh immediately before
                             # merging (BUG-MEM C1, lost-update). The whole-run
                             # snapshot at step 4 can be stale by now: a concurrent
-                            # engine.increment_pattern_usage() (load_pattern then
-                            # save_pattern) may have bumped usage_count/last_used
-                            # AFTER the snapshot. merge_with_existing() builds the
+                            # storage.increment_pattern_usage() (atomic read-mutate-
+                            # write under one exclusive lock) may have bumped
+                            # usage_count/last_used AFTER the snapshot. merge_with_existing() builds the
                             # merged record from best_match.usage_count/last_used,
                             # so merging from the stale snapshot clobbers that bump.
                             # Re-reading narrows the window to this single write.

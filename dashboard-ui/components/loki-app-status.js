@@ -114,6 +114,11 @@ export class LokiAppStatus extends LokiElement {
         port: status?.port,
         restarts: status?.restart_count,
         url: status?.url,
+        // Re-render when the (forward-compatible) per-service list changes, so
+        // the extra-service rows appear once the backend exposes status.services.
+        services: Array.isArray(status?.services)
+          ? status.services.map(sv => `${sv?.url || ''}|${sv?.name || ''}`).join(',')
+          : null,
       });
       const logsHash = JSON.stringify(logsData?.lines?.slice(-5) || []);
       const logsChanged = logsHash !== this._lastLogsHash;
@@ -182,6 +187,33 @@ export class LokiAppStatus extends LokiElement {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Services beyond the primary, derived from an optional status.services array.
+   * The current single-service payload has no such array, so this returns an
+   * empty list and the card shows only the primary URL (unchanged). When the
+   * backend exposes status.services, each entry beyond the primary URL is listed
+   * with a label (name -> role -> "Port N" -> "Service"). Never throws on a
+   * malformed payload.
+   */
+  _extraServices(st) {
+    if (!st || !Array.isArray(st.services)) return [];
+    const primaryUrl = st.url || '';
+    const out = [];
+    const seen = new Set();
+    for (const sv of st.services) {
+      if (!sv || typeof sv.url !== 'string' || !sv.url) continue;
+      if (sv.url === primaryUrl) continue;
+      if (seen.has(sv.url)) continue;
+      seen.add(sv.url);
+      const name = typeof sv.name === 'string' ? sv.name.trim() : '';
+      const role = typeof sv.role === 'string' ? sv.role.trim() : '';
+      const port = sv.port != null ? String(sv.port) : '';
+      let label = name || role || (port ? `Port ${port}` : 'Service');
+      out.push({ url: sv.url, label, urlValid: this._isValidUrl(sv.url) });
+    }
+    return out;
   }
 
   _getStyles() {
@@ -392,6 +424,13 @@ export class LokiAppStatus extends LokiElement {
     const urlHtml = urlValid
       ? `<a href="${this._escapeHtml(st.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(st.url)}</a>`
       : this._escapeHtml(st.url || '--');
+    // Forward-compatible multi-service awareness. The status payload exposes a
+    // single primary service today; when the backend surfaces a status.services
+    // array (multiple compose services with ports), list the extra services
+    // here. With one service this renders nothing, so existing behavior is
+    // unchanged. The embedded preview (loki-app-preview) is where the user
+    // switches between services; this card just reports they exist.
+    const extraServices = this._extraServices(st);
 
     return `
       <div class="status-card">
@@ -404,9 +443,17 @@ export class LokiAppStatus extends LokiElement {
           <span class="status-value">${st.port ? this._escapeHtml(String(st.port)) : '--'}</span>
         </div>
         <div class="status-row">
-          <span class="status-label">URL</span>
+          <span class="status-label">${extraServices.length > 0 ? 'Primary URL' : 'URL'}</span>
           <span class="status-value">${urlHtml}</span>
         </div>
+        ${extraServices.map(sv => `
+          <div class="status-row">
+            <span class="status-label">${this._escapeHtml(sv.label)}</span>
+            <span class="status-value">${sv.urlValid
+              ? `<a href="${this._escapeHtml(sv.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(sv.url)}</a>`
+              : this._escapeHtml(sv.url || '--')}</span>
+          </div>
+        `).join('')}
         <div class="status-row">
           <span class="status-label">Restarts</span>
           <span class="status-value">${st.restart_count != null ? st.restart_count : '--'}</span>

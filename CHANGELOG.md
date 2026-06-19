@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.76.0] - 2026-06-19
+
+### Memory data-integrity fixes + dashboard UX
+
+Two HIGH memory data-integrity fixes and three dashboard usability improvements.
+Council 3/3. Memory: 28 + 9 existing tests pass plus adversarial concurrency
+probes (200-800 threads, zero lost updates).
+
+Memory:
+- Lost-update fix in pattern usage counting: increment_pattern_usage now performs
+  the entire read-mutate-write inside one exclusive file lock (new
+  storage.increment_pattern_usage, mirroring the boost path). The old path read
+  under a shared lock released immediately, mutated a detached object, then wrote
+  it back wholesale, dropping concurrent increments. The lock is reentrant, so the
+  inner atomic write does not deadlock.
+- Ingest idempotency: episode ids are now derived deterministically from the stable
+  session/task key (ep-<sha1[:12]>) with an existence check, so re-ingesting the
+  same session no longer double-counts episodes / cost / tokens. Keyless ingests
+  keep a random id (no false aliasing).
+- Cross-project pattern JSONL append is now done under an exclusive flock with
+  flush + fsync (buffer-all-rows-first), so concurrent writers cannot interleave or
+  tear lines; the reader logs dropped corrupt lines instead of silently skipping.
+
+Dashboard:
+- Overview tasks list: pagination + compact-by-default cards + status/priority
+  filtering, replacing the unbounded infinite scroll.
+- App Runner: the embedded app preview uses the full available width, and when the
+  running app exposes more than one service (UI plus API) the preview shows
+  per-service tabs. The tab bar is latent for single-service apps. The iframe src
+  is restricted to http/https and all labels/URLs are escaped.
+- Sidebar: running apps are surfaced in a dedicated, emphasized group (dropdown +
+  live count + tidy stop list), visually separated from inactive/known projects,
+  replacing the clumsy flat pill stack. Focus/stop/poll behavior is unchanged.
+
 ## [7.75.0] - 2026-06-19
 
 ### Enterprise container deployment: pod-loss-safe run-to-completion

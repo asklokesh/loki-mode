@@ -9,9 +9,19 @@ Storage: ~/.loki/knowledge/
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+
+try:
+    import fcntl  # POSIX-only; absent on Windows.
+    _HAS_FCNTL = True
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+    _HAS_FCNTL = False
+
+logger = logging.getLogger(__name__)
 
 
 class OrganizationKnowledgeGraph:
@@ -79,11 +89,30 @@ class OrganizationKnowledgeGraph:
         return unique
 
     def save_patterns(self, patterns):
-        """Save patterns to the knowledge store (appends to JSONL)."""
+        """Save patterns to the knowledge store (appends to JSONL).
+
+        The append is guarded by an exclusive flock and a single flushed
+        write so concurrent writers cannot interleave partial lines.
+        stdio buffering breaks O_APPEND atomicity and a record longer
+        than PIPE_BUF can split mid-line under concurrency, so we both
+        hold the lock and emit one contiguous buffer before unlocking.
+        """
         self.ensure_dir()
+        # Serialize first so a serialization error cannot leave a partial
+        # line on disk while the lock is held.
+        buffer = "".join(json.dumps(p) + "\n" for p in patterns)
+        if not buffer:
+            return
         with open(self.patterns_file, 'a') as f:
-            for p in patterns:
-                f.write(json.dumps(p) + '\n')
+            if _HAS_FCNTL:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(buffer)
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                if _HAS_FCNTL:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     def load_patterns(self, limit=100):
         """Load patterns from the knowledge store."""
@@ -98,6 +127,12 @@ class OrganizationKnowledgeGraph:
                 try:
                     patterns.append(json.loads(line))
                 except json.JSONDecodeError:
+                    # Resilient: skip the bad row but surface it so silent
+                    # data loss (e.g. a torn legacy line) is observable.
+                    logger.warning(
+                        "knowledge_graph: dropped unparseable patterns.jsonl line: %.120r",
+                        line,
+                    )
                     continue
                 if len(patterns) >= limit:
                     break

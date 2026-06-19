@@ -1519,6 +1519,53 @@ class MemoryStorage:
 
         return False
 
+    def increment_pattern_usage(self, pattern_id: str) -> bool:
+        """Atomically increment a semantic pattern's usage_count, keyed by id.
+
+        The entire read-mutate-write happens inside a single exclusive
+        _file_lock so concurrent increments cannot lose updates. Mirrors the
+        lock-spanning idiom of _persist_boost_semantic / save_pattern: fresh
+        read of patterns.json under the lock -> bump the matching entry ->
+        atomic write (which reuses the same reentrant lock).
+
+        Args:
+            pattern_id: Pattern identifier to increment.
+
+        Returns:
+            True if the pattern was found and incremented, False otherwise.
+        """
+        patterns_path = self.base_path / "semantic" / "patterns.json"
+        if not patterns_path.exists():
+            return False
+
+        with self._file_lock(patterns_path, exclusive=True):
+            if not patterns_path.exists():
+                return False
+            try:
+                with open(patterns_path, "r", encoding="utf-8") as f:
+                    patterns_file = json.load(f)
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                return False
+            if not patterns_file:
+                return False
+
+            patterns = patterns_file.get("patterns", [])
+            for pattern in patterns:
+                if not isinstance(pattern, dict):
+                    continue
+                if pattern.get("id") == pattern_id:
+                    # `or 0` guards an explicit null usage_count (corrupt or
+                    # hand-edited record); null and 0 are equivalent here.
+                    pattern["usage_count"] = (pattern.get("usage_count") or 0) + 1
+                    pattern["last_used"] = datetime.now(timezone.utc).isoformat()
+                    patterns_file["last_updated"] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                    self._atomic_write(patterns_path, patterns_file)
+                    return True
+
+        return False
+
     def batch_apply_decay(
         self,
         collection: str = "all",

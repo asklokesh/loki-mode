@@ -26,6 +26,7 @@ Safety:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -163,6 +164,52 @@ def _log_to_errors(memory_base: str, function_name: str, exc: BaseException) -> 
         log_memory_error(memory_base, function_name, exc)
     except Exception:
         return
+
+
+def _deterministic_episode_id(stable_key: str) -> str:
+    """Derive a stable, idempotent episode id from a stable key.
+
+    Re-ingesting the same session/summary must NOT create a new episode.
+    EpisodeTrace.create() mints a random uuid every call, so without a
+    deterministic id the index dedup (which keys on episode_id) counts
+    the same session twice, inflating episode_count / total_cost_usd /
+    total_tokens. Deriving the id from the stable key (e.g. the session
+    or task id) makes re-ingest land on the same filename + the same
+    index dedup bucket. Date is intentionally omitted so the id does not
+    drift across day boundaries for the same source.
+    """
+    digest = hashlib.sha1(stable_key.encode("utf-8")).hexdigest()[:12]
+    return f"ep-{digest}"
+
+
+def _existing_episode_path(
+    storage: Any, memory_base: str, episode_id: str
+) -> Optional[str]:
+    """Return the on-disk path for an already-stored episode id, or None.
+
+    Used for the idempotency existence check before writing so a repeat
+    ingest of the same source is a no-op rather than an append-new.
+    """
+    try:
+        existing = storage.load_episode(episode_id)
+    except Exception:
+        return None
+    if not existing:
+        return None
+    # Mirror storage.save_episode's path layout; prefer the stored
+    # timestamp date, fall back to a directory scan if absent.
+    ts = existing.get("timestamp")
+    if isinstance(ts, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", ts[:10] or ""):
+        candidate = Path(memory_base) / "episodic" / ts[:10] / f"task-{episode_id}.json"
+        if candidate.is_file():
+            return str(candidate)
+    episodic_dir = Path(memory_base) / "episodic"
+    if episodic_dir.is_dir():
+        for date_dir in episodic_dir.iterdir():
+            candidate = date_dir / f"task-{episode_id}.json"
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 def _parse_transcript_line(line: str) -> Optional[Dict[str, Any]]:
@@ -385,12 +432,21 @@ def ingest_from_claude_transcript(
         engine = MemoryEngine(storage=storage, base_path=memory_base)
         engine.initialize()
 
+        # The transcript task_id is always stable (sessionId or filename
+        # stem), so derive a deterministic episode id from it and skip the
+        # write if this session was already ingested (idempotent re-run).
+        episode_id = _deterministic_episode_id(task_id)
+        already = _existing_episode_path(storage, memory_base, episode_id)
+        if already is not None:
+            return already
+
         trace = EpisodeTrace.create(
             task_id=task_id,
             agent=agent,
             phase=phase,
             goal=goal,
         )
+        trace.id = episode_id
         trace.outcome = outcome
         trace.duration_seconds = duration
         # v7.7.18 council fix: apply BOTH scrubbers to file paths --
@@ -440,9 +496,21 @@ def ingest_from_summary(
         engine = MemoryEngine(storage=storage, base_path=memory_base)
         engine.initialize()
 
+        # Only a caller-supplied task_id is a stable key. The auto-generated
+        # timestamp fallback is unique per call by design, so it must NOT
+        # drive a deterministic id (that would alias unrelated captures).
+        caller_supplied_key = task_id is not None
         if task_id is None:
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
             task_id = f"mcp-capture-{ts}"
+
+        if caller_supplied_key:
+            episode_id = _deterministic_episode_id(task_id)
+            already = _existing_episode_path(storage, memory_base, episode_id)
+            if already is not None:
+                return already
+        else:
+            episode_id = None
 
         trace = EpisodeTrace.create(
             task_id=task_id,
@@ -450,6 +518,8 @@ def ingest_from_summary(
             phase=phase,
             goal=_scrub(goal)[:500],
         )
+        if episode_id is not None:
+            trace.id = episode_id
         trace.outcome = outcome if outcome in ("success", "failure", "partial") else "success"
         trace.duration_seconds = max(0, int(duration_seconds))
         trace.files_read = [_scrub_path(_scrub(p)) for p in (files_read or [])]

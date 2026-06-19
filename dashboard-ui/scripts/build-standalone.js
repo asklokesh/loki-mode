@@ -369,57 +369,120 @@ function generateStandaloneHTML(bundleCode) {
       box-shadow: 0 0 0 3px var(--loki-accent-glow);
     }
 
-    /* v7.7.29 multi-project switcher */
+    /* v7.7.29 multi-project switcher; redesigned v7.75: running apps are the
+       primary, scannable surface (a "Running" group with a count + dropdown +
+       compact Stop affordance); inactive/known projects live in a muted
+       secondary "Switch project" group so they never crowd the running list. */
+    .project-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .project-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    /* hidden until it has content (no empty "Running" header when nothing runs) */
+    .project-group[hidden] { display: none; }
+    .project-group-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--loki-text-muted);
+    }
+    .project-group-head .group-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--loki-success, #1AAF95);
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 3px var(--loki-success-glow, rgba(26, 175, 149, 0.18));
+    }
+    .project-group-head .group-count {
+      margin-left: auto;
+      min-width: 16px;
+      padding: 0 5px;
+      height: 15px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--loki-bg-hover);
+      color: var(--loki-text-secondary);
+      font-size: 9px;
+      letter-spacing: 0;
+    }
+    /* Shared select styling for both the running + inactive switchers. */
     .project-switcher {
-      margin-left: 14px;
-      padding: 5px 10px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      padding: 6px 10px;
       background: var(--loki-bg-primary);
       border: 1px solid var(--loki-border);
-      border-radius: 6px;
+      border-radius: 7px;
       font-size: 12px;
       font-family: 'Inter', system-ui, sans-serif;
       color: var(--loki-text-primary);
       cursor: pointer;
-      max-width: 280px;
+      text-overflow: ellipsis;
     }
     .project-switcher:focus {
       outline: none;
       border-color: var(--loki-accent);
       box-shadow: 0 0 0 3px var(--loki-accent-glow);
     }
-    /* v7.7.30 per-project stop list */
+    /* Running select is emphasized (accent border); inactive select is muted. */
+    #running-switcher {
+      border-color: var(--loki-accent);
+      font-weight: 500;
+    }
+    #project-switcher {
+      color: var(--loki-text-secondary);
+    }
+    /* v7.7.30 per-project stop list -- now a tidy vertical column of running
+       apps, each a row with a truncating name (clickable to focus) + a small,
+       unobtrusive Stop button. Only running apps ever appear here. */
     .project-stop-list {
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-      margin-left: 10px;
+      flex-direction: column;
+      gap: 4px;
     }
+    .project-stop-list:empty { display: none; }
     .project-stop-row {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 6px 3px 10px;
+      gap: 8px;
+      padding: 4px 6px 4px 8px;
       background: var(--loki-bg-primary);
       border: 1px solid var(--loki-border);
-      border-radius: 14px;
+      border-radius: 7px;
       font-size: 11px;
       font-family: 'Inter', system-ui, sans-serif;
       color: var(--loki-text-primary);
     }
     .project-stop-row .project-stop-name {
-      max-width: 200px;
+      flex: 1 1 auto;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    /* v7.35: the chip name is a switch-project affordance. Clickable names get
+    /* v7.35: the row name is a switch-project affordance. Clickable names get
        a pointer + hover accent; the active project's name is emphasized and
        not clickable (already focused). */
     .project-stop-row .project-stop-name.is-clickable {
       cursor: pointer;
-      border-radius: 6px;
-      padding: 0 2px;
+      border-radius: 5px;
+      padding: 1px 3px;
+      margin: -1px -3px;
       transition: color 0.12s ease, background 0.12s ease;
     }
     .project-stop-row .project-stop-name.is-clickable:hover {
@@ -435,14 +498,16 @@ function generateStandaloneHTML(bundleCode) {
       color: var(--loki-accent, #553DE9);
     }
     .project-stop-row button {
-      padding: 2px 8px;
+      flex: 0 0 auto;
+      padding: 2px 9px;
       background: transparent;
       border: 1px solid var(--loki-border);
-      border-radius: 10px;
-      font-size: 11px;
+      border-radius: 6px;
+      font-size: 10px;
       font-family: 'Inter', system-ui, sans-serif;
       color: var(--loki-text-secondary);
       cursor: pointer;
+      transition: border-color 0.12s ease, color 0.12s ease;
     }
     .project-stop-row button:hover:not(:disabled) {
       border-color: var(--loki-error);
@@ -745,16 +810,39 @@ function generateStandaloneHTML(bundleCode) {
         </button>
         <span class="logo-brand">Loki Mode</span>
         <span class="logo-subtitle">powered by Autonomi</span>
-        <!-- v7.7.29 multi-project switcher: lists projects running loki in
-             different folders and switches which one the dashboard shows. -->
-        <select class="project-switcher" id="project-switcher" title="Switch project" aria-label="Switch project">
-          <option value="">All projects (current dir)</option>
-        </select>
-        <!-- v7.7.30 per-project stop: a compact list of running projects, each
-             with a Stop button that gracefully halts that project's runner
-             without affecting any other folder. Built at runtime; empty when
-             no project is running. -->
-        <div class="project-stop-list" id="project-stop-list" aria-label="Running projects"></div>
+        <!-- v7.7.29 multi-project switcher, redesigned v7.75: running apps are
+             the primary control (a "Running" group: count + dropdown to focus +
+             a compact per-app Stop list); inactive/known projects live in a
+             muted secondary "Switch project" group so they never crowd the
+             running list. Both groups are built/toggled at runtime from
+             /api/running-projects. -->
+        <div class="project-nav">
+          <!-- Running group: hidden until at least one app is running. -->
+          <div class="project-group" id="running-group" hidden>
+            <div class="project-group-head">
+              <span class="group-dot" aria-hidden="true"></span>
+              <span>Running</span>
+              <span class="group-count" id="running-count" aria-hidden="true">0</span>
+            </div>
+            <!-- Dropdown of running apps; selecting one focuses it (same
+                 /api/focus + reload path as the inactive switcher). The
+                 focused running app is pre-selected. -->
+            <select class="project-switcher" id="running-switcher" title="Focus a running app" aria-label="Focus a running app"></select>
+            <!-- v7.7.30 per-project stop: a tidy list of running apps, each with
+                 a Stop button that gracefully halts that app's runner without
+                 affecting any other folder. Built at runtime. -->
+            <div class="project-stop-list" id="project-stop-list" aria-label="Running apps"></div>
+          </div>
+          <!-- Inactive/all projects: the muted secondary switcher. Lists every
+               known project (running marked) so the user can switch to an
+               inactive folder; defaults to "All projects (current dir)". -->
+          <div class="project-group" id="all-projects-group">
+            <div class="project-group-head"><span>Switch project</span></div>
+            <select class="project-switcher" id="project-switcher" title="Switch project" aria-label="Switch project">
+              <option value="">All projects (current dir)</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <nav class="nav-links">
@@ -1340,6 +1428,11 @@ document.addEventListener('DOMContentLoaded', function() {
     var sel = document.getElementById('project-switcher');
     if (!sel) return;
     var stopList = document.getElementById('project-stop-list');
+    // v7.75: the running group (header + count + dropdown + stop list) is the
+    // primary surface; it is hidden whenever nothing is running.
+    var runningGroup = document.getElementById('running-group');
+    var runningSel = document.getElementById('running-switcher');
+    var runningCount = document.getElementById('running-count');
     // v7.35: focus a project by its working dir, then reload so every panel
     // re-fetches against it. The active section lives in the URL hash now, so
     // the reload lands the user on the SAME section (no reset to overview).
@@ -1406,13 +1499,31 @@ document.addEventListener('DOMContentLoaded', function() {
         stopList.appendChild(row);
       });
     }
+    // v7.75: build the primary "Running" dropdown from running apps only. The
+    // focused running app is pre-selected; selecting another focuses it (same
+    // /api/focus + reload path). Returns the running app count so the caller
+    // can toggle the group + count badge.
+    function buildRunningSwitcher(projects) {
+      if (!runningSel) return 0;
+      var running = projects.filter(function(p){ return p.running === true && p.path; });
+      while (runningSel.firstChild) runningSel.removeChild(runningSel.firstChild);
+      running.forEach(function(p){
+        var o = document.createElement('option');
+        o.value = p.path || '';
+        o.textContent = p.name || p.path || 'app';
+        if (p.is_active) o.selected = true;
+        runningSel.appendChild(o);
+      });
+      return running.length;
+    }
     function refresh() {
       fetch('/api/running-projects')
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(data){
           if (!data || !Array.isArray(data.projects)) return;
           var current = sel.value;
-          // Rebuild options: keep the "All projects" default first.
+          // Rebuild the inactive/all switcher: keep "All projects" default
+          // first, then every known project (running apps marked with *).
           sel.innerHTML = '';
           var optAll = document.createElement('option');
           optAll.value = ''; optAll.textContent = 'All projects (current dir)';
@@ -1426,6 +1537,10 @@ document.addEventListener('DOMContentLoaded', function() {
             sel.appendChild(o);
           });
           if (!data.active_project_dir && current === '') sel.value = '';
+          // Primary running surface: dropdown + count + visibility toggle.
+          var n = buildRunningSwitcher(data.projects);
+          if (runningCount) runningCount.textContent = String(n);
+          if (runningGroup) runningGroup.hidden = (n === 0);
           buildStopList(data.projects);
         })
         .catch(function(){ /* offline / no endpoint: leave as-is */ });
@@ -1433,6 +1548,11 @@ document.addEventListener('DOMContentLoaded', function() {
     sel.addEventListener('change', function(){
       focusProject(sel.value);
     });
+    if (runningSel) {
+      runningSel.addEventListener('change', function(){
+        focusProject(runningSel.value);
+      });
+    }
     refresh();
     setInterval(refresh, 15000);
   })();

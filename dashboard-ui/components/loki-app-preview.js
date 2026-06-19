@@ -19,6 +19,17 @@
  * not-running -> running) or an explicit Refresh, never on every poll, so the
  * preview does not flicker or reset the user's interaction.
  *
+ * Multi-service tabs: when the running app exposes more than one service (e.g.
+ * a web UI on one port AND an API on another), the panel renders a tab strip
+ * that switches which service the embedded view loads. The list of services is
+ * read from an optional status.services array; when the backend does not yet
+ * expose that array (the current single-service payload), the panel derives a
+ * single-service list from the flat url/port/primary_service fields and renders
+ * NO tabs (the single full-width preview is unchanged). A service whose role is
+ * an API (rather than a browser UI) is shown as a URL + Open-in-browser
+ * affordance instead of a broken iframe, since a raw JSON endpoint does not
+ * render usefully in a frame.
+ *
  * @example
  * <loki-app-preview api-url="http://localhost:57374" theme="dark"></loki-app-preview>
  */
@@ -61,6 +72,11 @@ export class LokiAppPreview extends LokiElement {
     this._iframeFailed = false;
     this._iframeLoadTimer = null;
     this._IFRAME_LOAD_TIMEOUT_MS = 6000;
+    // Active service tab (a service "key", see _serviceKey). Null means "use the
+    // first / primary service" and is resolved at render time. Only meaningful
+    // when more than one service is exposed; with a single service there are no
+    // tabs and this stays the implicit primary.
+    this._activeServiceKey = null;
   }
 
   connectedCallback() {
@@ -171,6 +187,13 @@ export class LokiAppPreview extends LokiElement {
           : status?.last_health?.ok === false
             ? 'down'
             : 'unknown',
+        // Include the per-service signal so the panel re-renders (and the tab
+        // strip re-derives) when the backend starts exposing multiple services
+        // or the set of running services changes. Today this is a single derived
+        // entry; when status.services lands it captures the multi-service shape.
+        services: Array.isArray(status?.services)
+          ? status.services.map(sv => `${sv?.url || ''}|${sv?.role || ''}|${sv?.name || ''}`).join(',')
+          : null,
       });
       // A prior poll may have set a transient read error. Clear it on any
       // successful read, even when the data itself is unchanged, so a recovered
@@ -204,6 +227,87 @@ export class LokiAppPreview extends LokiElement {
     }
   }
 
+  /**
+   * Derive the list of services to surface from the status payload.
+   *
+   * Forward-compatible: when the backend exposes status.services (an array of
+   * { url, role, name, port } objects), that array is used verbatim (filtered to
+   * entries with a valid URL). When it does not (the current single-service
+   * payload), a single-entry list is synthesized from the flat url/port/
+   * primary_service fields so the rest of the panel has one uniform shape.
+   *
+   * Each normalized service is { key, url, role, name, port, label }:
+   *   - key:   a stable identity used for tab selection (url, falling back to
+   *            name or port). Stable across polls so the active tab is preserved.
+   *   - role:  'ui' | 'api' | '' . 'api' services are shown as a URL + open
+   *            affordance rather than an iframe. Inferred from an explicit role,
+   *            else from the name (api/backend/server -> api), else '' (treated
+   *            as a UI by default so existing single-UI apps are unchanged).
+   *   - label: the tab caption (name -> role -> "Port N" -> "Service").
+   */
+  _getServices() {
+    const st = this._status;
+    if (!st) return [];
+
+    const raw = Array.isArray(st.services) && st.services.length > 0
+      ? st.services
+      : [{ url: st.url, role: '', name: st.primary_service || '', port: st.port }];
+
+    const seen = new Set();
+    const out = [];
+    for (const sv of raw) {
+      if (!sv || !this._isValidUrl(sv.url)) continue;
+      const name = typeof sv.name === 'string' ? sv.name.trim() : '';
+      const port = sv.port != null ? String(sv.port) : '';
+      const role = this._inferServiceRole(sv.role, name);
+      const key = sv.url || name || port;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let label = name;
+      if (!label) label = role === 'api' ? 'API' : role === 'ui' ? 'UI' : '';
+      if (!label) label = port ? `Port ${port}` : 'Service';
+      out.push({ key, url: sv.url, role, name, port, label });
+    }
+    return out;
+  }
+
+  /**
+   * Infer a service role. An explicit role on the payload wins; otherwise guess
+   * from the service name. Unknown -> '' (rendered as a UI, the safe default for
+   * the existing single-service case where everything is a browser app).
+   */
+  _inferServiceRole(role, name) {
+    const r = typeof role === 'string' ? role.trim().toLowerCase() : '';
+    if (r === 'ui' || r === 'web' || r === 'frontend') return 'ui';
+    if (r === 'api' || r === 'backend' || r === 'server') return 'api';
+    const n = (name || '').toLowerCase();
+    if (/\b(api|backend|server|graphql|grpc)\b/.test(n) || n.includes('api')) return 'api';
+    return '';
+  }
+
+  /**
+   * Resolve the currently-active service from the derived list, honoring the
+   * user's tab selection when it still exists, else falling back to the first
+   * service (the primary). Returns null when there are no surfaceable services.
+   */
+  _activeService(services) {
+    if (!services || services.length === 0) return null;
+    if (this._activeServiceKey) {
+      const match = services.find(sv => sv.key === this._activeServiceKey);
+      if (match) return match;
+    }
+    return services[0];
+  }
+
+  _handleSelectService(key) {
+    if (this._activeServiceKey === key) return;
+    this._activeServiceKey = key;
+    // A tab switch points the iframe at a different URL, so the prior load
+    // failure (if any) no longer describes the new attempt.
+    this._iframeFailed = false;
+    this.render();
+  }
+
   async _handleRestart() {
     try {
       await this._api.restartApp();
@@ -214,17 +318,29 @@ export class LokiAppPreview extends LokiElement {
     }
   }
 
+  /**
+   * The URL the toolbar / iframe should currently target: the active service's
+   * URL when a service is resolvable, falling back to the flat status URL (the
+   * single-service case). Returns '' when nothing valid is available.
+   */
+  _currentTargetUrl() {
+    const active = this._activeService(this._getServices());
+    if (active && this._isValidUrl(active.url)) return active.url;
+    const st = this._status;
+    return st && this._isValidUrl(st.url) ? st.url : '';
+  }
+
   _handleRefresh() {
     // Force the iframe to reload from the live URL with a cache-bust.
     const s = this.shadowRoot;
     if (!s) return;
     const frame = s.querySelector('iframe.preview-frame');
-    const st = this._status;
-    if (frame && st && this._isValidUrl(st.url)) {
+    const url = this._currentTargetUrl();
+    if (frame && url) {
       this._iframeFailed = false;
       this._clearIframeLoadTimer();
-      const bust = (st.url.includes('?') ? '&' : '?') + '_t=' + Date.now();
-      frame.src = st.url + bust;
+      const bust = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+      frame.src = url + bust;
       this._armIframeLoadDetection();
     }
   }
@@ -240,9 +356,9 @@ export class LokiAppPreview extends LokiElement {
   }
 
   _handleOpenExternal() {
-    const st = this._status;
-    if (st && this._isValidUrl(st.url)) {
-      window.open(st.url, '_blank', 'noopener');
+    const url = this._currentTargetUrl();
+    if (url) {
+      window.open(url, '_blank', 'noopener');
     }
   }
 
@@ -253,7 +369,7 @@ export class LokiAppPreview extends LokiElement {
 
   _getStyles() {
     return `
-      .preview { padding: 16px; font-family: var(--loki-font-family, system-ui, -apple-system, sans-serif); color: var(--loki-text-primary, #201515); }
+      .preview { padding: 16px; font-family: var(--loki-font-family, system-ui, -apple-system, sans-serif); color: var(--loki-text-primary, #201515); display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
       .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
       .header-left { display: flex; align-items: center; gap: 10px; }
       .title { font-size: 18px; font-weight: 600; margin: 0; }
@@ -269,8 +385,26 @@ export class LokiAppPreview extends LokiElement {
       .btn:hover:not(:disabled) { background: var(--loki-bg-hover, #e4e4e7); }
       .btn:disabled { opacity: 0.45; cursor: not-allowed; }
       .btn-primary { background: var(--loki-accent, #2563eb); color: #fff; border-color: var(--loki-accent, #2563eb); }
-      .frame-wrap { margin-top: 12px; border: 1px solid var(--loki-border, #e4e4e7); border-radius: 8px; overflow: hidden; background: #fff; }
-      .preview-frame { width: 100%; height: 480px; border: 0; display: block; background: #fff; }
+      /* Per-service tab strip. Rendered only when more than one service is
+         exposed; a single service shows no tabs (unchanged behavior). */
+      .service-tabs { display: flex; gap: 4px; margin-top: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--loki-border, #e4e4e7); }
+      .service-tab { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid transparent; border-bottom: 0; border-top-left-radius: 6px; border-top-right-radius: 6px; background: none; color: var(--loki-text-muted, #71717a); margin-bottom: -1px; }
+      .service-tab:hover { color: var(--loki-text-primary, #201515); background: var(--loki-bg-subtle, #f4f4f5); }
+      .service-tab.active { color: var(--loki-text-primary, #201515); background: var(--loki-bg-card, #fff); border-color: var(--loki-border, #e4e4e7); border-bottom-color: var(--loki-bg-card, #fff); }
+      .service-tab .tab-port { font-size: 11px; color: var(--loki-text-muted, #71717a); }
+      .service-tab .tab-icon { display: inline-flex; }
+      /* Full-width embed: fill the available right-side width and a generous
+         height so the running app is comfortable to use, not cramped. */
+      .frame-wrap { margin-top: 12px; border: 1px solid var(--loki-border, #e4e4e7); border-radius: 8px; overflow: hidden; background: #fff; width: 100%; box-sizing: border-box; }
+      .frame-wrap.tabbed { border-top-left-radius: 0; margin-top: 0; }
+      .preview-frame { width: 100%; height: min(72vh, 900px); min-height: 480px; border: 0; display: block; background: #fff; }
+      /* API service surface: a JSON endpoint does not render usefully in a
+         frame, so show the URL + an Open-in-browser CTA instead. */
+      .api-surface { margin-top: 12px; border: 1px solid var(--loki-border, #e4e4e7); border-radius: 8px; background: var(--loki-bg-card, #fff); padding: 20px 18px; width: 100%; box-sizing: border-box; }
+      .api-surface.tabbed { border-top-left-radius: 0; margin-top: 0; }
+      .api-surface h3 { margin: 0 0 6px 0; font-size: 15px; font-weight: 600; color: var(--loki-text-primary, #201515); }
+      .api-surface p { margin: 0 0 12px 0; font-size: 13px; color: var(--loki-text-muted, #71717a); }
+      .api-surface .api-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--loki-accent, #2563eb); word-break: break-all; }
       .state-block { margin-top: 12px; padding: 24px 16px; text-align: center; border: 1px dashed var(--loki-border, #e4e4e7); border-radius: 8px; color: var(--loki-text-muted, #71717a); }
       .state-block h3 { margin: 0 0 6px 0; font-size: 15px; font-weight: 600; color: var(--loki-text-primary, #201515); }
       .state-block p { margin: 0; font-size: 13px; }
@@ -341,7 +475,16 @@ export class LokiAppPreview extends LokiElement {
 
     const st = this._status;
     const rawStatus = st?.status || 'not_initialized';
-    const urlValid = this._isValidUrl(st?.url);
+    // Derive the services to surface and resolve the active one. With a single
+    // service this is one entry and no tab strip is shown; the active URL equals
+    // the flat status URL, so existing single-service behavior is unchanged.
+    const services = this._getServices();
+    const activeService = this._activeService(services);
+    const showTabs = services.length > 1;
+    // URL validity drives the running/iframe surface. Use the active service's
+    // URL when resolvable, else the flat status URL.
+    const activeUrl = activeService?.url || st?.url;
+    const urlValid = this._isValidUrl(activeUrl);
     const { view, healthOk } = this._effectiveView(rawStatus, urlValid);
     // An app Loki did not start itself (externally managed or discovered on the
     // conventional port). Loki cannot truthfully claim to manage its lifecycle,
@@ -369,9 +512,10 @@ export class LokiAppPreview extends LokiElement {
           ${this._renderToolbar(view, urlValid, extMgd)}
         </div>
         ${(view === 'running' || view === 'starting') && urlValid ? `
-          <p class="transport">${extMgd ? 'Detected running app' : 'Running locally'} - <a href="${this._escapeHtml(st.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(st.url)}</a>${extMgd ? ' <span style="color: var(--loki-text-muted, #71717a);">(managed outside Loki)</span>' : ''}</p>
+          <p class="transport">${extMgd ? 'Detected running app' : 'Running locally'} - <a href="${this._escapeHtml(activeUrl)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(activeUrl)}</a>${extMgd ? ' <span style="color: var(--loki-text-muted, #71717a);">(managed outside Loki)</span>' : ''}</p>
         ` : ''}
-        ${this._renderSurface(view, urlValid, healthOk, extMgd)}
+        ${showTabs && (view === 'running' || view === 'starting') ? this._renderServiceTabs(services, activeService) : ''}
+        ${this._renderSurface(view, urlValid, healthOk, extMgd, activeService, showTabs)}
         ${this._renderErrorBanner(rawStatus)}
         ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
       </div>
@@ -412,6 +556,46 @@ export class LokiAppPreview extends LokiElement {
     }, this._IFRAME_LOAD_TIMEOUT_MS);
   }
 
+  /**
+   * Render the per-service tab strip. Only called when more than one service is
+   * exposed. Each tab carries the service label and (when distinct) its port,
+   * with a small inline icon hinting whether it is a browser UI or an API. The
+   * active tab is highlighted; clicking switches which service the embed loads.
+   */
+  _renderServiceTabs(services, activeService) {
+    const activeKey = activeService?.key;
+    return `
+      <div class="service-tabs" role="tablist" aria-label="App services">
+        ${services.map(sv => {
+          const isActive = sv.key === activeKey;
+          const icon = sv.role === 'api' ? this._iconApi() : this._iconWindow();
+          return `
+            <button
+              class="service-tab ${isActive ? 'active' : ''}"
+              role="tab"
+              aria-selected="${isActive ? 'true' : 'false'}"
+              data-action="select-service"
+              data-service-key="${this._escapeHtml(sv.key)}">
+              <span class="tab-icon">${icon}</span>
+              <span>${this._escapeHtml(sv.label)}</span>
+              ${sv.port ? `<span class="tab-port">:${this._escapeHtml(sv.port)}</span>` : ''}
+            </button>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // Inline lucide-style icons (no emoji). Stroke uses currentColor so they pick
+  // up the tab's text color in both themes.
+  _iconWindow() {
+    return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>`;
+  }
+
+  _iconApi() {
+    return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+  }
+
   _renderToolbar(status, urlValid, extMgd) {
     // Refresh / Open-in-browser are useful whenever we have a valid URL and the
     // app is meant to be up (running, or amber starting, or stale), so the user
@@ -430,9 +614,25 @@ export class LokiAppPreview extends LokiElement {
     `;
   }
 
-  _renderSurface(status, urlValid, healthOk, extMgd) {
+  _renderSurface(status, urlValid, healthOk, extMgd, activeService, showTabs) {
     if (status === 'running' && urlValid) {
-      const st = this._status;
+      const targetUrl = activeService?.url || this._status?.url;
+      const tabbedClass = showTabs ? ' tabbed' : '';
+      // An API-type service does not render usefully in a frame (a raw JSON
+      // body, not a page), so show the URL + an Open-in-browser CTA instead of a
+      // broken iframe. UI services (or services with no known role) embed.
+      if (activeService && activeService.role === 'api') {
+        return `
+          <div class="api-surface${tabbedClass}">
+            <h3>API service</h3>
+            <p>This service exposes an API, not a browser UI, so it is not embedded here. Open it in your browser or call it directly.</p>
+            <p class="api-url">${this._escapeHtml(targetUrl)}</p>
+            <div class="err-actions" style="margin-top: 14px;">
+              <button class="btn btn-primary" data-action="open-external">Open in browser</button>
+            </div>
+          </div>
+        `;
+      }
       if (this._iframeFailed) {
         // Health is ok (we only reach the running view when last_health.ok is
         // true or unknown-in-grace) but the iframe still did not render. The
@@ -450,10 +650,10 @@ export class LokiAppPreview extends LokiElement {
         `;
       }
       return `
-        <div class="frame-wrap">
+        <div class="frame-wrap${tabbedClass}">
           <iframe
             class="preview-frame"
-            src="${this._escapeHtml(st.url)}"
+            src="${this._escapeHtml(targetUrl)}"
             sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
             referrerpolicy="no-referrer"
             title="Live preview of the running app"></iframe>
@@ -576,6 +776,8 @@ export class LokiAppPreview extends LokiElement {
       el.addEventListener('click', () => this._handleRetryFrame()));
     bind('[data-action="refresh"]', () => this._handleRefresh());
     bind('[data-action="toggle-details"]', () => this._toggleDetails());
+    s.querySelectorAll('[data-action="select-service"]').forEach(el =>
+      el.addEventListener('click', () => this._handleSelectService(el.getAttribute('data-service-key'))));
   }
 
   _escapeHtml(str) {
