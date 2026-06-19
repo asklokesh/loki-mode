@@ -120,6 +120,7 @@ h2.title{font-family:var(--serif);font-size:clamp(2rem,4.6vw,3.1rem);font-weight
 .perm-counter{margin-top:.4rem;padding:.9rem;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;text-align:center}
 .perm-counter .pc-n{font-size:1.55rem;font-weight:700;font-family:var(--mono);letter-spacing:-.02em;color:var(--indigo)}
 .perm-counter .pc-l{font-size:.7rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.perm-counter .pc-foot{font-size:.64rem;color:var(--dim);margin-top:.4rem;font-style:italic}
 .run-btn{width:100%;margin-top:1rem;padding:.85rem;border-radius:10px;background:var(--indigo);color:#fff;font-weight:700;border:none;cursor:pointer;font-size:.92rem;transition:all .2s;font-family:inherit}
 .run-btn:hover{background:var(--indigo-d);transform:translateY(-1px);box-shadow:0 8px 22px rgba(79,70,229,.3)}
 .run-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
@@ -258,7 +259,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
   </div>
   <div class="nav-right">
     <span class="ver-pill">v7.56.0</span>
-    <button class="nav-toggle" onclick="document.getElementById('tabs').classList.toggle('mobile-open')">Menu</button>
+    <button class="nav-toggle" aria-controls="tabs" aria-expanded="false" onclick="this.setAttribute('aria-expanded', document.getElementById('tabs').classList.toggle('mobile-open'))">Menu</button>
   </div>
 </nav>
 
@@ -383,6 +384,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
           <div class="perm-counter">
             <div class="pc-n" id="permN">0</div>
             <div class="pc-l">distinct run permutations</div>
+            <div class="pc-foot">config combinations &times; iteration/agent orderings</div>
           </div>
           <button class="run-btn" id="runBtn" onclick="runLoki()">Run Loki Mode</button>
         </div>
@@ -398,7 +400,7 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
             <div>Configure your run on the left, then press <b>Run Loki Mode</b>.</div>
             <div class="rarv"><span>Reason</span><span>Act</span><span>Reflect</span><span>Verify</span><span>Closure</span></div>
           </div>
-          <div class="console" id="console" style="display:none"></div>
+          <div class="console" id="console" style="display:none" aria-live="polite" aria-atomic="false"></div>
           <div class="result-bar" id="resultBar">
             <div class="rstat"><span class="rn ok" id="rIter">&mdash;</span><span class="rl">Iterations</span></div>
             <div class="rstat"><span class="rn ok" id="rGates">&mdash;</span><span class="rl">Gates passed</span></div>
@@ -689,7 +691,8 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
   function animateNum(el,target){
     var fmt=function(n){return n.toLocaleString('en-US');};
     var c=parseInt(el.dataset.cur||'0',10);
-    var step=Math.max(1,Math.round((target-c)/18));
+    // signed step so the counter animates both up (gate on) and down (gate off)
+    var step=(target>=c?1:-1)*Math.max(1,Math.abs(Math.round((target-c)/18)));
     clearInterval(el._t);
     el._t=setInterval(function(){
       c+=step;
