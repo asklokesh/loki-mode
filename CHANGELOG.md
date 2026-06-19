@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.79.0] - 2026-06-19
+
+### Enterprise + local foundation: one config knob, pluggable storage, hardened webhooks, real auth gating
+
+The first of two enterprise-hardening releases. Everything here is local-first by
+default (zero new dependencies, behavior byte-identical when you set nothing);
+enterprise backends and controls are strictly opt-in. Council 3/3 after a
+two-round adversarial review that caught and closed real defects before ship.
+
+Features
+- Unified config file (#691): `loki start --config <file>` (aliases `--vars`,
+  `--env-file`) loads one `.env` / YAML / JSON file, so Docker / compose / k8s /
+  Vault operators inject a single mounted file instead of a wall of `LOKI_*` env
+  vars. Locked precedence: CLI flags > `--config` > ambient env > auto
+  `.loki/config.yaml` > settings.json > defaults. Secrets are referenced via
+  `${VAR}` (resolved by bash indirect expansion, never eval), never inlined; a
+  literal secret value warns on load and fails `loki config validate`. New
+  `loki config example|schema|validate`, all generated from one canonical key map
+  (the three config-mapping tables that used to drift are now one).
+- Pluggable storage adapter (`lokistore/`): one local-first interface every
+  durability feature binds to. Default is the same `.loki/` files you already
+  use (zero new deps; importing it loads no cloud SDK). Opt in to `s3` / `gcs` /
+  `azure-blob` (lazy-imported only when selected) via `storage.backend`.
+- Object-store checkpoint sync (opt-in): with a non-local `storage.backend`, a
+  build's checkpoints sync off-cluster and a pod rescheduled onto a fresh node
+  hydrates and resumes. The Helm worker sets a stable `LOKI_RUN_ID` so keys match
+  across pod restarts.
+- Multi-build state isolation: per-build state is namespaced by `LOKI_SESSION_ID`,
+  so two builds in one pod no longer clobber each other (legacy single-build path
+  unchanged when unset).
+- Post-release smoke CI: a new workflow installs and runs the PUBLISHED npm /
+  Docker / Homebrew / SDK artifacts after each release and fails loud, replacing
+  the previous manual post-release check.
+
+Security and hardening
+- Webhook trigger server rewrite: refuses to run (or accepts) any webhook when no
+  HMAC secret is configured (was accept-all), constant-time signature compare,
+  threaded with a bounded worker queue (no listener blocking, load-shed on
+  storm), dispatches `loki start` (not the deprecated `loki run`), reaps children
+  (no zombies), dedups redelivered webhooks, and rejects a malformed
+  `owner/repo` so a webhook payload can never inject a CLI flag into the build.
+- Two unauthenticated WebSocket paths closed: the `/lab` sub-app and the native
+  `/ws/collab` endpoint were reachable without auth when enterprise auth was on
+  (the collab path could mutate shared state); both now require a valid scoped
+  token (close 1008 otherwise) and are pass-through when auth is off.
+- Config-value validator fixed: `validate_yaml_value` used a regex bracket class
+  that matched nothing and silently accepted shell metacharacters; it now
+  rejects `$(...)`, backticks, pipes, etc.
+- LokiStore path-traversal read closed: a leaf symlink inside the store base that
+  pointed outside it was followed on read; reads now realpath-check the full
+  target.
+- Dashboard RBAC consistency: seven `/api/memory/*` reads and the `/api/collab/*`
+  routes that were missing scope checks now match their gated siblings.
+
+Honest scope (NOT overclaimed)
+- `LOKI_ALLOWED_PATHS` is PARTIAL enforcement: it restricts the sandbox custom
+  `--mount` host path and an operator-supplied sandbox command. It does NOT
+  restrict provider-driven agent file writes (those go through the provider CLI,
+  not run.sh; the container is their containment). Docs say exactly this.
+- Object-store sync covers the `.loki` checkpoint state; the git `refs/loki/cp/*`
+  worktree snapshots are not synced. SSO/SAML, SCIM, app-level/tenant RBAC, and
+  SOC2 remain roadmap, not shipped.
+
+Every claim above maps to enforced, tested behavior: full local test suite green
+(1376 pytest + the new bash suites), local-ci 85/0, bash/Bun parity intact.
+
 ## [7.78.0] - 2026-06-19
 
 ### Dead-code removal + ALLOWED_PATHS honesty

@@ -41,12 +41,32 @@ def create_collab_routes(app):
         app: FastAPI application instance
     """
     from fastapi import (
+        Depends,
         HTTPException,
         WebSocket,
         WebSocketDisconnect,
         Query,
     )
     from pydantic import BaseModel, ConfigDict, Field
+
+    # Reuse the dashboard's scope auth so the collab REST routes are gated the
+    # same way as the rest of the dashboard when enterprise auth / OIDC is on.
+    # require_scope is a no-op (allows through) when auth is OFF, so local
+    # default-mode behavior is unchanged. Reads require "read"; state-changing
+    # routes (join/leave/cursor/status/heartbeat/operation/sync) require
+    # "control", mirroring the /ws/collab gate. Imported the same way server.py
+    # loads auth; if unavailable, fall back to a no-op so collab still loads.
+    try:
+        from dashboard import auth as _auth
+
+        _read = Depends(_auth.require_scope("read"))
+        _control = Depends(_auth.require_scope("control"))
+    except Exception:  # noqa: BLE001 - collab must still register without auth
+        def _noop_dep():
+            return True
+
+        _read = Depends(_noop_dep)
+        _control = Depends(_noop_dep)
 
     # Pydantic schemas
     class JoinRequest(BaseModel):
@@ -116,7 +136,7 @@ def create_collab_routes(app):
     # Presence Endpoints
     # ==========================================================================
 
-    @app.post("/api/collab/join", response_model=JoinResponse, tags=["collab"])
+    @app.post("/api/collab/join", response_model=JoinResponse, tags=["collab"], dependencies=[_control])
     async def join_session(request: JoinRequest) -> JoinResponse:
         """
         Join the collaboration session.
@@ -143,7 +163,7 @@ def create_collab_routes(app):
             joined_at=user.joined_at,
         )
 
-    @app.post("/api/collab/leave", status_code=204, tags=["collab"])
+    @app.post("/api/collab/leave", status_code=204, tags=["collab"], dependencies=[_control])
     async def leave_session(user_id: str = Query(...)) -> None:
         """
         Leave the collaboration session.
@@ -153,7 +173,7 @@ def create_collab_routes(app):
         if not presence.leave(user_id):
             raise HTTPException(status_code=404, detail="User not found")
 
-    @app.get("/api/collab/users", response_model=List[UserResponse], tags=["collab"])
+    @app.get("/api/collab/users", response_model=List[UserResponse], tags=["collab"], dependencies=[_read])
     async def get_active_users(
         include_offline: bool = Query(False),
         client_type: Optional[str] = Query(None),
@@ -187,7 +207,7 @@ def create_collab_routes(app):
             for u in users
         ]
 
-    @app.get("/api/collab/users/{user_id}", response_model=UserResponse, tags=["collab"])
+    @app.get("/api/collab/users/{user_id}", response_model=UserResponse, tags=["collab"], dependencies=[_read])
     async def get_user(user_id: str) -> UserResponse:
         """Get a specific user by ID."""
         user = presence.get_user(user_id)
@@ -204,7 +224,7 @@ def create_collab_routes(app):
             current_file=user.current_file,
         )
 
-    @app.post("/api/collab/users/{user_id}/heartbeat", status_code=204, tags=["collab"])
+    @app.post("/api/collab/users/{user_id}/heartbeat", status_code=204, tags=["collab"], dependencies=[_control])
     async def send_heartbeat(user_id: str) -> None:
         """
         Send a heartbeat to keep the user active.
@@ -215,7 +235,7 @@ def create_collab_routes(app):
         if not presence.heartbeat(user_id):
             raise HTTPException(status_code=404, detail="User not found")
 
-    @app.post("/api/collab/users/{user_id}/cursor", status_code=204, tags=["collab"])
+    @app.post("/api/collab/users/{user_id}/cursor", status_code=204, tags=["collab"], dependencies=[_control])
     async def update_cursor(user_id: str, cursor: CursorUpdate) -> None:
         """Update user's cursor position."""
         pos = CursorPosition(
@@ -229,7 +249,7 @@ def create_collab_routes(app):
         if not presence.update_cursor(user_id, pos):
             raise HTTPException(status_code=404, detail="User not found")
 
-    @app.post("/api/collab/users/{user_id}/status", status_code=204, tags=["collab"])
+    @app.post("/api/collab/users/{user_id}/status", status_code=204, tags=["collab"], dependencies=[_control])
     async def update_status(user_id: str, status_update: StatusUpdate) -> None:
         """Update user's status (online, away, busy, offline)."""
         try:
@@ -240,13 +260,13 @@ def create_collab_routes(app):
         if not presence.update_status(user_id, status):
             raise HTTPException(status_code=404, detail="User not found")
 
-    @app.get("/api/collab/presence", response_model=PresenceSummary, tags=["collab"])
+    @app.get("/api/collab/presence", response_model=PresenceSummary, tags=["collab"], dependencies=[_read])
     async def get_presence_summary() -> PresenceSummary:
         """Get a summary of current presence state."""
         summary = presence.get_presence_summary()
         return PresenceSummary(**summary)
 
-    @app.get("/api/collab/file/{file_path:path}", response_model=List[UserResponse], tags=["collab"])
+    @app.get("/api/collab/file/{file_path:path}", response_model=List[UserResponse], tags=["collab"], dependencies=[_read])
     async def get_users_in_file(file_path: str) -> List[UserResponse]:
         """Get all users currently viewing a specific file."""
         users = presence.get_users_in_file(file_path)
@@ -268,7 +288,7 @@ def create_collab_routes(app):
     # State Sync Endpoints
     # ==========================================================================
 
-    @app.get("/api/collab/state", tags=["collab"])
+    @app.get("/api/collab/state", tags=["collab"], dependencies=[_read])
     async def get_state() -> Dict[str, Any]:
         """Get the current shared state."""
         return {
@@ -277,7 +297,7 @@ def create_collab_routes(app):
             "hash": sync.get_state_hash(),
         }
 
-    @app.get("/api/collab/state/value", tags=["collab"])
+    @app.get("/api/collab/state/value", tags=["collab"], dependencies=[_read])
     async def get_state_value(path: str = Query(...)) -> Dict[str, Any]:
         """
         Get a value at a specific path in the state.
@@ -298,7 +318,7 @@ def create_collab_routes(app):
 
         return {"path": path, "value": value}
 
-    @app.post("/api/collab/operation", tags=["collab"])
+    @app.post("/api/collab/operation", tags=["collab"], dependencies=[_control])
     async def apply_operation(
         operation: OperationRequest,
         user_id: str = Query(...),
@@ -347,7 +367,7 @@ def create_collab_routes(app):
             "version": sync.get_version(),
         }
 
-    @app.post("/api/collab/sync", tags=["collab"])
+    @app.post("/api/collab/sync", tags=["collab"], dependencies=[_control])
     async def sync_state(request: SyncRequest) -> Dict[str, Any]:
         """
         Synchronize with a full state snapshot.
@@ -362,7 +382,7 @@ def create_collab_routes(app):
             "hash": sync.get_state_hash(),
         }
 
-    @app.get("/api/collab/history", tags=["collab"])
+    @app.get("/api/collab/history", tags=["collab"], dependencies=[_read])
     async def get_operation_history(
         since_version: Optional[int] = Query(None),
         limit: int = Query(100, le=1000),
@@ -441,7 +461,7 @@ def create_collab_routes(app):
     # Status Endpoint
     # ==========================================================================
 
-    @app.get("/api/collab/status", tags=["collab"])
+    @app.get("/api/collab/status", tags=["collab"], dependencies=[_read])
     async def get_collab_status() -> Dict[str, Any]:
         """Get collaboration system status."""
         return {

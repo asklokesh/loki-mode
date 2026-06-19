@@ -79,6 +79,33 @@ spec:
             # backed by the durable volume mounted below.
             - name: LOKI_DURABLE_STATE
               value: "1"
+            # Stable run id across pod restarts of THIS Job. The per-process
+            # trust-run-id changes on every restart, so cross-node object-store
+            # hydrate (A3: pull this build's checkpoints back onto a fresh volume)
+            # can only match keys when a stable id is set. The Helm fullname is
+            # stable for the life of a release/Job, so it is the correct anchor.
+            - name: LOKI_RUN_ID
+              value: {{ include "autonomi.fullname" . | quote }}
+            {{- if .Values.storage.backend }}
+            # Object-store checkpoint sync (A3). Default unset/local = no-op
+            # (state stays on the durable volume only). Set storage.backend to
+            # s3|gcs|azure-blob + storage.bucket/prefix/region to also push
+            # checkpoints off-cluster for cross-node resume + backup.
+            - name: LOKI_STORAGE_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            {{- if .Values.storage.bucket }}
+            - name: LOKI_STORAGE_BUCKET
+              value: {{ .Values.storage.bucket | quote }}
+            {{- end }}
+            {{- if .Values.storage.prefix }}
+            - name: LOKI_STORAGE_PREFIX
+              value: {{ .Values.storage.prefix | quote }}
+            {{- end }}
+            {{- if .Values.storage.region }}
+            - name: LOKI_STORAGE_REGION
+              value: {{ .Values.storage.region | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

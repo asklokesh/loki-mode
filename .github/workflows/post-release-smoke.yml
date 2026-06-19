@@ -1,0 +1,357 @@
+name: Post-Release Smoke
+
+# Verifies that the PUBLISHED artifacts of a release actually work, closing
+# the manual post-release validation gap. Unlike soak-monitor.yml (a daily
+# adoption-signal HEARTBEAT), this is a SMOKE TEST: it installs/pulls each
+# distribution channel for a specific version and asserts the binary runs and
+# reports the expected version.
+#
+# Trigger: runs after the Release workflow finishes successfully. The Release
+# workflow already gates publish-npm/publish-docker/update-homebrew on its own
+# success, so a successful Release run means the artifacts were pushed. A manual
+# workflow_dispatch with a version override is also supported for re-runs (for
+# example, re-validating after a propagation lag or a fixed publish job).
+#
+# Version resolution:
+#   - workflow_dispatch: uses the `version` input verbatim (no leading "v").
+#   - workflow_run: checks out the commit that triggered the Release run
+#     (the head SHA of that run) and reads the VERSION file from it. That is
+#     the same source the Release workflow uses to determine the version, so
+#     the two always agree.
+#
+# Each smoke job retries on propagation lag (npm/Docker/Homebrew can take a few
+# minutes to serve a freshly published artifact) with a bounded backoff, then
+# fails loudly. On any failure the notify job posts to the SAME Slack webhook
+# the Release workflow uses (secrets.SLACK_WEBHOOK_URL), naming the channel and
+# version that failed.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to smoke test (no leading v, e.g. 7.75.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.version || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  # Resolve the version once so every smoke job shares the same value, and so
+  # the workflow can be skipped early when the triggering Release run failed.
+  resolve:
+    # Only proceed when manually dispatched OR when the triggering Release run
+    # succeeded. A failed Release run published nothing worth smoke testing.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout triggering commit
+        uses: actions/checkout@v4
+        with:
+          # For workflow_run, check out the exact commit that produced the
+          # release so the VERSION file matches what was published. For
+          # workflow_dispatch this ref is empty and the default checkout is fine.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="$(cat VERSION | tr -d '\n')"
+          fi
+          # Normalize: strip any accidental leading "v".
+          VERSION="${VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "FATAL: could not resolve a version to smoke test"
+            exit 1
+          fi
+          echo "Resolved version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  npm-smoke:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install loki-mode from npm (retry on propagation lag)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            echo "npm install attempt ${attempt} for loki-mode@${VERSION}"
+            if npm install -g "loki-mode@${VERSION}"; then
+              echo "npm install succeeded"
+              exit 0
+            fi
+            echo "npm not ready yet (propagation lag); backing off..."
+            sleep $((attempt * 30))
+          done
+          echo "FATAL: loki-mode@${VERSION} not installable from npm after retries"
+          exit 1
+
+      - name: Assert loki version
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          OUT="$(loki version 2>&1 || true)"
+          echo "loki version output: $OUT"
+          if ! echo "$OUT" | grep -q "$VERSION"; then
+            echo "FATAL: loki version did not report expected version $VERSION"
+            exit 1
+          fi
+
+      - name: Assert loki doctor --json
+        run: |
+          set -uo pipefail
+          loki doctor --json > /tmp/doctor.json
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "FATAL: loki doctor --json exited with $RC"
+            exit 1
+          fi
+          python3 -c "import json,sys; json.load(open('/tmp/doctor.json')); print('doctor --json is valid JSON')"
+
+  docker-smoke:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Pull image from Docker Hub (retry on propagation lag)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          IMG="asklokesh/loki-mode:${VERSION}"
+          for attempt in 1 2 3 4 5 6; do
+            echo "docker pull attempt ${attempt} for ${IMG}"
+            if docker pull "$IMG"; then
+              echo "docker pull succeeded"
+              exit 0
+            fi
+            echo "image not ready yet (propagation lag); backing off..."
+            sleep $((attempt * 30))
+          done
+          echo "FATAL: ${IMG} not pullable after retries"
+          exit 1
+
+      - name: Assert image version
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          IMG="asklokesh/loki-mode:${VERSION}"
+          OUT="$(docker run --rm "$IMG" version 2>&1 || true)"
+          echo "image version output: $OUT"
+          if ! echo "$OUT" | grep -q "$VERSION"; then
+            echo "FATAL: image version did not report expected version $VERSION"
+            exit 1
+          fi
+
+      - name: Assert doctor --json (valid JSON)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          IMG="asklokesh/loki-mode:${VERSION}"
+          docker run --rm "$IMG" doctor --json > /tmp/docker-doctor.json
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "FATAL: docker doctor --json exited with $RC"
+            exit 1
+          fi
+          python3 -c "import json,sys; json.load(open('/tmp/docker-doctor.json')); print('docker doctor --json is valid JSON')"
+
+      - name: Assert status --json (valid JSON)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          IMG="asklokesh/loki-mode:${VERSION}"
+          docker run --rm "$IMG" status --json > /tmp/docker-status.json
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "FATAL: docker status --json exited with $RC"
+            exit 1
+          fi
+          python3 -c "import json,sys; json.load(open('/tmp/docker-status.json')); print('docker status --json is valid JSON')"
+
+  homebrew-smoke:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify Homebrew formula references the version + sha256 (retry on lag)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          # The tap update is the last channel in the Release pipeline, so it
+          # can lag the most. Fetch the live formula and assert it pins this
+          # version and carries a sha256.
+          FORMULA_URL="https://raw.githubusercontent.com/asklokesh/homebrew-tap/master/Formula/loki-mode.rb"
+          for attempt in 1 2 3 4 5 6; do
+            echo "formula fetch attempt ${attempt} for ${VERSION}"
+            FORMULA="$(curl -fsSL "$FORMULA_URL" 2>/dev/null || echo '')"
+            if echo "$FORMULA" | grep -q "loki-mode-${VERSION}.tar.gz" \
+               && echo "$FORMULA" | grep -Eq 'sha256 "[0-9a-f]{64}"'; then
+              echo "Homebrew formula references v${VERSION} with a sha256"
+              exit 0
+            fi
+            echo "formula not updated to ${VERSION} yet (propagation lag); backing off..."
+            sleep $((attempt * 30))
+          done
+          echo "FATAL: Homebrew formula not updated to v${VERSION} after retries"
+          echo "----- last fetched formula -----"
+          echo "$FORMULA"
+          exit 1
+
+  sdk-smoke:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Python SDK import smoke (retry on PyPI lag)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            echo "pip install attempt ${attempt} for loki-mode-sdk==${VERSION}"
+            if pip install "loki-mode-sdk==${VERSION}"; then
+              python3 -c "import importlib.metadata as m; v=m.version('loki-mode-sdk'); print('python sdk version', v); assert v == '${VERSION}', 'version mismatch: '+v"
+              echo "python sdk smoke passed"
+              exit 0
+            fi
+            echo "PyPI not ready yet (propagation lag); backing off..."
+            sleep $((attempt * 30))
+          done
+          echo "FATAL: loki-mode-sdk==${VERSION} not installable from PyPI after retries"
+          exit 1
+
+      - name: TypeScript SDK version smoke (retry on npm lag)
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            echo "npm view attempt ${attempt} for loki-mode-sdk@${VERSION}"
+            FOUND="$(npm view "loki-mode-sdk@${VERSION}" version 2>/dev/null || echo '')"
+            if [ "$FOUND" = "${VERSION}" ]; then
+              echo "typescript sdk version ${FOUND} published"
+              exit 0
+            fi
+            echo "ts sdk not ready yet (propagation lag); backing off..."
+            sleep $((attempt * 30))
+          done
+          echo "FATAL: loki-mode-sdk@${VERSION} not found on npm after retries"
+          exit 1
+
+  notify:
+    # Run after all smoke jobs regardless of outcome so a single failed channel
+    # is reported. Uses the same Slack webhook the Release workflow uses.
+    needs: [resolve, npm-smoke, docker-smoke, homebrew-smoke, sdk-smoke]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Determine failed channels
+        id: failed
+        run: |
+          set -uo pipefail
+          CHANNELS=""
+          [ "${{ needs.npm-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} npm"
+          [ "${{ needs.docker-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} docker"
+          [ "${{ needs.homebrew-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} brew"
+          [ "${{ needs.sdk-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} sdk"
+          CHANNELS="$(echo "$CHANNELS" | sed 's/^ *//')"
+          if [ -n "$CHANNELS" ]; then
+            echo "any_failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_failed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "channels=$CHANNELS" >> "$GITHUB_OUTPUT"
+          echo "Failed channels: '${CHANNELS:-none}'"
+
+      - name: Post failure to Slack
+        if: steps.failed.outputs.any_failed == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          CHANNELS: ${{ steps.failed.outputs.channels }}
+        run: |
+          set -uo pipefail
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not configured, skipping Slack notification"
+            exit 0
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # Build the payload in Python to avoid bash quoting issues.
+          VERSION_FOR_SLACK="v${VERSION}" CHANNELS_FOR_SLACK="$CHANNELS" RUN_URL_FOR_SLACK="$RUN_URL" python3 -c "
+          import json, os
+          version = os.environ['VERSION_FOR_SLACK']
+          channels = os.environ['CHANNELS_FOR_SLACK'].strip()
+          run_url = os.environ['RUN_URL_FOR_SLACK']
+          payload = {
+              'blocks': [
+                  {
+                      'type': 'header',
+                      'text': {'type': 'plain_text', 'text': f'Post-release smoke FAILED for Loki Mode {version}'}
+                  },
+                  {
+                      'type': 'section',
+                      'text': {'type': 'mrkdwn', 'text': f'Failing channel(s): *{channels}*\nThe published artifact(s) for these channels did not pass smoke verification.'}
+                  },
+                  {
+                      'type': 'section',
+                      'text': {'type': 'mrkdwn', 'text': f'*<{run_url}|View failed run>*'}
+                  }
+              ]
+          }
+          with open('/tmp/slack-smoke-payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            -d @/tmp/slack-smoke-payload.json
+          echo "Slack failure notification sent for v${VERSION} (channels: ${CHANNELS})"
+
+      - name: Fail the workflow if any channel failed
+        if: steps.failed.outputs.any_failed == 'true'
+        run: |
+          echo "Post-release smoke failed for channel(s): ${{ steps.failed.outputs.channels }}"
+          exit 1

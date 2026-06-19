@@ -4008,7 +4008,7 @@ async def get_memory_summary():
     return summary
 
 
-@app.get("/api/memory/episodes")
+@app.get("/api/memory/episodes", dependencies=[Depends(auth.require_scope("read"))])
 async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
     """List episodic memory entries."""
     # Both backends below are blocking (SQLite queries / a glob+read loop over
@@ -4079,7 +4079,7 @@ async def get_episode(episode_id: str):
     raise HTTPException(status_code=404, detail="Episode not found")
 
 
-@app.get("/api/memory/patterns")
+@app.get("/api/memory/patterns", dependencies=[Depends(auth.require_scope("read"))])
 async def list_patterns():
     """List semantic patterns."""
     # Try SQLite first
@@ -4118,7 +4118,7 @@ async def get_pattern(pattern_id: str):
     raise HTTPException(status_code=404, detail="Pattern not found")
 
 
-@app.get("/api/memory/skills")
+@app.get("/api/memory/skills", dependencies=[Depends(auth.require_scope("read"))])
 async def list_skills():
     """List procedural skills."""
     # Blocking SQLite query / glob+read loop; offload the whole read so the
@@ -4343,7 +4343,7 @@ async def retrieve_memory(query: dict = None):
         raise HTTPException(status_code=503, detail=f"Retrieval unavailable: {e}")
 
 
-@app.get("/api/memory/index")
+@app.get("/api/memory/index", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_index():
     """Get memory index (Layer 1 - lightweight discovery)."""
     index_file = _get_loki_dir() / "memory" / "index.json"
@@ -4355,7 +4355,7 @@ async def get_memory_index():
     return {"topics": [], "lastUpdated": None}
 
 
-@app.get("/api/memory/timeline")
+@app.get("/api/memory/timeline", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_timeline():
     """Get memory timeline (Layer 2 - progressive disclosure)."""
     timeline_file = _get_loki_dir() / "memory" / "timeline.json"
@@ -4550,7 +4550,7 @@ def _get_memory_storage():
         return None
 
 
-@app.get("/api/memory/search")
+@app.get("/api/memory/search", dependencies=[Depends(auth.require_scope("read"))])
 async def search_memory(
     q: str = Query(..., min_length=1, max_length=500, description="Search query"),
     collection: str = Query(default="all", pattern="^(episodes|patterns|skills|all)$"),
@@ -4588,7 +4588,7 @@ async def search_memory(
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
 
-@app.get("/api/memory/stats")
+@app.get("/api/memory/stats", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_stats():
     """Get memory system statistics (counts, size, backend info)."""
     # SQLite stats query or a directory-walk over many JSON files; both block,
@@ -6858,6 +6858,62 @@ try:
     logger.info("Collaboration API routes enabled")
 except ImportError as e:
     logger.debug(f"Collaboration module not available: {e}")
+
+
+class _CollabWsAuthMiddleware:
+    """ASGI middleware that auth-gates the native /ws/collab WebSocket.
+
+    The collaboration module registers @app.websocket("/ws/collab") inside
+    create_collab_routes() and performs NO token validation: it accepts any
+    connection and trusts a client-supplied ?user_id=. With enterprise auth or
+    OIDC enabled this native WS is therefore reachable UNAUTHENTICATED, exposing
+    user presence, shared state, and operation sync to any client. The dashboard
+    cannot rely on route dependencies for WebSockets (FastAPI Depends() is not
+    supported on @app.websocket routes), so this middleware validates the token
+    on the /ws/collab handshake before the route runs, mirroring the native /ws
+    gate and the _MountAuthGuard WS logic.
+
+    Scope: the collab WS handle_message path applies state operations (writes)
+    via ws_manager.handle_message -> sync.apply_operation, so a valid but
+    read-only token must not be admitted. This requires the "control" scope to
+    match the _MountAuthGuard WS scope-check pattern (a valid token alone is not
+    enough), so a read-only token is closed 1008 even though it authenticates.
+
+    When enterprise auth and OIDC are both OFF this is a pass-through, so local
+    default-mode behavior is unchanged. Non-websocket scopes and other websocket
+    paths (the native /ws self-guards in-route) are passed through untouched.
+    Added via app.add_middleware(), so app stays a FastAPI instance and all
+    later route registrations are unaffected.
+    """
+
+    def __init__(self, app) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "websocket" or scope.get("path") != "/ws/collab":
+            await self._app(scope, receive, send)
+            return
+        if not auth.is_enterprise_mode() and not auth.is_oidc_mode():
+            await self._app(scope, receive, send)
+            return
+        token_str = _MountAuthGuard._ws_token_from_scope(scope)
+        token_info = _MountAuthGuard._validate_ws_token(token_str)
+        if token_info is None or not auth.has_scope(token_info, "control"):
+            # Accept-then-close is the portable ASGI way to surface a policy
+            # violation to the client before any route code runs. 1008 = policy
+            # violation, matching the native /ws and _MountAuthGuard behavior.
+            # "control" (not just a valid token) is required because the collab
+            # WS path performs state writes; a read-only token is rejected here.
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await self._app(scope, receive, send)
+
+
+# Gate the /ws/collab handshake before the unauthenticated collab route runs.
+# Registered as middleware so app remains a FastAPI instance (route decorators
+# below keep working).
+app.add_middleware(_CollabWsAuthMiddleware)
 
 
 # =============================================================================

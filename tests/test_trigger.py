@@ -46,10 +46,15 @@ class TestWebhookSignatureValidation(unittest.TestCase):
         body = b'{"action": "opened"}'
         self.assertFalse(ts.validate_signature(secret, body, "sha256=badhash"))
 
-    def test_no_secret_accepts_all(self):
-        """When no secret configured, accept all requests."""
-        self.assertTrue(ts.validate_signature("", b"body", ""))
-        self.assertTrue(ts.validate_signature("", b"body", "sha256=anything"))
+    def test_no_secret_rejects_all(self):
+        """When no secret is configured, NO webhook is considered valid.
+
+        v7.79.0 security fix: validate_signature now returns False when no secret
+        is set (was a return-True accept-all). The server refuses to dispatch
+        unauthenticated webhooks; an operator must configure a secret.
+        """
+        self.assertFalse(ts.validate_signature("", b"body", ""))
+        self.assertFalse(ts.validate_signature("", b"body", "sha256=anything"))
 
     def test_missing_signature_with_secret_rejects(self):
         """When secret is set but no signature provided, reject."""
@@ -109,14 +114,15 @@ class TestEventRouting(unittest.TestCase):
 
     # Issues event tests
 
-    def test_issues_opened_fires_loki_run(self):
+    def test_issues_opened_fires_loki_start(self):
+        # v7.79.0: dispatch uses `loki start` (loki run is a deprecated alias).
         payload = self._make_issues_payload("opened", number=99)
         summary, status = ts.handle_issues_event(payload, dry_run=False)
         self.assertEqual(status, "fired")
         self.assertIn("99", summary)
         self.mock_run.assert_called_once()
         call_args = self.mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "run")
+        self.assertEqual(call_args[0], "start")
         self.assertIn("--pr", call_args)
         self.assertIn("--detach", call_args)
 
@@ -144,13 +150,14 @@ class TestEventRouting(unittest.TestCase):
 
     # Pull request event tests
 
-    def test_pr_synchronize_fires_loki_run(self):
+    def test_pr_synchronize_fires_loki_start(self):
+        # v7.79.0: dispatch uses `loki start` (loki run is a deprecated alias).
         payload = self._make_pr_payload("synchronize", number=17)
         summary, status = ts.handle_pull_request_event(payload, dry_run=False)
         self.assertEqual(status, "fired")
         self.assertIn("17", summary)
         call_args = self.mock_run.call_args[0][0]
-        self.assertEqual(call_args[0], "run")
+        self.assertEqual(call_args[0], "start")
         self.assertIn("--detach", call_args)
 
     def test_pr_opened_skipped(self):

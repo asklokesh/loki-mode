@@ -224,6 +224,21 @@ run_test "Branch Lifecycle (default-on, base!=main, commit, advisory no-push)" "
 # proves non-execution + CI/CD git-advice precedence over cloud options.
 run_test "Deploy advisory (print-only, CI/CD precedence)" "$SCRIPT_DIR/test-deploy.sh"
 
+# Unified config-file (#691): `loki start --config <path>` (.env/YAML/JSON), the
+# locked precedence ladder (--config beats ambient env -- the keystone), ${VAR}
+# expansion, raw-secret detection, injection rejection, and `config
+# example|schema|validate`. Drives the real binary under LOKI_CONFIG_DUMP=1 +
+# direct unit calls into the side-effect-free config-map.sh lib.
+run_test "Unified config-file (--config precedence + formats)" "$SCRIPT_DIR/test-config-file.sh"
+
+# Release A (v7.79.0) enterprise + local hardening: the bash-side suites. (The
+# python suites -- test_lokistore.py, test_trigger*.py, tests/dashboard/*auth*.py,
+# test-checkpoint-objectstore-sync.py -- are auto-discovered by the local-ci
+# `python3.12 -m pytest -q` block; only the bash tests need explicit registration.)
+run_test "validate_yaml_value injection guard (#691 security fix)" "$SCRIPT_DIR/test-validate-yaml-value.sh"
+run_test "ALLOWED_PATHS partial enforcement (A5: sandbox mount + command)" "$SCRIPT_DIR/test-allowed-paths-a5.sh"
+run_test "Multi-build state isolation (A6: LOKI_SESSION_ID namespacing)" "$SCRIPT_DIR/test-state-isolation-a6.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

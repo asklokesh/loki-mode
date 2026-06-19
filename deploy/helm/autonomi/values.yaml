@@ -199,6 +199,23 @@ ingress:
 # resume model is: the Job's retried pod re-mounts the SAME volume and resumes.
 # Concurrent independent builds require separate releases (or a future
 # generateName / per-Job dynamic claim); that is not implemented here.
+# ---------------------------------------------------------------------------
+# Object-store checkpoint sync (optional, A3). LOCAL-FIRST DEFAULT: leave
+# backend empty and per-build state lives only on the durable /workspace PVC
+# (a Job's retried pod re-mounts the SAME volume and resumes). Set backend to
+# s3 | gcs | azure-blob (+ bucket/prefix/region) to ALSO push this build's
+# checkpoints off-cluster, so a pod rescheduled onto a FRESH node can hydrate
+# and resume. The worker Job sets a stable LOKI_RUN_ID (the release fullname)
+# so the off-cluster keys match across pod restarts.
+# Honest limits: the git refs/loki/cp/* worktree snapshots are NOT synced (they
+# live in .git, outside the synced .loki root); credentials come from the pod's
+# default cloud credential chain (IRSA / Workload Identity / mounted Secret).
+storage:
+  backend: ""      # "" or "local" = no off-cluster sync (default). s3|gcs|azure-blob to enable.
+  bucket: ""
+  prefix: ""
+  region: ""
+
 persistence:
   # Worker /workspace durable volume (per-build state + worker JSONL audit).
   checkpoints:

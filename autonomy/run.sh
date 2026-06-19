@@ -40,12 +40,18 @@
 #   LOKI_AUDIT_DISABLED     - Disable audit logging (default: false)
 #   LOKI_MAX_PARALLEL_AGENTS - Limit concurrent agent spawning (default: 10)
 #   LOKI_SANDBOX_MODE       - Run in sandboxed container (default: false, requires Docker)
-#   LOKI_ALLOWED_PATHS      - Reserved: comma-separated path allowlist. NOT YET
-#                             ENFORCED by the runtime (the value is read from
-#                             config but no path-restriction check consumes it).
-#                             Do not rely on it as a security control. Agent file
-#                             writes are constrained by the OS user + container
-#                             sandbox (LOKI_SANDBOX_MODE), not by this var.
+#   LOKI_ALLOWED_PATHS      - Comma-separated path allowlist. PARTIAL enforcement
+#                             (honest scope): when set, run.sh rejects a sandbox
+#                             custom --mount whose host path is outside the
+#                             allowlist (a write surface run.sh itself controls).
+#                             It does NOT and CANNOT restrict provider-driven
+#                             agent file writes: claude/codex/cline/aider write
+#                             files directly, not through run.sh, so run.sh never
+#                             sees those writes. The containment for agent writes
+#                             is the OS user + the LOKI_SANDBOX_MODE container
+#                             (cap-drop, seccomp, read-only mounts), not this var.
+#                             Treat ALLOWED_PATHS as defense-in-depth on the
+#                             mount surface, not a complete write sandbox.
 #   LOKI_BLOCKED_COMMANDS   - Comma-separated blocked shell commands (default: rm -rf /)
 #
 # OIDC / SSO Authentication (optional, works alongside token auth):
@@ -230,6 +236,17 @@ fi
 # Configuration File Support (v4.1.0)
 # Loads settings from config file, environment variables take precedence
 #===============================================================================
+# #691: source the canonical config mapping + shared per-key export helper. This
+# is the SAME lib the loki CLI pre-pass uses, so the YAML/config-file mapping
+# cannot drift between the CLI and the runner. Side-effect-free on source. The
+# parsers below delegate to loki_config_export_key with override=0, preserving
+# the shipped env-wins auto-discovery contract byte-for-byte.
+_LOKI_CONFIG_MAP_LIB="$SCRIPT_DIR/lib/config-map.sh"
+if [ -f "$_LOKI_CONFIG_MAP_LIB" ]; then
+    # shellcheck source=lib/config-map.sh
+    source "$_LOKI_CONFIG_MAP_LIB"
+fi
+
 load_config_file() {
     local config_file=""
 
@@ -263,95 +280,22 @@ load_config_file() {
     parse_yaml_with_yq "$config_file"
 }
 
-# Fallback YAML parser for simple key: value format
+# Fallback YAML parser for simple key: value format.
+# #691: iterates the canonical LOKI_CONFIG_MAP (single source of truth) instead
+# of 64 hand-maintained set_from_yaml calls. override=0 -> ambient env still
+# wins (auto-discovery contract unchanged). Falls back to nothing if the lib is
+# absent (defensive; the lib ships alongside run.sh).
 parse_simple_yaml() {
     local file="$1"
-
-    # Parse core settings
-    set_from_yaml "$file" "core.max_retries" "LOKI_MAX_RETRIES"
-    set_from_yaml "$file" "core.base_wait" "LOKI_BASE_WAIT"
-    set_from_yaml "$file" "core.max_wait" "LOKI_MAX_WAIT"
-    set_from_yaml "$file" "core.skip_prereqs" "LOKI_SKIP_PREREQS"
-
-    # Dashboard
-    set_from_yaml "$file" "dashboard.enabled" "LOKI_DASHBOARD"
-    set_from_yaml "$file" "dashboard.port" "LOKI_DASHBOARD_PORT"
-
-    # Resources
-    set_from_yaml "$file" "resources.check_interval" "LOKI_RESOURCE_CHECK_INTERVAL"
-    set_from_yaml "$file" "resources.cpu_threshold" "LOKI_RESOURCE_CPU_THRESHOLD"
-    set_from_yaml "$file" "resources.mem_threshold" "LOKI_RESOURCE_MEM_THRESHOLD"
-
-    # Security
-    set_from_yaml "$file" "security.staged_autonomy" "LOKI_STAGED_AUTONOMY"
-    set_from_yaml "$file" "security.audit_log" "LOKI_AUDIT_LOG"
-    set_from_yaml "$file" "security.max_parallel_agents" "LOKI_MAX_PARALLEL_AGENTS"
-    set_from_yaml "$file" "security.sandbox_mode" "LOKI_SANDBOX_MODE"
-    set_from_yaml "$file" "security.allowed_paths" "LOKI_ALLOWED_PATHS"
-    set_from_yaml "$file" "security.blocked_commands" "LOKI_BLOCKED_COMMANDS"
-
-    # Phases
-    set_from_yaml "$file" "phases.unit_tests" "LOKI_PHASE_UNIT_TESTS"
-    set_from_yaml "$file" "phases.api_tests" "LOKI_PHASE_API_TESTS"
-    set_from_yaml "$file" "phases.e2e_tests" "LOKI_PHASE_E2E_TESTS"
-    set_from_yaml "$file" "phases.security" "LOKI_PHASE_SECURITY"
-    set_from_yaml "$file" "phases.integration" "LOKI_PHASE_INTEGRATION"
-    set_from_yaml "$file" "phases.code_review" "LOKI_PHASE_CODE_REVIEW"
-    set_from_yaml "$file" "phases.web_research" "LOKI_PHASE_WEB_RESEARCH"
-    set_from_yaml "$file" "phases.performance" "LOKI_PHASE_PERFORMANCE"
-    set_from_yaml "$file" "phases.accessibility" "LOKI_PHASE_ACCESSIBILITY"
-    set_from_yaml "$file" "phases.regression" "LOKI_PHASE_REGRESSION"
-    set_from_yaml "$file" "phases.uat" "LOKI_PHASE_UAT"
-
-    # Completion
-    set_from_yaml "$file" "completion.promise" "LOKI_COMPLETION_PROMISE"
-    set_from_yaml "$file" "completion.max_iterations" "LOKI_MAX_ITERATIONS"
-    set_from_yaml "$file" "completion.perpetual_mode" "LOKI_PERPETUAL_MODE"
-    set_from_yaml "$file" "completion.council.enabled" "LOKI_COUNCIL_ENABLED"
-    set_from_yaml "$file" "completion.council.size" "LOKI_COUNCIL_SIZE"
-    set_from_yaml "$file" "completion.council.threshold" "LOKI_COUNCIL_THRESHOLD"
-    set_from_yaml "$file" "completion.council.check_interval" "LOKI_COUNCIL_CHECK_INTERVAL"
-    set_from_yaml "$file" "completion.council.min_iterations" "LOKI_COUNCIL_MIN_ITERATIONS"
-    set_from_yaml "$file" "completion.council.stagnation_limit" "LOKI_COUNCIL_STAGNATION_LIMIT"
-    set_from_yaml "$file" "completion.uncertainty.escalation" "LOKI_UNCERTAINTY_ESCALATION"
-    set_from_yaml "$file" "completion.uncertainty.rounds" "LOKI_UNCERTAINTY_ROUNDS"
-    set_from_yaml "$file" "completion.uncertainty.nochange_min" "LOKI_UNCERTAINTY_NOCHANGE_MIN"
-    set_from_yaml "$file" "completion.uncertainty.split_rounds" "LOKI_UNCERTAINTY_SPLIT_ROUNDS"
-
-    # Model
-    set_from_yaml "$file" "model.prompt_repetition" "LOKI_PROMPT_REPETITION"
-    set_from_yaml "$file" "model.confidence_routing" "LOKI_CONFIDENCE_ROUTING"
-    set_from_yaml "$file" "model.autonomy_mode" "LOKI_AUTONOMY_MODE"
-    set_from_yaml "$file" "model.planning" "LOKI_MODEL_PLANNING"
-    set_from_yaml "$file" "model.development" "LOKI_MODEL_DEVELOPMENT"
-    set_from_yaml "$file" "model.fast" "LOKI_MODEL_FAST"
-
-    # Parallel
-    set_from_yaml "$file" "parallel.enabled" "LOKI_PARALLEL_MODE"
-    set_from_yaml "$file" "parallel.max_worktrees" "LOKI_MAX_WORKTREES"
-    set_from_yaml "$file" "parallel.max_sessions" "LOKI_MAX_PARALLEL_SESSIONS"
-    set_from_yaml "$file" "parallel.testing" "LOKI_PARALLEL_TESTING"
-    set_from_yaml "$file" "parallel.docs" "LOKI_PARALLEL_DOCS"
-    set_from_yaml "$file" "parallel.blog" "LOKI_PARALLEL_BLOG"
-    set_from_yaml "$file" "parallel.auto_merge" "LOKI_AUTO_MERGE"
-
-    # Complexity
-    set_from_yaml "$file" "complexity.tier" "LOKI_COMPLEXITY"
-
-    # GitHub
-    set_from_yaml "$file" "github.import" "LOKI_GITHUB_IMPORT"
-    set_from_yaml "$file" "github.pr" "LOKI_GITHUB_PR"
-    set_from_yaml "$file" "github.sync" "LOKI_GITHUB_SYNC"
-    set_from_yaml "$file" "github.repo" "LOKI_GITHUB_REPO"
-    set_from_yaml "$file" "github.labels" "LOKI_GITHUB_LABELS"
-    set_from_yaml "$file" "github.milestone" "LOKI_GITHUB_MILESTONE"
-    set_from_yaml "$file" "github.assignee" "LOKI_GITHUB_ASSIGNEE"
-    set_from_yaml "$file" "github.limit" "LOKI_GITHUB_LIMIT"
-    set_from_yaml "$file" "github.pr_label" "LOKI_GITHUB_PR_LABEL"
-
-    # Notifications
-    set_from_yaml "$file" "notifications.enabled" "LOKI_NOTIFICATIONS"
-    set_from_yaml "$file" "notifications.sound" "LOKI_NOTIFICATION_SOUND"
+    if ! declare -p LOKI_CONFIG_MAP >/dev/null 2>&1; then
+        return 0
+    fi
+    local mapping yaml_path env_var
+    for mapping in "${LOKI_CONFIG_MAP[@]}"; do
+        yaml_path="${mapping%%:*}"
+        env_var="${mapping##*:}"
+        set_from_yaml "$file" "$yaml_path" "$env_var"
+    done
 }
 
 # Validate YAML value to prevent injection attacks
@@ -364,11 +308,19 @@ validate_yaml_value() {
         return 1
     fi
 
-    # Reject values with dangerous shell metacharacters
-    # Allow alphanumeric, spaces, dots, dashes, underscores, slashes, colons, commas, @
-    if [[ "$value" =~ [\$\`\|\;\&\>\<\(\)\{\}\[\]\\] ]]; then
-        return 1
-    fi
+    # Reject values with dangerous shell metacharacters.
+    # SECURITY FIX (#691 wave): the previous [[ "$value" =~ [\$\`...] ]]
+    # bracket-regex matched NOTHING -- backslash escapes inside a bash regex
+    # bracket class are taken literally, so the guard ACCEPTED $(...), backticks,
+    # pipes, etc. (verified behaviorally: it returned 0 for "$(touch /tmp/x)").
+    # A `case` glob class has no such ambiguity and actually rejects the metachars.
+    # Allow alphanumeric, spaces, dots, dashes, underscores, slashes, colons,
+    # commas, @.
+    case "$value" in
+        *'$'* | *'`'* | *'|'* | *';'* | *'&'* | *'>'* | *'<'* | *'('* | *')'* \
+        | *'{'* | *'}'* | *'['* | *']'* | *'\'* )
+            return 1 ;;
+    esac
 
     # Reject values that are too long (DoS protection)
     if [ "${#value}" -gt "$max_length" ]; then
@@ -396,7 +348,8 @@ set_from_yaml() {
     local yaml_path="$2"
     local env_var="$3"
 
-    # Skip if env var is already set
+    # Skip if env var is already set (env-wins guard; the shared helper also
+    # enforces this with override=0, but checking here avoids the extraction).
     if [ -n "${!env_var:-}" ]; then
         return 0
     fi
@@ -414,95 +367,40 @@ set_from_yaml() {
     # Use read to avoid xargs command execution risks
     value=$(grep -E "^\s*${escaped_key}:" "$file" 2>/dev/null | head -1 | sed -E 's/.*:\s*//' | sed 's/#.*//' | sed 's/^["\x27]//;s/["\x27]$//' | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-    # Validate value before export (security check)
-    if [ -n "$value" ] && [ "$value" != "null" ] && validate_yaml_value "$value"; then
+    # #691: delegate the env-wins guard + ${VAR}-expand + validate + export to the
+    # single shared helper (override=0 -> ambient env wins). Falls back to the
+    # original inline export if the lib is unavailable, so behavior is identical
+    # either way.
+    if declare -f loki_config_export_key >/dev/null 2>&1; then
+        loki_config_export_key "$env_var" "$value" 0 || true
+    elif [ -n "$value" ] && [ "$value" != "null" ] && validate_yaml_value "$value"; then
         export "$env_var=$value"
     fi
 }
 
-# Parse YAML using yq (proper parser)
+# Parse YAML using yq (proper parser).
+# #691: iterates the canonical LOKI_CONFIG_MAP and delegates the env-wins guard +
+# expand + validate + export to the single shared helper (override=0 -> ambient
+# env wins; auto-discovery contract unchanged). The inline 61-entry table that
+# used to drift from parse_simple_yaml's 64 is gone.
 parse_yaml_with_yq() {
     local file="$1"
-    local mappings=(
-        "core.max_retries:LOKI_MAX_RETRIES"
-        "core.base_wait:LOKI_BASE_WAIT"
-        "core.max_wait:LOKI_MAX_WAIT"
-        "core.skip_prereqs:LOKI_SKIP_PREREQS"
-        "dashboard.enabled:LOKI_DASHBOARD"
-        "dashboard.port:LOKI_DASHBOARD_PORT"
-        "resources.check_interval:LOKI_RESOURCE_CHECK_INTERVAL"
-        "resources.cpu_threshold:LOKI_RESOURCE_CPU_THRESHOLD"
-        "resources.mem_threshold:LOKI_RESOURCE_MEM_THRESHOLD"
-        "security.staged_autonomy:LOKI_STAGED_AUTONOMY"
-        "security.audit_log:LOKI_AUDIT_LOG"
-        "security.max_parallel_agents:LOKI_MAX_PARALLEL_AGENTS"
-        "security.sandbox_mode:LOKI_SANDBOX_MODE"
-        "security.allowed_paths:LOKI_ALLOWED_PATHS"
-        "security.blocked_commands:LOKI_BLOCKED_COMMANDS"
-        "phases.unit_tests:LOKI_PHASE_UNIT_TESTS"
-        "phases.api_tests:LOKI_PHASE_API_TESTS"
-        "phases.e2e_tests:LOKI_PHASE_E2E_TESTS"
-        "phases.security:LOKI_PHASE_SECURITY"
-        "phases.integration:LOKI_PHASE_INTEGRATION"
-        "phases.code_review:LOKI_PHASE_CODE_REVIEW"
-        "phases.web_research:LOKI_PHASE_WEB_RESEARCH"
-        "phases.performance:LOKI_PHASE_PERFORMANCE"
-        "phases.accessibility:LOKI_PHASE_ACCESSIBILITY"
-        "phases.regression:LOKI_PHASE_REGRESSION"
-        "phases.uat:LOKI_PHASE_UAT"
-        "completion.promise:LOKI_COMPLETION_PROMISE"
-        "completion.max_iterations:LOKI_MAX_ITERATIONS"
-        "completion.perpetual_mode:LOKI_PERPETUAL_MODE"
-        "completion.council.enabled:LOKI_COUNCIL_ENABLED"
-        "completion.council.size:LOKI_COUNCIL_SIZE"
-        "completion.council.threshold:LOKI_COUNCIL_THRESHOLD"
-        "completion.council.check_interval:LOKI_COUNCIL_CHECK_INTERVAL"
-        "completion.council.min_iterations:LOKI_COUNCIL_MIN_ITERATIONS"
-        "completion.council.stagnation_limit:LOKI_COUNCIL_STAGNATION_LIMIT"
-        "completion.uncertainty.escalation:LOKI_UNCERTAINTY_ESCALATION"
-        "completion.uncertainty.rounds:LOKI_UNCERTAINTY_ROUNDS"
-        "completion.uncertainty.nochange_min:LOKI_UNCERTAINTY_NOCHANGE_MIN"
-        "completion.uncertainty.split_rounds:LOKI_UNCERTAINTY_SPLIT_ROUNDS"
-        "model.prompt_repetition:LOKI_PROMPT_REPETITION"
-        "model.confidence_routing:LOKI_CONFIDENCE_ROUTING"
-        "model.autonomy_mode:LOKI_AUTONOMY_MODE"
-        "parallel.enabled:LOKI_PARALLEL_MODE"
-        "parallel.max_worktrees:LOKI_MAX_WORKTREES"
-        "parallel.max_sessions:LOKI_MAX_PARALLEL_SESSIONS"
-        "parallel.testing:LOKI_PARALLEL_TESTING"
-        "parallel.docs:LOKI_PARALLEL_DOCS"
-        "parallel.blog:LOKI_PARALLEL_BLOG"
-        "parallel.auto_merge:LOKI_AUTO_MERGE"
-        "complexity.tier:LOKI_COMPLEXITY"
-        "github.import:LOKI_GITHUB_IMPORT"
-        "github.pr:LOKI_GITHUB_PR"
-        "github.sync:LOKI_GITHUB_SYNC"
-        "github.repo:LOKI_GITHUB_REPO"
-        "github.labels:LOKI_GITHUB_LABELS"
-        "github.milestone:LOKI_GITHUB_MILESTONE"
-        "github.assignee:LOKI_GITHUB_ASSIGNEE"
-        "github.limit:LOKI_GITHUB_LIMIT"
-        "github.pr_label:LOKI_GITHUB_PR_LABEL"
-        "notifications.enabled:LOKI_NOTIFICATIONS"
-        "notifications.sound:LOKI_NOTIFICATION_SOUND"
-    )
+    if ! declare -p LOKI_CONFIG_MAP >/dev/null 2>&1; then
+        return 0
+    fi
 
-    for mapping in "${mappings[@]}"; do
-        local yaml_path="${mapping%%:*}"
-        local env_var="${mapping##*:}"
+    local mapping yaml_path env_var value
+    for mapping in "${LOKI_CONFIG_MAP[@]}"; do
+        yaml_path="${mapping%%:*}"
+        env_var="${mapping##*:}"
 
-        # Skip if env var is already set
-        if [ -n "${!env_var:-}" ]; then
-            continue
-        fi
-
-        # Extract value using yq
-        local value
+        # Extract value using yq (env-wins guard is enforced by the shared helper).
         value=$(yq eval ".$yaml_path // \"\"" "$file" 2>/dev/null)
 
-        # Set env var if value found and not empty/null
-        # Also validate for security (prevent injection)
-        if [ -n "$value" ] && [ "$value" != "null" ] && [ "$value" != "" ] && validate_yaml_value "$value"; then
+        if declare -f loki_config_export_key >/dev/null 2>&1; then
+            loki_config_export_key "$env_var" "$value" 0 || true
+        elif [ -n "$value" ] && [ "$value" != "null" ] && [ "$value" != "" ] \
+                && [ -z "${!env_var:-}" ] && validate_yaml_value "$value"; then
             export "$env_var=$value"
         fi
     done
@@ -593,8 +491,28 @@ STAGED_AUTONOMY=${LOKI_STAGED_AUTONOMY:-false}           # Require plan approval
 AUDIT_LOG_ENABLED=${LOKI_AUDIT_LOG:-true}                # Enable audit logging (on by default)
 MAX_PARALLEL_AGENTS=${LOKI_MAX_PARALLEL_AGENTS:-10}      # Limit concurrent agents
 SANDBOX_MODE=${LOKI_SANDBOX_MODE:-false}                 # Docker sandbox mode (informational; the real dispatch reads LOKI_SANDBOX_MODE at autonomy/loki:1965 and execs sandbox.sh -- this var is not consumed in run.sh)
-ALLOWED_PATHS=${LOKI_ALLOWED_PATHS:-""}                  # Reserved, NOT enforced (see header note). No runtime path check reads this; kept only so config plumbing + a future enforcement wiring have a single var to bind. Not a security control today.
+ALLOWED_PATHS=${LOKI_ALLOWED_PATHS:-""}                  # PARTIAL enforcement. When set, a sandbox custom --mount host path outside the allowlist is rejected in sandbox.sh (_sandbox_path_within_allowed), NOT in run.sh. Does NOT restrict provider-driven agent writes (run.sh never sees them); the sandbox container is the containment for those. Default empty = no restriction.
 BLOCKED_COMMANDS=${LOKI_BLOCKED_COMMANDS:-"rm -rf /,dd if=,mkfs,:(){ :|:& };:"}
+
+# LOKI_SESSION_ID is woven into many filesystem paths (.loki/sessions/<id>/...,
+# session locks, PID files, per-session state). It is operator/issue-derived
+# (trusted-ish), but a value like "../../tmp/x" would escape the .loki/ tree.
+# Sanitize ONCE here at intake: any char outside [A-Za-z0-9._-] is replaced with
+# "_" and a leading run of dots/dashes is neutralized, so every downstream
+# session path is contained. Unset stays unset (default behavior unchanged).
+if [ -n "${LOKI_SESSION_ID:-}" ]; then
+    _loki_sid_raw="$LOKI_SESSION_ID"
+    _loki_sid_safe="${_loki_sid_raw//[^A-Za-z0-9._-]/_}"
+    # Strip leading dots/dashes so "../x" -> "x" cannot reference a parent dir
+    # or look like an option; collapse a now-empty result to a safe literal.
+    _loki_sid_safe="${_loki_sid_safe#"${_loki_sid_safe%%[!.-]*}"}"
+    [ -n "$_loki_sid_safe" ] || _loki_sid_safe="session"
+    if [ "$_loki_sid_safe" != "$_loki_sid_raw" ]; then
+        printf 'loki: WARNING sanitized unsafe LOKI_SESSION_ID %s -> %s\n' "$_loki_sid_raw" "$_loki_sid_safe" >&2
+    fi
+    export LOKI_SESSION_ID="$_loki_sid_safe"
+    unset _loki_sid_raw _loki_sid_safe
+fi
 
 # Process Supervision (opt-in)
 WATCHDOG_ENABLED=${LOKI_WATCHDOG:-"false"}          # Enable process health monitoring
@@ -6275,6 +6193,28 @@ check_command_allowed() {
     return 0
 }
 
+# A5 (ALLOWED_PATHS enforcement) -- HONEST THREAT MODEL
+# --------------------------------------------------------------------------
+# The DOMINANT file-write path in an autonomous build is the PROVIDER CLI
+# (claude / codex / cline / aider) writing files directly. run.sh hands the
+# work to that CLI and never sees those writes as shell redirections, so run.sh
+# CANNOT intercept provider-driven writes. ALLOWED_PATHS therefore cannot be a
+# complete sandbox; the real containment for provider writes is the OS user +
+# the LOKI_SANDBOX_MODE container (sandbox.sh, cap-drop/seccomp/read-only
+# mounts), not this shell.
+#
+# Where ALLOWED_PATHS is actually enforced: the sandbox custom --mount surface.
+# That enforcement lives in sandbox.sh, NOT here. When ALLOWED_PATHS is set, a
+# host path that loki is about to bind-mount into the container is checked by
+# _sandbox_path_within_allowed (autonomy/sandbox.sh), and an operator-supplied
+# `loki sandbox run` argv is checked by _sandbox_command_allowed there too.
+# run.sh itself does not consume ALLOWED_PATHS for any write decision -- it has
+# no run.sh-controlled host-write surface to gate -- so there is no enforcement
+# helper here. (A run.sh-local helper existed previously but had zero call
+# sites; it was removed so the only enforcement path is the one that genuinely
+# runs. See tests/test-allowed-paths-a5.sh, which exercises the sandbox.sh
+# functions.)
+
 #===============================================================================
 # Cross-Project Learnings Database
 #===============================================================================
@@ -9693,6 +9633,18 @@ create_checkpoint() {
             cp ".loki/$f" "$cp_dir/$f" 2>/dev/null || true
         fi
     done
+    # A6: under a namespaced session the live state file is at
+    # .loki/sessions/<id>/autonomy-state.json, which the legacy loop above misses.
+    # Snapshot it into the checkpoint as autonomy-state.json so a rollback still
+    # captures the current run's machine state. (Default `loki start` has no
+    # LOKI_SESSION_ID, so this block is skipped and the loop above is unchanged.)
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        local _ns_state_file
+        _ns_state_file="$(_loki_state_file)"
+        if [ -f "$_ns_state_file" ]; then
+            cp "$_ns_state_file" "$cp_dir/autonomy-state.json" 2>/dev/null || true
+        fi
+    fi
 
     # R6: capture a real working-tree snapshot so code can be truly undone later.
     # Loki does not commit per iteration, so git_sha (HEAD) cannot reconstruct
@@ -9790,6 +9742,47 @@ print(json.dumps({'id':m['id'],'ts':m['timestamp'],'iter':m['iteration'],'task':
     # it without parsing stdout (log_info writes to stdout, so command-substitution
     # capture would include log lines).
     _LAST_CHECKPOINT_ID="$checkpoint_id"
+
+    # A3: best-effort object-store sync of checkpoint state. No-op unless
+    # LOKI_STORAGE_BACKEND is set to a non-local backend. Never blocks/fails the
+    # build on a sync error (the shim swallows errors; we also `|| true`).
+    _loki_object_store_sync_checkpoints || true
+}
+
+# A3: push .loki/state/checkpoints/** to the configured object store (best-effort).
+# Local/unset backend => no-op (zero behavior change for local users). Provider
+# writes are out of scope; this syncs only the checkpoint state run.sh owns.
+_loki_object_store_sync_checkpoints() {
+    local backend="${LOKI_STORAGE_BACKEND:-local}"
+    case "$backend" in
+        local|""|file|filesystem) return 0 ;;
+    esac
+    command -v python3 >/dev/null 2>&1 || return 0
+    local shim="${SCRIPT_DIR}/lib/checkpoint_sync.py"
+    [ -f "$shim" ] || return 0
+    python3 "$shim" sync >/dev/null 2>&1 || log_warn "Object-store checkpoint sync skipped (backend=$backend); build continues."
+    return 0
+}
+
+# A3: hydrate .loki/state/checkpoints/** from the object store on a durable
+# resume when the local volume is empty (best-effort). No-op unless
+# LOKI_DURABLE_STATE=1 AND a non-local LOKI_STORAGE_BACKEND is set. The shim
+# itself guards against overwriting a non-empty local volume.
+_loki_object_store_hydrate_checkpoints() {
+    [ "${LOKI_DURABLE_STATE:-0}" = "1" ] || return 0
+    local backend="${LOKI_STORAGE_BACKEND:-local}"
+    case "$backend" in
+        local|""|file|filesystem) return 0 ;;
+    esac
+    command -v python3 >/dev/null 2>&1 || return 0
+    local shim="${SCRIPT_DIR}/lib/checkpoint_sync.py"
+    [ -f "$shim" ] || return 0
+    if python3 "$shim" hydrate >/dev/null 2>&1; then
+        log_info "Durable resume: checked object store ($backend) for prior checkpoints."
+    else
+        log_warn "Object-store checkpoint hydrate skipped (backend=$backend); build continues with local state."
+    fi
+    return 0
 }
 
 start_dashboard() {
@@ -11807,16 +11800,39 @@ PYEOF
 # Save/Load Wrapper State
 #===============================================================================
 
+# A6 (multi-build-per-pod state isolation): resolve the autonomy-state.json path.
+# The existing .loki/sessions/<id>/ scoping (v6.4.0) namespaces PID + lock files
+# so concurrent sessions in the SAME TARGET_DIR do not collide. autonomy-state.json
+# was NOT covered by that scoping, so two concurrent builds with distinct
+# LOKI_SESSION_IDs still raced on the one global .loki/autonomy-state.json
+# (lost-update on retry/iteration counts). When LOKI_SESSION_ID is set we mirror
+# the session scoping and put the file under .loki/sessions/<id>/. When unset
+# (the normal `loki start ./prd.md` case) the legacy .loki/autonomy-state.json
+# path is returned UNCHANGED, so default single-session behavior is byte-identical.
+_loki_state_file() {
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        printf '%s' ".loki/sessions/${LOKI_SESSION_ID}/autonomy-state.json"
+    else
+        printf '%s' ".loki/autonomy-state.json"
+    fi
+}
+
 save_state() {
     local retry_count="$1"
     local status="$2"
     local exit_code="$3"
 
-    # BUG-ST-013: Ensure .loki directory exists (defensive -- may be called from signal handler)
-    mkdir -p .loki 2>/dev/null || true
+    local state_file
+    state_file="$(_loki_state_file)"
 
-    # BUG-XC-004: Atomic write via temp file + mv
-    local state_tmp=".loki/autonomy-state.json.tmp.$$"
+    # BUG-ST-013: Ensure target directory exists (defensive -- may be called from
+    # signal handler). For a namespaced session path this also creates
+    # .loki/sessions/<id>/; for the default path it is .loki/ as before.
+    mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+
+    # BUG-XC-004: Atomic write via temp file + mv (temp lives beside the target so
+    # the rename stays on the same filesystem)
+    local state_tmp="${state_file}.tmp.$$"
     cat > "$state_tmp" << EOF
 {
     "retryCount": $retry_count,
@@ -11830,23 +11846,30 @@ save_state() {
     "baseWait": $BASE_WAIT
 }
 EOF
-    mv -f "$state_tmp" ".loki/autonomy-state.json"
+    mv -f "$state_tmp" "$state_file"
 }
 
 load_state() {
+    local state_file
+    state_file="$(_loki_state_file)"
+
     # BUG-EP-015: Clean up orphaned temp files from kill -9 crashes
     # These are left behind when the process is killed during atomic writes
     find .loki/ -maxdepth 1 -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
     find .loki/state/ -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
+    # A6: also sweep namespaced session state temps when running under a session id
+    if [ -n "${LOKI_SESSION_ID:-}" ]; then
+        find ".loki/sessions/${LOKI_SESSION_ID}/" -maxdepth 1 -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
+    fi
 
-    if [ -f ".loki/autonomy-state.json" ]; then
+    if [ -f "$state_file" ]; then
         if command -v python3 &> /dev/null; then
             # BUG-ST-006: Validate checkpoint integrity before loading state
             local state_valid
-            state_valid=$(python3 -c "
-import json, sys
+            state_valid=$(LOKI_STATE_FILE="$state_file" python3 -c "
+import json, os, sys
 try:
-    with open('.loki/autonomy-state.json') as f:
+    with open(os.environ['LOKI_STATE_FILE']) as f:
         d = json.load(f)
     # Validate required fields exist and have sane types
     rc = d.get('retryCount', 0)
@@ -11868,16 +11891,16 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
                 RETRY_COUNT=0
                 ITERATION_COUNT=0
                 # Back up corrupted state file for diagnosis
-                mv ".loki/autonomy-state.json" ".loki/autonomy-state.json.corrupt.$(date +%s)" 2>/dev/null || true
+                mv "$state_file" "${state_file}.corrupt.$(date +%s)" 2>/dev/null || true
                 return
             fi
 
             # Load retry count, iteration count, and status from previous session
             local prev_status
-            prev_status=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('status', 'unknown'))" 2>/dev/null || echo "unknown")
-            RETRY_COUNT=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('retryCount', 0))" 2>/dev/null || echo "0")
+            prev_status=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status', 'unknown'))" 2>/dev/null || echo "unknown")
+            RETRY_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('retryCount', 0))" 2>/dev/null || echo "0")
             # BUG-RUN-003: Restore ITERATION_COUNT from persisted state
-            ITERATION_COUNT=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('iterationCount', 0))" 2>/dev/null || echo "0")
+            ITERATION_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('iterationCount', 0))" 2>/dev/null || echo "0")
 
             # Reset retry count + iteration count if previous session ended in a
             # terminal state. A fresh `loki start` after a terminal run is a NEW
@@ -13979,7 +14002,7 @@ except Exception as exc:
 
     # Check max iterations before starting
     if check_max_iterations; then
-        log_error "Max iterations already reached. Reset with: rm .loki/autonomy-state.json"
+        log_error "Max iterations already reached. Reset with: rm $(_loki_state_file)"
         # Delegate-then-notify: terminal state. Mirror the in-loop max-iterations
         # site so a detached (--bg) run still writes COMPLETION.txt + fires the
         # ping on this pre-loop exit. _LOKI_RUN_START_SHA is already exported
@@ -16818,6 +16841,14 @@ main() {
     # durable mount, so a misconfigured volume never silently loses build state.
     assert_durable_state_mount
 
+    # A3: on a durable resume with an object-store backend, hydrate this run's
+    # checkpoints from the store IF the local volume came up empty (a fresh pod /
+    # non-durable volume). Best-effort + idempotent: the shim no-ops when the
+    # backend is local, when the local volume already has checkpoints, or when
+    # the store has nothing for this run. Runs before the main loop so any
+    # resume/rollback sees the restored state. Zero behavior change for local.
+    _loki_object_store_hydrate_checkpoints || true
+
     # Setup agent branch protection (isolates agent changes to a feature branch)
     setup_agent_branch
 
@@ -17035,8 +17066,9 @@ main() {
     #        because the process was SIGKILLed before reaching here). Retryable;
     #        the restarted Job resumes via the ENT-2 durable-resume path.
     if [ "${LOKI_DURABLE_STATE:-0}" = "1" ]; then
-        local _final_status
-        _final_status=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('status','unknown'))" 2>/dev/null || echo "unknown")
+        local _final_status _final_state_file
+        _final_state_file="$(_loki_state_file)"
+        _final_status=$(LOKI_STATE_FILE="$_final_state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status','unknown'))" 2>/dev/null || echo "unknown")
         case "$_final_status" in
             council_approved|council_force_approved|completion_promise_fulfilled|force_stopped|paused|interrupted|budget_exceeded|stopped)
                 result=0 ;;

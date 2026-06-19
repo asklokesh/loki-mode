@@ -115,6 +115,88 @@ log_error() {
     echo -e "${RED}[SANDBOX]${NC} $1" >&2
 }
 
+#===============================================================================
+# A5: ALLOWED_PATHS + BLOCKED_COMMANDS enforcement (sandbox-local)
+#
+# sandbox.sh runs as its own process (set -euo pipefail) and does NOT source
+# run.sh, so the run.sh helpers are out of scope. These are self-contained
+# mirrors that read the same env vars (LOKI_ALLOWED_PATHS / LOKI_BLOCKED_COMMANDS)
+# so the sandbox -- the real security boundary -- enforces them at the point
+# where run.sh/sandbox.sh actually controls the surface: which host paths get
+# bind-mounted, and the operator-supplied `loki sandbox run <cmd>` argv.
+#
+# HONEST SCOPE: this does NOT restrict provider-driven agent writes inside the
+# container (those are contained by cap-drop/seccomp/read-only mounts, not a
+# path allowlist). It is defense-in-depth on the surfaces run.sh owns.
+#===============================================================================
+
+# Return 0 if target is within LOKI_ALLOWED_PATHS (or the allowlist is unset/
+# empty -> no restriction). realpath -m collapses ../ traversal before the
+# prefix check, so allowed/../../etc cannot slip past.
+_sandbox_path_within_allowed() {
+    local target="$1"
+    local allow="${LOKI_ALLOWED_PATHS:-}"
+    [ -z "$allow" ] && return 0
+    [ -z "$target" ] && return 1
+
+    local norm_target
+    norm_target="$(realpath -m -- "$target" 2>/dev/null || true)"
+    if [ -z "$norm_target" ]; then
+        norm_target="$(LOKI_AP_T="$target" python3 -c 'import os; print(os.path.realpath(os.environ["LOKI_AP_T"]))' 2>/dev/null || true)"
+    fi
+    [ -z "$norm_target" ] && return 1
+
+    local entry norm_entry
+    IFS=',' read -ra _AP_ARRAY <<< "$allow"
+    for entry in "${_AP_ARRAY[@]}"; do
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [ -z "$entry" ] && continue
+        # Tilde-expand allowlist entries so "~/proj" matches a resolved $HOME path.
+        # SC2088 disabled intentionally: we are pattern-MATCHING a literal "~/" at
+        # the start of a config-supplied string (no expansion wanted here), then
+        # expanding it ourselves via $HOME. The directive sits in front of the whole
+        # if-block (it cannot precede an elif branch -- SC1123).
+        # shellcheck disable=SC2088
+        if [[ "$entry" == "~/"* ]]; then
+            entry="$HOME/${entry#\~/}"
+        elif [[ "$entry" == "~" ]]; then
+            entry="$HOME"
+        fi
+        norm_entry="$(realpath -m -- "$entry" 2>/dev/null || true)"
+        if [ -z "$norm_entry" ]; then
+            norm_entry="$(LOKI_AP_E="$entry" python3 -c 'import os; print(os.path.realpath(os.environ["LOKI_AP_E"]))' 2>/dev/null || true)"
+        fi
+        [ -z "$norm_entry" ] && continue
+        if [ "$norm_target" = "$norm_entry" ] || [ "${norm_target#"${norm_entry}/"}" != "$norm_target" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Return 1 (block) if the command string contains a blocked pattern. Mirrors
+# run.sh check_command_allowed; default list matches run.sh's BLOCKED_COMMANDS.
+_sandbox_command_allowed() {
+    local command="$1"
+    # NOTE: the default list is assigned to a separate var first. It cannot be an
+    # inline ${VAR:-default} default because the default value contains a literal
+    # "}" (the fork-bomb ":(){ :|:& };:"), which would prematurely terminate the
+    # ${...} parameter expansion and corrupt the list.
+    local _default_blocked='rm -rf /,dd if=,mkfs,:(){ :|:& };:'
+    local blocked_list="${LOKI_BLOCKED_COMMANDS:-$_default_blocked}"
+    local blocked
+    IFS=',' read -ra _BC_ARRAY <<< "$blocked_list"
+    for blocked in "${_BC_ARRAY[@]}"; do
+        [ -z "$blocked" ] && continue
+        if [[ "$command" == *"$blocked"* ]]; then
+            log_error "SECURITY: blocked dangerous command (matched '$blocked'): $command"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Check if a port is available
 check_port_available() {
     local port="$1"
@@ -1156,6 +1238,15 @@ start_sandbox() {
                     c_host="$HOME"
                 fi
                 if [[ -e "$c_host" ]]; then
+                    # A5: when LOKI_ALLOWED_PATHS is set, reject a custom mount
+                    # whose host path is outside the allowlist. This is a write
+                    # surface run.sh/sandbox.sh genuinely controls (we decide what
+                    # to bind into the container), so the allowlist is enforced
+                    # here rather than only documented.
+                    if ! _sandbox_path_within_allowed "$c_host"; then
+                        log_error "Custom mount host path is outside LOKI_ALLOWED_PATHS, refusing to mount: $c_host"
+                        return 1
+                    fi
                     docker_args+=("--volume" "${c_host}:${c_container}:${c_mode}")
                     log_info "  Custom mount: $c_host -> $c_container ($c_mode)"
                 else
@@ -1348,6 +1439,13 @@ sandbox_run() {
     if [[ -z "$cmd" ]]; then
         log_error "Usage: loki sandbox run <command>"
         log_info "Example: loki sandbox run 'npm run dev'"
+        return 1
+    fi
+
+    # A5: defense-in-depth on the operator-supplied command. The container is the
+    # real boundary, but an obviously-destructive command is blocked here before
+    # it is dispatched into the sandbox (honors LOKI_BLOCKED_COMMANDS).
+    if ! _sandbox_command_allowed "$cmd"; then
         return 1
     fi
 

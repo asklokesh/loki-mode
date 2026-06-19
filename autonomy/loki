@@ -125,6 +125,16 @@ if [ -f "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh"
 fi
 
+# Unified config-file support (#691). Canonical LOKI_CONFIG_MAP + the config-file
+# loader (loki_maybe_apply_config_file / loki_apply_config_file) and the
+# example/schema/validate generators. Side-effect-free on source: defines the
+# array + functions, exports nothing. The main() pre-pass and run.sh's YAML
+# parsers both call into this single lib so the mapping cannot drift.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/config-map.sh" ]; then
+    # shellcheck source=autonomy/lib/config-map.sh
+    source "$_LOKI_SCRIPT_DIR/lib/config-map.sh"
+fi
+
 # Resolve the script's real path (handles symlinks)
 resolve_script_path() {
     local script="$1"
@@ -1471,6 +1481,24 @@ cmd_start() {
                 issue_use_worktree=true
                 issue_run_detached=true
                 issue_mode_args+=("--detach")
+                shift
+                ;;
+            # #691: unified config-file aliases. Already applied by the main()
+            # pre-pass (loki_maybe_apply_config_file); these arms only consume
+            # the flag+path so the loop does not misread the path as the PRD
+            # positional, and do NOT forward it to the run.sh exec target.
+            --config|--vars|--env-file)
+                # Guard the shift 2: a dangling flag (path omitted, flag is the
+                # last arg) would underflow shift 2 and, under set -euo pipefail,
+                # abort the command SILENTLY. Give an honest actionable error.
+                if [ "$#" -ge 2 ]; then
+                    shift 2
+                else
+                    echo "loki: $1 requires a file path (e.g. --config .loki/config.yaml)" >&2
+                    exit 1
+                fi
+                ;;
+            --config=*|--vars=*|--env-file=*)
                 shift
                 ;;
             -*)
@@ -6701,6 +6729,21 @@ cmd_run() {
                 run_detached=true
                 shift
                 ;;
+            # #691: unified config-file aliases. Applied by the main() pre-pass;
+            # consume here so the path is not misread as the issue-ref positional
+            # and is not forwarded to cmd_start.
+            --config|--vars|--env-file)
+                # Guard shift 2 against a dangling flag (silent set -e abort).
+                if [ "$#" -ge 2 ]; then
+                    shift 2
+                else
+                    echo "loki: $1 requires a file path (e.g. --config .loki/config.yaml)" >&2
+                    exit 1
+                fi
+                ;;
+            --config=*|--vars=*|--env-file=*)
+                shift
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 echo "Run 'loki run --help' for usage."
@@ -8109,15 +8152,27 @@ cmd_config() {
         get)
             cmd_config_get "$@"
             ;;
+        example)
+            cmd_config_example "$@"
+            ;;
+        schema)
+            cmd_config_schema "$@"
+            ;;
+        validate)
+            cmd_config_validate "$@"
+            ;;
         *)
-            echo -e "${YELLOW}Usage: loki config [show|init|edit|path|set|get]${NC}"
+            echo -e "${YELLOW}Usage: loki config [show|init|edit|path|set|get|example|schema|validate]${NC}"
             echo ""
-            echo "  show           Show current configuration (default)"
-            echo "  init           Create a config file from template"
-            echo "  edit           Open config file in editor"
-            echo "  path           Show config file paths"
-            echo "  set KEY VALUE  Set a configuration value"
-            echo "  get KEY        Get a configuration value"
+            echo "  show            Show current configuration (default)"
+            echo "  init            Create a config file from template"
+            echo "  edit            Open config file in editor"
+            echo "  path            Show config file paths"
+            echo "  set KEY VALUE   Set a configuration value"
+            echo "  get KEY         Get a configuration value"
+            echo "  example         Print an annotated config template (for --config)"
+            echo "  schema          Print the key -> env-var mapping table"
+            echo "  validate FILE   Validate a config file (--config) without applying it"
             echo ""
             echo "Settable keys (v6.0.0):"
             echo "  maxTier              Cost ceiling: opus, sonnet, haiku (default: opus)"
@@ -8293,6 +8348,41 @@ SET_CONFIG
         # intentionally not exported.
         budget)           export LOKI_BUDGET_LIMIT="$value" ;;
     esac
+}
+
+# #691: print an annotated config template generated from LOKI_CONFIG_MAP, so it
+# can never drift from the parsers. Suitable for `loki start --config <path>`.
+cmd_config_example() {
+    if ! declare -f loki_config_generate_example >/dev/null 2>&1; then
+        echo -e "${RED}config example: config-map.sh helper not loaded${NC}" >&2
+        return 1
+    fi
+    loki_config_generate_example
+}
+
+# #691: print the machine-readable key -> LOKI_ENV_VAR mapping table.
+cmd_config_schema() {
+    if ! declare -f loki_config_generate_schema >/dev/null 2>&1; then
+        echo -e "${RED}config schema: config-map.sh helper not loaded${NC}" >&2
+        return 1
+    fi
+    loki_config_generate_schema
+}
+
+# #691: validate a config file (--config) WITHOUT applying it. Reports
+# unresolved ${VAR} refs, raw-secret literals (error), and per-value validation
+# failures. Non-zero exit on any failure.
+cmd_config_validate() {
+    local file="${1:-}"
+    if [ -z "$file" ]; then
+        echo -e "${RED}Usage: loki config validate <file>${NC}" >&2
+        return 2
+    fi
+    if ! declare -f loki_config_validate_file >/dev/null 2>&1; then
+        echo -e "${RED}config validate: config-map.sh helper not loaded${NC}" >&2
+        return 1
+    fi
+    loki_config_validate_file "$file"
 }
 
 # v6.0.0: Get a configuration value
@@ -10819,6 +10909,25 @@ cmd_quick() {
             exit 2
         fi
     fi
+
+    # #691: drop the unified config-file aliases from the task description. The
+    # main() pre-pass already applied the file; without this, a trailing
+    # `--config f.env` would be swept into task_desc (cmd_quick has no arg loop).
+    local _quick_args=()
+    local _skip_next=false
+    local _qa
+    for _qa in "$@"; do
+        if [ "$_skip_next" = "true" ]; then
+            _skip_next=false
+            continue
+        fi
+        case "$_qa" in
+            --config|--vars|--env-file)        _skip_next=true; continue ;;
+            --config=*|--vars=*|--env-file=*)   continue ;;
+        esac
+        _quick_args+=("$_qa")
+    done
+    set -- "${_quick_args[@]+"${_quick_args[@]}"}"
 
     local task_desc="$*"
     local version=$(get_version)
@@ -15305,6 +15414,32 @@ main() {
     # both Bun-routed and bash-routed commands (autonomy/loki main() never
     # runs for the 8 ported commands). Marker file: ~/.loki-first-run.
     loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
+
+    # Unified config-file pre-pass (#691). For session commands ONLY, honor
+    # LOKI_CONFIG_FILE / --config|--vars|--env-file and load the file BEFORE the
+    # per-command arg loop runs. Running here means: config exports survive the
+    # exec into run.sh, and the subsequent CLI arg loop still overrides them
+    # (CLI > config). The pre-pass SCANS without consuming; the per-command
+    # loops carry consume-and-ignore arms for the three aliases. Gated to
+    # start/run/quick so status/config/stop never trigger a config load.
+    case "$command" in
+        start|run|quick)
+            if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then
+                loki_maybe_apply_config_file "$@"
+            fi
+            # #691: documented observation hook. When LOKI_CONFIG_DUMP=1, print
+            # the resolved LOKI_* environment (after the config pre-pass AND any
+            # ambient env) and exit 0 WITHOUT running a build. Lets operators and
+            # tests verify exactly which values a --config file resolves to,
+            # without spend. The per-command CLI arg loops do not run on this
+            # path, so CLI-flag overrides are NOT reflected by the dump; it shows
+            # the config+env resolution only.
+            if [ "${LOKI_CONFIG_DUMP:-}" = "1" ]; then
+                env | grep -E '^LOKI_' | LC_ALL=C sort
+                exit 0
+            fi
+            ;;
+    esac
 
     case "$command" in
         run)
