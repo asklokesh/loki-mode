@@ -1,3 +1,9 @@
+{{- /*
+A run-to-completion worker Job serves no traffic and needs no Service. This
+headless Service renders ONLY for the (not-yet-implemented) long-running
+queue-consumer Deployment mode.
+*/}}
+{{- if eq .Values.worker.mode "deployment" }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -9,3 +15,4 @@ spec:
   clusterIP: None
   selector:
     {{- include "autonomi.worker.selectorLabels" . | nindent 4 }}
+{{- end }}

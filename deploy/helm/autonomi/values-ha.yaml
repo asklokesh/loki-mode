@@ -18,35 +18,22 @@ controlplane:
                   - controlplane
           topologyKey: kubernetes.io/hostname
 
-worker:
-  replicas: 5
-
-  autoscaling:
-    enabled: true
-    minReplicas: 5
-    maxReplicas: 20
-    targetCPUUtilizationPercentage: 60
-    targetMemoryUtilizationPercentage: 70
-
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchExpressions:
-                - key: app.kubernetes.io/component
-                  operator: In
-                  values:
-                    - worker
-            topologyKey: kubernetes.io/hostname
+# The worker is a run-to-completion Job: a single pod per release. replicas,
+# autoscaling, and worker pod-anti-affinity (which spreads multiple replicas)
+# do not apply and are intentionally omitted.
 
 persistence:
+  # /workspace durable volume. ReadWriteOnce is correct: a single Job pod (and
+  # its retry) mounts it. ReadWriteMany is NOT needed for the Job model and is
+  # intentionally not set here.
   checkpoints:
     enabled: true
     size: 100Gi
-    accessMode: ReadWriteMany
 
+  # Control-plane hash-chain audit volume. ReadWriteMany if the control-plane
+  # runs multiple replicas sharing the chain; default RWO otherwise. Left at the
+  # chart default here (set persistence.auditLogs.accessMode if you run >1
+  # control-plane replica on a shared audit volume).
   auditLogs:
     enabled: true
     size: 200Gi

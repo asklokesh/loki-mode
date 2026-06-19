@@ -7,8 +7,8 @@ metadata:
 data:
   LOKI_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   LOKI_AUDIT_ENABLED: {{ .Values.config.auditEnabled | quote }}
-  LOKI_AUDIT_LOG_PATH: {{ .Values.config.auditLogPath | quote }}
-  LOKI_CHECKPOINT_DIR: {{ .Values.config.checkpointDir | quote }}
+  # LOKI_AUDIT_LOG_PATH / LOKI_CHECKPOINT_DIR are intentionally NOT set: the
+  # runtime ignores them. State durability comes from the /workspace volume mount.
   LOKI_MAX_WORKERS: {{ .Values.config.maxWorkers | quote }}
   LOKI_PROVIDER: {{ .Values.config.provider | quote }}
   LOKI_DASHBOARD_HOST: {{ .Values.config.dashboardHost | quote }}

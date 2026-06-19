@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.75.0] - 2026-06-19
+
+### Enterprise container deployment: pod-loss-safe run-to-completion
+
+Loki Mode now deploys as a pod-loss-safe run-to-completion build in Kubernetes
+(and the same model maps to ECS run-task and docker-run + systemd). A single build
+is a k8s Job, not a long-lived Deployment, leaning on the platform's native
+restart primitives instead of a custom retry loop. The architecture was decided by
+a 3-reviewer council against the real code after the first proposal was rejected for
+overclaiming resilience the code did not have. All new runtime behavior is OPT-IN
+via `LOKI_DURABLE_STATE=1` (set automatically by the Helm chart). Local and CI runs
+are byte-for-byte unaffected (verified by the council and the test suite).
+
+- Durable-state substrate: all per-build state (`.loki/` checkpoints, state, queue,
+  signals, logs, the agent feature branch, and the `refs/loki/cp/*` checkpoint refs
+  in the checkout's `.git`) lives under the working directory, so mounting ONE
+  durable volume at the container workdir makes a build survive pod loss with no
+  path refactor. A startup assertion (`LOKI_DURABLE_STATE=1` only) fails fast with
+  exit 20 if the mount is missing or read-only, instead of silently losing state on
+  the first crash. The machine-global registry stays off the volume; `/tmp` scratch
+  stays ephemeral.
+- Crash-resume: in durable mode, a build whose pod was killed mid-run (status
+  `running`) with a valid run-start-SHA baseline on the volume RESUMES from its last
+  iteration on Job restart, instead of restarting from scratch. The agent branch,
+  checkpoint refs, queue, and checklist all survive on the volume and the next
+  iteration continues from them. Resume re-enters the RARV verification loop: a crash
+  never inherits a gate PASS, and a completed-then-rerun is still a new run. Outside
+  durable mode, the original safe reset behavior is unchanged.
+- Platform exit-code contract: in durable mode the process exit code is `0` for a
+  completed / human-stopped run, `20` for a deterministic terminal failure (failed
+  gate, max iterations) so the Job's podFailurePolicy fails it immediately without
+  burning retries, and a retryable nonzero for a crash so the Job retries and
+  resumes. (Local/CI exit codes are unchanged.)
+- Idempotent PR: the auto-PR and delegate-PR paths now check for an existing open PR
+  for the head branch before creating one, so a platform retry never opens a
+  duplicate PR. (Applies to the opt-in `LOKI_AUTO_PR=1` / `LOKI_DELEGATE_PR=1`
+  paths; the default advisory-only path is unchanged.)
+- Helm chart (`deploy/helm/autonomi`): the RARV worker is now a `batch/v1` Job
+  (restartPolicy Never + backoffLimit + activeDeadlineSeconds + podFailurePolicy:
+  exit 20 -> FailJob, pod eviction -> Ignore) with one durable volume at the
+  workdir and `LOKI_DURABLE_STATE=1` set. The broken liveness probe (`pgrep -f loki`
+  matched a hung process) and the phantom readiness probe (a file nothing created)
+  are removed. Decorative, never-read `LOKI_CHECKPOINT_DIR` / `LOKI_AUDIT_LOG_PATH`
+  env are removed. `worker.spec` selects what the Job builds (repo at the mounted
+  workdir, a PRD path, or a GitHub issue ref). The control plane stays a Deployment;
+  its audit mount now points at the path `dashboard/audit.py` actually writes. HPA /
+  worker Service / worker PDB render only under an opt-in `worker.mode: deployment`
+  (a reserved queue-consumer stub, off by default). Chart appVersion and image tag
+  bumped to current. Requires Kubernetes 1.31+ for the podFailurePolicy exit-code
+  contract.
+
+Honest scope (NOT claimed): the worker audit is plain JSONL on the durable volume
+(survives pod loss); it is not tamper-evident and not shipped to a SIEM (the
+hash-chained audit is the control-plane chain; full SIEM ingestion is roadmap). The
+`/workspace` volume is empty on a fresh install (the chart does not clone the repo
+or place the PRD; the operator pre-seeds it or passes an issue ref). A Job's
+template is immutable, so changing image/spec/resources means a new release, not an
+in-place upgrade. One build per release (one Job + one RWO volume); concurrent
+builds need separate releases. SSO/SAML, SCIM, app-level RBAC, and SOC2 remain
+roadmap, not present. The object-store checkpoint sync, the queue-consumer and
+serverless fleet modes, and the unified `--config` file loader are deferred to
+later releases.
+
 ## [7.74.0] - 2026-06-18
 
 ### Trust-gate hardening (completion + override + registry)

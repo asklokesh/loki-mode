@@ -15,6 +15,13 @@ spec:
     matchLabels:
       {{- include "autonomi.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: controlplane
+{{- /*
+A PDB protects a long-running workload from voluntary disruption; it is
+meaningless for a run-to-completion worker Job (pod loss is handled by the
+durable volume + Job retry). The worker PDB renders ONLY in the
+(not-yet-implemented) Deployment mode.
+*/}}
+{{- if eq .Values.worker.mode "deployment" }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -32,4 +39,5 @@ spec:
     matchLabels:
       {{- include "autonomi.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
+{{- end }}
 {{- end }}

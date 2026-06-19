@@ -76,20 +76,17 @@ spec:
           securityContext:
             {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
           volumeMounts:
-            {{- if .Values.persistence.checkpoints.enabled }}
-            - name: checkpoints
-              mountPath: /data/checkpoints
-            {{- end }}
             {{- if .Values.persistence.auditLogs.enabled }}
+            # Mount at the exact directory dashboard/audit.py writes to
+            # ($HOME/.loki/dashboard/audit; HOME=/home/loki), so the
+            # tamper-evident hash-chain JSONL is durable across pod loss. The old
+            # /data/audit mount was inert: the code never wrote there. We mount
+            # the audit subdir specifically, NOT .../dashboard, to avoid shadowing
+            # the machine-local projects.json registry under .../dashboard.
             - name: audit-logs
-              mountPath: /data/audit
+              mountPath: /home/loki/.loki/dashboard/audit
             {{- end }}
       volumes:
-        {{- if .Values.persistence.checkpoints.enabled }}
-        - name: checkpoints
-          persistentVolumeClaim:
-            claimName: {{ .Values.persistence.checkpoints.existingClaim | default (printf "%s-checkpoints" (include "autonomi.fullname" .)) }}
-        {{- end }}
         {{- if .Values.persistence.auditLogs.enabled }}
         - name: audit-logs
           persistentVolumeClaim:

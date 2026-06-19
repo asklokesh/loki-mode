@@ -11,7 +11,9 @@ createNamespace: false
 # -- Container image
 image:
   repository: asklokesh/loki-mode
-  tag: ""  # defaults to Chart.appVersion
+  # Pinned to the chart appVersion so a default install pulls the matching
+  # runtime, not a floating tag. Keep this in lockstep with Chart.yaml appVersion.
+  tag: "7.74.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -71,8 +73,41 @@ controlplane:
 # ---------------------------------------------------------------------------
 # Worker (RARV execution)
 # ---------------------------------------------------------------------------
+# The worker runs ONE autonomous build to completion (`loki start`). It is a
+# run-to-completion batch Job, not a long-running service: it has no probes and
+# serves no traffic. Pod loss (eviction, node drain, SIGKILL) is survived by the
+# durable /workspace volume below plus the run.sh crash-resume + exit-code
+# contract (activated by LOKI_DURABLE_STATE=1).
 worker:
-  replicas: 1
+  # Worker execution model. Only "job" is implemented and supported today.
+  #   job        -- run-to-completion batch Job (default; pod-loss-safe).
+  #   deployment -- long-running queue-consumer Deployment (NOT yet implemented;
+  #                 reserved so HPA / Service / PDB can be gated off in Job mode).
+  # Setting mode to "deployment" only changes which optional resources render
+  # (hpa-worker, service-worker, the worker PDB); it does NOT change the worker
+  # workload kind, which is always a Job in this chart version.
+  mode: "job"
+
+  # Job retry behavior. backoffLimit bounds retries of a CRASHED build (the
+  # restarted pod resumes via the durable volume). A deterministic terminal
+  # failure (run.sh exit 20) is NOT retried: podFailurePolicy in the Job
+  # template fails the Job immediately on exit 20. See exitCodes below.
+  backoffLimit: 6
+
+  # Hard upper bound on a single build's wall-clock time, in seconds (24h).
+  # This replaces the old liveness probe, which could not detect a wedged build:
+  # `pgrep -f loki` matched both a hung process and the probe's own shell, so a
+  # stuck build never restarted. activeDeadlineSeconds bounds it deterministically.
+  activeDeadlineSeconds: 86400
+
+  # Process-exit contract (run.sh, LOKI_DURABLE_STATE=1). Used by podFailurePolicy
+  # so the platform distinguishes "terminal failure, do not retry" from "crash,
+  # retry and resume":
+  #   0  -> Job Complete (no retry)
+  #   20 -> deterministic terminal failure: podFailurePolicy fails the Job NOW
+  #   other nonzero / SIGKILL / eviction -> crash: retry up to backoffLimit
+  exitCodes:
+    terminalFailure: 20
 
   resources:
     requests:
@@ -82,7 +117,9 @@ worker:
       cpu: "2"
       memory: 2Gi
 
-  # HPA settings
+  # Horizontal Pod Autoscaler. Only meaningful for the (unimplemented)
+  # mode: "deployment" queue-consumer; an HPA cannot target a Job. hpa-worker.yaml
+  # renders ONLY when mode is "deployment" AND this is enabled.
   autoscaling:
     enabled: false
     minReplicas: 1
@@ -98,6 +135,19 @@ worker:
   affinity: {}
 
   podAnnotations: {}
+
+  # Build spec injected into the per-Job `loki start` invocation. Pick ONE:
+  #   ""                  -- no spec: analyze the repo already on the mounted
+  #                          /workspace volume (codebase-analysis mode).
+  #   "prd.md"            -- a path, relative to /workspace, to a PRD/spec file
+  #                          that exists on the mounted volume (e.g. "docs/prd.md").
+  #   "owner/repo#123"    -- a GitHub issue reference (issue-mode); requires a
+  #                          GitHub token in the secret.
+  # HONESTY: the chart does NOT populate /workspace. A fresh PVC is empty. The
+  # operator must pre-seed the volume (repo checkout and/or PRD file) before the
+  # Job runs, or provide an issue ref that loki resolves from GitHub. An
+  # init-container clone is future work, not implemented here.
+  spec: ""
 
 # ---------------------------------------------------------------------------
 # Service
@@ -127,7 +177,30 @@ ingress:
 # ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
+# Two distinct durable volumes for two distinct concerns:
+#
+#   workspace -- mounted at /workspace (the worker WORKDIR) on the worker Job.
+#     ALL per-build state lives under the working directory because run.sh runs
+#     with cwd == /workspace and every state path is relative: .loki/state,
+#     .loki/state/checkpoints, .loki/queue, .loki/signals, .loki/logs (the
+#     worker's plain-JSONL audit), the agent feature branch, and refs/loki/cp/*
+#     in /workspace/.git. Mounting ONE durable volume here makes the entire
+#     per-build state -- checkpoints AND the worker audit log -- survive pod loss
+#     with zero code change. The claim name keeps the "checkpoints" suffix so
+#     existing `helm install` users and existingClaim references do not break;
+#     only its mountPath and semantics changed (now the whole workspace).
+#
+#   controlplaneAudit -- mounted at /home/loki/.loki/dashboard/audit on the
+#     control-plane Deployment ONLY. The dashboard hash-chain audit
+#     (dashboard/audit.py) writes tamper-evident JSONL to $HOME/.loki/dashboard/
+#     audit (HOME=/home/loki). This is a separate concern from the worker audit.
+#
+# NOTE: a single ReadWriteOnce workspace PVC backs ONE build per release. The
+# resume model is: the Job's retried pod re-mounts the SAME volume and resumes.
+# Concurrent independent builds require separate releases (or a future
+# generateName / per-Job dynamic claim); that is not implemented here.
 persistence:
+  # Worker /workspace durable volume (per-build state + worker JSONL audit).
   checkpoints:
     enabled: true
     storageClass: ""
@@ -135,6 +208,18 @@ persistence:
     size: 10Gi
     existingClaim: ""
 
+  # Control-plane dashboard hash-chain audit volume. Mounted on the control-plane
+  # only, at /home/loki/.loki/dashboard/audit. The worker does NOT use this; the
+  # worker's audit lives on the workspace volume above.
+  #
+  # AUDIT DURABILITY -- two distinct chains, honest scope:
+  #   Worker audit:  PLAIN JSONL written by the bash audit_log helper to
+  #     /workspace/.loki/logs/audit-YYYYMMDD.jsonl. Durable across pod loss via
+  #     the workspace volume above. It is NOT tamper-evident and is NOT shipped to
+  #     a SIEM. Do not represent it as either.
+  #   Control-plane audit:  tamper-evident HASH-CHAIN JSONL written by
+  #     dashboard/audit.py to /home/loki/.loki/dashboard/audit, made durable by
+  #     this volume. Full SIEM ingestion is roadmap, not wired here.
   auditLogs:
     enabled: true
     storageClass: ""
@@ -150,10 +235,11 @@ config:
   otelEndpoint: ""
   # Enable audit logging
   auditEnabled: "true"
-  # Audit log path inside the container
-  auditLogPath: "/data/audit/audit.log"
-  # Checkpoint directory
-  checkpointDir: "/data/checkpoints"
+  # NOTE: there is intentionally no auditLogPath / checkpointDir knob. The bash
+  # runtime ignores LOKI_AUDIT_LOG_PATH and LOKI_CHECKPOINT_DIR (grep-verified:
+  # zero references in run.sh / loki). All state is written relative to the
+  # working directory, so durability is provided by the /workspace volume mount,
+  # not by pointing the code at /data/*. Do not reintroduce those env vars.
   # Log level (DEBUG, INFO, WARNING, ERROR)
   logLevel: "INFO"
   # Maximum concurrent RARV workers per pod

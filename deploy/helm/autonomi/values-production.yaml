@@ -18,9 +18,10 @@ controlplane:
     prometheus.io/port: "57374"
     prometheus.io/path: "/metrics"
 
+# The worker is a run-to-completion Job (one build per release). replicas /
+# autoscaling do not apply and are intentionally omitted. Concurrent builds =
+# separate releases.
 worker:
-  replicas: 3
-
   resources:
     requests:
       cpu: "1"
@@ -29,18 +30,13 @@ worker:
       cpu: "4"
       memory: 4Gi
 
-  autoscaling:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-
 persistence:
+  # /workspace durable volume (per-build state + worker JSONL audit).
   checkpoints:
     enabled: true
     size: 50Gi
 
+  # Control-plane hash-chain audit volume.
   auditLogs:
     enabled: true
     size: 100Gi

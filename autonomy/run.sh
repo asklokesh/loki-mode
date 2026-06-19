@@ -3112,6 +3112,16 @@ on_run_complete() {
     local pr_title
     pr_title="Loki Mode: ${branch}"
     local pr_url=""
+    # ENT-4 (idempotent PR): reuse an existing OPEN PR for this head instead of
+    # attempting a second create on a platform retry / resume.
+    local existing_pr
+    existing_pr="$( (cd "${TARGET_DIR:-.}" && _loki_net gh pr list --head "$branch" --state open --json url --jq '.[0].url') 2>/dev/null || true )"
+    if [ -n "$existing_pr" ]; then
+        _LOKI_DELEGATE_PR_URL="$existing_pr"
+        export _LOKI_DELEGATE_PR_URL
+        log_info "LOKI_DELEGATE_PR=1: PR already exists for branch '$branch': $existing_pr (skipping create)."
+        return 0
+    fi
     pr_url="$( (cd "${TARGET_DIR:-.}" && _loki_net gh pr create --title "$pr_title" --body "Opened by Loki Mode (delegate mode). Review locally before merge." --head "$branch") 2>/dev/null || true )"
     if [ -n "$pr_url" ]; then
         # Export so build_completion_summary folds the url into the summary.
@@ -6688,6 +6698,19 @@ create_session_pr() {
     # Create PR if gh CLI is available
     if command -v gh &>/dev/null; then
         local pr_url
+        # ENT-4 (idempotent PR): check-before-create. On a platform retry (k8s Job
+        # backoffLimit / ECS / pod-loss resume) the run can reach this completion
+        # path more than once for the SAME head branch. `gh pr create` dedupes by
+        # head only because the branch name is stable, but we make the no-duplicate
+        # guarantee explicit and the log honest: if an OPEN PR already exists for
+        # this head, reuse its URL instead of attempting a second create.
+        local existing_pr
+        existing_pr=$(gh pr list --head "$branch_name" --state open --json url --jq '.[0].url' 2>/dev/null || true)
+        if [ -n "$existing_pr" ]; then
+            log_info "PR already exists for branch $branch_name: $existing_pr (skipping create)"
+            audit_log "PR_EXISTS" "branch=$branch_name,url=$existing_pr"
+            return 0
+        fi
         pr_url=$(gh pr create \
             --title "Loki Mode: Agent session changes ($branch_name)" \
             --body "Automated changes from Loki Mode agent session.
@@ -10344,6 +10367,53 @@ SOLUTIONS_SCRIPT
 }
 
 # ============================================================================
+# Durable-state assertion (enterprise container deployment)
+# ============================================================================
+# In a containerized deployment (k8s Job / ECS task / docker-run), all per-build
+# state -- .loki/state/checkpoints, .loki/ state, .loki/queue, .loki/signals,
+# .loki/logs, the agent feature branch, and the refs/loki/cp/* checkpoint refs
+# in the checkout's .git -- lives UNDER the working directory (TARGET_DIR), since
+# run_autonomous() runs with cwd == TARGET_DIR and every state path is relative
+# (or ${TARGET_DIR}/.loki). Mounting ONE durable volume at the working checkout
+# therefore makes the whole per-build state survive pod loss with no code change.
+# The machine-global registry (~/.loki/dashboard/projects.json) is intentionally
+# NOT per-build and stays off the volume; /tmp scratch (the staged run script,
+# mktemp temp files) is intentionally ephemeral and re-created on restart.
+#
+# This assertion is OPT-IN via LOKI_DURABLE_STATE=1 (set by the container
+# ENTRYPOINT / Helm chart). Local runs are unaffected. When enabled it fails
+# loudly BEFORE any work if TARGET_DIR is not a writable directory, so a
+# misconfigured mount (wrong mountPath, read-only volume, missing PVC) surfaces
+# as an immediate honest error instead of silent state loss on the first crash.
+assert_durable_state_mount() {
+    [ "${LOKI_DURABLE_STATE:-0}" = "1" ] || return 0
+    local dir="${TARGET_DIR:-.}"
+    # A misconfigured mount is a DETERMINISTIC config error: re-running on the same
+    # broken mount fails identically. Exit 20 (the terminal-failure contract code)
+    # so the Job's podFailurePolicy fails it immediately instead of burning the
+    # whole backoffLimit retrying a config error that cannot self-heal.
+    if [ ! -d "$dir" ]; then
+        log_error "LOKI_DURABLE_STATE=1 but working directory does not exist: $dir"
+        log_error "Mount a durable volume (PVC / EFS / bind mount) at the working checkout."
+        exit 20
+    fi
+    # Probe writability with an actual write+remove (a read-only mount passes -w
+    # on some filesystems but rejects the write). This proves the mount is
+    # WRITABLE; durability (survival across pod loss) is a property of the volume
+    # the operator mounts here (a PVC / EFS / bind mount), which a write probe
+    # cannot detect -- so the success message claims only writability.
+    local probe="${dir}/.loki-durable-probe.$$"
+    if ! ( mkdir -p "${dir}/.loki" 2>/dev/null && : > "$probe" ) 2>/dev/null; then
+        log_error "LOKI_DURABLE_STATE=1 but the working directory is not writable: $dir"
+        log_error "Pod-loss resume requires a writable durable volume mounted here."
+        rm -f "$probe" 2>/dev/null || true
+        exit 20
+    fi
+    rm -f "$probe" 2>/dev/null || true
+    log_info "Durable state: writable mount verified at $dir (per-build state persists here; mount a durable volume for pod-loss survival)"
+}
+
+# ============================================================================
 # Checkpoint/Snapshot System (v5.34.0)
 # Git-based checkpoints after task completion with state snapshots
 # Inspired by Cursor Self-Driving Codebases + Entire.io provenance tracking
@@ -12791,8 +12861,38 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
             #     signals), so this closes the crash-rerun toothless-gate path.
             # Deliberately NOT reset (genuine resume / user re-run expecting to
             # continue): paused, interrupted, budget_exceeded, stopped.
+            #
+            # ENT-2 (enterprise pod-loss resume): a crashed "running" run is
+            # normally reset (a fresh `loki start` on a dev box after a crash is a
+            # new run, and resetting closes the toothless-gate path). BUT in a
+            # containerized deployment (LOKI_DURABLE_STATE=1) the platform RESTARTS
+            # the SAME build on the SAME durable volume after a pod loss, and the
+            # operator's intent is RESUME, not restart-from-scratch. In that mode
+            # only, a "running" status with a still-valid run-start-SHA baseline on
+            # the durable volume RESUMES (ITERATION_COUNT preserved). The gate stays
+            # sharp because $_start_sha_file survived on the volume, so the run-start
+            # SHA recapture (run_autonomous) keys on THIS run's real start SHA, not
+            # the prior run's -- and resume re-enters the normal RARV iteration,
+            # which re-runs verification; a crash never inherits a gate PASS (the
+            # success terminals council_approved/.../completion_promise_fulfilled
+            # are still reset, so a completed-then-rerun is a NEW run as before).
+            local _resume_crashed_running=0
+            if [ "$prev_status" = "running" ] \
+               && [ "${LOKI_DURABLE_STATE:-0}" = "1" ] \
+               && [ -s ".loki/state/start-sha" ]; then
+                _resume_crashed_running=1
+            fi
             case "$prev_status" in
-                failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled|running)
+                running)
+                    if [ "$_resume_crashed_running" = "1" ]; then
+                        log_info "Durable resume: previous build crashed mid-run (status: running). Resuming from iteration ${ITERATION_COUNT} on the durable volume; verification re-runs (a crash never inherits a gate PASS)."
+                    else
+                        log_info "Previous session ended with status: $prev_status. Resetting for new session."
+                        RETRY_COUNT=0
+                        ITERATION_COUNT=0
+                    fi
+                    ;;
+                failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled)
                     log_info "Previous session ended with status: $prev_status. Resetting for new session."
                     RETRY_COUNT=0
                     ITERATION_COUNT=0
@@ -17679,6 +17779,11 @@ main() {
         load_solutions_context "general development"
     fi
 
+    # Durable-state mount check (enterprise containers): fail loudly before any
+    # work if LOKI_DURABLE_STATE=1 and the working checkout is not a writable
+    # durable mount, so a misconfigured volume never silently loses build state.
+    assert_durable_state_mount
+
     # Setup agent branch protection (isolates agent changes to a feature branch)
     setup_agent_branch
 
@@ -17874,6 +17979,47 @@ main() {
         rm -f "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pid" \
               "$loki_dir/sessions/${LOKI_SESSION_ID}/loki.pgid" 2>/dev/null
     fi
+    # ENT-3 (enterprise pod-loss / platform-retry contract): translate the
+    # terminal RUN STATE into a stable PROCESS exit code so a k8s Job's
+    # backoffLimit (or ECS/systemd retry) can distinguish "completed but failed
+    # the gate -> do NOT retry" from "crashed -> retry and resume". Without this
+    # both look like a generic exit 1 and the platform either loops a
+    # deterministically-failing build forever or gives up on a recoverable crash.
+    #
+    # Contract (LOKI_DURABLE_STATE=1 only; local/CI exit codes are unchanged):
+    #   0  = success / human-controlled clean stop (council approved, completion
+    #        promise, force-stop, or paused/interrupted/budget/stopped where a
+    #        human will resume). Job -> Complete, no retry.
+    #   20 = deterministic terminal failure (failed, max_iterations_reached,
+    #        max_retries_exceeded, exited, policy_blocked). Re-running on the same
+    #        inputs fails the same way -> Job must NOT retry. The Helm Job pairs
+    #        this with restartPolicy: Never + a podFailurePolicy rule that maps
+    #        exit 20 to FailJob (no retry), so a deterministic failure does not
+    #        burn the backoffLimit (the Job records the failure; an operator
+    #        changes the spec/budget and re-submits a NEW Job). K8s 1.31+.
+    #   anything else nonzero = crash/unexpected (e.g. status still "running"
+    #        because the process was SIGKILLed before reaching here). Retryable;
+    #        the restarted Job resumes via the ENT-2 durable-resume path.
+    if [ "${LOKI_DURABLE_STATE:-0}" = "1" ]; then
+        local _final_status
+        _final_status=$(python3 -c "import json; print(json.load(open('.loki/autonomy-state.json')).get('status','unknown'))" 2>/dev/null || echo "unknown")
+        case "$_final_status" in
+            council_approved|council_force_approved|completion_promise_fulfilled|force_stopped|paused|interrupted|budget_exceeded|stopped)
+                result=0 ;;
+            failed|max_iterations_reached|max_retries_exceeded|policy_blocked)
+                result=20 ;;
+            *)
+                # Unknown/running/exited terminal: leave $result as-is (nonzero on a
+                # real failure path) so the platform treats it as a retryable crash.
+                # "exited" is a TRANSIENT per-iteration status (save_state at the end
+                # of each iteration), never a legitimate deterministic terminal, so
+                # it must NOT map to no-retry: a SIGKILL while "exited" is persisted
+                # is a recoverable crash that should resume, not a FailJob.
+                [ "$result" = "0" ] && result=1 ;;
+        esac
+        log_info "Durable-state exit contract: final status '$_final_status' -> exit ${result} ($([ "$result" = "0" ] && echo "complete, no retry" || { [ "$result" = "20" ] && echo "terminal failure, no retry" || echo "crash, retryable"; }))"
+    fi
+
     # Mark session.json as stopped
     if [ -f "$loki_dir/session.json" ]; then
         # BUG-ST-008: Atomic session.json update via temp file + mv

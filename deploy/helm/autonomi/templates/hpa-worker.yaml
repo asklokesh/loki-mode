@@ -1,4 +1,10 @@
-{{- if .Values.worker.autoscaling.enabled }}
+{{- /*
+An HPA cannot target a Job; the default worker is a run-to-completion Job. This
+renders ONLY for the (not-yet-implemented) long-running queue-consumer
+Deployment mode, so enabling autoscaling in the default Job mode is a no-op
+rather than producing an HPA pointed at a nonexistent Deployment.
+*/}}
+{{- if and .Values.worker.autoscaling.enabled (eq .Values.worker.mode "deployment") }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
