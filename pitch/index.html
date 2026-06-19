@@ -6,6 +6,8 @@
 <title>Loki Mode by Autonomi &mdash; Investor Experience</title>
 <meta name="description" content="Autonomi's Loki Mode: autonomous AI agents that build, ship, and prove it is done. Interactive demo, pitch deck, and the path to a USD 100B category.">
 <meta name="theme-color" content="#FFFFFF">
+<!-- Investor document with forward-looking financial claims: keep it out of search indexes if ever hosted. -->
+<meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234F46E5'/><text x='50' y='72' font-size='62' text-anchor='middle' fill='white' font-family='Georgia,serif' font-weight='bold'>L</text></svg>" type="image/svg+xml">
 <!-- Web fonts load from Google with a system serif/sans fallback, so the file still renders correctly offline / air-gapped (Georgia + system-ui). -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -113,7 +115,7 @@ h2.title{font-family:var(--serif);font-size:clamp(2rem,4.6vw,3.1rem);font-weight
 .opt small{display:block;font-size:.62rem;opacity:.8;font-weight:400}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:.42rem 0;font-size:.82rem;color:var(--muted);border-bottom:1px solid var(--line-2)}
 .toggle-row:last-child{border-bottom:none}
-.sw{position:relative;width:38px;height:21px;border-radius:100px;background:#d9d6cf;cursor:pointer;transition:background .2s;flex-shrink:0}
+.sw{position:relative;width:38px;height:21px;border:none;padding:0;appearance:none;-webkit-appearance:none;border-radius:100px;background:#d9d6cf;cursor:pointer;transition:background .2s;flex-shrink:0}
 .sw.on{background:var(--indigo)}
 .sw::after{content:'';position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 .sw.on::after{transform:translateX(17px)}
@@ -174,9 +176,9 @@ h2.title{font-family:var(--serif);font-size:clamp(2rem,4.6vw,3.1rem);font-weight
 .deck-nav button{background:#fff;border:1px solid var(--line);color:var(--ink);width:42px;height:42px;border-radius:11px;cursor:pointer;font-size:1.1rem;transition:all .2s}
 .deck-nav button:hover{border-color:var(--indigo);color:var(--indigo)}
 .dots{display:flex;gap:.4rem}
-.dots i{width:8px;height:8px;border-radius:50%;background:#d9d6cf;cursor:pointer;transition:all .2s}
-.dots i.on{background:var(--indigo);width:22px;border-radius:100px}
-.dots i:focus-visible,.brand:focus-visible{outline:2px solid var(--indigo);outline-offset:3px;border-radius:4px}
+.dots button{width:8px;height:8px;border:none;padding:0;appearance:none;-webkit-appearance:none;border-radius:50%;background:#d9d6cf;cursor:pointer;transition:all .2s}
+.dots button.on{background:var(--indigo);width:22px;border-radius:100px}
+.dots button:focus-visible,.brand:focus-visible,.opt:focus-visible,.sw:focus-visible{outline:2px solid var(--indigo);outline-offset:3px}
 .deck-hint{text-align:center;color:var(--dim);font-size:.76rem;margin-top:.8rem;font-family:var(--mono)}
 .slide .fwd{position:relative;z-index:2;margin-top:1.4rem;font-size:.78rem;color:var(--dim);font-style:italic}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem;position:relative;z-index:2;margin-top:1.4rem}
@@ -675,11 +677,11 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
   GATES.forEach(function(g){
     state.gates[g[0]]=g[2];
     var row=document.createElement('div');row.className='toggle-row';
-    row.innerHTML='<span>'+g[1]+'</span><div class="sw '+(g[2]?'on':'')+'" data-gate="'+g[0]+'"></div>';
+    row.innerHTML='<span id="gl-'+g[0]+'">'+g[1]+'</span><button type="button" class="sw '+(g[2]?'on':'')+'" data-gate="'+g[0]+'" role="switch" aria-checked="'+(g[2]?'true':'false')+'" aria-labelledby="gl-'+g[0]+'"></button>';
     gateList.appendChild(row);
   });
   gateList.querySelectorAll('.sw').forEach(function(sw){sw.addEventListener('click',function(){
-    var k=sw.dataset.gate;state.gates[k]=!state.gates[k];sw.classList.toggle('on',state.gates[k]);updatePerm();
+    var k=sw.dataset.gate;state.gates[k]=!state.gates[k];sw.classList.toggle('on',state.gates[k]);sw.setAttribute('aria-checked',state.gates[k]?'true':'false');updatePerm();
   });});
   document.querySelectorAll('.opt-row').forEach(function(row){
     row.querySelectorAll('.opt').forEach(function(o){o.addEventListener('click',function(){
@@ -794,14 +796,13 @@ footer .brand{justify-content:center;display:inline-flex;margin-bottom:.6rem}
   var slides=document.querySelectorAll('#slides .slide');
   var dotsWrap=document.getElementById('deckDots');
   slides.forEach(function(s,i){
-    var d=document.createElement('i');
+    var d=document.createElement('button');d.type='button';
     if(i===0)d.classList.add('on');
-    d.setAttribute('role','button');d.setAttribute('tabindex','0');d.setAttribute('aria-label','Go to slide '+(i+1));
+    d.setAttribute('aria-label','Go to slide '+(i+1));
     d.onclick=function(){showSlide(i);};
-    d.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();showSlide(i);}});
     dotsWrap.appendChild(d);
   });
-  var dots=dotsWrap.querySelectorAll('i');
+  var dots=dotsWrap.querySelectorAll('button');
   function showSlide(n){
     cur=(n+slides.length)%slides.length;
     slides.forEach(function(s,i){s.classList.toggle('active',i===cur);});
