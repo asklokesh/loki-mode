@@ -265,6 +265,30 @@ _loki_new_session_exec() {
     fi
 }
 
+# Actionable PRD-not-found exit. Both PRD-path existence guards in cmd_start route
+# through here so they cannot drift: the user always learns the two recoveries
+# (fix the path, or drop the arg to auto-generate from the codebase). If a sibling
+# .md file looks like a near-miss of the bad path, surface it honestly as a hint.
+# Prints to stderr and exits 1. Honest: only suggests a "did you mean" when a real
+# .md sibling exists; never fabricates a path.
+_prd_not_found_die() {
+    local bad_path="$1"
+    echo -e "${RED}Error: PRD file not found: $bad_path${NC}" >&2
+    echo -e "${YELLOW}Hint: provide a path to an existing .md/.json/.txt/.yaml/.yml file, or run 'loki start' with no args to analyze the current directory.${NC}" >&2
+    # Best-effort near-miss suggestion: if a .md file sits in the same directory
+    # as the bad path, point at it. Read-only; silent when nothing matches.
+    local dir base suggestion
+    dir="$(dirname "$bad_path" 2>/dev/null)" || dir="."
+    base="$(basename "$bad_path" 2>/dev/null)"
+    if [ -d "$dir" ] && [ -n "$base" ]; then
+        suggestion="$(ls -1 "$dir"/*.md 2>/dev/null | head -1)"
+        if [ -n "$suggestion" ]; then
+            echo -e "${YELLOW}Did you mean: $suggestion ?${NC}" >&2
+        fi
+    fi
+    exit 1
+}
+
 # Anonymous usage telemetry
 PROJECT_DIR="$SKILL_DIR"
 _TELEMETRY_SCRIPT="$SKILL_DIR/autonomy/telemetry.sh"
@@ -1687,9 +1711,7 @@ cmd_start() {
         case "$prd_file" in
             *.md|*.json|*.txt|*.yaml|*.yml)
                 if [ ! -f "$prd_file" ]; then
-                    echo "Error: PRD file not found: $prd_file" >&2
-                    echo "Hint: provide a path to an existing .md/.json/.txt/.yaml/.yml file, or run 'loki start' with no args to analyze the current directory." >&2
-                    exit 1
+                    _prd_not_found_die "$prd_file"
                 fi
                 ;;
         esac
@@ -1712,8 +1734,7 @@ cmd_start() {
         case "$prd_file" in
             *.md|*.json|*.txt|*.yaml|*.yml)
                 if [ ! -f "$prd_file" ]; then
-                    echo -e "${RED}Error: PRD file not found: $prd_file${NC}" >&2
-                    exit 1
+                    _prd_not_found_die "$prd_file"
                 fi
                 ;;
         esac
@@ -2014,7 +2035,13 @@ cmd_start() {
         fi
         if [ -n "$_existing_pid" ] && kill -0 "$_existing_pid" 2>/dev/null; then
             echo -e "${RED}Error: another loki instance is running (pid $_existing_pid).${NC}" >&2
-            echo -e "${YELLOW}Run 'loki stop' first, then retry 'loki start'.${NC}" >&2
+            # 'loki stop' is folder-scoped by default (v7.7.30), so it only stops a
+            # run in THIS directory. If the live instance is in another project,
+            # 'loki stop' here reports "No active session" and the user is stuck in
+            # a start-says-running / stop-says-clean loop. Point at the global stop
+            # and at 'loki status' to find the live run.
+            echo -e "${YELLOW}Run 'loki stop' here, or 'loki stop --all' if it is running in another project.${NC}" >&2
+            echo -e "${YELLOW}See 'loki status' for the live run, then retry 'loki start'.${NC}" >&2
             exit 1
         fi
         # PID is stale (file present but process gone). Log + remove + continue.
