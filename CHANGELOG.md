@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.83.0] - 2026-06-20
+
+### UX: less friction, more wow
+
+Six experience improvements that cut the number of commands and flags you need to
+learn, make output worth screenshotting, and tell you the next step everywhere.
+All additive and opt-out; default behavior is unchanged.
+
+- One-command forward motion: `loki next` reads the build's own state and runs the
+  right next step (resume / ship / why), confirm-then-run on a TTY, print-only
+  with --dry-run or off a TTY. `loki ship` finishes a build in one command:
+  optional preview, the same diff quality gates as review, and the exact
+  branch-aware PR command on a clean result (print-only; never pushes).
+- Zero-config `loki start`: when run with no spec it auto-discovers an on-disk
+  spec (prd.md, a single top-level *.md/*.yaml), shows a resume hint if a previous
+  build here was interrupted (naming the last checkpoint), and prints a one-line
+  pre-flight summary. All opt-out; nothing changes when a spec is given or none
+  is found.
+- Visible delight: an inline completion card after a build, a "Building:" headline
+  on start, app-live / last-run lines in status, and a polished COMPLETION.txt
+  receipt. Display-only and TTY-gated (byte-identical off-TTY and under --json).
+- Actionable guidance: the PRD-not-found messages are now unified and tell you
+  exactly what to do; the instance-running path explains recovery; tab completion
+  is spec-aware.
+- Discoverability + first-run wow: `loki doctor` ends with a copy-paste next step,
+  a one-command completions install, quickstart surfaced on the landing/welcome
+  screen, and a drift-proof completion-coverage check so the command list cannot
+  silently fall out of sync again.
+
+Full suite green (1422 pytest + bun + shell suites); completion-coverage drift
+check passing.
+
 ## [7.82.0] - 2026-06-20
 
 ### Hardening sweep: 36 verified bug fixes, real-cluster-proven deployment, UX polish

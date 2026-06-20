@@ -2911,7 +2911,7 @@ emit_completion_summary() {
 }
 
 #===============================================================================
-# print_completion_card  (v7.82: visible-delight completion card)
+# print_completion_card  (visible-delight completion card)
 #
 # Display-only. Renders a boxed summary card to the interactive TTY at the close
 # of a foreground run: outcome, branch, files changed (+ins/-del), the live-app

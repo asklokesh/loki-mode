@@ -130,6 +130,8 @@ function _loki_commands {
         'pause:Pause execution'
         'resume:Resume execution'
         'status:Show status'
+        'next:Run the right next step for the current build'
+        'ship:Finish the build (gates + PR advice) in one command'
         'why:Explain why the last run did what it did'
         'dashboard:Dashboard commands'
         'web:Start the web app surface'

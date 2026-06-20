@@ -79,7 +79,9 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
     // four (one per absent provider).
     const installLines = out.split("\n").filter((l) => l.includes("Install:"));
     expect(installLines.length).toBeLessThanOrEqual(1);
-  });
+  }, 20000); // doctor spawns real per-provider `--version` probes + a network
+  // reachability check (~5-7s with all providers absent); this asserts STDOUT
+  // routing, not speed, so give it a generous timeout (the 5s default flaked).
 
   it("sub-cap files are returned whole on both routes", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-gfcap-"));

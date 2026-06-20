@@ -3010,7 +3010,21 @@ def load(p):
     except Exception: return {}
 state = load(os.environ.get("_LOKI_NA_STATE", ""))
 comp = load(os.environ.get("_LOKI_NA_COMPLETION", ""))
-print(state.get("status") or comp.get("outcome") or "unknown")
+# Mirror cmd_why's COMP_OUTCOME_ALIASES so a completion-only state (a rotated or
+# crashed run with no live status, only completion.json's outcome) resolves to
+# the canonical status loki next's action map keys on. Without this, an outcome
+# of "complete"/"max_iterations" drifted to the default "loki status" instead of
+# "loki ship"/"loki resume".
+COMP_OUTCOME_ALIASES = {
+    "complete": "council_approved",
+    "max_iterations": "max_iterations_reached",
+    "intervention": "paused",
+}
+status = state.get("status")
+if not status:
+    raw_outcome = comp.get("outcome") or ""
+    status = COMP_OUTCOME_ALIASES.get(raw_outcome, raw_outcome) or "unknown"
+print(status)
 NASTATUS
 }
 
