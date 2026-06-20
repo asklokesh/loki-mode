@@ -3235,6 +3235,43 @@ cmd_status() {
         fi
     fi
 
+    # v7.82: surface the single most valuable, most shareable fact -- where the
+    # built app is running -- when the app runner reports a live app. Display-only
+    # read of .loki/app-runner/state.json (same shape build_completion_summary
+    # reads); silent when no app is running. The --json path (cmd_status_json) is
+    # untouched, so machine output stays byte-identical.
+    if [ -f "$LOKI_DIR/app-runner/state.json" ]; then
+        local app_url
+        app_url=$(_LOKI_APP_STATE="$LOKI_DIR/app-runner/state.json" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['_LOKI_APP_STATE']))
+    print(d.get('url', '') if d.get('status') == 'running' else '')
+except Exception:
+    print('')" 2>/dev/null)
+        if [ -n "$app_url" ]; then
+            echo ""
+            echo -e "${GREEN}App running:${NC} ${BOLD}${app_url}${NC}  ${DIM}- open it to try it${NC}"
+        fi
+    fi
+
+    # v7.82: completion-aware one-liner. When a finished run left a completion
+    # record, show its outcome and point at \`loki why\` for the full story. Reads
+    # the persisted completion.json (no recompute); silent when absent.
+    if [ -f "$LOKI_DIR/state/completion.json" ]; then
+        local last_outcome
+        last_outcome=$(_LOKI_CJ="$LOKI_DIR/state/completion.json" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['_LOKI_CJ']))
+    print(d.get('outcome', '') or '')
+except Exception:
+    print('')" 2>/dev/null)
+        if [ -n "$last_outcome" ]; then
+            echo -e "${DIM}Last run: ${last_outcome} - run 'loki why' for details${NC}"
+        fi
+    fi
+
     echo ""
     echo -e "${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}"
     echo -e "${DIM}  Tip: loki analyze code overview  - codebase intelligence${NC}"

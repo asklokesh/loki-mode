@@ -2674,34 +2674,35 @@ except Exception:
     fi
 
     # ---- Durable human-readable file: .loki/COMPLETION.txt --------------------
+    # Presentation-only receipt: a single fixed-width label column, the live-app
+    # URL elevated right under the outcome headline, and a consistent rule line.
+    # Stays pure ASCII (no emoji, no dashes, no color codes) so it pastes cleanly
+    # into a PR description or a chat. Same facts and values as before.
     {
         echo "Loki Mode run summary"
         echo "====================="
         echo ""
-        echo "Outcome:   $outcome_label"
-        echo "Branch:    $branch"
-        echo "Files changed: $files_changed (+$insertions / -$deletions)"
-        echo "Finished:  $ts"
-        echo ""
-        if [ -n "$delegate_branch" ]; then
-            echo "Delegate branch: $delegate_branch"
-        fi
-        if [ -n "$pr_url" ]; then
-            echo "Pull request: $pr_url"
-        elif [ "$outcome" = "complete" ]; then
-            echo "Pull request: not opened (set LOKI_DELEGATE_PR=1 to open one)"
-        fi
-        echo ""
+        printf '%-14s %s\n' "Outcome:" "$outcome_label"
         if [ -n "$live_app_url" ]; then
             # Compute the dashboard scheme the same way start_dashboard does
             # (url_scheme is local to that function, not visible here).
             local _dash_scheme="http"
             [ -n "${LOKI_TLS_CERT:-}" ] && [ -n "${LOKI_TLS_KEY:-}" ] && _dash_scheme="https"
-            echo "Your app is live at: $live_app_url  (served locally on this machine)"
-            echo "  Dashboard: ${_dash_scheme}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
-            echo ""
+            printf '%-14s %s\n' "Live app:" "$live_app_url  (served locally on this machine)"
+            printf '%-14s %s\n' "Dashboard:" "${_dash_scheme}://127.0.0.1:${DASHBOARD_PORT:-57374}/  (App Runner -> Live App)"
         fi
-        echo "Tasks: pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
+        printf '%-14s %s\n' "Branch:" "$branch"
+        printf '%-14s %s\n' "Files:" "$files_changed (+$insertions / -$deletions)"
+        printf '%-14s %s\n' "Finished:" "$ts"
+        if [ -n "$delegate_branch" ]; then
+            printf '%-14s %s\n' "Delegate:" "$delegate_branch"
+        fi
+        if [ -n "$pr_url" ]; then
+            printf '%-14s %s\n' "Pull request:" "$pr_url"
+        elif [ "$outcome" = "complete" ]; then
+            printf '%-14s %s\n' "Pull request:" "not opened (set LOKI_DELEGATE_PR=1 to open one)"
+        fi
+        printf '%-14s %s\n' "Tasks:" "pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
         if [ -n "$evidence_inconclusive_line" ]; then
             echo "$evidence_inconclusive_line"
@@ -2901,7 +2902,127 @@ emit_completion_summary() {
     local outcome="${1:-complete}"
     local urgency="${2:-normal}"
     build_completion_summary "$outcome"
+    # Render the screenshot-worthy completion card inline on a foreground TTY run,
+    # AFTER the durable files are written. The card re-reads the persisted
+    # completion.json (never recomputes) so it can never diverge from the file.
+    print_completion_card
     send_notification "${_LOKI_SUMMARY_TITLE:-Run finished}" "${_LOKI_SUMMARY_BODY:-}" "$urgency"
+    return 0
+}
+
+#===============================================================================
+# print_completion_card  (v7.82: visible-delight completion card)
+#
+# Display-only. Renders a boxed summary card to the interactive TTY at the close
+# of a foreground run: outcome, branch, files changed (+ins/-del), the live-app
+# URL with a "try it" line when an app is running, the copy-pasteable review
+# command, and the recorded-assumptions count. This is the single most
+# screenshot-worthy moment of a run, which was previously only written to a file.
+#
+# It reads ONLY from the already-persisted .loki/state/completion.json (written
+# by build_completion_summary just before this is called) and the app-runner
+# state, so the card and the durable file are guaranteed identical. Nothing is
+# computed or written here.
+#
+# Gate (same shape as the HUD at the colors block): interactive stdout, not
+# --bg, and not opted out via LOKI_COMPLETION_CARD=0. Off-TTY / --bg / --json
+# paths emit nothing, so machine output stays byte-identical. Wrapped so any
+# internal failure still returns 0 and can never abort the completion path.
+#===============================================================================
+print_completion_card() {
+    # Gate first: emit nothing unless interactive TTY, not background, not opted out.
+    if ! { [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ] && [ "${LOKI_COMPLETION_CARD:-1}" != "0" ]; }; then
+        return 0
+    fi
+
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local _cj="$loki_dir/state/completion.json"
+    [ -f "$_cj" ] || return 0
+
+    # Pull the fields we render straight from the persisted record. The python3
+    # call emits one field per line in a fixed order; we read them line by line
+    # so empty fields (e.g. no pr_url) keep their positions (a single delimiter
+    # split would collapse adjacent empties). Any failure leaves the card
+    # unrendered. Trailing-newline guard: NUL-free, fields are single-line.
+    local _fields
+    _fields="$(python3 -c "
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+def g(k):
+    v=d.get(k,'')
+    return '' if v is None else str(v).replace('\n',' ')
+for k in ['outcome','branch','files_changed','insertions','deletions',
+          'review_cmd','pr_url','assumptions_total','assumptions_high']:
+    print(g(k))
+" "$_cj" 2>/dev/null)" || return 0
+    [ -z "$_fields" ] && return 0
+
+    local _outcome _branch _files _ins _del _review _pr _atotal _ahigh
+    {
+        IFS= read -r _outcome
+        IFS= read -r _branch
+        IFS= read -r _files
+        IFS= read -r _ins
+        IFS= read -r _del
+        IFS= read -r _review
+        IFS= read -r _pr
+        IFS= read -r _atotal
+        IFS= read -r _ahigh
+    } <<EOF
+$_fields
+EOF
+
+    # Human outcome label (mirror build_completion_summary's mapping).
+    local _label
+    case "$_outcome" in
+        complete)        _label="Completed" ;;
+        max_iterations)  _label="Max iterations" ;;
+        stopped)         _label="Stopped" ;;
+        force_stopped)   _label="Stopped (not verified-complete)" ;;
+        failed)          _label="Failed" ;;
+        intervention)    _label="Needs input" ;;
+        *)               _label="$_outcome" ;;
+    esac
+
+    # Live app URL (best-effort), same read as build_completion_summary.
+    local _url="" _app_state="$loki_dir/app-runner/state.json"
+    if [ -f "$_app_state" ]; then
+        _url="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('url','') if d.get('status')=='running' else '')
+except Exception:
+    print('')" "$_app_state" 2>/dev/null)" || _url=""
+    fi
+
+    # Box width matches log_header (66 inner columns). Render lines that fit;
+    # this is decoration, so over-wide content is simply not boxed-truncated
+    # (the durable file carries the full text).
+    echo ""
+    echo -e "${GREEN}+================================================================+${NC}"
+    echo -e "${GREEN}|${NC} ${BOLD}Loki Mode: ${_label}${NC}"
+    echo -e "${GREEN}|${NC}"
+    if [ -n "$_url" ]; then
+        echo -e "${GREEN}|${NC} ${BOLD}${CYAN}Your app is live at ${_url}${NC}  ${DIM}- open it to try it${NC}"
+        echo -e "${GREEN}|${NC}"
+    fi
+    echo -e "${GREEN}|${NC} Branch: ${BOLD}${_branch}${NC}"
+    echo -e "${GREEN}|${NC} Files:  ${BOLD}${_files}${NC} changed  ${GREEN}+${_ins}${NC} / ${RED}-${_del}${NC}"
+    case "$_atotal" in ''|0) : ;; *)
+        echo -e "${GREEN}|${NC} Spec assumptions recorded: ${BOLD}${_atotal}${NC} (${_ahigh} high) ${DIM}see .loki/assumptions/ledger.md${NC}"
+        ;;
+    esac
+    if [ -n "$_pr" ]; then
+        echo -e "${GREEN}|${NC} Pull request: ${_pr}"
+    fi
+    echo -e "${GREEN}|${NC}"
+    echo -e "${GREEN}|${NC} ${DIM}Review the work:${NC}"
+    echo -e "${GREEN}|${NC}   ${_review}"
+    echo -e "${GREEN}+================================================================+${NC}"
+    echo ""
     return 0
 }
 
@@ -16570,6 +16691,35 @@ main() {
     if [ -n "$PRD_PATH" ] && [ ! -f "$PRD_PATH" ]; then
         log_error "PRD file not found: $PRD_PATH"
         exit 1
+    fi
+
+    # v7.82: one-line "Building:" headline under the start banner so the opening
+    # frame reflects the user's own intent (their PRD / brief / this codebase),
+    # not a generic banner. Display-only, derived from already-resolved values:
+    # PRD basename for a file, the recorded brief text for a brief run, or fixed
+    # text for a no-arg in-repo run. Truncated to one tidy line. Gated to an
+    # interactive TTY, not --bg, and opt-out via LOKI_START_HEADLINE=0, so the
+    # off-TTY / background path is byte-identical (no output). Best-effort; a
+    # failure here must never affect parsing or the build flow.
+    if [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ] && [ "${LOKI_START_HEADLINE:-1}" != "0" ]; then
+        local _headline=""
+        if [ -n "$PRD_PATH" ]; then
+            _headline="$(basename "$PRD_PATH" 2>/dev/null || echo "$PRD_PATH")"
+        elif [ -f ".loki/state/brief.txt" ]; then
+            # Recorded one-line brief (written by cmd_start). Collapse to a single
+            # line and truncate to ~60 chars so the banner stays clean.
+            local _brief
+            _brief="$(tr '\n' ' ' < .loki/state/brief.txt 2>/dev/null | sed 's/  */ /g; s/^ //; s/ $//')"
+            if [ -n "$_brief" ]; then
+                if [ "${#_brief}" -gt 60 ]; then
+                    _brief="${_brief:0:57}..."
+                fi
+                _headline="\"$_brief\""
+            fi
+        fi
+        [ -z "$_headline" ] && _headline="analyzing this codebase"
+        echo -e "  ${BOLD}${CYAN}Building: ${_headline}${NC}"
+        echo ""
     fi
 
     # Handle background mode
