@@ -136,7 +136,10 @@ function generateStandaloneHTML(bundleCode) {
       --loki-transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    @media (prefers-color-scheme: dark) {
+    /* v7.90.1: dark mode removed (light-only). Disabled via an always-false media
+       query so an OS dark preference no longer flips the dashboard to the dark
+       palette the founder found worse. Kept (not deleted) to minimize churn. */
+    @media (prefers-color-scheme: dark) and (max-width: 0px) {
       :root {
         --loki-bg-primary: #0F0B1A;
         --loki-bg-secondary: #150F24;
@@ -1122,11 +1125,8 @@ function generateStandaloneHTML(bundleCode) {
               </div>
             </div>
           </div>
-          <button class="footer-btn theme-toggle" id="theme-toggle" title="Toggle theme (T)">
-            <svg id="theme-icon-sun" width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            <svg id="theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-            <span id="theme-label">Dark</span>
-          </button>
+          <!-- v7.90.1: dark mode removed (light-only). The theme toggle and its
+               handler are gone; the dashboard ships a single light theme. -->
         </div>
       </div>
     </aside>
@@ -1777,60 +1777,19 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(refresh, 15000);
   })();
 
-  // Theme toggle functionality
-  var themeToggle = document.getElementById('theme-toggle');
-  var themeLabel = document.getElementById('theme-label');
+  // v7.90.1: dark mode removed -- the dashboard is light-only. The theme toggle
+  // button + handler are gone; everything renders in the single light theme.
+  // Force light on the SPA and pin the iframe/standalone pages (trust/cost/
+  // proofs) to ?theme=light so they match.
+  try {
+    if (LokiDashboard && LokiDashboard.UnifiedThemeManager &&
+        typeof LokiDashboard.UnifiedThemeManager.setTheme === 'function') {
+      LokiDashboard.UnifiedThemeManager.setTheme('light');
+    }
+  } catch (_e) { /* theme manager optional; light is the CSS default anyway */ }
 
-  var sunIcon = document.getElementById('theme-icon-sun');
-  var moonIcon = document.getElementById('theme-icon-moon');
-
-  // Resolve the active theme to a plain 'dark'|'light' for the iframe pages
-  // (trust/cost/proofs), which live in separate documents and cannot read the
-  // SPA's data-loki-theme attribute. v7.18.0.
-  function lokiResolvedTheme() {
-    var theme = LokiDashboard.UnifiedThemeManager.getTheme();
-    return (theme.includes('dark') || theme === 'high-contrast') ? 'dark' : 'light';
-  }
-
-  // Keep the trust iframe's theme in sync with the SPA toggle. If the frame is
-  // already loaded, re-point its src with the new ?theme= so its palette flips
-  // with the SPA instead of clashing.
-  function syncTrustFrameTheme() {
-    var tframe = document.getElementById('trust-frame');
-    if (!tframe) return;
-    var cur = tframe.getAttribute('src') || '';
-    if (!cur || cur === 'about:blank') return; // not opened yet; opens with theme
-    tframe.src = '/trust?theme=' + lokiResolvedTheme();
-  }
-
-  function updateThemeUI() {
-    var theme = LokiDashboard.UnifiedThemeManager.getTheme();
-    var isDark = theme.includes('dark') || theme === 'high-contrast';
-    themeLabel.textContent = isDark ? 'Light' : 'Dark';
-    if (sunIcon) sunIcon.style.display = isDark ? 'inline' : 'none';
-    if (moonIcon) moonIcon.style.display = isDark ? 'none' : 'inline';
-  }
-
-  themeToggle.addEventListener('click', function() {
-    LokiDashboard.UnifiedThemeManager.toggle();
-    // updateThemeUI + syncTrustFrameTheme run via the loki-theme-change
-    // listener below (toggle() dispatches it), so we do NOT call them here too
-    // -- a direct call would re-point the trust iframe src twice per toggle.
-  });
-
-  window.addEventListener('loki-theme-change', function() {
-    updateThemeUI();
-    syncTrustFrameTheme();
-  });
-
-  updateThemeUI();
-
-  // Carry the SPA theme to the full-page standalone views (cost/proofs) opened
-  // via direct links, so a user who toggled Dark gets a matching page instead
-  // of an OS-default one. Updated on click so it always reflects the current
-  // toggle state. v7.18.0.
   function lokiThemeHref(base) {
-    return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'theme=' + lokiResolvedTheme();
+    return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'theme=light';
   }
   var costLink = document.getElementById('budget-banner-link');
   if (costLink) {
@@ -2066,7 +2025,7 @@ document.addEventListener('DOMContentLoaded', function() {
       var tframe = document.getElementById('trust-frame');
       if (tframe && (!tframe.src || tframe.src === 'about:blank' ||
           tframe.getAttribute('src') === 'about:blank')) {
-        tframe.src = '/trust?theme=' + lokiResolvedTheme();
+        tframe.src = '/trust?theme=light';
       }
     }
     // Update nav active state
@@ -2138,148 +2097,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // Keyboard shortcuts: Cmd/Ctrl + 1-7
-  document.addEventListener('keydown', function(e) {
-    if ((e.metaKey || e.ctrlKey) && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
-      e.preventDefault();
-      var sections = ['overview', 'fleet', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
-      var idx = e.key === '0' ? 9 : parseInt(e.key) - 1;
-      if (idx < sections.length) switchSection(sections[idx]);
-    }
-  });
-
-  // --- Keyboard Shortcuts (Issue #18) ---
-  var shortcutsOverlay = document.getElementById('shortcuts-overlay');
-  var shortcutsClose = document.getElementById('shortcuts-close');
-
-  function toggleShortcutsOverlay() {
-    shortcutsOverlay.classList.toggle('visible');
-  }
-
-  function closeShortcutsOverlay() {
-    shortcutsOverlay.classList.remove('visible');
-  }
-
-  shortcutsClose.addEventListener('click', closeShortcutsOverlay);
-
-  // Close overlay when clicking outside the dialog
-  shortcutsOverlay.addEventListener('click', function(e) {
-    if (e.target === shortcutsOverlay) {
-      closeShortcutsOverlay();
-    }
-  });
-
-  document.addEventListener('keydown', function(e) {
-    // Skip shortcuts when typing in input, textarea, or select elements
-    var tag = (e.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) {
-      // Allow Escape to blur input fields
-      if (e.key === 'Escape') {
-        e.target.blur();
-      }
-      return;
-    }
-
-    // Skip if modifier keys are held (let browser defaults work)
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-    var sections = ['overview', 'fleet', 'insights', 'prd-checklist', 'app-runner', 'council', 'quality', 'cost', 'trust', 'checkpoint', 'context', 'notifications', 'migration', 'analytics', 'escalations'];
-
-    switch (e.key) {
-      // Section navigation: 1-9, 0
-      case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-        e.preventDefault();
-        switchSection(sections[parseInt(e.key) - 1]);
-        break;
-      case '0':
-        e.preventDefault();
-        switchSection(sections[9]);
-        break;
-
-      // Migration page
-      case 'm':
-        e.preventDefault();
-        switchSection('migration');
-        break;
-
-      // Analytics page
-      case 'a':
-        e.preventDefault();
-        switchSection('analytics');
-        break;
-
-      // Escalations page
-      case 'e':
-        e.preventDefault();
-        switchSection('escalations');
-        break;
-
-      // Help overlay
-      case '?':
-        e.preventDefault();
-        toggleShortcutsOverlay();
-        break;
-
-      // Close overlays
-      case 'Escape':
-        if (shortcutsOverlay.classList.contains('visible')) {
-          e.preventDefault();
-          closeShortcutsOverlay();
-        }
-        break;
-
-      // Focus API URL input
-      case '/':
-        e.preventDefault();
-        apiUrlInput.focus();
-        apiUrlInput.select();
-        break;
-
-      // Theme toggle. updateThemeUI + syncTrustFrameTheme run via the
-      // loki-theme-change listener (toggle() dispatches it); do not call them
-      // here too, or the trust iframe re-points twice per toggle.
-      case 't':
-        e.preventDefault();
-        LokiDashboard.UnifiedThemeManager.toggle();
-        break;
-
-      // Session controls
-      case 'p':
-        e.preventDefault();
-        var sessionCtrl = document.getElementById('session-control');
-        if (sessionCtrl) {
-          var pauseBtn = sessionCtrl.shadowRoot && sessionCtrl.shadowRoot.getElementById('pause-btn');
-          if (pauseBtn && !pauseBtn.disabled) {
-            pauseBtn.click();
-          }
-        }
-        break;
-
-      case 'r':
-        e.preventDefault();
-        var sessionCtrl2 = document.getElementById('session-control');
-        if (sessionCtrl2) {
-          var resumeBtn = sessionCtrl2.shadowRoot && sessionCtrl2.shadowRoot.getElementById('resume-btn');
-          if (resumeBtn) {
-            resumeBtn.click();
-          }
-        }
-        break;
-
-      case 's':
-        e.preventDefault();
-        var sessionCtrl3 = document.getElementById('session-control');
-        if (sessionCtrl3) {
-          var stopBtn = sessionCtrl3.shadowRoot && sessionCtrl3.shadowRoot.getElementById('stop-btn');
-          if (stopBtn && !stopBtn.disabled) {
-            if (window.confirm('Are you sure you want to stop the session?')) {
-              stopBtn.click();
-            }
-          }
-        }
-        break;
-    }
-  });
+  // Keyboard shortcuts removed (v7.90.1): app-level hotkeys fired while
+  // typing in inputs (switching tabs / toggling theme), so they are gone
+  // entirely. Native browser behavior + per-modal Escape handling remain.
 
   // Restore last section from localStorage (overrides default overview)
   var savedSection = localStorage.getItem('loki-active-section');

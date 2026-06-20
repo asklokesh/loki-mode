@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.90.1] - 2026-06-20
+
+### Dashboard polish: a calmer, more readable live view
+
+Fixes from watching the live dashboard during a real build, all aimed at a
+cleaner experience for whoever is watching:
+
+- Markdown is now rendered as a formatted preview, not raw text. The Spec panel
+  (your generated spec), the wiki sections, the How-to-Run / USAGE view, task
+  descriptions, and handoff/escalation notes now show headings, lists, bold, and
+  code blocks instead of literal #, **, and ``` markers. The renderer escapes its
+  input first, so a spec or wiki body can never inject script.
+- The model picker no longer slams shut. A background refresh used to re-render
+  the dropdown out from under you mid-selection; it now stays open while you
+  choose.
+- Keyboard shortcuts are removed. Typing in any text box used to trigger
+  app actions (switching tabs, toggling the theme); the dashboard no longer binds
+  app-level hotkeys, so typing only types.
+- Dark mode is removed; the dashboard is light-only. The previous dark palette
+  looked worse and an OS dark preference no longer flips it.
+- The dashboard no longer lingers after you stop your last run. When you press
+  Stop and no other run is active, a dashboard that was auto-started with a run
+  shuts itself down; a dashboard you started yourself with `loki dashboard` stays
+  up and shows a clear "no active runs" note. It never tears down a dashboard that
+  other running projects still need.
+
 ## [7.90.0] - 2026-06-20
 
 ### Proven PR: every PR Loki opens carries its own re-verifiable proof

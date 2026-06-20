@@ -11,6 +11,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { renderMarkdown, MARKDOWN_STYLES } from '../core/loki-markdown.js';
 
 /** @type {Array<{id: string, label: string}>} Wiki section tabs plus the Ask tab. */
 const TABS = [
@@ -362,7 +363,7 @@ export class LokiWikiBrowser extends LokiElement {
     return `<div class="section">
       <h3>${this._esc(data.title)}</h3>
       ${this._renderDiagram(id, data)}
-      <pre class="body">${this._esc(data.body)}</pre>
+      <div class="body md-body">${renderMarkdown(data.body)}</div>
       ${this._renderCitations(data.citations)}
     </div>`;
   }
@@ -412,7 +413,7 @@ export class LokiWikiBrowser extends LokiElement {
       const note = this._answer.note
         ? `<p class="dim">${this._esc(this._answer.note)}</p>` : '';
       result = `<div class="answer">
-        <pre class="body">${this._esc(this._answer.answer || '')}</pre>
+        <div class="body md-body">${renderMarkdown(this._answer.answer || '')}</div>
         ${note}
         ${this._renderCitations(this._answer.citations)}
       </div>`;
@@ -462,6 +463,7 @@ export class LokiWikiBrowser extends LokiElement {
     this.shadowRoot.innerHTML = `
       <style>
         ${this.getBaseStyles()}
+        ${MARKDOWN_STYLES}
         :host { display: block; }
         .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--loki-border);
           margin-bottom: 12px; flex-wrap: wrap; }
@@ -470,9 +472,10 @@ export class LokiWikiBrowser extends LokiElement {
           border-bottom: 2px solid transparent; transition: color 0.15s ease; }
         .tab:hover { color: var(--loki-text-primary); }
         .tab.active { color: var(--loki-accent); border-bottom-color: var(--loki-accent); }
-        .body { white-space: pre-wrap; word-break: break-word;
-          font-family: var(--loki-font-mono, monospace); font-size: 12px; line-height: 1.6;
-          background: var(--loki-bg-secondary); color: var(--loki-text-primary);
+        /* Chrome for the rendered section / answer document. The markdown itself
+           is styled by MARKDOWN_STYLES (.md-body), injected into this root. */
+        .body { word-break: break-word;
+          background: var(--loki-bg-secondary);
           padding: 14px; border-radius: var(--loki-radius-lg, 5px);
           border: 1px solid var(--loki-border); }
         .cites { margin-top: 10px; font-size: 12px; color: var(--loki-text-secondary); }

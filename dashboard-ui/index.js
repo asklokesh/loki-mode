@@ -27,6 +27,7 @@ import {
 } from './core/loki-theme.js';
 import { LokiApiClient, getApiClient, createApiClient, ApiEvents } from './core/loki-api-client.js';
 import { LokiState, getState, createStore, STATE_CHANGE_EVENT } from './core/loki-state.js';
+import { renderMarkdown, escapeHtml, MARKDOWN_STYLES } from './core/loki-markdown.js';
 
 // Import unified styles directly for full access
 import {
@@ -45,6 +46,11 @@ import {
 export { LokiTheme, LokiElement, THEME_VARIABLES, COMMON_STYLES };
 export { LokiApiClient, getApiClient, createApiClient, ApiEvents };
 export { LokiState, getState, createStore, STATE_CHANGE_EVENT };
+
+// Shared, XSS-safe markdown renderer used by every dashboard surface that shows
+// markdown (Spec panel, Wiki sections, task descriptions, escalation docs). The
+// inline standalone USAGE.md script reaches it via the LokiDashboard global.
+export { renderMarkdown, escapeHtml, MARKDOWN_STYLES };
 
 // Re-export unified styles (recommended for new code)
 export {

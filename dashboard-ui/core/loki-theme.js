@@ -411,8 +411,10 @@ export class LokiElement extends HTMLElement {
         ${generateThemeCSS('light')}
       }
 
-      /* Dark theme via system preference */
-      @media (prefers-color-scheme: dark) {
+      /* v7.90.1: dark mode removed (light-only). The OS-preference dark block is
+         disabled via an always-false media query so an OS dark setting no longer
+         flips components to dark. */
+      @media (prefers-color-scheme: dark) and (max-width: 0px) {
         :host {
           ${generateThemeCSS('dark')}
         }

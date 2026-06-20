@@ -400,6 +400,14 @@ export class LokiSessionControl extends LokiElement {
   }
 
   render() {
+    // Do NOT rebuild the DOM while the user is interacting with the model
+    // dropdown -- a poll-driven re-render replaces the <select> and slams the
+    // open menu shut, making the picker unusable (user-reported). Defer: mark
+    // that a render is pending and re-run it once the dropdown closes (blur/
+    // change re-call render via _modelInteracting=false). A user-initiated
+    // render (start/stop/model-change) clears the flag itself, so this only
+    // skips the 3s background poll re-render, never a real state change.
+    if (this._modelInteracting) { this._renderPending = true; return; }
     const isCompact = this.hasAttribute('compact');
     const statusClass = this._getStatusClass();
     const statusLabel = this._getStatusLabel();
@@ -839,7 +847,21 @@ export class LokiSessionControl extends LokiElement {
 
     const modelSelect = this.shadowRoot.getElementById('model-select');
     if (modelSelect) {
-      modelSelect.addEventListener('change', (e) => this._onModelChange(e.target.value));
+      // Mark interaction so a background poll re-render does not slam the open
+      // menu shut (user-reported). focus/mousedown opens interaction; change/blur
+      // ends it and flushes any render that was deferred while it was open.
+      const endInteract = () => {
+        this._modelInteracting = false;
+        if (this._renderPending) { this._renderPending = false; this.render(); }
+      };
+      modelSelect.addEventListener('mousedown', () => { this._modelInteracting = true; });
+      modelSelect.addEventListener('focus', () => { this._modelInteracting = true; });
+      modelSelect.addEventListener('blur', endInteract);
+      modelSelect.addEventListener('change', (e) => {
+        this._modelInteracting = false;
+        this._renderPending = false;
+        this._onModelChange(e.target.value);
+      });
     }
 
     const specInput = this.shadowRoot.getElementById('spec-input');

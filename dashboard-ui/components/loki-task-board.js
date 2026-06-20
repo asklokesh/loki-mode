@@ -11,6 +11,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
 import { getState } from '../core/loki-state.js';
+import { renderMarkdown, MARKDOWN_STYLES } from '../core/loki-markdown.js';
 
 /** @type {Array<{id: string, label: string, status: string, color: string}>} */
 const COLUMNS = [
@@ -383,31 +384,11 @@ export class LokiTaskBoard extends LokiElement {
   }
 
   _renderMarkdown(md) {
-    if (!md) return '';
-    // Minimal markdown: escape first, then apply simple inline + block patterns.
-    let html = this._escapeHtml(String(md));
-    // Code fences ```...```
-    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="md-code">${code.trim()}</pre>`);
-    // Inline code `...`
-    html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>');
-    // Headings
-    html = html.replace(/^###\s+(.+)$/gm, '<h4 class="md-h4">$1</h4>');
-    html = html.replace(/^##\s+(.+)$/gm, '<h3 class="md-h3">$1</h3>');
-    html = html.replace(/^#\s+(.+)$/gm, '<h2 class="md-h2">$1</h2>');
-    // Bold and italic
-    html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    // Bullet lists (single-level)
-    html = html.replace(/(?:^|\n)((?:[-*]\s+.+(?:\n|$))+)/g, (_, block) => {
-      const items = block.trim().split(/\n/).map(line => line.replace(/^[-*]\s+/, '')).map(t => `<li>${t}</li>`).join('');
-      return `\n<ul class="md-list">${items}</ul>`;
-    });
-    // Paragraphs (double newlines)
-    html = html.split(/\n{2,}/).map(block => {
-      if (/^<(h\d|ul|ol|pre)/.test(block.trim())) return block;
-      return `<p class="md-p">${block.replace(/\n/g, '<br>')}</p>`;
-    }).join('');
-    return html;
+    // Delegates to the shared, XSS-safe renderer so task descriptions render
+    // identically to every other markdown surface (Spec, Wiki, escalations) and
+    // cannot drift. The output uses the same .md-* classes this component's
+    // .md-body styles already target; renderMarkdown escapes its input first.
+    return renderMarkdown(md);
   }
 
   _formatTimestamp(ts) {
@@ -1074,7 +1055,13 @@ export class LokiTaskBoard extends LokiElement {
           color: var(--loki-text-muted);
         }
 
-        /* Markdown body inside Description section */
+        /* Shared markdown styles first, so the shared renderer's full class set
+           (.md-quote, .md-hr, .md-link, .md-h5/h6, strong) is themed. The
+           task-board overrides below have equal specificity and come after, so
+           they still win on the classes they target (compact fonts/margins). */
+        ${MARKDOWN_STYLES}
+
+        /* Markdown body inside Description section (compact overrides) */
         .md-body .md-h2 { font-size: 14px; margin: 8px 0 4px; color: var(--loki-text-primary); }
         .md-body .md-h3 { font-size: 13px; margin: 8px 0 4px; color: var(--loki-text-primary); }
         .md-body .md-h4 { font-size: 12px; margin: 6px 0 2px; color: var(--loki-text-primary); }

@@ -3325,12 +3325,14 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
             except OSError:
                 pass
         registry.mark_project_stopped(project_id)
-        return {
+        _resp = {
             "success": True,
             "project_id": project_id,
             "stopped": stop_signaled,
             "already_stopped": not stop_signaled,
         }
+        _resp.update(_dashboard_teardown_after_project_stop(path))
+        return _resp
 
     # Write the STOP file so the runner's own cleanup STOP-branch fires for a
     # clean teardown. Only into the registry-resolved .loki dir.
@@ -3392,12 +3394,14 @@ async def stop_running_project(request: Request, body: RunningProjectStopRequest
 
     registry.mark_project_stopped(project_id)
 
-    return {
+    _resp = {
         "success": True,
         "project_id": project_id,
         "stopped": stopped,
         "already_stopped": False,
     }
+    _resp.update(_dashboard_teardown_after_project_stop(path))
+    return _resp
 
 
 def _recover_spec_source(path: str) -> Optional[_Path]:
@@ -4057,6 +4061,17 @@ def get_compliance_status(request: Request, report_type: str = Query("soc2", ali
 # When set, _get_loki_dir() resolves .loki/ relative to this path instead of CWD.
 _active_project_dir: Optional[str] = None
 
+# M4 (v7.90.1): was this dashboard auto-started by a run (`loki start` ->
+# run.sh start_dashboard), or started deliberately by the user
+# (`loki dashboard start`)? Captured ONCE at import from the environment marker
+# that ONLY the auto-start path sets. Used to decide whether the dashboard may
+# shut ITSELF down after its Stop button stops the last active run: an
+# auto-started dashboard self-exits (it came up with the run, so it should go
+# down with the last run), while a user-started dashboard is left up and only
+# surfaces a non-destructive notice. Frozen at startup so a later child process
+# inheriting/clearing the var cannot flip the decision.
+_DASHBOARD_AUTOSTARTED: bool = os.environ.get("LOKI_DASHBOARD_AUTOSTARTED") == "1"
+
 
 def _get_loki_dir() -> _Path:
     """Get LOKI_DIR, refreshing from env on each call for consistency.
@@ -4362,6 +4377,126 @@ def _reap_orchestrators_until_clear(project_dir: _Path, expected_cwd: str,
             _time.sleep(0.2)  # brief pause before the confirming re-scan
     # Exhausted rounds: report gone only if the final scan is empty.
     return (found_any, not _find_orchestrator_pids_for_dir(project_dir))
+
+
+def _other_runs_alive(exclude_path: Optional[str] = None) -> bool:
+    """True if ANY registered project OTHER than exclude_path still has a live
+    orchestrator pid. Mirrors run.sh's CLEAR/KEEP check (and cmd_stop's): a
+    project counts as alive only when its recorded pid is still running. The
+    just-stopped project must already be marked stopped in the registry (its pid
+    set to None by mark_project_stopped) before this is called, so it is not
+    self-counted; exclude_path is an extra belt-and-suspenders guard by realpath.
+    Best-effort: any registry/probe error degrades to True (KEEP) so we NEVER
+    tear the dashboard down on uncertain information.
+    """
+    try:
+        exclude_real = None
+        if exclude_path:
+            try:
+                exclude_real = os.path.realpath(exclude_path)
+            except OSError:
+                exclude_real = os.path.abspath(exclude_path)
+        for p in registry.list_projects(include_inactive=True):
+            path = p.get("path", "")
+            if exclude_real and path:
+                try:
+                    if os.path.realpath(path) == exclude_real:
+                        continue
+                except OSError:
+                    if os.path.abspath(path) == exclude_real:
+                        continue
+            pid = p.get("pid")
+            if isinstance(pid, int) and pid > 0 and not _pid_is_gone(pid):
+                return True
+        return False
+    except Exception:
+        # Unknown -> assume something is still running so we never wrongly kill
+        # the dashboard.
+        return True
+
+
+def _self_shutdown_after_response(delay_s: float = 1.0) -> None:
+    """Gracefully shut THIS dashboard server down shortly after the current HTTP
+    response has been sent. Used only after the dashboard's own Stop button stops
+    the LAST active run and only when this dashboard was auto-started (M4).
+
+    Why a delayed background thread (not an inline exit): the Stop request is
+    still in flight when this is decided. We must let FastAPI/uvicorn finish
+    writing the response (so the UI gets its JSON) before the process goes away.
+    A short-delay daemon thread sends SIGTERM to our OWN pid, which uvicorn
+    handles as a graceful shutdown (runs the lifespan teardown). This sidesteps
+    the fragile path where the dashboard relied on the orchestrator's cleanup
+    trap to kill it -- a path that a SIGKILL of the orchestrator (after the 5s
+    window) or a uvicorn graceful-shutdown deadlock could bypass, leaving the
+    dashboard lingering (the reported M4 bug). Best-effort; never raises into
+    the request.
+    """
+    import signal as _signal
+
+    def _kill_self() -> None:
+        try:
+            time.sleep(max(0.0, delay_s))
+        except Exception:
+            pass
+        try:
+            logger.info(
+                "Auto-started dashboard: last active run stopped and no other "
+                "run is alive; shutting self down (pid=%s).", os.getpid())
+        except Exception:
+            pass
+        try:
+            os.kill(os.getpid(), _signal.SIGTERM)
+        except OSError:
+            # Last resort: hard-exit this process only (never touches others).
+            os._exit(0)
+
+    try:
+        threading.Thread(target=_kill_self, name="loki-dash-selfstop",
+                         daemon=True).start()
+    except Exception:
+        # If we cannot even spawn the thread, do nothing: a lingering dashboard
+        # is strictly safer than any broader action.
+        pass
+
+
+def _dashboard_teardown_after_project_stop(stopped_path: Optional[str]) -> dict:
+    """Decide what happens to THIS dashboard after a per-project Stop, and return
+    fields to merge into the Stop response (M4).
+
+    Rules (conservative; never touches any process but this server's own):
+      - If another registered run is still alive -> KEEP: do nothing, the
+        dashboard stays up because other projects still need it.
+      - If no other run is alive (CLEAR) and this dashboard was AUTO-STARTED by a
+        run -> schedule a graceful self-shutdown after the response is sent. It
+        came up with a run, so it goes down with the last run.
+      - If CLEAR but the dashboard was started DELIBERATELY by the user
+        (`loki dashboard start`) -> do NOT self-kill; return a non-destructive
+        notice so the UI can tell the user how to stop it (loki dashboard stop).
+
+    Returns one of:
+      {"dashboard": "kept"}                              # other runs alive
+      {"dashboard": "stopping", ...}                     # auto-started + CLEAR
+      {"dashboard": "idle", "notice": "...", ...}        # user-started + CLEAR
+    """
+    try:
+        if _other_runs_alive(exclude_path=stopped_path):
+            return {"dashboard": "kept"}
+        if _DASHBOARD_AUTOSTARTED:
+            _self_shutdown_after_response()
+            return {
+                "dashboard": "stopping",
+                "dashboard_autostarted": True,
+            }
+        return {
+            "dashboard": "idle",
+            "dashboard_autostarted": False,
+            "notice": ("No active runs. This dashboard was started manually; "
+                       "stop it with: loki dashboard stop"),
+        }
+    except Exception:
+        # Any failure in the decision must never break the Stop response, and
+        # must never kill the dashboard on uncertain info.
+        return {"dashboard": "kept"}
 
 
 def _pid_is_gone(pid: int) -> bool:

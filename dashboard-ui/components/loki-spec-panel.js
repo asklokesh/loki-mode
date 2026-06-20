@@ -13,6 +13,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { renderMarkdown, MARKDOWN_STYLES } from '../core/loki-markdown.js';
 
 /** Human labels + short descriptions for each honest spec type. */
 const TYPE_LABELS = {
@@ -139,7 +140,10 @@ export class LokiSpecPanel extends LokiElement {
       if (s.path) meta = `<code class="src">${this._esc(s.path)}</code>`;
       const content = s.content || '';
       if (content.trim()) {
-        body = `<pre class="body">${this._esc(content)}</pre>`
+        // Render the spec as a formatted document, not a raw markdown dump.
+        // renderMarkdown escapes its input first, so a spec containing <script>
+        // is shown as text and cannot inject.
+        body = `<div class="body md-body">${renderMarkdown(content)}</div>`
           + (s.truncated ? `<p class="dim">Preview truncated -- see the full file on disk.</p>` : '');
       } else {
         body = `<p class="dim">No content available.</p>`;
@@ -149,7 +153,7 @@ export class LokiSpecPanel extends LokiElement {
       meta = ref;
       const title = s.title ? `<p class="issue-title">${this._esc(s.title)}</p>` : '';
       const issueBody = (s.body || '').trim()
-        ? `<pre class="body">${this._esc(s.body)}</pre>`
+        ? `<div class="body md-body">${renderMarkdown(s.body)}</div>`
           + (s.truncated ? `<p class="dim">Preview truncated.</p>` : '')
         : '';
       body = `${title}${issueBody}`;
@@ -231,6 +235,7 @@ export class LokiSpecPanel extends LokiElement {
     this.shadowRoot.innerHTML = `
       <style>
         ${this.getBaseStyles()}
+        ${MARKDOWN_STYLES}
         :host { display: block; }
         .active { background: var(--loki-bg-secondary); border: 1px solid var(--loki-border);
           border-radius: var(--loki-radius-lg, 5px); padding: 16px; }
@@ -247,12 +252,17 @@ export class LokiSpecPanel extends LokiElement {
         .src { font-family: var(--loki-font-mono, monospace); font-size: 12px;
           background: var(--loki-bg-tertiary); color: var(--loki-text-secondary);
           padding: 2px 7px; border-radius: 3px; word-break: break-all; }
-        .body { white-space: pre-wrap; word-break: break-word;
-          font-family: var(--loki-font-mono, monospace); font-size: 12px; line-height: 1.6;
+        /* Scroll chrome for the rendered spec/issue document. The markdown
+           itself is styled by MARKDOWN_STYLES (.md-body), injected below. */
+        .body { word-break: break-word;
           max-height: 320px; overflow: auto;
-          background: var(--loki-bg-tertiary); color: var(--loki-text-primary);
+          background: var(--loki-bg-tertiary);
           padding: 12px; border-radius: var(--loki-radius-md, 4px);
           border: 1px solid var(--loki-border); margin: 0; }
+        /* The brief is a one-line plain-text spec, kept as a preformatted block. */
+        .body.brief { white-space: pre-wrap;
+          font-family: var(--loki-font-mono, monospace); font-size: 12px;
+          line-height: 1.6; color: var(--loki-text-primary); }
         .dim { color: var(--loki-text-muted); font-size: 12px; }
 
         /* History */

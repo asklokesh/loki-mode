@@ -17,6 +17,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { renderMarkdown, MARKDOWN_STYLES } from '../core/loki-markdown.js';
 
 export class LokiEscalations extends LokiElement {
   static get observedAttributes() {
@@ -37,6 +38,7 @@ export class LokiEscalations extends LokiElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._ensureMarkdownStyles();
     this._setupApi();
     this._loadList();
     // Central registry gates this poll to the active + visible section in ONE
@@ -130,6 +132,21 @@ export class LokiEscalations extends LokiElement {
     }
   }
 
+  /**
+   * Inject the shared MARKDOWN_STYLES into document.head exactly once. This
+   * component renders to the light DOM (no shadow root), so the .md-body styles
+   * for the rendered handoff document must live at document scope. A sentinel id
+   * makes this idempotent across re-renders and multiple instances.
+   */
+  _ensureMarkdownStyles() {
+    if (typeof document === 'undefined' || !document.head) return;
+    if (document.getElementById('loki-markdown-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'loki-markdown-styles';
+    style.textContent = MARKDOWN_STYLES;
+    document.head.appendChild(style);
+  }
+
   _escapeHtml(s) {
     if (s === null || s === undefined) return '';
     return String(s)
@@ -202,16 +219,22 @@ export class LokiEscalations extends LokiElement {
           color: var(--text-secondary, #36342E);
           font-size: 0.75rem;
         }
+        /* Scroll chrome for the handoff viewer. The rendered markdown is styled
+           by MARKDOWN_STYLES (.md-body), injected once into document.head. The
+           monospace/pre-wrap below only applies to the plain-text loading line
+           (a bare .esc-body without .md-body). */
         .esc-body {
-          font-family: 'JetBrains Mono', monospace;
-          font-size: 0.78rem;
-          white-space: pre-wrap;
           word-wrap: break-word;
           max-height: 480px;
           overflow: auto;
           background: var(--bg-secondary, #F8F4F0);
           padding: 10px;
           border-radius: 4px;
+        }
+        .esc-body:not(.md-body) {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.78rem;
+          white-space: pre-wrap;
         }
       </style>
     `;
@@ -247,7 +270,10 @@ export class LokiEscalations extends LokiElement {
       } else if (this._activeBody === null) {
         inner = '<div class="esc-body">Loading ' + fname + '...</div>';
       } else {
-        inner = '<div class="esc-body">' + this._escapeHtml(this._activeBody) + '</div>';
+        // Render the handoff/escalation markdown as a formatted document.
+        // renderMarkdown escapes its input first, so a doc containing <script>
+        // is shown as text and cannot inject.
+        inner = '<div class="esc-body md-body">' + renderMarkdown(this._activeBody) + '</div>';
       }
       viewer = (
         '<div class="esc-viewer">' +

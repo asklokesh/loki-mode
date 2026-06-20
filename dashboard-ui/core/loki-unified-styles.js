@@ -972,12 +972,11 @@ export class UnifiedThemeManager {
       return vsTheme === 'dark' ? 'vscode-dark' : 'vscode-light';
     }
 
-    // Browser/CLI: check localStorage, then system preference
-    const saved = localStorage.getItem(UnifiedThemeManager.STORAGE_KEY);
-    if (saved && THEMES[saved]) return saved;
-
-    // Light-first: default to light unless system explicitly prefers dark
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    // v7.90.1: the dashboard is LIGHT-ONLY. Dark mode was removed (it looked
+    // worse), so the browser/CLI context always resolves to light regardless of
+    // OS preference or any previously-saved dark choice. (VS Code context above
+    // still follows the editor, which is correct for the embedded views.)
+    return 'light';
   }
 
   /**
@@ -1004,17 +1003,12 @@ export class UnifiedThemeManager {
    * @returns {string} New theme
    */
   static toggle() {
+    // v7.90.1: dark mode removed. Toggle is a no-op in the light-only dashboard
+    // (kept callable for any legacy caller); VS Code context follows the editor.
     const current = UnifiedThemeManager.getTheme();
-    let next;
-
-    if (current.includes('dark') || current === 'high-contrast') {
-      next = current.startsWith('vscode') ? 'vscode-light' : 'light';
-    } else {
-      next = current.startsWith('vscode') ? 'vscode-dark' : 'dark';
-    }
-
-    UnifiedThemeManager.setTheme(next);
-    return next;
+    if (current.startsWith('vscode')) return current;
+    UnifiedThemeManager.setTheme('light');
+    return 'light';
   }
 
   /**

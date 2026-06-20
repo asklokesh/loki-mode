@@ -10650,7 +10650,14 @@ start_dashboard() {
     # Start the FastAPI dashboard server
     # Dashboard module is at project root (parent of autonomy/)
     # LOKI_SKILL_DIR tells server.py where to find static files
+    # LOKI_DASHBOARD_AUTOSTARTED=1 marks this as a run-launched (auto-started)
+    # dashboard, distinct from an explicit `loki dashboard start`. The server
+    # uses this so that, after the dashboard Stop button stops the last active
+    # run, it may shut ITSELF down -- but ONLY when it was auto-started, never
+    # when the user started it deliberately to keep monitoring. The explicit
+    # cmd_dashboard_start path never sets this var (M4 fix).
     LOKI_TLS_CERT="${LOKI_TLS_CERT:-}" LOKI_TLS_KEY="${LOKI_TLS_KEY:-}" \
+        LOKI_DASHBOARD_AUTOSTARTED=1 \
         LOKI_SKILL_DIR="${skill_dir}" PYTHONPATH="${skill_dir}" nohup "$python_cmd" -m dashboard.server > "$log_file" 2>&1 &
     DASHBOARD_PID=$!
     register_pid "$DASHBOARD_PID" "dashboard" "port=${DASHBOARD_PORT:-57374}"
