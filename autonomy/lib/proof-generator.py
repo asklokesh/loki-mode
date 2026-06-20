@@ -253,6 +253,52 @@ def _collect_build(loki_dir):
     return out
 
 
+def _collect_security(loki_dir):
+    """Read .loki/quality/security-findings.json (the secure-by-default gate).
+
+    Deterministic FACT (pattern scan, not an LLM opinion). Tolerates an absent
+    file -> status not_run. Counts only ACTIVE (un-waived) findings; HIGH active
+    findings are the gap signal. Shape:
+    {ran, total, active, waived, high_active, status, findings:[{rule,severity}]}.
+    status: not_run (no scan) | clean (ran, no active findings) | findings
+    (ran, active findings present).
+    """
+    out = {
+        "ran": False, "total": 0, "active": 0, "waived": 0,
+        "high_active": 0, "status": "not_run", "findings": [],
+    }
+    raw = _read_json(
+        os.path.join(loki_dir, "quality", "security-findings.json"), default=None
+    )
+    if not isinstance(raw, dict):
+        return out
+    out["ran"] = True
+    findings = raw.get("findings") if isinstance(raw.get("findings"), list) else []
+    total = active = waived = high_active = 0
+    slim = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        total += 1
+        is_waived = bool(f.get("waived"))
+        sev = str(f.get("severity") or "").upper()
+        if is_waived:
+            waived += 1
+        else:
+            active += 1
+            if sev == "HIGH":
+                high_active += 1
+        slim.append({"rule": str(f.get("rule") or ""), "severity": sev,
+                     "waived": is_waived})
+    out["total"] = total
+    out["active"] = active
+    out["waived"] = waived
+    out["high_active"] = high_active
+    out["findings"] = slim
+    out["status"] = "findings" if active > 0 else "clean"
+    return out
+
+
 def _norm_tests_status(raw):
     """Map a recorded test status to {verified,failed,inconclusive,not_run}.
 
@@ -578,6 +624,7 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
 
     build = _collect_build(loki_dir)
     tests = _collect_tests(loki_dir)
+    security = _collect_security(loki_dir)
     evidence_gate = _collect_evidence_gate(loki_dir)
 
     deployed_url = os.environ.get("LOKI_DEPLOYED_URL") or None
@@ -611,6 +658,7 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             {"name": g.get("name", ""), "status": g.get("status", "not_run")}
             for g in (quality_gates.get("gates") or [])
         ],
+        "security": security,
         "cost": cost,
         "meta": {
             "run_id": run_id,
@@ -711,6 +759,15 @@ def _compute_degraded(facts):
             out.append({"item": "quality_gate:%s" % g.get("name", ""),
                         "status": g.get("status"),
                         "reason": "gate %s" % g.get("status")})
+    # Secure-by-default gate: an ACTIVE (un-waived) HIGH security finding is a gap
+    # in the proof of done -- the receipt must surface it, never green-wash an app
+    # that ships a known-bad pattern. Waived findings are NOT a gap (the user
+    # accepted them with intent, recorded in the receipt).
+    sec = facts.get("security") or {}
+    if sec.get("ran") and (sec.get("high_active") or 0) > 0:
+        out.append({"item": "security", "status": "findings",
+                    "reason": "%s un-waived HIGH security finding(s)"
+                              % sec.get("high_active")})
     git = facts.get("git") or {}
     if not (git.get("diff") or {}).get("count"):
         out.append({"item": "git.diff", "status": "not_run",
@@ -736,11 +793,18 @@ def _compute_headline(facts, degraded):
     # negative signal than a not-run one: amber means "we did not check
     # everything", red means "something we checked did not pass". Conflating them
     # would let a failed test render amber, which understates the failure.
+    # An ACTIVE (un-waived) HIGH security finding is a hard failure too: shipping a
+    # known-bad pattern (a committed private key, a world-open datastore) is not a
+    # "gap", it is a verified-NO. Waived findings do not count (accepted with
+    # intent). This keeps the receipt honest about security, not just tests.
+    sec = facts.get("security") or {}
+    sec_high = bool(sec.get("ran") and (sec.get("high_active") or 0) > 0)
     any_failed = (
         tests.get("status") == "failed"
         or build.get("status") == "failed"
         or any(g.get("status") == "failed"
                for g in (facts.get("quality_gates") or []))
+        or sec_high
     )
     if any_failed:
         return "NOT VERIFIED"

@@ -267,6 +267,13 @@ run_test "Emit JSON Escape (C0 control chars + UTF-8)" "$SCRIPT_DIR/test-emit-js
 # against CODEX_KNOWN_MODELS. Regression guard for the silent-downgrade bug.
 run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-codex-model-trusted.sh"
 
+# Secure-by-default gate (Loop 4): the secure-scan engine precision (bad/safe
+# matrix for all 5 rules + the named false-positive guards), the run_secure_scan
+# wiring (advisory default never blocks; LOKI_SECURE_GATE=block blocks an
+# un-waived HIGH; a waiver suppresses the block), and the `loki secure
+# waive|unwaive|list` CLI shape. Receipt honesty is in tests/test_proof_generator.py.
+run_test "Secure-by-Default Gate (engine precision + wiring + waiver CLI)" "$SCRIPT_DIR/test-secure-scan.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

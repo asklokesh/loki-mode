@@ -276,6 +276,8 @@ if [ -n "$PROOF_PY" ]; then
   run_check "tests/test_proof_redaction.py (R1 redaction gate)" "$PROOF_PY -m pytest -q tests/test_proof_redaction.py 2>&1 | tail -5"
   # Schema + integrity hash + include-diffs + graceful degradation.
   run_check "tests/test_proof_generator.py (R1 generator schema/hash)" "$PROOF_PY -m pytest -q tests/test_proof_generator.py 2>&1 | tail -5"
+  # Evidence Receipt verifier: tamper + drift re-check (loki proof verify).
+  run_check "tests/test_proof_verify.py (Evidence Receipt verify: tamper/drift)" "$PROOF_PY -m pytest -q tests/test_proof_verify.py 2>&1 | tail -5"
   # Self-contained page: no external resource refs; all Tier1-4 fields render.
   run_check "tests/test_proof_html.py (R1 self-contained page)" "$PROOF_PY -m pytest -q tests/test_proof_html.py 2>&1 | tail -5"
   # R2 benchmark harness gates (mocked adapters, no paid API calls).
@@ -385,6 +387,11 @@ run_check "tests/test-bash-bun-parity.sh (runtime bash<->Bun parity)" "bash test
 # v7.5.15: sentrux gate unit tests (fake on-PATH binary; safe on every host).
 # Mirrors the test.yml shell-tests job; fast, no network, no real sentrux dep.
 run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sentrux-gate.sh 2>&1 | tail -3"
+
+# Loop 4 secure-by-default gate: engine precision (bad/safe matrix + FP guards),
+# run_secure_scan wiring (advisory default / LOKI_SECURE_GATE=block / waiver), and
+# the `loki secure` waiver CLI shape. Fast, no network, throwaway temp fixtures.
+run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-secure-scan.sh 2>&1 | tail -3"
 
 # ---------------------------------------------------------------------------
 # STOP-SUITE FOREIGN-KILL REGRESSION GUARD (fix/local-ci-sentinel)

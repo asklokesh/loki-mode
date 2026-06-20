@@ -16500,6 +16500,10 @@ main() {
             # Receipt surface): same subcommands (list/show/verify/open/share).
             cmd_proof "$@"
             ;;
+        secure)
+            # Secure-by-default gate surface: inspect findings + manage waivers.
+            cmd_secure "$@"
+            ;;
         bench)
             cmd_bench "$@"
             ;;
@@ -30432,6 +30436,110 @@ cmd_bench() {
             ;;
     esac
     bash "$bench_sh" "$@"
+}
+
+# loki secure - the secure-by-default gate surface (v7.87.0).
+# Subcommands: list (show findings) | waive <rule> <file> [reason] | unwaive.
+# Waivers are written to .loki/quality/security-waivers.json, which the gate
+# (run.sh run_secure_scan) and the Evidence Receipt both READ + honor. The gate
+# is advisory by default; LOKI_SECURE_GATE=block makes un-waived HIGH findings
+# block. Honest: a waiver is RECORDED in the receipt (accepted with intent), never
+# silently hides a finding.
+cmd_secure() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    local quality_dir="${loki_dir}/quality"
+    local findings_file="${quality_dir}/security-findings.json"
+    local waivers_file="${quality_dir}/security-waivers.json"
+    local sub="${1:-}"
+    [ $# -gt 0 ] && shift
+    case "$sub" in
+        ""|--help|-h|help)
+            echo -e "${BOLD}loki secure${NC} - secure-by-default gate: findings + waivers"
+            echo ""
+            echo "Usage: loki secure <subcommand> [args]"
+            echo ""
+            echo "Subcommands:"
+            echo "  list                 Show security findings from the last scan"
+            echo "  waive <rule> <file> [reason]   Waive a finding (accepted with intent)"
+            echo "  unwaive <rule> <file>          Remove a waiver"
+            echo ""
+            echo "The gate is advisory by default; set LOKI_SECURE_GATE=block to make"
+            echo "un-waived HIGH findings block completion. Waivers are recorded in the"
+            echo "Evidence Receipt (loki proof show) -- they are never hidden."
+            [ "$sub" = "" ] && exit 1
+            exit 0
+            ;;
+        list)
+            if [ ! -f "$findings_file" ]; then
+                echo -e "${YELLOW}No security scan results yet.${NC} Run 'loki start' (the gate runs in the review phase)."
+                exit 0
+            fi
+            if command -v jq &>/dev/null; then
+                jq '.findings' "$findings_file" 2>/dev/null || cat "$findings_file"
+            else
+                LOKI_SEC_F="$findings_file" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_SEC_F'])); [print('%s [%s] %s%s -- %s' % (f.get('severity','?'), f.get('rule','?'), f.get('file','?'), (':'+str(f['line'])) if f.get('line') else '', f.get('fix',''))) for f in d.get('findings',[])] or print('No findings.')"
+            fi
+            exit 0
+            ;;
+        waive)
+            local rule="${1:-}" file="${2:-}" reason="${3:-waived via loki secure}"
+            if [ -z "$rule" ] || [ -z "$file" ]; then
+                echo -e "${RED}Usage: loki secure waive <rule> <file> [reason]${NC}" >&2
+                exit 2
+            fi
+            mkdir -p "$quality_dir"
+            LOKI_SEC_W="$waivers_file" LOKI_SEC_RULE="$rule" LOKI_SEC_FILE="$file" LOKI_SEC_REASON="$reason" python3 - <<'PYW'
+import json, os
+p = os.environ["LOKI_SEC_W"]
+try:
+    with open(p) as f: data = json.load(f)
+    if not isinstance(data, dict): data = {}
+except Exception:
+    data = {}
+waivers = data.get("waivers")
+if not isinstance(waivers, list): waivers = []
+rule, fl, reason = os.environ["LOKI_SEC_RULE"], os.environ["LOKI_SEC_FILE"], os.environ["LOKI_SEC_REASON"]
+if not any(w.get("rule") == rule and w.get("file") == fl for w in waivers if isinstance(w, dict)):
+    waivers.append({"rule": rule, "file": fl, "reason": reason})
+data["waivers"] = waivers
+tmp = p + ".tmp"
+with open(tmp, "w") as f: json.dump(data, f, indent=2)
+os.replace(tmp, p)
+print("Waived %s on %s (recorded in the Evidence Receipt)." % (rule, fl))
+PYW
+            exit $?
+            ;;
+        unwaive)
+            local rule="${1:-}" file="${2:-}"
+            if [ -z "$rule" ] || [ -z "$file" ]; then
+                echo -e "${RED}Usage: loki secure unwaive <rule> <file>${NC}" >&2
+                exit 2
+            fi
+            [ -f "$waivers_file" ] || { echo "No waivers to remove."; exit 0; }
+            LOKI_SEC_W="$waivers_file" LOKI_SEC_RULE="$rule" LOKI_SEC_FILE="$file" python3 - <<'PYU'
+import json, os
+p = os.environ["LOKI_SEC_W"]
+try:
+    with open(p) as f: data = json.load(f)
+except Exception:
+    data = {}
+waivers = [w for w in (data.get("waivers") or [])
+           if not (isinstance(w, dict) and w.get("rule") == os.environ["LOKI_SEC_RULE"]
+                   and w.get("file") == os.environ["LOKI_SEC_FILE"])]
+data["waivers"] = waivers
+tmp = p + ".tmp"
+with open(tmp, "w") as f: json.dump(data, f, indent=2)
+os.replace(tmp, p)
+print("Removed waiver for %s on %s." % (os.environ["LOKI_SEC_RULE"], os.environ["LOKI_SEC_FILE"]))
+PYU
+            exit $?
+            ;;
+        *)
+            echo -e "${RED}Unknown subcommand: secure $sub${NC}" >&2
+            echo "Try: loki secure --help"
+            exit 2
+            ;;
+    esac
 }
 
 # loki proof - inspect and share proof-of-run artifacts (.loki/proofs/<id>/).

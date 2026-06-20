@@ -699,5 +699,184 @@ class HonestyHeadlineTests(unittest.TestCase):
         self.assertEqual(items["tests"]["status"], "failed")
 
 
+class SecurityHonestyTests(unittest.TestCase):
+    """Secure-by-default gate honesty (Loop 4): the Evidence Receipt must tell
+    the truth about the security scan and must never green-wash an app that
+    ships a known-bad pattern.
+
+    Contract (deterministic, derived only from .loki/quality/security-findings
+    .json -- a pattern-scan FACT, not an LLM opinion):
+      - an ACTIVE (un-waived) HIGH finding -> headline NOT VERIFIED AND
+        "security" appears in honesty.degraded (a verified-NO, not an amber gap).
+      - the SAME finding WAIVED -> not a gap; with otherwise-green evidence the
+        headline can read VERIFIED (the user accepted it with intent, recorded).
+      - no security file at all -> not run, not a gap (silence is honest here:
+        the gate did not run, so it is neither a pass nor a fail for security).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-sec-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _git_repo_with_change(self):
+        """A real git repo with one committed change so the diff is non-empty.
+        Returns (proj_dir, base_sha). Mirrors HonestyHeadlineTests."""
+        proj = os.path.join(self.tmp, "gitproj-%s" % os.urandom(4).hex())
+        os.makedirs(proj)
+
+        def git(*a):
+            return subprocess.run(
+                ["git", "-C", proj, "-c", "user.email=t@t.test",
+                 "-c", "user.name=tester"] + list(a),
+                capture_output=True, text=True, check=True)
+        git("init")
+        with open(os.path.join(proj, "a.txt"), "w") as f:
+            f.write("one\n")
+        git("add", "a.txt")
+        git("commit", "-m", "init")
+        base = git("rev-parse", "HEAD").stdout.strip()
+        with open(os.path.join(proj, "a.txt"), "w") as f:
+            f.write("one\ntwo\n")
+        git("add", "a.txt")
+        git("commit", "-m", "second")
+        return proj, base
+
+    def _write_green_tests_and_build(self, loki_dir):
+        """Seed verified tests + a passing build so the ONLY remaining gap is
+        whatever the security fact contributes -- isolates the security signal."""
+        os.makedirs(os.path.join(loki_dir, "quality"), exist_ok=True)
+        with open(os.path.join(loki_dir, "quality", "test-results.json"),
+                  "w") as f:
+            json.dump({"runner": "pytest", "command": "pytest -q",
+                       "exit_code": 0, "status": "verified",
+                       "passed_count": 5, "failed_count": 0}, f)
+        with open(os.path.join(loki_dir, "quality", "build-results.json"),
+                  "w") as f:
+            json.dump({"command": "make build", "ran": True,
+                       "exit_code": 0, "duration_sec": 1.0}, f)
+
+    def _write_security(self, loki_dir, findings):
+        os.makedirs(os.path.join(loki_dir, "quality"), exist_ok=True)
+        total = len(findings)
+        by_sev = {}
+        for f in findings:
+            sev = str(f.get("severity", "")).upper()
+            by_sev[sev] = by_sev.get(sev, 0) + 1
+        doc = {"rules_version": "1.0", "findings": findings,
+               "summary": {"total": total, "by_severity": by_sev}}
+        with open(os.path.join(loki_dir, "quality",
+                               "security-findings.json"), "w") as f:
+            json.dump(doc, f)
+
+    # --- active un-waived HIGH -> NOT VERIFIED + in degraded ---------------
+    def test_active_high_finding_is_not_verified_and_degraded(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-sec-active")
+        os.makedirs(loki_dir)
+        # Otherwise all-green, so the security finding is the ONLY signal.
+        self._write_green_tests_and_build(loki_dir)
+        self._write_security(loki_dir, [{
+            "rule": "private-key-committed", "file": "leak.pem", "line": 1,
+            "severity": "HIGH",
+            "message": "A PEM private key block is present in this file.",
+            "fix": "Remove the key and rotate it.", "waived": False}])
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # An un-waived HIGH is a verified-NO: red, never green, never amber-only.
+        self.assertEqual(d["honesty"]["headline"], "NOT VERIFIED")
+        # The security gap is surfaced explicitly in the honesty ledger.
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertIn("security", items)
+        self.assertEqual(items["security"]["status"], "findings")
+        self.assertTrue(items["security"]["reason"])
+        # And the fact is recorded: scan ran, 1 active HIGH, 0 waived.
+        sec = d["facts"]["security"]
+        self.assertTrue(sec["ran"])
+        self.assertEqual(sec["high_active"], 1)
+        self.assertEqual(sec["active"], 1)
+        self.assertEqual(sec["waived"], 0)
+        self.assertEqual(sec["status"], "findings")
+
+    # --- the SAME HIGH waived -> not a gap; headline can be VERIFIED -------
+    def test_waived_high_finding_is_not_a_gap(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-sec-waived")
+        os.makedirs(loki_dir)
+        self._write_green_tests_and_build(loki_dir)
+        # Identical finding, but waived (accepted with intent).
+        self._write_security(loki_dir, [{
+            "rule": "private-key-committed", "file": "leak.pem", "line": 1,
+            "severity": "HIGH",
+            "message": "A PEM private key block is present in this file.",
+            "fix": "Remove the key and rotate it.", "waived": True}])
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # A waived finding is NOT a gap: it must not appear in degraded.
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertNotIn("security", items,
+                         "a waived finding must not be reported as a gap")
+        # The fact records it as waived, not active.
+        sec = d["facts"]["security"]
+        self.assertTrue(sec["ran"])
+        self.assertEqual(sec["high_active"], 0)
+        self.assertEqual(sec["active"], 0)
+        self.assertEqual(sec["waived"], 1)
+        self.assertEqual(sec["status"], "clean")
+        # With everything else green and no gap, the headline can read VERIFIED.
+        self.assertEqual(d["honesty"]["degraded"], [],
+                         "no gaps expected: a waived finding is accepted")
+        self.assertEqual(d["honesty"]["headline"], "VERIFIED")
+
+    # --- no security file -> not run, not a gap ---------------------------
+    def test_no_security_file_is_not_a_gap(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-sec-absent")
+        os.makedirs(loki_dir)
+        self._write_green_tests_and_build(loki_dir)
+        # Deliberately do NOT write security-findings.json.
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # Absence of a scan is not a security gap (the gate did not run).
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertNotIn("security", items,
+                         "no scan is not_run, not a gap")
+        sec = d["facts"]["security"]
+        self.assertFalse(sec["ran"])
+        self.assertEqual(sec["status"], "not_run")
+        self.assertEqual(sec["high_active"], 0)
+
+    # --- a MEDIUM active finding is NOT a hard-fail (only HIGH gates) ------
+    def test_active_medium_does_not_force_not_verified(self):
+        # The gate's hard-fail signal is an un-waived HIGH. A MEDIUM finding
+        # (e.g. debug-in-prod / cors-wildcard-credentials) is recorded but does
+        # NOT force NOT VERIFIED -- locking that the headline keys off high_active
+        # specifically, not any active finding.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-sec-medium")
+        os.makedirs(loki_dir)
+        self._write_green_tests_and_build(loki_dir)
+        self._write_security(loki_dir, [{
+            "rule": "debug-in-prod", "file": "settings.py", "line": 1,
+            "severity": "MEDIUM",
+            "message": "Debug mode is enabled in a production config.",
+            "fix": "Set debug to False for production.", "waived": False}])
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        sec = d["facts"]["security"]
+        self.assertTrue(sec["ran"])
+        self.assertEqual(sec["high_active"], 0)
+        self.assertEqual(sec["active"], 1)
+        # No HIGH -> security is not a hard-fail and not in the degraded ledger.
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertNotIn("security", items)
+        self.assertEqual(d["honesty"]["headline"], "VERIFIED")
+
+
 if __name__ == "__main__":
     unittest.main()

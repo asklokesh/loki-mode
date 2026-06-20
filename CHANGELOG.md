@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.87.0] - 2026-06-20
+
+### Secure-by-default gate (advisory by default)
+
+A new gate scans the built code for a small set of high-precision, high-severity
+security mistakes -- the ones that sink AI-built apps -- and records the result in
+the Evidence Receipt. It is advisory by default (it never blocks an existing
+build); set LOKI_SECURE_GATE=block to make un-waived HIGH findings stop completion.
+
+- Five rules, chosen for near-zero false positives (each one fires on the real
+  bad pattern but not the safe equivalent): a committed private key, a real secret
+  in a browser-shipped file, a literally world-open datastore rule, debug mode
+  left on in a production config, and an any-origin CORS policy combined with
+  credentials. Each finding names the file and how to fix it.
+- In the Evidence Receipt: the scan is a deterministic FACT. An un-waived HIGH
+  finding makes the receipt read NOT VERIFIED -- a build that ships a known-bad
+  pattern can never read green. Waived findings are recorded (accepted with
+  intent), never hidden.
+- Waivers: loki secure list | waive <rule> <file> [reason] | unwaive. A waiver is
+  honored by the gate and shown in the receipt.
+
+Honest scope: the gate proves specific known-bad patterns are ABSENT; it does not
+claim the app is "secure". Deeper checks (auth/route analysis) are roadmap. About
+24 new tests lock the bad/safe precision matrix and the receipt behavior.
+
 ## [7.86.0] - 2026-06-20
 
 ### The trust story, made visible (honestly)

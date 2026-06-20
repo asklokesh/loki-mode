@@ -7309,6 +7309,157 @@ SAFEOF
     fi
 }
 
+# ============================================================================
+# Secure-by-default scan (v7.87.0 - Loop 4)
+# Runs the high-precision rule engine (autonomy/lib/secure-scan.py) over the
+# generated app and reports known-bad security patterns.
+#
+# ADVISORY BY DEFAULT (mirrors the ktlint/detekt advisory linters above):
+# findings are reported via log_warn + the receipt json, but do NOT block. This
+# guarantees no existing build starts blocking on this new gate.
+#
+# OPT-IN BLOCK: only when LOKI_SECURE_GATE=block do un-waived HIGH findings
+# cause a blocking gate failure (return 1, same mechanism the other gates use).
+#
+# Waivers: .loki/quality/security-waivers.json ({"waivers":[{rule,file},...]})
+# is READ here and honored (matched findings recorded as waived, never counted
+# active). The waiver-write surface is a separate slice.
+#
+# Honest degrade: if python3 or secure-scan.py is absent, pass through cleanly
+# (no crash, no block), exactly like the optional linters.
+# ============================================================================
+run_secure_scan() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local quality_dir="$loki_dir/quality"
+    mkdir -p "$quality_dir"
+
+    local out_file="$quality_dir/security-findings.json"
+    local waivers_file="$quality_dir/security-waivers.json"
+    local scanner="$SCRIPT_DIR/lib/secure-scan.py"
+
+    # Honest pass-through if the engine or python3 is unavailable. Still write a
+    # valid (empty) receipt so downstream consumers never read malformed JSON.
+    if ! command -v python3 >/dev/null 2>&1 || [ ! -f "$scanner" ]; then
+        cat > "$out_file" << 'SECEMPTY'
+{"rules_version":null,"findings":[],"summary":{"total":0,"by_severity":{}},"skipped":"scanner-unavailable"}
+SECEMPTY
+        log_info "Security scan: secure-scan.py or python3 not available, skipping (pass-through)"
+        return 0
+    fi
+
+    # Run the scanner. exit 0 = no findings, 1 = findings, 2 = bad input.
+    local raw rc=0
+    raw=$(python3 "$scanner" "${TARGET_DIR:-.}" --json 2>/dev/null) || rc=$?
+    if [ "$rc" -eq 2 ] || [ -z "$raw" ]; then
+        cat > "$out_file" << 'SECEMPTY'
+{"rules_version":null,"findings":[],"summary":{"total":0,"by_severity":{}},"skipped":"scanner-error"}
+SECEMPTY
+        log_info "Security scan: scanner returned no parseable output, skipping (pass-through)"
+        return 0
+    fi
+
+    # Apply waivers, build the receipt json, and emit a machine-readable verdict.
+    # All policy lives in this one python pass so the bash stays bash-3.2 safe.
+    # It prints a final line: ACTIVE_HIGH=<n>\tACTIVE_TOTAL=<n>\tWAIVED=<n>
+    # and writes the enriched receipt (findings carry a "waived" bool).
+    local verdict
+    verdict=$(_SEC_RAW="$raw" _SEC_WAIVERS="$waivers_file" _SEC_OUT="$out_file" python3 -c '
+import json, os, sys
+raw = os.environ.get("_SEC_RAW", "")
+waivers_file = os.environ.get("_SEC_WAIVERS", "")
+out_file = os.environ.get("_SEC_OUT", "")
+
+try:
+    data = json.loads(raw)
+except Exception:
+    data = {"rules_version": None, "findings": [], "summary": {"total": 0, "by_severity": {}}}
+
+# Load waivers: {"waivers":[{"rule":..,"file":..}, ...]}. Match on rule+file.
+waived_set = set()
+try:
+    with open(waivers_file) as f:
+        wdoc = json.load(f)
+    for w in wdoc.get("waivers", []):
+        r = w.get("rule"); fl = w.get("file")
+        if r is not None and fl is not None:
+            waived_set.add((r, fl))
+except (OSError, json.JSONDecodeError, AttributeError):
+    pass
+
+findings = data.get("findings", []) or []
+active_high = 0
+active_total = 0
+waived_count = 0
+for fnd in findings:
+    key = (fnd.get("rule"), fnd.get("file"))
+    is_waived = key in waived_set
+    fnd["waived"] = is_waived
+    if is_waived:
+        waived_count += 1
+    else:
+        active_total += 1
+        if str(fnd.get("severity", "")).upper() == "HIGH":
+            active_high += 1
+
+data["waived"] = waived_count
+data["active"] = active_total
+try:
+    with open(out_file, "w") as f:
+        json.dump(data, f, indent=2)
+except OSError:
+    pass
+
+sys.stdout.write("ACTIVE_HIGH=%d\tACTIVE_TOTAL=%d\tWAIVED=%d" % (active_high, active_total, waived_count))
+' 2>/dev/null) || verdict=""
+
+    if [ -z "$verdict" ]; then
+        # python policy pass failed unexpectedly; preserve the raw scan as the
+        # receipt so nothing is lost, and pass through (never crash the gate).
+        printf '%s\n' "$raw" > "$out_file" 2>/dev/null || true
+        log_info "Security scan: result recorded (policy pass unavailable, advisory)"
+        return 0
+    fi
+
+    local active_high active_total waived
+    active_high=$(printf '%s' "$verdict" | sed -n 's/.*ACTIVE_HIGH=\([0-9]*\).*/\1/p')
+    active_total=$(printf '%s' "$verdict" | sed -n 's/.*ACTIVE_TOTAL=\([0-9]*\).*/\1/p')
+    waived=$(printf '%s' "$verdict" | sed -n 's/.*WAIVED=\([0-9]*\).*/\1/p')
+    active_high=${active_high:-0}
+    active_total=${active_total:-0}
+    waived=${waived:-0}
+
+    if [ "$active_total" -eq 0 ]; then
+        log_info "Security scan: no active findings (waived: $waived)"
+        return 0
+    fi
+
+    # Actionable advisory summary: rule + file + fix, from the receipt json.
+    log_warn "Security scan: $active_total active finding(s) (HIGH: $active_high, waived: $waived)"
+    _SEC_OUT="$out_file" python3 -c '
+import json, os
+try:
+    with open(os.environ["_SEC_OUT"]) as f:
+        data = json.load(f)
+except Exception:
+    data = {"findings": []}
+for fnd in data.get("findings", []):
+    if fnd.get("waived"):
+        continue
+    print("  [%s] %s %s:%s -- %s | fix: %s" % (
+        fnd.get("severity", "?"), fnd.get("rule", "?"),
+        fnd.get("file", "?"), fnd.get("line", "?"),
+        fnd.get("message", ""), fnd.get("fix", "")))
+' 2>/dev/null | while IFS= read -r line; do log_warn "$line"; done
+
+    # OPT-IN BLOCK: only un-waived HIGH findings block, and only when explicitly
+    # enabled. Advisory default returns 0 (never surprise-blocks).
+    if [ "${LOKI_SECURE_GATE:-advisory}" = "block" ] && [ "$active_high" -gt 0 ]; then
+        log_warn "Security gate: $active_high un-waived HIGH finding(s) - BLOCK (LOKI_SECURE_GATE=block)"
+        return 1
+    fi
+    return 0
+}
+
 #===============================================================================
 # Gate Failure Tracking (v6.10.0)
 #===============================================================================
@@ -15261,6 +15412,18 @@ if __name__ == "__main__":
                     gate_failures="${gate_failures}static_analysis,"
                     log_warn "Static analysis FAILED ($sa_count consecutive) - findings injected into next iteration"
                 fi
+            fi
+            # Secure-by-default scan (v7.87.0). Advisory by default (never
+            # blocks); records .loki/quality/security-findings.json each
+            # iteration. Blocks only on un-waived HIGH when LOKI_SECURE_GATE=block.
+            log_info "Quality gate: security scan (advisory)..."
+            if run_secure_scan; then
+                clear_gate_failure "security_scan"
+            else
+                local sec_count
+                sec_count=$(track_gate_failure "security_scan")
+                gate_failures="${gate_failures}security_scan,"
+                log_warn "Security gate BLOCKED ($sec_count consecutive) - un-waived HIGH findings (LOKI_SECURE_GATE=block)"
             fi
             # BUG-ST-002: Check pause signal between quality gates
             if [ -f "${TARGET_DIR:-.}/.loki/PAUSE" ] || [ -f "${TARGET_DIR:-.}/.loki/STOP" ]; then
