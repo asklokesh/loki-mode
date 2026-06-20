@@ -811,9 +811,19 @@ async function runText(): Promise<number> {
   }
   if (tally.warn > 0) {
     process.stdout.write(`${YELLOW}All required checks passed with some warnings.${NC}\n`);
-    return 0;
+  } else {
+    process.stdout.write(`${GREEN}All checks passed. System is ready for Loki Mode.${NC}\n`);
   }
-  process.stdout.write(`${GREEN}All checks passed. System is ready for Loki Mode.${NC}\n`);
+  // Setup verified (no required check failed): hand the user straight to a
+  // first build with a copy-paste command, so they never dead-end here. The
+  // fail branch returns above, so a failing setup is never told to build.
+  process.stdout.write(`\n`);
+  process.stdout.write(
+    `Next: loki quickstart (guided first build from your idea, no PRD needed)\n`,
+  );
+  process.stdout.write(
+    `      or loki demo (builds a sample todo app end to end) or loki start ./prd.md\n`,
+  );
   return 0;
 }
 

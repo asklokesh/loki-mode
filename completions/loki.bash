@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start quick monitor demo init stop pause resume status dashboard web serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share proof explain plan report cost kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash open otel preview quickstart rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help"
+    local main_commands="start quick monitor demo init stop pause resume status next ship dashboard web serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share proof explain plan report cost kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash open otel preview quickstart rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -213,7 +213,7 @@ _loki_completion() {
             ;;
 
         completions)
-            COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
+            COMPREPLY=( $(compgen -W "bash zsh install" -- "$cur") )
             ;;
 
         context|ctx)

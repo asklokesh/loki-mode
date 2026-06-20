@@ -101,7 +101,7 @@ function _loki {
                         '1:subcommand:(list show open share)'
                     ;;
                 completions)
-                    _arguments '1:shell:(bash zsh)'
+                    _arguments '1:shell:(bash zsh install)'
                     ;;
                 monitor)
                     _directories
@@ -122,6 +122,7 @@ function _loki_commands {
     commands=(
         'start:Start Loki Mode'
         'quick:Quick single-task mode'
+        'quickstart:Guided first build from your idea'
         'monitor:Monitor Docker Compose services with auto-fix'
         'demo:Interactive 60-second demo'
         'init:Interactive PRD builder'
@@ -129,11 +130,14 @@ function _loki_commands {
         'pause:Pause execution'
         'resume:Resume execution'
         'status:Show status'
+        'why:Explain why the last run did what it did'
         'dashboard:Dashboard commands'
+        'web:Start the web app surface'
         'logs:View session logs'
         'serve:Start API server'
         'api:API server commands'
         'sandbox:Docker sandbox commands'
+        'docker:Run Loki in a Docker container'
         'notify:Notification commands'
         'import:Import GitHub issues'
         'issue:GitHub issue commands'
@@ -153,6 +157,8 @@ function _loki_commands {
         'metrics:Session productivity report'
         'share:Share session report as GitHub Gist'
         'proof:Inspect/share proof-of-run artifacts'
+        'preview:Preview the locally-running app'
+        'deploy:Deploy the built product (CI/CD-aware)'
         'context:Context window management'
         'ctx:Context window management (alias)'
         'code:Codebase intelligence'
