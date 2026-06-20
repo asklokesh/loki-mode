@@ -11,7 +11,7 @@ function _loki {
     case $state in
         (args)
             case $line[1] in
-                start)
+                start|quick)
                     _loki_start
                     ;;
                 council)
@@ -174,7 +174,17 @@ function _loki_start {
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
         '--max-iterations[Max iterations]:number:' \
-        '*:PRD File:_files'
+        '*:spec file:_loki_spec_files'
+}
+
+# Bias spec completion toward the file shapes Loki accepts (.md/.json/.txt/
+# .yaml/.yml), while still offering directories so the user can navigate into a
+# subfolder. Mirrors the bash completion. Makes the most-common command
+# tab-driven and typo-proof, cutting "PRD file not found" mistakes.
+function _loki_spec_files {
+    _alternative \
+        'specs:spec file:_files -g "*.(md|json|txt|yaml|yml)"' \
+        'dirs:directory:_files -/'
 }
 
 function _loki_council {

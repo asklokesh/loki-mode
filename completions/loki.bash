@@ -15,7 +15,7 @@ _loki_completion() {
 
     # 2. Handle subcommands and their specific flags/args
     case "${words[1]}" in
-        start)
+        start|quick)
             # If the previous word was --provider, show provider names
             if [[ "$prev" == "--provider" ]]; then
                 COMPREPLY=( $(compgen -W "claude codex gemini" -- "$cur") )
@@ -29,8 +29,23 @@ _loki_completion() {
                 return 0
             fi
 
-            # Otherwise, default to file completion (for PRD files)
-            COMPREPLY=( $(compgen -f -- "$cur") )
+            # Bias toward the spec-shaped files Loki actually accepts
+            # (.md/.json/.txt/.yaml/.yml), plus directories so the user can still
+            # navigate into a subfolder. This makes the most-common command
+            # tab-driven and typo-proof, cutting "PRD file not found" mistakes.
+            # If the spec-filtered set is empty (no specs here), fall back to
+            # generic file completion so nothing the user could type is lost.
+            local _specs _dirs _eg_was_set=0
+            shopt -q extglob && _eg_was_set=1
+            shopt -s extglob
+            _specs=$(compgen -f -X '!*.@(md|json|txt|yaml|yml)' -- "$cur")
+            [[ "$_eg_was_set" -eq 0 ]] && shopt -u extglob
+            _dirs=$(compgen -d -- "$cur")
+            if [[ -n "$_specs" || -n "$_dirs" ]]; then
+                COMPREPLY=( $_specs $_dirs )
+            else
+                COMPREPLY=( $(compgen -f -- "$cur") )
+            fi
             ;;
 
         council)
