@@ -3979,9 +3979,18 @@ EOF
     if [ -n "$BUDGET_LIMIT" ]; then
         # Validate budget limit is numeric before writing JSON
         if ! echo "$BUDGET_LIMIT" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
-            log_warn "Invalid BUDGET_LIMIT '$BUDGET_LIMIT', defaulting to 0"
-            BUDGET_LIMIT=0
+            log_warn "Invalid BUDGET_LIMIT '$BUDGET_LIMIT', ignoring (no cap set)"
+            BUDGET_LIMIT=""
         fi
+        # Mirror the CLI guard: a non-positive cap (0/0.00) would make
+        # check_budget_limit pause before any work runs. Treat it as "no cap"
+        # rather than a silent pre-work pause.
+        if [ -n "$BUDGET_LIMIT" ] && ! awk -v b="$BUDGET_LIMIT" 'BEGIN{exit !(b+0 > 0)}'; then
+            log_warn "BUDGET_LIMIT '$BUDGET_LIMIT' is not greater than 0, ignoring (no cap set)"
+            BUDGET_LIMIT=""
+        fi
+    fi
+    if [ -n "$BUDGET_LIMIT" ]; then
         cat > ".loki/metrics/budget.json" << BUDGET_EOF
 {
   "limit": $BUDGET_LIMIT,
@@ -10386,20 +10395,32 @@ check_primary_recovery() {
 # Returns: 0 if rate limit detected, 1 otherwise
 is_rate_limited() {
     local log_file="$1"
+    [ -f "$log_file" ] || return 1
 
-    # Generic patterns that work across all providers
-    # - HTTP 429 status code
-    # - "rate limit" / "rate-limit" / "ratelimit" text
-    # - "too many requests" text
-    # - "quota exceeded" text
-    # - "request limit" text
-    # - "retry after" / "retry-after" headers
-    if grep -qiE '(429|rate.?limit|too many requests|quota exceeded|request limit|retry.?after)' "$log_file" 2>/dev/null; then
+    # Only consider the TAIL of the log: a real provider rate-limit appears at the
+    # END of the iteration (the call that failed), not buried in mid-run prose.
+    # Scanning the whole file false-positived on the agent's OWN output (a build
+    # that printed or generated rate-limiting code -- "rate limit", "429",
+    # "retry-after" as source/text -- wrongly triggered a multi-minute wait).
+    local tail_txt
+    tail_txt=$(tail -n 40 "$log_file" 2>/dev/null) || return 1
+
+    # Require an ERROR CONTEXT, not a bare keyword: a rate-limit token must
+    # co-occur (same line) with a genuine provider-error frame -- an explicit
+    # error word ("Error"/"failed"/"exceeded"), an HTTP/status frame, or the
+    # canonical "429 Too Many Requests" phrasing. This distinguishes a real
+    # failing API line from the words "rate limit"/"retry-after"/"429" appearing
+    # in the model's own generated source or prose. Note: a bare "429" or a bare
+    # "retry-after" is NOT sufficient on its own (both occur in generated code).
+    local _err='(error|errored|failed|exceeded|http[ /]?[0-9]|status[: ]+[0-9]|too many requests)'
+    local _rl='(rate.?limit|too many requests|quota exceeded|request limit|429[ )"]*too many|retry.?after)'
+    if printf '%s\n' "$tail_txt" | grep -qiE "(${_rl}).*(${_err})|(${_err}).*(${_rl})" 2>/dev/null; then
         return 0
     fi
 
-    # Claude-specific: "resets Xam/pm" format
-    if grep -qE 'resets [0-9]+[ap]m' "$log_file" 2>/dev/null; then
+    # Claude-specific: the explicit "resets Xam/pm" reset-time line is itself an
+    # unambiguous provider rate-limit signal (the CLI only prints it on a limit).
+    if printf '%s\n' "$tail_txt" | grep -qE 'resets [0-9]+[ap]m' 2>/dev/null; then
         return 0
     fi
 

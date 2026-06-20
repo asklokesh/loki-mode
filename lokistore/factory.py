@@ -60,6 +60,9 @@ def _config_from_env() -> Dict[str, Any]:
     region = os.environ.get("LOKI_STORAGE_REGION")
     if region:
         cfg["region"] = region
+    endpoint = os.environ.get("LOKI_STORAGE_ENDPOINT")
+    if endpoint:
+        cfg["endpoint"] = endpoint
     return cfg
 
 
@@ -75,6 +78,7 @@ def build_store(config: Optional[Dict[str, Any]] = None) -> LokiStore:
       bucket  : bucket/container name (cloud backends)
       prefix  : key prefix within the bucket (optional)
       region  : region (s3, optional)
+      endpoint: custom S3-compatible endpoint URL (s3 only; e.g. MinIO/Ceph/R2)
       base_dir: local base directory (local backend only; overrides resolution)
     """
     config = dict(config or {})
@@ -86,11 +90,12 @@ def build_store(config: Optional[Dict[str, Any]] = None) -> LokiStore:
     bucket = config.get("bucket")
     prefix = config.get("prefix")
     region = config.get("region")
+    endpoint = config.get("endpoint")
 
     if backend in ("s3", "aws", "aws-s3"):
         from .cloud import S3Store
 
-        return S3Store(bucket=bucket, prefix=prefix, region=region)
+        return S3Store(bucket=bucket, prefix=prefix, region=region, endpoint=endpoint)
 
     if backend in ("gcs", "gcp", "google", "google-cloud-storage"):
         from .cloud import GCSStore

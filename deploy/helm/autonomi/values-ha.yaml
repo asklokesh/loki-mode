@@ -4,8 +4,18 @@
 #   -f deploy/helm/autonomi/values-production.yaml \
 #   -f deploy/helm/autonomi/values-ha.yaml
 
+# The control plane writes a tamper-evident, hash-chain audit log
+# (dashboard/audit.py). That chain head lives in a per-PROCESS module global, so
+# the audit writer is SINGLE-WRITER by construction: running >1 replica against a
+# shared audit volume interleaves entries from independent chains and the on-disk
+# log no longer verifies. HA therefore keeps a single audit-writing control
+# plane (replicas=1). A render-time preflight (autonomi.controlplane.preflight)
+# fails the install if replicas>1 is set against the chart's ReadWriteOnce audit
+# volume, so this constraint is enforced, not just documented. To scale the
+# control plane horizontally you must give each replica an independent audit
+# chain (the chart does not do this for you).
 controlplane:
-  replicas: 3
+  replicas: 1
 
   affinity:
     podAntiAffinity:
@@ -30,10 +40,11 @@ persistence:
     enabled: true
     size: 100Gi
 
-  # Control-plane hash-chain audit volume. ReadWriteMany if the control-plane
-  # runs multiple replicas sharing the chain; default RWO otherwise. Left at the
-  # chart default here (set persistence.auditLogs.accessMode if you run >1
-  # control-plane replica on a shared audit volume).
+  # Control-plane hash-chain audit volume. Left at the chart default
+  # (ReadWriteOnce), which is correct for the single audit-writing control plane
+  # (controlplane.replicas=1 above). Do NOT switch this to ReadWriteMany to share
+  # one volume across replicas: the hash chain is single-writer and a shared
+  # write target silently corrupts it (see the controlplane block above).
   auditLogs:
     enabled: true
     size: 200Gi

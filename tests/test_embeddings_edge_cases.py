@@ -117,12 +117,124 @@ def test_compute_quality_score_zero_vector_normalize():
     assert q.score < 0.5, f"all-zero embedding scored too high: {q.score}"
 
 
+class _FailingPrimary:
+    """A provider whose embed/embed_batch always raise, forcing the fallback.
+
+    Delegates is_available/get_dimension to a real inner provider so the engine
+    treats it as a usable primary until embed() is actually called.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def embed(self, text):
+        raise RuntimeError("primary embed down")
+
+    def embed_batch(self, texts):
+        raise RuntimeError("primary batch down")
+
+    def is_available(self):
+        return True
+
+    def get_dimension(self):
+        return self._inner.get_dimension()
+
+
+def test_fallback_embed_caches_and_hits_on_repeat():
+    """
+    BUG: when the primary provider failed, embed() computed the cache key with
+    the pre-fallback provider name, then _use_fallback() switched the provider
+    and stored the vector under that OLD key. The next call recomputed the key
+    with the NEW provider name, so it never hit -> permanent cache miss and a
+    re-embed on every fallback request.
+
+    The fix recomputes the cache key AFTER _use_fallback(). This test forces the
+    primary to fail, simulates a provider-name change across the fallback, and
+    asserts the SECOND identical call is served from cache.
+
+    Non-vacuous: against the OLD code, cache_hits does not increase on the repeat
+    call (delta 0); the assertion of delta == 1 fails.
+    """
+    eng = EmbeddingEngine(config=EmbeddingConfig(provider="local", cache_enabled=True))
+    eng._primary_provider = _FailingPrimary(eng._primary_provider)
+    # Make the current provider name differ from the fallback ("local") so the
+    # pre/post-fallback cache keys genuinely diverge (the real openai->local case).
+    eng._current_provider_name = "openai"
+
+    text = "embed me please " * 5
+
+    before = eng._metrics["cache_hits"]
+    eng.embed(text)  # falls back, must store under the post-fallback key
+    after_first = eng._metrics["cache_hits"]
+    eng.embed(text)  # identical -> must hit cache
+    after_second = eng._metrics["cache_hits"]
+
+    assert after_first == before, "first fallback call must not be a cache hit"
+    assert after_second - after_first == 1, (
+        "repeat fallback call must hit the cache; got delta %d (the old code "
+        "stored under the pre-fallback key and missed forever)"
+        % (after_second - after_first)
+    )
+
+
+def test_fallback_embed_uses_chunked_path_for_multichunk():
+    """
+    BUG (companion): the fallback path embedded the raw, un-chunked text, while
+    the success path chunks long text and length-weighted-averages the chunk
+    vectors. For multi-chunk input the two paths produced different vectors. The
+    fix runs the fallback through the same _chunk_text + weighted-average path.
+
+    Non-vacuous: we force a multi-chunk input (small max_chunk_size) and assert
+    the fallback vector equals the vector the same provider produces via the
+    explicit chunk + weighted-average computation, NOT the raw single-shot embed.
+    """
+    cfg = EmbeddingConfig(
+        provider="local",
+        cache_enabled=False,
+        chunking_strategy="fixed",
+        max_chunk_size=20,
+    )
+    eng = EmbeddingEngine(config=cfg)
+    inner = eng._primary_provider  # real local provider
+    eng._primary_provider = _FailingPrimary(inner)
+    eng._current_provider_name = "openai"
+
+    text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
+    chunks = eng._chunk_text(text)
+    assert len(chunks) > 1, "test setup must yield multiple chunks"
+
+    got = eng.embed(text)
+
+    # Expected: the fallback (local) provider's chunked + length-weighted average.
+    chunk_vecs = inner.embed_batch(chunks)
+    w = np.array([len(c) for c in chunks], dtype=np.float32)
+    w = w / w.sum()
+    expected = np.average(chunk_vecs, axis=0, weights=w)
+    expected = eng._normalize(expected).astype(np.float32)
+    if expected.ndim > 1:
+        expected = expected.squeeze()
+
+    # And the raw single-shot embed (the OLD buggy path) for a distinctness check.
+    raw = eng._normalize(inner.embed(text)).astype(np.float32)
+
+    assert np.allclose(got, expected, atol=1e-5), (
+        "fallback vector must match the chunked + weighted-average path"
+    )
+    # Only meaningful when the two paths actually differ for this input.
+    if not np.allclose(expected, raw, atol=1e-5):
+        assert not np.allclose(got, raw, atol=1e-5), (
+            "fallback must NOT use the raw un-chunked path when chunking applies"
+        )
+
+
 def _run():
     tests = [
         test_similarity_search_single_1d_corpus,
         test_similarity_search_2d_corpus_unchanged,
         test_compute_quality_score_zero_length_embedding,
         test_compute_quality_score_zero_vector_normalize,
+        test_fallback_embed_caches_and_hits_on_repeat,
+        test_fallback_embed_uses_chunked_path_for_multichunk,
     ]
     failed = 0
     for t in tests:

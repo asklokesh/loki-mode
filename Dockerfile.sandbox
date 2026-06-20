@@ -99,8 +99,8 @@ RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
 FROM debian:bookworm-slim AS runtime
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.81.1"
-LABEL org.opencontainers.image.version="7.81.1"
+LABEL version="7.82.0"
+LABEL org.opencontainers.image.version="7.82.0"
 LABEL description="Security-hardened sandbox for Loki Mode by Autonomi"
 LABEL url="https://www.autonomi.dev/"
 LABEL org.opencontainers.image.source="https://github.com/asklokesh/claudeskill-loki-mode"
@@ -135,6 +135,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     # Network utilities for health checks
     netcat-openbsd \
+    # redis-cli for the reference queue-consumer's redis backend
+    # (autonomy/queue-consumer.sh; without it the redis backend is dead)
+    redis-tools \
     # Timezone data (for log timestamps)
     tzdata \
     # Security: Clean up apt cache
@@ -211,6 +214,8 @@ COPY --chown=loki:loki agents/ ./agents/
 COPY --chown=loki:loki skills/ ./skills/
 COPY --chown=loki:loki references/ ./references/
 COPY --chown=loki:loki memory/ ./memory/
+# lokistore/ storage adapter (runtime dep of checkpoint_sync.py object-store sync)
+COPY --chown=loki:loki lokistore/ ./lokistore/
 COPY --chown=loki:loki tools/ ./tools/
 COPY --chown=loki:loki assets/ ./assets/
 COPY --chown=loki:loki events/ ./events/

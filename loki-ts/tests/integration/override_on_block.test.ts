@@ -92,7 +92,7 @@ describe("Phase 1 v7.5.0 override council on BLOCK", () => {
     expect(r.detail).toContain("blocking severity present");
   });
 
-  it("lifts BLOCK when override council is ON, counter-evidence exists, and proofType is trusted", async () => {
+  it("RETAINS BLOCK on the stub path even with trusted proofType + artifact (WAVE14: self-authored counter-evidence cannot lift a trust gate; only the real-LLM panel may)", async () => {
     process.env["LOKI_INJECT_FINDINGS"] = "1";
     process.env["LOKI_OVERRIDE_COUNCIL"] = "1";
 
@@ -137,16 +137,25 @@ describe("Phase 1 v7.5.0 override council on BLOCK", () => {
       reviewer: failReviewer,
       diffOverride: { diff: "+ const x = 1;\n", files: "src/x.ts\n" },
     });
-    expect(r2.passed).toBe(true);
-    expect(r2.detail).toContain("blockers lifted by override council");
+    // WAVE14 trust fix: on the stub path (no real judge panel), the override
+    // council fails CLOSED. Self-authored counter-evidence -- even with a trusted
+    // proofType and a non-empty artifact string -- cannot lift a Critical/High
+    // BLOCK, because the gated agent controls both the proofType and the artifact.
+    // The BLOCK is RETAINED; only the Bun real-LLM panel (adjudicator the agent
+    // does not control) may lift it.
+    expect(r2.passed).toBe(false);
 
-    // Verify learnings written for the override
+    // Verify learnings recorded the override was REJECTED (not approved) on the
+    // stub path -- the BLOCK was retained, so no override_approved learning.
     const learnPath = join(scratch, "state", "relevant-learnings.json");
-    expect(existsSync(learnPath)).toBe(true);
-    const learnings = JSON.parse(readFileSync(learnPath, "utf-8")) as {
-      learnings: Array<{ trigger: string }>;
-    };
-    expect(learnings.learnings.some((l) => l.trigger === "override_approved")).toBe(true);
+    if (existsSync(learnPath)) {
+      const learnings = JSON.parse(readFileSync(learnPath, "utf-8")) as {
+        learnings: Array<{ trigger: string }>;
+      };
+      expect(
+        learnings.learnings.some((l) => l.trigger === "override_approved"),
+      ).toBe(false);
+    }
   });
 
   it("rejects override when proofType is NOT trusted (e.g. 'reviewer-misread' is trusted, 'free-form' is not)", async () => {

@@ -1386,6 +1386,13 @@ cmd_start() {
                         echo -e "${RED}--budget requires a numeric USD amount (e.g., --budget 5.00)${NC}"
                         exit 1
                     fi
+                    # Reject a non-positive budget: a 0 (or 0.00) cap makes
+                    # check_budget_limit pause before any work runs (cost >= 0 is
+                    # always true), which looks like a silent hang. Require > 0.
+                    if ! awk -v b="$2" 'BEGIN{exit !(b+0 > 0)}'; then
+                        echo -e "${RED}--budget must be greater than 0 (a 0 budget pauses before any work)${NC}" >&2
+                        exit 1
+                    fi
                     export LOKI_BUDGET_LIMIT="$2"
                     shift 2
                 else
@@ -1397,6 +1404,11 @@ cmd_start() {
                 local budget_val="${1#*=}"
                 if ! echo "$budget_val" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
                     echo -e "${RED}--budget requires a numeric USD amount (e.g., --budget=5.00)${NC}"
+                    exit 1
+                fi
+                # Reject a non-positive budget (see --budget arm above).
+                if ! awk -v b="$budget_val" 'BEGIN{exit !(b+0 > 0)}'; then
+                    echo -e "${RED}--budget must be greater than 0 (a 0 budget pauses before any work)${NC}" >&2
                     exit 1
                 fi
                 export LOKI_BUDGET_LIMIT="$budget_val"
@@ -1613,6 +1625,10 @@ cmd_start() {
         version=$(get_version)
         local _ttfv_max_iter="${LOKI_MAX_ITERATIONS:-3}"
         mkdir -p "$LOKI_DIR" 2>/dev/null || true
+        # Reap stale per-PID temp PRDs from prior runs (the process exec-replaces
+        # into run.sh, so these are never cleaned on exit and accumulate).
+        find "$LOKI_DIR" -maxdepth 1 -name 'brief-prd-*.md' -mtime +1 -delete 2>/dev/null || true
+        find "$LOKI_DIR" -maxdepth 1 -name 'quick-prd-*.md' -mtime +1 -delete 2>/dev/null || true
         local brief_prd="$LOKI_DIR/brief-prd-$$.md"
         synthesize_brief_prd "$brief_prd" "$brief_text"
         prd_file="$brief_prd"
@@ -2951,7 +2967,7 @@ cmd_why() {
         --json) as_json=1 ;;
         --help|-h) echo "Usage: loki why [--json]  -- explain the last build's outcome and what to do next"; return 0 ;;
         "" ) : ;;
-        *) echo -e "${RED}Unknown flag: $1${NC}"; echo "Usage: loki why [--json]"; return 1 ;;
+        *) echo -e "${RED}Unknown flag: $1${NC}" >&2; echo "Usage: loki why [--json]" >&2; return 1 ;;
     esac
 
     local loki_dir="${LOKI_DIR:-.loki}"
@@ -2985,7 +3001,10 @@ WHYJSON
     # Human-readable report. The diagnosis maps the terminal status to a plain
     # explanation + a concrete next action; everything is sourced from the files,
     # nothing is invented.
+    local _why_head_sha
+    _why_head_sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
     _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
+    _LOKI_WHY_HEAD_SHA="$_why_head_sha" \
     _LOKI_WHY_HANDOFFS="$loki_dir/memory/handoffs" python3 - <<'WHYTXT'
 import json, os, glob
 def load(p):
@@ -2994,7 +3013,22 @@ def load(p):
     except Exception: return {}
 state = load(os.environ.get("_LOKI_WHY_STATE", ""))
 comp = load(os.environ.get("_LOKI_WHY_COMPLETION", ""))
-status = state.get("status") or comp.get("outcome") or "unknown"
+
+# completion.json uses a terminal-outcome vocabulary (complete / max_iterations /
+# failed / stopped / force_stopped / intervention) that differs from the GUIDE
+# keys below. Map it onto the GUIDE keys so the diagnosis is never "no mapping".
+# The live state-file status (running / exited / paused / ...) is preferred when
+# present; we only fall back to the (normalized) completion outcome.
+COMP_OUTCOME_ALIASES = {
+    "complete": "council_approved",
+    "max_iterations": "max_iterations_reached",
+    "intervention": "paused",
+    # failed / stopped / force_stopped already match GUIDE keys verbatim.
+}
+status = state.get("status")
+if not status:
+    raw_outcome = comp.get("outcome") or ""
+    status = COMP_OUTCOME_ALIASES.get(raw_outcome, raw_outcome) or "unknown"
 exit_code = state.get("lastExitCode")
 iters = state.get("iterationCount")
 
@@ -3026,9 +3060,24 @@ GUIDE = {
                       "Start a new build, or investigate why a force-stop was needed."),
     "running": ("The recorded state says a build is still running (or crashed mid-run).",
                 "If no build is active it likely crashed; in durable mode (LOKI_DURABLE_STATE=1) a restart resumes, else loki start re-runs."),
+    "exited": ("The build process exited mid-iteration (likely a crash, kill, or empty provider output).",
+               "Read .loki/logs/ for the last error; if nothing is running it crashed -- re-run with loki start, or loki resume in durable mode."),
 }
 meaning, action = GUIDE.get(status, ("No diagnosis mapping for this status; see the raw fields below.",
                                      "Check loki status and .loki/logs/ for detail."))
+
+# The completion.json branch/changes/PR belong to the LAST COMPLETED run. When
+# the live state shows a build that is still running or crashed mid-iteration
+# (running/exited), or when the completion record's head_sha no longer matches
+# the current git HEAD, those fields describe a PREVIOUS run -- not this one.
+# Label them honestly so a crashed run is never reported with a stale PR/branch.
+live_statuses = {"running", "exited"}
+head_sha = os.environ.get("_LOKI_WHY_HEAD_SHA", "")
+comp_head = comp.get("head_sha", "")
+comp_is_stale = bool(state.get("status") in live_statuses) or bool(
+    head_sha and comp_head and comp_head != head_sha
+)
+comp_label = "  (from previous completed run)" if comp_is_stale else ""
 
 print("Loki: why")
 print("=" * 60)
@@ -3038,11 +3087,11 @@ if exit_code is not None:
 if iters is not None:
     print(f"  Iterations  : {iters}")
 if comp.get("branch"):
-    print(f"  Branch      : {comp['branch']}")
+    print(f"  Branch      : {comp['branch']}{comp_label}")
 if comp.get("files_changed") is not None:
-    print(f"  Changes     : {comp.get('files_changed',0)} files (+{comp.get('insertions',0)}/-{comp.get('deletions',0)})")
+    print(f"  Changes     : {comp.get('files_changed',0)} files (+{comp.get('insertions',0)}/-{comp.get('deletions',0)}){comp_label}")
 if comp.get("pr_url"):
-    print(f"  PR          : {comp['pr_url']}")
+    print(f"  PR          : {comp['pr_url']}{comp_label}")
 print()
 print(f"  What happened: {meaning}")
 print(f"  What to do   : {action}")
@@ -5767,12 +5816,20 @@ cmd_preview() {
                 public=true
                 ;;
             --provider)
-                provider="${2:-}"
-                # Guard the value-consuming shift: if --provider is the LAST arg
-                # (no value), an unguarded shift here plus the loop's trailing
-                # shift would underflow and abort under set -e. Only consume a
-                # value when one is actually present.
-                [ $# -ge 2 ] && shift
+                # Guard against a missing OR flag-shaped value: an unguarded
+                # shift when --provider is the last arg underflows under set -e,
+                # and a bare "--provider --public" would otherwise swallow the
+                # next flag as the provider name.
+                case "${2:-}" in
+                    -*|"")
+                        echo "loki preview --provider requires a value (cloudflared|ngrok)" >&2
+                        return 1
+                        ;;
+                    *)
+                        provider="$2"
+                        shift
+                        ;;
+                esac
                 ;;
             --yes)
                 assume_yes=true
@@ -6122,11 +6179,14 @@ cmd_deploy() {
                 return 0
                 ;;
             --dir)
-                dir="${2:-.}"
-                # Guard the value-consuming shift: if --dir is the LAST arg (no
-                # value), an unguarded shift plus the loop's trailing shift would
-                # underflow and abort under set -e. Consume a value only if present.
-                [ $# -ge 2 ] && shift
+                # Guard against a missing OR flag-shaped value: an unguarded
+                # shift when --dir is the last arg underflows under set -e, and a
+                # bare "--dir --no-clip" would otherwise treat the next flag as
+                # the scan directory.
+                case "${2:-}" in
+                    -*|"") echo "loki deploy --dir requires a directory path" >&2; return 1 ;;
+                    *) dir="$2"; shift ;;
+                esac
                 ;;
             --no-clip)
                 do_clip=false
@@ -8013,7 +8073,7 @@ cmd_assets() {
             ;;
         *)
             echo -e "${RED}Unknown subcommand: $subcommand${NC}" >&2
-            echo "Run 'loki assets --help' for usage."
+            echo "Run 'loki assets --help' for usage." >&2
             return 1
             ;;
     esac
@@ -11081,6 +11141,10 @@ cmd_quick() {
     # BUG-PU-005: Use unique filename to prevent race conditions when
     # multiple simultaneous `loki quick` commands run in the same project
     mkdir -p "$LOKI_DIR"
+    # Reap stale per-PID temp PRDs from prior runs (the process exec-replaces
+    # into run.sh, so these are never cleaned on exit and accumulate).
+    find "$LOKI_DIR" -maxdepth 1 -name 'quick-prd-*.md' -mtime +1 -delete 2>/dev/null || true
+    find "$LOKI_DIR" -maxdepth 1 -name 'brief-prd-*.md' -mtime +1 -delete 2>/dev/null || true
     local quick_prd="$LOKI_DIR/quick-prd-$$.md"
     cat > "$quick_prd" << QPRDEOF
 # Quick Task
@@ -15482,12 +15546,22 @@ cmd_plan() {
     done
 
     if [ -z "$prd_file" ]; then
+        # Under --json, a machine consumer expects JSON on every path, including
+        # errors -- never ANSI-colored prose. Emit a structured error to stdout.
+        if [ "$show_json" = true ]; then
+            printf '{"error":"missing PRD file argument"}\n'
+            return 2
+        fi
         echo -e "${RED}Usage: loki plan <PRD file>${NC}"
         echo "Run 'loki plan --help' for usage."
         return 2
     fi
 
     if [ ! -f "$prd_file" ]; then
+        if [ "$show_json" = true ]; then
+            printf '{"error":"PRD file not found","prd_file":"%s"}\n' "$prd_file"
+            return 1
+        fi
         echo -e "${RED}PRD file not found: $prd_file${NC}"
         return 1
     fi
@@ -15526,6 +15600,60 @@ maybe_show_auto_plan() {
     local abs_prd
     abs_prd="$(cd "$(dirname "$prd_path")" && pwd)/$(basename "$prd_path")"
     show_prd_plan "$abs_prd" "false" "false"
+}
+
+# Suggest the closest known command for a typo (the did-you-mean hint).
+# Prints "Did you mean 'X'?" to stderr when an unknown command is within a
+# small Levenshtein distance of a real command. Silent (returns 1) when
+# nothing is close enough, so a genuinely-unknown command is not given a
+# misleading suggestion. Pure bash + awk (no extra deps); the candidate list
+# is the canonical set of top-level commands accepted by the dispatcher.
+_suggest_command() {
+    local typo="$1"
+    [ -n "$typo" ] || return 1
+    # Canonical top-level command names (keep in sync with the dispatch case
+    # below). Deprecated aliases are intentionally included so a typo of an
+    # alias still resolves to a helpful pointer.
+    local known="start run quick plan grill spec verify proof trust review \
+ultracode council demo dogfood heal modernize import issue github init template \
+status stop pause resume monitor watch watchdog dashboard web open preview share \
+memory context ctx checkpoint state report kpis cost metrics stats logs otel \
+syslog telemetry crash config provider doctor setup-skill onboard quickstart \
+welcome update self-update rollback failover cluster enterprise remote deploy docker \
+sandbox api mcp magic compound assets export wiki docs explain why audit compliance \
+secrets analyze optimize bench ci reset cleanup notify trigger voice sentrux \
+worktree wt projects cp rc trust-metrics serve agent code self_update test help version"
+    local best
+    best=$(printf '%s\n' $known | awk -v t="$typo" '
+        function min3(a, b, c) { if (a < b) { if (a < c) return a; return c } if (b < c) return b; return c }
+        function lev(s1, s2,   n, m, i, j, prev, cur, cost, tmp) {
+            n = length(s1); m = length(s2)
+            if (n == 0) return m
+            if (m == 0) return n
+            for (j = 0; j <= m; j++) prev[j] = j
+            for (i = 1; i <= n; i++) {
+                cur[0] = i
+                for (j = 1; j <= m; j++) {
+                    cost = (substr(s1, i, 1) == substr(s2, j, 1)) ? 0 : 1
+                    cur[j] = min3(prev[j] + 1, cur[j-1] + 1, prev[j-1] + cost)
+                }
+                for (j = 0; j <= m; j++) prev[j] = cur[j]
+            }
+            return prev[m]
+        }
+        { d = lev(t, $1); if (d < bestd || NR == 1) { bestd = d; bestc = $1 } }
+        END {
+            # Only suggest when the edit distance is small relative to the typo
+            # length: <=2 for short commands, <=3 for longer ones. This avoids
+            # absurd suggestions (e.g. "xyz" -> "web").
+            thr = (length(t) <= 4) ? 2 : 3
+            if (bestd <= thr) print bestc
+        }')
+    if [ -n "$best" ]; then
+        printf '%s\n' "$best"
+        return 0
+    fi
+    return 1
 }
 
 # Main command dispatcher
@@ -15952,8 +16080,12 @@ main() {
             fi
             ;;
         *)
-            echo -e "${RED}Unknown command: $command${NC}"
-            echo "Run 'loki help' for usage."
+            echo -e "${RED}Unknown command: $command${NC}" >&2
+            local _suggestion
+            if _suggestion=$(_suggest_command "$command"); then
+                echo "Did you mean 'loki ${_suggestion}'?" >&2
+            fi
+            echo "Run 'loki help' for usage." >&2
             exit 1
             ;;
     esac
@@ -18329,9 +18461,15 @@ try:
         print('No relevant memories found')
     else:
         for i, r in enumerate(results, 1):
-            source = r.get('source', 'unknown')
-            summary = r.get('summary', r.get('pattern', 'No summary'))[:80]
-            score = r.get('score', 0)
+            # Retrieval results expose _source/_score/_weighted_score and the
+            # raw stored fields (pattern/description/goal/name), not
+            # source/summary/score. Read the fields that actually exist so the
+            # output is not a uniform [unknown] ... (score 0.00).
+            source = r.get('_source', 'unknown')
+            score = r.get('_score', r.get('_weighted_score', 0))
+            summary = (r.get('pattern') or r.get('description') or r.get('goal')
+                       or (r.get('context') or {}).get('goal') or r.get('name')
+                       or 'No summary')[:80]
             print(f'{i}. [{source}] {summary}... (score: {score:.2f})')
 except ImportError as e:
     print(f'Error: Required module not found - {e}')
@@ -21892,7 +22030,7 @@ cmd_trust_metrics() {
                 echo "Run 'loki trust-metrics' inside each project directory."
                 exit 2
                 ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki trust-metrics --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki trust-metrics --help' for usage." >&2; exit 1 ;;
         esac
     done
 
@@ -21947,7 +22085,7 @@ cmd_cost() {
             --json) show_json=true; shift ;;
             --last) last_n="${2:-0}"; shift 2 ;;
             --last=*) last_n="${1#*=}"; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki cost --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki cost --help' for usage." >&2; exit 1 ;;
         esac
     done
 
@@ -22262,7 +22400,7 @@ cmd_metrics() {
                 echo "$response"
                 exit 0
                 ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki metrics --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki metrics --help' for usage." >&2; exit 1 ;;
         esac
     done
 
@@ -29444,7 +29582,7 @@ cmd_share() {
             --private) visibility=""; shift ;;
             --format) format="${2:-markdown}"; shift 2 ;;
             --format=*) format="${1#*=}"; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}"; echo "Run 'loki share --help' for usage."; exit 1 ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki share --help' for usage." >&2; exit 1 ;;
         esac
     done
 
@@ -30143,7 +30281,14 @@ cmd_docker() {
     local -a fwd=()
     while [ $# -gt 0 ]; do
         case "$1" in
-            --image) [ $# -ge 2 ] && { shift; export LOKI_DOCKER_IMAGE="$1"; } || { echo "loki docker --image requires a value" >&2; return 1; }; shift ;;
+            --image)
+                # Guard against a missing OR flag-shaped value so "--image
+                # --dry-run" cannot swallow the next flag as the image ref.
+                case "${2:-}" in
+                    -*|"") echo "loki docker --image requires a value (e.g., --image asklokesh/loki-mode:latest)" >&2; return 1 ;;
+                    *) shift; export LOKI_DOCKER_IMAGE="$1"; shift ;;
+                esac
+                ;;
             --dry-run) dry_run=1; shift ;;
             --api) with_api=1; fwd+=("$1"); shift ;;
             *) fwd+=("$1"); shift ;;

@@ -55,18 +55,20 @@ controlplane:
   # Pod-level annotations (e.g. Prometheus scrape)
   podAnnotations: {}
 
-  # Readiness / liveness probe overrides
+  # Readiness / liveness probe overrides.
+  # port: empty = probe the named container port "http" (tracks config.dashboardPort
+  # automatically). Set a numeric value only to override.
   probes:
     readiness:
       path: /health
-      port: 57374
+      port: ""
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
       failureThreshold: 3
     liveness:
       path: /health
-      port: 57374
+      port: ""
       initialDelaySeconds: 15
       periodSeconds: 20
       timeoutSeconds: 5
@@ -385,6 +387,10 @@ storage:
   bucket: ""
   prefix: ""
   region: ""
+  # Custom S3-compatible endpoint URL (s3 backend only). Set for MinIO / Ceph /
+  # Cloudflare R2 / Wasabi etc. Leave empty for real AWS S3. Credentials come
+  # from the standard AWS chain (env/secret/IRSA), not this field.
+  endpoint: ""
 
 persistence:
   # Worker /workspace durable volume (per-build state + worker JSONL audit).

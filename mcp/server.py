@@ -1919,20 +1919,32 @@ async def mem_search(
         context = {"goal": query, "task_type": "exploration"}
         results = retriever.retrieve_task_aware(context, top_k=limit)
 
-        # BUG-MCP-006: Filter results by collection parameter when not "all"
-        # The retrieve_task_aware method returns all collections, but the user
-        # may have requested only a specific collection type
+        # Filter results by collection parameter when not "all".
+        # retrieve_task_aware tags every item with _source in
+        # {episodic, semantic, skills, anti_patterns}; it does NOT emit
+        # _type/type. Map _source to the public collection vocabulary so the
+        # filter actually matches (previously every result was dropped because
+        # result_type defaulted to "unknown").
         collection_type_map = {
             "episodes": "episode",
             "patterns": "pattern",
             "skills": "skill",
         }
         filter_type = collection_type_map.get(collection)
+        source_to_type = {
+            "episodic": "episode",
+            "semantic": "pattern",
+            "skills": "skill",
+            "anti_patterns": "pattern",
+        }
 
         # Compact results for token efficiency
         compact = []
         for r in results:
-            result_type = r.get("_type", r.get("type", "unknown"))
+            result_type = source_to_type.get(
+                r.get("_source"),
+                r.get("_type", r.get("type", "unknown")),
+            )
             # Apply collection filter
             if filter_type and result_type != filter_type:
                 continue

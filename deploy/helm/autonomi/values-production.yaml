@@ -2,8 +2,13 @@
 # ----------------------------------------
 # Use with: helm install autonomi ./deploy/helm/autonomi -f deploy/helm/autonomi/values-production.yaml
 
+# The control-plane audit log is a single-writer hash chain (dashboard/audit.py),
+# so the audit-writing control plane runs a single replica. >1 replica against
+# the chart's ReadWriteOnce audit volume is rejected by a render-time preflight
+# (it would hang extra pods Pending and corrupt the chain if shared RWM). See
+# values-ha.yaml for the full rationale and the horizontal-scale path.
 controlplane:
-  replicas: 2
+  replicas: 1
 
   resources:
     requests:

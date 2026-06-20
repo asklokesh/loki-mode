@@ -21,6 +21,7 @@ import logging.handlers
 import os
 import socket
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -46,6 +47,16 @@ _SYSLOG_PROTO = os.environ.get("LOKI_AUDIT_SYSLOG_PROTO", "udp").lower().strip()
 # Disable with LOKI_AUDIT_NO_INTEGRITY=true
 INTEGRITY_ENABLED = os.environ.get("LOKI_AUDIT_NO_INTEGRITY", "").lower() not in ("true", "1", "yes")
 _last_hash: str = "0" * 64  # Genesis hash
+
+# Serializes the chain read-modify-write + file append in log_event(). Without
+# it, concurrent callers (the dashboard fans audit writes out across async
+# handlers / asyncio.to_thread workers) interleave the unsynchronized
+# _last_hash RMW with the file append: lines get written in a different order
+# than the hashes were chained, which breaks the tamper-evident chain so
+# verify_all_logs() reports valid:False even though no entry was tampered with.
+# Holding this lock makes "compute hash, update _last_hash, append the line" a
+# single atomic step so on-disk line order always matches chain order.
+_hash_lock = threading.Lock()
 
 
 def _recover_last_hash() -> str:
@@ -254,20 +265,35 @@ def log_event(
         "details": details or {},
     }
 
-    # Tamper-evident chain hash
+    # Tamper-evident chain hash + file append, serialized as one atomic step.
+    #
+    # The chain hash is a read-modify-write of the module-global _last_hash, and
+    # the line must land in the file in the same order the hashes were chained.
+    # _hash_lock guards the whole "compute hash -> update _last_hash -> append"
+    # critical section so concurrent callers cannot interleave and break the
+    # chain (see _hash_lock definition above).
+    #
+    # NOTE for async callers: log_event() does blocking file I/O while holding
+    # this lock. When called from an asyncio handler it SHOULD be offloaded with
+    # `await asyncio.to_thread(audit.log_event, ...)` so a slow disk does not
+    # stall the dashboard event loop. The thread-safety here is what makes that
+    # offload safe; rewriting every call site to async is a separate, larger
+    # change and is intentionally not done here.
     global _last_hash
-    if INTEGRITY_ENABLED:
-        entry_json = json.dumps(entry, sort_keys=True, default=str)
-        entry["_integrity_hash"] = _compute_chain_hash(entry_json, _last_hash)
-        _last_hash = entry["_integrity_hash"]
+    with _hash_lock:
+        if INTEGRITY_ENABLED:
+            entry_json = json.dumps(entry, sort_keys=True, default=str)
+            entry["_integrity_hash"] = _compute_chain_hash(entry_json, _last_hash)
+            _last_hash = entry["_integrity_hash"]
 
-    log_file = _get_current_log_file()
-    _rotate_logs_if_needed(log_file)
+        log_file = _get_current_log_file()
+        _rotate_logs_if_needed(log_file)
 
-    with open(log_file, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        with open(log_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
-    # Forward to syslog if configured
+    # Forward to syslog if configured (outside the lock: fire-and-forget and
+    # must never extend the critical section / block other writers).
     _forward_to_syslog(entry)
 
     return entry

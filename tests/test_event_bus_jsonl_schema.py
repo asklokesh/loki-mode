@@ -100,6 +100,52 @@ def test_canonical_pending_schema_unchanged():
     )
 
 
+def test_import_flat_jsonl_is_idempotent():
+    """Re-importing the same flat events.jsonl must not duplicate events.
+
+    Flat run.sh lines carry no `id`, so from_dict used to mint a fresh random
+    uuid on every parse, defeating import_from_jsonl() dedup. The deterministic
+    content-derived id makes repeated imports a no-op.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        loki_dir = Path(tmp) / '.loki'
+        loki_dir.mkdir(parents=True)
+        lines = [
+            {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state',
+             'data': {'source': 'runner', 'action': 'a'}},
+            {'timestamp': '2026-06-17T16:00:01Z', 'type': 'task',
+             'data': {'source': 'runner', 'action': 'b'}},
+        ]
+        (loki_dir / 'events.jsonl').write_text(
+            ''.join(json.dumps(l) + '\n' for l in lines)
+        )
+
+        bus = EventBus(loki_dir=loki_dir)
+        first = bus.import_from_jsonl()
+        second = bus.import_from_jsonl()
+        third = bus.import_from_jsonl()
+
+        assert first == 2, f"first import should yield 2, got {first}"
+        assert second == 0, f"second import should be a no-op, got {second}"
+        assert third == 0, f"third import should be a no-op, got {third}"
+
+        pending = list((loki_dir / 'events' / 'pending').glob('*.json'))
+        assert len(pending) == 2, (
+            "duplicate pending files written on re-import; got %d"
+            % len(pending)
+        )
+
+
+def test_flat_jsonl_id_is_deterministic():
+    """The same flat record always yields the same derived id (stable dedup)."""
+    line = {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state',
+            'data': {'source': 'runner', 'action': 'a'}}
+    a = LokiEvent.from_dict(dict(line, data=dict(line['data'])))
+    b = LokiEvent.from_dict(dict(line, data=dict(line['data'])))
+    assert a.id == b.id, f"derived id not stable: {a.id!r} != {b.id!r}"
+    assert a.id, "derived id should be non-empty"
+
+
 if __name__ == '__main__':
     import pytest
     raise SystemExit(pytest.main([__file__, '-v']))

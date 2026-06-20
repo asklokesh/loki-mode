@@ -123,6 +123,11 @@ spec:
             - name: LOKI_STORAGE_REGION
               value: {{ .Values.storage.region | quote }}
             {{- end }}
+            {{- if .Values.storage.endpoint }}
+            # Custom S3-compatible endpoint (MinIO/Ceph/R2/Wasabi). Omit for AWS S3.
+            - name: LOKI_STORAGE_ENDPOINT
+              value: {{ .Values.storage.endpoint | quote }}
+            {{- end }}
             {{- end }}
             {{- with .Values.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}

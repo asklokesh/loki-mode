@@ -1008,8 +1008,26 @@ class EmbeddingEngine:
             logger.warning("Primary provider failed: %s, trying fallback", e)
             old_dimension = self.dimension
             self._use_fallback()
-            embedding = self._primary_provider.embed(text)
+            # Run the fallback through the SAME chunk + weighted-average path as
+            # the success branch so the vector is computed consistently (the old
+            # code embedded the raw, un-chunked text, producing a different vector
+            # for multi-chunk inputs).
+            if len(chunks) == 1:
+                embedding = self._primary_provider.embed(chunks[0])
+            else:
+                chunk_embeddings = self._primary_provider.embed_batch(chunks)
+                weights = np.array([len(c) for c in chunks], dtype=np.float32)
+                weights = weights / weights.sum()
+                embedding = np.average(chunk_embeddings, axis=0, weights=weights)
             embedding = self._normalize(embedding)
+            # The cache key computed above used the pre-fallback provider name.
+            # _use_fallback() switched the provider, so recompute the key to
+            # reflect the provider that actually produced this vector. Without
+            # this, the entry is stored under the old key while the next call
+            # looks it up under the new provider key, causing a permanent cache
+            # miss (and re-embedding) on every fallback request.
+            if self.config.cache_enabled:
+                cache_key = self._get_cache_key(text)
             # If dimension changed after fallback, log a warning so callers
             # know existing vector indices may be incompatible (BUG-MEM-006).
             if self.dimension != old_dimension:

@@ -1,3 +1,4 @@
+{{- include "autonomi.controlplane.preflight" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,17 +40,27 @@ spec:
             - uvicorn
             - "dashboard.server:app"
             - "--host"
-            - "0.0.0.0"
+            - {{ .Values.config.dashboardHost | quote }}
+            # Honor config.dashboardPort so the documented knob actually changes
+            # the bind port. Previously this was hardcoded 57374, so setting
+            # config.dashboardPort only changed the LOKI_DASHBOARD_PORT env var
+            # (which uvicorn ignores) while uvicorn still bound 57374 -- and a
+            # probe pointed at the configured port would crash-loop the pod.
             - "--port"
-            - "57374"
+            - {{ .Values.config.dashboardPort | quote }}
           ports:
             - name: http
-              containerPort: 57374
+              containerPort: {{ .Values.config.dashboardPort | int }}
               protocol: TCP
           readinessProbe:
             httpGet:
               path: {{ .Values.controlplane.probes.readiness.path }}
-              port: {{ .Values.controlplane.probes.readiness.port }}
+              # Default to the named container port so the probe always tracks the
+              # actual bind port (config.dashboardPort). An explicit numeric
+              # probes.*.port still overrides if set. Previously this defaulted to a
+              # literal 57374 that could diverge from config.dashboardPort and
+              # crash-loop the pod.
+              port: {{ .Values.controlplane.probes.readiness.port | default "http" }}
             initialDelaySeconds: {{ .Values.controlplane.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.controlplane.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.controlplane.probes.readiness.timeoutSeconds }}
@@ -57,7 +68,7 @@ spec:
           livenessProbe:
             httpGet:
               path: {{ .Values.controlplane.probes.liveness.path }}
-              port: {{ .Values.controlplane.probes.liveness.port }}
+              port: {{ .Values.controlplane.probes.liveness.port | default "http" }}
             initialDelaySeconds: {{ .Values.controlplane.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.controlplane.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.controlplane.probes.liveness.timeoutSeconds }}

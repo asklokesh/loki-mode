@@ -1,5 +1,7 @@
 {{- if .Values.security.networkPolicy.enabled }}
-# Control plane: accept ingress on port 57374 from anywhere in the namespace
+# Control plane: accept ingress on the dashboard port from anywhere in the
+# namespace. Tracks config.dashboardPort so a non-default port is not silently
+# firewalled off (the port was previously hardcoded 57374).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,7 +18,7 @@ spec:
     - Egress
   ingress:
     - ports:
-        - port: 57374
+        - port: {{ .Values.config.dashboardPort | int }}
           protocol: TCP
   egress:
     - {}

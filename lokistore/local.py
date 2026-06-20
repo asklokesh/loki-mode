@@ -178,16 +178,24 @@ class LocalStore(LokiStore):
     def list(self, prefix: str = "") -> List[str]:
         # Normalize the prefix to a path under the base. An empty prefix lists
         # everything under the base.
+        #
+        # Walk the realpath of the base consistently with how relpath is taken
+        # below. If the base is reached through a symlink (macOS /tmp ->
+        # /private/tmp, k8s bind mounts, a symlinked LOKI_DIR), walking the
+        # symlink path while computing relpath against the realpath would emit
+        # "../../.." garbage keys that downstream sync then rejects as path
+        # traversal -- silently breaking the whole object-store sync.
+        real_base = os.path.realpath(self._base)
         if prefix:
             clean_prefix = normalize_key(prefix)
-            search_root = self._base / clean_prefix
+            search_root = Path(real_base) / clean_prefix
         else:
-            search_root = self._base
+            search_root = Path(real_base)
 
         if not search_root.exists():
             return []
 
-        base_str = os.path.realpath(self._base)
+        base_str = real_base
         results: List[str] = []
 
         if search_root.is_file():

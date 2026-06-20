@@ -111,6 +111,35 @@ def test_localstore_list_prefix_matches_at_slash_boundary(tmp_path):
     assert store.list("state") == ["state/a.json", "state/sub/b.json"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_localstore_list_through_symlinked_base(tmp_path):
+    # Regression: when the store base is reached through a SYMLINK (macOS
+    # /tmp -> /private/tmp, k8s bind mounts, a symlinked LOKI_DIR), list()
+    # used to walk the symlink path while taking relpath against the realpath,
+    # emitting "../../.." garbage keys. Downstream checkpoint sync then rejected
+    # those as path traversal and silently synced nothing. The keys must stay
+    # clean, relative, and round-trip through get().
+    real_base = tmp_path / "real_base"
+    real_base.mkdir()
+    link_base = tmp_path / "link_base"
+    link_base.symlink_to(real_base, target_is_directory=True)
+
+    store = LocalStore(link_base)
+    store.put("checkpoints/a.json", b"1")
+    store.put("checkpoints/sub/b.json", b"2")
+
+    for prefix in ("checkpoints/", ""):
+        keys = store.list(prefix)
+        assert keys == ["checkpoints/a.json", "checkpoints/sub/b.json"]
+        for key in keys:
+            assert not key.startswith(".."), f"symlinked base leaked key: {key}"
+            # The returned key must be usable downstream (sync calls get()).
+            assert store.get(key) in (b"1", b"2")
+
+    # A prefix pointing directly at a key is also clean (the is_file() branch).
+    assert store.list("checkpoints/a.json") == ["checkpoints/a.json"]
+
+
 def test_localstore_delete_idempotent(tmp_path):
     store = LocalStore(tmp_path / ".loki")
     store.put("k.json", b"v")

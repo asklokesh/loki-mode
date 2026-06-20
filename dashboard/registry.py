@@ -140,6 +140,9 @@ def register_project(
     path: str,
     name: Optional[str] = None,
     alias: Optional[str] = None,
+    pid: Optional[int] = None,
+    port: Optional[int] = None,
+    status: Optional[str] = None,
 ) -> dict:
     """
     Register a project in the registry.
@@ -148,6 +151,18 @@ def register_project(
         path: Absolute path to the project directory
         name: Display name (defaults to directory name)
         alias: Short alias for CLI usage
+        pid: Live runtime pid for the project's current build (optional)
+        port: Live runtime port for the project's current build (optional)
+        status: Runtime status override, e.g. "active" / "running" (optional)
+
+    The pid / port / status kwargs let a caller register a project AND set its
+    runtime fields in one atomic, locked load->mutate->save. Before this, the
+    runner had to call register_project() and then do a SECOND, unlocked
+    load-mutate-save to stamp pid/port/status, which lost-updates a concurrent
+    writer (two writers each load the registry, set their own runtime fields,
+    and save -- the last save wins and silently drops the other's entry). Set
+    these here so the whole change happens inside _registry_lock(). When all
+    three are omitted the behavior is unchanged (backward compatible).
 
     Returns:
         The registered project entry
@@ -187,6 +202,16 @@ def register_project(
                 "status": "active",
             }
             registry["projects"][project_id] = project
+
+        # Atomically stamp runtime fields inside the same lock (both the create
+        # and update branches). None means "leave as-is" so omitting these
+        # keeps the legacy behavior.
+        if pid is not None:
+            project["pid"] = pid
+        if port is not None:
+            project["port"] = port
+        if status is not None:
+            project["status"] = status
 
         _save_registry(registry)
     return project
@@ -438,7 +463,6 @@ def sync_registry_with_discovery() -> dict:
     Returns:
         Summary of sync results
     """
-    registry = _load_registry()
     discovered = discover_projects()
 
     # Track results
@@ -446,31 +470,50 @@ def sync_registry_with_discovery() -> dict:
     updated = []
     missing = []
 
-    # Add/update discovered projects
-    discovered_paths = set()
-    for project_info in discovered:
-        path = project_info["path"]
-        discovered_paths.add(path)
-        project_id = _generate_project_id(path)
+    # Mutate a single registry copy under the lock and save it ONCE at the end.
+    # Previously this loaded the registry, then called register_project() in the
+    # loop (which loads+mutates+saves its OWN copy), and finally saved the stale
+    # original over the top -- silently dropping every newly added project (the
+    # summary said "added: N" while the on-disk registry kept zero of them). All
+    # mutations now happen on the same in-memory dict that gets persisted.
+    with _registry_lock():
+        registry = _load_registry()
 
-        if project_id not in registry["projects"]:
-            # New project
-            project = register_project(path)
-            added.append(project)
-        else:
-            # Update existing
-            project = registry["projects"][project_id]
-            project["has_loki_dir"] = True
-            project["updated_at"] = datetime.now(timezone.utc).isoformat()
-            updated.append(project)
+        # Add/update discovered projects
+        for project_info in discovered:
+            path = project_info["path"]
+            project_id = _generate_project_id(path)
 
-    # Check for missing projects
-    for project_id, project in registry["projects"].items():
-        if not os.path.isdir(project["path"]):
-            project["status"] = "missing"
-            missing.append(project)
+            if project_id not in registry["projects"]:
+                # New project
+                now = datetime.now(timezone.utc).isoformat()
+                project = {
+                    "id": project_id,
+                    "path": path,
+                    "name": os.path.basename(path),
+                    "alias": None,
+                    "registered_at": now,
+                    "updated_at": now,
+                    "last_accessed": None,
+                    "has_loki_dir": os.path.isdir(os.path.join(path, ".loki")),
+                    "status": "active",
+                }
+                registry["projects"][project_id] = project
+                added.append(project)
+            else:
+                # Update existing
+                project = registry["projects"][project_id]
+                project["has_loki_dir"] = True
+                project["updated_at"] = datetime.now(timezone.utc).isoformat()
+                updated.append(project)
 
-    _save_registry(registry)
+        # Check for missing projects
+        for project_id, project in registry["projects"].items():
+            if not os.path.isdir(project["path"]):
+                project["status"] = "missing"
+                missing.append(project)
+
+        _save_registry(registry)
 
     return {
         "added": len(added),

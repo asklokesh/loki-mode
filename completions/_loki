@@ -67,8 +67,12 @@ function _loki {
                     _arguments \
                         '--follow[Follow logs in real-time]' \
                         '-f[Follow logs in real-time]' \
-                        '--lines[Number of lines]:number:' \
-                        '-n[Number of lines]:number:'
+                        '--tail[Number of lines to show]:number:' \
+                        '-n[Number of lines to show]:number:' \
+                        '--all[Show all lines]' \
+                        '-a[Show all lines]' \
+                        '--help[Show help]' \
+                        '-h[Show help]'
                     ;;
                 issue)
                     _loki_issue
@@ -150,7 +154,63 @@ function _loki_commands {
         'share:Share session report as GitHub Gist'
         'proof:Inspect/share proof-of-run artifacts'
         'context:Context window management'
+        'ctx:Context window management (alias)'
         'code:Codebase intelligence'
+        'web:Start the web dashboard'
+        'plan:Preview the build plan for a spec'
+        'report:Reporting commands (cost, kpis, share)'
+        'cost:Show cost of recent runs'
+        'kpis:Key performance indicators'
+        'stats:Session statistics'
+        'preview:Open the running app preview'
+        'deploy:Advisory deploy command (print-only)'
+        'docker:Run Loki in a Docker container'
+        'mcp:MCP server commands'
+        'magic:Spec-driven component generation'
+        'assets:Export/import shareable team assets'
+        'spec:Living spec drift detection'
+        'verify:Deterministic PR verification'
+        'grill:Interrogate a spec before building'
+        'trust:Visible trust trajectory'
+        'trust-metrics:Trust metrics report'
+        'why:Explain the last build outcome'
+        'heal:Legacy system healing'
+        'modernize:Modernize a legacy system'
+        'migrate:Migration commands'
+        'analyze:Analyze a codebase'
+        'compliance:Compliance reporting'
+        'crash:Crash report management'
+        'otel:OpenTelemetry management'
+        'wiki:Wiki commands'
+        'explain:Explain Loki concepts'
+        'optimize:Optimization commands'
+        'review:Code review commands'
+        'export:Export session data'
+        'test:Run tests'
+        'ci:CI helpers'
+        'watch:Watch mode'
+        'audit:Audit commands'
+        'syslog:System log commands'
+        'cluster:Cluster commands'
+        'failover:Failover commands'
+        'remote:Remote execution commands'
+        'worktree:Git worktree commands'
+        'wt:Git worktree commands (alias)'
+        'trigger:Trigger commands'
+        'cleanup:Clean up Loki state'
+        'rollback:Roll back a change'
+        'update:Update Loki Mode'
+        'self-update:Update Loki Mode'
+        'setup-skill:Set up the Claude Code skill'
+        'quickstart:Quickstart guide'
+        'sentrux:Sentrux integration'
+        'state:Inspect run state'
+        'template:PRD template commands'
+        'ultracode:Ultra code review'
+        'voice:Voice commands'
+        'bench:Run benchmarks'
+        'open:Open a project resource'
+        'rc:Release candidate commands'
         'version:Show version'
         'completions:Output shell completions'
         'help:Show help'
@@ -160,7 +220,7 @@ function _loki_commands {
 
 function _loki_start {
     _arguments \
-        '--provider[AI provider]:provider name:(claude codex gemini)' \
+        '--provider[AI provider]:provider name:(claude codex cline aider)' \
         '--parallel[Parallel mode]' \
         '--background[Background mode]' \
         '--bg[Background mode]' \

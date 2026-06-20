@@ -463,7 +463,18 @@ run_check "tests/run-checkpoint-worktree-bundle-tests.sh (V2 refs/loki/cp bundle
 run_check "tests/test-allowed-paths-sandbox-mount.sh (V3 sandbox workspace fail-closed)" "bash tests/test-allowed-paths-sandbox-mount.sh 2>&1 | tail -3"
 run_check "tests/test-queue-consumer.sh (V5 redis/file consumer + flag-injection guard)" "bash tests/test-queue-consumer.sh 2>&1 | tail -3"
 run_check "tests/test-loki-why.sh (B5 failure/outcome diagnosis)" "bash tests/test-loki-why.sh 2>&1 | tail -3"
+run_check "tests/cli/test-cli-flag-guards.sh (budget/plan-json/memory/temp-prd/flag-value guards)" "bash tests/cli/test-cli-flag-guards.sh 2>&1 | tail -3"
+run_check "tests/test-rate-limit-detection.sh (rate-limit false-positive guard)" "bash tests/test-rate-limit-detection.sh 2>&1 | tail -3"
+run_check "tests/test-config-map-fallback.sh (no-yq YAML nested-path + quote handling)" "bash tests/test-config-map-fallback.sh 2>&1 | tail -3"
 run_check "tests/test-bench-honest-degrade.sh (L4 packaged-install bench UX)" "bash tests/test-bench-honest-degrade.sh 2>&1 | tail -3"
+run_check "tests/test-emit-json-escape.sh (C0 control-char escaping + UTF-8)" "bash tests/test-emit-json-escape.sh 2>&1 | tail -3"
+run_check "tests/test-codex-model-trusted.sh (LOKI_CODEX_MODEL verbatim, generic validated)" "bash tests/test-codex-model-trusted.sh 2>&1 | tail -3"
+
+# Completion-trust core: the devil's advocate must read the structured test
+# signal (.loki/quality/test-results.json), not a log path nothing writes, so a
+# genuine unanimous COMPLETE is not always vetoed to CONTINUE. Mutation guard
+# included.
+run_check "tests/test-council-devils-advocate.sh (structured test-evidence, no spurious veto)" "bash tests/test-council-devils-advocate.sh 2>&1 | tail -3"
 
 # v7.7.31: STOP-aware countdown + dead-pid authoritative + autonomy override
 # (--append-system-prompt) parity. Verifies the dashboard Stop button responds

@@ -164,6 +164,21 @@ class _RateLimiter:
 _control_limiter = _RateLimiter(max_calls=10, window_seconds=60)
 _read_limiter = _RateLimiter(max_calls=60, window_seconds=60)
 
+
+def _rate_key(base: str, request: Optional[Request]) -> str:
+    """Build a per-client rate-limit key.
+
+    Static literal keys make the read limiter a single global cap: one client
+    can exhaust the window for everyone else. Mirror the /ws path, which keys
+    by client.host, so the cap is enforced per client. Falls back to the bare
+    base key when the client address is unavailable (preserving prior
+    behaviour rather than failing open).
+    """
+    host = None
+    if request is not None and request.client is not None:
+        host = request.client.host
+    return f"{base}_{host}" if host else base
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -1402,7 +1417,7 @@ async def get_status() -> StatusResponse:
 
 
 # Project endpoints
-@app.get("/api/projects", response_model=list[ProjectResponse])
+@app.get("/api/projects", response_model=list[ProjectResponse], dependencies=[Depends(auth.require_scope("read"))])
 async def list_projects(
     status: Optional[str] = Query(None),
     limit: int = Query(default=50, ge=1, le=500),
@@ -1521,7 +1536,7 @@ async def create_project(
     )
 
 
-@app.get("/api/projects/{project_id}", response_model=ProjectResponse)
+@app.get("/api/projects/{project_id}", response_model=ProjectResponse, dependencies=[Depends(auth.require_scope("read"))])
 async def get_project(
     project_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1736,7 +1751,7 @@ def _apply_task_section(task: dict, section: str, lines: list):
 
 
 # Task endpoints - reads from .loki/dashboard-state.json
-@app.get("/api/tasks")
+@app.get("/api/tasks", dependencies=[Depends(auth.require_scope("read"))])
 async def list_tasks(
     project_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
@@ -1959,7 +1974,7 @@ async def create_task(
     return _task_response_from_db(db_task)
 
 
-@app.get("/api/tasks/{task_id}", response_model=TaskResponse)
+@app.get("/api/tasks/{task_id}", response_model=TaskResponse, dependencies=[Depends(auth.require_scope("read"))])
 async def get_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
@@ -2282,7 +2297,7 @@ class HealthResponse(BaseModel):
     checks: dict
 
 
-@app.get("/api/registry/projects", response_model=list[RegisteredProjectResponse])
+@app.get("/api/registry/projects", response_model=list[RegisteredProjectResponse], dependencies=[Depends(auth.require_scope("read"))])
 async def list_registered_projects(include_inactive: bool = False):
     """List all registered projects."""
     projects = registry.list_projects(include_inactive=include_inactive)
@@ -2303,7 +2318,7 @@ async def register_project(request: RegisterProjectRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/api/registry/projects/{identifier}", response_model=RegisteredProjectResponse)
+@app.get("/api/registry/projects/{identifier}", response_model=RegisteredProjectResponse, dependencies=[Depends(auth.require_scope("read"))])
 async def get_registered_project(identifier: str):
     """Get a registered project by ID, path, or alias."""
     project = registry.get_project(identifier)
@@ -2326,7 +2341,7 @@ async def unregister_project(identifier: str, request: Request):
     )
 
 
-@app.get("/api/registry/projects/{identifier}/health", response_model=HealthResponse)
+@app.get("/api/registry/projects/{identifier}/health", response_model=HealthResponse, dependencies=[Depends(auth.require_scope("read"))])
 async def get_project_health(identifier: str):
     """Check the health of a registered project."""
     health = registry.check_project_health(identifier)
@@ -2344,7 +2359,7 @@ async def update_project_access(identifier: str):
     return project
 
 
-@app.get("/api/registry/discover", response_model=list[DiscoverResponse])
+@app.get("/api/registry/discover", response_model=list[DiscoverResponse], dependencies=[Depends(auth.require_scope("read"))])
 async def discover_projects(max_depth: int = Query(default=3, ge=1, le=10)):
     """Discover projects with .loki directories."""
     max_depth = min(max_depth, 10)
@@ -2374,7 +2389,7 @@ async def sync_registry():
     }
 
 
-@app.get("/api/registry/tasks")
+@app.get("/api/registry/tasks", dependencies=[Depends(auth.require_scope("read"))])
 async def get_cross_project_tasks(project_ids: Optional[str] = None):
     """Get tasks from multiple projects for unified view."""
     ids = project_ids.split(",") if project_ids else None
@@ -2382,7 +2397,7 @@ async def get_cross_project_tasks(project_ids: Optional[str] = None):
     return tasks
 
 
-@app.get("/api/registry/learnings")
+@app.get("/api/registry/learnings", dependencies=[Depends(auth.require_scope("read"))])
 async def get_cross_project_learnings():
     """Get learnings from the global learnings database."""
     learnings = registry.get_cross_project_learnings()
@@ -2551,7 +2566,7 @@ async def set_focus(request: FocusRequest):
     return {"project_dir": _active_project_dir, "loki_dir": str(_get_loki_dir())}
 
 
-@app.get("/api/focus")
+@app.get("/api/focus", dependencies=[Depends(auth.require_scope("read"))])
 async def get_focus():
     """Get the currently focused project directory."""
     return {
@@ -2870,7 +2885,7 @@ async def set_session_model(request: SessionModelRequest):
     return {"model": model, "effective": effective, "clamped": clamped}
 
 
-@app.get("/api/running-projects")
+@app.get("/api/running-projects", dependencies=[Depends(auth.require_scope("read"))])
 async def list_running_projects():
     """List registered projects enriched with live status for the dashboard
     project switcher (v7.7.29 multi-project support).
@@ -2961,10 +2976,13 @@ class StartBuildRequest(BaseModel):
     def validate_provider(self) -> None:
         """Validate provider is from the supported list.
 
-        Mirrors dashboard/control.py StartRequest.validate_provider so the
-        dashboard and the standalone control app accept the same set.
+        Mirrors providers/loader.sh SUPPORTED_PROVIDERS so the dashboard
+        rejects providers the runtime rejects. gemini was deprecated in
+        v7.5.18 (runtime removed); accepting it here let the dashboard
+        report a false "Build started" while run.sh killed the child on the
+        deprecation guard.
         """
-        allowed = ["claude", "codex", "gemini", "cline", "aider"]
+        allowed = ["claude", "codex", "cline", "aider"]
         if self.provider not in allowed:
             raise ValueError(
                 f"Invalid provider: {self.provider}. "
@@ -3137,6 +3155,26 @@ async def start_build(request: Request, body: StartBuildRequest):
         )
     except (OSError, subprocess.SubprocessError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to start build: {e}")
+
+    # Liveness check: a provider that dies on a startup guard (e.g. an
+    # unsupported provider, a missing CLI, or a preflight failure in run.sh)
+    # would otherwise let us report a false "Build started". Poll briefly and
+    # surface an honest error if the child exits immediately.
+    early_exit = None
+    for _ in range(3):
+        await asyncio.sleep(0.1)
+        early_exit = process.poll()
+        if early_exit is not None:
+            break
+    if early_exit is not None and early_exit != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Build process exited immediately (code {early_exit}). "
+                f"The '{body.provider}' provider or run.sh preflight may have "
+                f"rejected the request."
+            ),
+        )
 
     # Persist provider for status tracking (same as control.py).
     try:
@@ -3872,7 +3910,7 @@ _COMPLIANCE_TYPES = ("soc2", "iso27001", "gdpr")
 
 
 @app.get("/api/compliance", dependencies=[Depends(auth.require_scope("audit"))])
-def get_compliance_status(report_type: str = Query("soc2", alias="type")):
+def get_compliance_status(request: Request, report_type: str = Query("soc2", alias="type")):
     """Live compliance status for the active project's agent audit chain.
 
     Auth/tenant scoping: requires the `audit` scope (same gate as the
@@ -3890,7 +3928,7 @@ def get_compliance_status(report_type: str = Query("soc2", alias="type")):
     available:false payload (HTTP 200) rather than masquerading as "no
     compliance".
     """
-    if not _read_limiter.check("compliance"):
+    if not _read_limiter.check(_rate_key("compliance", request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     if report_type not in _COMPLIANCE_TYPES:
         raise HTTPException(
@@ -5339,9 +5377,9 @@ async def get_learning_aggregation():
 
 
 @app.post("/api/learning/aggregate", dependencies=[Depends(auth.require_scope("control"))])
-async def trigger_aggregation():
+async def trigger_aggregation(request: Request):
     """Aggregate learning signals from events.jsonl into structured metrics."""
-    if not _read_limiter.check("learning_aggregate"):
+    if not _read_limiter.check(_rate_key("learning_aggregate", request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     # Reads up to 10 MB of events.jsonl, parses every line, then writes the
@@ -5828,7 +5866,7 @@ def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> 
     return round(input_cost + output_cost, 6)
 
 
-@app.get("/api/cost")
+@app.get("/api/cost", dependencies=[Depends(auth.require_scope("read"))])
 async def get_cost():
     """Get cost visibility data from .loki/metrics/efficiency/ and budget.json.
 
@@ -5955,7 +5993,7 @@ def _compute_cost_snapshot() -> dict:
     }
 
 
-@app.get("/api/budget")
+@app.get("/api/budget", dependencies=[Depends(auth.require_scope("read"))])
 async def get_budget():
     """Get current budget status from .loki/metrics/budget.json and cost data."""
     loki_dir = _get_loki_dir()
@@ -6010,6 +6048,25 @@ async def get_budget():
 
     budget_limit_f = _to_float(budget_limit, None) if budget_limit is not None else None
     budget_used_f = _to_float(budget_used, 0.0)
+
+    # current_cost must reflect real live spend, not the static budget.json
+    # field which only updates when run.sh persists it. The same divergence
+    # made the widget show $0 mid-run while /api/cost summed real spend.
+    # Derive from _compute_budget_snapshot (sums live efficiency records,
+    # the single source of truth shared with /api/cost/timeline and the WS
+    # push); keep budget.json's value only as a fallback when no live spend
+    # has been recorded yet.
+    try:
+        snapshot = _compute_budget_snapshot(loki_dir)
+        live_used = snapshot.get("used")
+        if isinstance(live_used, (int, float)) and live_used > 0:
+            budget_used_f = float(live_used)
+        if budget_limit_f is None and snapshot.get("limit") is not None:
+            budget_limit_f = _to_float(snapshot.get("limit"), None)
+    except Exception:
+        # Never let the live computation break the endpoint; fall back to the
+        # static budget.json value already loaded above.
+        pass
 
     remaining = None
     if budget_limit_f is not None:
@@ -6115,7 +6172,7 @@ def _compute_budget_snapshot(loki_dir: _Path) -> dict:
     }
 
 
-@app.get("/api/cost/timeline")
+@app.get("/api/cost/timeline", dependencies=[Depends(auth.require_scope("read"))])
 async def get_cost_timeline():
     """Cost over time: intra-run per-iteration series + per-run history.
 
@@ -6275,7 +6332,7 @@ def _load_trust_module():
         return None
 
 
-@app.get("/api/trust/trajectory")
+@app.get("/api/trust/trajectory", dependencies=[Depends(auth.require_scope("read"))])
 async def get_trust_trajectory():
     """Per-project trust trajectory derived from proof-of-run history.
 
@@ -6336,7 +6393,7 @@ _MODEL_PROVIDERS = {
 }
 
 
-@app.get("/api/pricing")
+@app.get("/api/pricing", dependencies=[Depends(auth.require_scope("read"))])
 async def get_pricing():
     """Get current model pricing. Reads from .loki/pricing.json if available, falls back to static defaults."""
     loki_dir = _get_loki_dir()
@@ -6383,7 +6440,7 @@ async def get_pricing():
 # Completion Council API (v5.25.0)
 # =============================================================================
 
-@app.get("/api/council/state")
+@app.get("/api/council/state", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_state():
     """Get current Completion Council state."""
     state_file = _get_loki_dir() / "council" / "state.json"
@@ -6395,7 +6452,7 @@ async def get_council_state():
     return {"enabled": False, "total_votes": 0, "verdicts": []}
 
 
-@app.get("/api/council/verdicts")
+@app.get("/api/council/verdicts", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_verdicts(limit: int = Query(default=20, ge=1, le=1000)):
     """Get council vote history (decision log).
 
@@ -6452,7 +6509,7 @@ async def get_council_verdicts(limit: int = Query(default=20, ge=1, le=1000)):
     return await asyncio.to_thread(_collect_verdicts)
 
 
-@app.get("/api/council/convergence")
+@app.get("/api/council/convergence", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_convergence():
     """Get convergence tracking data for visualization."""
     convergence_file = _get_loki_dir() / "council" / "convergence.log"
@@ -6474,7 +6531,7 @@ async def get_council_convergence():
     return {"dataPoints": data_points}
 
 
-@app.get("/api/council/report")
+@app.get("/api/council/report", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_report():
     """Get the final council completion report."""
     report_file = _get_loki_dir() / "council" / "report.md"
@@ -6494,7 +6551,7 @@ async def force_council_review():
     return {"success": True, "message": "Council review requested"}
 
 
-@app.get("/api/council/transcripts")
+@app.get("/api/council/transcripts", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_transcripts(
     limit: int = Query(default=20, ge=1, le=200),
     since: Optional[str] = Query(default=None),
@@ -6571,7 +6628,7 @@ async def get_council_transcripts(
     return response
 
 
-@app.get("/api/council/transcripts/{iteration_id}")
+@app.get("/api/council/transcripts/{iteration_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_transcript(iteration_id: str):
     """Fetch a single council transcript by iteration_id.
 
@@ -6603,7 +6660,7 @@ async def get_council_transcript(iteration_id: str):
 # Context Window Tracking API (v5.40.0)
 # =============================================================================
 
-@app.get("/api/context")
+@app.get("/api/context", dependencies=[Depends(auth.require_scope("read"))])
 async def get_context():
     """Get context window tracking data from .loki/context/tracking.json."""
     loki_dir = _get_loki_dir()
@@ -6639,7 +6696,7 @@ async def get_context():
 # Notification Trigger API (v5.40.0)
 # =============================================================================
 
-@app.get("/api/notifications")
+@app.get("/api/notifications", dependencies=[Depends(auth.require_scope("read"))])
 async def get_notifications(
     severity: Optional[str] = Query(None, pattern="^(critical|warning|info)$"),
     unread_only: bool = Query(False),
@@ -6676,7 +6733,7 @@ async def get_notifications(
     }
 
 
-@app.get("/api/notifications/triggers")
+@app.get("/api/notifications/triggers", dependencies=[Depends(auth.require_scope("read"))])
 async def get_notification_triggers():
     """Get notification trigger configuration from .loki/notifications/triggers.json."""
     loki_dir = _get_loki_dir()
@@ -6786,7 +6843,7 @@ def _sanitize_checkpoint_id(checkpoint_id: str) -> str:
     return checkpoint_id
 
 
-@app.get("/api/checkpoints")
+@app.get("/api/checkpoints", dependencies=[Depends(auth.require_scope("read"))])
 async def list_checkpoints(limit: int = Query(default=20, ge=1, le=200)):
     """List recent checkpoints from index.jsonl, enriched with metadata when available.
 
@@ -6853,7 +6910,7 @@ def _collect_checkpoints(limit: int) -> list:
     return checkpoints[:limit]
 
 
-@app.get("/api/checkpoints/{checkpoint_id}")
+@app.get("/api/checkpoints/{checkpoint_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_checkpoint(checkpoint_id: str):
     """Get checkpoint details by ID."""
     checkpoint_id = _sanitize_checkpoint_id(checkpoint_id)
@@ -7926,7 +7983,7 @@ async def prometheus_metrics():
 # PRD Checklist Endpoints (v5.44.0)
 # =============================================================================
 
-@app.get("/api/checklist")
+@app.get("/api/checklist", dependencies=[Depends(auth.require_scope("read"))])
 async def get_checklist():
     """Get full PRD checklist with verification status."""
     loki_dir = _get_loki_dir()
@@ -7939,7 +7996,7 @@ async def get_checklist():
         return {"status": "error", "categories": [], "summary": {"total": 0, "verified": 0, "failing": 0, "pending": 0}}
 
 
-@app.get("/api/usage")
+@app.get("/api/usage", dependencies=[Depends(auth.require_scope("read"))])
 async def get_usage_doc():
     """v7.7.1 F-1 follow-up: return the auto-generated USAGE.md from the
     project root so Dashboard + Lab can surface "how to run / test the app".
@@ -7979,7 +8036,7 @@ async def get_usage_doc():
     return out
 
 
-@app.get("/api/checklist/summary")
+@app.get("/api/checklist/summary", dependencies=[Depends(auth.require_scope("read"))])
 async def get_checklist_summary():
     """Get checklist verification summary."""
     loki_dir = _get_loki_dir()
@@ -7992,7 +8049,7 @@ async def get_checklist_summary():
         return {"status": "error", "summary": {"total": 0, "verified": 0, "failing": 0, "pending": 0}}
 
 
-@app.get("/api/prd-observations")
+@app.get("/api/prd-observations", dependencies=[Depends(auth.require_scope("read"))])
 async def get_prd_observations():
     """Get PRD quality analysis observations."""
     loki_dir = _get_loki_dir()
@@ -8010,7 +8067,7 @@ async def get_prd_observations():
 # Checklist Waiver Management Endpoints (Phase 4)
 # =============================================================================
 
-@app.get("/api/checklist/waivers")
+@app.get("/api/checklist/waivers", dependencies=[Depends(auth.require_scope("read"))])
 async def get_checklist_waivers():
     """Get all checklist waivers."""
     waivers_file = _get_loki_dir() / "checklist" / "waivers.json"
@@ -8132,7 +8189,7 @@ _DEFAULT_QUALITY_GATES = [
 ]
 
 
-@app.get("/api/council/gate")
+@app.get("/api/council/gate", dependencies=[Depends(auth.require_scope("read"))])
 async def get_council_gate():
     """Get council hard gate status.
 
@@ -8757,7 +8814,7 @@ def _discover_compose_app_runner_state_uncached(project_dir):
         return None
 
 
-@app.get("/api/app-runner/status")
+@app.get("/api/app-runner/status", dependencies=[Depends(auth.require_scope("read"))])
 async def get_app_runner_status():
     """Get app runner current status (with dead-run liveness reconciliation).
 
@@ -8834,7 +8891,7 @@ def _get_log_redactor():
     return redactor
 
 
-@app.get("/api/app-runner/logs")
+@app.get("/api/app-runner/logs", dependencies=[Depends(auth.require_scope("read"))])
 async def get_app_runner_logs(lines: int = Query(default=100, ge=1, le=1000)):
     """Get last N lines of app runner logs (redacted)."""
     loki_dir = _get_loki_dir()
@@ -8853,7 +8910,7 @@ async def get_app_runner_logs(lines: int = Query(default=100, ge=1, le=1000)):
         return {"lines": []}
 
 
-@app.get("/api/app-runner/errors")
+@app.get("/api/app-runner/errors", dependencies=[Depends(auth.require_scope("read"))])
 async def get_app_runner_errors(lines: int = Query(default=50, ge=1, le=500)):
     """Get the last N lines of app runner output, redacted, plus crash state.
 
@@ -8928,7 +8985,7 @@ async def control_app_stop(request: Request):
 # Playwright Verification Endpoints (v5.46.0)
 # =============================================================================
 
-@app.get("/api/playwright/results")
+@app.get("/api/playwright/results", dependencies=[Depends(auth.require_scope("read"))])
 async def get_playwright_results():
     """Get latest Playwright smoke test results."""
     loki_dir = _get_loki_dir()
@@ -8941,7 +8998,7 @@ async def get_playwright_results():
         return {"status": "error"}
 
 
-@app.get("/api/playwright/screenshot")
+@app.get("/api/playwright/screenshot", dependencies=[Depends(auth.require_scope("read"))])
 async def get_playwright_screenshot():
     """Get path to latest Playwright screenshot."""
     loki_dir = _get_loki_dir()
@@ -8981,12 +9038,12 @@ def _get_prompt_optimizer():
     return _prompt_optimizer
 
 
-@app.get("/api/failures")
-def get_failures(sessions: int = 10):
+@app.get("/api/failures", dependencies=[Depends(auth.require_scope("read"))])
+def get_failures(request: Request, sessions: int = 10):
     """Get failure patterns from recent sessions."""
     if sessions < 1 or sessions > 1000:
         raise HTTPException(status_code=400, detail="sessions must be between 1 and 1000")
-    if not _read_limiter.check("failures"):
+    if not _read_limiter.check(_rate_key("failures", request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
         return _get_failure_extractor().extract(sessions=sessions)
@@ -8995,7 +9052,7 @@ def get_failures(sessions: int = 10):
         raise HTTPException(status_code=500, detail="Failed to extract failure patterns")
 
 
-@app.get("/api/prompt-versions")
+@app.get("/api/prompt-versions", dependencies=[Depends(auth.require_scope("read"))])
 def get_prompt_versions():
     """Get current prompt optimization status."""
     if not _read_limiter.check("prompt_versions"):
@@ -9070,10 +9127,10 @@ if STATIC_DIR:
 # Activity Logger & Session Diff
 # ---------------------------------------------------------------------------
 
-@app.get("/api/activity")
-def get_activity(since: Optional[str] = None, limit: int = Query(default=100, ge=1, le=1000)):
+@app.get("/api/activity", dependencies=[Depends(auth.require_scope("read"))])
+def get_activity(request: Request, since: Optional[str] = None, limit: int = Query(default=100, ge=1, le=1000)):
     """Get activity log entries, optionally filtered by timestamp."""
-    if not _read_limiter.check("activity"):
+    if not _read_limiter.check(_rate_key("activity", request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
         activity_logger = get_activity_logger()
@@ -9088,7 +9145,7 @@ def get_activity(since: Optional[str] = None, limit: int = Query(default=100, ge
         raise HTTPException(status_code=500, detail="Failed to read activity log")
 
 
-@app.get("/api/session-diff")
+@app.get("/api/session-diff", dependencies=[Depends(auth.require_scope("read"))])
 def get_session_diff(since: Optional[str] = None):
     """Get structured session diff since timestamp. Defaults to last 24h."""
     if not _read_limiter.check("session-diff"):
@@ -9139,7 +9196,7 @@ async def serve_favicon():
 # Serve the self-contained cost + observability panel (R3). Zero-build
 # standalone page that fetches /api/cost/timeline. Mirrors the proofs.html
 # pattern: works without the SPA build.
-@app.get("/cost", include_in_schema=False)
+@app.get("/cost", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
 async def serve_cost_panel():
     """Serve the standalone cost + observability HTML panel."""
     if STATIC_DIR:
@@ -9151,7 +9208,7 @@ async def serve_cost_panel():
 
 # R4: standalone trust-trajectory page that fetches /api/trust/trajectory.
 # Mirrors the cost.html / /cost pattern: works without the SPA build.
-@app.get("/trust", include_in_schema=False)
+@app.get("/trust", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
 async def serve_trust_panel():
     """Serve the standalone trust-trajectory HTML panel."""
     if STATIC_DIR:
@@ -9162,7 +9219,7 @@ async def serve_trust_panel():
 
 
 # Serve index.html or standalone HTML for root
-@app.get("/", include_in_schema=False)
+@app.get("/", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
 async def serve_index():
     """Serve the frontend SPA or standalone HTML."""
     # Try multiple index file locations
@@ -9211,10 +9268,10 @@ def _get_rigour() -> "RigourIntegration":
     return _rigour
 
 
-@app.get("/api/quality-score")
-def get_quality_score():
+@app.get("/api/quality-score", dependencies=[Depends(auth.require_scope("read"))])
+def get_quality_score(request: Request):
     """Get current quality score from the most recent Rigour scan."""
-    if not _read_limiter.check("quality-score"):
+    if not _read_limiter.check(_rate_key("quality-score", request)):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
         rigour = _get_rigour()
@@ -9224,7 +9281,7 @@ def get_quality_score():
         raise HTTPException(status_code=500, detail="Failed to read quality score")
 
 
-@app.get("/api/quality-score/history")
+@app.get("/api/quality-score/history", dependencies=[Depends(auth.require_scope("read"))])
 def get_quality_score_history(limit: int = Query(50, ge=1, le=500)):
     """Get quality score trend over time."""
     if not _read_limiter.check("quality-history"):
@@ -9257,7 +9314,7 @@ async def run_quality_scan(preset: str = Query("default")):
     return result
 
 
-@app.get("/api/quality-report")
+@app.get("/api/quality-report", dependencies=[Depends(auth.require_scope("read"))])
 def get_quality_report(fmt: str = Query("json", alias="format", pattern="^(json|markdown|html)$")):
     """Get an exportable quality audit report."""
     if not _read_limiter.check("quality-report"):
@@ -9617,7 +9674,7 @@ def _last_fallback_ts(events: list[dict[str, Any]]) -> Optional[str]:
     return None
 
 
-@app.get("/api/managed/events")
+@app.get("/api/managed/events", dependencies=[Depends(auth.require_scope("read"))])
 async def get_managed_events(
     limit: int = Query(default=100, ge=1, le=_MANAGED_EVENTS_TAIL_MAX),
     since: Optional[str] = Query(default=None),
@@ -9646,7 +9703,7 @@ async def get_managed_events(
         return {"events": [], "count": 0, "error": str(exc)}
 
 
-@app.get("/api/managed/status")
+@app.get("/api/managed/status", dependencies=[Depends(auth.require_scope("read"))])
 async def get_managed_status():
     """
     Return the managed-agents flag snapshot plus last_fallback_ts.
@@ -9672,7 +9729,7 @@ async def get_managed_status():
     return snapshot
 
 
-@app.get("/api/managed/memory_versions/{memory_id}")
+@app.get("/api/managed/memory_versions/{memory_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def list_managed_memory_versions(memory_id: str):
     """
     Proxy to beta.memory_stores.memory_versions.list(memory_id=...).
@@ -9771,7 +9828,7 @@ async def list_managed_memory_versions(memory_id: str):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/findings/{iteration}")
+@app.get("/api/findings/{iteration}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_findings(iteration: int):
     """Read structured code-review findings for a given iteration."""
     base = _get_loki_dir()
@@ -9800,7 +9857,7 @@ async def get_findings(iteration: int):
                         detail=f"No findings for iteration {iteration}")
 
 
-@app.get("/api/quality/architecture")
+@app.get("/api/quality/architecture", dependencies=[Depends(auth.require_scope("read"))])
 async def get_quality_architecture():
     """Return the sentrux architectural-drift series.
 
@@ -9862,7 +9919,7 @@ async def get_quality_architecture():
     return {"series": series, "current": current, "samples": len(series)}
 
 
-@app.get("/api/learnings")
+@app.get("/api/learnings", dependencies=[Depends(auth.require_scope("read"))])
 async def get_learnings(limit: int = 50):
     """Read recent learnings (newest first)."""
     base = _get_loki_dir()
@@ -9881,7 +9938,7 @@ async def get_learnings(limit: int = 50):
             "learnings": sliced}
 
 
-@app.get("/api/escalations")
+@app.get("/api/escalations", dependencies=[Depends(auth.require_scope("read"))])
 async def list_escalations():
     """List handoff documents under .loki/escalations/."""
     base = _get_loki_dir()
@@ -9913,7 +9970,7 @@ async def list_escalations():
     return {"escalations": items}
 
 
-@app.get("/api/escalations/{filename}")
+@app.get("/api/escalations/{filename}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_escalation(filename: str):
     """Read one handoff document. Path-traversal-safe."""
     if "\\" in filename or filename.startswith("."):
@@ -9975,7 +10032,7 @@ def _safe_proof_run_dir(run_id: str) -> _Path:
     return _Path(target)
 
 
-@app.get("/api/proofs")
+@app.get("/api/proofs", dependencies=[Depends(auth.require_scope("read"))])
 async def list_proofs():
     """List proof-of-run artifacts for the active project's .loki/proofs/."""
     proofs_dir = _proofs_dir()
@@ -10007,7 +10064,7 @@ async def list_proofs():
     return {"proofs": items}
 
 
-@app.get("/api/proofs/{run_id}")
+@app.get("/api/proofs/{run_id}", dependencies=[Depends(auth.require_scope("read"))])
 async def get_proof(run_id: str):
     """Return the redacted proof.json for one run."""
     run_dir = _safe_proof_run_dir(run_id)
@@ -10020,7 +10077,7 @@ async def get_proof(run_id: str):
     return JSONResponse(content=data)
 
 
-@app.get("/api/proofs/{run_id}/html")
+@app.get("/api/proofs/{run_id}/html", dependencies=[Depends(auth.require_scope("read"))])
 async def get_proof_html(run_id: str):
     """Serve the self-contained shareable proof page for one run."""
     run_dir = _safe_proof_run_dir(run_id)
@@ -10159,7 +10216,7 @@ async def post_wiki_ask(req: WikiAskRequest):
 # or static asset mounts.  This lets the dashboard UI handle client-side routing.
 # Must be registered LAST so it never shadows an API endpoint.
 # ---------------------------------------------------------------------------
-@app.get("/{full_path:path}", include_in_schema=False)
+@app.get("/{full_path:path}", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
 async def serve_spa_catchall(full_path: str):
     """Serve static files or fall back to index.html for SPA routing.
 

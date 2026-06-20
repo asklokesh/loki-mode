@@ -1,0 +1,26 @@
+{{- if .Values.observability.serviceMonitor.enabled }}
+# Prometheus ServiceMonitor for the control-plane /metrics endpoint
+# (dashboard/server.py exposes GET /metrics). Gated on
+# observability.serviceMonitor.enabled. Requires the prometheus-operator CRDs
+# (monitoring.coreos.com/v1); without them this manifest will not apply.
+# Selects the control-plane Service by its selector labels and scrapes its named
+# "http" port (the same port the dashboard binds, config.dashboardPort).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "autonomi.fullname" . }}-controlplane
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controlplane
+    {{- with .Values.observability.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "autonomi.controlplane.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval }}
+{{- end }}

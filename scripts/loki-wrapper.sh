@@ -217,10 +217,14 @@ main() {
 
         # Run provider CLI with the prompt
         # Using provider-specific prompt flag for non-interactive mode
-        set +e
+        # NOTE: this script runs under `set -uo pipefail` (no errexit). A nonzero
+        # provider exit is EXPECTED (rate limits, crashes) and is handled below,
+        # so we must NOT enable `set -e` here. A prior `set -e` turned errexit on
+        # for the rest of the loop, and the very next `((retry++))` (post-increment
+        # returns the OLD value, which is 0 = falsey on the first retry) aborted
+        # the whole wrapper -- killing the auto-resume on the first rate limit.
         "$PROVIDER_CLI" $PROVIDER_AUTONOMOUS_FLAG $PROVIDER_PROMPT_FLAG "$prompt" 2>&1 | tee -a "$LOG_FILE"
         local exit_code=${PIPESTATUS[0]}
-        set -e
 
         local end_time=$(date +%s)
         local duration=$((end_time - start_time))

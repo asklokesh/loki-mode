@@ -291,6 +291,59 @@ loki_escape_regex() {
     printf '%s' "$input" | sed 's/[.[\*?+^${}|()\\]/\\&/g'
 }
 
+# YAML scalar extractor for the no-yq fallback. Resolves a FULL nested dotted
+# path (e.g. completion.council.enabled) by descending indentation, so keys
+# that share a last segment (dashboard.enabled vs notifications.enabled) never
+# collide. Prints the scalar value (one line) or nothing if the path is absent.
+# Pure awk so it is portable across GNU and BSD (POSIX classes, no \s, no sed
+# quirks). Mirrors what `yq eval ".$path // \"\""` would return for scalars.
+loki_yaml_fallback_extract() {
+    local file="$1" dotted_path="$2"
+    [ -f "$file" ] || return 0
+    awk -v path="$dotted_path" '
+        BEGIN { n = split(path, want, "."); depth = 0 }
+        {
+            line = $0
+            if (line ~ /^[[:space:]]*#/) next
+            if (line ~ /^[[:space:]]*$/) next
+            ind = 0
+            while (substr(line, ind + 1, 1) == " ") ind++
+            rest = substr(line, ind + 1)
+            if (rest !~ /^[^:]+:/) next
+            ci = index(rest, ":")
+            key = substr(rest, 1, ci - 1)
+            val = substr(rest, ci + 1)
+            # Pop stack entries that are siblings or shallower than this line.
+            while (depth > 0 && stack_ind[depth] >= ind) depth--
+            depth++
+            stack_ind[depth] = ind
+            stack_key[depth] = key
+            if (depth == n) {
+                ok = 1
+                for (i = 1; i <= n; i++) if (stack_key[i] != want[i]) { ok = 0; break }
+                if (ok) {
+                    sub(/^[[:space:]]+/, "", val)
+                    q = substr(val, 1, 1)
+                    if (q == "\"" || q == "\047") {
+                        # Quoted scalar: take chars up to the matching close quote
+                        # so a "#" or trailing comment inside/after stays correct.
+                        rest2 = substr(val, 2)
+                        qi = index(rest2, q)
+                        if (qi > 0) val = substr(rest2, 1, qi - 1)
+                        else val = rest2
+                    } else {
+                        # Unquoted: drop a trailing comment, then trailing space.
+                        sub(/[[:space:]]*#.*$/, "", val)
+                        sub(/[[:space:]]+$/, "", val)
+                    }
+                    print val
+                    exit
+                }
+            }
+        }
+    ' "$file"
+}
+
 #===============================================================================
 # 5a. ${VAR} env-ref expansion (NEVER eval)
 #===============================================================================
@@ -528,16 +581,11 @@ loki_parse_yaml_file() {
         if [ "$have_yq" = "1" ]; then
             value="$(yq eval ".$yaml_path // \"\"" "$file" 2>/dev/null || true)"
         else
-            # grep/sed fallback: match the LAST path segment as a key.
-            # `|| true` keeps the no-match case (grep rc=1 under pipefail) from
-            # tripping set -e in the loki CLI (which runs set -euo pipefail).
-            local key escaped_key
-            key="${yaml_path##*.}"
-            escaped_key="$(loki_escape_regex "$key")"
-            value="$( { grep -E "^\s*${escaped_key}:" "$file" 2>/dev/null | head -1 \
-                | sed -E 's/.*:\s*//' | sed 's/#.*//' \
-                | sed 's/^["'\'']//;s/["'\'']$//' | tr -d '\n' \
-                | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; } || true)"
+            # No-yq fallback: resolve the FULL nested dotted path by indentation
+            # so same-last-segment keys (dashboard.enabled vs notifications.enabled)
+            # never collide. `|| true` keeps a no-match from tripping set -e in the
+            # loki CLI (which runs set -euo pipefail).
+            value="$(loki_yaml_fallback_extract "$file" "$yaml_path" || true)"
         fi
         if [ "$value" = "null" ]; then value=""; fi
         if [ -z "$value" ]; then continue; fi
@@ -831,17 +879,15 @@ loki_config_validate_file() {
                     done < "$f"
                     ;;
                 yaml)
-                    local mapping yaml_path env_var value key escaped_key have_yq=0
+                    local mapping yaml_path env_var value have_yq=0
                     if command -v yq >/dev/null 2>&1; then have_yq=1; fi
                     for mapping in "${LOKI_CONFIG_MAP[@]}"; do
                         yaml_path="${mapping%%:*}"; env_var="${mapping##*:}"
                         if [ "$have_yq" = 1 ]; then
                             value="$(yq eval ".$yaml_path // \"\"" "$f" 2>/dev/null || true)"
                         else
-                            key="${yaml_path##*.}"; escaped_key="$(loki_escape_regex "$key")"
-                            value="$( { grep -E "^\s*${escaped_key}:" "$f" 2>/dev/null | head -1 \
-                                | sed -E 's/.*:\s*//' | sed 's/#.*//' | sed 's/^["'\'']//;s/["'\'']$//' \
-                                | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; } || true)"
+                            # Full nested-path resolution (no same-last-segment collision).
+                            value="$(loki_yaml_fallback_extract "$f" "$yaml_path" || true)"
                         fi
                         if [ "$value" = "null" ]; then value=""; fi
                         if [ -z "$value" ]; then continue; fi

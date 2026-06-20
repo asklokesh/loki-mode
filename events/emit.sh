@@ -118,8 +118,22 @@ else
 fi
 
 # JSON escape helper: handles \, ", and control characters including newlines
+#
+# The sed pass escapes the named short forms (\\ \" \t \r \b \f); the first awk
+# pass collapses embedded newlines to \n. Any OTHER C0 control byte
+# (0x01-0x07, 0x0B, 0x0E-0x1F) is invalid raw inside a JSON string and is
+# escaped as \uXXXX by the final awk pass -- otherwise json.loads / JSON.parse
+# reject the line and consumers (dashboard _read_events, learning aggregator)
+# silently drop it. The named short forms are already two-char ASCII by the
+# time the final pass runs, so they are never re-escaped.
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s//\\b/g; s//\\f/g' | awk '{if(NR>1) printf "\\n"; printf "%s", $0}'
+    printf '%s' "$1" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s//\\b/g; s//\\f/g' \
+        | awk '{if(NR>1) printf "\\n"; printf "%s", $0}' \
+        | awk 'BEGIN{for(i=1;i<=31;i++)m[sprintf("%c",i)]=sprintf("\\u%04x",i)}
+               {s=""; n=length($0);
+                for(i=1;i<=n;i++){c=substr($0,i,1); s=s (c in m ? m[c] : c)}
+                printf "%s", s}'
 }
 
 # Build payload JSON

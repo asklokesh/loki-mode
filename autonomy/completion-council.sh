@@ -927,7 +927,7 @@ if not voters:
             # v7.41.3: word-bounded + markdown-tolerant. VOTE:APPROVED and
             # VOTE:APPROVE_WITH_CONCERNS must NOT match APPROVE; bold/quoted
             # VOTE: APPROVE must match. Unmatched -> default REJECT (conservative).
-            vote_match = re.search(r'[*_> ]*VOTE[*_ ]*:[*_> ]*(APPROVE|REJECT|CANNOT_VALIDATE)(?![A-Za-z0-9_])', content)
+            vote_match = re.search(r'(?:^|[^A-Za-z0-9_])[*_> ]*VOTE[*_ ]*:[*_> ]*(APPROVE|REJECT|CANNOT_VALIDATE)(?![A-Za-z0-9_])', content)
             reason_match = re.search(r'REASON\s*:\s*(.+?)(?:\n|\$)', content)
             issues = []
             for im in re.finditer(r'ISSUES\s*:\s*(CRITICAL|HIGH|MEDIUM|LOW)\s*:\s*(.+?)(?:\n|\$)', content):
@@ -2537,8 +2537,17 @@ council_aggregate_votes() {
     local complete_count=0
     local continue_count=0
     local total_members=$COUNCIL_SIZE
-    local votes_json="["
-    local first=true
+
+    # Per-member fields, collected as newline-delimited records and serialized to
+    # JSON inside a python heredoc below. Building the JSON in bash with a sed
+    # quote-escape (the old approach) produced INVALID JSON whenever a reason
+    # contained a backslash or control character: the round-file write then
+    # failed and the caller silently forced CONTINUE. json.dumps escapes
+    # everything correctly, so the round file always parses.
+    local _members=""
+    local _roles=""
+    local _vote_values=""
+    local _reasons=""
 
     local _council_roles=("requirements_verifier" "test_auditor" "devils_advocate")
     local member=1
@@ -2561,20 +2570,38 @@ council_aggregate_votes() {
 
         log_info "  Evaluate member $member ($role): $vote_value - $vote_reason"
 
-        # Build JSON array entry
-        if [ "$first" = "true" ]; then
-            first=false
-        else
-            votes_json="${votes_json},"
-        fi
-        # Escape double quotes in reason for JSON safety
-        local safe_reason
-        safe_reason=$(echo "$vote_reason" | sed 's/"/\\"/g')
-        votes_json="${votes_json}{\"member\":$member,\"role\":\"$role\",\"vote\":\"$vote_value\",\"reason\":\"$safe_reason\"}"
+        # Accumulate one field per line (reason kept single-line by upstream parse,
+        # but newlines are normalized to spaces here to keep the line mapping 1:1).
+        _members="${_members}${member}"$'\n'
+        _roles="${_roles}${role}"$'\n'
+        _vote_values="${_vote_values}${vote_value}"$'\n'
+        _reasons="${_reasons}$(printf '%s' "$vote_reason" | tr '\n' ' ')"$'\n'
 
         ((member++))
     done
-    votes_json="${votes_json}]"
+
+    # Serialize the votes array with json.dumps so backslashes/control chars are
+    # escaped correctly (BUG fix: sed-only escaping produced invalid JSON).
+    local votes_json
+    votes_json=$(_MEMBERS="$_members" _ROLES="$_roles" _VOTEVALS="$_vote_values" _REASONS="$_reasons" python3 -c "
+import json, os
+def lines(name):
+    v = os.environ.get(name, '')
+    return v.split('\n')[:-1] if v.endswith('\n') else (v.split('\n') if v else [])
+members = lines('_MEMBERS')
+roles = lines('_ROLES')
+votevals = lines('_VOTEVALS')
+reasons = lines('_REASONS')
+out = []
+for i in range(len(members)):
+    out.append({
+        'member': int(members[i]) if members[i].isdigit() else members[i],
+        'role': roles[i] if i < len(roles) else '',
+        'vote': votevals[i] if i < len(votevals) else '',
+        'reason': reasons[i] if i < len(reasons) else '',
+    })
+print(json.dumps(out))
+" 2>/dev/null || echo "[]")
 
     # Calculate threshold: 2/3 majority
     local threshold=$(( (total_members * 2 + 2) / 3 ))  # ceiling of 2/3
@@ -2638,21 +2665,49 @@ council_devils_advocate_review() {
     local issue_details=""
 
     # Skeptical check 1: Are tests actually running and passing?
-    local has_test_results=false
+    # Read the SAME structured signal the council already uses
+    # (.loki/quality/test-results.json, written by run.sh:ensure_completion_test
+    # _evidence; parsed the same way as council_evaluate_member ~2414-2438 and the
+    # evidence gate). Parse verdict: runner=="none" => PASS (no real suite to
+    # contradict completion), pass is False => FAIL, else PASS. The legacy log
+    # glob is kept ONLY as an ADDITIONAL red signal -- its absence is NOT an issue
+    # (nothing writes .loki/logs/test-*.log, so an empty glob is the normal case
+    # and must never veto a unanimous COMPLETE on its own).
+    local tr_file="$loki_dir/quality/test-results.json"
+    if [ -f "$tr_file" ]; then
+        local _tr_status
+        _tr_status=$(_TR_FILE="$tr_file" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_TR_FILE']) as f:
+        d = json.load(f)
+except (json.JSONDecodeError, IOError, KeyError, ValueError):
+    print('absent')
+    sys.exit(0)
+runner = d.get('runner', 'none')
+passed = d.get('pass', True)
+if runner == 'none':
+    print('pass')
+elif passed is False:
+    print('fail')
+else:
+    print('pass')
+" 2>/dev/null || echo "absent")
+        if [ "$_tr_status" = "fail" ]; then
+            ((issues_found++))
+            issue_details="${issue_details}structured test results red (pass==false); "
+        fi
+    fi
+    # Additional source: any legacy test log that shows no pass indicator is a red
+    # signal. Missing logs are NOT counted (this path is not written by the runner).
+    local f
     for f in "$loki_dir"/logs/test-*.log "$loki_dir"/logs/*test*.log; do
-        if [ -f "$f" ]; then
-            has_test_results=true
-            # Look for test runner output indicating pass
-            if ! tail -30 "$f" 2>/dev/null | grep -qiE "(passed|success|ok|all tests)"; then
-                ((issues_found++))
-                issue_details="${issue_details}test log $(basename "$f") has no clear pass indicator; "
-            fi
+        [ -f "$f" ] || continue
+        if ! tail -30 "$f" 2>/dev/null | grep -qiE "(passed|success|ok|all tests)"; then
+            ((issues_found++))
+            issue_details="${issue_details}test log $(basename "$f") has no clear pass indicator; "
         fi
     done
-    if [ "$has_test_results" = "false" ]; then
-        ((issues_found++))
-        issue_details="${issue_details}no test result logs found at all; "
-    fi
 
     # Skeptical check 2: Are there still failing tasks in the queue?
     if [ -f "$loki_dir/queue/failed.json" ]; then
@@ -2681,9 +2736,15 @@ council_devils_advocate_review() {
     fi
 
     # Skeptical check 5: Recent error events
+    # events.jsonl uses the flat schema {"timestamp","type","data"} (events/emit.sh
+    # :196; run.sh emit_event). There is no "level" field, so the old
+    # "\"level\":\"error\"" grep never matched (dead check). Match the real shape:
+    # a "type" whose name ends in error/fail/crash (e.g. provider_failover,
+    # dashboard_crash), plus error/failed markers inside the data payload.
     if [ -f "$loki_dir/events.jsonl" ]; then
         local recent_errors
-        recent_errors=$(tail -50 "$loki_dir/events.jsonl" 2>/dev/null | grep -ciE "\"level\":\s*\"error\"" 2>/dev/null || echo "0")
+        recent_errors=$(tail -50 "$loki_dir/events.jsonl" 2>/dev/null | grep -ciE '"type"[[:space:]]*:[[:space:]]*"[a-z_]*(error|fail|crash)' 2>/dev/null | tr -d ' \n' || echo "0")
+        [ -n "$recent_errors" ] || recent_errors=0
         if [ "$recent_errors" -gt 0 ]; then
             ((issues_found++))
             issue_details="${issue_details}$recent_errors recent error events; "

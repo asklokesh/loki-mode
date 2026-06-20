@@ -241,6 +241,54 @@ class TestCrossProjectIndex(unittest.TestCase):
         self.assertEqual(len(dirs), 2)
         self.assertTrue(all(isinstance(d, Path) for d in dirs))
 
+    def test_build_index_counts_episodes_in_date_subdirs(self):
+        # Regression: episodes live under episodic/{date}/task-*.json, so a
+        # non-recursive episodic/*.json glob reported 0 for every real store.
+        proj_mem = os.path.join(self.search_dir, 'proj-a', '.loki', 'memory')
+        date_dir = os.path.join(proj_mem, 'episodic', '2026-06-19')
+        os.makedirs(date_dir)
+        with open(os.path.join(date_dir, 'task-1.json'), 'w') as f:
+            f.write('{}')
+        with open(os.path.join(date_dir, 'task-2.json'), 'w') as f:
+            f.write('{}')
+        # index.json sidecars must NOT be counted as episodes.
+        with open(os.path.join(date_dir, 'index.json'), 'w') as f:
+            f.write('{}')
+
+        index = self.index.build_index()
+        proj_a = next(p for p in index['projects'] if p['name'] == 'proj-a')
+        self.assertEqual(proj_a['episodic_count'], 2)
+        self.assertEqual(index['total_episodes'], 2)
+
+    def test_build_index_counts_patterns_in_patterns_json(self):
+        # Regression: patterns live as a list inside semantic/patterns.json, so
+        # a semantic/*.json file glob counted 1 (the container) regardless of
+        # how many patterns it held.
+        proj_mem = os.path.join(self.search_dir, 'proj-b', '.loki', 'memory')
+        semantic_dir = os.path.join(proj_mem, 'semantic')
+        # proj-b already has the legacy p1.json from setUp; remove it so this
+        # test isolates the patterns.json list count.
+        legacy = os.path.join(semantic_dir, 'p1.json')
+        if os.path.exists(legacy):
+            os.remove(legacy)
+        with open(os.path.join(semantic_dir, 'patterns.json'), 'w') as f:
+            json.dump({'patterns': [{'id': 'a'}, {'id': 'b'}, {'id': 'c'}]}, f)
+
+        index = self.index.build_index()
+        proj_b = next(p for p in index['projects'] if p['name'] == 'proj-b')
+        self.assertEqual(proj_b['semantic_count'], 3)
+
+    def test_save_index_is_atomic_round_trip(self):
+        # save_index now writes via a temp file + os.replace; verify the saved
+        # file round-trips and stays valid JSON (no torn write).
+        self.index.build_index()
+        self.index.save_index()
+        loaded = self.index.load_index()
+        self.assertIsNotNone(loaded)
+        # Re-reading the raw file must parse as JSON.
+        with open(os.path.join(self.tmpdir, 'index.json')) as f:
+            json.load(f)
+
 
 class TestRAGInjector(unittest.TestCase):
     def setUp(self):

@@ -120,6 +120,37 @@ multiple templates is harmless (the first failing one stops the render).
 {{- end }}
 
 {{/*
+Control-plane preflight. Fails the render on a control-plane topology that would
+silently break instead of erroring, so the misconfiguration surfaces at
+`helm template`/`helm install` time rather than as stuck-Pending pods or a
+silently-corrupt audit log. Included once by the control-plane Deployment.
+
+  H1: controlplane.replicas > 1 with the chart-created audit PVC at its default
+      ReadWriteOnce access mode. The audit volume is a single RWO claim; a RWO
+      volume attaches to exactly one node, so the 2nd/3rd replica (spread by the
+      HA pod-anti-affinity) is stuck Pending with a Multi-Attach error and the
+      documented HA path never comes up.
+
+      Sharing the volume RWM is NOT a safe fix: the tamper-evident hash chain in
+      dashboard/audit.py keeps the chain head in a per-PROCESS module global
+      (_last_hash). Each replica advances its own private head and appends to the
+      shared file, so the interleaved on-disk entries do not verify -- a silently
+      corrupt audit log. The hash-chain audit is single-writer by construction.
+
+      Resolve by one of: run a single audit writer (controlplane.replicas=1);
+      supply your own ReadWriteMany claim via persistence.auditLogs.existingClaim
+      ONLY if you also give each replica an independent chain (the chart does not
+      do this for you); or disable the shared audit volume
+      (persistence.auditLogs.enabled=false) and collect per-replica audit logs
+      out of band.
+*/}}
+{{- define "autonomi.controlplane.preflight" -}}
+{{- if and (gt (int .Values.controlplane.replicas) 1) .Values.persistence.auditLogs.enabled (not .Values.persistence.auditLogs.existingClaim) (eq .Values.persistence.auditLogs.accessMode "ReadWriteOnce") }}
+{{- fail (printf "controlplane.replicas=%d with the chart-created ReadWriteOnce audit volume cannot run HA: a RWO volume attaches to one node, so extra replicas hang Pending (Multi-Attach), and the hash-chain audit log is single-writer (sharing it RWM corrupts the chain). Set controlplane.replicas=1, or supply persistence.auditLogs.existingClaim with an independent per-replica chain, or set persistence.auditLogs.enabled=false." (int .Values.controlplane.replicas)) }}
+{{- end }}
+{{- end }}
+
+{{/*
 Optional init-container that clones a git repo and seeds the spec into
 /workspace before the worker runs. Renders nothing unless
 workspace.initClone.enabled is true. Shared by the worker Job and the serverless

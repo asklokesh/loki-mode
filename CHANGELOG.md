@@ -9,6 +9,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.82.0] - 2026-06-20
+
+### Hardening sweep: 36 verified bug fixes, real-cluster-proven deployment, UX polish
+
+A large correctness + trust release. Every bug below was found by an adversarial
+hunt and independently confirmed by a second reviewer before any fix (about half
+the raw findings were refuted and dropped, so what shipped is real). Two of the
+deployment fixes were caught only by running the published image on a real
+Kubernetes cluster. Council 3/3 after a round that caught (and this release
+corrects) an auth-hardening over-reach.
+
+Trust and security
+- Override council (Bun route): the stub judge now fails CLOSED. Self-authored
+  counter-evidence can no longer lift a Critical/High code-review BLOCK; only a
+  real adjudicator the agent does not control may. This matches the bash route
+  and closes a cross-route trust inconsistency.
+- Completion council: the devil's-advocate check no longer always vetoes a
+  unanimous COMPLETE (it read test logs from a path nothing writes). It now reads
+  the structured test-results record; a real failing build is still vetoed.
+- Dashboard auth: data-bearing GET endpoints (cost, council transcripts,
+  escalations, app-runner logs, findings, learnings, ...) now require the read
+  scope under enterprise auth, closing an unauthenticated-read bypass. Probes,
+  A2A discovery, the auth-bootstrap endpoint, and /metrics stay public (so k8s
+  health checks and Prometheus scraping keep working).
+- Audit log: the tamper-evident hash chain is now lock-protected against
+  concurrent writes (it silently corrupted under concurrency before).
+
+Deployment (found by running the real image on Kubernetes)
+- The Docker image was missing redis-cli, boto3, and the lokistore package, so
+  the reference queue-consumer's redis backend and the S3 object-store sync both
+  failed at runtime despite the features being shipped. All three are now in the
+  image (proven end-to-end against a real Redis and a real MinIO bucket).
+- S3 object-store backend gained custom-endpoint support (LOKI_STORAGE_ENDPOINT /
+  storage.endpoint), so MinIO/Ceph/R2 and other S3-compatible stores work, not
+  just AWS.
+- Helm HA: the chart no longer renders a multi-replica control plane onto one
+  ReadWriteOnce audit volume (which hung pods with Multi-Attach and corrupted the
+  single-writer audit chain). A render-time preflight fails loudly with guidance;
+  values-ha/production default to a single audit writer. A ServiceMonitor
+  template now actually ships for the documented observability.serviceMonitor knob.
+
+Correctness (selected from the 36)
+- loki why: added the missing "exited" status, aligned the completion-record
+  vocabulary, and stopped surfacing a previous run's branch/PR as the current
+  crashed run's.
+- loki plan --json emits clean JSON (not ANSI) on error paths; --budget 0 is
+  rejected (it used to pause before any work while status said "no limit");
+  loki memory retrieve shows real source/score; preview/docker/deploy flag
+  parsing no longer swallows the next flag as a value.
+- The auto-resume wrapper no longer aborts on the first rate-limit retry; rate
+  limit detection no longer false-positives on the agent's own generated output;
+  config-file YAML fallback no longer collides same-named keys; event JSON
+  escapes control characters; MCP mem_search collection filter returns results;
+  memory retrieval no longer double-returns anti-patterns.
+
+Experience
+- Zero-config loki start: auto-discovers an on-disk spec, shows an interrupted-
+  build resume hint, and prints a one-line pre-flight summary (all additive,
+  opt-out, default behavior unchanged).
+- Dashboard first-run launchpad and a shareable build summary.
+
+Removed
+- The experimental hierarchical (PageIndex-pattern) tree retrieval. A real-LLM
+  benchmark measured it no better than keyword on the current corpus, so it is
+  removed rather than shipped as dead weight. Default retrieval is unchanged.
+
+About 14 new regression tests cover the above; full suite green (1422 pytest +
+67 shell suites), helm lint clean across all worker modes.
+
 ## [7.81.1] - 2026-06-19
 
 ### Fix: CI Shell-tests green (V2 python test runner-contract)

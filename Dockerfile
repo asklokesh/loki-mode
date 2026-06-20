@@ -6,12 +6,12 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.81.1"
+LABEL version="7.82.0"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="7.81.1"
+LABEL org.opencontainers.image.version="7.82.0"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20 LTS from NodeSource with GPG verification
@@ -106,6 +107,12 @@ COPY --chown=loki:loki docs/ ./docs/
 COPY --chown=loki:loki providers/ ./providers/
 COPY --chown=loki:loki agents/ ./agents/
 COPY --chown=loki:loki memory/ ./memory/
+# lokistore/ is the pluggable storage adapter imported at runtime by
+# autonomy/lib/checkpoint_sync.py (the opt-in object-store sync). Without this
+# COPY the s3/gcs/azure backends fail with "No module named 'lokistore'" even
+# when boto3 is present. (It ships in npm via package.json files[]; the image
+# needs its own COPY.)
+COPY --chown=loki:loki lokistore/ ./lokistore/
 COPY --chown=loki:loki assets/ ./assets/
 COPY --chown=loki:loki tools/ ./tools/
 COPY --chown=loki:loki events/ ./events/
@@ -137,10 +144,16 @@ COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 # mcp/requirements.txt is installed here so the MCP SDK is present in the image:
 # Glama's clean-room introspection builds this image and launches the server, and
 # a baked-in SDK lets `loki mcp` serve tools without a first-run bootstrap.
+# boto3 is included so the opt-in S3 object-store backend (LOKI_STORAGE_BACKEND=s3,
+# the k8s cross-node-resume path) works in the deployed image without a runtime
+# pip install (a pod may be read-only/offline). Without it the S3 backend raised
+# BackendNotAvailableError at runtime. GCS/Azure SDKs stay lazy (bring-your-own
+# via their own image layer) since they are less common deploy targets.
 RUN pip3 install --no-cache-dir --break-system-packages \
     -r dashboard/requirements.txt \
     -r web-app/requirements.txt \
-    -r mcp/requirements.txt
+    -r mcp/requirements.txt \
+    boto3
 
 # Make scripts executable
 RUN chmod +x autonomy/run.sh autonomy/loki autonomy/app-runner.sh autonomy/prd-checklist.sh autonomy/playwright-verify.sh autonomy/completion-council.sh autonomy/queue-consumer.sh bin/loki

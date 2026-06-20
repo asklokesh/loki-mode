@@ -132,24 +132,27 @@ describe("v7.5.3 embedded Phase 1 e2e (default-on)", () => {
       }),
     );
 
-    // Iter 1 again with counter-evidence in place -> BLOCK lifted.
+    // Iter 1 again with counter-evidence in place. WAVE14 trust fix: on the stub
+    // path (LOKI_OVERRIDE_REAL_JUDGE=0, set in beforeEach) the override council
+    // fails CLOSED -- self-authored counter-evidence, even with a trusted
+    // proofType, cannot lift a Critical/High BLOCK. Only the real-LLM panel may.
+    // So the BLOCK is RETAINED here.
     const r2 = await runCodeReview(ctxAt(1), {
       reviewer: failReviewer,
       diffOverride: { diff, files },
     });
-    expect(r2.passed).toBe(true);
-    expect(r2.detail).toContain("blockers lifted by override council");
+    expect(r2.passed).toBe(false);
 
-    // Override council recorded a learning.
+    // The override was REJECTED on the stub path, so no override_approved learning.
     const learnPath2 = join(scratch, "state", "relevant-learnings.json");
-    expect(existsSync(learnPath2)).toBe(true);
-    const learnings2 = JSON.parse(readFileSync(learnPath2, "utf-8")) as {
-      learnings: Array<{ trigger: string }>;
-    };
-    expect(learnings2.learnings.some((l) => l.trigger === "override_approved")).toBe(true);
-
-    // No PAUSE signal was written.
-    expect(existsSync(join(scratch, "PAUSE"))).toBe(false);
+    if (existsSync(learnPath2)) {
+      const learnings2 = JSON.parse(readFileSync(learnPath2, "utf-8")) as {
+        learnings: Array<{ trigger: string }>;
+      };
+      expect(
+        learnings2.learnings.some((l) => l.trigger === "override_approved"),
+      ).toBe(false);
+    }
   });
 
   it("opt-out path: LOKI_INJECT_FINDINGS=0 disables findings persistence", async () => {

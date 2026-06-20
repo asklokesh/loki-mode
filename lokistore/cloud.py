@@ -63,6 +63,7 @@ class S3Store(LokiStore):
         bucket: str,
         prefix: Optional[str] = None,
         region: Optional[str] = None,
+        endpoint: Optional[str] = None,
     ):
         if not bucket:
             raise ValueError("S3Store requires a bucket name")
@@ -78,7 +79,22 @@ class S3Store(LokiStore):
         self._prefix = _normalize_prefix(prefix)
         # boto3 picks up credentials from its default chain (env, shared
         # config, instance/role metadata). region_name is optional.
-        kwargs = {"region_name": region} if region else {}
+        # endpoint_url targets an S3-COMPATIBLE store (MinIO, Ceph, R2,
+        # Wasabi, ...) instead of real AWS S3; without it the docstring's
+        # "(or S3-compatible)" claim was false. Read from the arg or the
+        # AWS_ENDPOINT_URL env (boto3's own convention) as a fallback.
+        kwargs = {}
+        endpoint = endpoint or os.environ.get("AWS_ENDPOINT_URL")
+        if endpoint:
+            kwargs["endpoint_url"] = endpoint
+        if region:
+            kwargs["region_name"] = region
+        elif endpoint:
+            # A custom S3-compatible endpoint (MinIO/Ceph/...) still needs a
+            # region for SigV4 request signing even though the store ignores it.
+            # Default to us-east-1 (the conventional MinIO default) so a MinIO
+            # config without an explicit region does not fail signing.
+            kwargs["region_name"] = "us-east-1"
         self._client = boto3.client("s3", **kwargs)
 
     def _object_key(self, key: str) -> str:

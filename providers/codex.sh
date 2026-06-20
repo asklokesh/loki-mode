@@ -73,10 +73,15 @@ _codex_validate_model() {
     echo "$CODEX_DEFAULT_MODEL"
 }
 
-# Provider-specific env (LOKI_CODEX_MODEL) is trusted; generic LOKI_MODEL_* is validated
-PROVIDER_MODEL_PLANNING="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_PLANNING:-$CODEX_DEFAULT_MODEL}}")"
-PROVIDER_MODEL_DEVELOPMENT="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$CODEX_DEFAULT_MODEL}}")"
-PROVIDER_MODEL_FAST="$(_codex_validate_model "${LOKI_CODEX_MODEL:-${LOKI_MODEL_FAST:-$CODEX_DEFAULT_MODEL}}")"
+# Provider-specific env (LOKI_CODEX_MODEL) is trusted and used verbatim -- the
+# operator set a Codex-specific model on purpose (e.g. a fine-tune or org-scoped
+# name that need not match CODEX_KNOWN_MODELS). Only the GENERIC LOKI_MODEL_*
+# fallback is validated, since it may carry Claude aliases (opus/sonnet/haiku)
+# that are invalid for Codex. Validating the whole chain silently downgraded a
+# trusted LOKI_CODEX_MODEL to the default (BUG-PROV-003 fix).
+PROVIDER_MODEL_PLANNING="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_PLANNING:-$CODEX_DEFAULT_MODEL}")}"
+PROVIDER_MODEL_DEVELOPMENT="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_DEVELOPMENT:-$CODEX_DEFAULT_MODEL}")}"
+PROVIDER_MODEL_FAST="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_FAST:-$CODEX_DEFAULT_MODEL}")}"
 
 # Effort levels (Codex-specific: maps to reasoning time, not model capability)
 PROVIDER_EFFORT_PLANNING="xhigh"

@@ -135,6 +135,11 @@ run_test "Completion-promise Gating (signal vs legacy grep)" "$SCRIPT_DIR/test-c
 # closed). Includes a mutation guard proving non-vacuity.
 run_test "Council Live-Vote Quorum (WAVE13 fail-closed)" "$SCRIPT_DIR/test-council-quorum-wave13.sh"
 
+# Completion-council devil's advocate: must read the structured test signal
+# (.loki/quality/test-results.json), not a log path nothing writes, so a real
+# unanimous COMPLETE is not always vetoed. Includes a mutation guard.
+run_test "Council Devil's Advocate (structured test-evidence)" "$SCRIPT_DIR/test-council-devils-advocate.sh"
+
 # check_human_intervention signal dispatch + security: STOP -> rc 2; HUMAN_INPUT
 # symlink rejected; prompt injection disabled-by-default quarantines input.
 run_test "Human Intervention Signals (STOP/HUMAN_INPUT security)" "$SCRIPT_DIR/test-human-intervention-signals.sh"
@@ -231,6 +236,10 @@ run_test "Deploy advisory (print-only, CI/CD precedence)" "$SCRIPT_DIR/test-depl
 # direct unit calls into the side-effect-free config-map.sh lib.
 run_test "Unified config-file (--config precedence + formats)" "$SCRIPT_DIR/test-config-file.sh"
 
+# Config-map no-yq YAML fallback: regression for same-last-segment key collision
+# and the BSD-sed \s stray-quote bug. Forces the fallback by hiding yq from PATH.
+run_test "Config-map no-yq YAML fallback (nested-path + quote handling)" "$SCRIPT_DIR/test-config-map-fallback.sh"
+
 # Release A (v7.79.0) enterprise + local hardening: the bash-side suites. (The
 # python suites -- test_lokistore.py, test_trigger*.py, tests/dashboard/*auth*.py,
 # test-checkpoint-objectstore-sync.py -- are auto-discovered by the local-ci
@@ -240,9 +249,21 @@ run_test "ALLOWED_PATHS partial enforcement (A5: sandbox mount + command)" "$SCR
 run_test "ALLOWED_PATHS sandbox workspace mount (V3: fail-closed refuse)" "$SCRIPT_DIR/test-allowed-paths-sandbox-mount.sh"
 run_test "Multi-build state isolation (A6: LOKI_SESSION_ID namespacing)" "$SCRIPT_DIR/test-state-isolation-a6.sh"
 run_test "loki why (B5: failure/outcome diagnosis)" "$SCRIPT_DIR/test-loki-why.sh"
+run_test "CLI flag guards (budget/plan-json/memory/temp-prd/flag-value)" "$SCRIPT_DIR/cli/test-cli-flag-guards.sh"
+run_test "Rate-limit detection (no false-positive on agent output)" "$SCRIPT_DIR/test-rate-limit-detection.sh"
 run_test "Checkpoint worktree-bundle sync (V2: refs/loki/cp via git bundle)" "$SCRIPT_DIR/run-checkpoint-worktree-bundle-tests.sh"
 run_test "Queue-consumer (V5: redis/file backend + flag-injection guard)" "$SCRIPT_DIR/test-queue-consumer.sh"
 run_test "loki bench honest degrade (L4: packaged-install UX)" "$SCRIPT_DIR/test-bench-honest-degrade.sh"
+
+# events/emit.sh json_escape: payload values with raw C0 control bytes must
+# escape to \uXXXX so the events.jsonl + pending JSON stay parseable (consumers
+# silently drop a JSONDecodeError line); UTF-8 multibyte must survive intact.
+run_test "Emit JSON Escape (C0 control chars + UTF-8)" "$SCRIPT_DIR/test-emit-json-escape.sh"
+
+# providers/codex.sh: LOKI_CODEX_MODEL is trusted (used verbatim, incl
+# org-scoped fine-tunes); only the generic LOKI_MODEL_* fallback is validated
+# against CODEX_KNOWN_MODELS. Regression guard for the silent-downgrade bug.
+run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-codex-model-trusted.sh"
 
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

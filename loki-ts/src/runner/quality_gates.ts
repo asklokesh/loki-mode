@@ -1854,27 +1854,32 @@ async function maybeRunOverrideCouncil(args: {
       finding: import("./findings_injector.ts").Finding;
       evidence: import("./counter_evidence.ts").CounterEvidence;
       judge: string;
-    }) => {
-      // A trusted proofType is only mechanically falsifiable if it actually
-      // carries an artifact to check (a file path to grep, test output, a
-      // scope rule). Counter-evidence with a trusted proofType but no
-      // non-empty artifact is an unverifiable claim, so approving it would
-      // lift a BLOCK with zero verification (the unsafe, toward-approve
-      // direction on a trust gate). Require >=1 non-empty artifact; otherwise
-      // fail-safe to REJECT_OVERRIDE and keep the BLOCK.
-      const hasArtifact = input.evidence.artifacts.some(
-        (a) => a.trim().length > 0,
-      );
-      const trusted =
-        TRUSTED_PROOFS.has(input.evidence.proofType) && hasArtifact;
+    }): Promise<{
+      judge: string;
+      verdict: "APPROVE_OVERRIDE" | "REJECT_OVERRIDE";
+      reasoning: string;
+    }> => {
+      // WAVE14 trust fix: the stub judge fails CLOSED -- it approves NOTHING.
+      // The counter-evidence (proofType + artifacts) is authored by the SAME
+      // gated agent whose BLOCK is under dispute, so a trusted proofType and a
+      // non-empty artifact STRING are both self-supplied and forgeable. An
+      // earlier attempt that "required a non-empty artifact" did NOT close the
+      // hole (it never reads/greps/execs the artifact -- and even if it did, the
+      // same party controls the disk; mechanical verification of self-authored
+      // artifacts is not verification). This mirrors the bash route's WAVE13 fix
+      // (commands/internal_phase1.ts) and the documented invariant in
+      // counter_evidence.ts: the ONLY adjudicator that may lift a BLOCK is the
+      // Bun-route real-LLM panel (judgeFn replaced below when it builds), which
+      // uses an adjudicator the agent does not control. With no real panel
+      // (LOKI_OVERRIDE_REAL_JUDGE=0 or no provider CLI), a BLOCK is RETAINED.
+      void TRUSTED_PROOFS; // retained for the real-panel prompt; unused by the stub
       return {
         judge: input.judge,
-        verdict: trusted ? ("APPROVE_OVERRIDE" as const) : ("REJECT_OVERRIDE" as const),
-        reasoning: trusted
-          ? `[stub] proofType=${input.evidence.proofType} trusted with artifact`
-          : !hasArtifact && TRUSTED_PROOFS.has(input.evidence.proofType)
-            ? `[stub] proofType=${input.evidence.proofType} trusted but no artifact supplied`
-            : `[stub] proofType=${input.evidence.proofType} requires manual review`,
+        verdict: "REJECT_OVERRIDE" as const,
+        reasoning:
+          `[stub] self-authored counter-evidence cannot lift a trust-gate BLOCK ` +
+          `(proofType=${input.evidence.proofType}); only the real-LLM override ` +
+          `panel may adjudicate. BLOCK retained.`,
       };
     };
 

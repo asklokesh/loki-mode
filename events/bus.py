@@ -5,6 +5,7 @@ Events are written to .loki/events/pending/ and processed by subscribers.
 This enables CLI, API, VS Code, and MCP to communicate without shared memory.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -123,8 +124,23 @@ class LokiEvent:
         except ValueError:
             event_source = EventSource.CLI
 
+        # ID: prefer the canonical `id`. Flat events.jsonl lines (run.sh
+        # emit_event / emit_event_json) carry NO id, so __post_init__ would mint
+        # a fresh random uuid on every parse -- defeating import_from_jsonl()
+        # dedup (_processed_ids + pending-file glob) and re-importing every flat
+        # line on each call. Derive a DETERMINISTIC id from the record content
+        # so repeated imports of the same line are idempotent.
+        event_id = data.get('id', '')
+        if not event_id:
+            digest_src = '%s|%s|%s' % (
+                data.get('timestamp', ''),
+                raw_type,
+                json.dumps(payload, sort_keys=True),
+            )
+            event_id = hashlib.sha1(digest_src.encode('utf-8')).hexdigest()[:8]
+
         return cls(
-            id=data.get('id', ''),
+            id=event_id,
             type=event_type,
             source=event_source,
             timestamp=data.get('timestamp', ''),
