@@ -714,6 +714,7 @@ show_help() {
     echo ""
     echo "Session:"
     echo "  status [--json]  Show current status (--json for machine-readable)"
+    echo "  next             Run the right next step for you (resume / ship / why)"
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume paused execution"
@@ -745,7 +746,7 @@ show_help() {
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
-    echo "More commands (grill, spec, deploy, cleanup, init, watch, demo, web, api,"
+    echo "More commands (ship, grill, spec, deploy, cleanup, init, watch, demo, web, api,"
     echo "logs, github, import, council, proof, audit, compliance, agent, template,"
     echo "magic, docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
     echo "failover, monitor, remote, ...) are dispatchable and documented via"
@@ -2936,6 +2937,309 @@ cmd_resume() {
         # Session is running but no signals to clear
         echo -e "${CYAN}Session is running normally. Nothing to resume.${NC}"
     fi
+}
+
+# Resolve the terminal-run status from the same already-captured artifacts that
+# cmd_why reads (no new state, no spend). Echoes a single token: the resolved
+# status string (e.g. council_approved, paused, max_iterations_reached), or the
+# literal "none" when no run exists here yet. Used by cmd_next so its status->
+# action mapping reads exactly the same state cmd_why does (no drift).
+# Read-only; never fabricates.
+_loki_resolve_run_status() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    local state_file="$loki_dir/autonomy-state.json"
+    if [ -n "${LOKI_SESSION_ID:-}" ] && [ -f "$loki_dir/sessions/${LOKI_SESSION_ID}/autonomy-state.json" ]; then
+        state_file="$loki_dir/sessions/${LOKI_SESSION_ID}/autonomy-state.json"
+    fi
+    local completion_file="$loki_dir/state/completion.json"
+
+    if [ ! -f "$state_file" ] && [ ! -f "$completion_file" ]; then
+        printf '%s\n' "none"
+        return 0
+    fi
+
+    _LOKI_NA_STATE="$state_file" _LOKI_NA_COMPLETION="$completion_file" python3 - <<'NASTATUS'
+import json, os
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception: return {}
+state = load(os.environ.get("_LOKI_NA_STATE", ""))
+comp = load(os.environ.get("_LOKI_NA_COMPLETION", ""))
+print(state.get("status") or comp.get("outcome") or "unknown")
+NASTATUS
+}
+
+# Map a resolved status to the single concrete next-action SENTENCE (the same
+# wording cmd_why prints under "What to do"). Echoes the action string. Kept in
+# lockstep with cmd_why's GUIDE map so why and next agree.
+_loki_next_action() {
+    local status="${1:-unknown}"
+    case "$status" in
+        council_approved)
+            echo "Review the diff and open a PR (loki ship, or git push + gh pr create)." ;;
+        council_force_approved)
+            echo "Review the diff carefully before merging -- convergence was not unanimous." ;;
+        completion_promise_fulfilled)
+            echo "Verify the promised outcome, then review and PR (loki ship)." ;;
+        max_iterations_reached)
+            echo "Raise LOKI_MAX_ITERATIONS (or narrow the spec), then resume (loki resume)." ;;
+        max_retries_exceeded)
+            echo "Read .loki/logs for the recurring error, fix the root cause, then re-run (loki why)." ;;
+        failed)
+            echo "Read the failure (loki why), fix it, then re-run." ;;
+        policy_blocked)
+            echo "Review the blocking finding (loki why); address it or use the documented override." ;;
+        budget_exceeded)
+            echo "Raise LOKI_BUDGET_LIMIT or accept the partial result, then resume (loki resume)." ;;
+        paused)
+            echo "Resume with: loki resume." ;;
+        interrupted)
+            echo "Resume with: loki resume." ;;
+        stopped)
+            echo "Start a new build (loki start), or resume if you meant to continue." ;;
+        force_stopped)
+            echo "Start a new build, or investigate why a force-stop was needed (loki why)." ;;
+        running)
+            echo "A build looks active (or crashed mid-run); check loki status." ;;
+        none)
+            echo "Run a build first: loki start <spec>." ;;
+        *)
+            echo "Check loki status and loki why for detail." ;;
+    esac
+}
+
+# loki next -- one command that runs the right next step for you.
+# Reads the SAME already-captured state as cmd_why (no new state, no spend),
+# resolves the terminal status, and proposes the single mapped next step, then
+# runs it on confirmation. Default on a TTY is confirm-then-run; --yes runs it
+# without asking; --dry-run and any non-TTY context only PRINT (honest: never
+# auto-acts in CI / when piped). Strictly additive: reuses cmd_resume, cmd_ship,
+# cmd_why, and cmd_status; never touches the build path.
+cmd_next() {
+    local assume_yes=false
+    local dry_run=false
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}Loki Mode -- run the right next step for you${NC}"
+            echo ""
+            echo "Usage: loki next [--yes] [--dry-run]"
+            echo ""
+            echo "Reads the last build's recorded outcome (the same state 'loki why'"
+            echo "reads -- no new run, no cost) and carries you forward by running the"
+            echo "single mapped next step: resume a paused/interrupted run, finish a"
+            echo "council-approved build (loki ship), or route a failure to 'loki why'."
+            echo ""
+            echo "Default on a terminal: it shows the proposed step and asks before"
+            echo "running it. Non-interactive (piped/CI) it only prints the step;"
+            echo "it never acts on its own there."
+            echo ""
+            echo "Options:"
+            echo "  --yes        Run the proposed step without asking"
+            echo "  --dry-run    Print the proposed step only; do not run it"
+            echo "  --help, -h   Show this help and exit"
+            return 0
+            ;;
+        --yes|-y) assume_yes=true ;;
+        --dry-run) dry_run=true ;;
+        "") : ;;
+        *) echo -e "${RED}Unknown flag: $1${NC}" >&2; echo "Usage: loki next [--yes] [--dry-run]" >&2; return 1 ;;
+    esac
+    # Allow a second flag (e.g. --dry-run --yes order-agnostic).
+    case "${2:-}" in
+        --yes|-y) assume_yes=true ;;
+        --dry-run) dry_run=true ;;
+    esac
+
+    local status
+    status="$(_loki_resolve_run_status)"
+    if [ "$status" = "none" ]; then
+        echo "loki next: no run found here yet." >&2
+        echo "Run a build first: loki start <spec>" >&2
+        return 1
+    fi
+
+    local action_text
+    action_text="$(_loki_next_action "$status")"
+
+    # Map the status to the concrete callable that carries the user forward.
+    # action_cmd is a human label; the case below dispatches to the real function.
+    local action_cmd=""
+    case "$status" in
+        paused|interrupted)                              action_cmd="loki resume" ;;
+        council_approved|council_force_approved|completion_promise_fulfilled)
+                                                         action_cmd="loki ship" ;;
+        max_iterations_reached|budget_exceeded)          action_cmd="loki resume" ;;
+        failed|max_retries_exceeded|policy_blocked|force_stopped)
+                                                         action_cmd="loki why" ;;
+        *)                                               action_cmd="loki status" ;;
+    esac
+
+    echo -e "${BOLD}Loki: next${NC}"
+    echo "  Last outcome : $status"
+    echo "  Next step    : $action_text"
+    echo "  Will run     : $action_cmd"
+    echo ""
+
+    # Honesty gate: only ACT on an interactive terminal with consent, or with
+    # --yes. --dry-run and non-TTY always print-only.
+    if [ "$dry_run" = true ]; then
+        echo "(dry-run: not running. Run '$action_cmd' yourself, or 'loki next --yes'.)"
+        return 0
+    fi
+    if [ "$assume_yes" != true ]; then
+        if [ ! -t 0 ] || [ ! -t 1 ]; then
+            echo "(non-interactive: not running. Run '$action_cmd', or 'loki next --yes'.)"
+            return 0
+        fi
+        local reply=""
+        printf "Run '%s' now? [y/N] " "$action_cmd"
+        read -r reply || reply=""
+        case "$reply" in
+            y|Y|yes|YES) : ;;
+            *) echo "Skipped. Run '$action_cmd' when ready."; return 0 ;;
+        esac
+    fi
+
+    # Dispatch to the real command. For budget/iteration caps, print the env-var
+    # guidance first (the resume alone will not lift the cap), then resume.
+    case "$status" in
+        max_iterations_reached)
+            echo "Note: raise the cap first if you want more iterations, e.g.:"
+            echo "  LOKI_MAX_ITERATIONS=<n> loki resume"
+            echo ""
+            ;;
+        budget_exceeded)
+            echo "Note: raise the budget first if you want to continue, e.g.:"
+            echo "  LOKI_BUDGET_LIMIT=<usd> loki resume"
+            echo ""
+            ;;
+    esac
+    case "$action_cmd" in
+        "loki resume")  cmd_resume ;;
+        "loki ship")    cmd_ship ;;
+        "loki why")     cmd_why ;;
+        *)              cmd_status ;;
+    esac
+    return $?
+}
+
+# loki ship -- the build is done, now get it out (review + PR advice in one flow).
+# Composes existing surfaces only: optionally opens the running app (--preview),
+# runs the SAME diff quality gates as cmd_review, and on a clean-enough result
+# prints the exact branch-aware PR command via the shared print_pr_advice (the
+# same advisory cmd_deploy uses). PRINT-ONLY for shipping: it NEVER pushes and
+# NEVER deploys; it prints (and clipboards, as the advisory already does) the
+# git push + PR command for YOU to run. If review finds HIGH/CRITICAL it stops
+# and points at the findings instead of advising a PR.
+cmd_ship() {
+    local do_preview=false
+    local review_args=()
+    while [ $# -gt 0 ]; do
+        case "${1:-}" in
+            --help|-h|help)
+                echo -e "${BOLD}Loki Mode -- finish the build: review, then PR advice (print-only)${NC}"
+                echo ""
+                echo "Usage: loki ship [--preview] [--yes] [review options]"
+                echo ""
+                echo "Runs the natural finish line in one command:"
+                echo "  1. (with --preview) opens the app Loki built and started locally"
+                echo "  2. runs 'loki review' on your uncommitted/branch diff (the same"
+                echo "     quality gates)"
+                echo "  3. on a clean-enough result, PRINTS the exact branch-aware"
+                echo "     git push + pull-request command for YOU to run"
+                echo ""
+                echo "It is advisory only for shipping: it NEVER runs 'git push', NEVER"
+                echo "creates a PR, and NEVER deploys. You run the printed command."
+                echo "If review finds HIGH or CRITICAL findings it stops and points you"
+                echo "at the findings instead of advising a PR (exit code 1)."
+                echo ""
+                echo "Options:"
+                echo "  --preview    Open the running local app first (loki preview)"
+                echo "  --yes, -y    Pass through to review (skip its confirmation prompt)"
+                echo "  --help, -h   Show this help and exit"
+                echo ""
+                echo "Any other options are passed through to 'loki review'"
+                echo "(e.g. --staged, --since <commit>, --severity high)."
+                return 0
+                ;;
+            --preview) do_preview=true ;;
+            *) review_args+=("$1") ;;
+        esac
+        shift
+    done
+
+    # 1. Optional preview of the running local app. Only when an app-runner state
+    #    file exists, so we never imply an app is running when it is not.
+    if [ "$do_preview" = true ]; then
+        local loki_dir="${LOKI_DIR:-.loki}"
+        if [ -f "$loki_dir/state/app-runner.json" ] || [ -f "$loki_dir/app-runner.json" ]; then
+            echo -e "${BOLD}Opening the running app...${NC}"
+            cmd_preview || true
+            echo ""
+        else
+            echo "(no running app detected; skipping preview. Start one with loki start.)"
+            echo ""
+        fi
+    fi
+
+    # 2. Run the SAME diff quality gates as cmd_review. Capture its documented
+    #    exit code (0 clean, 1 HIGH, 2 CRITICAL). set -e safe: capture via || rc=$?.
+    echo -e "${BOLD}Running quality gates on the diff (loki review)...${NC}"
+    echo ""
+    local rc=0
+    cmd_review "${review_args[@]}" || rc=$?
+
+    if [ "$rc" -ge 1 ]; then
+        echo ""
+        if [ "$rc" -ge 2 ]; then
+            echo -e "${RED}Review found CRITICAL findings. Not advising a PR yet.${NC}" >&2
+        else
+            echo -e "${YELLOW}Review found HIGH findings. Not advising a PR yet.${NC}" >&2
+        fi
+        echo "Fix the findings above (or run 'loki review' for the full report), then 'loki ship' again." >&2
+        return 1
+    fi
+
+    # 3. Clean enough: print the branch-aware PR command (the SAME advisory
+    #    cmd_deploy uses). Derive base/head exactly as cmd_deploy does.
+    echo ""
+    echo -e "${GREEN}Review is clean (no HIGH or CRITICAL findings).${NC}"
+    echo ""
+    local dir="."
+    local head="" base=""
+    head="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    [ -n "$head" ] || head="HEAD"
+    case "$head" in
+        loki/*)
+            if [ -s "$dir/.loki/state/base-branch.txt" ]; then
+                base="$(head -n1 "$dir/.loki/state/base-branch.txt" 2>/dev/null || echo "")"
+            fi
+            ;;
+    esac
+    if [ -z "$base" ]; then
+        local origin_head=""
+        origin_head="$(git -C "$dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || echo "")"
+        if [ -n "$origin_head" ]; then
+            base="${origin_head##*/}"
+        fi
+    fi
+
+    if declare -F print_pr_advice >/dev/null 2>&1; then
+        if [ -n "$base" ]; then
+            print_pr_advice "$base" "$head" "$dir"
+        else
+            echo "Could not determine the PR base branch automatically; set it manually:"
+            print_pr_advice "manually-set-base" "$head" "$dir"
+        fi
+    else
+        echo "To open a pull request:"
+        echo "  git push -u origin ${head}"
+        echo "  Open a pull request for ${head} (set the base branch manually)."
+    fi
+    echo ""
+    echo -e "${DIM}Loki does not push or deploy for you; run the command above when ready.${NC}"
+    return 0
 }
 
 # loki why -- actionable failure/outcome diagnosis (B5).
@@ -15622,6 +15926,9 @@ main() {
         why)
             cmd_why "$@"
             ;;
+        next)
+            cmd_next "$@"
+            ;;
         stats)
             # CLI consolidation (Phase A): 'stats' is a deprecated alias of
             # 'report session'. On the Bun route this arm is never reached
@@ -15644,6 +15951,9 @@ main() {
             ;;
         deploy)
             cmd_deploy "$@"
+            ;;
+        ship)
+            cmd_ship "$@"
             ;;
         open)
             # CLI consolidation (Phase A): 'open' is a deprecated alias of 'preview'.
