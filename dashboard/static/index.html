@@ -389,9 +389,6 @@
       flex-shrink: 0;
     }
 
-    .theme-toggle {
-      margin-left: auto;
-    }
 
     .footer-settings {
       position: relative;
@@ -741,105 +738,6 @@
     ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
 
     /* Keyboard Shortcuts Help Overlay */
-    .shortcuts-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      z-index: 1000;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .shortcuts-overlay.visible {
-      display: flex;
-    }
-
-    .shortcuts-dialog {
-      background: var(--loki-glass-bg);
-      backdrop-filter: blur(20px) saturate(1.4);
-      -webkit-backdrop-filter: blur(20px) saturate(1.4);
-      border: 1px solid var(--loki-glass-border);
-      border-radius: 12px;
-      padding: 24px;
-      max-width: 480px;
-      width: 90%;
-      max-height: 80vh;
-      overflow-y: auto;
-      box-shadow: var(--loki-glass-shadow);
-    }
-
-    .shortcuts-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--loki-border);
-    }
-
-    .shortcuts-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--loki-text-primary);
-    }
-
-    .shortcuts-close {
-      background: none;
-      border: none;
-      color: var(--loki-text-muted);
-      cursor: pointer;
-      padding: 4px;
-      font-size: 18px;
-      line-height: 1;
-    }
-
-    .shortcuts-close:hover {
-      color: var(--loki-text-primary);
-    }
-
-    .shortcuts-group {
-      margin-bottom: 16px;
-    }
-
-    .shortcuts-group-title {
-      font-size: 11px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--loki-text-muted);
-      margin-bottom: 8px;
-    }
-
-    .shortcut-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 4px 0;
-    }
-
-    .shortcut-keys {
-      display: flex;
-      gap: 4px;
-    }
-
-    .shortcut-key {
-      display: inline-block;
-      padding: 2px 8px;
-      background: var(--loki-bg-tertiary);
-      border: 1px solid var(--loki-border);
-      border-radius: 6px;
-      font-size: 12px;
-      font-family: 'JetBrains Mono', monospace;
-      color: var(--loki-text-primary);
-      min-width: 24px;
-      text-align: center;
-    }
-
-    .shortcut-desc {
-      font-size: 13px;
-      color: var(--loki-text-secondary);
-    }
 
     /* USAGE.md markdown render styles */
     .usage-md { max-height: 480px; overflow: auto; padding: 12px; background: var(--loki-bg-secondary, #F2F0EB); border-radius: 4px; color: var(--loki-text-primary, #1A1614); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.6; }
@@ -1498,43 +1396,6 @@
   </div>
 
   <!-- Keyboard Shortcuts Help Overlay -->
-  <div class="shortcuts-overlay" id="shortcuts-overlay">
-    <div class="shortcuts-dialog">
-      <div class="shortcuts-header">
-        <span class="shortcuts-title">Keyboard Shortcuts</span>
-        <button class="shortcuts-close" id="shortcuts-close" aria-label="Close">&times;</button>
-      </div>
-      <div class="shortcuts-group">
-        <div class="shortcuts-group-title">Navigation</div>
-        <div class="shortcut-row"><span class="shortcut-desc">Overview</span><span class="shortcut-keys"><kbd class="shortcut-key">1</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Insights</span><span class="shortcut-keys"><kbd class="shortcut-key">2</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Spec Checklist</span><span class="shortcut-keys"><kbd class="shortcut-key">3</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">App Runner</span><span class="shortcut-keys"><kbd class="shortcut-key">4</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Council</span><span class="shortcut-keys"><kbd class="shortcut-key">5</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Quality</span><span class="shortcut-keys"><kbd class="shortcut-key">6</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Cost</span><span class="shortcut-keys"><kbd class="shortcut-key">7</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Checkpoints</span><span class="shortcut-keys"><kbd class="shortcut-key">8</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Context</span><span class="shortcut-keys"><kbd class="shortcut-key">9</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Notifications</span><span class="shortcut-keys"><kbd class="shortcut-key">0</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Migration</span><span class="shortcut-keys"><kbd class="shortcut-key">m</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Analytics</span><span class="shortcut-keys"><kbd class="shortcut-key">a</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Escalations</span><span class="shortcut-keys"><kbd class="shortcut-key">e</kbd></span></div>
-      </div>
-      <div class="shortcuts-group">
-        <div class="shortcuts-group-title">Session</div>
-        <div class="shortcut-row"><span class="shortcut-desc">Pause session</span><span class="shortcut-keys"><kbd class="shortcut-key">p</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Resume session</span><span class="shortcut-keys"><kbd class="shortcut-key">r</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Stop session</span><span class="shortcut-keys"><kbd class="shortcut-key">s</kbd></span></div>
-      </div>
-      <div class="shortcuts-group">
-        <div class="shortcuts-group-title">General</div>
-        <div class="shortcut-row"><span class="shortcut-desc">Toggle theme</span><span class="shortcut-keys"><kbd class="shortcut-key">t</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Focus API URL</span><span class="shortcut-keys"><kbd class="shortcut-key">/</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Show shortcuts</span><span class="shortcut-keys"><kbd class="shortcut-key">?</kbd></span></div>
-        <div class="shortcut-row"><span class="shortcut-desc">Close overlay</span><span class="shortcut-keys"><kbd class="shortcut-key">Esc</kbd></span></div>
-      </div>
-    </div>
-  </div>
 
   <!-- Inlined JavaScript Bundle -->
   <script>

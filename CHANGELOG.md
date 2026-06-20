@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.90.2] - 2026-06-20
+
+### Cleanup: remove dead keyboard-shortcut and theme-toggle markup
+
+Follow-up to v7.90.1. The keyboard-shortcut help overlay markup + CSS and the
+theme-toggle CSS rule were left behind when those features were removed; they were
+never shown and never referenced. Deleted them so the dashboard carries no dead
+shortcut/theme code. No user-visible change.
+
 ## [7.90.1] - 2026-06-20
 
 ### Dashboard polish: a calmer, more readable live view
