@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start quick monitor demo init stop pause resume status dashboard logs serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share proof explain plan report test ci watch telemetry agent context code run export review optimize heal migrate cluster worktree trigger failover remote version completions help"
+    local main_commands="start quick quickstart monitor demo init stop pause resume status why dashboard web logs serve api sandbox docker notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets doctor watchdog audit metrics syslog onboard share proof explain plan report test ci watch telemetry agent context code run export review optimize heal migrate cluster worktree trigger failover remote preview deploy version completions help"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -195,7 +195,7 @@ _loki_completion() {
             ;;
 
         completions)
-            COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") )
+            COMPREPLY=( $(compgen -W "bash zsh install" -- "$cur") )
             ;;
 
         context|ctx)

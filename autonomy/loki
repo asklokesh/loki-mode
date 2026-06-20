@@ -909,6 +909,7 @@ show_landing() {
     echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
     echo ""
     echo "Get started:"
+    echo -e "  ${CYAN}loki quickstart${NC}       Guided first build from your idea (no PRD needed)"
     echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
     echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
     echo -e "  ${CYAN}loki dashboard start${NC}  Start the live run monitor (then: loki dashboard open)"
@@ -4817,7 +4818,7 @@ cmd_welcome_terminal() {
     echo -e "  ${CYAN}Cross-project memory${NC}     Lessons compound, so agents stop repeating mistakes."
     echo -e "  ${CYAN}Provider-agnostic${NC}        Claude, Codex, Cline, or Aider. Your keys, your infra."
     echo ""
-    echo -e "  Quick start:  ${BOLD}loki start ./prd.md${NC}"
+    echo -e "  Quick start:  ${BOLD}loki quickstart${NC} (from your idea) or ${BOLD}loki start ./prd.md${NC} (from a spec)"
     echo -e "  Docs:         ${BOLD}https://www.autonomi.dev/docs${NC}"
     echo ""
     if _loki_welcome_analytics_on; then
@@ -9464,11 +9465,17 @@ cmd_doctor() {
         return 1
     elif [ "$warn_count" -gt 0 ]; then
         echo -e "${YELLOW}All required checks passed with some warnings.${NC}"
-        return 0
     else
         echo -e "${GREEN}All checks passed. System is ready for Loki Mode.${NC}"
-        return 0
     fi
+    # Setup verified (no required check failed): hand the user straight to a
+    # first build with a copy-paste command, so they never dead-end here. Gated
+    # on fail_count==0 above, so a failing setup is never told to build. The
+    # --json path returns long before this code, so machine output is untouched.
+    echo ""
+    echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
+    echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
+    return 0
 }
 
 # JSON output for loki doctor --json
@@ -23336,12 +23343,15 @@ _code_diff() {
 # Output shell completion scripts
 cmd_completions() {
     local shell="${1:-bash}"
+    # Consume the subcommand so the install arm can read an optional shell
+    # override as its own positional ($1). bash/zsh raw-output arms ignore $@.
+    shift 2>/dev/null || true
     local skill_dir
-    
+
     # Find the skill directory (where autonomy/loki is located)
     skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     local completions_dir="$skill_dir/completions"
-    
+
     case "$shell" in
         bash)
             if [ -f "$completions_dir/loki.bash" ]; then
@@ -23359,24 +23369,77 @@ cmd_completions() {
                 exit 1
             fi
             ;;
+        install)
+            # One-command install: detect the current shell, append a single
+            # guarded line to the right rc file exactly once (idempotent via a
+            # sentinel comment), then tell the user how to activate it. This
+            # replaces the error-prone manual recipe with something that just
+            # works after one command.
+            local detected target_shell rc_file
+            detected="$(basename "${SHELL:-}" 2>/dev/null)"
+            # Allow an explicit override: loki completions install bash|zsh
+            target_shell="${1:-$detected}"
+            case "$target_shell" in
+                bash)
+                    rc_file="${HOME}/.bashrc"
+                    ;;
+                zsh)
+                    rc_file="${HOME}/.zshrc"
+                    ;;
+                *)
+                    echo -e "${RED}Could not detect a supported shell (got: ${target_shell:-unknown}).${NC}" >&2
+                    echo "Specify one explicitly: loki completions install bash | loki completions install zsh" >&2
+                    exit 1
+                    ;;
+            esac
+            local sentinel="# loki-mode completions"
+            if [ -f "$rc_file" ] && grep -qF "$sentinel" "$rc_file" 2>/dev/null; then
+                echo "Loki completions already installed in ${rc_file} (no change)."
+                echo "Activate now with: source ${rc_file}"
+                return 0
+            fi
+            # Append the sentinel plus a single eval line that re-loads the
+            # completion script at shell start. eval (not redirect) is the
+            # correct persistent form: it sources the script into the
+            # interactive shell each time the rc file runs.
+            {
+                printf '\n%s\n' "$sentinel"
+                printf '%s\n' "eval \"\$(loki completions ${target_shell})\""
+            } >> "$rc_file" || {
+                echo -e "${RED}Failed to write to ${rc_file}.${NC}" >&2
+                exit 1
+            }
+            echo "Installed Loki ${target_shell} completions into ${rc_file}."
+            echo "Activate now with: source ${rc_file}  (or restart your shell)"
+            return 0
+            ;;
         *)
             echo -e "${BOLD}Loki Shell Completions${NC}"
             echo ""
             echo "Output shell completion scripts for bash or zsh."
             echo ""
             echo "Usage: loki completions <shell>"
+            echo "       loki completions install [bash|zsh]"
             echo ""
             echo "Shells:"
-            echo "  bash    Bash completion script"
-            echo "  zsh     Zsh completion script"
+            echo "  bash       Bash completion script"
+            echo "  zsh        Zsh completion script"
+            echo "  install    Auto-install completions into your shell rc file"
             echo ""
             echo "Installation:"
             echo ""
-            echo "Bash:"
-            echo "  eval \"\$(loki completions bash)\" >> ~/.bashrc"
+            echo "  One command (recommended):"
+            echo "    loki completions install"
             echo ""
-            echo "Zsh:"
-            echo "  eval \"\$(loki completions zsh)\" >> ~/.zshrc"
+            echo "  Manual (persistent), Bash:"
+            echo "    echo 'eval \"\$(loki completions bash)\"' >> ~/.bashrc"
+            echo "  Manual (persistent), Zsh:"
+            echo "    echo 'eval \"\$(loki completions zsh)\"' >> ~/.zshrc"
+            echo ""
+            echo "  Session only (current shell), Bash:"
+            echo "    eval \"\$(loki completions bash)\""
+            echo "  Session only (current shell), Zsh:"
+            echo "    eval \"\$(loki completions zsh)\""
             echo ""
             exit 1
             ;;
