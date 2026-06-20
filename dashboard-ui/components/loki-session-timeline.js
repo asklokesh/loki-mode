@@ -212,7 +212,7 @@ export class LokiSessionTimeline extends LokiElement {
           :host { display: block; }
           .empty { padding: 24px; text-align: center; color: var(--loki-text-muted); font-size: 12px; background: var(--loki-bg-card); border: 1px solid var(--loki-border); border-radius: 5px; }
         </style>
-        <div class="empty">No session timeline data available</div>
+        <div class="empty">The timeline will appear once a build starts.</div>
       `;
       return;
     }

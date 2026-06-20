@@ -237,7 +237,7 @@ export class LokiMemoryBrowser extends LokiElement {
       <div class="search-panel">
         <div class="search-bar">
           <input type="text" id="memory-search-input" class="search-input"
-                 placeholder="Search memory (FTS5)..."
+                 placeholder="Search memory..."
                  value="${this._escapeHtml(this._searchQuery)}"
                  aria-label="Search memory">
           <select id="memory-search-collection" class="search-select" aria-label="Collection filter">
@@ -370,7 +370,7 @@ export class LokiMemoryBrowser extends LokiElement {
             ` : ''}
             ${this._stats.fts_enabled != null ? `
               <div class="stats-item">
-                <span class="stats-label">FTS5 Search</span>
+                <span class="stats-label">Full-text Search</span>
                 <span class="stats-value ${this._stats.fts_enabled ? 'enabled' : 'disabled'}">${this._stats.fts_enabled ? 'Enabled' : 'Disabled'}</span>
               </div>
             ` : ''}

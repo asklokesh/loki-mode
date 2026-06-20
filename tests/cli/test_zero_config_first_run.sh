@@ -83,6 +83,14 @@ test_detect "build a todo app"                "brief"
 test_detect "make a snake game in python"     "brief"
 test_detect "a CLI that converts CSV to JSON" "brief"
 
+# W1 E2E regression (v7.89.1): a brief that contains a slash (or other path-like
+# punctuation) but ALSO whitespace must classify as brief, not prd. Before the
+# fix, the "contains /" path-like heuristic ran before the whitespace check, so
+# these died with "PRD file not found".
+test_detect "a python CLI todo app with add/list/done, json storage" "brief"
+test_detect "add a CI/CD pipeline"            "brief"
+test_detect "build an input/output parser"    "brief"
+
 # Back-compat: single-token unknown still falls through to unknown (PRD path)
 test_detect "snake"                           "unknown"
 test_detect "mytool"                          "unknown"

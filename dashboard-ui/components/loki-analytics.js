@@ -454,7 +454,7 @@ export class LokiAnalytics extends LokiElement {
 
     const entries = Object.entries(providers);
     if (entries.length === 0) {
-      return '<div class="empty-state">No provider data available. Start a session to see cross-provider comparison.</div>';
+      return '<div class="empty-state">No provider activity yet. Start a build to compare providers side by side.</div>';
     }
 
     return `

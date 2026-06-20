@@ -385,7 +385,7 @@ export class LokiAppStatus extends LokiElement {
       <div class="app-status">
         <div class="header">
           <div class="header-left">
-            <h2 class="title">App Runner</h2>
+            <h2 class="title">App Status</h2>
             ${this._renderStatusBadge(st)}
           </div>
           ${isActive ? this._renderActions(st) : ''}
@@ -491,8 +491,8 @@ export class LokiAppStatus extends LokiElement {
   _renderEmpty() {
     return `
       <div class="empty-state">
-        <p>App runner not started</p>
-        <p class="hint">App runner will start after the first successful build iteration.</p>
+        <p>App not running yet</p>
+        <p class="hint">Your app will start automatically after the first successful build step.</p>
       </div>
     `;
   }

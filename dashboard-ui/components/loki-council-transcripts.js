@@ -466,8 +466,8 @@ export class LokiCouncilTranscripts extends LokiElement {
         '</div>';
     } else if (!this._transcripts || this._transcripts.length === 0) {
       body =
-        '<div class="ct-empty">No council rounds recorded yet -- ' +
-        'transcripts appear after the first iteration vote.</div>';
+        '<div class="ct-empty">No review rounds recorded yet. ' +
+        'Transcripts appear after the first completion vote.</div>';
     } else {
       const cards = this._transcripts
         .map((t) => this._transcriptCardHtml(t))

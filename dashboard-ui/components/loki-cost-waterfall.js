@@ -360,7 +360,7 @@ export class LokiCostWaterfall extends LokiElement {
           <div class="header">
             <h3 class="title">Cost Breakdown</h3>
           </div>
-          <div class="empty-state">No cost data available</div>
+          <div class="empty-state">Cost details will appear once a build starts running.</div>
         </div>
       `;
       return;

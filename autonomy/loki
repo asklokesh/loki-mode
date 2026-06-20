@@ -1017,26 +1017,32 @@ detect_arg_type() {
         return 0
     fi
 
-    # Path-like (contains / or starts with . or /) -> treat as PRD
-    if [[ "$arg" == */* ]] || [[ "$arg" == .* ]] || [[ "$arg" == /* ]]; then
-        echo "prd"
-        return 0
-    fi
-
-    # Existing file on disk -> PRD
+    # An existing file on disk is unambiguously a PRD, even if its name has
+    # spaces -- a real path the user pointed at wins over the brief heuristic.
     if [ -e "$arg" ]; then
         echo "prd"
         return 0
     fi
 
     # R7 (zero-config first run): a one-line brief. An arg that contains
-    # whitespace and matched none of the file/issue/path patterns above is a
-    # natural-language brief (e.g. "build a todo app"), NOT a PRD path. This is
-    # additive: a single-token arg with no whitespace still falls through to
-    # "unknown" (PRD-path back-compat) below. The `--brief` flag is the
-    # deterministic escape hatch for the rare single-word brief.
+    # WHITESPACE and is not an existing file is a natural-language brief, NOT a
+    # path -- a real PRD path argument essentially never contains spaces, whereas
+    # a brief routinely contains slashes/punctuation ("add/list/done", "CI/CD",
+    # "input/output"). This MUST come before the path-like (contains "/")
+    # heuristic below, else a brief like "a todo app with add/list/done" is
+    # misrouted to PRD mode and dies with "PRD file not found" (W1 E2E bug,
+    # v7.89.1). The `--brief` flag remains the escape hatch for a single-word
+    # brief with no whitespace.
     if [[ "$arg" == *[[:space:]]* ]]; then
         echo "brief"
+        return 0
+    fi
+
+    # Path-like (contains / or starts with . or /) -> treat as PRD. Reached only
+    # for a NO-WHITESPACE arg (a brief with spaces was already handled above), so
+    # this is a genuine file path like ./prd.md or docs/spec.md.
+    if [[ "$arg" == */* ]] || [[ "$arg" == .* ]] || [[ "$arg" == /* ]]; then
+        echo "prd"
         return 0
     fi
 

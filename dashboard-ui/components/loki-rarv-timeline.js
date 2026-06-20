@@ -532,7 +532,7 @@ export class LokiRarvTimeline extends LokiElement {
         <div class="timeline-bar" style="opacity: 0.5;">${segments}</div>
         <div class="legend">${legendItems}</div>
         <div style="text-align: center; margin-top: 12px; font-size: 12px; color: var(--loki-text-muted, #939084);">
-          RARV phases will populate as the session progresses
+          Each step fills in as your build progresses
         </div>
       </div>
     `;

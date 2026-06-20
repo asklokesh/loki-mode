@@ -131,7 +131,7 @@ export class LokiActivityStream extends LokiElement {
       { id: '2', timestamp: new Date(now - 5000).toISOString(), message: 'Code review passed (3/3 reviewers)', severity: 'success', source: 'review' },
       { id: '3', timestamp: new Date(now - 8000).toISOString(), message: 'Context window at 78% capacity', severity: 'warning', source: 'context' },
       { id: '4', timestamp: new Date(now - 12000).toISOString(), message: 'Test suite completed: 42/42 passed', severity: 'success', source: 'testing' },
-      { id: '5', timestamp: new Date(now - 15000).toISOString(), message: 'RARV cycle: Verify phase complete', severity: 'info', source: 'rarv' },
+      { id: '5', timestamp: new Date(now - 15000).toISOString(), message: 'Verify step complete: changes checked', severity: 'info', source: 'rarv' },
     ];
   }
 
@@ -387,7 +387,7 @@ export class LokiActivityStream extends LokiElement {
 
     let feedContent;
     if (filtered.length === 0) {
-      feedContent = '<div class="empty-state">No activity to display</div>';
+      feedContent = '<div class="empty-state">No activity yet. Updates will stream here as your build runs.</div>';
     } else {
       feedContent = filtered.map(item => {
         const cfg = SEVERITY_CONFIG[item.severity] || SEVERITY_CONFIG.info;

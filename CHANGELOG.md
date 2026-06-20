@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.89.1] - 2026-06-20
+
+### Plainer language in the live dashboard
+
+A copy pass so a non-technical user watching a build sees plain language instead
+of internal jargon. Empty and loading states across the activity, cost, memory,
+provider-health, quality-gates, timeline, and escalations panels now describe what
+is happening in product terms (e.g. "Each step fills in as your build progresses"
+instead of "RARV phases will populate"). No behavior change.
+
 ## [7.89.0] - 2026-06-20
 
 ### Live dashboard + wiki: a polished experience while you watch a build

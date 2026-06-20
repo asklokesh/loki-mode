@@ -324,7 +324,7 @@ export class LokiSessionDiff extends LokiElement {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             <span class="diff-title">Session Resume</span>
           </div>
-          <div class="empty-state">No session diff available</div>
+          <div class="empty-state">Nothing to compare yet. Changes will show here after your first build.</div>
         </div>
       `;
       return;
@@ -404,7 +404,7 @@ export class LokiSessionDiff extends LokiElement {
           </div>
         </div>` : `
         <div style="text-align: center; padding: 14px 8px; font-size: 12px; color: var(--loki-text-muted, #939084);">
-          Populates after the first build iteration
+          Fills in after the first build step
         </div>`}
 
         ${highlightsHtml}

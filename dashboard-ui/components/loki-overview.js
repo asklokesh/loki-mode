@@ -230,10 +230,10 @@ export class LokiOverview extends LokiElement {
     const s = this._appRunnerStatus;
     if (!s || s.status === 'not_initialized') {
       const isRunning = this._data.status === 'running' || this._data.status === 'autonomous';
-      const label = isRunning ? 'Waiting...' : 'Not started';
+      const label = isRunning ? 'Starting...' : 'Not started';
       return `
         <div class="overview-card">
-          <div class="card-label">App Runner</div>
+          <div class="card-label">App Status</div>
           <div class="card-value small-text">${label}</div>
         </div>
       `;
@@ -257,7 +257,7 @@ export class LokiOverview extends LokiElement {
       appUrl = `http://localhost:${s.port}`;
     }
     const inner = `
-      <div class="card-label">App Runner${appUrl ? ' <span style="font-size:10px;color:var(--loki-text-muted);">(click to open)</span>' : ''}</div>
+      <div class="card-label">App Status${appUrl ? ' <span style="font-size:10px;color:var(--loki-text-muted);">(click to open)</span>' : ''}</div>
       <div class="card-value small-text">
         <span class="status-dot ${dotClass}"></span>
         ${label}${port}

@@ -353,7 +353,7 @@ export class LokiCouncilDashboard extends LokiElement {
 
   _renderDecisions() {
     if (this._verdicts.length === 0) {
-      return `<div class="empty-state">No council decisions yet. The council convenes every ${this._councilState?.check_interval || 5} iterations.</div>`;
+      return `<div class="empty-state">No review decisions yet. The council checks for completion every ${this._councilState?.check_interval || 5} build steps.</div>`;
     }
 
     return `

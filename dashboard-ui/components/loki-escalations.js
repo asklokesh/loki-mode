@@ -222,7 +222,7 @@ export class LokiEscalations extends LokiElement {
     } else if (this._error) {
       body = '<div class="esc-error">Failed to load escalations: ' + this._escapeHtml(this._error) + '</div>';
     } else if (!this._items || this._items.length === 0) {
-      body = '<div class="esc-empty">Escalations: no events yet. Handoff/escalation markdown documents written by the runner under .loki/escalations/ will appear here.</div>';
+      body = '<div class="esc-empty">No handoff notes yet. If a build needs your attention, its notes will appear here.</div>';
     } else {
       const rows = this._items.map((it) => {
         const fname = this._escapeHtml(it.filename || '');

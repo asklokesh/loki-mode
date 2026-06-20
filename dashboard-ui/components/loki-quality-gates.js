@@ -461,7 +461,7 @@ export class LokiQualityGates extends LokiElement {
         <div class="es">
           <div class="es-icon">${gateIcon}</div>
           <div class="es-title">No gate results yet</div>
-          <div class="es-desc">Quality gates run automatically between RARV iterations during a session. Run a scan now, or start a session with <code>loki start ./prd.md</code>.</div>
+          <div class="es-desc">Quality gates run automatically during each build step. Run a scan now, or start a session with <code>loki start ./prd.md</code>.</div>
           <button class="es-cta" id="gates-scan-btn" ${this._scanning ? 'disabled' : ''}>
             ${this._scanning ? '<span class="es-spinner"></span> Scanning...' : 'Run quality scan'}
           </button>

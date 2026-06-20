@@ -359,7 +359,7 @@ export class LokiProviderHealth extends LokiElement {
 
     let content;
     if (this._providers.length === 0) {
-      content = '<div class="empty-state">No provider data available</div>';
+      content = '<div class="empty-state">Provider status will appear once a build starts.</div>';
     } else {
       content = `<div class="provider-grid">${this._providers.map(p => {
         const icon = PROVIDER_ICONS[p.name] || { initial: (p.name ?? '?').charAt(0).toUpperCase(), color: '#939084', bgColor: 'rgba(147, 144, 132, 0.12)' };
