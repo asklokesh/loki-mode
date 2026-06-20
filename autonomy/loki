@@ -3193,6 +3193,10 @@ cmd_next() {
 cmd_ship() {
     local do_preview=false
     local review_args=()
+    # Tracks whether the caller passed an explicit scope flag (--staged, --since,
+    # ...). Passthrough flags like --yes/--severity do NOT set this, so they do
+    # not suppress the clean-loki-branch auto-scoping below.
+    local ship_explicit_scope=false
     while [ $# -gt 0 ]; do
         case "${1:-}" in
             --help|-h|help)
@@ -3222,7 +3226,31 @@ cmd_ship() {
                 return 0
                 ;;
             --preview) do_preview=true ;;
-            *) review_args+=("$1") ;;
+            # Only a known set of NON-scope passthrough flags are exempt from
+            # "explicit scope". Everything else the caller passes -- an explicit
+            # scope flag (--staged/--since/...), a positional <file-or-dir>, or any
+            # other review flag that narrows WHAT is reviewed -- counts as explicit
+            # scope, so we do NOT override it with the clean-branch auto-scoping
+            # below. This is the safe default: passthrough-that-changes-scope must
+            # win over our auto-scope. The exempt list is only flags that never
+            # change scope: --yes/-y (skip prompt), --severity (threshold).
+            # (Without this, `loki ship somefile.py` on a clean loki branch would
+            # get --since base injected and review the whole range, not the file.)
+            --yes|-y|--severity=*)
+                review_args+=("$1") ;;
+            # --severity in its DOCUMENTED two-token form (`--severity high`) takes
+            # a VALUE in the next arg. Consume both here so the value does not fall
+            # to the catch-all and wrongly mark explicit scope (which would skip the
+            # clean-branch auto-scoping and re-introduce the empty-diff false-clean
+            # bug). --severity sets a threshold, not a scope, so neither token is
+            # explicit scope.
+            --severity)
+                review_args+=("$1")
+                if [ "$#" -ge 2 ] && [ "${2#-}" = "$2" ]; then
+                    review_args+=("$2"); shift
+                fi
+                ;;
+            *) review_args+=("$1"); ship_explicit_scope=true ;;
         esac
         shift
     done
@@ -3243,6 +3271,41 @@ cmd_ship() {
 
     # 2. Run the SAME diff quality gates as cmd_review. Capture its documented
     #    exit code (0 clean, 1 HIGH, 2 CRITICAL). set -e safe: capture via || rc=$?.
+    #
+    #    Scope correction: cmd_review defaults to the UNCOMMITTED diff, but run.sh
+    #    auto-commits the session's work to the loki/session-* branch, so by the
+    #    time `loki ship` runs the tree is usually CLEAN -- which would make review
+    #    see an empty diff and falsely report "clean" before advising a PR (the
+    #    safety gate would be a no-op exactly when it matters). When the caller
+    #    gave no explicit scope AND we are on a loki/* branch with a clean tree,
+    #    default the scope to the branch-vs-base RANGE (the work being shipped),
+    #    resolved the same way the PR advice below resolves it.
+    local _ship_dir="."
+    if [ "$ship_explicit_scope" = false ]; then
+        local _ship_head="" _ship_base="" _ship_dirty=""
+        _ship_head="$(git -C "$_ship_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+        # Untracked files (e.g. a gitignored .loki/) do not count as "dirty" --
+        # what matters is whether the shippable TRACKED work is already committed.
+        _ship_dirty="$(git -C "$_ship_dir" status --porcelain --untracked-files=no 2>/dev/null)"
+        case "$_ship_head" in
+            loki/*)
+                if [ -z "$_ship_dirty" ]; then
+                    if [ -s "$_ship_dir/.loki/state/base-branch.txt" ]; then
+                        _ship_base="$(head -n1 "$_ship_dir/.loki/state/base-branch.txt" 2>/dev/null || echo "")"
+                    fi
+                    if [ -z "$_ship_base" ]; then
+                        local _ship_oh=""
+                        _ship_oh="$(git -C "$_ship_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || echo "")"
+                        [ -n "$_ship_oh" ] && _ship_base="${_ship_oh##*/}"
+                    fi
+                    if [ -n "$_ship_base" ] && git -C "$_ship_dir" rev-parse --verify --quiet "$_ship_base" >/dev/null 2>&1; then
+                        review_args+=("--since" "$_ship_base")
+                        echo -e "${DIM}Clean working tree on $_ship_head; reviewing the branch range vs $_ship_base.${NC}"
+                    fi
+                fi
+                ;;
+        esac
+    fi
     echo -e "${BOLD}Running quality gates on the diff (loki review)...${NC}"
     echo ""
     local rc=0

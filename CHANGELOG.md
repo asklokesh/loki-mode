@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.83.1] - 2026-06-20
+
+### Fix: loki ship now reviews the work being shipped
+
+A post-release adversarial hunt found that `loki ship` (new in v7.83.0) ran its
+quality gate on the uncommitted diff, but a Loki build auto-commits the session's
+work to the loki/session-* branch -- so by ship time the working tree is clean,
+the review saw an empty diff, and ship reported "clean" and advised a PR without
+gating the actual branch work. ship was always print-only (it never pushed), so
+nothing unsafe shipped, but the gate it advertises was a no-op exactly when it
+mattered. Fix: on a clean loki/* branch with no explicit scope, ship now reviews
+the branch-vs-base range (resolved from base-branch.txt), so the shippable work
+is gated. Explicit scope flags are still respected; ship stays print-only.
+
 ## [7.83.0] - 2026-06-20
 
 ### UX: less friction, more wow

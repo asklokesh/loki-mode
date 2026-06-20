@@ -465,6 +465,7 @@ run_check "tests/test-allowed-paths-sandbox-mount.sh (V3 sandbox workspace fail-
 run_check "tests/test-queue-consumer.sh (V5 redis/file consumer + flag-injection guard)" "bash tests/test-queue-consumer.sh 2>&1 | tail -3"
 run_check "tests/test-loki-why.sh (B5 failure/outcome diagnosis)" "bash tests/test-loki-why.sh 2>&1 | tail -3"
 run_check "tests/cli/test-loki-next.sh (loki next resolver)" "bash tests/cli/test-loki-next.sh 2>&1 | tail -3"
+run_check "tests/cli/test-ship-review-scope.sh (ship review scope)" "bash tests/cli/test-ship-review-scope.sh 2>&1 | tail -3"
 run_check "tests/cli/test-cli-flag-guards.sh (budget/plan-json/memory/temp-prd/flag-value guards)" "bash tests/cli/test-cli-flag-guards.sh 2>&1 | tail -3"
 run_check "tests/test-rate-limit-detection.sh (rate-limit false-positive guard)" "bash tests/test-rate-limit-detection.sh 2>&1 | tail -3"
 run_check "tests/test-config-map-fallback.sh (no-yq YAML nested-path + quote handling)" "bash tests/test-config-map-fallback.sh 2>&1 | tail -3"

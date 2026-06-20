@@ -250,6 +250,7 @@ run_test "ALLOWED_PATHS sandbox workspace mount (V3: fail-closed refuse)" "$SCRI
 run_test "Multi-build state isolation (A6: LOKI_SESSION_ID namespacing)" "$SCRIPT_DIR/test-state-isolation-a6.sh"
 run_test "loki why (B5: failure/outcome diagnosis)" "$SCRIPT_DIR/test-loki-why.sh"
 run_test "loki next (forward-motion resolver)" "$SCRIPT_DIR/cli/test-loki-next.sh"
+run_test "loki ship review scope (branch range on clean loki branch)" "$SCRIPT_DIR/cli/test-ship-review-scope.sh"
 run_test "CLI flag guards (budget/plan-json/memory/temp-prd/flag-value)" "$SCRIPT_DIR/cli/test-cli-flag-guards.sh"
 run_test "Rate-limit detection (no false-positive on agent output)" "$SCRIPT_DIR/test-rate-limit-detection.sh"
 run_test "Checkpoint worktree-bundle sync (V2: refs/loki/cp via git bundle)" "$SCRIPT_DIR/run-checkpoint-worktree-bundle-tests.sh"
