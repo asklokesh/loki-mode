@@ -39,18 +39,31 @@ export class LokiWikiBrowser extends LokiElement {
     this._error = null;
     this._api = null;
     this._meta = null; // GET /api/wiki
-    this._sectionCache = {}; // id -> {title, body, citations}
+    this._metaPromise = null; // in-flight GET /api/wiki, awaited by _selectTab
+    this._sectionCache = {}; // id -> {title, body, citations} (loaded sections)
+    // Per-section state machine: id -> 'loading' | 'loaded' | 'error' | 'empty'.
+    // Drives _renderSection so a tab can never get stuck on a spinner: every
+    // _loadSection transitions the section out of 'loading' in a finally block.
+    this._sectionState = {};
     // Ask state
     this._question = '';
     this._answer = null;
     this._asking = false;
     this._askError = null;
+    // Mermaid (lazy-loaded, see _ensureMermaid). null = untried.
+    this._mermaid = null;
+    this._mermaidPromise = null;
   }
 
   connectedCallback() {
     super.connectedCallback();
     this._setupApi();
     this._loadMeta();
+  }
+
+  disconnectedCallback() {
+    if (super.disconnectedCallback) super.disconnectedCallback();
+    this._disconnected = true;
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
@@ -64,64 +77,200 @@ export class LokiWikiBrowser extends LokiElement {
     this._api = getApiClient({ baseUrl: apiUrl });
   }
 
-  async _loadMeta() {
+  /**
+   * Load the wiki manifest (GET /api/wiki). The in-flight promise is stored on
+   * this._metaPromise so _selectTab can await it -- this is the fix for the
+   * first-click race where a section fetch was skipped because _meta was not
+   * yet resolved, leaving the tab stuck on "Loading section..." forever.
+   * @returns {Promise<void>} resolves once _meta is set (or _error on failure).
+   */
+  _loadMeta() {
     this._loading = true;
     this._error = null;
     this.render();
-    try {
-      this._meta = await this._api._get('/api/wiki');
-    } catch (e) {
-      this._error = (e && e.message) ? e.message : 'Failed to load wiki';
-    } finally {
-      this._loading = false;
-      this.render();
-      // If the user clicked a section tab during the meta load race (on a
-      // generated repo, the gate in _selectTab skipped the fetch because _meta
-      // was not yet resolved), load that section now so it does not stay stuck
-      // on "Loading...". Only for an active, uncached section tab.
-      const t = this._activeTab;
-      if (this._meta && this._meta.generated &&
-          (t === 'architecture' || t === 'modules' || t === 'data-flow') &&
-          !this._sectionCache[t]) {
-        this._loadSection(t).then(() => this.render());
+    this._metaPromise = (async () => {
+      try {
+        this._meta = await this._api._get('/api/wiki');
+      } catch (e) {
+        this._error = (e && e.message) ? e.message : 'Failed to load wiki';
+      } finally {
+        this._loading = false;
+        this.render();
       }
-    }
+    })();
+    return this._metaPromise;
   }
 
+  /**
+   * Fetch a wiki section, driving its state machine entry. Always leaves the
+   * section in a terminal state ('loaded' or 'error') -- never 'loading' -- so
+   * the spinner can never stick. Cached sections short-circuit and stay instant.
+   * @param {string} id - section id (architecture | modules | data-flow)
+   * @returns {Promise<object>} the section data (or an {error} record).
+   */
   async _loadSection(id) {
     if (this._sectionCache[id]) {
+      this._sectionState[id] = this._sectionCache[id].error ? 'error' : 'loaded';
       return this._sectionCache[id];
     }
+    this._sectionState[id] = 'loading';
     try {
       const data = await this._api._get(`/api/wiki/${encodeURIComponent(id)}`);
       this._sectionCache[id] = data;
+      this._sectionState[id] = (data && data.error) ? 'error' : 'loaded';
       return data;
     } catch (e) {
-      this._sectionCache[id] = { error: (e && e.message) || 'load failed' };
-      return this._sectionCache[id];
+      const rec = { error: (e && e.message) || 'load failed' };
+      this._sectionCache[id] = rec;
+      this._sectionState[id] = 'error';
+      return rec;
     }
   }
 
+  /**
+   * Switch tabs. For a section tab, this ENSURES the manifest is resolved
+   * (awaiting the in-flight _loadMeta promise) before deciding whether to fetch
+   * the section, then fetches it if a wiki exists. The fetch + diagram render
+   * always end in a terminal state, so the tab can never hang.
+   * @param {string} id - tab id
+   */
   async _selectTab(id) {
     this._activeTab = id;
-    if (id === 'architecture' || id === 'modules' || id === 'data-flow') {
-      // Only fetch a section when a wiki actually exists. On a fresh repo the
-      // manifest reports generated:false and /api/wiki/{section} would 404,
-      // flooding the console with 404s + AbortErrors. Render a friendly
-      // not-generated message instead of hitting the network -- but do NOT
-      // write it to _sectionCache: the cache is permanent (loadSection returns
-      // cached entries and never refetches), so caching here would poison the
-      // tab if it was clicked before _meta resolved on a repo that DOES have a
-      // wiki. _renderSection reads _meta.generated live to decide.
-      if (this._meta && this._meta.generated) {
-        this.render(); // show spinner
-        await this._loadSection(id);
-      } else {
-        this.render();
-      }
-    } else {
+    if (id !== 'architecture' && id !== 'modules' && id !== 'data-flow') {
       this.render();
+      return;
     }
+    // Already loaded -> instant (cache preserved, no refetch, no flicker).
+    if (this._sectionCache[id]) {
+      this.render();
+      return;
+    }
+    // Show the spinner while we resolve the manifest + fetch the section.
+    this._sectionState[id] = 'loading';
+    this.render();
+    // Wait for the manifest so the generated:false / generated:true decision is
+    // real and not a race. If the manifest is still loading on first click, this
+    // is exactly the bug we fix: we await it instead of skipping the fetch.
+    if (this._metaPromise) {
+      try { await this._metaPromise; } catch (_e) { /* handled via _error */ }
+    }
+    if (this._disconnected || this._activeTab !== id) return;
+    // No wiki yet (fresh repo): show the honest not-generated empty state.
+    // Do NOT cache it -- _renderSection reads _meta.generated live so the tab
+    // self-corrects once a wiki exists. Clear the transient 'loading' state.
+    if (!this._meta || !this._meta.generated) {
+      delete this._sectionState[id];
+      this.render();
+      return;
+    }
+    await this._loadSection(id);
+    if (this._disconnected || this._activeTab !== id) return;
+    // render() rewrites the panel and then (re-)renders any mermaid diagram for
+    // the active section into #wiki-diagram. Failure there degrades to the
+    // source + prose, never throws -- so this single render fully settles the tab.
+    this.render();
+  }
+
+  /**
+   * Lazily load mermaid from a SAME-ORIGIN vendored asset (no external CDN, so
+   * the dashboard stays offline / air-gapped safe). Resolves to the mermaid API
+   * object, or null if it cannot be loaded (caller then degrades to the source).
+   * The script is loaded once and cached; concurrent callers share one promise.
+   * @returns {Promise<object|null>}
+   */
+  _ensureMermaid() {
+    if (this._mermaid) return Promise.resolve(this._mermaid);
+    if (this._mermaidPromise) return this._mermaidPromise;
+    this._mermaidPromise = (async () => {
+      try {
+        // Already present on the page (standalone build may inline it, or a
+        // prior load on another component instance).
+        if (typeof window !== 'undefined' && window.mermaid) {
+          this._mermaid = window.mermaid;
+          return this._mermaid;
+        }
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+          return null;
+        }
+        const base = (this._api && this._api.baseUrl) || window.location.origin;
+        const url = `${base}/assets/mermaid.min.js`;
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[data-loki-mermaid]');
+          if (existing) {
+            existing.addEventListener('load', resolve, { once: true });
+            existing.addEventListener('error', reject, { once: true });
+            if (window.mermaid) resolve();
+            return;
+          }
+          const s = document.createElement('script');
+          s.src = url;
+          s.async = true;
+          s.setAttribute('data-loki-mermaid', '1');
+          s.addEventListener('load', resolve, { once: true });
+          s.addEventListener('error', () => reject(new Error('mermaid load failed')), { once: true });
+          document.head.appendChild(s);
+        });
+        this._mermaid = (typeof window !== 'undefined' && window.mermaid) || null;
+        return this._mermaid;
+      } catch (_e) {
+        // Offline / asset missing / load error: degrade gracefully.
+        return null;
+      }
+    })();
+    return this._mermaidPromise;
+  }
+
+  /**
+   * Render the mermaid diagram for a section into #wiki-diagram as an SVG, if a
+   * diagram exists and mermaid is available. Any failure (no mermaid, invalid
+   * source, parse error) is swallowed -- the fallback code block + prose stay
+   * visible. Never throws, never blanks the panel.
+   * @param {string} id - section id
+   */
+  async _maybeRenderDiagram(id) {
+    const data = this._sectionCache[id];
+    const src = this._diagramSource(data);
+    if (!src) return;
+    let mermaid;
+    try {
+      mermaid = await this._ensureMermaid();
+    } catch (_e) {
+      mermaid = null;
+    }
+    if (!mermaid || this._disconnected || this._activeTab !== id) return;
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        // 'strict' strips/escapes HTML in labels, blocking script injection from
+        // generated (and therefore untrusted) diagram text.
+        securityLevel: 'strict',
+        theme: this._mermaidTheme(),
+        flowchart: { htmlLabels: false, useMaxWidth: true },
+        deterministicIds: true,
+      });
+      // Validate first so invalid source falls back instead of throwing into the
+      // panel. mermaid.parse throws on invalid syntax.
+      if (typeof mermaid.parse === 'function') {
+        await mermaid.parse(src);
+      }
+      const renderId = `wiki-mmd-${id}-${Date.now()}`;
+      const out = await mermaid.render(renderId, src);
+      const svg = out && (out.svg || out); // v10 returns {svg}, older returns string
+      if (typeof svg !== 'string' || svg.indexOf('<svg') === -1) return;
+      if (this._disconnected || this._activeTab !== id || !this.shadowRoot) return;
+      const host = this.shadowRoot.getElementById('wiki-diagram');
+      if (host) host.innerHTML = svg;
+    } catch (_e) {
+      // Invalid mermaid or render error: keep the source fallback already shown.
+    }
+  }
+
+  /** Map the dashboard theme to a mermaid built-in theme. */
+  _mermaidTheme() {
+    const t = (this.getAttribute('theme') ||
+      (typeof document !== 'undefined' &&
+        document.documentElement.getAttribute('data-loki-theme')) || '').toLowerCase();
+    return t.includes('dark') ? 'dark' : 'neutral';
   }
 
   async _ask() {
@@ -196,8 +345,14 @@ export class LokiWikiBrowser extends LokiElement {
   }
 
   _renderSection(id) {
-    // Live check: if no wiki is generated, show the not-generated message
-    // (never cached, so it self-corrects once a wiki exists / _meta resolves).
+    // State machine: loading -> (loaded | error | empty). The not-generated
+    // empty state is checked live (never cached) so the tab self-corrects once a
+    // wiki exists / _meta resolves. While the manifest is still resolving on a
+    // first click we keep showing the spinner (terminal states clear it).
+    const state = this._sectionState[id];
+    if (state === 'loading') {
+      return `<div class="es-loading"><span class="es-spinner"></span> Loading section...</div>`;
+    }
     if (!this._meta || !this._meta.generated) {
       return this._renderNotGenerated();
     }
@@ -206,8 +361,44 @@ export class LokiWikiBrowser extends LokiElement {
     if (data.error) return this._renderError(data.error);
     return `<div class="section">
       <h3>${this._esc(data.title)}</h3>
+      ${this._renderDiagram(id, data)}
       <pre class="body">${this._esc(data.body)}</pre>
       ${this._renderCitations(data.citations)}
+    </div>`;
+  }
+
+  /**
+   * Render the diagram region for a section. The container is filled with an SVG
+   * by _maybeRenderDiagram once mermaid resolves; until then (or if there is no
+   * diagram / mermaid is unavailable / the source is invalid) it falls back to
+   * the mermaid source in a code block so the user always sees the structure.
+   * @param {string} id - section id
+   * @param {object} data - section payload (may carry a `diagram` field)
+   * @returns {string} HTML for the diagram region (empty string if no diagram)
+   */
+  /**
+   * Extract the mermaid source from a section payload. Accepts either a raw
+   * mermaid string or a fenced ```mermaid ... ``` block (the generator may emit
+   * either), returning the inner mermaid source with the fence stripped.
+   * @param {object} data - section payload
+   * @returns {string} mermaid source ('' if none)
+   */
+  _diagramSource(data) {
+    let src = data && typeof data.diagram === 'string' ? data.diagram.trim() : '';
+    if (!src) return '';
+    const fenced = src.match(/^```(?:mermaid)?\s*\n([\s\S]*?)\n```$/);
+    if (fenced) src = fenced[1].trim();
+    return src;
+  }
+
+  _renderDiagram(id, data) {
+    const src = this._diagramSource(data);
+    if (!src) return '';
+    // The rendered SVG (set imperatively after render) lives in #wiki-diagram.
+    // The <noscript>-style fallback below is shown until/unless an SVG replaces
+    // it, and remains if mermaid is unavailable or the source fails to parse.
+    return `<div class="diagram" id="wiki-diagram" data-section="${this._esc(id)}">
+      <pre class="diagram-fallback"><code>${this._esc(src)}</code></pre>
     </div>`;
   }
 
@@ -292,6 +483,23 @@ export class LokiWikiBrowser extends LokiElement {
         .dim { color: var(--loki-text-muted); }
         .overview p, .section p { color: var(--loki-text-secondary); font-size: 13px; }
         h3 { margin-top: 0; color: var(--loki-text-primary); font-size: 15px; }
+
+        /* Mermaid diagram region (theme-aware container; the SVG inherits the
+           mermaid theme chosen in _mermaidTheme). Falls back to the source code
+           block below if mermaid is unavailable or the source is invalid. */
+        .diagram {
+          margin: 0 0 12px; padding: 14px; overflow-x: auto;
+          background: var(--loki-bg-secondary);
+          border: 1px solid var(--loki-border);
+          border-radius: var(--loki-radius-lg, 5px);
+        }
+        .diagram svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+        .diagram-fallback {
+          margin: 0; white-space: pre-wrap; word-break: break-word;
+          font-family: var(--loki-font-mono, monospace); font-size: 12px;
+          line-height: 1.5; color: var(--loki-text-secondary);
+        }
+        .diagram-fallback code { background: transparent; padding: 0; color: inherit; }
 
         /* Branded empty / loading / error states */
         .es {
@@ -388,8 +596,19 @@ export class LokiWikiBrowser extends LokiElement {
     if (retryBtn) {
       retryBtn.addEventListener('click', () => {
         this._sectionCache = {};
+        this._sectionState = {};
         this._loadMeta();
       });
+    }
+    // If the active section is a loaded diagram-bearing section, (re-)render the
+    // SVG -- render() rewrites innerHTML back to the source fallback each time,
+    // so we re-hydrate the visual on every render of a cached section. Guarded
+    // so it is a no-op when there is no diagram or mermaid is unavailable.
+    const t = this._activeTab;
+    if ((t === 'architecture' || t === 'data-flow') &&
+        this._sectionCache[t] && !this._sectionCache[t].error &&
+        this.shadowRoot.getElementById('wiki-diagram')) {
+      this._maybeRenderDiagram(t);
     }
   }
 

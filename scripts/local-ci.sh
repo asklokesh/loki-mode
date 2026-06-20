@@ -393,6 +393,14 @@ run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sent
 # run_secure_scan wiring (advisory default / LOKI_SECURE_GATE=block / waiver), and
 # the `loki secure` waiver CLI shape. Fast, no network, throwaway temp fixtures.
 run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-secure-scan.sh 2>&1 | tail -3"
+run_check "tests/test-build-home-isolation.sh (in-build app exec sandbox)" "bash tests/test-build-home-isolation.sh 2>&1 | tail -3"
+
+# Telemetry disclosure-before-egress under a real pty (council cH_r1 AC7). Locks
+# in the on-by-default TTY fix: interactivity resolved once at the entry point
+# (LOKI_TTY_INTERACTIVE), never re-probed `-t` in FD-detached subshells, so a real
+# interactive user is disclosed-to before any egress on BOTH routes and never
+# covertly. Hermetic (unroutable endpoint, fresh HOME, no real network send).
+run_check "tests/test-telemetry-disclosure-pty.sh (TTY signal + no covert egress)" "bash tests/test-telemetry-disclosure-pty.sh 2>&1 | tail -3"
 
 # ---------------------------------------------------------------------------
 # STOP-SUITE FOREIGN-KILL REGRESSION GUARD (fix/local-ci-sentinel)

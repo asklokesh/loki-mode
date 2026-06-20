@@ -11,6 +11,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 const PHASES = ['understand', 'guardrail', 'migrate', 'verify'];
 const PHASE_LABELS = { understand: 'Understand', guardrail: 'Guardrail', migrate: 'Migrate', verify: 'Verify' };
@@ -40,14 +41,22 @@ export class LokiMigrationDashboard extends LokiElement {
     super.connectedCallback();
     this._setupApi();
     this._fetchMigrations();
-    this._pollInterval = setInterval(() => this._fetchData(), 15000);
+    // Central registry gates this poll to the active + visible section (one
+    // place enforces visibility + active-view); the initial load above runs
+    // eagerly, so immediate is disabled to avoid a duplicate fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._fetchData(),
+      intervalMs: 15000,
+      element: this,
+      immediate: false,
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 

@@ -170,6 +170,10 @@ run_test "AGENTS.md Doc Walker (precedence + fallback)" "$SCRIPT_DIR/test-agents
 run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-agents-md-build-prompt.sh"
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
 
+# F52: DOC_SCOPE instruction scales documentation to detected project complexity
+# (simple -> minimal docs; standard/complex -> full architecture suite).
+run_test "DOC_SCOPE build_prompt Instruction (tier-conditional)" "$SCRIPT_DIR/test-doc-scope-build-prompt.sh"
+
 # caveman output-token compressor gates: ACTIVATE on free-form generation,
 # HARD-SUPPRESS (CAVEMAN_DEFAULT_MODE=off) on every parsed trust-gate subcall.
 # Includes the determinism / moat carve-out proof (suppression is unconditional)
@@ -223,6 +227,17 @@ run_test "Public Preview Tunnel (--public consent + tunnel wrap)" "$SCRIPT_DIR/t
 # refs after), with a mutation check proving that assertion is non-vacuous.
 run_test "Branch Lifecycle (default-on, base!=main, commit, advisory no-push)" "$SCRIPT_DIR/test-branch-lifecycle.sh"
 
+# Telemetry disclosure-before-egress under a REAL pty (council cH_r1 AC7). The
+# on-by-default gate resolves interactivity ONCE at the entry point (exported
+# LOKI_TTY_INTERACTIVE) instead of re-probing `-t` in FD-detached subshells, so
+# an interactive user is never auto-off'd by the gate-check/emit subshells. This
+# test drives `loki version` (Bun route) and a bash-routed command under a
+# python3 pty on a fresh HOME and asserts: interactive enabled -> disclosure once
+# before egress; 2nd run no repeat; off/CI/enterprise/DO_NOT_TRACK/non-pty ->
+# silent; sentinel edge (CI-first then interactive) still discloses. Hermetic:
+# endpoint points at an unroutable local sink, never the real PostHog host.
+run_test "Telemetry Disclosure PTY (TTY signal + no covert egress)" "$SCRIPT_DIR/test-telemetry-disclosure-pty.sh"
+
 # Deploy Advisory (FEAT-DEPLOY): `loki deploy` detects project type + CI/CD
 # pipeline and PRINTS the deploy command(s); print-only (NEVER runs a cloud CLI,
 # NEVER git push). Drives the real binary with fake cloud-CLI stubs; headline
@@ -273,6 +288,10 @@ run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-cod
 # un-waived HIGH; a waiver suppresses the block), and the `loki secure
 # waive|unwaive|list` CLI shape. Receipt honesty is in tests/test_proof_generator.py.
 run_test "Secure-by-Default Gate (engine precision + wiring + waiver CLI)" "$SCRIPT_DIR/test-secure-scan.sh"
+
+# Build-time HOME isolation (F49): Loki's in-build app executions must run with an
+# isolated HOME/XDG/TMPDIR so a generated app cannot litter the user's real home.
+run_test "Build-time HOME isolation (in-build app exec sandbox)" "$SCRIPT_DIR/test-build-home-isolation.sh"
 
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

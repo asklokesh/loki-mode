@@ -10191,6 +10191,219 @@ async def get_proof_html(run_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Active spec + spec history.
+#
+# Gives the dashboard honest visibility into WHAT Loki is building from. The
+# resolution order mirrors proof-generator.py::_collect_spec so the panel and
+# the Evidence Receipt can never disagree about the spec source:
+#   1. PRD file  -> session.json prdPath (only when the file still exists)
+#   2. one-line brief -> .loki/state/brief.txt
+#   3. generated PRD  -> .loki/generated-prd.md
+#   4. no spec        -> codebase-analysis
+# Issue mode is detected from the latest proof.json's spec.source (a GitHub
+# issue URL): issue runs re-dispatch through cmd_run, which synthesizes a PRD,
+# so at runtime they look like a generated-prd; the proof carries the real
+# issue ref. We never fabricate a type -- when nothing is resolvable we say so.
+#
+# History is derived from the proofs the Evidence Receipt already writes
+# (.loki/proofs/<run_id>/proof.json), newest-first. No new store is invented.
+# ---------------------------------------------------------------------------
+# Cap on the spec body returned to the dashboard so a huge PRD cannot bloat the
+# payload. The panel shows a preview; the full file lives on disk.
+_SPEC_CONTENT_CAP = 20000
+# Issue URLs (mirrors autonomy/loki's issue-mode detection regex). Matches a
+# tracker host followed somewhere by an /issue(s)/ path or a Jira /browse/ key.
+_ISSUE_URL_RE = re.compile(
+    r"(github\.com|gitlab\.com|atlassian\.net|dev\.azure\.com|"
+    r"visualstudio\.com)/.*\b(issues?|browse)/", re.IGNORECASE)
+
+
+def _spec_source_is_issue(source: str) -> bool:
+    """True when a proof spec.source string is a tracker issue reference."""
+    if not source:
+        return False
+    return bool(_ISSUE_URL_RE.search(source))
+
+
+def _latest_proof(proofs_dir: _Path) -> Optional[dict]:
+    """Return the newest proof.json dict for the active project, or None."""
+    try:
+        entries = sorted(proofs_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        return None
+    newest = None
+    newest_key = ""
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        proof_json = entry / "proof.json"
+        if not proof_json.is_file():
+            continue
+        data = _safe_json_read(proof_json, default=None)
+        if not isinstance(data, dict):
+            continue
+        key = data.get("generated_at") or entry.name
+        if newest is None or key >= newest_key:
+            newest = data
+            newest_key = key
+    return newest
+
+
+def _spec_summary(source: str, brief: str) -> str:
+    """One-line summary for a history row, derived honestly from the spec.
+
+    Prefers the first non-empty line of the brief; falls back to the source
+    basename. Never fabricates -- returns an honest label when nothing exists.
+    """
+    if brief:
+        for line in brief.splitlines():
+            line = line.strip().lstrip("#").strip()
+            if line:
+                return line[:160]
+    if source in ("brief", "codebase-analysis", "", None):
+        return {"brief": "one-line brief",
+                "codebase-analysis": "Codebase analysis (no spec)"}.get(
+                    source, "Unknown spec")
+    if _spec_source_is_issue(source):
+        return source
+    return os.path.basename(source) or source
+
+
+def _classify_proof_spec(spec: dict) -> str:
+    """Map a proof.json spec dict to a dashboard spec type, honestly."""
+    if not isinstance(spec, dict):
+        return "unknown"
+    source = (spec.get("source") or "").strip()
+    if _spec_source_is_issue(source):
+        return "issue"
+    if source == "brief":
+        return "brief"
+    if source == "codebase-analysis":
+        return "codebase-analysis"
+    if not source:
+        return "unknown"
+    # A real filesystem path (PRD or generated PRD). A synthesized PRD lives at
+    # .loki/generated-prd.md or .loki/brief-prd-*.md; anything else is a user
+    # PRD. We report the broad "spec" type and the path so the UI can show it.
+    return "spec"
+
+
+@app.get("/api/spec", dependencies=[Depends(auth.require_scope("read"))])
+async def get_active_spec():
+    """Return the current run's spec source + content, honestly typed.
+
+    Types: prd | brief | spec | issue | codebase-analysis | none. The `none`
+    state is the honest empty state when no run has produced a spec yet. We
+    never invent a spec: each branch reads a real file or says it cannot.
+    """
+    loki_dir = _get_loki_dir()
+
+    # 1. PRD file recorded by the running orchestrator (session.json prdPath).
+    #    Only trust it when the file still exists on disk.
+    session = _safe_json_read(loki_dir / "session.json", default=None)
+    prd_path = ""
+    if isinstance(session, dict):
+        prd_path = (session.get("prdPath") or "").strip()
+    if prd_path:
+        p = _Path(prd_path)
+        if p.is_file():
+            content = _safe_read_text(p)
+            return {
+                "type": "prd",
+                "path": str(p),
+                "content": content[:_SPEC_CONTENT_CAP],
+                "truncated": len(content) > _SPEC_CONTENT_CAP,
+            }
+
+    # 2. one-line brief (zero-config first run). The raw brief is the strongest
+    #    honest artifact -- show it verbatim.
+    brief_file = loki_dir / "state" / "brief.txt"
+    if brief_file.is_file():
+        text = _safe_read_text(brief_file).strip()
+        if text:
+            return {"type": "brief", "text": text[:_SPEC_CONTENT_CAP],
+                    "truncated": len(text) > _SPEC_CONTENT_CAP}
+
+    # 3. Issue mode: a brief/PRD run that originated from a tracker issue. The
+    #    runtime has only the synthesized PRD, but the latest proof.json carries
+    #    the real issue ref + brief. Surface it as an issue when we can prove it.
+    latest = _latest_proof(loki_dir / "proofs")
+    if isinstance(latest, dict):
+        pspec = latest.get("spec")
+        if isinstance(pspec, dict):
+            src = (pspec.get("source") or "").strip()
+            if _spec_source_is_issue(src):
+                pbrief = (pspec.get("brief") or "").strip()
+                return {
+                    "type": "issue",
+                    "ref": src,
+                    "title": _spec_summary(src, pbrief),
+                    "body": pbrief[:_SPEC_CONTENT_CAP],
+                    "truncated": len(pbrief) > _SPEC_CONTENT_CAP,
+                }
+
+    # 4. Generated PRD (synthesized from a brief, or from codebase analysis).
+    for name in ("generated-prd.md",):
+        gen = loki_dir / name
+        if gen.is_file():
+            content = _safe_read_text(gen)
+            if content.strip():
+                return {
+                    "type": "spec",
+                    "path": str(gen),
+                    "content": content[:_SPEC_CONTENT_CAP],
+                    "truncated": len(content) > _SPEC_CONTENT_CAP,
+                    "generated": True,
+                }
+
+    # 5. Codebase analysis (no explicit spec) -- only claim this when a run has
+    #    actually happened (a session or a proof exists). Otherwise honest none.
+    has_session = isinstance(session, dict) and bool(session)
+    if has_session or latest is not None:
+        return {"type": "codebase-analysis"}
+
+    # 6. Nothing yet -- honest empty state, not a fabricated spec.
+    return {"type": "none"}
+
+
+@app.get("/api/spec/history", dependencies=[Depends(auth.require_scope("read"))])
+async def get_spec_history():
+    """Return past specs/issues/briefs for this codebase, newest-first.
+
+    Derived from the Evidence Receipts (.loki/proofs/<run_id>/proof.json) that
+    every run already writes; no separate spec store is invented. Each row:
+    {when, type, summary, run_id}. Missing/corrupt proofs are skipped, never
+    faked. Empty -> {"history": []} (honest empty state).
+    """
+    proofs_dir = _get_loki_dir() / "proofs"
+    rows: list[dict] = []
+    try:
+        entries = sorted(proofs_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        return {"history": []}
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        proof_json = entry / "proof.json"
+        if not proof_json.is_file():
+            continue
+        data = _safe_json_read(proof_json, default=None)
+        if not isinstance(data, dict):
+            continue
+        spec = data.get("spec")
+        spec = spec if isinstance(spec, dict) else {}
+        source = (spec.get("source") or "").strip()
+        rows.append({
+            "run_id": data.get("run_id", entry.name),
+            "when": data.get("generated_at"),
+            "type": _classify_proof_spec(spec),
+            "summary": _spec_summary(source, (spec.get("brief") or "").strip()),
+        })
+    rows.sort(key=lambda x: (x.get("when") or ""), reverse=True)
+    return {"history": rows}
+
+
+# ---------------------------------------------------------------------------
 # R5: Auto-wiki + cited codebase Q&A (Loki's DeepWiki).
 #
 # Surfaces the per-project wiki generated by autonomy/lib/wiki-generator.py

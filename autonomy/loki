@@ -5315,14 +5315,17 @@ cmd_welcome_terminal() {
     echo -e "  Quick start:  ${BOLD}loki quickstart${NC} (from your idea) or ${BOLD}loki start ./prd.md${NC} (from a spec)"
     echo -e "  Docs:         ${BOLD}https://www.autonomi.dev/docs${NC}"
     echo ""
+    # One-time honest disclosure (this welcome screen shows once, via the
+    # WELCOME_MARKER). On-by-default anonymous diagnostics must be disclosed
+    # somewhere so collection is never covert; this single line is that
+    # disclosure. It is NOT repeated on later runs. Enterprise/CI/air-gapped
+    # installs auto-disable collection, so the line only appears when it is
+    # actually on. Opt out anytime: loki telemetry off.
     if _loki_welcome_analytics_on; then
-        echo -e "  ${DIM}Anonymous usage analytics are ON (you opted in). We never collect${NC}"
-        echo -e "  ${DIM}prompts, PRDs, or code. Opt out: loki telemetry off${NC}"
-    else
-        echo -e "  ${DIM}Anonymous analytics are off by default. Nothing is sent unless you${NC}"
-        echo -e "  ${DIM}opt in with: loki telemetry on${NC}"
+        echo -e "  ${DIM}Anonymous diagnostics on (os/arch/version/error type only -- never${NC}"
+        echo -e "  ${DIM}code, prompts, or paths). Off: loki telemetry off  -  docs/PRIVACY.md${NC}"
+        echo ""
     fi
-    echo ""
 }
 
 cmd_welcome() {
@@ -5419,7 +5422,7 @@ cmd_web() {
     case "$subcommand" in
         start)
             shift || true
-            cmd_web_start "$@"
+            cmd_web_redirect_to_dashboard "$@"
             ;;
         stop)
             cmd_web_stop
@@ -5449,9 +5452,51 @@ cmd_web() {
         *)
             # Treat unknown args as options to start (e.g., loki web --no-open)
             shift
-            cmd_web_start "$subcommand" "$@"
+            cmd_web_redirect_to_dashboard "$subcommand" "$@"
             ;;
     esac
+}
+
+# v7.x (F55): `loki web` (the command a user intuitively types) used to launch
+# the deprecated Purple Lab, whose '/' redirects to '/lab/' and whose port has
+# none of the real dashboard APIs (/api/status, /trust, etc. all 404). A user
+# typing the obvious command landed on the wrong, broken-looking surface. The
+# value-preserving fix: the START path now launches the real dashboard instead.
+# 'loki web stop|status|logs' still operate on Purple Lab so anyone who started
+# it the old way (or via scripts) is never stranded. The deprecation banner has
+# already printed in cmd_web() before we get here.
+cmd_web_redirect_to_dashboard() {
+    # The dashboard start path does not accept Purple-Lab-only flags
+    # (--no-open, --prd). Filter them so `loki web --no-open` (used in CI) and
+    # `loki web --prd X` keep working instead of erroring on an unknown option.
+    # --port is shared and passes straight through.
+    local orig_args=("$@")
+    local dash_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-open)
+                # Dashboard has no browser-open behavior to suppress; drop it.
+                shift
+                ;;
+            --prd)
+                # Purple-Lab-only prefill; not supported by the dashboard.
+                shift 2 2>/dev/null || shift
+                ;;
+            --prd=*)
+                shift
+                ;;
+            *)
+                dash_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Safe empty-array expansion (bash 3.2 + set -u): ${arr[@]+"${arr[@]}"}
+    if ! _deprecated_alias_should_suppress ${orig_args[@]+"${orig_args[@]}"}; then
+        echo "Launching the dashboard (http://localhost:${DASHBOARD_DEFAULT_PORT}) instead of the deprecated Purple Lab." >&2
+    fi
+    cmd_dashboard_start ${dash_args[@]+"${dash_args[@]}"}
 }
 
 cmd_web_help() {
@@ -5460,40 +5505,34 @@ cmd_web_help() {
     echo "Usage: loki web [command] [options]"
     echo ""
     echo "DEPRECATED as of v7.44.0: Purple Lab is consolidated into the dashboard."
-    echo "  For local build + monitoring, use the dashboard (auto-launches at"
-    echo "  'loki start', http://localhost:${DASHBOARD_DEFAULT_PORT}; or 'loki dashboard')."
-    echo "  For the hosted platform, see Autonomi Cloud."
-    echo "  'loki web' still works for now (it launches after a deprecation notice),"
-    echo "  but it will be removed in a future release. Migrate to the dashboard."
+    echo "  'loki web' (no subcommand) now LAUNCHES THE DASHBOARD"
+    echo "  (http://localhost:${DASHBOARD_DEFAULT_PORT}) instead of the deprecated Purple"
+    echo "  Lab, so the obvious command lands you on the working UI. Use the embedded"
+    echo "  'Lab' tab there to submit a PRD. For the hosted platform, see Autonomi Cloud."
     echo ""
-    echo "Note: 'loki web' is Purple Lab (the PRD-input/build-watch UI, port ${PURPLE_LAB_DEFAULT_PORT})."
-    echo "      It is NOT the same as 'loki dashboard' (operations UI, port ${DASHBOARD_DEFAULT_PORT})."
-    echo "      Use 'loki dashboard' to monitor running agents, tasks, costs, council, escalations."
+    echo "Note: the canonical command is 'loki dashboard' (operations UI, port ${DASHBOARD_DEFAULT_PORT})."
+    echo "      Use it to monitor running agents, tasks, costs, council, escalations."
     echo ""
     echo "Commands:"
-    echo "  start    Start Purple Lab (default)"
-    echo "  stop     Stop Purple Lab server"
+    echo "  start    Launch the dashboard (default; Purple Lab is deprecated)"
+    echo "  stop     Stop the Purple Lab server (if one was started the old way)"
     echo "  status   Show Purple Lab server status"
     echo "  logs     Show Purple Lab server logs"
     echo "  help     Show this help"
     echo ""
     echo "Options (for start):"
-    echo "  --no-open      Don't open browser automatically"
-    echo "  --port PORT    Use custom port (default: ${PURPLE_LAB_DEFAULT_PORT})"
-    echo ""
-    echo "Purple Lab is the product UI where you input PRDs and watch agents build."
-    echo "It runs its own backend (web-app/server.py) on port ${PURPLE_LAB_DEFAULT_PORT}."
+    echo "  --port PORT    Use custom port (default: ${DASHBOARD_DEFAULT_PORT})"
+    echo "  --no-open      Accepted for back-compat; ignored (no-op on the dashboard)"
     echo ""
     echo "Examples:"
-    echo "  loki web                  Start Purple Lab and open in browser"
-    echo "  loki web --no-open        Start without opening browser"
-    echo "  loki web stop             Stop the Purple Lab server"
+    echo "  loki web                  Launch the dashboard"
+    echo "  loki web --no-open        Launch the dashboard (--no-open is a no-op)"
+    echo "  loki web stop             Stop a Purple Lab server started the old way"
     echo ""
     echo "Note (since v7.5.30):"
-    echo "  Purple Lab is also embedded in the Dashboard as a Lab sidebar entry."
-    echo "  Run 'loki dashboard start' and click 'Lab' to use the same UI"
-    echo "  without spawning a second port. 'loki web' standalone remains"
-    echo "  supported (Rule 0); both modes serve the same React bundle."
+    echo "  The same PRD-input UI is embedded in the dashboard as a 'Lab' sidebar entry."
+    echo "  'loki web stop|status|logs' still operate on a standalone Purple Lab"
+    echo "  process so anyone who started one the old way is never stranded."
 }
 
 cmd_web_start() {
@@ -16110,6 +16149,18 @@ worktree wt projects cp rc trust-metrics serve agent code self_update test help 
 
 # Main command dispatcher
 main() {
+    # v7.89.0 telemetry TTY fix (council cH_r1 AC1): resolve interactivity EXACTLY
+    # ONCE here, while autonomy/loki main still owns the user's real TTY, and
+    # export the explicit signal that the telemetry/crash gates trust instead of a
+    # late `-t` re-probe. When invoked via the bin/loki shim the var is already
+    # exported (and re-exporting the same value is a no-op); this covers the path
+    # where autonomy/loki is invoked directly (LOKI_LEGACY_BASH, no-Bun, or a
+    # direct call). Only set when a terminal is actually present; leave UNSET
+    # otherwise so isolated gate unit tests fall back to their own `-t` probe.
+    if [ -z "${LOKI_TTY_INTERACTIVE:-}" ] && { [ -t 1 ] || [ -t 0 ]; }; then
+        export LOKI_TTY_INTERACTIVE=1
+    fi
+
     # v7.5.18: early guard -- LOKI_PROVIDER=gemini is no longer supported.
     if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
         echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}" >&2
@@ -16131,6 +16182,19 @@ main() {
     # v7.4.13: first-run telemetry moved to bin/loki shim so it fires for
     # both Bun-routed and bash-routed commands (autonomy/loki main() never
     # runs for the 8 ported commands). Marker file: ~/.loki-first-run.
+    #
+    # v7.89.0 (council cH_r1 AC4): this is a FOREGROUND egress on the bash route.
+    # Before it can phone home, the user must have seen the disclosure once -- a
+    # bash-routed first command must never be covert. Evaluate the SAME gate the
+    # egress uses, and if collection is genuinely enabled, disclose once (shared
+    # impl from telemetry.sh, keyed on its own marker, so it never double-prints
+    # with the Bun route or repeats). loki_telemetry itself re-checks the gate, so
+    # this only adds the disclosure; it never changes whether we send.
+    if declare -f _loki_telemetry_enabled >/dev/null 2>&1 \
+       && declare -f _loki_disclose_telemetry_once >/dev/null 2>&1 \
+       && _loki_telemetry_enabled; then
+        _loki_disclose_telemetry_once
+    fi
     loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
 
     # Unified config-file pre-pass (#691). For session commands ONLY, honor
@@ -21947,13 +22011,32 @@ try {
 
             # Unified collection state (PostHog usage telemetry + crash reporting).
             # loki_collection_enabled is the single source of truth (crash.sh).
-            # Collection is OPT-IN: OFF by default, enabled only after opt-in.
+            # Collection is ON BY DEFAULT for individual interactive installs and
+            # auto-off in enterprise/CI/air-gapped/non-interactive contexts; an
+            # explicit opt-out always wins. AC8 (council cH_r1): the status copy
+            # must distinguish "on by default" from an explicit "you opted in".
             echo ""
             if type loki_collection_enabled &>/dev/null; then
                 if loki_collection_enabled; then
-                    echo -e "  Collection: ${GREEN}enabled${NC} (you opted in; anonymous diagnostics; opt out with: loki telemetry off)"
+                    # Detect an EXPLICIT opt-in (env LOKI_TELEMETRY=on, or the
+                    # persistent ~/.loki/config TELEMETRY_ENABLED=true written by
+                    # `loki telemetry on`). Anything else that is enabled is the
+                    # individual on-by-default path.
+                    local _telem_lower_status
+                    _telem_lower_status="$(printf '%s' "${LOKI_TELEMETRY:-}" | tr '[:upper:]' '[:lower:]')"
+                    local _explicit_optin=false
+                    if [ "$_telem_lower_status" = "on" ]; then
+                        _explicit_optin=true
+                    elif [ -f "$global_config" ] && grep -q "^TELEMETRY_ENABLED=true" "$global_config" 2>/dev/null; then
+                        _explicit_optin=true
+                    fi
+                    if [ "$_explicit_optin" = true ]; then
+                        echo -e "  Collection: ${GREEN}enabled${NC} (you opted in; anonymous diagnostics; opt out with: loki telemetry off)"
+                    else
+                        echo -e "  Collection: ${GREEN}on by default${NC} (anonymous diagnostics; opt out with: loki telemetry off)"
+                    fi
                 else
-                    echo -e "  Collection: ${YELLOW}off by default${NC} (nothing sent; opt in with: loki telemetry on)"
+                    echo -e "  Collection: ${YELLOW}off${NC} (nothing sent; enterprise/CI/air-gapped or opted out; opt in with: loki telemetry on)"
                 fi
             fi
 
@@ -30649,7 +30732,7 @@ cmd_proof() {
                 # "No proofs found" line -- matching the Bun route (proof.ts
                 # listProofs, which returns before the header when rows is empty).
                 if [ "$found" -eq 0 ]; then
-                    printf "%-26s  %-20s  %-10s  %-9s  %s\n" "RUN_ID" "GENERATED_AT" "VERDICT" "COST_USD" "FILES"
+                    printf "%-26s  %-20s  %-18s  %-9s  %s\n" "RUN_ID" "GENERATED_AT" "VERDICT" "COST_USD" "FILES"
                 fi
                 found=1
                 LOKI_PROOF_JSON="$pj" python3 - <<'PYEOF'
@@ -30667,10 +30750,14 @@ def s(v):
     return "-" if v is None else str(v)
 run_id = d.get("run_id")
 gen = d.get("generated_at")
-verdict = (d.get("council") or {}).get("final_verdict")
+# The honest verdict lives in honesty.headline (VERIFIED / VERIFIED WITH GAPS /
+# NOT VERIFIED); fall back to legacy council.final_verdict for older proofs.
+verdict = (d.get("honesty") or {}).get("headline")
+if verdict is None:
+    verdict = (d.get("council") or {}).get("final_verdict")
 cost = (d.get("cost") or {}).get("usd")
 files = (d.get("files_changed") or {}).get("count")
-print("{:<26}  {:<20}  {:<10}  {:<9}  {}".format(
+print("{:<26}  {:<20}  {:<18}  {:<9}  {}".format(
     s(run_id), s(gen), s(verdict), s(cost), s(files)))
 PYEOF
             done

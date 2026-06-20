@@ -76,7 +76,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "version":
     case "--version":
     case "-v":
-      return runVersion();
+      return await runVersion();
 
     case "provider":
       return runProvider(rest);
@@ -161,15 +161,17 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runRollback(rest);
     }
 
-    case "proof": {
+    case "proof":
+    case "receipt": {
       // R1 (SLICE B): inspect/share proof-of-run artifacts. The Bun port
-      // implements list/show/open natively (share shells out to
+      // implements list/show/verify/open natively (share shells out to
       // `gh gist create` after a redaction-preview confirmation). The bin/loki
       // shim allowlist (line ~119) DOES include "proof", so when bun is
       // installed a real `loki proof` invocation routes here -- this is the
       // live route. The bash cmd_proof (autonomy/loki) is the fallback for
       // no-bun systems and the LOKI_LEGACY_BASH=1 escape hatch, kept at parity
-      // (see loki-ts/tests/commands/proof.test.ts).
+      // (see loki-ts/tests/commands/proof.test.ts). `loki receipt` is a friendly
+      // alias for `loki proof` (parity with the bash proof|receipt dispatch).
       const { runProof } = await import("./commands/proof.ts");
       return runProof(rest);
     }

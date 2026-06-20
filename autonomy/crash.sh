@@ -39,10 +39,46 @@ _LOKI_CRASH_CAPTURE_PY="${_LOKI_CRASH_DIR}/lib/crash_capture.py"
 # its precedence MUST be mirrored by _is_enabled in dashboard/telemetry.py and
 # _loki_telemetry_enabled in autonomy/telemetry.sh.
 #
-# Precedence:
-#   1. Any opt-out flag present  -> OFF (hard kill, always wins)
-#   2. Else any opt-in flag present -> ON
-#   3. Else (default)            -> OFF (no egress, no local capture)
+# Precedence (MUST mirror _loki_telemetry_enabled in autonomy/telemetry.sh and
+# _is_enabled in dashboard/telemetry.py):
+#   1. Any opt-out flag present     -> OFF (hard kill, always wins)
+#   2. Else explicit opt-in present -> ON (force-on, even in CI/enterprise)
+#   3. Else enterprise/CI/air-gapped -> OFF (auto-off, safe out of the box)
+#   4. Else (individual default)    -> ON (anonymous diagnostics, disclosed once)
+
+# _loki_collection_auto_off: enterprise / CI / air-gapped / non-interactive
+# detection. Defined here too (not only telemetry.sh) because autonomy/loki sources
+# crash.sh but not telemetry.sh. Guarded so a single definition wins if both load.
+# This list MUST stay in sync with _loki_telemetry_auto_off (telemetry.sh) and
+# dashboard/telemetry.py.
+if ! declare -f _loki_collection_auto_off >/dev/null 2>&1; then
+_loki_collection_auto_off() {
+    [ "${CI:-}" = "true" ] && return 0
+    [ -n "${GITHUB_ACTIONS:-}" ] && return 0
+    [ -n "${GITLAB_CI:-}" ] && return 0
+    [ -n "${BUILDKITE:-}" ] && return 0
+    [ -n "${JENKINS_URL:-}" ] && return 0
+    [ -n "${TEAMCITY_VERSION:-}" ] && return 0
+    [ "${CONTINUOUS_INTEGRATION:-}" = "true" ] && return 0
+    [ "${LOKI_ENTERPRISE:-}" = "true" ] && return 0
+    [ "${LOKI_AIRGAP:-}" = "true" ] && return 0
+    # Non-interactive detection (council cH_r1 AC2). MUST match
+    # _loki_telemetry_auto_off (telemetry.sh) and _auto_off (dashboard/telemetry.py):
+    # trust the explicit LOKI_TTY_INTERACTIVE signal resolved once at the entry
+    # point; fall back to a live `-t` probe only when the signal is unset (isolated
+    # unit test that bypassed the entry point). A fresh `-t` probe in an
+    # FD-detached subshell would wrongly auto-off a real interactive user.
+    if [ -n "${LOKI_TTY_INTERACTIVE:-}" ]; then
+        [ "${LOKI_TTY_INTERACTIVE}" = "1" ] && return 1
+        return 0
+    fi
+    if [ ! -t 1 ] && [ ! -t 0 ]; then
+        return 0
+    fi
+    return 1
+}
+fi
+
 loki_collection_enabled() {
     local telem_lower
     telem_lower="$(printf '%s' "${LOKI_TELEMETRY:-}" | tr '[:upper:]' '[:lower:]')"
@@ -59,7 +95,7 @@ loki_collection_enabled() {
         return 1
     fi
 
-    # --- 2. Opt-in required to enable ---
+    # --- 2. Explicit opt-in forces ON (overrides the enterprise/CI auto-off) ---
     # Env: LOKI_TELEMETRY=on (case-insensitive, exact word "on").
     [ "$telem_lower" = "on" ] && return 0
     # Persistent opt-in in ~/.loki/config (written by: loki telemetry on).
@@ -67,8 +103,11 @@ loki_collection_enabled() {
         return 0
     fi
 
-    # --- 3. Default: OFF ---
-    return 1
+    # --- 3. Enterprise / CI / air-gapped: auto-off (safe out of the box) ---
+    _loki_collection_auto_off && return 1
+
+    # --- 4. Individual interactive default: ON (anonymous diagnostics) ---
+    return 0
 }
 
 # _loki_crash_python: resolve a python3 interpreter, or return 1 if absent.
@@ -156,35 +195,23 @@ loki_crash_friction() {
     return 0
 }
 
-# loki_show_disclosure_once: print the first-run disclosure exactly once.
-# Shown regardless of enabled/disabled state, before any egress. Uses the
-# DISCLOSURE_SHOWN sentinel in ~/.loki/config (do not invent a new file).
-# Safe if HOME is unwritable (best-effort).
+# loki_show_disclosure_once: intentionally a SILENT no-op.
+#
+# The verbose multi-line disclosure block was removed (it cluttered logs + the
+# run experience, and its "off by default" copy no longer matches the on-by-
+# default-for-individuals model). Disclosure now lives in two non-noisy places,
+# so on-by-default collection is still NEVER covert:
+#   1. a single line on the one-time welcome screen (cmd_welcome_terminal), shown
+#      only when diagnostics are actually on, and
+#   2. docs/PRIVACY.md (canonical), plus `loki telemetry` status/off.
+# Kept as a callable no-op so existing callers (run.sh) do not break, and still
+# records the DISCLOSURE_SHOWN sentinel for back-compat with any reader of it.
 loki_show_disclosure_once() {
     local config="${HOME}/.loki/config"
-
-    # Already shown? Never re-show.
     if [ -f "$config" ] && grep -q "^DISCLOSURE_SHOWN=true" "$config" 2>/dev/null; then
         return 0
     fi
-
-    # Disclosure copy (opt-in framing; no emojis, no em dashes).
-    {
-        echo ""
-        echo "Loki Mode anonymous diagnostics are OFF by default. Nothing is collected"
-        echo "or sent unless you opt in, so a default install sends us no telemetry"
-        echo "or diagnostics. Air-gapped and enterprise deployments are safe out of"
-        echo "the box."
-        echo "If you opt in, we send anonymous diagnostics only (os, arch, version,"
-        echo "error type, sanitized stack signatures). Never your code, prompts, paths,"
-        echo "keys, or repo names."
-        echo "See docs/PRIVACY.md. Opt in anytime with: loki telemetry on"
-        echo ""
-    } >&2
-
-    # Persist the sentinel (best-effort; never fail the caller).
     mkdir -p "${HOME}/.loki" 2>/dev/null || return 0
     echo "DISCLOSURE_SHOWN=true" >> "$config" 2>/dev/null || true
-
     return 0
 }

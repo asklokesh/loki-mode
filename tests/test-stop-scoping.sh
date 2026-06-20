@@ -96,6 +96,30 @@ T2=$(
   mkdir -p "$WORK/A/.loki" "$WORK/B/.loki"
   # Unique marker for this run's fake runners; the --all kill is scoped to it.
   SCOPE_MARK="STOPSCOPE-$$-${RANDOM}"
+  # Poll a pid for up to ~10s. wait_dead returns 0 once the pid is gone;
+  # wait_alive returns 0 once the pid file holds a live pid. These replace
+  # fixed `sleep N` snapshots so the case is deterministic under CPU load:
+  # we wait for the actual condition instead of guessing how long a kill or a
+  # pid-file write will take on a busy box.
+  wait_dead() {
+    local pid="$1" i
+    for i in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || return 0
+      sleep 0.1
+    done
+    return 1
+  }
+  wait_pidfile() {
+    local f="$1" i p
+    for i in $(seq 1 100); do
+      p=$(cat "$f" 2>/dev/null || true)
+      if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+        echo "$p"; return 0
+      fi
+      sleep 0.1
+    done
+    return 1
+  }
   # fake runner script (name carries the unique marker so the scoped --all pkill
   # matches it); does NOT exec, so the script name stays in argv like the real
   # runner.
@@ -116,23 +140,36 @@ RUNNER
     echo "$rs"
   }
   RA=$(make_runner "$WORK/A"); RB=$(make_runner "$WORK/B")
-  sleep 0.4
-  PIDA=$(cat "$WORK/A/.loki/loki.pid" 2>/dev/null)
-  PIDB=$(cat "$WORK/B/.loki/loki.pid" 2>/dev/null)
+  # Wait for both runners to publish their live pid before stopping anything.
+  PIDA=$(wait_pidfile "$WORK/A/.loki/loki.pid")
+  PIDB=$(wait_pidfile "$WORK/B/.loki/loki.pid")
   result=""
   # folder-scoped stop in A
   ( cd "$WORK/A" && LOKI_DIR=.loki SKILL_DIR="$REPO_ROOT" LOKI_SKIP_PROJECT_REGISTRY=1 \
       bash "$LOKI" stop >/dev/null 2>&1 )
-  sleep 0.5
-  kill -0 "$PIDA" 2>/dev/null && result="${result}A_ALIVE " || result="${result}A_DEAD "
-  kill -0 "$PIDB" 2>/dev/null && result="${result}B_ALIVE " || result="${result}B_DEAD "
+  # A must die; poll until it does (or time out -> A_ALIVE means the scoped stop
+  # failed). B must stay alive: confirm it survives the whole window A took to
+  # die, so a slow kill of A can never be mistaken for B also dying.
+  if [ -n "${PIDA:-}" ] && wait_dead "$PIDA"; then
+    result="${result}A_DEAD "
+  else
+    result="${result}A_ALIVE "
+  fi
+  if [ -n "${PIDB:-}" ] && kill -0 "$PIDB" 2>/dev/null; then
+    result="${result}B_ALIVE "
+  else
+    result="${result}B_DEAD "
+  fi
   # --all from A (which now has no live session) must kill B too. Scope the
   # blanket kill to THIS run's marker so we never reap an unrelated loki-run-*.
   ( cd "$WORK/A" && LOKI_DIR=.loki SKILL_DIR="$REPO_ROOT" LOKI_SKIP_PROJECT_REGISTRY=1 \
       LOKI_STOP_ALL_PATTERN="loki-run-${SCOPE_MARK}-" \
       bash "$LOKI" stop --all >/dev/null 2>&1 )
-  sleep 0.8
-  kill -0 "$PIDB" 2>/dev/null && result="${result}B_ALIVE_AFTER_ALL" || result="${result}B_DEAD_AFTER_ALL"
+  if [ -n "${PIDB:-}" ] && wait_dead "$PIDB"; then
+    result="${result}B_DEAD_AFTER_ALL"
+  else
+    result="${result}B_ALIVE_AFTER_ALL"
+  fi
   # cleanup: kill any survivors, remove temp dirs + the runner scripts we made
   kill -9 "$PIDA" "$PIDB" 2>/dev/null
   rm -f "$RA" "$RB"

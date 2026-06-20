@@ -101,6 +101,7 @@ export { LokiManagedMemoryPanel } from './components/loki-managed-memory-panel.j
 export { LokiEscalations } from './components/loki-escalations.js';
 export { LokiCouncilTranscripts } from './components/loki-council-transcripts.js';
 export { LokiWikiBrowser } from './components/loki-wiki-browser.js';
+export { LokiSpecPanel } from './components/loki-spec-panel.js';
 
 // Version
 export const VERSION = '1.4.0';
@@ -171,6 +172,7 @@ const componentModules = [
   './components/loki-agent-leaderboard.js',
   './components/loki-managed-memory-panel.js',
   './components/loki-wiki-browser.js',
+  './components/loki-spec-panel.js',
 ];
 
 // Components are registered via customElements.define in their respective files

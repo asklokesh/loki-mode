@@ -465,22 +465,54 @@ describe("buildPrompt v7.40.0 autonomous complexity-gated ultracode analysis", (
     expect(out).not.toContain("ultracode: CODEBASE_ANALYSIS_MODE:");
   });
 
-  it("byte-identical to default for simple/standard + unset var", async () => {
+  it("byte-identical to default for standard + unset var", async () => {
+    // #584 gate: the workflow-analysis prefix must NOT fire for non-complex
+    // tiers. standard and unset both also resolve doc_scope to FULL (F52), so
+    // the whole prompt stays byte-identical to the unset-var baseline.
     const baseline = await buildPrompt({
       retry: 0,
       prd: null,
       iteration: 7,
       ctx: { cwd: workDir, env: emptyEnv() },
     });
-    for (const cx of ["simple", "standard"]) {
-      const out = await buildPrompt({
-        retry: 0,
-        prd: null,
-        iteration: 7,
-        ctx: { cwd: workDir, env: emptyEnv({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: cx }) },
-      });
-      expect(out).toBe(baseline);
-    }
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "standard" }),
+      },
+    });
+    expect(out).toBe(baseline);
+  });
+
+  it("simple tier does not fire the workflow-analysis prefix (#584), only swaps doc_scope (F52)", async () => {
+    // simple must still take the cheap three-pass analysis (no 'ultracode:'),
+    // and differ from the baseline ONLY by the tier-conditional doc_scope line.
+    const baseline = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: { cwd: workDir, env: emptyEnv() },
+    });
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 7,
+      ctx: {
+        cwd: workDir,
+        env: emptyEnv({ LOKI_PROVIDER: "claude", DETECTED_COMPLEXITY: "simple" }),
+      },
+    });
+    expect(out).not.toContain("ultracode:");
+    expect(out).toContain(_internals.DOC_SCOPE_INSTRUCTION_SIMPLE);
+    // Swapping the doc_scope line back to FULL reproduces the baseline exactly.
+    const normalized = out.replace(
+      _internals.DOC_SCOPE_INSTRUCTION_SIMPLE,
+      _internals.DOC_SCOPE_INSTRUCTION_FULL,
+    );
+    expect(normalized).toBe(baseline);
   });
 
   it("byte-identical to default when the flag is explicitly off (escape hatch), even on complex", async () => {
@@ -668,5 +700,68 @@ describe("buildPrompt v7.40.0 autonomous complexity-gated ultracode analysis", (
       console.error = orig;
       _internals.resetWorkflowDisclosure();
     }
+  });
+});
+
+// F52: documentation scope must scale to the detected project complexity so a
+// trivial one-file app does not get a nine-file architecture suite. The
+// instruction is tier-conditional (simple -> minimal, standard/complex -> full)
+// and parity-locked between the bash and Bun routes.
+describe("docScopeInstruction (F52: docs scale to project size)", () => {
+  it("simple tier returns the minimal-doc instruction (no full suite)", () => {
+    const s = _internals.docScopeInstruction({ DETECTED_COMPLEXITY: "simple" });
+    expect(s).toBe(_internals.DOC_SCOPE_INSTRUCTION_SIMPLE);
+    expect(s).toContain("small, simple project");
+    expect(s).toContain("Do NOT generate a multi-file architecture documentation suite");
+  });
+
+  it("standard tier returns the full-suite instruction", () => {
+    expect(_internals.docScopeInstruction({ DETECTED_COMPLEXITY: "standard" })).toBe(
+      _internals.DOC_SCOPE_INSTRUCTION_FULL,
+    );
+  });
+
+  it("complex tier returns the full-suite instruction", () => {
+    expect(_internals.docScopeInstruction({ DETECTED_COMPLEXITY: "complex" })).toBe(
+      _internals.DOC_SCOPE_INSTRUCTION_FULL,
+    );
+  });
+
+  it("unset/empty tier defaults to full (parity with bash ${DETECTED_COMPLEXITY:-standard})", () => {
+    expect(_internals.docScopeInstruction({})).toBe(_internals.DOC_SCOPE_INSTRUCTION_FULL);
+    expect(_internals.docScopeInstruction({ DETECTED_COMPLEXITY: "" })).toBe(
+      _internals.DOC_SCOPE_INSTRUCTION_FULL,
+    );
+  });
+
+  it("both variants forbid claiming docs that were not written", () => {
+    expect(_internals.DOC_SCOPE_INSTRUCTION_SIMPLE).toContain(
+      "Never claim a doc exists that you did not write",
+    );
+    expect(_internals.DOC_SCOPE_INSTRUCTION_FULL).toContain(
+      "Never claim a doc exists that you did not write",
+    );
+  });
+
+  it("buildPrompt emits the simple instruction for a simple-tier run", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: { cwd: workDir, env: emptyEnv({ DETECTED_COMPLEXITY: "simple" }) },
+    });
+    expect(out).toContain(_internals.DOC_SCOPE_INSTRUCTION_SIMPLE);
+    expect(out).not.toContain(_internals.DOC_SCOPE_INSTRUCTION_FULL);
+  });
+
+  it("buildPrompt emits the full instruction for a complex-tier run", async () => {
+    const out = await buildPrompt({
+      retry: 0,
+      prd: null,
+      iteration: 1,
+      ctx: { cwd: workDir, env: emptyEnv({ DETECTED_COMPLEXITY: "complex" }) },
+    });
+    expect(out).toContain(_internals.DOC_SCOPE_INSTRUCTION_FULL);
+    expect(out).not.toContain(_internals.DOC_SCOPE_INSTRUCTION_SIMPLE);
   });
 });

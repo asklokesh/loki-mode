@@ -6,21 +6,32 @@ match the code, the code is the bug; please open an issue.
 
 ## Summary
 
-- Anonymous diagnostics are OPT-IN and OFF by default. A default install sends
-  no telemetry or diagnostics of any kind. This covers a default `npm install`,
-  the CLI (session and command events), the dashboard, and the welcome page
-  form. Air-gapped, GDPR, and FedRAMP deployments are safe out of the box: an
-  untouched install sends us no telemetry or diagnostics. (This statement scopes
-  to telemetry and diagnostics; provider CLIs you configure, such as Claude or
-  Codex, make their own network calls under your own credentials and are
-  governed by their vendors.)
-- When you DO opt in, Loki Mode collects anonymous diagnostics to help find and
-  fix bugs. It NEVER collects your code, prompts, PRDs, file paths, environment
-  values, API keys, repository names, emails, or IP addresses.
+- Anonymous diagnostics are ON BY DEFAULT for an ordinary individual install,
+  and AUTO-OFF in enterprise, CI, and air-gapped contexts. This covers the CLI
+  (session and command events), the dashboard, and the welcome page form. What is
+  ever sent is ONLY anonymous diagnostics (operating system, architecture, Loki
+  version, error type, and sanitized stack signatures). It NEVER includes your
+  code, prompts, PRDs, file paths, environment values, API keys, repository
+  names, emails, or IP addresses. (This statement scopes to telemetry and
+  diagnostics; provider CLIs you configure, such as Claude or Codex, make their
+  own network calls under your own credentials and are governed by their vendors.)
+- Enterprise / CI / air-gapped deployments are safe out of the box: collection
+  AUTO-DISABLES (no opt-out needed) when any of these is detected -- CI
+  (CI/GITHUB_ACTIONS/GITLAB_CI/BUILDKITE/JENKINS_URL/TEAMCITY_VERSION/
+  CONTINUOUS_INTEGRATION), an enterprise/air-gapped marker
+  (LOKI_ENTERPRISE=true / LOKI_AIRGAP=true), or a non-interactive session (no
+  TTY: scripts, pipes, cron, detached/container runs). In those contexts an
+  untouched install sends us nothing. GDPR / FedRAMP deployments stay clean.
+- Disclosure is never covert: the first-run welcome screen states (once) that
+  anonymous diagnostics are on and how to turn them off, and this document is the
+  canonical reference.
+- Opt out anytime, and opt-out ALWAYS wins: `loki telemetry off` /
+  `LOKI_TELEMETRY=off` / `LOKI_TELEMETRY_DISABLED=true` / `DO_NOT_TRACK=1` /
+  `~/.loki/config: TELEMETRY_DISABLED=true`. Conversely `loki telemetry on`
+  force-enables even inside CI/enterprise if you want to send us diagnostics.
 - Crash reporting (Phase 0) is local-only with zero network egress regardless,
-  and is also gated by opt-in, so a default install writes nothing at all.
-- You opt in with a single switch (`loki telemetry on` or `LOKI_TELEMETRY=on`)
-  and can opt back out at any time. Opt-out always wins over opt-in.
+  and is gated by the same switch, so an opted-out (or auto-off) install writes
+  nothing at all.
 
 ## Two collection paths exist
 
@@ -46,10 +57,14 @@ Phase 0 behavior:
     GitHub issue URL so you can submit it manually if you choose. Loki Mode does
     not submit anything for you in this version.
 
-### 2. Usage telemetry (anonymous, opt-in)
+### 2. Usage telemetry (anonymous, on by default for individuals)
 
-Loki Mode can send anonymous usage telemetry via PostHog, but ONLY after you opt
-in. By default it is OFF and nothing is sent.
+Loki Mode sends anonymous usage telemetry via PostHog. It is ON by default for an
+ordinary individual install, and AUTO-OFF in enterprise, CI, air-gapped, and
+non-interactive contexts (see the precedence below). It is gated by the same
+switch as crash reporting, so a single opt-out (`loki telemetry off` /
+`DO_NOT_TRACK=1`) disables everything, and it never sends your code, prompts,
+paths, keys, or repo names -- only anonymous diagnostics.
 
 - Endpoint: `https://us.i.posthog.com/capture/` (override with
   `LOKI_TELEMETRY_ENDPOINT`). The PostHog project key is a public ingest key.
@@ -115,36 +130,45 @@ prompts, briefs, and diffs can never reach the payload even if a redaction rule
 were to miss something. Secrets are additionally scrubbed by the shared redactor
 before whitelisting.
 
-## How to opt in (and opt back out)
+## How to turn it off (and force it on)
 
-Collection is OFF by default. To turn it on, use ANY one of:
+Anonymous diagnostics are ON by default for an ordinary individual install. To
+turn them off at any time, use ANY one of the following. Opt-out always wins, so
+setting one of these guarantees nothing is collected or sent:
 
-- Run `loki telemetry on` (persists `TELEMETRY_ENABLED=true` to `~/.loki/config`)
-- Set the environment variable `LOKI_TELEMETRY=on` (exact word `on`,
-  case-insensitive; values like `1` or `true` do NOT count as consent)
-
-To opt back out at any time, use ANY one of the following. Opt-out always wins
-over opt-in, so setting one of these guarantees nothing is collected or sent:
-
-- Run `loki telemetry off`
+- Run `loki telemetry off` (persists `TELEMETRY_DISABLED=true` to `~/.loki/config`)
 - Set `LOKI_TELEMETRY=off`
 - Set `DO_NOT_TRACK=1` (the cross-tool community convention)
 - Set `LOKI_TELEMETRY_DISABLED=true`
 
+To FORCE it on (for example to send us diagnostics from a context that would
+otherwise auto-disable, like CI), use ANY one of:
+
+- Run `loki telemetry on` (persists `TELEMETRY_ENABLED=true` to `~/.loki/config`)
+- Set `LOKI_TELEMETRY=on` (exact word `on`, case-insensitive)
+
 ### Precedence (exact)
 
 1. If any opt-out flag is set, collection is OFF (hard kill, always wins).
-2. Else if any opt-in flag is set, collection is ON.
-3. Otherwise (the default), collection is OFF.
+2. Else if an explicit opt-in (`loki telemetry on` / `LOKI_TELEMETRY=on` /
+   `TELEMETRY_ENABLED=true`) is set, collection is ON (this overrides the
+   enterprise/CI/air-gapped auto-off below).
+3. Else if the context is enterprise / CI / air-gapped / non-interactive,
+   collection is OFF (auto-off, safe out of the box). Detected via: CI /
+   GITHUB_ACTIONS / GITLAB_CI / BUILDKITE / JENKINS_URL / TEAMCITY_VERSION /
+   CONTINUOUS_INTEGRATION, or LOKI_ENTERPRISE=true / LOKI_AIRGAP=true, or no TTY.
+4. Otherwise (an ordinary individual install), collection is ON.
+
+In all enabled cases, if `curl` is unavailable there is no egress.
 
 ### Air-gapped and enterprise deployments
 
-Because collection is opt-in, a default install in an air-gapped, GDPR, or
-FedRAMP environment sends us no telemetry or diagnostics: there is nothing to
-turn off because there is nothing on. To make opting in impossible by accident
-across a fleet, bake `LOKI_TELEMETRY_DISABLED=true` (or `DO_NOT_TRACK=1`) into
-your base image or CI environment; opt-out always wins regardless of any later
-opt-in.
+A default install in an air-gapped, CI, or non-interactive environment sends us
+no telemetry or diagnostics: collection AUTO-DISABLES there (step 3 above), so
+there is nothing to turn off. To make collection impossible across a fleet
+regardless of context, bake `LOKI_TELEMETRY_DISABLED=true` (or `DO_NOT_TRACK=1`)
+into your base image or CI environment; opt-out always wins over everything,
+including a stray `loki telemetry on`.
 
 This same gate covers ALL paths: the `npm install` event, CLI session and
 command events, the dashboard event, the welcome form, and local crash capture.
@@ -183,9 +207,12 @@ that choice plainly so you can decide whether to opt out.
 
 ## Compliance posture
 
-- Opt-in by default: nothing is collected or sent unless the user explicitly
-  opts in. A default install (including air-gapped) sends us no telemetry or
-  diagnostics.
+- Safe-by-default for enterprise: collection AUTO-DISABLES in enterprise, CI,
+  air-gapped, and non-interactive contexts, so an untouched install in those
+  environments sends us no telemetry or diagnostics (no action required). For an
+  ordinary individual install it is on by default (anonymous diagnostics only),
+  disclosed once on first use, and a single opt-out (`loki telemetry off` /
+  `DO_NOT_TRACK=1`) always wins and disables everything.
 - Anonymous by design: no PII is in the whitelist; emails and IP addresses are
   denied outright. The welcome form's role / company-size / tools fields are
   self-reported and anonymous (no name, email, or IP).

@@ -32,6 +32,21 @@ SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
 
+# v7.89.0 telemetry TTY fix (council cH_r1): resolve interactivity EXACTLY ONCE
+# here, while this shim still owns the user's real TTY, and export it as an
+# explicit signal. The telemetry gates (telemetry.sh / crash.sh / dashboard
+# telemetry.py) must NOT re-probe `-t` later: the gate is evaluated inside
+# subshells that redirect FDs (the `) </dev/null >/dev/null 2>&1` gate-check
+# subshells below), and the backgrounded emit subshell also detaches its FDs, so
+# a fresh `-t` probe there always sees non-TTY and would auto-off a REAL
+# interactive user (killing on-by-default + the disclosure). Set the var only
+# when a terminal is actually present at this entry point; leave it UNSET
+# otherwise so an isolated unit test that bypasses this entry point falls back to
+# the gate's own `-t` probe (documented precedence in the *_auto_off helpers).
+if [ -t 1 ] || [ -t 0 ]; then
+    export LOKI_TTY_INTERACTIVE=1
+fi
+
 # Resolve which Bun entry to use:
 #   1. LOKI_TS_ENTRY=...   -- explicit override (custom builds, tests)
 #   2. BUN_FROM_SOURCE=1   -- prefer src/cli.ts (used by bench --compare-dist
@@ -87,6 +102,42 @@ else
     exec "$BASH_CLI" "$@"
 fi
 
+# v7.88.1 covert-path fix (council cF_r2 + cG_r2 sentinel edge): under on-by-default
+# diagnostics, NO telemetry may egress before the user has seen a disclosure once.
+# The cmd_start welcome only shows on `loki start`, so a first `loki version`/`doctor`
+# would otherwise egress covertly. _loki_disclose_telemetry_once prints a one-time
+# disclosure to the user's REAL stderr the first time collection is ACTUALLY enabled
+# at egress time. It is keyed on its OWN marker (~/.loki/.telemetry-disclosed), NOT
+# the .loki-first-run sentinel: the sentinel edge is that a first run in CI/auto-off
+# sets .loki-first-run while suppressing disclosure, which must NOT permanently
+# silence the disclosure on a later interactive (enabled) run. Every enabled egress
+# path (installed + cli_command) calls this first, so whichever fires first discloses.
+#
+# v7.89.0 (council cH_r1 AC4): the helper now lives in autonomy/telemetry.sh as
+# the SINGLE shared impl for both routes (the bash route in autonomy/loki calls
+# the same function before its foreground egress, so the copy never drifts).
+# Source it here at top level just for this helper -- telemetry.sh executes
+# nothing on source beyond defining functions and two host/key vars, so this is
+# side-effect-free for the shim. If the source fails for any reason, define a
+# local fallback so on-by-default disclosure is never silently skipped.
+if [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+    # shellcheck source=../autonomy/telemetry.sh
+    source "$REPO_ROOT/autonomy/telemetry.sh" 2>/dev/null || true
+fi
+if ! declare -f _loki_disclose_telemetry_once >/dev/null 2>&1; then
+_loki_disclose_telemetry_once() {
+    local _marker="${HOME}/.loki/.telemetry-disclosed"
+    [ -f "$_marker" ] 2>/dev/null && return 0
+    printf '%s\n' \
+      "Loki Mode sends anonymous diagnostics (os, arch, version, error type only --" \
+      "never your code, prompts, paths, or keys) to help fix bugs. Off in enterprise/" \
+      "CI/air-gapped setups. Turn it off anytime: loki telemetry off  (docs/PRIVACY.md)" >&2
+    mkdir -p "${HOME}/.loki" 2>/dev/null || return 0
+    : > "$_marker" 2>/dev/null || true
+    return 0
+}
+fi
+
 # v7.4.13: one-shot first-run telemetry, MOVED from autonomy/loki main()
 # into the shim because the 8 ported commands (version, status, doctor,
 # stats, provider, memory) bypass main() entirely -- only unported
@@ -96,13 +147,26 @@ fi
 if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ ! -f "${HOME}/.loki-first-run" ] 2>/dev/null; then
     touch "${HOME}/.loki-first-run" 2>/dev/null || true
     if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
-        # Source telemetry helpers + fire installed event in background
-        # so the user does not pay latency on first invocation.
-        # Detach all three FDs so the backgrounded subshell never holds this
-        # shim's stdout/stderr/stdin open (v7.8.3: same fix as the cli_command
-        # emit below -- prevents a macOS broken-pipe in piped callers).
-        ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
-        disown 2>/dev/null || true
+        # Decide with the SAME gate the egress uses (_loki_telemetry_enabled), in a
+        # subshell so sourcing telemetry.sh cannot pollute the shim env.
+        # AC3: evaluate the GATE in the foreground (do NOT detach FDs here) so it
+        # inherits the real TTY / sees the exported LOKI_TTY_INTERACTIVE signal;
+        # only the network EMIT below is backgrounded with detached FDs. The
+        # sourced helper is silenced via 2>/dev/null and the gate writes nothing
+        # to stdout, so foreground evaluation adds no output.
+        if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+             && declare -f _loki_telemetry_enabled >/dev/null 2>&1 \
+             && _loki_telemetry_enabled ); then
+            # Disclosure BEFORE the installed egress -- see the shared
+            # _loki_disclose_telemetry_once helper below (keyed on its OWN
+            # disclosed-marker, NOT .loki-first-run, so a first run in CI that
+            # suppressed disclosure does not permanently silence it).
+            _loki_disclose_telemetry_once
+            # Fire-and-forget the installed event; detach all FDs (v7.8.3 broken-pipe fix).
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+              && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+            disown 2>/dev/null || true
+        fi
     fi
 fi
 
@@ -176,6 +240,15 @@ if [ "${1:-}" = "report" ]; then
     done
     if [ "$_report_first_sub" = "kpis" ]; then
         if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+            # Disclose once before egress if collection is genuinely enabled
+            # (covers the case where a cli_command is the first ENABLED egress,
+            # e.g. first run was CI/auto-off so .loki-first-run is already set).
+            # AC3: foreground gate evaluation (no FD detach) so the exported
+            # LOKI_TTY_INTERACTIVE signal / real TTY drives the verdict.
+            if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+                 && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
+                _loki_disclose_telemetry_once
+            fi
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
@@ -187,7 +260,7 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|wiki|crash)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).
@@ -210,6 +283,14 @@ case "${1:-}" in
             # stdout/stderr/stdin open. Without this, the lingering FD changed
             # pipe-teardown timing and produced a macOS-only broken-pipe in the
             # shim-route CLI test harness (v7.8.2 -> fixed v7.8.3).
+            # Disclose once before egress if collection is genuinely enabled
+            # (first ENABLED egress may be a cli_command, not installed).
+            # AC3: foreground gate evaluation (no FD detach) so the exported
+            # LOKI_TTY_INTERACTIVE signal / real TTY drives the verdict.
+            if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+                 && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
+                _loki_disclose_telemetry_once
+            fi
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi

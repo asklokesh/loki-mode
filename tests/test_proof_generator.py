@@ -878,5 +878,79 @@ class SecurityHonestyTests(unittest.TestCase):
         self.assertEqual(d["honesty"]["headline"], "VERIFIED")
 
 
+class LokiVersionResolutionTests(unittest.TestCase):
+    """Regression for the runtime-path proof loki_version="unknown" bug (F51).
+
+    In a real `loki start` build, run.sh's generate_proof_of_run wrapper passes
+    --loki-version "$(get_version || echo unknown)", but get_version is not
+    defined in run.sh's process, so the literal sentinel "unknown" reaches the
+    generator. The generator must NOT report "unknown": it self-locates the
+    VERSION shipped beside it (autonomy/lib/proof-generator.py -> ../../VERSION),
+    so the receipt shows the installed version even when the target app dir has
+    no VERSION file and orchestrator.json carries no version.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-version-")
+        # The real installed version this generator ships beside.
+        self.real_version = open(
+            os.path.join(_REPO, "VERSION")
+        ).read().strip()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _seed_minimal_no_version(self, loki_dir):
+        """A user app dir: no VERSION file, orchestrator.json without version."""
+        os.makedirs(os.path.join(loki_dir, "state"))
+        os.makedirs(os.path.join(loki_dir, "queue"))
+        with open(os.path.join(loki_dir, "state",
+                               "orchestrator.json"), "w") as f:
+            json.dump({"startedAt": "2026-06-20T00:00:00Z"}, f)
+        # Sanity: the app dir really has no VERSION (this is the user scenario).
+        target_dir = os.path.dirname(loki_dir)
+        self.assertFalse(os.path.exists(os.path.join(target_dir, "VERSION")))
+
+    def test_runtime_unknown_sentinel_resolves_to_real_version(self):
+        loki_dir = os.path.join(self.tmp, "userapp", ".loki")
+        out_dir = os.path.join(self.tmp, "out")
+        self._seed_minimal_no_version(loki_dir)
+        # Simulate the exact runtime wrapper behavior: --loki-version "unknown".
+        d = _run_generator(loki_dir, out_dir, loki_version="unknown")
+        self.assertNotEqual(d["loki_version"], "unknown")
+        self.assertEqual(d["loki_version"], self.real_version)
+        # v1.1 facts mirror must agree.
+        self.assertEqual(d["facts"]["meta"]["loki_version"], self.real_version)
+
+    def test_empty_arg_also_resolves_to_real_version(self):
+        loki_dir = os.path.join(self.tmp, "userapp2", ".loki")
+        out_dir = os.path.join(self.tmp, "out2")
+        self._seed_minimal_no_version(loki_dir)
+        d = _run_generator(loki_dir, out_dir, loki_version="")
+        self.assertEqual(d["loki_version"], self.real_version)
+
+    def test_explicit_version_arg_still_wins(self):
+        # A real, non-sentinel --loki-version must still take precedence.
+        loki_dir = os.path.join(self.tmp, "userapp3", ".loki")
+        out_dir = os.path.join(self.tmp, "out3")
+        self._seed_minimal_no_version(loki_dir)
+        d = _run_generator(loki_dir, out_dir, loki_version="9.9.9")
+        self.assertEqual(d["loki_version"], "9.9.9")
+
+    def test_orchestrator_version_wins_over_self_version(self):
+        # When orchestrator.json records a version and the arg is the sentinel,
+        # the recorded run version is used (not the self-located fallback).
+        loki_dir = os.path.join(self.tmp, "userapp4", ".loki")
+        out_dir = os.path.join(self.tmp, "out4")
+        os.makedirs(os.path.join(loki_dir, "state"))
+        os.makedirs(os.path.join(loki_dir, "queue"))
+        with open(os.path.join(loki_dir, "state",
+                               "orchestrator.json"), "w") as f:
+            json.dump({"startedAt": "2026-06-20T00:00:00Z",
+                       "version": "7.0.0"}, f)
+        d = _run_generator(loki_dir, out_dir, loki_version="unknown")
+        self.assertEqual(d["loki_version"], "7.0.0")
+
+
 if __name__ == "__main__":
     unittest.main()

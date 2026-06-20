@@ -28,7 +28,10 @@ import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
 work = tempfile.mkdtemp(prefix='lk732-')
 loki = os.path.join(work, '.loki'); os.makedirs(os.path.join(loki, 'queue'))
-# write a dashboard-state.json shaped exactly like run.sh writes for an iteration
+# write a dashboard-state.json shaped like run.sh writes for an iteration (same
+# field SHAPE; field VALUES here are an arbitrary fixture to prove the API passes
+# enrichment through verbatim -- the live card text is covered by
+# test-iteration-card-plain.sh)
 state = {
     "tasks": {
         "pending": [],

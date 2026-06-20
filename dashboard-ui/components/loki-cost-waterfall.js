@@ -9,6 +9,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 /** @type {Object<string, {color: string, label: string}>} Phase color mapping */
 const PHASE_COLORS = {
@@ -70,13 +71,22 @@ export class LokiCostWaterfall extends LokiElement {
   }
 
   _startPolling() {
-    this._pollInterval = setInterval(() => this._loadData(), 10000);
+    // Central registry gates this poll to the active + visible section so a
+    // hidden tab or a background section does not fetch. connectedCallback
+    // already does the initial load, so immediate is disabled here to avoid a
+    // duplicate first fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._loadData(),
+      intervalMs: 10000,
+      element: this,
+      immediate: false,
+    });
   }
 
   _stopPolling() {
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 

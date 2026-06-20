@@ -43,11 +43,19 @@ _collection_enabled() {
         bash -c ". '$REPO_ROOT/autonomy/crash.sh'; loki_collection_enabled"
 }
 
-# OPT-IN MODEL (P3-2): collection is OFF by default. A default install (no
-# switches, no config) must NOT collect or egress -- this is the air-gapped /
-# GDPR / FedRAMP safety guarantee.
+# DEFAULT MODEL (v7.89.0): collection is ON by default for an ordinary individual
+# interactive install, but AUTO-OFF in non-interactive / enterprise / CI / air-
+# gapped contexts. The test harness runs under `env -i ... bash -c` with NO TTY,
+# which is exactly a non-interactive context, so the bare default here resolves
+# OFF (auto-off). That is the air-gapped / CI / GDPR safety guarantee: an
+# untouched install in a non-interactive environment collects + egresses nothing.
 rm -f "$FAKE_HOME/.loki/config" 2>/dev/null || true
-if _collection_enabled; then bad "default should be OFF (opt-in model)"; else ok "collection OFF by default (opt-in)"; fi
+if _collection_enabled; then bad "non-interactive default should auto-off"; else ok "collection auto-off in non-interactive context (CI/air-gapped safe)"; fi
+# An explicit opt-in forces ON even in this non-interactive context (force-on).
+if _collection_enabled LOKI_TELEMETRY=on; then ok "explicit opt-in forces ON even non-interactive"; else bad "LOKI_TELEMETRY=on must force ON"; fi
+# An enterprise/CI marker keeps it OFF even if a TTY were present.
+if _collection_enabled CI=true; then bad "CI=true must auto-off"; else ok "CI=true auto-off"; fi
+if _collection_enabled LOKI_ENTERPRISE=true; then bad "LOKI_ENTERPRISE=true must auto-off"; else ok "LOKI_ENTERPRISE=true auto-off"; fi
 
 # Opt-in via env enables collection.
 if _collection_enabled LOKI_TELEMETRY=on; then ok "LOKI_TELEMETRY=on enables"; else bad "LOKI_TELEMETRY=on should enable"; fi
@@ -77,8 +85,13 @@ if _collection_enabled; then bad "config TELEMETRY_DISABLED=true must win over E
 rm -f "$FAKE_HOME/.loki/config"
 
 # ---------------------------------------------------------------------------
-# loki_show_disclosure_once: disclosure goes to STDERR. Capture 2>&1. Prints
-# once, persists DISCLOSURE_SHOWN, silent on a second call.
+# loki_show_disclosure_once (v7.89.0): now a SILENT no-op. The verbose per-run
+# disclosure block was removed (it cluttered logs + its "off by default" copy no
+# longer matched the on-by-default-for-individuals model). Disclosure now lives
+# (1) one-time on the welcome screen + the bin/loki first-egress notice, and
+# (2) in docs/PRIVACY.md. The function is kept as a callable no-op (callers in
+# run.sh must not break) and still records the DISCLOSURE_SHOWN sentinel for any
+# back-compat reader. It must print NOTHING.
 # ---------------------------------------------------------------------------
 _show_disclosure() {
     env -i PATH="$PATH" HOME="$FAKE_HOME" \
@@ -87,22 +100,20 @@ _show_disclosure() {
 
 rm -rf "$FAKE_HOME/.loki" 2>/dev/null || true
 out1="$(_show_disclosure)"
-# Stable phrase from the opt-in disclosure copy.
-printf '%s' "$out1" | grep -q "OFF by default" \
-    && ok "disclosure states analytics are OFF by default (first call)" \
-    || bad "disclosure missing opt-in framing on first call"
-printf '%s' "$out1" | grep -q "loki telemetry on" \
-    && ok "disclosure mentions the opt-in command" \
-    || bad "disclosure missing opt-in command"
-
-# Sentinel persisted.
+# It must be SILENT now (no verbose block). Empty output is the contract.
+if [ -z "$out1" ]; then
+    ok "loki_show_disclosure_once is a silent no-op (first call)"
+else
+    bad "disclosure should print nothing now, got: [$out1]"
+fi
+# Sentinel still persisted for back-compat.
 if grep -q "^DISCLOSURE_SHOWN=true" "$FAKE_HOME/.loki/config" 2>/dev/null; then
-    ok "disclosure persists DISCLOSURE_SHOWN=true"
+    ok "disclosure still records DISCLOSURE_SHOWN=true sentinel"
 else
     bad "DISCLOSURE_SHOWN sentinel not written"
 fi
 
-# Second call: silent.
+# Second call: still silent.
 out2="$(_show_disclosure)"
 if [ -z "$out2" ]; then
     ok "disclosure silent on second call"

@@ -10,6 +10,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 /** @type {Object<string, {color: string, label: string}>} Log level display configuration */
 const LOG_LEVELS = {
@@ -48,6 +49,14 @@ export class LokiLogStream extends LokiElement {
     this._api = null;
     this._pollInterval = null;
     this._logMessageHandler = null;
+    // Heavy-logs duplicate suppression: track how many lines we have already
+    // ingested and a lightweight signature of the last response so an unchanged
+    // 200-line log does not get re-processed every cycle. The poll itself is
+    // gated to the active + visible Insights section by the central registry.
+    this._apiLastCount = 0;
+    this._apiLastSig = null;
+    this._fileLastSize = 0;
+    this._fileLastSig = null;
   }
 
   connectedCallback() {
@@ -110,71 +119,101 @@ export class LokiLogStream extends LokiElement {
   }
 
   async _pollApiLogs() {
-    let lastCount = 0;
+    // Run once now, then register the recurring poll on the central registry so
+    // the heavy /api/logs?lines=200 endpoint only fetches when the Logs view
+    // (Insights section) is active AND the tab is visible. The interval is
+    // deliberately LONGER than the light status polls (5s vs the 2s it used to
+    // run at on every page) because logs are heavy and the WebSocket push path
+    // delivers live lines in real time when connected.
+    await this._apiLogPollTick();
+    this._poll = registerPoll({
+      loadFn: () => this._apiLogPollTick(),
+      intervalMs: 5000,
+      element: this,
+      immediate: false,
+    });
+  }
 
-    const poll = async () => {
-      try {
-        const entries = await this._api.getLogs(200);
-        if (Array.isArray(entries) && entries.length > lastCount) {
-          const newEntries = entries.slice(lastCount);
-          for (const entry of newEntries) {
-            if (entry.message && entry.message.trim()) {
-              this._addLog({
-                message: entry.message,
-                level: entry.level || 'info',
-                timestamp: entry.timestamp || new Date().toLocaleTimeString(),
-              });
-            }
+  async _apiLogPollTick() {
+    try {
+      const entries = await this._api.getLogs(200);
+      if (!Array.isArray(entries)) return;
+      // Duplicate-suppression: skip all work if the response is identical to
+      // the last one (same count + same last-line signature). This avoids
+      // re-walking and re-rendering an unchanged 200-line log every cycle.
+      const sig = entries.length
+        ? `${entries.length}:${entries[entries.length - 1]?.timestamp || ''}:${entries[entries.length - 1]?.message || ''}`
+        : '0';
+      if (sig === this._apiLastSig) return;
+      this._apiLastSig = sig;
+      if (entries.length > this._apiLastCount) {
+        const newEntries = entries.slice(this._apiLastCount);
+        for (const entry of newEntries) {
+          if (entry.message && entry.message.trim()) {
+            this._addLog({
+              message: entry.message,
+              level: entry.level || 'info',
+              timestamp: entry.timestamp || new Date().toLocaleTimeString(),
+            });
           }
-          lastCount = entries.length;
         }
-      } catch (error) {
-        // API not available, will retry on next poll
+      } else if (entries.length < this._apiLastCount) {
+        // Log rotated/truncated: reset and ingest from the top next cycle.
+        this._apiLastCount = 0;
       }
-    };
-
-    poll();
-    this._apiPollInterval = setInterval(poll, 2000);
+      this._apiLastCount = entries.length;
+    } catch (error) {
+      // API not available, will retry on next poll
+    }
   }
 
   async _pollLogFile(logFile) {
-    let lastSize = 0;
+    // Run once now, then register the recurring file poll on the central
+    // registry (active + visible section only). Kept at 1s for file tails since
+    // a static file read is cheap, but still gated so a hidden tab or a
+    // background section does no I/O.
+    await this._fileLogPollTick(logFile);
+    this._poll = registerPoll({
+      loadFn: () => this._fileLogPollTick(logFile),
+      intervalMs: 1000,
+      element: this,
+      immediate: false,
+    });
+  }
 
-    const poll = async () => {
-      try {
-        const response = await fetch(`${logFile}?t=${Date.now()}`, { credentials: 'include' });
-        if (!response.ok) return;
+  async _fileLogPollTick(logFile) {
+    try {
+      const response = await fetch(`${logFile}?t=${Date.now()}`, { credentials: 'include' });
+      if (!response.ok) return;
 
-        const text = await response.text();
-        const lines = text.split('\n');
+      const text = await response.text();
+      // Duplicate-suppression: identical file content -> no work.
+      const sig = `${text.length}`;
+      if (sig === this._fileLastSig) return;
+      this._fileLastSig = sig;
+      const lines = text.split('\n');
 
-        // Only process new lines
-        if (lines.length > lastSize) {
-          const newLines = lines.slice(lastSize);
-          for (const line of newLines) {
-            if (line.trim()) {
-              this._addLog(this._parseLine(line));
-            }
+      // Only process new lines
+      if (lines.length > this._fileLastSize) {
+        const newLines = lines.slice(this._fileLastSize);
+        for (const line of newLines) {
+          if (line.trim()) {
+            this._addLog(this._parseLine(line));
           }
-          lastSize = lines.length;
         }
-      } catch (error) {
-        // Silently ignore file read errors
+      } else if (lines.length < this._fileLastSize) {
+        this._fileLastSize = 0;
       }
-    };
-
-    poll();
-    this._pollInterval = setInterval(poll, 1000);
+      this._fileLastSize = lines.length;
+    } catch (error) {
+      // Silently ignore file read errors
+    }
   }
 
   _stopLogPolling() {
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
-    }
-    if (this._apiPollInterval) {
-      clearInterval(this._apiPollInterval);
-      this._apiPollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 

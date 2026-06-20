@@ -9,6 +9,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.89.0] - 2026-06-20
+
+### Live dashboard + wiki: a polished experience while you watch a build
+
+A pass over what a user actually sees while Loki works, found by watching real
+builds:
+
+- The dashboard no longer floods the network tab. Polling is now visibility- and
+  active-view-aware: a hidden tab and background views stop polling, and the heavy
+  logs endpoint only refetches when it changed, cutting steady-state requests
+  dramatically.
+- The Architecture and Data Flow wiki tabs now render a real Mermaid diagram (a
+  visual, not just prose), generated from the codebase and themed to match the
+  dashboard. Mermaid is vendored locally (offline / air-gapped safe), sandboxed
+  against injection, and degrades gracefully to the diagram source if rendering
+  fails.
+- The wiki regenerates automatically after each build iteration (no manual
+  `loki wiki generate`), so the overview / architecture / modules / data-flow and
+  the diagram stay current. It is incremental (only when the codebase changed),
+  default-on, opt out with LOKI_WIKI_AUTO=0.
+- Wiki tabs no longer hang on "Loading section..." on first click (a first-load
+  race); they now resolve to content, an honest empty state, or a real error.
+- The per-iteration task card describes the real work in plain language (e.g.
+  "Analyzing the codebase and generating a spec") instead of the generic
+  "Iteration 1 / RARV iteration" placeholder with phase-name boilerplate.
+- A new spec panel shows what Loki is building from (PRD / GitHub issue /
+  one-line brief / codebase analysis), plus a history of past specs for the repo.
+
+### Telemetry: on by default for individuals, off for enterprise/CI/air-gapped
+
+Anonymous diagnostics now default ON for an ordinary individual install (to find
+and fix bugs), and AUTO-OFF in enterprise, CI, air-gapped, and non-interactive
+contexts, so those deployments stay silent out of the box with no action required.
+Only anonymous diagnostics are ever sent (os, arch, version, error type, sanitized
+stack signatures) -- never code, prompts, paths, keys, or repo names. Disclosure is
+shown once (welcome screen + a one-line notice before the first send) and
+documented in docs/PRIVACY.md, so it is never covert. Opt out anytime with
+`loki telemetry off` / `DO_NOT_TRACK=1` (always wins); force on with
+`loki telemetry on`. The verbose per-run disclosure block was removed.
+
+### Fixes found by a real end-to-end run
+
+A real `loki start` build (haiku, not fixtures) surfaced a batch of issues across
+the trust + first-run surfaces. All are fixed here:
+
+- `loki proof verify <id>` now works on the default route. The finish-and-own
+  handoff (`loki own`) tells you to run exactly this command to re-check that a
+  receipt still matches your code, but on the default (Bun) route it returned
+  "Unknown subcommand" -- only the legacy bash route had it. It now shells to the
+  same verifier on both routes, byte-for-byte identical (clean = exit 0,
+  tamper/drift = 1). `loki receipt` is a working alias for `loki proof`.
+- `loki own` and the generated HANDOFF.md no longer render broken nested code
+  fences. The run/verify commands quoted from USAGE.md are wrapped exactly once.
+- `loki proof list` shows the honest verdict (VERIFIED / VERIFIED WITH GAPS /
+  NOT VERIFIED) in the VERDICT column instead of a blank, and proof.json records
+  the real Loki version instead of "unknown".
+- In-build app testing now runs with an isolated HOME/XDG/TMPDIR, so a generated
+  app can no longer write into your real home directory during the build.
+- Zero-config / one-line-brief runs can now complete cleanly: the assumption
+  ledger gate is advisory in brief mode (assumptions are still recorded and
+  surfaced in the receipt + `loki own`, never silently dropped).
+- Generated documentation scales to project size: a simple build gets a minimal
+  doc set instead of a full nine-file architecture suite.
+- The quality gate no longer passes a build as "tested" when no tests actually
+  ran; simple projects get real test execution or an honestly recorded gap.
+- `loki web` (deprecated) now launches the real dashboard instead of the old
+  Purple Lab dead end. `loki version` shows a one-line hint when a newer release
+  is available (cached, opt-out, silent in CI).
+
+### Telemetry: on by default for individuals, off for enterprise/CI/air-gapped
+
+Anonymous diagnostics now default ON for an ordinary individual install (to
+actually find and fix bugs), and AUTO-OFF in enterprise, CI, and air-gapped or
+non-interactive contexts, so those deployments stay silent out of the box with no
+action required. Only anonymous diagnostics are ever sent (os, arch, version,
+error type, sanitized stack signatures) -- never code, prompts, paths, keys, or
+repo names. Disclosure is shown once on the welcome screen (never covert) and
+documented in docs/PRIVACY.md. Opt out anytime with `loki telemetry off` /
+`DO_NOT_TRACK=1` (always wins); force on with `loki telemetry on`. The verbose
+per-run disclosure block was removed to keep logs clean.
+
 ## [7.88.0] - 2026-06-20
 
 ### Finish and own: a plain-English handoff for whoever owns the result

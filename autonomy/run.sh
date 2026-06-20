@@ -592,6 +592,84 @@ if [ -f "${SCRIPT_DIR}/app-runner.sh" ]; then
     source "${SCRIPT_DIR}/app-runner.sh"
 fi
 
+# Build-time HOME isolation (F49).
+#
+# When Loki executes/tests the GENERATED app during a build (the app-runner
+# server launch, restarts, and the project's own test suite in
+# enforce_test_coverage), the child process inherits Loki's environment --
+# including the user's REAL $HOME. A generated app that defaults its state file
+# to a HOME-relative path (e.g. a todo CLI writing ~/.todo.json) would then
+# litter the user's home directory with Loki's in-build test data. These two
+# helpers give those in-build executions an isolated HOME/XDG/TMPDIR rooted
+# under .loki/ so the app can run normally but cannot write into the real home.
+#
+# Scope: ONLY Loki's own in-build test executions are sandboxed. The user's
+# later manual `npm start`/run of the app is unaffected -- they invoke it
+# themselves in their own shell with their own HOME.
+
+# Lazily create and echo a persistent isolated HOME directory under .loki.
+# Persistent (not a per-call mktemp) so an app launched in one iteration and
+# restarted in a later one keeps a stable home, and so its state survives
+# across the build the same way a real run would.
+_loki_app_sandbox_dir() {
+    local _base="${TARGET_DIR:-.}/.loki/app-sandbox"
+    if [ ! -d "$_base/home" ]; then
+        mkdir -p "$_base/home" "$_base/config" "$_base/data" \
+                 "$_base/cache" "$_base/state" "$_base/tmp" 2>/dev/null || return 1
+    fi
+    printf '%s\n' "$_base"
+}
+
+# Run a command with the build-time app sandbox env applied, then restore the
+# previous environment. Works for both shell functions (app_runner_start) and
+# external commands because it only mutates env vars around the call. The
+# background app launched by app_runner_start captures the sandbox HOME at fork
+# time and keeps it for its lifetime; restoring here ensures the orchestrator
+# (and the next iteration's provider invocation, which needs the REAL HOME for
+# OAuth/credentials) is never left pointing at the sandbox.
+_loki_with_app_sandbox() {
+    local _sb
+    _sb=$(_loki_app_sandbox_dir 2>/dev/null) || _sb=""
+    # If the sandbox could not be created, run unsandboxed rather than failing
+    # the build -- correctness of the app run takes priority over isolation.
+    if [ -z "$_sb" ]; then
+        "$@"
+        return $?
+    fi
+    # Resolve to an absolute path so child `cd` into the target dir cannot make
+    # a relative HOME point somewhere unexpected.
+    local _abs
+    _abs=$(cd "$_sb" 2>/dev/null && pwd) || _abs="$_sb"
+
+    # Save current values plus their set/unset state so restore is exact.
+    local _had_home="${HOME+x}"        _old_home="${HOME:-}"
+    local _had_xch="${XDG_CONFIG_HOME+x}" _old_xch="${XDG_CONFIG_HOME:-}"
+    local _had_xdh="${XDG_DATA_HOME+x}"   _old_xdh="${XDG_DATA_HOME:-}"
+    local _had_xcache="${XDG_CACHE_HOME+x}" _old_xcache="${XDG_CACHE_HOME:-}"
+    local _had_xsh="${XDG_STATE_HOME+x}"  _old_xsh="${XDG_STATE_HOME:-}"
+    local _had_tmp="${TMPDIR+x}"        _old_tmp="${TMPDIR:-}"
+
+    export HOME="$_abs/home"
+    export XDG_CONFIG_HOME="$_abs/config"
+    export XDG_DATA_HOME="$_abs/data"
+    export XDG_CACHE_HOME="$_abs/cache"
+    export XDG_STATE_HOME="$_abs/state"
+    export TMPDIR="$_abs/tmp"
+
+    local _rc=0
+    "$@" || _rc=$?
+
+    # Restore exactly (re-export prior value, or unset if it was unset before).
+    if [ -n "$_had_home" ]; then export HOME="$_old_home"; else unset HOME; fi
+    if [ -n "$_had_xch" ]; then export XDG_CONFIG_HOME="$_old_xch"; else unset XDG_CONFIG_HOME; fi
+    if [ -n "$_had_xdh" ]; then export XDG_DATA_HOME="$_old_xdh"; else unset XDG_DATA_HOME; fi
+    if [ -n "$_had_xcache" ]; then export XDG_CACHE_HOME="$_old_xcache"; else unset XDG_CACHE_HOME; fi
+    if [ -n "$_had_xsh" ]; then export XDG_STATE_HOME="$_old_xsh"; else unset XDG_STATE_HOME; fi
+    if [ -n "$_had_tmp" ]; then export TMPDIR="$_old_tmp"; else unset TMPDIR; fi
+
+    return "$_rc"
+}
+
 # Playwright Smoke Test module (v5.46.0)
 if [ -f "${SCRIPT_DIR}/playwright-verify.sh" ]; then
     # shellcheck source=playwright-verify.sh
@@ -4641,6 +4719,49 @@ check_notification_triggers() {
 # Task Queue Auto-Tracking (for degraded mode providers)
 #===============================================================================
 
+# Derive a plain-language, honest summary of the spec this run is building from,
+# for the dashboard iteration card (Task G). Mirrors the "Building:" start
+# headline (run.sh:17061) and proof-generator's source resolution so the card,
+# the banner, and the proof artifact all describe the same real intent.
+#
+# Echoes two tab-separated fields: <human spec label>\t<spec kind>, where kind is
+# one of: brief | prd | codebase-analysis. The label is plain English with no
+# RARV jargon. Best-effort and never fails (used only to enrich a card).
+_loki_iteration_spec_summary() {
+    local prd="${1:-}"
+    local label="" kind=""
+
+    # 1. A recorded one-line brief (`loki start "<brief>"`) is the user's own
+    #    words; show them verbatim, truncated to stay on one tidy line.
+    if [ -f ".loki/state/brief.txt" ]; then
+        local _brief
+        _brief="$(tr '\n' ' ' < .loki/state/brief.txt 2>/dev/null | sed 's/  */ /g; s/^ //; s/ $//')"
+        if [ -n "$_brief" ]; then
+            if [ "${#_brief}" -gt 80 ]; then
+                _brief="${_brief:0:77}..."
+            fi
+            printf '%s\t%s' "$_brief" "brief"
+            return 0
+        fi
+    fi
+
+    # 2. A generated PRD means there was no user spec; we are reverse-engineering
+    #    one from the code. Say exactly that rather than naming the internal file.
+    case "$prd" in
+        ""|*.loki/generated-prd.md|*.loki/generated-prd.json)
+            label="the codebase (no spec provided)"
+            kind="codebase-analysis"
+            ;;
+        *)
+            # 3. A real user PRD / spec file: name it by basename, no path noise.
+            label="$(basename "$prd" 2>/dev/null || printf '%s' "$prd")"
+            kind="prd"
+            ;;
+    esac
+
+    printf '%s\t%s' "$label" "$kind"
+}
+
 # Track iteration start - create task in in-progress queue
 track_iteration_start() {
     local iteration="$1"
@@ -4694,6 +4815,19 @@ except: pass
     local prd_escaped
     prd_escaped=$(printf '%s' "${prd:-Codebase Analysis}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g')
 
+    # Task G: derive a plain-language, honest summary of what this run is building
+    # from, so the card title/description describe the real work instead of the
+    # generic "Iteration N" / "RARV iteration N" placeholder. Best-effort.
+    local _spec_label="" _spec_kind=""
+    local _spec_summary
+    _spec_summary=$(_loki_iteration_spec_summary "$prd")
+    _spec_label="${_spec_summary%%$'\t'*}"
+    _spec_kind="${_spec_summary##*$'\t'}"
+    # Escape for safe embedding in the python -c literals below.
+    local _spec_label_esc _spec_kind_esc
+    _spec_label_esc=$(printf '%s' "$_spec_label" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g')
+    _spec_kind_esc=$(printf '%s' "$_spec_kind" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g')
+
     # Build enriched task JSON with pending task context.
     # Must initialize to empty: this script runs under `set -u` (line 152),
     # so `local task_json` without a value leaves it unset. When the pending
@@ -4704,25 +4838,33 @@ except: pass
         task_json=$(python3 -c "
 import json, sys
 ctx = json.loads('''$next_task_context''')
-# v7.5.12: always emit acceptance_criteria, notes, logs so the dashboard
-# task model has consistent shape. default_ac covers the RARV gate-pass
-# requirements when no PRD-provided list exists.
-default_ac = [
-    'REASON phase identifies next task without errors',
-    'ACT phase produces verifiable artifacts (code/docs/tests)',
-    'REFLECT phase records progress in CONTINUITY.md',
-    'VERIFY phase passes automated tests / quality gates'
-]
+# Task G: the card must describe the REAL work in plain language, not the
+# generic 'Iteration N' / 'RARV iteration N' placeholder. Prefer the pending
+# PRD task's own title/description/criteria. When those are absent, fall back to
+# a plain-language summary derived from the spec this run is building from, and
+# OMIT acceptance criteria rather than show RARV phase-name boilerplate (only
+# state what is really known).
+spec_label = '${_spec_label_esc}'
+spec_kind = '${_spec_kind_esc}'
+if spec_kind == 'codebase-analysis':
+    fallback_title = 'Analyzing the codebase and generating a spec'
+    fallback_desc = 'Reading the existing code to reverse-engineer a spec, then building against it.'
+elif spec_kind == 'brief':
+    fallback_title = 'Building: ' + spec_label
+    fallback_desc = 'Building from your brief: ' + spec_label
+else:
+    fallback_title = 'Building from ' + spec_label
+    fallback_desc = 'Implementing the spec in ' + spec_label + ' and verifying it.'
 task = {
     'id': 'iteration-$iteration',
     'type': 'iteration',
-    'title': ctx.get('current_task') or 'Iteration $iteration',
-    'description': ctx.get('description') or 'RARV iteration $iteration. PRD: ${prd_escaped}',
+    'title': ctx.get('current_task') or fallback_title,
+    'description': ctx.get('description') or fallback_desc,
     'status': 'in_progress',
     'priority': 'medium',
     'startedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     'provider': '${PROVIDER_NAME:-claude}',
-    'acceptance_criteria': ctx.get('acceptance_criteria') or default_ac,
+    'acceptance_criteria': ctx.get('acceptance_criteria') or [],
     'notes': [],
     'logs': [{
         'timestamp': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
@@ -4742,29 +4884,75 @@ print(json.dumps(task, indent=2))
 " 2>/dev/null) || task_json=""
     fi
 
-    # Fallback to basic task JSON if enrichment failed
+    # Fallback when there is no pending PRD task (codebase-analysis run or empty
+    # queue). Task G: this was the worst placeholder card -- 'Iteration N' /
+    # 'RARV iteration N' with RARV-phase-name acceptance criteria, which tells a
+    # watching user nothing about the real work. Build an honest, plain-language
+    # card from the spec summary instead, and omit acceptance criteria (we have no
+    # real per-iteration criteria here -- do not invent RARV jargon).
     if [[ -z "${task_json:-}" ]]; then
         local _start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        task_json=$(python3 -c "
+import json
+spec_label = '${_spec_label_esc}'
+spec_kind = '${_spec_kind_esc}'
+if spec_kind == 'codebase-analysis':
+    title = 'Analyzing the codebase and generating a spec'
+    desc = 'Reading the existing code to reverse-engineer a spec, then building against it.'
+elif spec_kind == 'brief':
+    title = 'Building: ' + spec_label
+    desc = 'Building from your brief: ' + spec_label
+else:
+    title = 'Building from ' + spec_label
+    desc = 'Implementing the spec in ' + spec_label + ' and verifying it.'
+task = {
+    'id': '$task_id',
+    'type': 'iteration',
+    'title': title,
+    'description': desc,
+    'status': 'in_progress',
+    'priority': 'medium',
+    'startedAt': '$_start_ts',
+    'provider': '${PROVIDER_NAME:-claude}',
+    'acceptance_criteria': [],
+    'notes': [],
+    'logs': [{
+        'timestamp': '$_start_ts',
+        'iteration': $iteration,
+        'level': 'info',
+        'phase': 'BOOTSTRAP',
+        'message': 'Iteration $iteration started'
+    }]
+}
+print(json.dumps(task, indent=2))
+" 2>/dev/null) || task_json=""
+    fi
+
+    # Last-resort safety net if python is unavailable. Still avoids the generic
+    # 'RARV iteration' wording and omits boilerplate acceptance criteria.
+    if [[ -z "${task_json:-}" ]]; then
+        local _start_ts2="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        local _safe_title
+        case "$_spec_kind" in
+            codebase-analysis) _safe_title="Analyzing the codebase and generating a spec" ;;
+            brief) _safe_title="Building from your brief" ;;
+            *) _safe_title="Building from the spec" ;;
+        esac
         task_json=$(cat <<EOF
 {
   "id": "$task_id",
   "type": "iteration",
-  "title": "Iteration $iteration",
-  "description": "RARV iteration $iteration. PRD: ${prd_escaped}",
+  "title": "$_safe_title",
+  "description": "$_safe_title (iteration $iteration).",
   "status": "in_progress",
   "priority": "medium",
-  "startedAt": "$_start_ts",
+  "startedAt": "$_start_ts2",
   "provider": "${PROVIDER_NAME:-claude}",
-  "acceptance_criteria": [
-    "REASON phase identifies next task without errors",
-    "ACT phase produces verifiable artifacts (code/docs/tests)",
-    "REFLECT phase records progress in CONTINUITY.md",
-    "VERIFY phase passes automated tests / quality gates"
-  ],
+  "acceptance_criteria": [],
   "notes": [],
   "logs": [
     {
-      "timestamp": "$_start_ts",
+      "timestamp": "$_start_ts2",
       "iteration": $iteration,
       "level": "info",
       "phase": "BOOTSTRAP",
@@ -7907,9 +8095,57 @@ sys.stdout.write(t.strip())
         # unit-tests.pass is only read for the status-line display (run.sh ~2183,
         # PASS vs PENDING); keeping the touch preserves the historical
         # non-blocking behavior for legitimate no-test projects.
+        #
+        # F56/F53 (verification-gap honesty): a generated project that shipped
+        # source but no runnable tests previously recorded a bare "not_run" and
+        # the gate passed through silently -- so a real logic bug (F53: todo-id
+        # numbering) reached the receipt unverified, and a TESTING.md that
+        # DESCRIBES tests shipped with NONE executed (F56: test docs without test
+        # execution). We do not scaffold+run tests here (generating correct test
+        # code for an arbitrary project is the agent's job, not the gate's, and
+        # would overreach a pass/fail gate). Instead we make the no-runner record
+        # HONEST about the gap: if the project has generated source, the gap is
+        # "source present, no runnable tests"; if a TESTING.md also claims tests,
+        # the gap is the stronger "test docs without execution" mismatch. The
+        # record stays non-blocking (runner=="none" short-circuits the evidence
+        # gate as before; no infinite hang), but the receipt and the operator now
+        # SEE the gap instead of a silent pass, and "no tests" never reads as
+        # "tests verified".
+        local _vgap="none" _vgap_summary="No test runner detected"
+        local _has_src=false _has_testdoc=false
+        # Generated source present? Look only at top-of-tree, skipping vendored /
+        # tooling dirs, so this is cheap and never walks node_modules.
+        if find "${TARGET_DIR:-.}" -maxdepth 3 -type f \
+            \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.jsx' \
+               -o -name '*.tsx' -o -name '*.go' -o -name '*.rs' -o -name '*.java' \
+               -o -name '*.rb' -o -name '*.php' \) \
+            -not -path '*/node_modules/*' -not -path '*/.loki/*' \
+            -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/dist/*' \
+            -not -path '*/build/*' -not -path '*/.venv/*' -not -path '*/venv/*' \
+            -print -quit 2>/dev/null | grep -q .; then
+            _has_src=true
+        fi
+        # TESTING.md (project root or .loki/docs) that documents tests despite no
+        # runner -- the docs-without-execution mismatch.
+        local _td
+        for _td in "${TARGET_DIR:-.}/TESTING.md" "${TARGET_DIR:-.}/.loki/docs/TESTING.md"; do
+            if [ -f "$_td" ] && grep -qiE 'test|coverage' "$_td" 2>/dev/null; then
+                _has_testdoc=true
+                break
+            fi
+        done
+        if [ "$_has_testdoc" = "true" ]; then
+            _vgap="test_docs_without_execution"
+            _vgap_summary="TESTING.md documents tests but no runner ran any (unverified)"
+            log_warn "Verification gap: TESTING.md describes tests but no test runner executed -- shipping test docs without test execution"
+        elif [ "$_has_src" = "true" ]; then
+            _vgap="source_without_tests"
+            _vgap_summary="Source present but no runnable tests detected (unverified logic)"
+            log_warn "Verification gap: generated source present but no runnable tests -- logic is unverified by execution"
+        fi
         touch "$quality_dir/unit-tests.pass"
         cat > "$quality_dir/test-results.json" << TREOF
-{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":"inconclusive","summary":"No test runner detected","command":null,"exit_code":null,"status":"not_run","passed_count":null,"failed_count":null}
+{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":"inconclusive","summary":"$_vgap_summary","command":null,"exit_code":null,"status":"not_run","passed_count":null,"failed_count":null,"verification_gap":"$_vgap"}
 TREOF
         # Finding #598: stamp the per-iteration freshness marker so a later
         # completion-route capture (ensure_completion_test_evidence) reuses this
@@ -7946,8 +8182,11 @@ TREOF
     [ -n "$_tr_passed_n" ] || _tr_passed_n=null
     [ -n "$_tr_failed_n" ] || _tr_failed_n=null
 
+    # verification_gap is "none" whenever a real runner executed: the suite ran,
+    # so there is no docs-without-execution / source-without-tests gap. Keeping
+    # the key on BOTH writers gives consumers a single stable schema shape.
     cat > "$quality_dir/test-results.json" << TREOF
-{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"$test_runner","pass":$test_passed,"min_coverage":$min_coverage,"summary":"$details","command":"$_tr_cmd","exit_code":$_tr_exit,"status":"$_tr_status","passed_count":$_tr_passed_n,"failed_count":$_tr_failed_n}
+{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"$test_runner","pass":$test_passed,"min_coverage":$min_coverage,"summary":"$details","command":"$_tr_cmd","exit_code":$_tr_exit,"status":"$_tr_status","passed_count":$_tr_passed_n,"failed_count":$_tr_failed_n,"verification_gap":"none"}
 TREOF
     # Finding #598: stamp the per-iteration freshness marker (see above).
     printf '%s\n' "${ITERATION_COUNT:-0}" > "$quality_dir/.test-results.iter" 2>/dev/null || true
@@ -8177,7 +8416,9 @@ ensure_completion_test_evidence() {
     [ -f "$_results_file" ] && _mtime_before=$(stat -f %m "$_results_file" 2>/dev/null || stat -c %Y "$_results_file" 2>/dev/null || echo "")
     # The gate decides on the persisted file; a red suite (nonzero rc) is expected
     # and must not abort the completion path here.
-    enforce_test_coverage || true
+    # F49: the project's test suite may exec the app, which can write into HOME;
+    # run it under the isolated build-time HOME.
+    _loki_with_app_sandbox enforce_test_coverage || true
     mkdir -p "$quality_dir" 2>/dev/null || true
     local _mtime_after=""
     [ -f "$_results_file" ] && _mtime_after=$(stat -f %m "$_results_file" 2>/dev/null || stat -c %Y "$_results_file" 2>/dev/null || echo "")
@@ -11757,6 +11998,94 @@ ${_commits}"
 }
 
 
+# Auto-wiki regeneration after an iteration (v7.88.2). Mirrors the
+# _intelligent_usage_regen contract: best-effort, NON-blocking, never fails the
+# iteration (every path returns 0; the caller also guards with `|| true`).
+#
+# Default-ON; opt out with LOKI_WIKI_AUTO=0. Off-TTY / CI safe: no prompts, no
+# stream-fighting, byte-identical behavior (no TTY checks, no interactive paths;
+# the generator is deterministic given the same codebase index).
+#
+# INCREMENTAL change-detection (E3): regenerating the wiki walks + hashes the
+# source set, which is wasted work on an iteration that did not change the
+# codebase structure. We avoid even spawning python on an unchanged repo with a
+# cheap bash-level signal: a hash over the source file list and their mtimes,
+# cached at .loki/wiki/.auto-hash. We only invoke the generator when that hash
+# differs from the cached value. The generator ALSO has its own content-hash
+# signature gate (wiki-manifest.json), so this is a fast pre-filter, not the
+# only guard -- if the cheap signal ever misfires, the generator still skips a
+# truly-unchanged codebase. The cheap signal uses find (file list + mtimes),
+# which is far cheaper than the generator's full byte-hash of every file.
+_auto_wiki_regen() {
+    # Opt-out honored first so a disabled run does zero work.
+    if [ "${LOKI_WIKI_AUTO:-1}" = "0" ]; then
+        return 0
+    fi
+    local target_dir="${TARGET_DIR:-.}"
+    # python3 is required for the generator; bail silently if absent.
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+    local gen="$SCRIPT_DIR/lib/wiki-generator.py"
+    if [ ! -f "$gen" ]; then
+        return 0
+    fi
+
+    # Cheap structure signal: a hash over (path, mtime, size) of every source
+    # file, excluding the usual noise dirs (and .loki itself, so writing the
+    # wiki never changes the signal). Computed with a small stat-only python
+    # walk -- portable across macOS/BSD and Linux (GNU vs BSD `find -printf`
+    # diverge), and far cheaper than the generator's full byte-hash of every
+    # file because it reads no file contents. python3 is already required above.
+    local hash_file="$target_dir/.loki/wiki/.auto-hash"
+    local cur_hash
+    cur_hash=$(python3 - "$target_dir" <<'PY' 2>/dev/null || true
+import hashlib, os, sys
+root = sys.argv[1]
+SKIP = {"node_modules", ".git", ".loki", "dist", "build", "venv", ".venv",
+        "__pycache__", "target", "vendor", ".next", ".cache", "out"}
+h = hashlib.sha256()
+for dirpath, dirnames, filenames in os.walk(root):
+    dirnames[:] = sorted(d for d in dirnames if d not in SKIP)
+    for fn in sorted(filenames):
+        p = os.path.join(dirpath, fn)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        rel = os.path.relpath(p, root)
+        h.update(("%s|%d|%d\n" % (rel, int(st.st_mtime), st.st_size)).encode("utf-8", "replace"))
+sys.stdout.write(h.hexdigest())
+PY
+)
+    if [ -n "$cur_hash" ] && [ -f "$hash_file" ]; then
+        local prev_hash
+        prev_hash=$(cat "$hash_file" 2>/dev/null || echo "")
+        if [ "$cur_hash" = "$prev_hash" ]; then
+            # Structure unchanged since the last wiki -- skip without spawning
+            # the generator. No token burn on an unchanged repo.
+            return 0
+        fi
+    fi
+
+    log_info "Auto-regenerating project wiki (codebase structure changed)..."
+    # The generator is deterministic and self-incremental; --quiet keeps the
+    # iteration log clean. Never let a wiki failure surface to the iteration.
+    if python3 "$gen" --root "$target_dir" --quiet >/dev/null 2>&1; then
+        # Record the cheap signal only on a successful generation so a failed
+        # run is retried next iteration rather than silently skipped.
+        if [ -n "$cur_hash" ]; then
+            mkdir -p "$target_dir/.loki/wiki" 2>/dev/null || true
+            printf '%s\n' "$cur_hash" > "$hash_file" 2>/dev/null || true
+        fi
+        log_info "Project wiki refreshed -> $target_dir/.loki/wiki/"
+    else
+        log_info "Auto-wiki regen skipped (generator returned non-zero); keeping existing wiki."
+    fi
+    return 0
+}
+
+
 # Magic Modules COMPOUND: record successful component patterns (v6.77.0)
 # Called at end of each iteration to capture generated/updated components
 # as semantic memory patterns via magic.core.memory_bridge.
@@ -12465,6 +12794,24 @@ build_prompt() {
     # and to the dashboard/Purple Lab UI.
     local usage_doc_instruction="USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it."
 
+    # DOC_SCOPE instruction (F52): scale generated documentation to the detected
+    # project complexity. A trivial one-file app does not warrant a nine-file
+    # architecture suite (ARCHITECTURE/COMPONENTS/DECISIONS/API/SETUP/TESTING) --
+    # that is token and iteration burn with no reader. USAGE.md (above) and
+    # HANDOFF.md (rendered post-completion) are written regardless of tier, so this
+    # string only governs the OPTIONAL architecture suite. simple -> minimal set;
+    # standard/complex -> full suite only where it genuinely helps a reader.
+    # MUST stay byte-identical to DOC_SCOPE_INSTRUCTION_{SIMPLE,FULL} in
+    # loki-ts/src/runner/build_prompt.ts (parity-locked, same precedent as
+    # COMPOSE_INSTRUCTION). Tier is read from DETECTED_COMPLEXITY (set once per run
+    # by run_autonomous before the first build_prompt); cache-stable within a run.
+    local doc_scope_instruction
+    if [ "${DETECTED_COMPLEXITY:-standard}" = "simple" ]; then
+        doc_scope_instruction="DOC_SCOPE: This is a small, simple project. Keep documentation minimal and proportional: a short README.md (what it is, install, run) plus the required USAGE.md is sufficient. Do NOT generate a multi-file architecture documentation suite (ARCHITECTURE.md, COMPONENTS.md, DECISIONS.md, API.md, SETUP.md, TESTING.md) for a project this small -- it is overhead with no reader and wastes iterations. Only add one of those files if the code genuinely warrants it (e.g. write API.md only when there is a real public API surface). Never claim a doc exists that you did not write."
+    else
+        doc_scope_instruction="DOC_SCOPE: Scale documentation to what a reader of THIS project actually needs -- do not generate empty boilerplate. Beyond the required USAGE.md, write a README.md and add architecture-suite docs (ARCHITECTURE.md, COMPONENTS.md, DECISIONS.md, API.md, SETUP.md, TESTING.md) only where each one carries real, project-specific content (e.g. API.md only with a real public API, COMPONENTS.md only with multiple distinct components, DECISIONS.md only when there are non-obvious design decisions). Prefer fewer accurate docs over a complete-looking suite of stubs. Never claim a doc exists that you did not write."
+    fi
+
     # v7.7.8: LSP grounding instruction. The lsp-proxy MCP server (auto-mounted
     # when a language server is on PATH) exposes four tools that ground the
     # agent in real workspace symbols instead of hallucinated names. Before
@@ -12883,15 +13230,15 @@ except Exception:
         else
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode with PRD at $prd. $update_instruction $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $doc_scope_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $analysis_instruction $rarv_instruction $memory_instruction $usage_doc_instruction $doc_scope_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             else
                 if [ -n "$prd" ]; then
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). PRD: $prd. $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section $rarv_instruction $memory_instruction $usage_doc_instruction $doc_scope_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 else
-                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
+                    echo "Loki Mode - Resume iteration #$iteration (retry #$retry). $human_directive $gate_failure_context $assumption_context $queue_tasks $bmad_context $openspec_context $mirofish_context $magic_context $checklist_status $app_runner_info $playwright_info $memory_context_section Use .loki/generated-prd.md if exists. $rarv_instruction $memory_instruction $usage_doc_instruction $doc_scope_instruction $compose_instruction $lsp_grounding_instruction $agents_md_instruction $completion_instruction $sdlc_instruction $autonomous_suffix"
                 fi
             fi
         fi
@@ -12933,6 +13280,7 @@ except Exception:
             printf 'You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.\n'
         fi
         printf '%s\n' "$usage_doc_instruction"
+        printf '%s\n' "$doc_scope_instruction"
         printf '%s\n' "$compose_instruction"
         printf '%s\n' "$lsp_grounding_instruction"
         printf '%s\n' "$agents_md_instruction"
@@ -12967,6 +13315,7 @@ except Exception:
     printf '%s\n' "$autonomous_suffix"
     printf '%s\n' "$memory_instruction"
     printf '%s\n' "$usage_doc_instruction"
+    printf '%s\n' "$doc_scope_instruction"
     printf '%s\n' "$compose_instruction"
     printf '%s\n' "$lsp_grounding_instruction"
     printf '%s\n' "$agents_md_instruction"
@@ -15343,7 +15692,9 @@ if __name__ == "__main__":
         if [ "${APP_RUNNER_INITIALIZED:-}" != "true" ] && [ $exit_code -eq 0 ] && \
            [ "${LOKI_APP_RUNNER:-true}" = "true" ] && type app_runner_init &>/dev/null; then
             if app_runner_init; then
-                app_runner_start || log_warn "App runner: failed to start application"
+                # F49: sandbox the generated app's HOME so its in-build run
+                # cannot write into the user's real home directory.
+                _loki_with_app_sandbox app_runner_start || log_warn "App runner: failed to start application"
                 APP_RUNNER_INITIALIZED=true
             fi
         fi
@@ -15353,7 +15704,8 @@ if __name__ == "__main__":
         # App Runner: restart on code changes (v5.45.0)
         if [ "${APP_RUNNER_INITIALIZED:-}" = "true" ] && type app_runner_should_restart &>/dev/null; then
             if app_runner_should_restart; then
-                app_runner_restart || log_warn "App runner: failed to restart application"
+                # F49: re-launch under the same isolated HOME as the initial start.
+                _loki_with_app_sandbox app_runner_restart || log_warn "App runner: failed to restart application"
             fi
         fi
 
@@ -15378,7 +15730,8 @@ if __name__ == "__main__":
             if [ -f ".loki/app-runner/restart-signal" ]; then
                 rm -f ".loki/app-runner/restart-signal"
                 log_info "App runner: restart signal received from dashboard"
-                app_runner_restart || true
+                # F49: dashboard-triggered restart uses the isolated HOME too.
+                _loki_with_app_sandbox app_runner_restart || true
             fi
             if [ -f ".loki/app-runner/stop-signal" ]; then
                 rm -f ".loki/app-runner/stop-signal"
@@ -15438,7 +15791,9 @@ if __name__ == "__main__":
             # Test coverage gate
             if [ "${PHASE_UNIT_TESTS:-true}" = "true" ]; then
                 log_info "Quality gate: test suite (pass/fail)..."
-                if enforce_test_coverage; then
+                # F49: isolate HOME so the project's suite cannot pollute the
+                # user's real home when it execs the generated app.
+                if _loki_with_app_sandbox enforce_test_coverage; then
                     clear_gate_failure "test_coverage"
                 else
                     local tc_count
@@ -15745,6 +16100,12 @@ else:
 
         # Magic Modules COMPOUND capture (v6.77.0): record component patterns
         _magic_compound_capture
+
+        # Auto-wiki regeneration after every iteration (v7.88.2). Best-effort,
+        # non-blocking, incremental (only regenerates when the codebase
+        # structure changed). Default-on; opt out LOKI_WIKI_AUTO=0. The `|| true`
+        # is belt-and-suspenders -- the function already returns 0 on every path.
+        _auto_wiki_regen 2>/dev/null || true
 
         # BUG-QG-008: Track iteration for convergence regardless of exit code
         if type council_track_iteration &>/dev/null; then

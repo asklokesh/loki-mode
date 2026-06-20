@@ -14,7 +14,7 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs';
 import esbuild from 'esbuild';
 
 // Get script directory for ES modules
@@ -32,13 +32,28 @@ const watchMode = args.includes('--watch');
 async function buildStandalone() {
   const distDir = join(__dirname, '..', 'dist');
   const serverStaticDir = join(__dirname, '..', '..', 'dashboard', 'static');
+  const serverAssetsDir = join(serverStaticDir, 'assets');
+  const distAssetsDir = join(distDir, 'assets');
   const entryPoint = join(__dirname, '..', 'index.js');
 
   // Ensure output directories exist
-  for (const dir of [distDir, serverStaticDir]) {
+  for (const dir of [distDir, serverStaticDir, serverAssetsDir, distAssetsDir]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
+  }
+
+  // Copy vendored, MIT-licensed mermaid into the asset dirs so the dashboard can
+  // lazy-load it same-origin (no external CDN -> offline / air-gapped safe). The
+  // wiki browser fetches /assets/mermaid.min.js only when an Architecture or
+  // Data Flow tab is opened; it is not inlined into the 720KB single-file HTML.
+  const mermaidSrc = join(__dirname, '..', 'assets', 'mermaid.min.js');
+  if (existsSync(mermaidSrc)) {
+    copyFileSync(mermaidSrc, join(serverAssetsDir, 'mermaid.min.js'));
+    copyFileSync(mermaidSrc, join(distAssetsDir, 'mermaid.min.js'));
+    console.log('Copied: assets/mermaid.min.js (vendored, offline-safe)');
+  } else {
+    console.warn('WARN: assets/mermaid.min.js missing -- wiki diagrams will fall back to source.');
   }
 
   console.log('Building standalone dashboard...');
@@ -1120,6 +1135,13 @@ function generateStandaloneHTML(bundleCode) {
     <main class="main-content" id="main-content">
       <!-- Overview + Tasks (combined) -->
       <div class="section-page active" id="page-overview">
+        <!-- Active spec: what Loki is building from + history of past specs -->
+        <div style="margin-bottom: 28px;">
+          <div class="section-page-header">
+            <h2 class="section-page-title">Spec</h2>
+          </div>
+          <loki-spec-panel id="spec-panel"></loki-spec-panel>
+        </div>
         <loki-overview id="overview"></loki-overview>
         <loki-rarv-timeline id="rarv-timeline"></loki-rarv-timeline>
         <loki-session-diff id="session-diff"></loki-session-diff>
@@ -2065,6 +2087,15 @@ document.addEventListener('DOMContentLoaded', function() {
         history.replaceState(null, '', window.location.pathname + window.location.search + nh);
       }
     } catch (e) { /* file:// or sandboxed: hash routing best-effort */ }
+    // v7.88.2: notify the central poll registry (core/loki-poll-registry.js)
+    // so only the active section's components poll. The registry also reads the
+    // DOM/localStorage defensively, but this event is the primary signal and
+    // makes view-switch gating immediate.
+    try {
+      document.dispatchEvent(new CustomEvent('loki:section-change', {
+        detail: { section: sectionId },
+      }));
+    } catch (e) { /* CustomEvent unsupported: registry falls back to DOM read */ }
   }
 
   navLinks.forEach(function(link) {

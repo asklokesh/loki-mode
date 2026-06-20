@@ -11,6 +11,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 /** @type {Array<{id: string, label: string}>} Council dashboard tab definitions */
 const COUNCIL_TABS = [
@@ -78,31 +79,22 @@ export class LokiCouncilDashboard extends LokiElement {
   }
 
   _startPolling() {
-    this._pollInterval = setInterval(() => this._loadData(), 3000);
-    this._visibilityHandler = () => {
-      if (document.hidden) {
-        if (this._pollInterval) {
-          clearInterval(this._pollInterval);
-          this._pollInterval = null;
-        }
-      } else {
-        if (!this._pollInterval) {
-          this._loadData();
-          this._pollInterval = setInterval(() => this._loadData(), 3000);
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', this._visibilityHandler);
+    // Central registry (core/loki-poll-registry.js) gates this poll to the
+    // active + visible section in ONE place, replacing the per-component
+    // visibilitychange handler. connectedCallback already did the first load,
+    // so immediate is disabled to avoid a duplicate fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._loadData(),
+      intervalMs: 3000,
+      element: this,
+      immediate: false,
+    });
   }
 
   _stopPolling() {
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
-    }
-    if (this._visibilityHandler) {
-      document.removeEventListener('visibilitychange', this._visibilityHandler);
-      this._visibilityHandler = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
     if (this._pendingRaf) {
       cancelAnimationFrame(this._pendingRaf);

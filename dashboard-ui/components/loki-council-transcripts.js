@@ -17,6 +17,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 export class LokiCouncilTranscripts extends LokiElement {
   static get observedAttributes() {
@@ -37,14 +38,22 @@ export class LokiCouncilTranscripts extends LokiElement {
     super.connectedCallback();
     this._setupApi();
     this._load();
-    this._pollInterval = setInterval(() => this._load(), 30000);
+    // Central registry gates this poll to the active + visible section in ONE
+    // place; the initial load above runs eagerly, so immediate is disabled to
+    // avoid a duplicate fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._load(),
+      intervalMs: 30000,
+      element: this,
+      immediate: false,
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 

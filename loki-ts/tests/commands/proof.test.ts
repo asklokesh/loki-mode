@@ -233,3 +233,78 @@ describe("loki proof: Bun in-process edge cases", () => {
     expect(bare).toBe(1);
   });
 });
+
+// F47 regression: `loki proof verify` must exist on the Bun (default) route and
+// behave identically to the bash route. The finish-and-own doc (loki own) tells
+// users to run exactly this command, so a missing-on-default-route gap is a
+// trust-breaking dead end. Both routes shell out to autonomy/lib/proof-verify.py.
+describe("loki proof: verify is routed on Bun + parity with bash (F47)", () => {
+  it("Bun route knows 'verify' (NOT 'Unknown subcommand') and reports it in help", async () => {
+    const help = await bunRoute(["proof", "--help"]);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("verify");
+  });
+
+  it("missing id: both routes exit 2 with the same message", async () => {
+    const a = await bunRoute(["proof", "verify"]);
+    const b = await bashRoute(["proof", "verify"]);
+    expect(a.exitCode).toBe(2);
+    expect(b.exitCode).toBe(2);
+  });
+
+  it("unknown proof id: both routes exit 1 (not 'Unknown subcommand')", async () => {
+    const a = await bunRoute(["proof", "verify", "does-not-exist"]);
+    const b = await bashRoute(["proof", "verify", "does-not-exist"]);
+    expect(a.exitCode).toBe(1);
+    expect(b.exitCode).toBe(1);
+    expect(a.stderr).not.toContain("Unknown subcommand");
+    expect(a.stderr).toContain("not found");
+  });
+
+  it("a seeded proof: both routes produce byte-identical verifier output + exit code", async () => {
+    // Minimal proof the verifier can load; it will report a base-unresolvable
+    // drift (no base_sha) deterministically and identically on both routes.
+    seedProof("run-verify-parity", {
+      run_id: "run-verify-parity",
+      generated_at: "2026-06-20T00:00:00Z",
+      honesty: { headline: "VERIFIED WITH GAPS", degraded: [] },
+      facts: { git: { diff: { count: 1, insertions: 1, deletions: 0 } } },
+    });
+    const a = await bunRoute(["proof", "verify", "run-verify-parity"]);
+    const b = await bashRoute(["proof", "verify", "run-verify-parity"]);
+    expect(a.stdout).toBe(b.stdout);
+    expect(a.exitCode).toBe(b.exitCode);
+  });
+});
+
+// F51 regression: proof list VERDICT must read honesty.headline (the honest
+// verdict), falling back to legacy council.final_verdict for old proofs.
+describe("loki proof list: VERDICT reads honesty.headline (F51)", () => {
+  it("renders the honesty headline in the verdict column", async () => {
+    seedProof("run-headline", {
+      run_id: "run-headline",
+      generated_at: "2026-06-20T00:00:00Z",
+      honesty: { headline: "VERIFIED WITH GAPS" },
+      cost: { usd: "0.10" },
+      files_changed: { count: 1 },
+    });
+    const a = await bunRoute(["proof", "list"]);
+    expect(a.exitCode).toBe(0);
+    expect(a.stdout).toContain("VERIFIED WITH GAPS");
+  });
+});
+
+// F47: `loki receipt` is a friendly alias for `loki proof` on the Bun route too
+// (parity with the bash proof|receipt dispatch). own/docs may reference either.
+describe("loki receipt: Bun alias for proof (F47)", () => {
+  it("receipt --help shows the proof help including verify", async () => {
+    const r = await bunRoute(["receipt", "--help"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("verify");
+  });
+  it("receipt list behaves like proof list (empty dir, exit 0)", async () => {
+    const r = await bunRoute(["receipt", "list"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("No proofs found");
+  });
+});

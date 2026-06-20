@@ -59,12 +59,17 @@ assert "loki dashboard --help mentions 'loki web'" "$?"
 echo "$WEB_HELP" | grep -q "loki dashboard"
 assert "loki web --help mentions 'loki dashboard'" "$?"
 
-# Both must explicitly distinguish the two (e.g., 'NOT the same' or 'different')
+# dashboard --help must still distinguish itself from the (deprecated) web UI.
 echo "$DASHBOARD_HELP" | grep -qiE "not the same|different from|alias for|use loki web"
 assert "loki dashboard --help clarifies the difference from loki web" "$?"
 
-echo "$WEB_HELP" | grep -qiE "not the same|different from|alias for|use loki dashboard"
-assert "loki web --help clarifies the difference from loki dashboard" "$?"
+# web --help must resolve the confusion at the source: as of F55 (v7.88.1) the
+# deprecated `loki web` now LAUNCHES the dashboard, so its help must make clear it
+# is deprecated and points to / launches loki dashboard (the confusion is gone
+# because they are no longer two separate UIs). Accept either the old "difference"
+# wording or the new "deprecated / now launches the dashboard" wording.
+echo "$WEB_HELP" | grep -qiE "not the same|different from|alias for|use loki dashboard|deprecated|launch(es)? the dashboard|canonical command is .?loki dashboard"
+assert "loki web --help clarifies its relationship to loki dashboard" "$?"
 
 # ---------------------------------------------------------------------------
 # Item 3: Escalations nav + component

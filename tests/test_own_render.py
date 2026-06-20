@@ -501,3 +501,129 @@ def test_staleness_note_present_even_when_not_verified(tmp_path):
     # and still no green claim
     assert "production ready" not in out.lower()
 
+
+def test_no_nested_code_fences_in_run_section(tmp_path):
+    """F48: own quotes USAGE.md sections (which contain ```bash fences) into its
+    own ``` block. It MUST strip the inner fences so the output never has nested
+    triple-backtick fences (which render broken for the non-dev reader)."""
+    import subprocess, sys, os, json as _json
+    loki = tmp_path / ".loki"
+    rd = loki / "proofs" / "r1"; rd.mkdir(parents=True)
+    (rd / "proof.json").write_text(_json.dumps({
+        "honesty": {"headline": "VERIFIED WITH GAPS", "degraded": [{"item": "tests", "status": "not_run"}]},
+        "facts": {"tests": {"status": "not_run"}, "build": {"ran": True}, "git": {"diff": {"count": 1}}},
+        "spec": {"brief": "a todo app"}, "deployment": {}, "meta": {"run_id": "r1"}}))
+    (loki / "state").mkdir(parents=True)
+    (loki / "state" / "completion.json").write_text('{"outcome":"complete","pr_url":"","assumptions_total":0}')
+    # USAGE.md WITH its own fenced code blocks (the trigger for the bug).
+    (tmp_path / "USAGE.md").write_text(
+        "## Start\n\n```bash\npython3 todo.py list\n```\n\n"
+        "## Verify\n\n```bash\npython3 todo.py add x\n```\n")
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = subprocess.run([sys.executable, os.path.join(here, "autonomy", "lib", "own-render.py"),
+                          "--loki-dir", str(loki), "--md"], capture_output=True, text=True).stdout
+    # No fence line may be immediately followed by another fence line (nested).
+    fence_lines = [i for i, ln in enumerate(out.splitlines()) if ln.strip().startswith("```")]
+    for a, b in zip(fence_lines, fence_lines[1:]):
+        assert b - a > 1, f"nested/adjacent code fences at lines {a},{b} in own output"
+    # The real command must still be present (we strip fences, not content).
+    assert "python3 todo.py list" in out
+
+
+# --------------------------------------------------------------------------
+# Readability polish (non-technical owner) -- wording invariants.
+# These lock the friendly-but-honest framing without weakening the gate.
+# --------------------------------------------------------------------------
+
+def test_friendly_intro_line_present(tmp_path):
+    """The doc opens with a short, friendly plain-language framing line right
+    under the title, before the sections, on every verdict."""
+    for hl in ("VERIFIED", "VERIFIED WITH GAPS", "NOT VERIFIED"):
+        loki = _make_loki(
+            tmp_path / hl.replace(" ", "_"),
+            proof=_proof(headline=hl, degraded=(
+                [] if hl == "VERIFIED" else
+                [{"item": "tests", "status": "not_run", "reason": "x"}])),
+            completion=_completion(outcome="complete"),
+        )
+        rc, out, err = _run(loki, "--md")
+        assert rc == 0, err
+        head = "\n".join(out.splitlines()[:6]).lower()
+        assert "what loki built and how to take it from here" in head, (
+            "friendly intro line missing for %s:\n%s" % (hl, out))
+
+
+def test_verified_gets_plain_language_translation(tmp_path):
+    """A VERIFIED build gets a true positive plain-language translation."""
+    loki = _make_loki(tmp_path, proof=_proof(headline="VERIFIED"),
+                      completion=_completion(outcome="complete"))
+    rc, out, err = _run(loki, "--md")
+    assert rc == 0, err
+    assert "in plain terms" in out.lower(), (
+        "VERIFIED doc has no plain-language translation:\n%s" % out)
+
+
+def test_verified_with_gaps_translation_is_honest_not_reassuring(tmp_path):
+    """VERIFIED WITH GAPS gets a translation that acknowledges the build/code
+    exist but states Loki could NOT fully prove it works. It must not contain a
+    green it-works claim."""
+    loki = _make_loki(
+        tmp_path,
+        proof=_proof(headline="VERIFIED WITH GAPS", degraded=[
+            {"item": "tests", "status": "not_run", "reason": "x"}]),
+        completion=_completion(outcome="complete"),
+    )
+    rc, out, err = _run(loki, "--md")
+    assert rc == 0, err
+    low = out.lower()
+    # Must carry the honest "could not fully prove" framing.
+    assert "could not fully prove" in low, (
+        "VERIFIED WITH GAPS translation lost its honest framing:\n%s" % out)
+    _assert_no_green_claim(out)
+
+
+def test_not_verified_translation_is_never_reassuring(tmp_path):
+    """CORE: a NOT VERIFIED build must NEVER receive a reassuring/positive
+    plain-language translation. The translation must state Loki could not
+    confirm it works, and must carry no green it-works claim."""
+    loki = _make_loki(
+        tmp_path,
+        proof=_proof(headline="NOT VERIFIED", degraded=[
+            {"item": "tests", "status": "not_run", "reason": "x"}]),
+        completion=_completion(outcome="max_iterations"),
+    )
+    rc, out, err = _run(loki, "--md")
+    assert rc == 0, err
+    low = out.lower()
+    # The non-reassuring framing must be present.
+    assert "could not confirm" in low, (
+        "NOT VERIFIED translation is missing its honest framing:\n%s" % out)
+    # And it must not contain the partial-verification reassurance reserved for
+    # an affirmatively-verified-with-gaps build.
+    assert "the code is there and the build ran, but loki could not fully" \
+        not in low, (
+        "NOT VERIFIED was given the partial-verification reassurance:\n%s" % out)
+    _assert_no_green_claim(out)
+
+
+def test_next_steps_are_numbered_when_present(tmp_path):
+    """The 'what you still need to do' section renders an ordered (numbered)
+    checklist so a non-dev knows what to do first, when there are items."""
+    loki = _make_loki(
+        tmp_path,
+        proof=_proof(headline="VERIFIED"),
+        completion=_completion(outcome="complete", pr_url="",
+                               assumptions_total=2, assumptions_high=1),
+    )
+    rc, out, err = _run(loki, "--md")
+    assert rc == 0, err
+    # Isolate the section body.
+    marker = "## What you still need to do or decide"
+    assert marker in out
+    body = out.split(marker, 1)[1]
+    # At least the first two ordered steps must be numbered.
+    assert re.search(r"(?m)^1\.\s", body), (
+        "next-steps section is not numbered:\n%s" % body)
+    assert re.search(r"(?m)^2\.\s", body), (
+        "next-steps section has no second ordered step:\n%s" % body)
+

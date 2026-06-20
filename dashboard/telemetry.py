@@ -1,12 +1,14 @@
 """Anonymous usage telemetry for Loki Mode dashboard.
 
-Collection is OPT-IN and OFF by default. Nothing is sent unless the user
-explicitly opts in, so a default install (including air-gapped, GDPR, and
-FedRAMP deployments) never phones home.
+Collection is ON BY DEFAULT for an ordinary individual install, and AUTO-OFF in
+enterprise / CI / air-gapped / non-interactive contexts (see _auto_off), so those
+deployments stay silent out of the box (GDPR / FedRAMP safe). Only anonymous
+diagnostics are ever sent; never code, prompts, paths, keys, or repo names. The
+gate mirrors autonomy/telemetry.sh + autonomy/crash.sh exactly.
 
-Opt-in (one required): LOKI_TELEMETRY=on  OR  ~/.loki/config: TELEMETRY_ENABLED=true
 Opt-out (always wins): LOKI_TELEMETRY=off / LOKI_TELEMETRY_DISABLED=true /
                        DO_NOT_TRACK=1 / ~/.loki/config: TELEMETRY_DISABLED=true
+Force-on:  LOKI_TELEMETRY=on  OR  ~/.loki/config: TELEMETRY_ENABLED=true
 
 All calls are fire-and-forget, silent on failure, non-blocking.
 """
@@ -14,6 +16,7 @@ All calls are fire-and-forget, silent on failure, non-blocking.
 import json
 import os
 import platform
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -25,17 +28,57 @@ _POSTHOG_HOST = os.environ.get(
 _POSTHOG_KEY = "phc_ya0vGBru41AJWtGNfZZ8H9W4yjoZy4KON0nnayS7s87"
 
 
+def _auto_off():
+    """Enterprise / CI / air-gapped / non-interactive detection: contexts where
+    on-by-default would be inappropriate, so collection auto-disables and stays
+    silent out of the box. MUST stay in sync with _loki_telemetry_auto_off
+    (autonomy/telemetry.sh) and _loki_collection_auto_off (autonomy/crash.sh)."""
+    if os.environ.get("CI") == "true":
+        return True
+    for var in ("GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "JENKINS_URL",
+                "TEAMCITY_VERSION"):
+        if os.environ.get(var):
+            return True
+    if os.environ.get("CONTINUOUS_INTEGRATION") == "true":
+        return True
+    if os.environ.get("LOKI_ENTERPRISE") == "true":
+        return True
+    if os.environ.get("LOKI_AIRGAP") == "true":
+        return True
+    # Non-interactive detection (council cH_r1 AC2). Interactivity is resolved
+    # exactly once at the real entry point (bin/loki shim / autonomy/loki main)
+    # and exported as LOKI_TTY_INTERACTIVE. Trust that explicit signal instead of
+    # a fresh isatty() probe, because the gate can run in a detached/non-TTY
+    # context (backgrounded thread / subprocess) where isatty() would wrongly
+    # auto-off a real interactive user. Fall back to a live isatty() probe only
+    # when the signal is unset (the helper ran without passing an entry point).
+    # MUST match _loki_telemetry_auto_off (telemetry.sh) and
+    # _loki_collection_auto_off (crash.sh).
+    tty_signal = os.environ.get("LOKI_TTY_INTERACTIVE")
+    if tty_signal is not None and tty_signal != "":
+        return tty_signal != "1"
+    # Non-interactive: neither stdout nor stdin is a terminal (scripts/pipes/
+    # detached/containers). An individual user at a real shell has a TTY.
+    try:
+        if not sys.stdout.isatty() and not sys.stdin.isatty():
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _is_enabled():
-    # Unified OPT-IN gate. Collection is OFF by default; enabled ONLY when the
-    # user has opted in AND has not also opted out. This precedence MUST mirror
-    # loki_collection_enabled in autonomy/crash.sh and _loki_telemetry_enabled
-    # in autonomy/telemetry.sh so one model gates BOTH PostHog usage telemetry
-    # and crash reporting.
+    # Unified gate. Default ON for individual interactive installs; auto-OFF in
+    # enterprise/CI/air-gapped contexts; explicit opt-out always wins. Precedence
+    # MUST mirror loki_collection_enabled in autonomy/crash.sh and
+    # _loki_telemetry_enabled in autonomy/telemetry.sh so one model gates BOTH
+    # PostHog usage telemetry and crash reporting.
     #
     # Precedence:
-    #   1. Any opt-out flag present  -> False (hard kill, always wins)
-    #   2. Else any opt-in flag present -> True
-    #   3. Else (default)            -> False (no egress)
+    #   1. Any opt-out flag present     -> False (hard kill, always wins)
+    #   2. Else explicit opt-in present -> True (force-on, even in CI/enterprise)
+    #   3. Else enterprise/CI/air-gapped -> False (auto-off, safe out of the box)
+    #   4. Else (individual default)    -> True (anonymous diagnostics)
     telem = os.environ.get("LOKI_TELEMETRY", "").lower()
 
     # --- 1. Opt-out always wins ---
@@ -59,14 +102,18 @@ def _is_enabled():
     except Exception:
         pass
 
-    # --- 2. Opt-in required to enable ---
+    # --- 2. Explicit opt-in forces ON (overrides the enterprise/CI auto-off) ---
     if telem == "on":
         return True
     if config_enabled:
         return True
 
-    # --- 3. Default: OFF ---
-    return False
+    # --- 3. Enterprise / CI / air-gapped: auto-off (safe out of the box) ---
+    if _auto_off():
+        return False
+
+    # --- 4. Individual interactive default: ON (anonymous diagnostics) ---
+    return True
 
 
 def _get_distinct_id():

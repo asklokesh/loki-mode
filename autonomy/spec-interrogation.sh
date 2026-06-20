@@ -820,15 +820,37 @@ print("%d %d" % (total, high))
 # resolution (sets confirmed=true). This is deliberately the same teeth the
 # LOKI_ASSUMPTIONS_REQUIRE_CONFIRM=1 path applies to ALL entries, scoped here to
 # just contradictions in default autonomous mode. See the design note below.
+#
+# F50 (zero-config brief mode): a one-line-brief run (LOKI_TTFV=brief) is the
+# zero-config first-pass path. There is no human in the loop and the audience
+# is non-technical: a permanently-blocking contradiction makes a brief run grind
+# to max-iterations and NEVER cleanly complete -- a broken first-run UX for the
+# exact users the brief path exists to serve. Worse, a synthetic brief-PRD that
+# Loki itself wrote is unlikely to carry a real human-authored contradiction;
+# leaving the gate blocking yields no signal a non-technical user can act on.
+# So in brief mode contradictions are RESOLVED-WITH-DEFAULT, not blocked: Loki
+# acknowledges the entry, records resolved_with_default=true plus an honest
+# resolution note, and the gate is allowed to clear. This is NOT hiding the gap:
+# spec_ledger_counts still counts the entry, build_completion_summary still folds
+# it into the proof-of-done, ledger.md still lists it, and `loki own` still tells
+# the user to review the assumptions Loki had to make. PRD mode (a real
+# human-authored spec, where a human CAN resolve a contradiction) keeps the
+# original BLOCKING behavior unchanged. brief mode is detected from LOKI_TTFV=brief
+# (set by cmd_start) and is overridable by the explicit param for tests/callers.
+# Usage: spec_ledger_acknowledge_all [brief_mode]   # brief_mode: "brief" to resolve contradictions
 # ---------------------------------------------------------------------------
 spec_ledger_acknowledge_all() {
     [ "${LOKI_ASSUMPTIONS_REQUIRE_CONFIRM:-0}" = "1" ] && return 0
-    local dir
+    local dir brief_mode
+    # F50: brief/zero-config mode resolves contradictions with a default rather
+    # than blocking forever. Explicit param wins; otherwise read LOKI_TTFV.
+    brief_mode="${1:-${LOKI_TTFV:-}}"
     dir="$(_spec_ledger_dir)"
     [ -d "$dir" ] || return 0
-    _SL_DIR="$dir" python3 -c '
+    _SL_DIR="$dir" _SL_BRIEF="$brief_mode" python3 -c '
 import glob, json, os, tempfile
 d = os.environ["_SL_DIR"]
+brief = os.environ.get("_SL_BRIEF", "") == "brief"
 for p in glob.glob(os.path.join(d, "a-*.json")):
     try:
         with open(p) as f:
@@ -837,10 +859,22 @@ for p in glob.glob(os.path.join(d, "a-*.json")):
         continue
     if r.get("acknowledged"):
         continue
-    # P2-4: a contradiction cannot be assumed away, so it is never auto-acked.
-    if r.get("class") == "contradictory":
+    is_contradiction = r.get("class") == "contradictory"
+    # P2-4: a contradiction cannot be assumed away, so it is never auto-acked
+    # in default / PRD mode (a human can resolve it there).
+    if is_contradiction and not brief:
         continue
     r["acknowledged"] = True
+    # F50: brief-mode contradictions are resolved-with-default, marked honestly
+    # so the receipt / ledger / `loki own` can show "Loki chose a default here".
+    if is_contradiction and brief:
+        r["resolved_with_default"] = True
+        if not r.get("resolution_note"):
+            r["resolution_note"] = (
+                "Resolved with a reasonable default in zero-config brief mode "
+                "(no human in the loop). Review and refine via a full PRD run "
+                "(loki start ./prd.md) if this default is wrong."
+            )
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -907,7 +941,17 @@ else:
     lines.append("Total assumptions: %d (%d high-severity)" % (len(entries), high))
     lines.append("")
     for e in entries:
-        state = "confirmed" if e.get("confirmed") else ("acknowledged" if e.get("acknowledged") else "OPEN")
+        # F50: surface a resolved-with-default state distinctly so a brief-mode
+        # contradiction reads honestly ("Loki chose a default") rather than as a
+        # plain ack or a silent pass.
+        if e.get("confirmed"):
+            state = "confirmed"
+        elif e.get("resolved_with_default"):
+            state = "resolved-with-default"
+        elif e.get("acknowledged"):
+            state = "acknowledged"
+        else:
+            state = "OPEN"
         lines.append("## %s [%s / %s / %s]" % (e.get("id",""), e.get("severity",""), e.get("class",""), state))
         lines.append("")
         lines.append("- Gap: %s" % e.get("gap",""))
@@ -915,6 +959,8 @@ else:
         lines.append("- Why: %s" % e.get("why",""))
         lines.append("- Affects: %s" % e.get("affects",""))
         lines.append("- Source: %s" % e.get("source",""))
+        if e.get("resolution_note"):
+            lines.append("- Resolution: %s" % e.get("resolution_note"))
         lines.append("")
 out = os.path.join(d, "ledger.md")
 fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")

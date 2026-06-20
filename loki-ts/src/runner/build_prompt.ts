@@ -361,6 +361,31 @@ const LSP_GROUNDING_INSTRUCTION =
 const AGENTS_MD_INSTRUCTION =
   `Project conventions: read AGENTS.md in the repository root for build, test, and style conventions. If AGENTS.md is absent, read CLAUDE.md instead. The nearest such file to the code you are editing takes precedence.`;
 
+// DOC_SCOPE instruction (F52): scale generated documentation to the detected
+// project complexity so a trivial one-file app does not get a nine-file
+// architecture suite. USAGE.md (USAGE_DOC_INSTRUCTION) and HANDOFF.md (rendered
+// post-completion) are written regardless of tier; these strings only govern the
+// OPTIONAL architecture suite. Parity with bash: run.sh build_prompt()
+// $doc_scope_instruction. Each string MUST stay byte-identical to its bash
+// counterpart (same precedent as COMPOSE_INSTRUCTION). The tier is resolved via
+// resolveDetectedComplexity() (env var on the bash route, FS-walk on the default
+// Bun route); the result is cache-stable within a run, so docScopeInstruction()
+// is emitted in the cache-stable prefix alongside USAGE_DOC_INSTRUCTION.
+const DOC_SCOPE_INSTRUCTION_SIMPLE =
+  `DOC_SCOPE: This is a small, simple project. Keep documentation minimal and proportional: a short README.md (what it is, install, run) plus the required USAGE.md is sufficient. Do NOT generate a multi-file architecture documentation suite (ARCHITECTURE.md, COMPONENTS.md, DECISIONS.md, API.md, SETUP.md, TESTING.md) for a project this small -- it is overhead with no reader and wastes iterations. Only add one of those files if the code genuinely warrants it (e.g. write API.md only when there is a real public API surface). Never claim a doc exists that you did not write.`;
+const DOC_SCOPE_INSTRUCTION_FULL =
+  `DOC_SCOPE: Scale documentation to what a reader of THIS project actually needs -- do not generate empty boilerplate. Beyond the required USAGE.md, write a README.md and add architecture-suite docs (ARCHITECTURE.md, COMPONENTS.md, DECISIONS.md, API.md, SETUP.md, TESTING.md) only where each one carries real, project-specific content (e.g. API.md only with a real public API, COMPONENTS.md only with multiple distinct components, DECISIONS.md only when there are non-obvious design decisions). Prefer fewer accurate docs over a complete-looking suite of stubs. Never claim a doc exists that you did not write.`;
+
+function docScopeInstruction(env: Readonly<Record<string, string | undefined>>): string {
+  // Parity with bash build_prompt(): the bash route reads ${DETECTED_COMPLEXITY:-standard}
+  // and does NOT FS-walk here (run_autonomous sets DETECTED_COMPLEXITY once per run before
+  // the first build_prompt). Mirror that env-only read exactly -- do NOT call
+  // resolveDetectedComplexity() (its FS-walk fallback would diverge from bash when the var
+  // is unset, e.g. in parity fixtures). Empty/unset -> non-simple (full suite), same as bash.
+  const tier = env["DETECTED_COMPLEXITY"];
+  return tier === "simple" ? DOC_SCOPE_INSTRUCTION_SIMPLE : DOC_SCOPE_INSTRUCTION_FULL;
+}
+
 // ---------------------------------------------------------------------------
 // load_ledger_context (run.sh:8126) -- newest LEDGER-*.md, head -100 lines.
 // ---------------------------------------------------------------------------
@@ -1285,13 +1310,18 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
       sdlcText,
       analysis: analysisInstruction(env, analysisTargetDir),
       memory: MEMORY_INSTRUCTION,
+      docScope: docScopeInstruction(env),
       sections,
     });
   }
 
+  // DOC_SCOPE (F52): tier-resolved once, cache-stable within a run. Threaded to
+  // the degraded path and emitted inline below alongside USAGE_DOC_INSTRUCTION.
+  const docScope = docScopeInstruction(env);
+
   // ----- Degraded provider (run.sh:9304-9334) ------------------------------
   if (providerDegraded) {
-    return buildStaticFirstDegraded(opts, sections);
+    return buildStaticFirstDegraded(opts, sections, docScope);
   }
 
   // ----- Full static-first layout (run.sh:9336-9381) -----------------------
@@ -1304,6 +1334,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(autonomyText);
   lines.push(MEMORY_INSTRUCTION);
   lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
@@ -1348,7 +1379,11 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
 // Static-first degraded (run.sh:9304-9334).
 // ---------------------------------------------------------------------------
 
-function buildStaticFirstDegraded(opts: BuildPromptOpts, sections: ResolvedSections): string {
+function buildStaticFirstDegraded(
+  opts: BuildPromptOpts,
+  sections: ResolvedSections,
+  docScope: string,
+): string {
   const { prd, iteration, retry, ctx } = opts;
   let prdContent = "";
   if (prd !== null && prd.length > 0) {
@@ -1370,6 +1405,7 @@ function buildStaticFirstDegraded(opts: BuildPromptOpts, sections: ResolvedSecti
     );
   }
   lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
   lines.push(AGENTS_MD_INSTRUCTION);
@@ -1394,6 +1430,7 @@ interface LegacyFullParts {
   sdlcText: string;
   analysis: string;
   memory: string;
+  docScope: string;
   sections: ResolvedSections;
 }
 
@@ -1418,14 +1455,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(
@@ -1476,6 +1513,9 @@ export const _internals = {
   resetWorkflowDisclosure,
   MEMORY_INSTRUCTION,
   USAGE_DOC_INSTRUCTION,
+  DOC_SCOPE_INSTRUCTION_SIMPLE,
+  DOC_SCOPE_INSTRUCTION_FULL,
+  docScopeInstruction,
   COMPOSE_INSTRUCTION,
   AGENTS_MD_INSTRUCTION,
   loadLedgerContext,

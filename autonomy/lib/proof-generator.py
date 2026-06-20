@@ -550,6 +550,19 @@ def _collect_spec(loki_dir, target_dir):
     return {"source": source, "brief": brief}
 
 
+def _self_version():
+    """Read the installed Loki version from the VERSION file shipped beside this
+    generator (package layout: <root>/VERSION and <root>/autonomy/lib/<this>).
+
+    This is the most robust source: proof-generator.py always ships two dirs
+    below VERSION in every distribution channel (npm, Docker, brew), so it is
+    correct regardless of the caller's cwd or the target app dir. Returns "" when
+    the file cannot be read (never raises)."""
+    return _read_text(
+        os.path.join(_HERE, "..", "..", "VERSION")
+    ).strip()
+
+
 def _collect_meta(loki_dir, repo_root):
     orch = _read_json(
         os.path.join(loki_dir, "state", "orchestrator.json"), default={}
@@ -560,6 +573,11 @@ def _collect_meta(loki_dir, repo_root):
     version = str(orch.get("version") or "")
     if not version and repo_root:
         version = _read_text(os.path.join(repo_root, "VERSION")).strip()
+    # Final fallback: the VERSION shipped beside this generator. Robust even when
+    # repo_root resolution failed (e.g. the generator runs from outside its
+    # package tree against a user app dir that has no VERSION file).
+    if not version:
+        version = _self_version()
     return started_at, version
 
 
@@ -610,7 +628,15 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     run_id = args.run_id or os.environ.get("LOKI_SESSION_ID") or _gen_run_id()
 
     started_at, version_from_state = _collect_meta(loki_dir, repo_root)
-    loki_version = args.loki_version or version_from_state or "unknown"
+    # Treat a literal "unknown" arg as absent: the bash runtime wrapper passes
+    # --loki-version "$(get_version ... || echo unknown)", and get_version is not
+    # defined in run.sh's process, so the wrapper sends the sentinel "unknown".
+    # Letting that win would mask the version that _collect_meta resolves from
+    # orchestrator.json / repo VERSION / the VERSION shipped beside this file.
+    arg_version = (args.loki_version or "").strip()
+    if arg_version.lower() == "unknown":
+        arg_version = ""
+    loki_version = arg_version or version_from_state or "unknown"
 
     cost, model_from_eff = _collect_efficiency(loki_dir)
     provider_name = args.provider or os.environ.get("PROVIDER_NAME") or "claude"

@@ -23,11 +23,11 @@
 // it (see loki-ts/tests/commands/proof.test.ts for the bash-vs-Bun gate).
 
 import { existsSync, readdirSync, readFileSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
-import { lokiDir } from "../util/paths.ts";
+import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
@@ -39,6 +39,7 @@ Usage: loki proof <subcommand> [args]
 Subcommands:
   list                 List proof-of-run artifacts in .loki/proofs/
   show <id>            Pretty-print .loki/proofs/<id>/proof.json
+  verify <id>          Re-check a receipt against your code (tamper + drift)
   open <id>            Open .loki/proofs/<id>/index.html in a browser
   share <id>           Publish the proof page as a GitHub Gist (opt-in)
 
@@ -105,11 +106,15 @@ function listProofs(): number {
     }
     const runId = str(d["run_id"]);
     const gen = str(d["generated_at"]);
-    const verdict = str(obj(d["council"])["final_verdict"]);
+    // The honest verdict lives in honesty.headline (VERIFIED / VERIFIED WITH
+    // GAPS / NOT VERIFIED). Fall back to the legacy council.final_verdict for
+    // older proofs that predate the honesty block.
+    const headline = obj(d["honesty"])["headline"];
+    const verdict = str(headline ?? obj(d["council"])["final_verdict"]);
     const cost = str(obj(d["cost"])["usd"]);
     const files = str(obj(d["files_changed"])["count"]);
     rows.push(
-      `${pad(runId, 26)}  ${pad(gen, 20)}  ${pad(verdict, 10)}  ${pad(cost, 9)}  ${files}`,
+      `${pad(runId, 26)}  ${pad(gen, 20)}  ${pad(verdict, 18)}  ${pad(cost, 9)}  ${files}`,
     );
   }
   if (rows.length === 0) {
@@ -117,7 +122,7 @@ function listProofs(): number {
     return 0;
   }
   process.stdout.write(
-    `${pad("RUN_ID", 26)}  ${pad("GENERATED_AT", 20)}  ${pad("VERDICT", 10)}  ${pad("COST_USD", 9)}  FILES\n`,
+    `${pad("RUN_ID", 26)}  ${pad("GENERATED_AT", 20)}  ${pad("VERDICT", 18)}  ${pad("COST_USD", 9)}  FILES\n`,
   );
   for (const r of rows) process.stdout.write(`${r}\n`);
   return 0;
@@ -413,6 +418,40 @@ async function shareProof(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+// verifyProof - deterministic re-check of a receipt (tamper + drift), Bun parity
+// for the bash `proof verify`. Both routes shell out to the SAME verifier
+// (autonomy/lib/proof-verify.py) so there is one source of truth: it re-hashes
+// the canonical proof (tamper) and re-derives the diff from the recorded base_sha
+// vs live HEAD (drift). This is the "verify it yourself" path that makes the
+// Evidence Receipt non-forgeable -- and it is the command `loki own` tells users
+// to run, so it MUST exist on the default (Bun) route, not only the bash fallback.
+// Exit 0 = clean, 1 = tamper/drift, 2 = unusable input.
+async function verifyProof(id: string | undefined): Promise<number> {
+  if (!id) {
+    process.stderr.write(`${RED}Missing proof id.${NC} Use 'loki proof list'.\n`);
+    return 2;
+  }
+  const pj = join(proofsDir(), id, "proof.json");
+  if (!existsSync(pj)) {
+    process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
+    process.stderr.write("Use 'loki proof list' to see available proofs.\n");
+    return 1;
+  }
+  const verifier = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
+  if (!existsSync(verifier)) {
+    process.stderr.write(`${RED}Verifier not found (autonomy/lib/proof-verify.py).${NC}\n`);
+    return 2;
+  }
+  const target = process.env["TARGET_DIR"] || ".";
+  // Shell out to the verifier and pass its report + exit code through verbatim
+  // (0 clean / 1 tamper-drift / 2 unusable). run() captures, so we write the
+  // captured streams back out; the verifier prints a JSON report on stdout.
+  const r = await run(["python3", verifier, pj, target], { timeoutMs: 30000 });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  return r.exitCode;
+}
+
 export async function runProof(argv: readonly string[]): Promise<number> {
   const sub = argv[0];
   const rest = argv.slice(1);
@@ -427,6 +466,8 @@ export async function runProof(argv: readonly string[]): Promise<number> {
       return listProofs();
     case "show":
       return showProof(rest[0]);
+    case "verify":
+      return verifyProof(rest[0]);
     case "open":
       return openProof(rest[0]);
     case "share":

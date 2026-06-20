@@ -109,6 +109,27 @@ def _usage_section(usage_text, header):
     return "\n".join(out)
 
 
+def _strip_md_fences(text):
+    """Remove markdown code-fence lines (``` or ```lang) from a USAGE.md section
+    body. USAGE.md already wraps commands in fenced blocks; own re-wraps each
+    section in ONE fence, so leaving the inner fences in produces nested,
+    broken-rendering ``` inside ``` for the non-technical reader. We drop the
+    fence delimiter lines but keep the content + prose between them verbatim."""
+    if not text:
+        return ""
+    kept = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            continue  # drop the fence delimiter line itself
+        kept.append(line)
+    # Re-trim blank edges left behind after removing fences.
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept)
+
+
 # ---------------------------------------------------------------------------
 # honesty gate (the core)
 # ---------------------------------------------------------------------------
@@ -209,6 +230,36 @@ def _run_id_when(run_id):
     return ""
 
 
+def _verdict_translation(proof):
+    """A one-sentence plain-language translation of the honesty verdict for a
+    non-technical owner. Honesty gate is sacred here:
+
+      - ready (_is_ready True)  -> a true, non-overclaiming positive line.
+      - partial ("VERIFIED ..." headline that is NOT a clean pass, e.g.
+        "VERIFIED WITH GAPS") -> "the code is there and it builds, but Loki
+        could not fully prove it works - see what is unverified below."
+      - everything else (NOT VERIFIED, missing/unknown headline) -> a plain,
+        NON-reassuring statement. NEVER softened into something comforting.
+
+    Returns '' when there is nothing safe to add (we never invent reassurance).
+    """
+    headline = str(((proof or {}).get("honesty") or {}).get("headline")
+                   or "").strip().upper()
+    if _is_ready(proof):
+        return ("In plain terms: Loki built what you asked for and checked that "
+                "it works.")
+    # Partial verification: the build produced something Loki could confirm
+    # partially, but not fully. Gated on the headline AFFIRMING verification
+    # (starts with VERIFIED) while NOT being a clean ready pass. "NOT VERIFIED"
+    # starts with "NOT" so it can never reach this branch.
+    if headline.startswith("VERIFIED"):
+        return ("In plain terms: the code is there and the build ran, but Loki "
+                "could not fully prove it works - see what is unverified below.")
+    # No affirmative verification at all. State it plainly, do not reassure.
+    return ("In plain terms: Loki could not confirm this build works. Treat it "
+            "as unfinished until the gaps below are resolved.")
+
+
 def _section_is_it_working(proof, run_id=None):
     """2. 'Is it working?' - VERBATIM honesty.headline gating.
 
@@ -226,6 +277,8 @@ def _section_is_it_working(proof, run_id=None):
         lines.append("Yes. Loki verified this build: the tests passed and the "
                      "build ran cleanly.")
         lines.append("")
+        lines.append(_verdict_translation(proof))
+        lines.append("")
         lines.append("Verdict (Loki's honest receipt): %s" % (headline or "VERIFIED"))
         lines.append("")
         lines.extend(_build_age_note(run_id))
@@ -237,6 +290,8 @@ def _section_is_it_working(proof, run_id=None):
                      "%s" % headline)
     else:
         lines.append("Not verified. Loki did not record a verdict for this run.")
+    lines.append("")
+    lines.append(_verdict_translation(proof))
     lines.append("")
     lines.append("This means Loki is NOT telling you it is ready to ship. Here is "
                  "what was not verified:")
@@ -266,9 +321,11 @@ def _section_run_on_computer(proof, usage_text, live_url):
     if live_url:
         lines.append("It is running right now on this machine at: %s" % live_url)
         lines.append("")
-    start = _usage_section(usage_text, "Start")
-    verify = _usage_section(usage_text, "Verify")
-    install = _usage_section(usage_text, "Install")
+    # Strip USAGE.md's own ``` fences so each section is wrapped exactly once
+    # below (otherwise nested fences render broken for the non-dev reader).
+    start = _strip_md_fences(_usage_section(usage_text, "Start"))
+    verify = _strip_md_fences(_usage_section(usage_text, "Verify"))
+    install = _strip_md_fences(_usage_section(usage_text, "Install"))
     if install:
         lines.append("First, install it:")
         lines.append("")
@@ -365,8 +422,16 @@ def _section_verified(proof, run_id):
 
 
 def _section_still_to_do(proof, completion):
-    """7. 'What you still need to do or decide'."""
+    """7. 'What you still need to do or decide'.
+
+    Rendered as a numbered, ordered checklist so a non-technical owner knows
+    exactly what to handle and roughly in what order: run/try it, resolve
+    anything Loki could not verify, then open a PR (merge) and deploy. Every
+    item still maps to a real artifact value -- nothing is invented.
+    """
     lines = ["## What you still need to do or decide", ""]
+    # Action items, kept in a sensible do-this-first order:
+    #   1) review assumptions, 2) resolve unverified gaps, 3) PR/merge, 4) deploy.
     items = []
 
     # Assumptions Loki had to make where the spec was ambiguous.
@@ -416,9 +481,12 @@ def _section_still_to_do(proof, completion):
     if not str(deployment.get("deployed_url") or "").strip():
         items.append("It is not deployed yet. Use `loki deploy` when you are ready.")
 
-    for it in items:
-        lines.append("- %s" % it)
-    if not items:
+    if items:
+        lines.append("Work through these in order:")
+        lines.append("")
+        for i, it in enumerate(items, start=1):
+            lines.append("%d. %s" % (i, it))
+    else:
         lines.append("- Nothing outstanding was recorded. Read the sections above "
                      "to decide your next step.")
     return lines
@@ -461,7 +529,9 @@ def render_markdown(loki_dir):
     usage_text = _read_text(os.path.join(project_root, "USAGE.md"))
     live_url = _live_url(loki_dir)
 
-    blocks = [["# What Loki built for you", ""]]
+    blocks = [["# What Loki built for you", "",
+               "Here is what Loki built and how to take it from here, in plain "
+               "language - no code reading required."]]
     blocks.append(_section_what_you_have(proof))
     blocks.append(_section_is_it_working(proof, run_id))
     blocks.append(_section_run_on_computer(proof, usage_text, live_url))

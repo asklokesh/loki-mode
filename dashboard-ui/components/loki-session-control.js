@@ -11,6 +11,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
 import { getState } from '../core/loki-state.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 
 /**
  * @class LokiSessionControl
@@ -143,22 +144,23 @@ export class LokiSessionControl extends LokiElement {
   }
 
   _startPolling() {
-    this._ownPollInterval = setInterval(async () => {
-      try {
-        const status = await this._api.getStatus();
-        this._updateFromStatus(status);
-      } catch (error) {
-        this._status.connected = false;
-        this._status.mode = 'offline';
-        this.render();
-      }
-    }, 3000);
+    // The session control lives in the always-visible sidebar footer (not
+    // inside a .section-page), so it opts OUT of section gating (sectionId:
+    // null) and is gated on tab visibility ONLY: a hidden tab does not poll,
+    // but it stays fresh on every active section. connectedCallback already did
+    // the first load, so immediate is disabled to avoid a duplicate fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._loadStatus(),
+      intervalMs: 3000,
+      sectionId: null,
+      immediate: false,
+    });
   }
 
   _stopPolling() {
-    if (this._ownPollInterval) {
-      clearInterval(this._ownPollInterval);
-      this._ownPollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 

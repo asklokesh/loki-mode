@@ -11,6 +11,7 @@
 
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
+import { registerPoll } from '../core/loki-poll-registry.js';
 import { LokiTheme } from '../core/loki-theme.js';
 
 /**
@@ -101,13 +102,23 @@ export class LokiDashboardHeader extends LokiElement {
   }
 
   _startPolling() {
-    this._pollInterval = setInterval(() => this._loadStatus(), 10000);
+    // The header is always-visible chrome (not inside a .section-page), so it
+    // opts OUT of section gating (sectionId: null) and is gated on tab
+    // visibility ONLY: a hidden tab does not poll, but any active section keeps
+    // the header status fresh. connectedCallback already did the first load,
+    // so immediate is disabled to avoid a duplicate fetch.
+    this._poll = registerPoll({
+      loadFn: () => this._loadStatus(),
+      intervalMs: 10000,
+      sectionId: null,
+      immediate: false,
+    });
   }
 
   _stopPolling() {
-    if (this._pollInterval) {
-      clearInterval(this._pollInterval);
-      this._pollInterval = null;
+    if (this._poll) {
+      this._poll.stop();
+      this._poll = null;
     }
   }
 
