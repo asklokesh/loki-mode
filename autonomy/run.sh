@@ -572,6 +572,25 @@ if [ -f "$GIT_PR_ADVISORY_LIB" ]; then
     source "$GIT_PR_ADVISORY_LIB"
 fi
 
+# Proven PR (Loop 6): shared print-only Evidence Receipt renderer for PR bodies.
+# render_evidence_receipt_md prints the run's honest headline + facts +
+# verify-yourself block into the PR body. Pure, never pushes/PRs/mutates.
+PROOF_PR_LIB="$SCRIPT_DIR/lib/proof-pr.sh"
+if [ -f "$PROOF_PR_LIB" ]; then
+    # shellcheck source=lib/proof-pr.sh
+    source "$PROOF_PR_LIB"
+fi
+
+# Proven PR (Loop 6 / Slice B): optional advisory verified-completion check-run.
+# Owned by Slice B (autonomy/lib/proof-check.sh); sourced guarded so this slice
+# is correct whether or not the file is present in the tree, and the single call
+# site is itself guarded on declare -f + LOKI_PROVEN_PR_CHECK.
+PROOF_CHECK_LIB="$SCRIPT_DIR/lib/proof-check.sh"
+if [ -f "$PROOF_CHECK_LIB" ]; then
+    # shellcheck source=lib/proof-check.sh
+    source "$PROOF_CHECK_LIB"
+fi
+
 # Completion Council (v5.25.0) - Multi-agent completion verification
 # Source completion council module
 COUNCIL_SCRIPT="$SCRIPT_DIR/completion-council.sh"
@@ -2330,6 +2349,19 @@ EOF
         jq -r '.completed_tasks[]? | select(.github_issue) | "Closes #\(.github_issue)"' .loki/ledger.json >> "$pr_body" 2>/dev/null || true
     fi
 
+    # Proven PR (Loop 6): append the Evidence Receipt to the body file before
+    # gh pr create --body-file. Default-on; LOKI_PROVEN_PR=0 -> body file bytes
+    # byte-identical to before. Empty expected_head_sha by design (R-DET-1
+    # run_id pointer is the anti-stale guard; the branch head is offset by the
+    # session commit). Best-effort: a missing proof appends nothing extra here.
+    if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+        local _bf_proof=""
+        _bf_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
+        if [ -n "$_bf_proof" ]; then
+            { printf '\n'; render_evidence_receipt_md "$_bf_proof" "" "" 2>/dev/null; } >> "$pr_body" 2>/dev/null || true
+        fi
+    fi
+
     # Build PR create command
     local pr_args=("pr" "create" "--repo" "$repo" "--title" "[Loki Mode] $feature_name" "--body-file" "$pr_body")
 
@@ -3184,7 +3216,30 @@ on_run_complete() {
         log_info "LOKI_DELEGATE_PR=1: PR already exists for branch '$branch': $existing_pr (skipping create)."
         return 0
     fi
-    pr_url="$( (cd "${TARGET_DIR:-.}" && _loki_net gh pr create --title "$pr_title" --body "Opened by Loki Mode (delegate mode). Review locally before merge." --head "$branch") 2>/dev/null || true )"
+    # Proven PR (Loop 6): append the Evidence Receipt to the inline body.
+    # Default-on; LOKI_PROVEN_PR=0 -> body byte-identical to before. This path
+    # runs gh from a `cd "${TARGET_DIR:-.}"` subshell, so resolve the proof
+    # relative to TARGET_DIR (not the bare-relative helper). Empty
+    # expected_head_sha by design (R-DET-1 run_id pointer is the anti-stale guard).
+    local _del_body="Opened by Loki Mode (delegate mode). Review locally before merge."
+    if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+        local _del_loki="${TARGET_DIR:-.}/.loki"
+        local _del_idfile="$_del_loki/state/last-proof-id.txt"
+        if [ -s "$_del_idfile" ]; then
+            local _del_rid=""
+            _del_rid="$(cat "$_del_idfile" 2>/dev/null || true)"
+            if [ -n "$_del_rid" ] && [ -f "$_del_loki/proofs/$_del_rid/proof.json" ]; then
+                local _del_receipt=""
+                _del_receipt="$(render_evidence_receipt_md "$_del_loki/proofs/$_del_rid/proof.json" "" "" 2>/dev/null || true)"
+                if [ -n "$_del_receipt" ]; then
+                    _del_body="${_del_body}
+
+${_del_receipt}"
+                fi
+            fi
+        fi
+    fi
+    pr_url="$( (cd "${TARGET_DIR:-.}" && _loki_net gh pr create --title "$pr_title" --body "$_del_body" --head "$branch") 2>/dev/null || true )"
     if [ -n "$pr_url" ]; then
         # Export so build_completion_summary folds the url into the summary.
         _LOKI_DELEGATE_PR_URL="$pr_url"
@@ -5501,6 +5556,46 @@ generate_proof_of_run() {
     local ver provider
     ver="$(get_version 2>/dev/null || echo unknown)"
     provider="${PROVIDER_NAME:-claude}"
+
+    # Proven PR (Loop 6 / Slice A2): resolve a deterministic run_id so the
+    # proof + the PR Evidence Receipt agree, and persist a stable pointer the PR
+    # sites read (never newest-by-mtime). The generator otherwise mints a fresh
+    # _gen_run_id() when LOKI_SESSION_ID is unset (the `loki start ./prd.md`
+    # case), which the later PR step could not know. Gated on the SAME flag as the
+    # receipt so LOKI_PROVEN_PR=0 is a byte-identical no-op (no --run-id passed,
+    # no pointer written): the pointer is only ever READ by the renderer, which
+    # is itself off under that flag.
+    if [ "${LOKI_PROVEN_PR:-1}" != "0" ]; then
+        local _rid=""
+        if declare -f _loki_trust_run_id >/dev/null 2>&1; then
+            _rid="$(_loki_trust_run_id 2>/dev/null || true)"
+        fi
+        # Fall back to a locally minted id when no persisted per-run id exists.
+        # Do NOT call _loki_trust_run_id --new here: that would clobber the
+        # trust-events run-id file; this is a read-or-mint-local resolution.
+        if [ -z "$_rid" ]; then
+            _rid="proof-$(date -u +%Y%m%d%H%M%S 2>/dev/null || echo 0)-$$-${RANDOM:-0}"
+        fi
+        ITERATION_COUNT="${ITERATION_COUNT:-0}" \
+        PROVIDER_NAME="$provider" \
+        PRD_PATH="${prd_path:-}" \
+        python3 "$gen" \
+            --loki-dir "$loki_dir" \
+            --loki-version "$ver" \
+            --provider "$provider" \
+            --run-id "$_rid" \
+            --quiet >/dev/null 2>&1 || true
+        # Persist the resolved run_id atomically (.tmp + mv) so the PR sites read
+        # the exact run the generator wrote, never an mtime guess.
+        local _id_dir="$loki_dir/state"
+        local _id_file="$_id_dir/last-proof-id.txt"
+        mkdir -p "$_id_dir" 2>/dev/null || true
+        if printf '%s' "$_rid" > "${_id_file}.tmp" 2>/dev/null; then
+            mv -f "${_id_file}.tmp" "$_id_file" 2>/dev/null || rm -f "${_id_file}.tmp" 2>/dev/null || true
+        fi
+        return 0
+    fi
+
     ITERATION_COUNT="${ITERATION_COUNT:-0}" \
     PROVIDER_NAME="$provider" \
     PRD_PATH="${prd_path:-}" \
@@ -6327,6 +6422,25 @@ commit_session_changes() {
     return 0
 }
 
+# _loki_proof_json_for_pr
+# Resolve THIS run's proof.json path from the persisted run_id pointer
+# (.loki/state/last-proof-id.txt, written by generate_proof_of_run / Slice A2).
+# Echoes the path when both the pointer and the file exist, else empty. NEVER
+# uses newest-by-mtime (R-DET-1). Best-effort, always returns 0. Uses the bare
+# relative .loki to match the other create_session_pr state reads (cwd==TARGET_DIR
+# at PR time). Returns empty under LOKI_PROVEN_PR=0 (pointer is never written).
+_loki_proof_json_for_pr() {
+    local id_file=".loki/state/last-proof-id.txt"
+    [ -s "$id_file" ] || { printf '%s' ""; return 0; }
+    local rid=""
+    rid="$(cat "$id_file" 2>/dev/null || true)"
+    [ -n "$rid" ] || { printf '%s' ""; return 0; }
+    local p=".loki/proofs/$rid/proof.json"
+    [ -f "$p" ] || { printf '%s' ""; return 0; }
+    printf '%s' "$p"
+    return 0
+}
+
 create_session_pr() {
     # Advise the user how to open a PR for the agent branch. PRINT-ONLY by
     # default (no push, no PR). LOKI_AUTO_PR=1 restores the legacy auto behavior.
@@ -6371,6 +6485,22 @@ create_session_pr() {
         else
             log_info "To open a pull request: git push -u origin ${branch_name}, then open a PR (base: ${base})"
         fi
+        # Proven PR (Loop 6): print the Evidence Receipt block AFTER the push/PR
+        # advice so a user opening a manual PR can paste it into the body. This is
+        # the print-PR-body fallback. Default-on; LOKI_PROVEN_PR=0 -> not invoked
+        # (advisory output byte-identical to before). Production callers pass an
+        # empty expected_head_sha: the session commit lands between proof-gen and
+        # this point, so the branch head is structurally offset from the proof's
+        # head and feeding it would false-degrade every legitimate receipt; the
+        # anti-stale guarantee is the run_id pointer (R-DET-1), not a head match.
+        if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+            local _pr_proof=""
+            _pr_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
+            if [ -n "$_pr_proof" ]; then
+                printf '\n'
+                render_evidence_receipt_md "$_pr_proof" "" "" || true
+            fi
+        fi
         return 0
     fi
 
@@ -6395,21 +6525,95 @@ create_session_pr() {
         if [ -n "$existing_pr" ]; then
             log_info "PR already exists for branch $branch_name: $existing_pr (skipping create)"
             audit_log "PR_EXISTS" "branch=$branch_name,url=$existing_pr"
+            # Proven PR (Loop 6, PO-locked Q1): on idempotent reuse, leave the
+            # existing PR untouched (do not rewrite the body, edit the PR, or
+            # post a comment). Just hint that an Evidence Receipt is available.
+            if [ "${LOKI_PROVEN_PR:-1}" != "0" ]; then
+                local _exist_proof=""
+                _exist_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
+                if [ -n "$_exist_proof" ]; then
+                    log_info "Evidence Receipt available for this run: loki proof open (run id in .loki/state/last-proof-id.txt)"
+                fi
+            fi
             return 0
         fi
-        pr_url=$(gh pr create \
-            --title "Loki Mode: Agent session changes ($branch_name)" \
-            --body "Automated changes from Loki Mode agent session.
+        # Build the body into a variable so the Proven PR Evidence Receipt can be
+        # appended (Loop 6). Default-on; LOKI_PROVEN_PR=0 -> body bytes are
+        # byte-identical to the legacy inline body. Empty expected_head_sha by
+        # design (see the advisory-branch note: the session commit offsets the
+        # branch head from the proof head; R-DET-1 run_id pointer is the guard).
+        local _auto_body
+        _auto_body="Automated changes from Loki Mode agent session.
 
 Branch: \`$branch_name\`
 Session PID: $$
-Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        local _auto_proof=""
+        if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+            _auto_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
+            if [ -n "$_auto_proof" ]; then
+                local _auto_receipt=""
+                _auto_receipt="$(render_evidence_receipt_md "$_auto_proof" "" "" 2>/dev/null || true)"
+                if [ -n "$_auto_receipt" ]; then
+                    _auto_body="${_auto_body}
+
+${_auto_receipt}"
+                fi
+            fi
+        fi
+        pr_url=$(gh pr create \
+            --title "Loki Mode: Agent session changes ($branch_name)" \
+            --body "$_auto_body" \
             --base "$base" \
             --head "$branch_name" 2>/dev/null) || true
 
         if [ -n "$pr_url" ]; then
             log_info "PR created: $pr_url"
             audit_log "PR_CREATED" "branch=$branch_name,url=$pr_url"
+            # Proven PR (Loop 6 / Slice D linkage): persist {run_id, pr_url} next
+            # to the proof so the dashboard proofs panel can show "PR #N:
+            # <headline>". Slice D owns the READ; Slice A owns this WRITE. Atomic
+            # .tmp + mv, python3-guarded for correct JSON escaping, only when a
+            # proof for THIS run exists and a pr_url was returned. Best-effort.
+            if [ -n "$_auto_proof" ] && command -v python3 >/dev/null 2>&1; then
+                local _pr_json_dir
+                _pr_json_dir="$(dirname "$_auto_proof" 2>/dev/null || true)"
+                if [ -n "$_pr_json_dir" ] && [ -d "$_pr_json_dir" ]; then
+                    local _pr_run_id
+                    _pr_run_id="$(basename "$_pr_json_dir" 2>/dev/null || true)"
+                    LOKI_PR_JSON_DIR="$_pr_json_dir" \
+                    LOKI_PR_RUN_ID="$_pr_run_id" \
+                    LOKI_PR_URL="$pr_url" \
+                    python3 - <<'PR_JSON_PY' 2>/dev/null || true
+import json
+import os
+
+d = os.environ.get("LOKI_PR_JSON_DIR", "")
+run_id = os.environ.get("LOKI_PR_RUN_ID", "")
+pr_url = os.environ.get("LOKI_PR_URL", "")
+if d and os.path.isdir(d):
+    path = os.path.join(d, "pr.json")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump({"run_id": run_id, "pr_url": pr_url}, f)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+PR_JSON_PY
+                fi
+            fi
+            # Proven PR (Loop 6 / Slice B integration): one guarded call to the
+            # optional advisory verified-completion check-run. Posts NOTHING by
+            # default (LOKI_PROVEN_PR_CHECK unset). Slice B owns proof-check.sh;
+            # guarded on the file being sourced (declare -f) so this slice is
+            # correct whether or not B is integrated. Best-effort, never fails PR.
+            if [ "${LOKI_PROVEN_PR_CHECK:-0}" = "1" ] && declare -f post_verified_completion_check >/dev/null 2>&1; then
+                post_verified_completion_check "${_auto_proof:-}" "$pr_url" || true
+            fi
         else
             log_warn "Failed to create PR - branch pushed to: $branch_name"
         fi

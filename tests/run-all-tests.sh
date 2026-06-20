@@ -289,6 +289,16 @@ run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-cod
 # waive|unwaive|list` CLI shape. Receipt honesty is in tests/test_proof_generator.py.
 run_test "Secure-by-Default Gate (engine precision + wiring + waiver CLI)" "$SCRIPT_DIR/test-secure-scan.sh"
 
+# Proven PR (Loop 6 / v7.90.0): the Evidence Receipt rendered into the PR body
+# Loki opens. Honesty: a green/VERIFIED claim only when honesty.headline==VERIFIED;
+# advisory check-run is opt-in and cannot block a merge; verify-yourself works on
+# the default route + installed layout (F47 guard). Tests PATH-stub gh/glab and
+# capture argv/body -- they NEVER open a real PR or post a real check.
+run_test "Proven PR Receipt (PR-body honesty + no false green)" "$SCRIPT_DIR/test-proven-pr-receipt.sh"
+run_test "Proven PR Check-Run (advisory, opt-in, cannot block merge)" "$SCRIPT_DIR/test-proven-pr-check.sh"
+run_test "Proven PR Installed-Layout (verify-yourself works on shipped routes)" "$SCRIPT_DIR/test-proven-pr-installed-layout.sh"
+run_test "Proven PR Detached Path (cmd_run --pr/--ship -d carries receipt)" "$SCRIPT_DIR/test-proven-pr-detached.sh"
+
 # Build-time HOME isolation (F49): Loki's in-build app executions must run with an
 # isolated HOME/XDG/TMPDIR so a generated app cannot litter the user's real home.
 run_test "Build-time HOME isolation (in-build app exec sandbox)" "$SCRIPT_DIR/test-build-home-isolation.sh"

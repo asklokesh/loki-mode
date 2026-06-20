@@ -125,6 +125,14 @@ if [ -f "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/lib/git-pr-advisory.sh"
 fi
 
+# Proven PR (Loop 6): shared print-only Evidence Receipt renderer for PR bodies
+# (render_evidence_receipt_md). Sourced so cmd_github can append the receipt to
+# the PR body. Self-guarded against double-source; existence-guarded.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/proof-pr.sh" ]; then
+    # shellcheck source=autonomy/lib/proof-pr.sh
+    source "$_LOKI_SCRIPT_DIR/lib/proof-pr.sh"
+fi
+
 # Unified config-file support (#691). Canonical LOKI_CONFIG_MAP + the config-file
 # loader (loki_maybe_apply_config_file / loki_apply_config_file) and the
 # example/schema/validate generators. Side-effect-free on source: defines the
@@ -7574,7 +7582,37 @@ if [[ "$LOKI_CREATE_PR" == "true" ]]; then
     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if [[ -n "$branch_current" && "$branch_current" != "main" && "$branch_current" != "master" ]]; then
         git push origin "$branch_current" 2>/dev/null || true
-        gh pr create --title "$LOKI_PR_TITLE" --body "Implemented by Loki Mode" --head "$branch_current" 2>/dev/null || true
+        # Proven PR (v7.90.0): render this run's Evidence Receipt into the PR body
+        # so even the detached --pr/--ship path proves itself. The proof + the
+        # run-id pointer (.loki/state/last-proof-id.txt) exist by now (the
+        # `loki start` above generated them). On by default (LOKI_PROVEN_PR=0
+        # opts out); degrades safely to the plain body if anything is missing.
+        # The renderer is print-only + honesty-gated (green only when the proof
+        # headline is VERIFIED); it can never make a receipt-less PR look proven.
+        _pr_body="Implemented by Loki Mode"
+        if [[ "${LOKI_PROVEN_PR:-1}" != "0" ]]; then
+            # Resolve the renderer from the ALREADY-RESOLVED autonomy dir passed
+            # in by the parent (LOKI_SCRIPT_DIR_RESOLVED = _LOKI_SCRIPT_DIR, which
+            # is symlink-safe). Do NOT recompute from `command -v loki` -- on
+            # npm/bun/brew global installs that is an UNRESOLVED bin symlink, so
+            # dirname-based guessing misses the lib and the receipt silently no-ops
+            # on the dominant install channels (council cIb_r2). Fall back to the
+            # old dirname guesses only if the resolved dir was not passed.
+            _pp_lib="${LOKI_SCRIPT_DIR_RESOLVED:-}/lib/proof-pr.sh"
+            [[ -f "$_pp_lib" ]] || _pp_lib="$(dirname "$LOKI_CMD")/../autonomy/lib/proof-pr.sh"
+            [[ -f "$_pp_lib" ]] || _pp_lib="$(dirname "$LOKI_CMD")/autonomy/lib/proof-pr.sh"
+            _pp_id=""
+            [[ -f .loki/state/last-proof-id.txt ]] && _pp_id="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
+            _pp_proof=".loki/proofs/${_pp_id}/proof.json"
+            if [[ -n "$_pp_id" && -f "$_pp_proof" && -f "$_pp_lib" ]]; then
+                # shellcheck source=/dev/null
+                if source "$_pp_lib" 2>/dev/null && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+                    _pp_block="$(render_evidence_receipt_md "$_pp_proof" "" "" 2>/dev/null || true)"
+                    [[ -n "$_pp_block" ]] && _pr_body="Implemented by Loki Mode"$'\n\n'"$_pp_block"
+                fi
+            fi
+        fi
+        gh pr create --title "$LOKI_PR_TITLE" --body "$_pr_body" --head "$branch_current" 2>/dev/null || true
     fi
 fi
 # Post-completion: auto-merge if requested
@@ -7592,6 +7630,7 @@ INNER_SCRIPT_EOF
         # Pass all variables safely via environment
         LOKI_RUN_DIR="$(pwd)" \
         LOKI_CMD="$loki_cmd" \
+        LOKI_SCRIPT_DIR_RESOLVED="$_LOKI_SCRIPT_DIR" \
         LOKI_SESSION_ID="$session_id" \
         LOKI_WORKTREE_BRANCH="$branch_name" \
         LOKI_PRD_PATH="$detach_prd" \
@@ -7681,6 +7720,28 @@ Provider: ${issue_provider}
 
 ## Changes
 $(git log --oneline "main..HEAD" 2>/dev/null || echo "See diff")"
+
+            # Proven PR (Loop 6): append the Evidence Receipt to the body. One
+            # append covers BOTH the gh and glab branches below. Default-on;
+            # LOKI_PROVEN_PR=0 -> body byte-identical to before. The proof lives
+            # under the project .loki resolved from the run_id pointer; empty
+            # expected_head_sha by design (R-DET-1 run_id pointer is the guard).
+            if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+                local _gh_idfile=".loki/state/last-proof-id.txt"
+                if [ -s "$_gh_idfile" ]; then
+                    local _gh_rid=""
+                    _gh_rid="$(cat "$_gh_idfile" 2>/dev/null || true)"
+                    if [ -n "$_gh_rid" ] && [ -f ".loki/proofs/$_gh_rid/proof.json" ]; then
+                        local _gh_receipt=""
+                        _gh_receipt="$(render_evidence_receipt_md ".loki/proofs/$_gh_rid/proof.json" "" "" 2>/dev/null || true)"
+                        if [ -n "$_gh_receipt" ]; then
+                            pr_body="${pr_body}
+
+${_gh_receipt}"
+                        fi
+                    fi
+                fi
+            fi
 
             case "${issue_provider:-github}" in
                 github)

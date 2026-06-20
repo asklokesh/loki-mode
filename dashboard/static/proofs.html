@@ -69,12 +69,18 @@
     display: block; background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 16px 18px; color: var(--text);
   }
-  .row:hover { border-color: var(--accent); text-decoration: none; }
+  .row:hover { border-color: var(--accent); }
+  .row-main { display: block; color: var(--text); }
+  .row-main:hover { text-decoration: none; }
   .row .top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .row .rid { font-family: var(--mono); font-size: 14px; font-weight: 600; }
   .row .usd { font-family: var(--mono); font-size: 16px; font-weight: 650; }
   .row .ts { color: var(--faint); font-size: 12px; margin-left: auto; }
   .row .meta { color: var(--muted); font-size: 13px; margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .row .pr { font-size: 13px; margin-top: 8px; }
+  .row .pr a { font-family: var(--mono); font-weight: 600; }
+  .row .pr .arrow { color: var(--faint); margin: 0 6px; }
+  .row .pr .verdict { color: var(--muted); }
   .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
   .b-approve { color: var(--green); border-color: rgba(52,211,153,0.4); }
   .b-reject { color: var(--red); border-color: rgba(248,113,113,0.4); }
@@ -115,6 +121,16 @@
     if (v.indexOf("CONCERN") === 0) return "b-concern";
     return "";
   }
+  // Extract the PR/MR number from a GitHub/GitLab PR URL for the display label.
+  // GitHub: .../pull/123  GitLab: .../merge_requests/123. Falls back to the
+  // trailing numeric path segment. Returns "" when no number can be found.
+  function prNumber(url) {
+    var s = String(url || "");
+    var m = s.match(/\/(?:pull|merge_requests|pulls)\/(\d+)/);
+    if (m) return m[1];
+    m = s.match(/\/(\d+)(?:[/?#]|$)/);
+    return m ? m[1] : "";
+  }
   function render(proofs) {
     var c = document.getElementById("content");
     if (!proofs || proofs.length === 0) {
@@ -133,11 +149,24 @@
       var ts = p.generated_at ? esc(p.generated_at) : "";
       var href = p.has_html ? ("/api/proofs/" + encodeURIComponent(p.run_id) + "/html") : ("/api/proofs/" + encodeURIComponent(p.run_id));
       var meta = [usd ? '<span class="usd">' + usd + "</span>" : "", fc, ver].filter(Boolean).join(" ");
-      rows += '<a class="row" href="' + href + '">' +
+      // PR linkage: render "PR #N -> <headline>" only when a PR is attached. The
+      // headline is the proof's own deterministic honesty.headline (display only,
+      // no client-side verdict logic). No pr_url -> nothing extra is rendered.
+      var prBlock = "";
+      if (p.pr_url) {
+        var num = prNumber(p.pr_url);
+        var label = num ? ("PR #" + esc(num)) : "PR";
+        var hl = p.headline ? ('<span class="arrow">-&gt;</span><span class="verdict">' + esc(p.headline) + "</span>") : "";
+        prBlock = '<div class="pr"><a href="' + esc(p.pr_url) +
+          '" target="_blank" rel="noopener noreferrer">' + label + "</a>" + hl + "</div>";
+      }
+      rows += '<div class="row">' +
+        '<a class="row-main" href="' + href + '">' +
         '<div class="top"><span class="rid">' + rid + "</span>" + verdict +
         (ts ? '<span class="ts">' + ts + "</span>" : "") + "</div>" +
         (meta ? '<div class="meta">' + meta + "</div>" : "") +
-        "</a>";
+        "</a>" + prBlock +
+        "</div>";
     }
     c.innerHTML = '<div class="list">' + rows + "</div>";
   }

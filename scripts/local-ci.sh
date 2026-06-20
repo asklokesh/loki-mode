@@ -394,6 +394,10 @@ run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sent
 # the `loki secure` waiver CLI shape. Fast, no network, throwaway temp fixtures.
 run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-secure-scan.sh 2>&1 | tail -3"
 run_check "tests/test-build-home-isolation.sh (in-build app exec sandbox)" "bash tests/test-build-home-isolation.sh 2>&1 | tail -3"
+run_check "tests/test-proven-pr-receipt.sh (PR-body honesty + no false green)" "bash tests/test-proven-pr-receipt.sh 2>&1 | tail -3"
+run_check "tests/test-proven-pr-check.sh (advisory check-run, cannot block merge)" "bash tests/test-proven-pr-check.sh 2>&1 | tail -3"
+run_check "tests/test-proven-pr-installed-layout.sh (verify-yourself on shipped routes)" "bash tests/test-proven-pr-installed-layout.sh 2>&1 | tail -3"
+run_check "tests/test-proven-pr-detached.sh (detached --pr/--ship -d carries receipt)" "bash tests/test-proven-pr-detached.sh 2>&1 | tail -3"
 
 # Telemetry disclosure-before-egress under a real pty (council cH_r1 AC7). Locks
 # in the on-by-default TTY fix: interactivity resolved once at the entry point

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.90.0] - 2026-06-20
+
+### Proven PR: every PR Loki opens carries its own re-verifiable proof
+
+When Loki opens a pull request, the PR body now includes an Evidence Receipt
+summary so a reviewer does not have to take the agent on faith. The block shows
+the honest verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED), the key facts
+(diff hash, tests, secure-gate result, cost), and a "verify this yourself" line:
+`loki proof verify <id>` against the recorded base SHA. The receipt is rendered
+by a single shared helper so every PR path Loki uses carries it consistently.
+
+- Honest by construction: a green/VERIFIED claim appears only when the receipt's
+  own headline is VERIFIED. The renderer never recomputes a verdict and never
+  puts raw local state into a public PR body (it reads the redacted receipt).
+- On by default when Loki opens or advises a PR; opt out with LOKI_PROVEN_PR=0.
+  If a PR is already open, Loki leaves its body untouched and just logs a hint.
+- Optional advisory status check (`loki: verified-completion`) maps the headline
+  to a check-run conclusion. It is OPT-IN (LOKI_PROVEN_PR_CHECK) and can never
+  block a merge -- only the repo owner can require it as a branch-protection
+  check. To make verified-completion blocking, add it as a required status check
+  on your repo.
+- The "verify yourself" command works on the default route, not just the legacy
+  bash route (parity-tested), and resolves correctly in the installed package
+  layout.
+
+The dashboard proofs panel now links each proof to its PR and headline.
+
 ## [7.89.1] - 2026-06-20
 
 ### Plainer language in the live dashboard

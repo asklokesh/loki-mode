@@ -119,6 +119,21 @@ redacted before it leaves your machine). An optional, off-by-default GPG detache
 signature (`LOKI_PROOF_GPG_KEY`) lets a third party confirm the receipt came from
 you.
 
+### Proven PR
+
+When Loki opens a pull request, the PR body includes the Evidence Receipt
+summary, so a reviewer does not have to take the agent on faith. It shows the
+honest verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED), the key facts
+(diff hash, tests, secure-gate, cost), and a "verify this yourself" line:
+`loki proof verify <id>` against the recorded base SHA. A green claim appears
+only when the receipt's own headline is VERIFIED. This is on by default whenever
+Loki opens or advises a PR; opt out with `LOKI_PROVEN_PR=0`.
+
+An optional advisory status check (`loki: verified-completion`) maps the verdict
+to a GitHub check-run. It is opt-in (`LOKI_PROVEN_PR_CHECK=1`) and can never block
+a merge on its own. To make verified-completion blocking, add it as a required
+status check in your repository's branch-protection settings.
+
 ---
 
 ## Get Started in 30 Seconds

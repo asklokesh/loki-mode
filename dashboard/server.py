@@ -10078,6 +10078,25 @@ def _safe_proof_run_dir(run_id: str) -> _Path:
     return _Path(target)
 
 
+def _proof_pr_url(run_dir: _Path) -> Optional[str]:
+    """Return the PR URL linked to this run, or None.
+
+    Reads the optional <run_dir>/pr.json that the run.sh auto-PR path writes at
+    PR-creation time ({"run_id": "...", "pr_url": "..."}). The file is read only
+    inside the already-validated run dir (the caller passes either an iterdir()
+    entry or a _safe_proof_run_dir result -- never a raw run_id), so there is no
+    additional traversal surface. Missing/unreadable/non-dict pr.json or an
+    empty/non-string pr_url -> None, never an error. Most proofs have no PR.
+    """
+    pr_data = _safe_json_read(run_dir / "pr.json", default=None)
+    if not isinstance(pr_data, dict):
+        return None
+    url = pr_data.get("pr_url")
+    if isinstance(url, str) and url:
+        return url
+    return None
+
+
 @app.get("/api/proofs", dependencies=[Depends(auth.require_scope("read"))])
 async def list_proofs():
     """List proof-of-run artifacts for the active project's .loki/proofs/."""
@@ -10096,6 +10115,11 @@ async def list_proofs():
         data = _safe_json_read(proof_json, default=None)
         if not isinstance(data, dict):
             continue
+        # Deterministic honesty headline (single source of truth, same access as
+        # proofs_summary's bucketing). Read, never recomputed. The list endpoint
+        # surfaces it so the panel can show the verdict without a second fetch.
+        honesty = data.get("honesty")
+        headline = honesty.get("headline") if isinstance(honesty, dict) else None
         items.append({
             "run_id": data.get("run_id", entry.name),
             "generated_at": data.get("generated_at"),
@@ -10103,6 +10127,8 @@ async def list_proofs():
             "cost_usd": (data.get("cost") or {}).get("usd"),
             "files_changed": (data.get("files_changed") or {}).get("count"),
             "final_verdict": (data.get("council") or {}).get("final_verdict"),
+            "headline": headline,
+            "pr_url": _proof_pr_url(entry),
             "has_html": (entry / "index.html").is_file(),
         })
     # Newest first when generated_at is present.
@@ -10176,6 +10202,10 @@ async def get_proof(run_id: str):
     data = _safe_json_read(proof_json, default=None)
     if not isinstance(data, dict):
         raise HTTPException(status_code=500, detail="proof.json unreadable")
+    # Surface the optional PR linkage alongside the proof. The proof.json itself
+    # already carries honesty.headline; we only add pr_url so the panel can show
+    # "PR #N -> <headline>". Absent pr.json -> pr_url null, never an error.
+    data["pr_url"] = _proof_pr_url(run_dir)
     return JSONResponse(content=data)
 
 
