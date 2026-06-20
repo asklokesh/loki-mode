@@ -27,7 +27,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 # Make proof_redact importable regardless of cwd.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -170,6 +170,28 @@ def _collect_council(loki_dir):
     }
 
 
+def _norm_gate_status(raw):
+    """Map a recorded gate value to one of {passed,failed,inconclusive,not_run}.
+
+    A bare bool means the gate ran with a clear outcome. A string is normalized
+    so e.g. "skip"/"skipped" -> not_run and "inconclusive" stays inconclusive.
+    Never conflate a missing/not-run gate with passed: an unrecognized truthy
+    string is reported verbatim (lowercased) rather than silently "passed".
+    """
+    if isinstance(raw, bool):
+        return "passed" if raw else "failed"
+    s = str(raw).strip().lower()
+    if s in ("passed", "pass", "true", "ok", "verified"):
+        return "passed"
+    if s in ("failed", "fail", "false", "error"):
+        return "failed"
+    if s in ("inconclusive", "unknown", "partial"):
+        return "inconclusive"
+    if s in ("not_run", "notrun", "skip", "skipped", "n/a", "na", "", "none"):
+        return "not_run"
+    return s
+
+
 def _collect_quality_gates(loki_dir):
     gates_raw = _read_json(
         os.path.join(loki_dir, "state", "quality-gates.json"), default=None
@@ -179,21 +201,175 @@ def _collect_quality_gates(loki_dir):
     total = 0
     if isinstance(gates_raw, dict):
         for name, val in gates_raw.items():
-            status = "unknown"
-            if isinstance(val, bool):
-                status = "passed" if val else "failed"
-            elif isinstance(val, dict):
+            if isinstance(val, dict):
                 if "passed" in val:
-                    status = "passed" if val.get("passed") else "failed"
+                    status = _norm_gate_status(val.get("passed"))
                 elif "status" in val:
-                    status = str(val.get("status"))
+                    status = _norm_gate_status(val.get("status"))
+                else:
+                    status = "not_run"
             else:
-                status = str(val)
+                status = _norm_gate_status(val)
             gates.append({"name": str(name), "status": status})
             total += 1
             if status == "passed":
                 passed += 1
     return {"passed": passed, "total": total, "gates": gates}
+
+
+def _collect_build(loki_dir):
+    """Read .loki/quality/build-results.json (Slice A writes it).
+
+    Deterministic FACT, never an LLM opinion. Tolerates an absent file ->
+    status not_run. Shape: {command, exit_code, ran, duration_sec, status}.
+    """
+    raw = _read_json(
+        os.path.join(loki_dir, "quality", "build-results.json"), default=None
+    )
+    out = {
+        "command": "",
+        "exit_code": None,
+        "ran": False,
+        "duration_sec": None,
+        "status": "not_run",
+    }
+    if not isinstance(raw, dict):
+        return out
+    out["command"] = str(raw.get("command") or "")
+    ran = bool(raw.get("ran", True))
+    out["ran"] = ran
+    ec = raw.get("exit_code")
+    out["exit_code"] = _to_int(ec, None) if ec is not None else None
+    dur = raw.get("duration_sec")
+    out["duration_sec"] = _to_float(dur, None) if dur is not None else None
+    if not ran:
+        out["status"] = "not_run"
+    elif out["exit_code"] == 0:
+        out["status"] = "verified"
+    elif out["exit_code"] is None:
+        out["status"] = "inconclusive"
+    else:
+        out["status"] = "failed"
+    return out
+
+
+def _norm_tests_status(raw):
+    """Map a recorded test status to {verified,failed,inconclusive,not_run}.
+
+    Tests use "verified" (not "passed") as the green state so the headline can
+    require tests.status == verified. A truthy pass-like string -> verified.
+    """
+    if isinstance(raw, bool):
+        return "verified" if raw else "failed"
+    s = str(raw).strip().lower()
+    if s in ("verified", "passed", "pass", "true", "ok", "green"):
+        return "verified"
+    if s in ("failed", "fail", "false", "error", "red"):
+        return "failed"
+    if s in ("inconclusive", "unknown", "partial"):
+        return "inconclusive"
+    if s in ("not_run", "notrun", "skip", "skipped", "n/a", "na", "", "none"):
+        return "not_run"
+    return s
+
+
+def _collect_tests(loki_dir):
+    """Read .loki/quality/test-results.json.
+
+    NEW shape (Slice A): {runner, command, exit_code, passed_count,
+    failed_count, status, duration_sec}. OLD shape (back-compat):
+    {pass, runner} where pass is true / false / "inconclusive". Maps the old
+    pass flag to a status (true->verified, "inconclusive"->inconclusive,
+    false->failed, missing->not_run). Deterministic FACT.
+    """
+    raw = _read_json(
+        os.path.join(loki_dir, "quality", "test-results.json"), default=None
+    )
+    out = {
+        "runner": "",
+        "command": "",
+        "exit_code": None,
+        "passed_count": None,
+        "failed_count": None,
+        "status": "not_run",
+        "duration_sec": None,
+    }
+    if not isinstance(raw, dict):
+        return out
+    out["runner"] = str(raw.get("runner") or "")
+    out["command"] = str(raw.get("command") or "")
+    ec = raw.get("exit_code")
+    out["exit_code"] = _to_int(ec, None) if ec is not None else None
+    pc = raw.get("passed_count")
+    out["passed_count"] = _to_int(pc, None) if pc is not None else None
+    fc = raw.get("failed_count")
+    out["failed_count"] = _to_int(fc, None) if fc is not None else None
+    dur = raw.get("duration_sec")
+    out["duration_sec"] = _to_float(dur, None) if dur is not None else None
+
+    if "status" in raw and raw.get("status"):
+        out["status"] = _norm_tests_status(raw.get("status"))
+    elif out["exit_code"] is not None:
+        out["status"] = "verified" if out["exit_code"] == 0 else "failed"
+    elif "pass" in raw:
+        # OLD shape: {pass, runner}. A bare pass:true must NOT become a green
+        # headline on its own without a real exit_code + command; it maps to a
+        # weaker "verified" here, but the headline logic additionally requires a
+        # non-empty test command before declaring the run VERIFIED.
+        p = raw.get("pass")
+        if p is True:
+            out["status"] = "verified"
+        elif isinstance(p, str) and p.strip().lower() == "inconclusive":
+            out["status"] = "inconclusive"
+        elif p is False:
+            out["status"] = "failed"
+        else:
+            out["status"] = "inconclusive"
+    else:
+        out["status"] = "not_run"
+    return out
+
+
+def _collect_evidence_gate(loki_dir):
+    """Read .loki/council/evidence-gate-details.json (written on every gate run).
+
+    Deterministic FACT about whether the verified-completion evidence gate ran
+    and its verdict. Absent -> ran False. baseline_established reflects whether
+    a diff baseline was usable (diff axis not inconclusive).
+    """
+    raw = _read_json(
+        os.path.join(loki_dir, "council", "evidence-gate-details.json"),
+        default=None,
+    )
+    out = {"ran": False, "verdict": "", "baseline_established": False}
+    if not isinstance(raw, dict):
+        return out
+    out["ran"] = True
+    out["verdict"] = str(raw.get("verdict") or "")
+    diff = raw.get("diff") if isinstance(raw.get("diff"), dict) else {}
+    # A baseline is "established" when the diff axis produced a usable result
+    # (not flagged inconclusive). This is the diff-baseline the gate compared to.
+    out["baseline_established"] = bool(
+        diff and not diff.get("inconclusive") and diff.get("ok") is not None
+    )
+    return out
+
+
+def _diff_sha256(files_changed):
+    """sha256 of the canonical diff stat (count/insertions/deletions/files).
+
+    Deterministic + re-derivable: a verifier recomputes this from the same
+    files_changed object. Hashing the stat (not the full patch) keeps it stable
+    whether or not --include-diffs was passed.
+    """
+    fc = files_changed or {}
+    canon = {
+        "count": fc.get("count", 0),
+        "insertions": fc.get("insertions", 0),
+        "deletions": fc.get("deletions", 0),
+        "files": fc.get("files", []),
+    }
+    return hashlib.sha256(_canonical(canon).encode("utf-8")).hexdigest()
 
 
 def _git_diffstat(target_dir, include_diffs):
@@ -363,6 +539,26 @@ def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
 
+def _gpg_detached_sign(data, key_id):
+    """Produce an ASCII-armored gpg detached signature over `data`.
+
+    Returns the armored signature string, or None on any failure (gpg missing,
+    key not found, timeout). Best-effort: signing is an optional add-on and
+    never blocks proof emission. Local-only: invokes the on-PATH gpg, no network.
+    """
+    try:
+        proc = subprocess.run(
+            ["gpg", "--batch", "--yes", "--armor", "--detach-sign",
+             "--local-user", key_id, "--output", "-"],
+            input=data, capture_output=True, timeout=30,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        return proc.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
 def _build_proof(args, loki_dir, target_dir, repo_root):
     generated_at = _utc_now_iso()
     run_id = args.run_id or os.environ.get("LOKI_SESSION_ID") or _gen_run_id()
@@ -380,6 +576,10 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     council = _collect_council(loki_dir)
     quality_gates = _collect_quality_gates(loki_dir)
 
+    build = _collect_build(loki_dir)
+    tests = _collect_tests(loki_dir)
+    evidence_gate = _collect_evidence_gate(loki_dir)
+
     deployed_url = os.environ.get("LOKI_DEPLOYED_URL") or None
 
     # public_url is the publish-time injection slot: None at generate time so
@@ -389,25 +589,194 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # so the URL is redacted like every other field and folded into the hash.
     public_url = os.environ.get("LOKI_PROOF_PUBLIC_URL") or None
 
+    wall_clock_sec = _wall_clock_sec(started_at, generated_at)
+    deployment = {"deployed_url": deployed_url, "public_url": public_url}
+    provider = {"name": provider_name, "model": model}
+
+    # ---- v1.1 evidence model -------------------------------------------------
+    # FACTS: deterministic, re-derivable, NON-LLM. A skeptic can recompute every
+    # one of these from the same .loki state. This is what makes a green receipt
+    # impossible to forge: the headline is computed ONLY from these facts.
+    git_facts = {
+        "base_sha": os.environ.get("_LOKI_ITER_START_SHA", "").strip(),
+        "head_sha": _git_head_sha(target_dir),
+        "diff": files_changed,
+        "diff_sha256": _diff_sha256(files_changed),
+    }
+    facts = {
+        "git": git_facts,
+        "build": build,
+        "tests": tests,
+        "quality_gates": [
+            {"name": g.get("name", ""), "status": g.get("status", "not_run")}
+            for g in (quality_gates.get("gates") or [])
+        ],
+        "cost": cost,
+        "meta": {
+            "run_id": run_id,
+            "loki_version": loki_version,
+            "provider": provider_name,
+            "model": model,
+            "started_at": started_at,
+            "generated_at": generated_at,
+            "wall_clock_sec": wall_clock_sec,
+        },
+    }
+
+    # ASSESSMENTS: LLM opinions. Explicitly labeled as judgment, NOT proof. A
+    # green council verdict is an opinion that can be wrong or gamed; it never
+    # contributes to the deterministic headline.
+    completion = _read_json(
+        os.path.join(loki_dir, "state", "completion.json"), default=None
+    )
+    claimed = bool(isinstance(completion, dict) and (
+        completion.get("completed")
+        or str(completion.get("outcome") or "").lower() in (
+            "complete", "completed", "success")
+    ))
+    assessments = {
+        "_note": "AI judgment, not deterministic proof",
+        "council": council,
+        "completion_claim": {
+            "claimed": claimed,
+            "evidence_gate_verdict": evidence_gate.get("verdict", ""),
+        },
+    }
+
+    # HONESTY: every fact that is not_run/inconclusive/skipped, surfaced loudly,
+    # plus a deterministic headline a forger cannot turn green without real
+    # exit_code:0 evidence and a non-empty diff.
+    degraded = _compute_degraded(facts)
+    headline = _compute_headline(facts, degraded)
+    honesty = {
+        "headline": headline,
+        "degraded": degraded,
+        "evidence_gate": evidence_gate,
+    }
+
     # Assemble WITHOUT redaction / verification fields (advisor ordering).
+    # Top-level flat keys are RETAINED as a back-compat mirror so existing
+    # dashboard/CLI/template readers (schema v1.0 consumers) keep working; the
+    # new facts/assessments/honesty blocks are additive.
     proof = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
         "generated_at": generated_at,
         "loki_version": loki_version,
         "started_at": started_at,
-        "wall_clock_sec": _wall_clock_sec(started_at, generated_at),
+        "wall_clock_sec": wall_clock_sec,
         "spec": spec,
-        "provider": {"name": provider_name, "model": model},
+        "provider": provider,
         "iterations": iterations,
         "files_changed": files_changed,
         "diffs": diffs,
         "council": council,
         "quality_gates": quality_gates,
         "cost": cost,
-        "deployment": {"deployed_url": deployed_url, "public_url": public_url},
+        "deployment": deployment,
+        # v1.1 evidence model (additive).
+        "facts": facts,
+        "assessments": assessments,
+        "honesty": honesty,
     }
     return proof, run_id
+
+
+def _compute_degraded(facts):
+    """List every fact whose status is not_run / inconclusive / skipped.
+
+    Each entry is {item, status, reason}. This is the explicit honesty ledger:
+    a reader sees exactly what was NOT verified rather than inferring it from
+    silence. Deterministic (derived only from facts)."""
+    out = []
+    # "failed" is included alongside the weak statuses: a hard failure is a gap in
+    # the proof of done just as much as a not-run check, and the honesty ledger
+    # must SHOW it (otherwise a failed test would render an amber banner whose
+    # "items below" list is empty -- the exact misleading state we forbid).
+    weak = ("not_run", "inconclusive", "skipped", "failed")
+    tests = facts.get("tests") or {}
+    if tests.get("status") in weak:
+        reason = "no test command recorded" if not tests.get("command") \
+            else ("exit_code=%s" % tests.get("exit_code"))
+        out.append({"item": "tests", "status": tests.get("status"),
+                    "reason": reason})
+    build = facts.get("build") or {}
+    if build.get("status") in weak:
+        reason = "build not run" if not build.get("ran") \
+            else ("exit_code=%s" % build.get("exit_code"))
+        out.append({"item": "build", "status": build.get("status"),
+                    "reason": reason})
+    for g in facts.get("quality_gates") or []:
+        if g.get("status") in weak:
+            out.append({"item": "quality_gate:%s" % g.get("name", ""),
+                        "status": g.get("status"),
+                        "reason": "gate %s" % g.get("status")})
+    git = facts.get("git") or {}
+    if not (git.get("diff") or {}).get("count"):
+        out.append({"item": "git.diff", "status": "not_run",
+                    "reason": "no file changes detected"})
+    return out
+
+
+def _compute_headline(facts, degraded):
+    """Deterministic headline. NEVER green from an LLM opinion or a bare
+    pass:true. Rules:
+      - VERIFIED only when tests.status == verified AND there are no degraded
+        items AND the diff is non-empty AND tests recorded a real command.
+      - VERIFIED WITH GAPS when some facts verified but degraded is non-empty.
+      - NOT VERIFIED otherwise.
+    """
+    tests = facts.get("tests") or {}
+    build = facts.get("build") or {}
+    git = facts.get("git") or {}
+    diff_nonempty = bool((git.get("diff") or {}).get("count"))
+
+    # A HARD FAILURE (a test/build that ran and FAILED, or a failed gate) forces
+    # NOT VERIFIED -- it is never an amber "gap". A failed check is a stronger
+    # negative signal than a not-run one: amber means "we did not check
+    # everything", red means "something we checked did not pass". Conflating them
+    # would let a failed test render amber, which understates the failure.
+    any_failed = (
+        tests.get("status") == "failed"
+        or build.get("status") == "failed"
+        or any(g.get("status") == "failed"
+               for g in (facts.get("quality_gates") or []))
+    )
+    if any_failed:
+        return "NOT VERIFIED"
+
+    tests_verified = (
+        tests.get("status") == "verified"
+        and bool(tests.get("command"))
+        and tests.get("exit_code") == 0
+    )
+    if tests_verified and not degraded and diff_nonempty:
+        return "VERIFIED"
+    # Any fact verified at all (tests/build verified, or a passed gate)?
+    any_verified = (
+        tests.get("status") == "verified"
+        or build.get("status") == "verified"
+        or any(g.get("status") == "passed"
+               for g in (facts.get("quality_gates") or []))
+        or diff_nonempty
+    )
+    if any_verified and degraded:
+        return "VERIFIED WITH GAPS"
+    return "NOT VERIFIED"
+
+
+def _git_head_sha(target_dir):
+    """Best-effort current HEAD sha for facts.git.head_sha. Empty when non-git."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", target_dir, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return ""
 
 
 def _council_ratio(proof):
@@ -644,6 +1013,17 @@ def generate(args):
             for rv in council_obj.get("reviewers") or []:
                 if isinstance(rv, dict) and isinstance(rv.get("summary"), str):
                     rv["summary"] = rv["summary"][:300]
+        # redact_tree returns fresh copies, so the v1.1 mirror blocks hold an
+        # independent (uncapped) council/cost copy. Re-point them at the capped
+        # top-level objects so the receipt is internally consistent (no divergent
+        # or uncapped duplicate of a reviewer summary or cost value).
+        assess = redacted.get("assessments")
+        if isinstance(assess, dict) and isinstance(council_obj, dict):
+            assess["council"] = council_obj
+        facts_obj = redacted.get("facts")
+        cost_obj = redacted.get("cost")
+        if isinstance(facts_obj, dict) and isinstance(cost_obj, dict):
+            facts_obj["cost"] = cost_obj
     except Exception:
         pass
 
@@ -656,12 +1036,26 @@ def generate(args):
     # Integrity hash over the canonical form INCLUDING redaction but EXCLUDING
     # verification (advisor ordering). Verifier re-canonicalizes the compact
     # sort_keys form, never the pretty bytes on disk.
-    digest = hashlib.sha256(_canonical(redacted).encode("utf-8")).hexdigest()
-    redacted["verification"] = {
+    canonical_bytes = _canonical(redacted).encode("utf-8")
+    digest = hashlib.sha256(canonical_bytes).hexdigest()
+    verification = {
         "hash": digest,
         "algo": "sha256",
         "scope": "integrity",
     }
+
+    # Optional, env-gated gpg detached signature over the SAME canonical bytes
+    # that were hashed (the pre-verification form a verifier reconstructs).
+    # Default OFF: absent LOKI_PROOF_GPG_KEY -> no signature field, bytes
+    # byte-identical to the unsigned proof. Never an external service, never
+    # required, best-effort (a gpg failure is swallowed: the proof still emits).
+    gpg_key = os.environ.get("LOKI_PROOF_GPG_KEY", "").strip()
+    if gpg_key:
+        sig = _gpg_detached_sign(canonical_bytes, gpg_key)
+        if sig:
+            verification["gpg_signature"] = sig
+
+    redacted["verification"] = verification
 
     # Determine output dir.
     if args.out_dir:

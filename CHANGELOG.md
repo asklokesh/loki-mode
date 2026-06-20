@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.85.0] - 2026-06-20
+
+### Evidence Receipt: verify it yourself, Loki never lies about done
+
+Loki already generated a proof-of-run at the end of every build. This release
+hardens it into a non-forgeable Evidence Receipt: the deterministic facts are
+separated from AI judgments, gaps are surfaced honestly, and you can re-verify
+the receipt against your repo yourself.
+
+- Facts vs assessments: the receipt now splits deterministic, re-derivable FACTS
+  (git diff + sha, the build command and its exit code, the test command, exit
+  code, and pass/fail counts, per-gate status) from AI ASSESSMENTS (council
+  verdict, completion claim), which are clearly labeled as judgment, not proof.
+- Honest headline: a receipt reads VERIFIED only when tests actually ran and
+  passed, the build succeeded, and there is a real diff with no gaps. If tests
+  did not run or a gate was skipped, it reads VERIFIED WITH GAPS or NOT VERIFIED
+  and lists every gap with a reason. A "tests not run" state can never render as
+  green.
+- Verify it yourself: `loki proof verify <id>` re-hashes the receipt (tamper
+  check) and re-derives the diff from the recorded base commit against the
+  current branch (drift check); exit 0 means clean, exit 1 means tampered or
+  drifted. The shareable receipt page prints the exact command and the base
+  commit so a skeptic can re-run it. `loki receipt` is a friendly alias.
+- Real test provenance: the test runner now records the command it ran, its exit
+  code, and pass/fail counts (unknown is recorded as unknown, never as zero), so
+  the receipt rests on real execution rather than a self-reported flag.
+
+Both routes share one generator (no drift). About 24 new tests lock the honesty
+guarantees, including that an untampered receipt verifies clean and a post-build
+commit is detected as drift.
+
 ## [7.84.0] - 2026-06-20
 
 ### Enterprise-grade dashboard overhaul

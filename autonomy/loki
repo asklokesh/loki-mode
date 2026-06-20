@@ -16495,7 +16495,9 @@ main() {
             _deprecated_alias share "report share" "$@"
             cmd_report share "$@"
             ;;
-        proof)
+        proof|receipt)
+            # `loki receipt` is a friendly alias for `loki proof` (the Evidence
+            # Receipt surface): same subcommands (list/show/verify/open/share).
             cmd_proof "$@"
             ;;
         bench)
@@ -30451,6 +30453,8 @@ cmd_proof() {
             echo "Subcommands:"
             echo "  list                 List proof-of-run artifacts in .loki/proofs/"
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
+            echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
+            echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."
             echo "  open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
             echo ""
@@ -30525,6 +30529,33 @@ PYEOF
                 LOKI_PROOF_JSON="$pj" python3 -c "import json,os; print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))"
             fi
             exit 0
+            ;;
+        verify)
+            # Deterministic re-check of a receipt against the repo: re-hashes the
+            # canonical proof (tamper check) and re-derives the diff from the
+            # recorded base_sha vs live HEAD (drift check). Exit 0 = clean, 1 =
+            # tamper/drift, 2 = unusable input. This is the "verify it yourself"
+            # path that makes the Evidence Receipt non-forgeable.
+            local id="${1:-}"
+            if [ -z "$id" ]; then
+                echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
+                exit 2
+            fi
+            local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ]; then
+                echo -e "${RED}Proof not found: ${id}${NC}"
+                echo "Use 'loki proof list' to see available proofs."
+                exit 1
+            fi
+            # The verifier ships beside the generator under autonomy/lib/ (same
+            # dir resolution run.sh uses for proof-generator.py).
+            local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
+            if [ ! -f "$verifier" ]; then
+                echo -e "${RED}Verifier not found (autonomy/lib/proof-verify.py).${NC}"
+                exit 2
+            fi
+            python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+            exit $?
             ;;
         open)
             local id="${1:-}"

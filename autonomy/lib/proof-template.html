@@ -257,6 +257,69 @@
   }
   .hash-note { color: var(--faint); font-size: 12px; margin-top: 8px; }
 
+  /* Honesty banner (driven by honesty.headline; v1.1) */
+  .honesty {
+    display: flex; align-items: flex-start; gap: 14px;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; margin-bottom: 22px;
+  }
+  .honesty.is-verified { border-color: rgba(52,211,153,0.45); background: rgba(52,211,153,0.07); }
+  .honesty.is-gaps { border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.07); }
+  .honesty.is-failed { border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.07); }
+  .honesty .h-mark {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 18px; font-weight: 700;
+  }
+  .honesty.is-verified .h-mark { color: var(--green); background: rgba(52,211,153,0.12); }
+  .honesty.is-gaps .h-mark { color: var(--amber); background: rgba(251,191,36,0.12); }
+  .honesty.is-failed .h-mark { color: var(--red); background: rgba(248,113,113,0.12); }
+  .honesty .h-body { flex: 1; min-width: 0; }
+  .honesty .h-headline { font-size: 18px; font-weight: 650; letter-spacing: 0.2px; }
+  .honesty.is-verified .h-headline { color: var(--green); }
+  .honesty.is-gaps .h-headline { color: var(--amber); }
+  .honesty.is-failed .h-headline { color: var(--red); }
+  .honesty .h-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .honesty .h-gaps { margin: 12px 0 0; padding-left: 18px; }
+  .honesty .h-gaps li { margin: 5px 0; color: var(--text); font-size: 13.5px; }
+  .honesty .h-gaps .gi { font-family: var(--mono); color: var(--amber); }
+  .honesty .h-gaps .gr { color: var(--muted); }
+
+  /* Facts vs Assessments split (v1.1) */
+  .split-label {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--faint); font-weight: 600;
+  }
+  .split-label .tag {
+    text-transform: none; letter-spacing: 0; font-size: 11px; font-weight: 600;
+    border-radius: 6px; padding: 2px 8px; border: 1px solid var(--border);
+  }
+  .split-label .tag.fact { color: var(--green); border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.07); }
+  .split-label .tag.opinion { color: var(--amber); border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.07); }
+  .split-note { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
+  .fact-row {
+    display: flex; align-items: baseline; gap: 12px; padding: 11px 0;
+    border-top: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .fact-row:first-child { border-top: none; }
+  .fact-row .fk { flex: 0 0 130px; color: var(--faint); font-size: 13px; }
+  .fact-row .fv { flex: 1; min-width: 160px; font-family: var(--mono); font-size: 13px; color: var(--text); word-break: break-word; }
+  .fact-row .fv .meta { color: var(--muted); font-family: var(--sans); }
+  .fstatus {
+    font-size: 11px; font-family: var(--mono); text-transform: uppercase;
+    border-radius: 6px; padding: 2px 8px; border: 1px solid var(--border);
+    letter-spacing: 0.4px;
+  }
+  .fstatus.ok { color: var(--green); border-color: rgba(52,211,153,0.4); background: rgba(52,211,153,0.07); }
+  .fstatus.bad { color: var(--red); border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.07); }
+  .fstatus.warn { color: var(--amber); border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.07); }
+  .fstatus.none { color: var(--faint); }
+  .opinion-note {
+    color: var(--amber); font-size: 12.5px; margin: 0 0 14px;
+    display: flex; align-items: center; gap: 7px;
+  }
+
   /* Copy command */
   .cmd {
     display: flex; align-items: stretch; gap: 0; margin-top: 10px;
@@ -284,6 +347,11 @@
     <span id="runIdTop"></span>
   </div>
 
+  <!-- HONESTY BANNER (v1.1; driven by honesty.headline). Stays hidden for v1.0
+       proofs that carry no honesty block. Never green unless the deterministic
+       headline says VERIFIED. -->
+  <div class="honesty hide" id="honestyBanner"></div>
+
   <!-- HERO (branded proof card; rendered client-side from the redacted dict) -->
   <section class="hero">
     <div class="hero-brand">
@@ -303,9 +371,28 @@
     <div class="hero-actions" id="heroActions"></div>
   </section>
 
+  <!-- FACTS (v1.1): deterministic, re-verifiable. Hidden for v1.0 proofs. -->
+  <section class="section hide" id="secFacts">
+    <h2><span class="split-label">Facts <span class="tag fact">deterministic, re-verifiable</span></span></h2>
+    <p class="split-note">Every line below is recomputed by a skeptic from the same repo state. These are not opinions.</p>
+    <div class="card" id="factsCard"></div>
+  </section>
+
+  <!-- ASSESSMENTS (v1.1): AI judgment, explicitly NOT proof. Hidden for v1.0. -->
+  <section class="section hide" id="secAssessments">
+    <h2><span class="split-label">Assessments <span class="tag opinion">AI judgment, not proof</span></span></h2>
+    <div class="card" id="assessmentsCard"></div>
+  </section>
+
+  <!-- VERIFY THIS YOURSELF (v1.1): the exact re-run command + base sha. -->
+  <section class="section hide" id="secVerifySelf">
+    <h2>Verify this yourself</h2>
+    <div class="card" id="verifySelfCard"></div>
+  </section>
+
   <!-- Tier 1: deployed URL + diff -->
   <section class="section" id="secTier1">
-    <h2>Verify it yourself</h2>
+    <h2>Live and review links</h2>
     <div class="card" id="tier1Card"></div>
   </section>
 
@@ -432,8 +519,20 @@
     return /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u);
   }
 
+  // v1.1 detection: a proof carries the evidence model when it has the
+  // honesty/facts blocks. v1.0 proofs do not, and the new sections stay hidden
+  // so they render byte-for-byte as before.
+  function isV11(p) {
+    return !!(p && typeof p === "object" &&
+              p.honesty && typeof p.honesty === "object");
+  }
+
   function render(p) {
+    renderHonesty(p);
     renderHero(p);
+    renderFacts(p);
+    renderAssessments(p);
+    renderVerifySelf(p);
     renderTier1(p);
     renderCost(p);
     renderStatsAndFiles(p);
@@ -460,6 +559,215 @@
       if (v === "APPROVE" || v === "APPROVED") ok++;
     }
     return { count: ok, total: reviewers.length };
+  }
+
+  // ---- v1.1 evidence model rendering -------------------------------------
+
+  // Map a deterministic fact status to a chip class. "verified"/"passed"/"ok"
+  // are the only green states; never paint not_run/inconclusive/skipped green.
+  function factStatusClass(st) {
+    st = String(st || "").toLowerCase();
+    if (st === "verified" || st === "passed" || st === "pass" || st === "ok") return "ok";
+    if (st === "failed" || st === "fail" || st === "error") return "bad";
+    if (st === "inconclusive" || st === "partial" || st === "unknown") return "warn";
+    if (st === "not_run" || st === "notrun" || st === "skipped" || st === "skip" || st === "") return "none";
+    return "warn";
+  }
+  function factStatusLabel(st) {
+    st = String(st || "").toLowerCase();
+    if (st === "not_run" || st === "notrun") return "not run";
+    return st || "not run";
+  }
+  function statusChip(st) {
+    return '<span class="fstatus ' + factStatusClass(st) + '">' +
+           esc(factStatusLabel(st)) + "</span>";
+  }
+
+  // Pick the honesty banner variant from the deterministic headline. Default to
+  // the failed/red variant for any unrecognized string so an unknown headline is
+  // never silently treated as green.
+  function honestyVariant(headline) {
+    var h = String(headline || "").toUpperCase();
+    if (h === "VERIFIED") return { cls: "is-verified", mark: "OK",
+      sub: "Tests verified, a real diff exists, and nothing was left unverified. Every claim below is deterministic and re-checkable." };
+    if (h.indexOf("GAPS") !== -1) return { cls: "is-gaps", mark: "!",
+      sub: "Some evidence is verified, but the items listed below were not. A gap is never hidden: read them before trusting this run." };
+    return { cls: "is-failed", mark: "X",
+      sub: "This run did not produce deterministic verification. Treat the build as unproven until the gaps below are closed." };
+  }
+
+  function renderHonesty(p) {
+    var el = document.getElementById("honestyBanner");
+    if (!el) return;
+    // v1.0 proofs have no honesty block: leave the banner hidden so they render
+    // exactly as before.
+    if (!isV11(p)) return;
+    var headline = g(p, "honesty.headline", "NOT VERIFIED");
+    var v = honestyVariant(headline);
+    var degraded = g(p, "honesty.degraded", []);
+    var gaps = "";
+    if (Array.isArray(degraded) && degraded.length > 0) {
+      var lis = "";
+      for (var i = 0; i < degraded.length; i++) {
+        var d = degraded[i];
+        if (d && typeof d === "object") {
+          // Generator shape: {item, status, reason}.
+          lis += "<li><span class=\"gi\">" + esc(g(d, "item", "")) + "</span> " +
+                 "<span class=\"gr\">" + esc(factStatusLabel(g(d, "status", ""))) +
+                 (g(d, "reason", "") ? " - " + esc(g(d, "reason", "")) : "") +
+                 "</span></li>";
+        } else {
+          // Tolerate a plain-string degraded entry (verifier-normalized shape).
+          lis += "<li><span class=\"gr\">" + esc(d) + "</span></li>";
+        }
+      }
+      gaps = '<ul class="h-gaps">' + lis + "</ul>";
+    } else {
+      gaps = '<p class="h-sub" style="margin-top:10px;">No gaps were flagged for this run.</p>';
+    }
+    el.className = "honesty " + v.cls;
+    el.innerHTML =
+      '<span class="h-mark" aria-hidden="true">' + v.mark + "</span>" +
+      '<div class="h-body">' +
+        '<div class="h-headline">' + esc(headline) + "</div>" +
+        '<div class="h-sub">' + v.sub + "</div>" +
+        gaps +
+      "</div>";
+  }
+
+  // Render the deterministic FACTS: git diff + sha, build command/exit, tests
+  // command/exit/counts/status, quality gates. Each carries a status chip so a
+  // not-run fact is visibly not-run, never blank-implied-green.
+  function renderFacts(p) {
+    var sec = document.getElementById("secFacts");
+    var card = document.getElementById("factsCard");
+    if (!sec || !card || !isV11(p)) return; // v1.0: stays hidden
+    var rows = "";
+
+    // git diff + sha (deterministic, re-derivable from base..head).
+    var diff = g(p, "facts.git.diff", null) || g(p, "files_changed", {});
+    var dc = num(g(diff, "count", 0));
+    var di = num(g(diff, "insertions", 0));
+    var dd = num(g(diff, "deletions", 0));
+    var diffSt = dc > 0 ? "verified" : "not_run";
+    rows += factRow("Code diff",
+      dc + ' file' + (dc === 1 ? "" : "s") +
+      ' <span class="add">+' + fmtInt(di) + '</span> <span class="del">-' + fmtInt(dd) + "</span>",
+      diffSt);
+    var dsha = g(p, "facts.git.diff_sha256", "");
+    if (dsha) rows += factRow("Diff sha256", '<span class="meta">' + esc(dsha) + "</span>", null);
+    var baseSha = g(p, "facts.git.base_sha", "");
+    if (baseSha) rows += factRow("Base commit", esc(baseSha), null);
+
+    // build command + exit code + status.
+    var bSt = g(p, "facts.build.status", "not_run");
+    var bCmd = g(p, "facts.build.command", "");
+    var bExit = g(p, "facts.build.exit_code", null);
+    var bVal = bCmd ? esc(bCmd) : '<span class="meta">no build command recorded</span>';
+    if (bExit !== null && bExit !== undefined) bVal += ' <span class="meta">exit ' + esc(bExit) + "</span>";
+    rows += factRow("Build", bVal, bSt);
+
+    // tests command + exit code + counts + status.
+    var tSt = g(p, "facts.tests.status", "not_run");
+    var tCmd = g(p, "facts.tests.command", "");
+    var tExit = g(p, "facts.tests.exit_code", null);
+    var tPass = g(p, "facts.tests.passed_count", null);
+    var tFail = g(p, "facts.tests.failed_count", null);
+    var tVal = tCmd ? esc(tCmd) : '<span class="meta">no test command recorded</span>';
+    var tMeta = [];
+    if (tExit !== null && tExit !== undefined) tMeta.push("exit " + esc(tExit));
+    if (tPass !== null && tPass !== undefined) tMeta.push(esc(tPass) + " passed");
+    if (tFail !== null && tFail !== undefined && num(tFail) > 0) tMeta.push(esc(tFail) + " failed");
+    if (tMeta.length) tVal += ' <span class="meta">' + tMeta.join(", ") + "</span>";
+    rows += factRow("Tests", tVal, tSt);
+
+    // quality gates (each a deterministic status).
+    var gates = g(p, "facts.quality_gates", []);
+    if (Array.isArray(gates) && gates.length > 0) {
+      var chips = "";
+      for (var i = 0; i < gates.length; i++) {
+        chips += '<span style="margin-right:8px;display:inline-block;">' +
+          esc(g(gates[i], "name", "gate")) + " " + statusChip(g(gates[i], "status", "not_run")) +
+          "</span>";
+      }
+      rows += factRow("Quality gates", chips, null);
+    }
+
+    card.innerHTML = rows;
+    sec.classList.remove("hide");
+  }
+
+  function factRow(k, vHtml, status) {
+    var chip = status ? " " + statusChip(status) : "";
+    return '<div class="fact-row"><span class="fk">' + esc(k) + "</span>" +
+           '<span class="fv">' + vHtml + chip + "</span></div>";
+  }
+
+  // Render the ASSESSMENTS: council verdict + completion claim. These are AI
+  // judgment, visually marked as opinion, and never contribute to the headline.
+  function renderAssessments(p) {
+    var sec = document.getElementById("secAssessments");
+    var card = document.getElementById("assessmentsCard");
+    if (!sec || !card || !isV11(p)) return;
+    var html = '<p class="opinion-note"><span aria-hidden="true">!</span>' +
+      "These are model opinions about the work, not deterministic proof. A green " +
+      "verdict here can still be wrong; trust the Facts above, not these.</p>";
+
+    // Council verdict (read from assessments.council, mirrored to top-level).
+    var enabled = g(p, "assessments.council.enabled", g(p, "council.enabled", false));
+    if (enabled) {
+      var verdict = g(p, "assessments.council.final_verdict", g(p, "council.final_verdict", ""));
+      var reviewers = g(p, "assessments.council.reviewers", g(p, "council.reviewers", []));
+      var ok = 0, tot = 0;
+      if (Array.isArray(reviewers)) {
+        tot = reviewers.length;
+        for (var i = 0; i < reviewers.length; i++) {
+          var vv = String(g(reviewers[i], "vote", "")).toUpperCase();
+          if (vv === "APPROVE" || vv === "APPROVED") ok++;
+        }
+      }
+      var meta = tot > 0 ? (ok + " of " + tot + " approved") : "";
+      html += '<div class="fact-row"><span class="fk">Council verdict</span><span class="fv">' +
+        (verdict ? '<span class="verdict-badge ' + verdictClass(verdict) + '">' + esc(verdict) + "</span>" : '<span class="meta">not recorded</span>') +
+        (meta ? ' <span class="meta">' + meta + "</span>" : "") + "</span></div>";
+    } else {
+      html += '<div class="fact-row"><span class="fk">Council verdict</span>' +
+        '<span class="fv"><span class="meta">council not enabled for this run</span></span></div>';
+    }
+
+    // Completion claim (the model's own claim it finished) + evidence-gate verdict.
+    var claimed = g(p, "assessments.completion_claim.claimed", false);
+    var egVerdict = g(p, "assessments.completion_claim.evidence_gate_verdict", "");
+    html += '<div class="fact-row"><span class="fk">Completion claim</span><span class="fv">' +
+      (claimed ? "model claimed the work is complete" : "no completion claim recorded") +
+      (egVerdict ? ' <span class="meta">evidence gate: ' + esc(egVerdict) + "</span>" : "") +
+      "</span></div>";
+
+    card.innerHTML = html;
+    sec.classList.remove("hide");
+  }
+
+  // Render the "Verify this yourself" block: the exact deterministic re-check
+  // command + the recorded base sha, so a skeptic can re-run the check.
+  function renderVerifySelf(p) {
+    var sec = document.getElementById("secVerifySelf");
+    var card = document.getElementById("verifySelfCard");
+    if (!sec || !card || !isV11(p)) return;
+    var rid = g(p, "run_id", "");
+    var baseSha = g(p, "facts.git.base_sha", "");
+    var html = '<p class="note" style="margin-top:0;">This receipt re-verifies. Run the deterministic check ' +
+      "below: it re-hashes the receipt for tamper and re-derives the diff from the " +
+      "recorded base commit to prove the facts still match the repo.</p>";
+    html += cmdBlock("verify", "loki proof verify " + (rid || "<run_id>"));
+    var kv = "";
+    if (baseSha) kv += '<div class="k">Base commit</div><div class="v">' + esc(baseSha) + "</div>";
+    var headSha = g(p, "facts.git.head_sha", "");
+    if (headSha) kv += '<div class="k">Head commit</div><div class="v">' + esc(headSha) + "</div>";
+    var dsha = g(p, "facts.git.diff_sha256", "");
+    if (dsha) kv += '<div class="k">Diff sha256</div><div class="v">' + esc(dsha) + "</div>";
+    if (kv) html += '<div class="kv" style="margin-top:14px;">' + kv + "</div>";
+    card.innerHTML = html;
+    sec.classList.remove("hide");
   }
 
   function renderHero(p) {

@@ -96,7 +96,7 @@ class SchemaTests(unittest.TestCase):
         d = _run_generator(loki_dir, out_dir)
 
         # Top-level scalars.
-        self.assertEqual(d["schema_version"], "1.0")
+        self.assertEqual(d["schema_version"], "1.1")
         self.assertIsInstance(d["run_id"], str)
         self.assertIsInstance(d["generated_at"], str)
         self.assertIsInstance(d["loki_version"], str)
@@ -436,6 +436,267 @@ class BriefSpecTests(unittest.TestCase):
         d = _run_generator(loki_dir, out_dir)
         self.assertEqual(d["spec"]["source"], "codebase-analysis")
         self.assertEqual(d["spec"]["brief"], "")
+
+
+class HonestyHeadlineTests(unittest.TestCase):
+    """v1.1 evidence model: the deterministic headline must NEVER read green
+    unless real exit_code:0 test evidence + a non-empty diff are present, and
+    LLM assessments (council/completion) must never flip it green on their own.
+
+    These are the non-forgeability guarantees: a green receipt cannot be
+    hand-crafted from a bare pass:true, a not-run/failed test, or an APPROVE
+    verdict. Each test locks one guarantee.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-honesty-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _git_repo_with_change(self):
+        """A real git repo with one committed change so the diff is non-empty.
+        Returns the project dir; .loki lives under it. _LOKI_ITER_START_SHA is
+        set to the first commit so base..HEAD shows a real diff."""
+        proj = os.path.join(self.tmp, "gitproj-%s" % os.urandom(4).hex())
+        os.makedirs(proj)
+
+        def git(*a):
+            return subprocess.run(
+                ["git", "-C", proj, "-c", "user.email=t@t.test",
+                 "-c", "user.name=tester"] + list(a),
+                capture_output=True, text=True, check=True)
+        git("init")
+        with open(os.path.join(proj, "a.txt"), "w") as f:
+            f.write("one\n")
+        git("add", "a.txt")
+        git("commit", "-m", "init")
+        base = git("rev-parse", "HEAD").stdout.strip()
+        with open(os.path.join(proj, "a.txt"), "w") as f:
+            f.write("one\ntwo\n")
+        git("add", "a.txt")
+        git("commit", "-m", "second")
+        return proj, base
+
+    def _write_tests(self, loki_dir, payload):
+        os.makedirs(os.path.join(loki_dir, "quality"), exist_ok=True)
+        with open(os.path.join(loki_dir, "quality", "test-results.json"),
+                  "w") as f:
+            json.dump(payload, f)
+
+    def _write_build(self, loki_dir, payload):
+        os.makedirs(os.path.join(loki_dir, "quality"), exist_ok=True)
+        with open(os.path.join(loki_dir, "quality", "build-results.json"),
+                  "w") as f:
+            json.dump(payload, f)
+
+    # --- Guarantee 1: not-run tests never read green --------------------
+    def test_not_run_tests_never_verified(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out1")
+        os.makedirs(loki_dir)
+        # No test-results.json at all -> tests not_run.
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        self.assertEqual(d["facts"]["tests"]["status"], "not_run")
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+        self.assertIn(d["honesty"]["headline"],
+                      ("NOT VERIFIED", "VERIFIED WITH GAPS"))
+        # The tests gap must appear in degraded[] with a reason.
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertIn("tests", items)
+        self.assertEqual(items["tests"]["status"], "not_run")
+        self.assertTrue(items["tests"]["reason"])
+
+    def test_bare_pass_true_without_command_not_verified(self):
+        # OLD shape {pass: true} maps tests.status -> verified, but the headline
+        # additionally requires a real command + exit_code 0. A bare pass:true
+        # must NOT produce a green headline.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out1b")
+        os.makedirs(loki_dir)
+        self._write_tests(loki_dir, {"pass": True, "runner": "pytest"})
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # status maps to verified, but no command + no exit_code 0.
+        self.assertEqual(d["facts"]["tests"]["status"], "verified")
+        self.assertEqual(d["facts"]["tests"]["command"], "")
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+
+    # --- Guarantee 2: failed tests never read green --------------------
+    def test_failed_tests_not_verified(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out2")
+        os.makedirs(loki_dir)
+        self._write_tests(loki_dir, {
+            "runner": "pytest", "command": "pytest -q",
+            "exit_code": 1, "status": "failed",
+            "passed_count": 3, "failed_count": 1})
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        self.assertEqual(d["facts"]["tests"]["status"], "failed")
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+
+    def test_nonzero_exit_code_not_verified(self):
+        # No explicit status but exit_code != 0 -> failed.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out2b")
+        os.makedirs(loki_dir)
+        self._write_tests(loki_dir, {
+            "runner": "pytest", "command": "pytest -q", "exit_code": 2})
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        self.assertEqual(d["facts"]["tests"]["status"], "failed")
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+
+    # --- Guarantee 3: all-green reads VERIFIED -------------------------
+    def test_all_green_is_verified(self):
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out3")
+        os.makedirs(loki_dir)
+        self._write_tests(loki_dir, {
+            "runner": "pytest", "command": "pytest -q",
+            "exit_code": 0, "status": "verified",
+            "passed_count": 10, "failed_count": 0})
+        # A green headline requires NO degraded facts, so the build must have
+        # run and passed too (an absent build is reported as a not_run gap).
+        self._write_build(loki_dir, {
+            "command": "make build", "ran": True, "exit_code": 0,
+            "duration_sec": 1.0})
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        self.assertEqual(d["facts"]["build"]["status"], "verified")
+        self.assertEqual(d["facts"]["tests"]["status"], "verified")
+        self.assertEqual(d["facts"]["tests"]["exit_code"], 0)
+        self.assertTrue(d["facts"]["tests"]["command"])
+        self.assertGreaterEqual(d["facts"]["git"]["diff"]["count"], 1)
+        self.assertEqual(d["honesty"]["degraded"], [],
+                         "no degraded items expected for an all-green run")
+        self.assertEqual(d["honesty"]["headline"], "VERIFIED")
+
+    def test_all_green_but_empty_diff_not_verified(self):
+        # Tests green but NO file changes -> git.diff degraded -> not VERIFIED.
+        # Use a non-git dir so the diff is empty (count 0).
+        loki_dir = os.path.join(self.tmp, "nogit", ".loki")
+        out_dir = os.path.join(self.tmp, "out3b")
+        os.makedirs(loki_dir)
+        self._write_tests(loki_dir, {
+            "runner": "pytest", "command": "pytest -q",
+            "exit_code": 0, "status": "verified"})
+        d = _run_generator(loki_dir, out_dir)
+        self.assertEqual(d["facts"]["git"]["diff"]["count"], 0)
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertIn("git.diff", items)
+
+    # --- Guarantee 4: assessments never flip the headline green --------
+    def test_council_approve_does_not_make_verified(self):
+        # An LLM APPROVE council verdict + claimed completion, but tests NOT run.
+        # The headline must stay NOT VERIFIED: opinions are not proof.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out4")
+        os.makedirs(os.path.join(loki_dir, "council"))
+        os.makedirs(os.path.join(loki_dir, "state"))
+        with open(os.path.join(loki_dir, "council", "state.json"), "w") as f:
+            json.dump({"enabled": True, "approve_votes": 3, "reject_votes": 0,
+                       "verdicts": [{"result": "APPROVED"}]}, f)
+        with open(os.path.join(loki_dir, "state", "completion.json"), "w") as f:
+            json.dump({"completed": True, "outcome": "complete"}, f)
+        # No test-results.json -> tests not_run.
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # The council/completion live under assessments, labeled not-proof.
+        self.assertIn("_note", d["assessments"])
+        self.assertIn("not deterministic proof", d["assessments"]["_note"])
+        self.assertEqual(d["assessments"]["council"]["final_verdict"],
+                         "APPROVED")
+        self.assertTrue(d["assessments"]["completion_claim"]["claimed"])
+        # Despite the APPROVE + claimed completion, the headline stays not green.
+        self.assertEqual(d["facts"]["tests"]["status"], "not_run")
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED")
+
+    def test_council_lives_under_assessments_not_facts(self):
+        # Council must be an assessment, never a fact. facts{} must not carry it.
+        loki_dir = os.path.join(self.tmp, "as", ".loki")
+        out_dir = os.path.join(self.tmp, "out4b")
+        os.makedirs(os.path.join(loki_dir, "council"))
+        with open(os.path.join(loki_dir, "council", "state.json"), "w") as f:
+            json.dump({"enabled": True, "approve_votes": 3, "reject_votes": 0,
+                       "verdicts": [{"result": "APPROVED"}]}, f)
+        d = _run_generator(loki_dir, out_dir)
+        self.assertIn("council", d["assessments"])
+        self.assertNotIn("council", d["facts"])
+
+    # --- Guarantee 5: back-compat mirror keys still present ------------
+    def test_back_compat_mirror_keys_present(self):
+        # Old (schema v1.0) readers parse the flat top-level keys. They must
+        # remain present alongside the additive facts/assessments/honesty.
+        loki_dir = os.path.join(self.tmp, "bc", ".loki")
+        out_dir = os.path.join(self.tmp, "out5")
+        os.makedirs(loki_dir)
+        d = _run_generator(loki_dir, out_dir)
+        for k in ("files_changed", "council", "quality_gates", "cost",
+                  "provider", "iterations", "spec", "deployment",
+                  "wall_clock_sec", "loki_version", "run_id"):
+            self.assertIn(k, d, "back-compat key %r missing" % k)
+        # And the new additive blocks are also present.
+        for k in ("facts", "assessments", "honesty"):
+            self.assertIn(k, d)
+
+    def test_facts_cost_mirror_consistent_with_top_level(self):
+        # facts.cost is re-pointed at the capped top-level cost (generator
+        # ordering): the two must be identical so the receipt is consistent.
+        loki_dir = os.path.join(self.tmp, "fc", ".loki")
+        out_dir = os.path.join(self.tmp, "out5b")
+        os.makedirs(os.path.join(loki_dir, "metrics", "efficiency"))
+        with open(os.path.join(loki_dir, "metrics", "efficiency",
+                               "iteration-1.json"), "w") as f:
+            json.dump({"cost_usd": 2.5, "input_tokens": 100,
+                       "output_tokens": 20}, f)
+        d = _run_generator(loki_dir, out_dir)
+        self.assertEqual(d["facts"]["cost"], d["cost"])
+
+    # --- Guarantee 9: redaction still gates emission ------------------
+    def test_redaction_applied_flag_present(self):
+        # The generator refuses to emit without redaction; the emitted proof
+        # always carries redaction.applied True. (A returncode 0 with a written
+        # proof.json is itself proof the chokepoint ran.)
+        loki_dir = os.path.join(self.tmp, "rd", ".loki")
+        out_dir = os.path.join(self.tmp, "out9")
+        os.makedirs(loki_dir)
+        d = _run_generator(loki_dir, out_dir)
+        self.assertIs(d["redaction"]["applied"], True)
+        self.assertIsInstance(d["redaction"]["redactions_count"], int)
+
+
+    def test_failed_tests_listed_in_degraded_and_red(self):
+        # cH_r1 (v7.85.0): a FAILED test must render NOT VERIFIED (red), never an
+        # amber "VERIFIED WITH GAPS", AND must appear in honesty.degraded so the
+        # banner's "items below" is not empty. A failed check is stronger than a
+        # not-run one; conflating them understates the failure.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out_failed")
+        os.makedirs(os.path.join(loki_dir, "quality"))
+        # Seed a FAILED test result (a runner that ran and failed).
+        with open(os.path.join(loki_dir, "quality", "test-results.json"), "w") as f:
+            json.dump({"runner": "pytest", "pass": False, "summary": "1 failed",
+                       "command": "pytest", "exit_code": 1, "status": "failed",
+                       "passed_count": 0, "failed_count": 1}, f)
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        # A failed test is RED, never amber, never green.
+        self.assertEqual(d["honesty"]["headline"], "NOT VERIFIED")
+        # And it is listed explicitly in the honesty ledger.
+        items = {x["item"]: x for x in d["honesty"]["degraded"]}
+        self.assertIn("tests", items)
+        self.assertEqual(items["tests"]["status"], "failed")
 
 
 if __name__ == "__main__":

@@ -7758,7 +7758,7 @@ sys.stdout.write(t.strip())
         # non-blocking behavior for legitimate no-test projects.
         touch "$quality_dir/unit-tests.pass"
         cat > "$quality_dir/test-results.json" << TREOF
-{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":"inconclusive","summary":"No test runner detected"}
+{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"none","pass":"inconclusive","summary":"No test runner detected","command":null,"exit_code":null,"status":"not_run","passed_count":null,"failed_count":null}
 TREOF
         # Finding #598: stamp the per-iteration freshness marker so a later
         # completion-route capture (ensure_completion_test_evidence) reuses this
@@ -7771,8 +7771,32 @@ TREOF
     # Sanitize details for JSON
     details=$(echo "$details" | tr '"' "'" | tr '\n' ' ' | head -c 500)
 
+    # Evidence Receipt provenance (v7.85.0): record the deterministic FACTS a
+    # non-forgeable receipt needs -- the command that ran, its exit code, and a
+    # status enum -- alongside the legacy pass/runner/min_coverage keys the
+    # completion-council evidence gate reads (those are UNCHANGED for back-compat).
+    # A receipt that says "tests passed" without the command+exit_code is exactly
+    # the "trust me" transcript we are replacing. counts are best-effort parsed
+    # from the runner summary; null (not 0) when unparseable, so "unknown" never
+    # reads as "0 failures".
+    local _tr_cmd _tr_exit _tr_status
+    case "$test_runner" in
+        pytest)      _tr_cmd="pytest" ;;
+        go-test)     _tr_cmd="go test ./..." ;;
+        cargo-test)  _tr_cmd="cargo test" ;;
+        npm-test|jest|vitest) _tr_cmd="$test_runner" ;;
+        *)           _tr_cmd="$test_runner" ;;
+    esac
+    if [ "$test_passed" = "true" ]; then _tr_exit=0; _tr_status="verified"; else _tr_exit=1; _tr_status="failed"; fi
+    # Best-effort pass/fail counts from the summary text (null when not found).
+    local _tr_passed_n _tr_failed_n
+    _tr_passed_n=$(printf '%s' "$details" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+    _tr_failed_n=$(printf '%s' "$details" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' | head -1)
+    [ -n "$_tr_passed_n" ] || _tr_passed_n=null
+    [ -n "$_tr_failed_n" ] || _tr_failed_n=null
+
     cat > "$quality_dir/test-results.json" << TREOF
-{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"$test_runner","pass":$test_passed,"min_coverage":$min_coverage,"summary":"$details"}
+{"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","runner":"$test_runner","pass":$test_passed,"min_coverage":$min_coverage,"summary":"$details","command":"$_tr_cmd","exit_code":$_tr_exit,"status":"$_tr_status","passed_count":$_tr_passed_n,"failed_count":$_tr_failed_n}
 TREOF
     # Finding #598: stamp the per-iteration freshness marker (see above).
     printf '%s\n' "${ITERATION_COUNT:-0}" > "$quality_dir/.test-results.iter" 2>/dev/null || true
