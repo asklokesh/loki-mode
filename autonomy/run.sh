@@ -9831,10 +9831,10 @@ run_code_review() {
     # only for parity with the evidence-gate exclusion list.
     local _review_pathspec=(-- . ':(exclude).loki/' ':(exclude).git/' ':(exclude)**/.loki/**')
 
-    # Plan #16 (A-2): make the review diff base robust to shallow/fresh history.
-    # The diff is a SINGLE-rev working-tree compare (`git diff <base> -- ...`),
-    # NOT a two-rev range: Loki does not commit per iteration, so the agent's
-    # work is uncommitted mid-run and only a working-tree compare surfaces it.
+    # Plan #16 (A-2): make the review diff base robust to shallow/fresh history,
+    # and surface NEW (untracked) files -- the whole greenfield build is new
+    # files, which `git diff <base>` (tracked-only) never shows.
+    #
     # Base preference, mirroring the proven metrics-path fallback chain:
     #   1. ${_LOKI_RUN_START_SHA} when it resolves to a commit -- the correct
     #      per-run baseline (captured at run start; also what the summary/"Review
@@ -9855,11 +9855,23 @@ run_code_review() {
         _review_base="$(git -C "${TARGET_DIR:-.}" hash-object -t tree /dev/null 2>/dev/null || echo "")"
     fi
 
+    # Build the review diff against a THROWAWAY index (GIT_INDEX_FILE points at a
+    # fresh, nonexistent path) so a `git add -A` captures the full working tree --
+    # new + modified files alike -- WITHOUT touching the real index. This avoids
+    # disturbing any other porcelain consumer (the evidence hard gate's status
+    # read, create_checkpoint's `git stash create`, commit_session_changes). The
+    # `.loki/.gitignore` (`*`) keeps runtime state out; the pathspec is a belt-
+    # and-suspenders exclude. `diff --cached <base>` then compares that staged
+    # snapshot to the baseline -- a real unified diff the reviewer can read.
     local diff_content=""
     local changed_files=""
     if [ -n "$_review_base" ]; then
-        diff_content=$(git -C "${TARGET_DIR:-.}" diff "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
-        changed_files=$(git -C "${TARGET_DIR:-.}" diff --name-only "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
+        local _rev_idx
+        _rev_idx="$(mktemp -u "${TMPDIR:-/tmp}/loki-revidx.XXXXXX")"
+        GIT_INDEX_FILE="$_rev_idx" git -C "${TARGET_DIR:-.}" add -A 2>/dev/null || true
+        diff_content=$(GIT_INDEX_FILE="$_rev_idx" git -C "${TARGET_DIR:-.}" diff --cached "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
+        changed_files=$(GIT_INDEX_FILE="$_rev_idx" git -C "${TARGET_DIR:-.}" diff --cached --name-only "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
+        rm -f "$_rev_idx" 2>/dev/null || true
     fi
 
     if [ -z "$diff_content" ]; then
