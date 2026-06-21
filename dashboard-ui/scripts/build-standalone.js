@@ -288,6 +288,22 @@ function generateStandaloneHTML(bundleCode) {
       border-bottom: 1px solid var(--loki-border-light);
     }
 
+    /* Brand row: the Loki mascot sits beside the wordmark so the engine's own
+       dashboard carries the same character that appears everywhere the engine
+       is used. His expression reflects the live run state (idle / building /
+       paused). */
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
     .logo-brand {
       font-family: 'DM Serif Display', Georgia, serif;
       font-size: 22px;
@@ -884,8 +900,13 @@ function generateStandaloneHTML(bundleCode) {
             <line x1="3" y1="18" x2="21" y2="18"/>
           </svg>
         </button>
-        <span class="logo-brand">Loki Mode</span>
-        <span class="logo-subtitle">powered by Autonomi</span>
+        <div class="brand-row">
+          <loki-mascot-presence id="mascot-presence" size="34" aria-hidden="true"></loki-mascot-presence>
+          <div class="brand-text">
+            <span class="logo-brand">Loki Mode</span>
+            <span class="logo-subtitle">powered by Autonomi</span>
+          </div>
+        </div>
         <!-- Verified-receipts badge: honest trust signal. Populated at runtime
              from /api/proofs/summary; hidden until data arrives, shows a muted
              empty state at zero, and degrades silently if the endpoint is
@@ -1689,7 +1710,8 @@ document.addEventListener('DOMContentLoaded', function() {
       'analytics-dashboard',
       'escalations-panel',
       'council-transcripts',
-      'wiki-browser'
+      'wiki-browser',
+      'mascot-presence'
     ];
     components.forEach(function(id) {
       var el = document.getElementById(id);

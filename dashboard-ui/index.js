@@ -108,6 +108,7 @@ export { LokiEscalations } from './components/loki-escalations.js';
 export { LokiCouncilTranscripts } from './components/loki-council-transcripts.js';
 export { LokiWikiBrowser } from './components/loki-wiki-browser.js';
 export { LokiSpecPanel } from './components/loki-spec-panel.js';
+export { LokiMascotPresence } from './components/loki-mascot-presence.js';
 
 // Version
 export const VERSION = '1.4.0';
