@@ -218,6 +218,11 @@ if [[ -z "${LOKI_RUNNING_FROM_TEMP:-}" ]] && [[ "${BASH_SOURCE[0]}" == "${0}" ]]
     # BUG-XC-011: Set trap BEFORE exec so the temp file gets cleaned up
     trap 'rm -f "$TEMP_SCRIPT"' EXIT
     export LOKI_RUNNING_FROM_TEMP=1
+    # Record the EXACT temp-copy path so the post-exec cleanup trap deletes THIS
+    # temp file and NEVER the canonical source (root cause of the recurring
+    # "run.sh self-deleted on build spawn" bug: an inherited LOKI_RUNNING_FROM_TEMP
+    # skips the self-copy block, leaving BASH_SOURCE[0]=the real run.sh).
+    export LOKI_TEMP_SCRIPT_PATH="$TEMP_SCRIPT"
     export LOKI_ORIGINAL_SCRIPT_DIR="$SCRIPT_DIR"
     export LOKI_ORIGINAL_PROJECT_DIR="$PROJECT_DIR"
     exec "$TEMP_SCRIPT" "$@"
@@ -227,9 +232,14 @@ fi
 SCRIPT_DIR="${LOKI_ORIGINAL_SCRIPT_DIR:-$SCRIPT_DIR}"
 PROJECT_DIR="${LOKI_ORIGINAL_PROJECT_DIR:-$PROJECT_DIR}"
 
-# Clean up temp script on exit (only when running from temp copy)
-if [[ "${LOKI_RUNNING_FROM_TEMP:-}" == "1" ]]; then
-    trap 'rm -f "${BASH_SOURCE[0]}" 2>/dev/null' EXIT
+# Clean up ONLY the recorded temp copy, and ONLY if it is a real temp file.
+# Deleting BASH_SOURCE[0] here was the bug: an inherited LOKI_RUNNING_FROM_TEMP
+# made BASH_SOURCE[0] the canonical source, so run.sh deleted itself on spawned
+# builds. Guard on the recorded path being a real /tmp/loki-run-* file.
+if [[ "${LOKI_RUNNING_FROM_TEMP:-}" == "1" ]] \
+   && [[ -n "${LOKI_TEMP_SCRIPT_PATH:-}" ]] \
+   && [[ "${LOKI_TEMP_SCRIPT_PATH}" == /tmp/loki-run-* || "${LOKI_TEMP_SCRIPT_PATH}" == "${TMPDIR:-/tmp}"loki-run-* ]]; then
+    trap 'rm -f "${LOKI_TEMP_SCRIPT_PATH}" 2>/dev/null' EXIT
 fi
 
 #===============================================================================
