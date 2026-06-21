@@ -6200,6 +6200,152 @@ audit_log() {
 }
 
 #===============================================================================
+# Engine-owned workspace git-init (Plan #16, Option A-1)
+#===============================================================================
+
+# Resolve a path to its physical absolute form (symlinks + .. collapsed) using
+# whatever is available; falls back to the input unchanged. Portable across the
+# BSD (macOS) and GNU userlands the engine runs on.
+_loki_resolve_path() {
+    local p="${1:-}"
+    [ -n "$p" ] || { printf '%s' ""; return 0; }
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$p" 2>/dev/null && return 0
+    fi
+    # python3 is a hard engine dependency; use it as the portable fallback.
+    python3 - "$p" <<'PYRESOLVE' 2>/dev/null && return 0
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PYRESOLVE
+    printf '%s' "$p"
+}
+
+# True (0) when TARGET_DIR is an engine-owned, freshly-minted build workspace
+# that Loki may auto-git-init without surprising a user. Two honest signals:
+#   1. LOKI_AUTO_GIT_INIT=1  -- explicit opt-in (non-SaaS automation).
+#   2. LOKI_TARGET_DIR is set AND realpath-contained under one of the
+#      colon-separated LOKI_WORKSPACE_ROOTS dirs (the v7.91.0 SaaS route: the
+#      BFF mints <root>/<buildId> and the server pins LOKI_TARGET_DIR to it).
+# A user's own folder (`loki start ./prd.md`, no workspace, roots unset) is
+# NEVER engine-owned -- it must not get a silent .git. Realpath containment (not
+# a prefix string match) so /root/build-other does not match /root/build.
+_loki_workspace_is_engine_owned() {
+    [ "${LOKI_AUTO_GIT_INIT:-0}" = "1" ] && return 0
+
+    local roots_raw="${LOKI_WORKSPACE_ROOTS:-}"
+    [ -n "${LOKI_TARGET_DIR:-}" ] || return 1
+    [ -n "$roots_raw" ] || return 1
+
+    local ws_real root_real
+    ws_real="$(_loki_resolve_path "${TARGET_DIR:-.}")"
+    [ -n "$ws_real" ] || return 1
+
+    local IFS=':'
+    local root
+    for root in $roots_raw; do
+        [ -n "$root" ] || continue
+        root_real="$(_loki_resolve_path "$root")"
+        [ -n "$root_real" ] || continue
+        # Exact match or contained: ws == root, or ws starts with root + "/".
+        if [ "$ws_real" = "$root_real" ] || case "$ws_real" in "$root_real"/*) true ;; *) false ;; esac; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Plan #16 Option A-1: establish git in an engine-owned build workspace so the
+# review/verify gate (run_code_review) and branch-isolation chain can actually
+# run. Without git history, run_code_review's diff resolves empty and the gate
+# SKIPS (silently reporting PASS) -- so a build that was never reviewed could
+# earn a VERIFIED receipt. This makes the gate RUN; it does NOT force a green
+# (a build whose review/tests fail still gets an honest verdict).
+#
+# Constraints honored:
+#   - Engine-owned workspaces ONLY (see _loki_workspace_is_engine_owned). A
+#     user's own folder is never silently git-init'd.
+#   - Already a git repo (user's repo OR the engine source tree) -> NO-OP. Only
+#     a non-git workspace is initialized.
+#   - One INITIAL commit (not a bare init): a zero-commit unborn HEAD breaks the
+#     start-SHA capture (git rev-parse HEAD) and re-trips the HEAD~1 skip. The
+#     commit uses --allow-empty because a greenfield workspace at build start
+#     holds only .loki/ (the spec lands in .loki/specs/), which .loki/.gitignore
+#     excludes -> nothing to stage -> a bare commit would fail and leave an
+#     unborn HEAD. --allow-empty guarantees a real HEAD either way.
+#   - Neutral repo-local identity (loki-build) so the initial commit AND the
+#     later commit_session_changes commit never inherit a developer's global git
+#     identity. Repo-local sticks on a freshly-init'd workspace (no revert hook).
+#   - Secrets never committed: brownfield files are staged through the same
+#     secret-scan guard (_commit_path_looks_secret / _commit_scan_secret_file)
+#     used by commit_session_changes; any offender unstages the whole set and
+#     the initial commit falls back to --allow-empty (HEAD still established).
+maybe_git_init_engine_workspace() {
+    command -v git >/dev/null 2>&1 || return 0
+    _loki_workspace_is_engine_owned || return 0
+
+    local ws="${TARGET_DIR:-.}"
+    [ -d "$ws" ] || return 0
+
+    # Already a git repo (user repo or engine source tree): do nothing.
+    if git -C "$ws" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_info "Engine-owned workspace is not a git repo; initializing for review/verify gates"
+
+    if ! git -C "$ws" init -q >/dev/null 2>&1; then
+        log_warn "git init failed in engine workspace; review gate will skip (non-fatal)"
+        return 0
+    fi
+
+    # Neutral repo-local identity for the initial AND session-end commits.
+    git -C "$ws" config user.name "loki-build" >/dev/null 2>&1 || true
+    git -C "$ws" config user.email "loki-build@autonomi.dev" >/dev/null 2>&1 || true
+
+    # Self-ignore .loki/ runtime state so no commit ever stages it (mirrors
+    # setup_agent_branch). Idempotent.
+    mkdir -p "$ws/.loki" 2>/dev/null || true
+    [ -f "$ws/.loki/.gitignore" ] || printf '*\n' > "$ws/.loki/.gitignore" 2>/dev/null || true
+
+    # Stage everything except .loki/ and an obvious-secret-path denylist (same
+    # first-cut excludes commit_session_changes uses). The scan loop below is the
+    # real guarantee for nested/weak secrets.
+    git -C "$ws" add -A \
+        ':!.loki' ':!.loki/' \
+        ':!.env' ':!.env.*' ':!*.env' \
+        ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
+        ':!id_rsa*' ':!*.token' ':!credentials*' >/dev/null 2>&1 || true
+
+    # Secret-scan staged files. ANY offender -> unstage all (safe default: never
+    # commit a possible secret). The --allow-empty commit below still runs so a
+    # real HEAD is established regardless.
+    local _offenders=""
+    local _f
+    while IFS= read -r -d '' _f; do
+        [ -f "$ws/$_f" ] || continue
+        if _commit_path_looks_secret "$ws/$_f" || _commit_scan_secret_file "$ws/$_f"; then
+            _offenders="${_offenders}${_offenders:+, }${_f}"
+        fi
+    done < <(git -C "$ws" diff --cached --name-only -z 2>/dev/null)
+
+    if [ -n "$_offenders" ]; then
+        git -C "$ws" reset >/dev/null 2>&1 || true
+        log_warn "Initial commit: possible secret in ${_offenders}; left unstaged (baseline commit will be empty)"
+    fi
+
+    # ONE initial commit. --allow-empty: a greenfield workspace stages nothing
+    # (only .loki/, which is ignored), so a bare commit would fail and leave an
+    # unborn HEAD -- the exact failure mode this whole block exists to avoid.
+    if git -C "$ws" commit --allow-empty -q -m "loki: initial build workspace baseline" >/dev/null 2>&1; then
+        log_info "Initialized git in engine workspace (initial baseline commit created)"
+        audit_log "WORKSPACE_GIT_INIT" "workspace=$ws"
+    else
+        log_warn "Initial baseline commit failed; review gate may skip (non-fatal)"
+    fi
+    return 0
+}
+
+#===============================================================================
 # Branch Protection for Agent Changes
 #===============================================================================
 
@@ -17852,6 +17998,13 @@ main() {
     # the store has nothing for this run. Runs before the main loop so any
     # resume/rollback sees the restored state. Zero behavior change for local.
     _loki_object_store_hydrate_checkpoints || true
+
+    # Plan #16 (A-1): establish git in an engine-owned, non-git build workspace
+    # BEFORE branch setup + start-SHA capture (both need a resolvable HEAD), so
+    # the per-iteration review/verify gate actually runs instead of skipping on
+    # an empty diff. No-op for the engine source tree, a user's own repo, or a
+    # non-engine-owned folder. See maybe_git_init_engine_workspace.
+    maybe_git_init_engine_workspace
 
     # Setup agent branch protection (isolates agent changes to a feature branch)
     setup_agent_branch
