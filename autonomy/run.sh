@@ -1394,6 +1394,34 @@ emit_event_json() {
     log_debug "Event: $event_type - $json_data"
 }
 
+# Per-stage timeline event (v7.91.x). Emits one stage_complete record per
+# quality-gate / build stage so the SaaS timeline can show where build time
+# goes within an iteration (the provider call itself is already bracketed by
+# iteration_start/iteration_complete). This is purely ADDITIVE: it appends one
+# event line via emit_event_json and never changes a gate verdict, gate exit
+# code, or control flow. Duration is computed by the caller (whole-second
+# resolution, sufficient for multi-second gates) and carried on the event so
+# the SaaS does not have to infer it from coarse ISO timestamps.
+#   emit_stage_complete <stage_name> <status: pass|fail> <start_epoch_seconds>
+# Event shape:
+#   {type:"stage_complete", timestamp, data:{stage, status, duration_s, iteration}}
+# Best-effort: any failure is swallowed so it can never block the build.
+emit_stage_complete() {
+    local stage="$1"
+    local status="$2"
+    local t0="$3"
+    local now dur
+    now=$(date +%s 2>/dev/null) || return 0
+    [ -n "$t0" ] || return 0
+    dur=$(( now - t0 ))
+    [ "$dur" -ge 0 ] 2>/dev/null || dur=0
+    emit_event_json "stage_complete" \
+        "stage=$stage" \
+        "status=$status" \
+        "duration_s=$dur" \
+        "iteration=${ITERATION_COUNT:-0}" 2>/dev/null || true
+}
+
 # Trust-layer metrics event writer (benchmark program section 3). Appends one
 # durable record per trust event to .loki/metrics/trust-events.jsonl via the
 # Python writer (single source of truth for the JSONL schema). This is ADDITIVE
@@ -16257,27 +16285,33 @@ if __name__ == "__main__":
             # Static analysis gate
             if [ "${PHASE_STATIC_ANALYSIS:-true}" = "true" ]; then
                 log_info "Quality gate: static analysis..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if enforce_static_analysis; then
                     clear_gate_failure "static_analysis"
                 else
+                    _stg_ok=fail
                     local sa_count
                     sa_count=$(track_gate_failure "static_analysis")
                     gate_failures="${gate_failures}static_analysis,"
                     log_warn "Static analysis FAILED ($sa_count consecutive) - findings injected into next iteration"
                 fi
+                emit_stage_complete "static_analysis" "$_stg_ok" "$_stg_t0"
             fi
             # Secure-by-default scan (v7.87.0). Advisory by default (never
             # blocks); records .loki/quality/security-findings.json each
             # iteration. Blocks only on un-waived HIGH when LOKI_SECURE_GATE=block.
             log_info "Quality gate: security scan (advisory)..."
+            local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
             if run_secure_scan; then
                 clear_gate_failure "security_scan"
             else
+                _stg_ok=fail
                 local sec_count
                 sec_count=$(track_gate_failure "security_scan")
                 gate_failures="${gate_failures}security_scan,"
                 log_warn "Security gate BLOCKED ($sec_count consecutive) - un-waived HIGH findings (LOKI_SECURE_GATE=block)"
             fi
+            emit_stage_complete "security_scan" "$_stg_ok" "$_stg_t0"
             # BUG-ST-002: Check pause signal between quality gates
             if [ -f "${TARGET_DIR:-.}/.loki/PAUSE" ] || [ -f "${TARGET_DIR:-.}/.loki/STOP" ]; then
                 log_warn "Pause/stop signal detected between quality gates - deferring remaining gates"
@@ -16291,11 +16325,13 @@ if __name__ == "__main__":
             # Test coverage gate
             if [ "${PHASE_UNIT_TESTS:-true}" = "true" ]; then
                 log_info "Quality gate: test suite (pass/fail)..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 # F49: isolate HOME so the project's suite cannot pollute the
                 # user's real home when it execs the generated app.
                 if _loki_with_app_sandbox enforce_test_coverage; then
                     clear_gate_failure "test_coverage"
                 else
+                    _stg_ok=fail
                     local tc_count
                     tc_count=$(track_gate_failure "test_coverage")
                     gate_failures="${gate_failures}test_coverage,"
@@ -16309,6 +16345,7 @@ if __name__ == "__main__":
                         log_warn "Test suite gate FAILED ($tc_count consecutive) - must pass next iteration"
                     fi
                 fi
+                emit_stage_complete "test_suite" "$_stg_ok" "$_stg_t0"
             fi
             # BUG-ST-002: Check pause signal between quality gates (after test coverage)
             if [ -f "${TARGET_DIR:-.}/.loki/PAUSE" ] || [ -f "${TARGET_DIR:-.}/.loki/STOP" ]; then
@@ -16321,26 +16358,32 @@ if __name__ == "__main__":
             # Mock integrity gate (P0-3): block on CRITICAL/HIGH mock problems.
             if [ "${LOKI_GATE_MOCK:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: mock integrity..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if enforce_mock_integrity; then
                     clear_gate_failure "mock_integrity"
                 else
+                    _stg_ok=fail
                     local mk_count
                     mk_count=$(track_gate_failure "mock_integrity")
                     gate_failures="${gate_failures}mock_integrity,"
                     log_warn "Mock integrity gate FAILED ($mk_count consecutive) - CRITICAL/HIGH mock problems"
                 fi
+                emit_stage_complete "mock_integrity" "$_stg_ok" "$_stg_t0"
             fi
             # Test mutation integrity gate (P0-3): block on HIGH test-fitting.
             if [ "${LOKI_GATE_MUTATION:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: test mutation integrity..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if enforce_mutation_integrity; then
                     clear_gate_failure "mutation_integrity"
                 else
+                    _stg_ok=fail
                     local mt_count
                     mt_count=$(track_gate_failure "mutation_integrity")
                     gate_failures="${gate_failures}mutation_integrity,"
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
                 fi
+                emit_stage_complete "mutation_integrity" "$_stg_ok" "$_stg_t0"
             fi
             # LSP diagnostics gate (P1-5 bash-route parity, v7.51.0; default-on
             # advisory-surfacing as of v7.57.0). Closes the parity gap: the Bun
@@ -16376,6 +16419,7 @@ if __name__ == "__main__":
             # runLSPDiagnosticsWriter: cwd=REPO_ROOT, --root=ctx.cwd).
             if { [ "${LOKI_GATE_LSP_DIAGNOSTICS:-true}" = "true" ] || [ "${LOKI_GATE_LSP_DIAGNOSTICS:-true}" = "1" ]; } && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: LSP diagnostics..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 # WRITER: route-neutral Python, same program as the Bun route.
                 if [ "${LOKI_GATE_LSP_WRITER:-1}" != "0" ]; then
                     ( cd "$PROJECT_DIR" && LOKI_DIR="${TARGET_DIR:-.}/.loki" python3 -m mcp.lsp_proxy --write-diagnostics --root "${TARGET_DIR:-.}" ) >/dev/null 2>&1 || true
@@ -16409,6 +16453,7 @@ else:
                 fi
                 case "$_lsp_verdict" in
                     block*)
+                        _stg_ok=fail
                         local _lsp_e _lsp_w
                         _lsp_e=$(printf '%s' "$_lsp_verdict" | awk '{print $2}')
                         _lsp_w=$(printf '%s' "$_lsp_verdict" | awk '{print $3}')
@@ -16435,6 +16480,7 @@ else:
                         log_info "LSP diagnostics: no lsp-diagnostics.json artifact (lsp not available) -- gate did not run"
                         ;;
                 esac
+                emit_stage_complete "lsp_diagnostics" "$_stg_ok" "$_stg_t0"
             fi
             # Semantic test-authenticity gate -- mid-iteration ADVISORY arm
             # (v7.57.0 default-on surfacing). Clones the mock arm (~15126)
@@ -16487,9 +16533,11 @@ else:
             # Code review gate (upgraded from advisory, with escalation)
             if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: code review..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if run_code_review; then
                     clear_gate_failure "code_review"
                 else
+                    _stg_ok=fail
                     local cr_count
                     cr_count=$(track_gate_failure "code_review")
                     # BUG-QG-007: Always append to gate_failures regardless of escalation tier
@@ -16514,7 +16562,7 @@ else:
                         esac
                     fi
                     if [ "$_phase1_overrode" = "true" ]; then
-                        : # BLOCK lifted; continue without escalation
+                        _stg_ok=pass # BLOCK lifted; continue without escalation
                     elif [ "$cr_count" -ge "$GATE_PAUSE_LIMIT" ]; then
                         log_error "Gate escalation: code_review failed $cr_count times (>= $GATE_PAUSE_LIMIT) - forcing PAUSE for human intervention"
                         echo "PAUSE" > "${TARGET_DIR:-.}/.loki/signals/GATE_ESCALATION"
@@ -16544,6 +16592,7 @@ else:
                         bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
                     fi
                 fi
+                emit_stage_complete "code_review" "$_stg_ok" "$_stg_t0"
             fi
             # Auto-generate docs (default-on) BEFORE the staleness check and the
             # gate, so neither nags the user to run 'loki docs generate' by hand.
@@ -16558,26 +16607,32 @@ else:
             # Documentation quality gate - Gate 7 (Documentation Coverage)
             if [ "${LOKI_GATE_DOC_COVERAGE:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: documentation coverage..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if run_doc_quality_gate; then
                     clear_gate_failure "doc_coverage"
                 else
+                    _stg_ok=fail
                     local dc_count
                     dc_count=$(track_gate_failure "doc_coverage")
                     gate_failures="${gate_failures}doc_coverage,"
                     log_warn "Documentation coverage gate: Score below threshold ($dc_count consecutive)"
                 fi
+                emit_stage_complete "doc_coverage" "$_stg_ok" "$_stg_t0"
             fi
             # Magic Modules debate gate - Gate 12 (v6.77.0)
             if [ "${LOKI_GATE_MAGIC_DEBATE:-true}" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: magic modules debate..."
+                local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if run_magic_debate_gate; then
                     clear_gate_failure "magic_debate"
                 else
+                    _stg_ok=fail
                     local md_count
                     md_count=$(track_gate_failure "magic_debate")
                     gate_failures="${gate_failures}magic_debate,"
                     log_warn "Magic Modules debate gate: BLOCK severity detected ($md_count consecutive)"
                 fi
+                emit_stage_complete "magic_debate" "$_stg_ok" "$_stg_t0"
             fi
             # Store gate failures for prompt injection
             if [ -n "$gate_failures" ]; then
