@@ -430,6 +430,15 @@ class StatusResponse(BaseModel):
     # correlation-only (v7.34); "resume" = LOKI_RESUME_SESSION recovery resume.
     # Empty when the run predates this field or no claude session was stamped.
     claude_session_mode: str = ""
+    # Track-1 (S1): the trust run_id (the proof key, format
+    # run-<ts>-<pid>-<rand>) of the run in THIS engine's resolved .loki dir, read
+    # from .loki/state/trust-run-id. Lets a caller correlate the run with its
+    # proof/receipt without parsing the pid. Empty when no run has minted one
+    # yet, or the run predates the field. NOTE for hosted callers: this reflects
+    # the engine's GLOBAL/cwd .loki (_get_loki_dir), so for a build started with a
+    # distinct workspace param it does NOT track that workspace's run -- read
+    # <workspace>/.loki/state/trust-run-id directly for the per-workspace build.
+    current_run_id: str = ""
     # Concurrent sessions (v6.4.0)
     sessions: list[SessionInfo] = []
 
@@ -1158,6 +1167,18 @@ async def get_status() -> StatusResponse:
         except (json.JSONDecodeError, OSError, KeyError, AttributeError):
             pass
 
+    # Track-1 (S1): the trust run_id (proof key) for the run in this resolved
+    # .loki dir. Best-effort read; empty when no run has minted one yet. Lets a
+    # caller correlate the run with its proof without parsing the pid.
+    current_run_id = ""
+    trust_run_id_file = loki_dir / "state" / "trust-run-id"
+    if trust_run_id_file.exists():
+        try:
+            _rid = trust_run_id_file.read_text(encoding="utf-8").strip()
+            current_run_id = _rid if isinstance(_rid, str) else ""
+        except OSError:
+            pass
+
     # Read dashboard state (with retry for concurrent writes)
     _has_dashboard_state = False
     if state_file.exists():
@@ -1412,6 +1433,7 @@ async def get_status() -> StatusResponse:
         current_task=current_task,
         claude_session_id=claude_session_id,
         claude_session_mode=claude_session_mode,
+        current_run_id=current_run_id,
         sessions=active_session_list,
     )
 
@@ -3018,6 +3040,14 @@ class StartBuildRequest(BaseModel):
     prd_path: Optional[str] = None
     provider: str = "claude"
     parallel: bool = False
+    # Track-1 (S1): an OPTIONAL per-build workspace directory. When present and
+    # path-guarded, the build runs against THIS dir (its own cwd + .loki) instead
+    # of the engine's own project dir, so a hosted caller (the SaaS BFF) can run a
+    # build outside the engine repo without polluting it. When OMITTED, behavior
+    # is byte-identical to before this field existed (the global project dir).
+    # The path is path-guarded against ALLOWED_WORKSPACE_ROOTS (see
+    # _validate_workspace) -- it is NOT a free-form filesystem write target.
+    workspace: Optional[str] = None
 
     def validate_provider(self) -> None:
         """Validate provider is from the supported list.
@@ -3069,6 +3099,88 @@ def _validate_prd_path(raw_path: str, project_dir: _Path) -> _Path:
         except ValueError:
             continue
     raise ValueError(f"PRD path is outside allowed directories: {raw_path}")
+
+
+def _allowed_workspace_roots() -> list[_Path]:
+    """Resolved roots a caller-supplied workspace may live under (Track-1 S1).
+
+    Configured via LOKI_WORKSPACE_ROOTS (os.pathsep-separated absolute dirs).
+    Each entry is expanded and resolved; nonexistent / non-absolute / relative
+    entries are dropped (a misconfigured root must NOT silently widen the guard
+    to the CWD). When the env var is unset or yields no valid root, the list is
+    empty and _validate_workspace rejects every workspace -- the feature is
+    opt-in by configuration, fail-closed by default.
+
+    This is deliberately NARROWER than the PRD-path roots ([project_dir, home]):
+    a build cwd runs an autonomous agent, so its root must be an explicitly
+    operator-allowed location (e.g. the BFF's ENGINE_WORKSPACE_ROOT, default
+    /workspaces), never the engine repo or the whole home directory.
+    """
+    raw = os.environ.get("LOKI_WORKSPACE_ROOTS", "").strip()
+    if not raw:
+        return []
+    roots: list[_Path] = []
+    for entry in raw.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        candidate = _Path(entry).expanduser()
+        if not candidate.is_absolute():
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.is_dir():
+            roots.append(resolved)
+    return roots
+
+
+def _validate_workspace(raw_path: str) -> _Path:
+    """Path-guard a caller-supplied per-build workspace dir (Track-1 S1).
+
+    Unlike _validate_prd_path, the workspace need NOT exist yet (the BFF passes
+    <ENGINE_WORKSPACE_ROOT>/<buildId>, created on first build); this guard
+    normalizes a possibly-nonexistent path and verifies CONTAINMENT under one of
+    LOKI_WORKSPACE_ROOTS, then the caller mkdirs it. Returns the resolved,
+    verified, absolute workspace path. Raises ValueError on any unsafe path.
+
+    Guard order:
+      1. Reject literal ".." traversal sequences before any resolution.
+      2. Require an absolute input (a relative path would resolve against the
+         dashboard CWD -- never an intended workspace).
+      3. resolve() (follows symlinks on existing parents) then assert the real
+         path is under an allowed root -- catches a symlinked parent that
+         escaped the no-".." check.
+    """
+    if not raw_path or not raw_path.strip():
+        raise ValueError("workspace must be a non-empty path")
+    raw_path = raw_path.strip()
+    if ".." in raw_path:
+        raise ValueError("workspace contains path traversal sequence (..)")
+
+    candidate = _Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("workspace must be an absolute path")
+
+    try:
+        ws = candidate.resolve()
+    except OSError as e:
+        raise ValueError(f"workspace path could not be resolved: {e}")
+
+    roots = _allowed_workspace_roots()
+    if not roots:
+        raise ValueError(
+            "workspace param is not enabled: set LOKI_WORKSPACE_ROOTS to one or "
+            "more absolute directories before passing a workspace"
+        )
+    for root in roots:
+        try:
+            ws.relative_to(root)
+            return ws
+        except ValueError:
+            continue
+    raise ValueError(f"workspace is outside allowed roots: {raw_path}")
 
 
 def _write_spec_text(prd_text: str, project_dir: _Path) -> _Path:
@@ -3153,10 +3265,34 @@ async def start_build(request: Request, body: StartBuildRequest):
             detail="Provide exactly one of prd_text or prd_path",
         )
 
-    # Resolve the target project directory from the active dashboard project.
-    loki_dir = _get_loki_dir()
-    project_dir = loki_dir.parent if loki_dir.name == ".loki" else _Path.cwd()
-    project_dir = project_dir.resolve()
+    # Resolve the target project directory. When the caller supplies a
+    # path-guarded workspace (Track-1 S1), the build runs against THAT dir (its
+    # own cwd + .loki) so a hosted caller can build outside the engine repo.
+    # When omitted, behavior is byte-identical to before: the active dashboard
+    # project (the engine's own _get_loki_dir).
+    workspace_dir: Optional[_Path] = None
+    if body.workspace and body.workspace.strip():
+        try:
+            workspace_dir = _validate_workspace(body.workspace)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if workspace_dir is not None:
+        # The build's project dir IS the workspace; its .loki lives inside it.
+        # Create it now so single-flight + spec-write below operate on the real
+        # build dir (the BFF passes <root>/<buildId>, absent on first build).
+        try:
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(
+                status_code=500, detail=f"Could not create workspace: {e}"
+            )
+        project_dir = workspace_dir
+        loki_dir = workspace_dir / ".loki"
+    else:
+        loki_dir = _get_loki_dir()
+        project_dir = loki_dir.parent if loki_dir.name == ".loki" else _Path.cwd()
+        project_dir = project_dir.resolve()
 
     # Single-flight: refuse if a run is already active in this project.
     active_pid = _project_run_active(loki_dir)
@@ -3191,6 +3327,19 @@ async def start_build(request: Request, body: StartBuildRequest):
     args.append("--bg")
     args.append(str(spec_file))
 
+    # When a workspace is given, pass an explicit env that PINS run.sh to the
+    # workspace. cwd alone is not enough: `loki` exports LOKI_DIR (default
+    # .loki) into the dashboard process, and run.sh resolves its workspace as
+    # ${LOKI_DIR:-${LOKI_TARGET_DIR:-$(pwd)}/.loki} -- an inherited LOKI_DIR
+    # would override the workspace cwd and the build would write into the
+    # engine's own .loki. Setting both LOKI_DIR and LOKI_TARGET_DIR makes the
+    # workspace authoritative. When no workspace is given, env=None (inherit) so
+    # behavior is byte-identical to before this feature.
+    popen_env = None
+    if workspace_dir is not None:
+        popen_env = dict(os.environ)
+        popen_env["LOKI_TARGET_DIR"] = str(workspace_dir)
+        popen_env["LOKI_DIR"] = str(loki_dir)
     try:
         process = subprocess.Popen(
             args,
@@ -3198,6 +3347,7 @@ async def start_build(request: Request, body: StartBuildRequest):
             stderr=subprocess.DEVNULL,
             start_new_session=True,
             cwd=str(project_dir),
+            env=popen_env,
         )
     except (OSError, subprocess.SubprocessError) as e:
         raise HTTPException(status_code=500, detail=f"Failed to start build: {e}")
@@ -3242,12 +3392,34 @@ async def start_build(request: Request, body: StartBuildRequest):
         ip_address=request.client.host if request.client else None,
     )
 
+    # Best-effort: surface the trust run_id (the proof key) so the caller can
+    # correlate this build to its Evidence Receipt without parsing the pid.
+    # run.sh mints it into <loki_dir>/state/trust-run-id at run-start; the 0.3s
+    # liveness poll above usually does NOT outlast the mint, so this is often
+    # null at start time. It is RELIABLY derivable later by the caller, which
+    # owns the workspace path: read <workspace>/.loki/state/trust-run-id (or the
+    # newest proof under <workspace>/.loki). Null here is expected, not an error.
+    run_id = ""
+    try:
+        rid_file = loki_dir / "state" / "trust-run-id"
+        if rid_file.is_file():
+            run_id = rid_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+
     return {
         "success": True,
         "message": f"Build started with provider {body.provider}",
         "pid": process.pid,
         "spec": str(spec_file),
         "provider": body.provider,
+        # The workspace this build runs in (echoed back; empty == engine's own
+        # project dir, today's default). The caller derives the proof path from
+        # this: <workspace>/.loki/state/trust-run-id.
+        "workspace": str(workspace_dir) if workspace_dir is not None else "",
+        # The trust run_id if already minted, else "" (see note above). When "",
+        # derive it from the workspace's .loki/state/trust-run-id.
+        "run_id": run_id,
     }
 
 

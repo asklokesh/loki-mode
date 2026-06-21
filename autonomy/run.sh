@@ -829,6 +829,12 @@ CONCURRENCY_CRITICAL_THRESHOLD=${LOKI_CONCURRENCY_CRITICAL_THRESHOLD:-95}
 GATE_CLEAR_LIMIT=${LOKI_GATE_CLEAR_LIMIT:-3}
 GATE_ESCALATE_LIMIT=${LOKI_GATE_ESCALATE_LIMIT:-5}
 GATE_PAUSE_LIMIT=${LOKI_GATE_PAUSE_LIMIT:-10}
+# Workspace resolution: the build runs against TARGET_DIR, defaulting to the
+# launch cwd. A caller can pin a per-build workspace by exporting
+# LOKI_TARGET_DIR (and the matching LOKI_DIR=<dir>/.loki); the dashboard
+# /api/control/start `workspace` param (Track-1 S1) does exactly this so a
+# hosted build runs in its own dir instead of the engine's repo. Every
+# $TARGET_DIR/.loki reference below then resolves under that workspace.
 TARGET_DIR="${LOKI_TARGET_DIR:-$(pwd)}"
 PARALLEL_BLOG=${LOKI_PARALLEL_BLOG:-false}
 AUTO_MERGE=${LOKI_AUTO_MERGE:-true}
