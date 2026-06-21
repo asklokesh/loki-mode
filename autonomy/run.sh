@@ -9829,7 +9829,24 @@ run_code_review() {
     # common case) because git ignores the exclude pathspec for paths it does not
     # track. ':(exclude).git/' is harmless (git never diffs .git/) and is kept
     # only for parity with the evidence-gate exclusion list.
-    local _review_pathspec=(-- . ':(exclude).loki/' ':(exclude).git/' ':(exclude)**/.loki/**')
+    # Finding #596 + Plan #16: exclude .loki/, .git/, AND the standard dependency
+    # / build noise dirs. The A-2 temp-index `git add -A` below stages EVERY
+    # untracked file, and a fresh greenfield workspace has no root .gitignore yet
+    # (only .loki/.gitignore, scoped to .loki/). Without these excludes a build
+    # that ran `npm install` / `pip install` before writing a .gitignore would
+    # stage node_modules/ (or .venv/, dist/, build/) into the temp index, bloat
+    # the review diff to multi-MB, overflow the reviewer prompt, force NO_OUTPUT,
+    # and defeat the gate -- exactly the Finding #596 class. The diff pathspec
+    # filters the OUTPUT regardless of what the temp index staged, so this one
+    # list fixes both diff_content and changed_files. Mirrors the metrics-path
+    # noise set (run.sh:12592-12598) plus __pycache__ and vendor.
+    local _review_pathspec=(-- . \
+        ':(exclude).loki/' ':(exclude).git/' ':(exclude)**/.loki/**' \
+        ':(exclude)node_modules/' ':(exclude)**/node_modules/**' \
+        ':(exclude)venv/' ':(exclude).venv/' ':(exclude)**/venv/**' ':(exclude)**/.venv/**' \
+        ':(exclude)dist/' ':(exclude)build/' ':(exclude)**/dist/**' ':(exclude)**/build/**' \
+        ':(exclude)__pycache__/' ':(exclude)**/__pycache__/**' \
+        ':(exclude)vendor/' ':(exclude)**/vendor/**')
 
     # Plan #16 (A-2): make the review diff base robust to shallow/fresh history,
     # and surface NEW (untracked) files -- the whole greenfield build is new
