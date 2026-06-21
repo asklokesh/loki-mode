@@ -11,6 +11,8 @@ These tests prove three contract guarantees the SaaS BFF (S2/S3) relies on:
      workspace AND env LOKI_TARGET_DIR / LOKI_DIR pin it there (cwd alone is
      not enough because `loki` exports LOKI_DIR into the dashboard process).
   3. TRAVERSAL / unsafe / out-of-root workspace -> 400, never a spawn.
+  4. proof.run_id == the trust-run-id (exact correlation) under the default
+     LOKI_PROVEN_PR=1 path (see ProofRunIdEqualityTests).
 
 subprocess.Popen is mocked so NO real run.sh runs (per the host constraint:
 fixtures/unit only, never a real build). The mock records the cwd + env it was
@@ -224,6 +226,83 @@ class StartBuildWorkspaceTests(unittest.TestCase):
             resp = self._client().get("/api/status")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json().get("current_run_id", ""), "")
+
+
+class ProofRunIdEqualityTests(unittest.TestCase):
+    """proof.run_id == the trust-run-id (exact per-build correlation).
+
+    The hosted correlation chain the BFF (p_fix) binds to is:
+        start-response run_id  ==  /api/status current_run_id
+        ==  <workspace>/.loki/state/trust-run-id  (all read the SAME file)
+        ==  the proof directory name  ==  proof.json["run_id"]
+
+    The last two equalities depend on run.sh invoking the proof generator with
+    --run-id set to the trust-run-id. That is exactly what the DEFAULT path does
+    (LOKI_PROVEN_PR=1, run.sh:5592 passes --run-id "$_rid" where _rid is the
+    persisted trust-run-id). This test pins the generator's contract directly --
+    no run.sh spawn, no server, no port -- so a refactor that drops --run-id (or
+    changes the proof's run_id keying) is caught.
+
+    NOTE: under LOKI_PROVEN_PR=0 the generator is invoked WITHOUT --run-id and
+    falls back to LOKI_SESSION_ID / a fresh gen id (proof-generator.py:628), so
+    the proof dir name diverges. That degrades correlation to FAIL-to-correlate
+    (the BFF finds no proof under the trust-run-id dir), never MIS-correlate, so
+    it is trust-safe. The hosted product runs default-on (PROVEN_PR=1).
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="loki-s1-proofeq-"))
+        (self.tmp / ".loki" / "state").mkdir(parents=True, exist_ok=True)
+        repo_root = Path(__file__).resolve().parents[2]
+        self.generator = repo_root / "autonomy" / "lib" / "proof-generator.py"
+
+    def _run_generator(self, *extra_args):
+        import subprocess as _sp
+        cmd = [
+            "python3", str(self.generator),
+            "--loki-dir", str(self.tmp / ".loki"),
+            "--loki-version", "test", "--provider", "claude", "--quiet",
+            *extra_args,
+        ]
+        # Drop LOKI_SESSION_ID so the no-run-id fallback is deterministic.
+        env = dict(os.environ)
+        env.pop("LOKI_SESSION_ID", None)
+        return _sp.run(cmd, capture_output=True, text=True, env=env)
+
+    def _proof(self):
+        import glob
+        import json
+        matches = glob.glob(str(self.tmp / ".loki" / "proofs" / "*" / "proof.json"))
+        self.assertEqual(len(matches), 1, f"expected one proof, got {matches}")
+        return matches[0], json.load(open(matches[0], encoding="utf-8"))
+
+    def test_proof_run_id_equals_trust_run_id_when_run_id_passed(self):
+        # The DEFAULT (LOKI_PROVEN_PR=1) path: run.sh passes --run-id <trust-run-id>.
+        trust_run_id = "run-20260621052204-54782-10037"
+        (self.tmp / ".loki" / "state" / "trust-run-id").write_text(
+            trust_run_id, encoding="utf-8"
+        )
+        result = self._run_generator("--run-id", trust_run_id)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        proof_path, proof = self._proof()
+        # proof.json run_id matches the trust-run-id exactly...
+        self.assertEqual(proof["run_id"], trust_run_id)
+        # ...AND the proof is stored UNDER a dir named by that id (the path the
+        # BFF derives: <workspace>/.loki/proofs/<trust-run-id>/proof.json).
+        self.assertEqual(Path(proof_path).parent.name, trust_run_id)
+
+    def test_proof_run_id_diverges_without_run_id_flag(self):
+        # The LOKI_PROVEN_PR=0 path: no --run-id -> generator mints its own id,
+        # which diverges from the trust-run-id. Documents the fail-to-correlate
+        # (trust-safe) degradation so the behavior is intentional, not a surprise.
+        trust_run_id = "run-20260621052204-54782-10037"
+        (self.tmp / ".loki" / "state" / "trust-run-id").write_text(
+            trust_run_id, encoding="utf-8"
+        )
+        result = self._run_generator()  # no --run-id
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, proof = self._proof()
+        self.assertNotEqual(proof["run_id"], trust_run_id)
 
 
 if __name__ == "__main__":
