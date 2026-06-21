@@ -9830,15 +9830,58 @@ run_code_review() {
     # track. ':(exclude).git/' is harmless (git never diffs .git/) and is kept
     # only for parity with the evidence-gate exclusion list.
     local _review_pathspec=(-- . ':(exclude).loki/' ':(exclude).git/' ':(exclude)**/.loki/**')
-    local diff_content
-    diff_content=$(git -C "${TARGET_DIR:-.}" diff HEAD~1 "${_review_pathspec[@]}" 2>/dev/null || git -C "${TARGET_DIR:-.}" diff --cached "${_review_pathspec[@]}" 2>/dev/null || echo "")
-    if [ -z "$diff_content" ]; then
-        log_info "Code review: No diff to review, skipping"
-        return 0
+
+    # Plan #16 (A-2): make the review diff base robust to shallow/fresh history.
+    # The diff is a SINGLE-rev working-tree compare (`git diff <base> -- ...`),
+    # NOT a two-rev range: Loki does not commit per iteration, so the agent's
+    # work is uncommitted mid-run and only a working-tree compare surfaces it.
+    # Base preference, mirroring the proven metrics-path fallback chain:
+    #   1. ${_LOKI_RUN_START_SHA} when it resolves to a commit -- the correct
+    #      per-run baseline (captured at run start; also what the summary/"Review
+    #      the work" command uses). After A-1, a fresh workspace has exactly one
+    #      commit at iteration 1, so HEAD~1 does NOT resolve -- the start-SHA is
+    #      what makes the gate run on iteration 1.
+    #   2. HEAD~1 when it resolves (the live engine-source case, deep history).
+    #   3. the git empty-tree object (computed, never a hardcoded SHA-1 constant,
+    #      so it survives a SHA-256 repo) so a single-commit repo still yields a
+    #      real diff against an empty baseline instead of an empty string.
+    local _review_base=""
+    if [ -n "${_LOKI_RUN_START_SHA:-}" ] && \
+       git -C "${TARGET_DIR:-.}" rev-parse --verify --quiet "${_LOKI_RUN_START_SHA}^{commit}" >/dev/null 2>&1; then
+        _review_base="${_LOKI_RUN_START_SHA}"
+    elif git -C "${TARGET_DIR:-.}" rev-parse --verify --quiet 'HEAD~1^{commit}' >/dev/null 2>&1; then
+        _review_base="HEAD~1"
+    else
+        _review_base="$(git -C "${TARGET_DIR:-.}" hash-object -t tree /dev/null 2>/dev/null || echo "")"
     fi
 
-    local changed_files
-    changed_files=$(git -C "${TARGET_DIR:-.}" diff --name-only HEAD~1 "${_review_pathspec[@]}" 2>/dev/null || git -C "${TARGET_DIR:-.}" diff --name-only --cached "${_review_pathspec[@]}" 2>/dev/null || echo "")
+    local diff_content=""
+    local changed_files=""
+    if [ -n "$_review_base" ]; then
+        diff_content=$(git -C "${TARGET_DIR:-.}" diff "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
+        changed_files=$(git -C "${TARGET_DIR:-.}" diff --name-only "$_review_base" "${_review_pathspec[@]}" 2>/dev/null || echo "")
+    fi
+
+    if [ -z "$diff_content" ]; then
+        # Honesty (Finding #596 class): a silent PASS on an empty diff is a trust
+        # gap ONLY when the run actually produced changes we failed to diff.
+        # Distinguish a genuine no-op iteration (nothing changed -> legitimate
+        # PASS) from "changes exist but we could not compute a diff" (must not
+        # pass silently). Use the same .loki/.git-excluding porcelain the
+        # evidence gate uses to detect real changes independent of the diff base.
+        local _dirty
+        _dirty=$(git -C "${TARGET_DIR:-.}" status --porcelain "${_review_pathspec[@]}" 2>/dev/null | head -1 || echo "")
+        if [ -n "$_dirty" ] || [ -n "$changed_files" ]; then
+            # Return non-zero so the gate dispatcher records a failure (it calls
+            # track_gate_failure on the else branch). Do NOT call track_gate_failure
+            # here: it echoes its count to stdout (callers capture it) and the
+            # dispatcher would double-count.
+            log_warn "Code review: workspace has changes but the review diff is empty (could not compute a diff base); NOT passing the gate silently"
+            return 1
+        fi
+        log_info "Code review: no changes this iteration, skipping (genuine no-op)"
+        return 0
+    fi
 
     log_header "CODE REVIEW: $review_id"
 
