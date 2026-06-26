@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.91.0] - 2026-06-26
+
+### Zero-friction adoption: per-build workspace + fail-fast auth + honest phase state
+
+- **Per-build workspace param + workspace-scoped endpoints**: optional path-guarded
+  `workspace` param on `/api/control/start` and workspace-scoped `/api/status`,
+  `/api/cost`, `/api/proofs`, `/api/proofs/:id` (validated against the workspace-root
+  allowlist, traversal-safe, deny-by-default), so a host can run and correlate a
+  per-build proof by exact run_id. Proven: `proof.run_id == trust-run-id`.
+- **Fail-fast auth preflight**: an expired Claude login used to pass the key-presence
+  check and then 401 on the first call, leaving the build stalled at BOOTSTRAP with
+  no clear cause. `validate_api_keys` now does a zero-network, zero-token local
+  expiry check and stops immediately with a `claude login` fix. Fail-open on any
+  unknown schema; opt out with `LOKI_SKIP_AUTH_PREFLIGHT=1`.
+- **`loki doctor` expired-login warning**: mirrors the preflight so a user catches an
+  expired login BEFORE starting a build.
+- **Honest phase state**: `currentPhase` now advances BOOTSTRAP -> BUILDING ->
+  COMPLETED (with a COMPLETED marker file), so the dashboard and reconciliation gate
+  see real progress instead of a stuck "Planning".
+
 ## [7.90.2] - 2026-06-20
 
 ### Cleanup: remove dead keyboard-shortcut and theme-toggle markup
