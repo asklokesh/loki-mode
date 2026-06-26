@@ -1434,6 +1434,30 @@ _loki_trust_run_id() {
     printf '%s' ""
 }
 
+# _advance_current_phase: atomically advance currentPhase in orchestrator.json.
+# This is the single source of truth for the build dashboard and the BFF
+# reconciliation gate (isTerminalPhase). The engine initialises it to "BOOTSTRAP"
+# at session start; call this to advance through the SDLC lifecycle phases.
+# Args: $1 = the new phase value (REASONING, BUILDING, VERIFYING, COMPLETED, etc.)
+_advance_current_phase() {
+    local new_phase="${1:?phase required}"
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}}/.loki"
+    local orch="$loki_dir/state/orchestrator.json"
+    [ -f "$orch" ] || return 0
+    # Values are passed via argv (not interpolated into the source) so a phase or
+    # path containing quotes can never break or inject into the python.
+    python3 -c "
+import json, sys
+f, phase = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(f))
+    d['currentPhase'] = phase
+    json.dump(d, open(f, 'w'))
+except (json.JSONDecodeError, OSError):
+    pass
+" "$orch" "$new_phase" 2>/dev/null || true
+}
+
 # Usage: record_trust_event_bash <event_type> [key=value ...]
 # Pass LOKI_TRUST_RUN_ID in the environment to override the resolved id (the
 # run_start site sets it to the freshly minted id so the first event matches).
@@ -17858,7 +17882,10 @@ main() {
         # Cleanup parallel streams
         cleanup_parallel_streams
     else
-        # Standard mode: single session
+        # Standard mode: single session. Advance phase from BOOTSTRAP to BUILDING
+        # before the first iteration so the dashboard shows real progress, not
+        # a stuck "Planning" state.
+        _advance_current_phase "BUILDING"
         run_autonomous "$PRD_PATH" || result=$?
     fi
 
@@ -17944,6 +17971,13 @@ main() {
     if [ "${LOKI_PROOF:-1}" != "0" ]; then
         generate_proof_of_run "$result" || true
     fi
+
+    # Advance currentPhase to COMPLETED so the BFF reconciliation gate and the
+    # engine's own is_completed() recognise this session as terminal. Write the
+    # file-system COMPLETED marker (checked by is_completed() in the main loop).
+    _advance_current_phase "COMPLETED"
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}}/.loki"
+    echo "Session completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$loki_dir/COMPLETED" 2>/dev/null || true
 
     # Finish-and-own (v7.88.0): write a plain-English ownership handoff
     # (HANDOFF.md) for a non-technical owner. Runs AFTER the proof so the
