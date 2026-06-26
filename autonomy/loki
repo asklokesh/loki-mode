@@ -9834,7 +9834,25 @@ cmd_doctor() {
         echo -e "  ${GREEN}PASS${NC}  ANTHROPIC_API_KEY is set"
         pass_count=$((pass_count + 1))
     elif command -v claude &>/dev/null; then
-        echo -e "  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)"
+        # Zero-network check: warn if the Claude OAuth login has expired. An
+        # expired token would otherwise pass and then 401 mid-build (the build
+        # stalls at BOOTSTRAP). Mirror run.sh's fail-fast preflight here so a
+        # user catches it with `loki doctor` BEFORE starting a build.
+        _claude_creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+        if [ -s "$_claude_creds" ] && [ "$(python3 -c "
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    exp = d.get('claudeAiOauth', {}).get('expiresAt')
+    print('expired' if isinstance(exp,(int,float)) and exp>0 and (exp/1000.0)<=(time.time()+60) else 'ok')
+except Exception:
+    print('ok')
+" "$_claude_creds" 2>/dev/null || echo ok)" = "expired" ]; then
+            echo -e "  ${YELLOW}WARN${NC}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)"
+            warn_count=$((warn_count + 1))
+        else
+            echo -e "  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)"
+        fi
     fi
     if [ -n "${OPENAI_API_KEY:-}" ]; then
         echo -e "  ${GREEN}PASS${NC}  OPENAI_API_KEY is set"
