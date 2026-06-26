@@ -1838,6 +1838,37 @@ validate_api_keys() {
     local masked="${key_value:0:8}...${key_value: -4}"
     log_info "API key $key_var: $masked (${#key_value} chars)"
 
+    # Fail-fast auth preflight (v7.91): for Claude OAuth logins, a present-but-
+    # EXPIRED token passes the presence check above but then 401s on the first
+    # provider call, leaving the build stalled at BOOTSTRAP with no clear cause.
+    # Catch that here with a zero-network, zero-token local expiry check so the
+    # user gets an instant, copy-pasteable fix instead of a silent stall.
+    # Opt out with LOKI_SKIP_AUTH_PREFLIGHT=1 (offline/odd setups).
+    if [[ "$provider" == "claude" && "${LOKI_SKIP_AUTH_PREFLIGHT:-}" != "1" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+        local _creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+        if [[ -s "$_creds" ]]; then
+            local _expired
+            _expired=$(python3 -c "
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    exp = d.get('claudeAiOauth', {}).get('expiresAt')
+    # expiresAt is epoch milliseconds; compare with a 60s safety margin.
+    if isinstance(exp, (int, float)) and exp > 0 and (exp / 1000.0) <= (time.time() + 60):
+        print('expired')
+except Exception:
+    pass  # unreadable/unknown schema -> do not block (fail open, let the call decide)
+" "$_creds" 2>/dev/null || true)
+            if [[ "$_expired" == "expired" ]]; then
+                log_error "Your Claude Code login has expired -- the build would stall instead of running."
+                log_error "Fix it in one step, then retry:"
+                log_error "    claude login"
+                log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
+                return 1
+            fi
+        fi
+    fi
+
     return 0
 }
 
