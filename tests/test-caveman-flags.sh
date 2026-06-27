@@ -371,7 +371,7 @@ while IFS= read -r line; do
 done < <(
   for f in "${SHELL_SURFACE[@]}"; do
     grep -nE '(^|[^[:alnum:]_-])claude([[:space:]]|$)' "$f" 2>/dev/null \
-      | grep -vE '#|command -v claude|which claude|claude auth status|claude CLI|Claude Code|claude-flags|claude\.sh|claude-session|claude_session|claude_flags|\.claude|--provider|Provider:|provider \(claude|\(claude default|supports the claude|for proc in' \
+      | grep -vE '#|command -v claude|which claude|claude auth status|claude login|claude CLI|Claude Code|claude-flags|claude\.sh|claude-session|claude_session|claude_flags|\.claude|--provider|Provider:|provider \(claude|\(claude default|supports the claude|for proc in' \
       | sed "s#^#$f:#"
   done
 )

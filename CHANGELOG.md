@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.91.1] - 2026-06-27
+
+### Fix: green the CI shell suite (caveman moat-audit false positive)
+
+The v7.91.0 fail-fast auth preflight added an error-message line that prints
+`claude login` as a fix hint. The caveman moat-audit (`test-caveman-flags.sh`)
+does a tree-wide scan for unsuppressed `claude` subcalls and matched that literal
+string, failing the CI "Shell tests" job. Whitelisted `claude login` in the audit
+(it is a user-instruction string, not a spawned subcall - same class as the
+already-whitelisted `claude auth status` / `command -v claude`). No runtime
+behavior change; all other v7.91.0 features intact.
+
 ## [7.91.0] - 2026-06-26
 
 ### Zero-friction adoption: per-build workspace + fail-fast auth + honest phase state
