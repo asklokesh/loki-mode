@@ -784,13 +784,17 @@ except Exception:
     # reaching the filter. Clear that marker (and reset the pending queue) so the
     # incremental rebuild actually runs and skips the satisfied features. Without
     # this, the founder-locked "build only the unsatisfied gap" behavior is inert.
-    rm -f ".loki/queue/.prd-populated" 2>/dev/null || true
-    if [ -f ".loki/queue/pending.json" ]; then
+    # Use $loki_dir (TARGET_DIR-rooted) for the queue paths too, matching the
+    # manifest path above. run_autonomous runs with cwd==TARGET_DIR so the prior
+    # relative form resolved identically, but a single rooted convention avoids a
+    # latent cwd footgun.
+    rm -f "$loki_dir/queue/.prd-populated" 2>/dev/null || true
+    if [ -f "$loki_dir/queue/pending.json" ]; then
         # Drop prior PRD-sourced tasks so the incremental pass is the source of
         # truth; non-PRD tasks (if any) are preserved.
-        python3 - <<'RESET_EOF' 2>/dev/null || true
+        LOKI_DR_PENDING="$loki_dir/queue/pending.json" python3 - <<'RESET_EOF' 2>/dev/null || true
 import json, os, tempfile
-p = ".loki/queue/pending.json"
+p = os.environ.get("LOKI_DR_PENDING", ".loki/queue/pending.json")
 try:
     with open(p) as f:
         data = json.load(f)
