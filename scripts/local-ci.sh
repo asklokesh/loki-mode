@@ -488,6 +488,7 @@ fi
 
 # Fast fail-early subset (also covered by the full suite above):
 run_check "tests/test-state-baseline-lifecycle.sh (run 2+ baseline freshness)" "bash tests/test-state-baseline-lifecycle.sh 2>&1 | tail -3"
+run_check "tests/test-reuse-done-recognition.sh (no-PRD reuse done-recognition gate)" "bash tests/test-reuse-done-recognition.sh 2>&1 | tail -3"
 run_check "tests/run-checkpoint-worktree-bundle-tests.sh (V2 refs/loki/cp bundle sync)" "bash tests/run-checkpoint-worktree-bundle-tests.sh 2>&1 | tail -3"
 run_check "tests/test-allowed-paths-sandbox-mount.sh (V3 sandbox workspace fail-closed)" "bash tests/test-allowed-paths-sandbox-mount.sh 2>&1 | tail -3"
 run_check "tests/test-queue-consumer.sh (V5 redis/file consumer + flag-injection guard)" "bash tests/test-queue-consumer.sh 2>&1 | tail -3"

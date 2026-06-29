@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.94.0] - 2026-06-29
+
+### Reuse done-recognition: a no-PRD reuse run no longer rebuilds finished work
+
+- **The bug**: a `loki start` with NO PRD over a project Loki already built and
+  completed reverse-engineered (reused) the prior generated PRD and then rebuilt
+  a full task queue and re-ran the RARV loop, re-doing finished work. The reuse
+  path never asked "is this reused PRD already satisfied by the current code?"
+  Observed live: a completed project (completion signal present, all tests green,
+  advisor said stop) still got an 11-task `prd-*` queue and fresh iterations.
+- **The fix**: a single localized gate (`reuse_done_recognition_gate`, in the new
+  `autonomy/lib/done-recognition.sh`) runs in `run_autonomous()` between
+  `load_state` and the queue/loop, only on a no-PRD reuse of an existing
+  generated PRD. It model-verifies whether the codebase already satisfies the
+  spec and routes to one of three outcomes:
+  - **done**: re-runs the tests now, re-checks each requirement, refreshes the
+    verified-completion record, finishes through the normal completion path, and
+    tells the user clearly ("This project already satisfies its spec ... To
+    rebuild from scratch run `loki start --fresh-prd`; to extend it, edit the
+    spec or pass a new/changed PRD."). No wasted iterations, no stray delegate
+    branch (the gate runs before the start-sha/delegate block).
+  - **incomplete**: writes a `prd_sha`-guarded satisfied-requirements manifest so
+    `populate_prd_queue` builds ONLY the unsatisfied requirements (no full
+    replan).
+  - **inconclusive**: falls through to the normal full build (safe default).
+- **Trust moat intact (no fake-green)**: the positive `done` verdict is always
+  the model's, grounded in re-run reality, never asserted from a stale artifact.
+  A model `done` is DOWNGRADED to build if the fresh `test-results.json` is red or
+  any requirement is unmet/uncertain. The `update` action (PRD stale by
+  definition) may never fast-stop as done; it only feeds the incremental queue.
+  The only deterministic shortcut is NEGATIVE (cheap signals that route to
+  BUILD, e.g. no completion footprint at all, or a provider that cannot verify).
+- **Rollout**: DEFAULT-ON. `LOKI_DONE_RECOGNITION=0` disables the gate (legacy
+  reuse-then-build behavior). Trust-safe because any uncertainty falls through to
+  build, so the worst case is today's behavior.
+- **Tests**: `tests/test-reuse-done-recognition.sh` (registered in
+  `tests/run-all-tests.sh` and `scripts/local-ci.sh`) exercises the gate with a
+  stubbed model seam across done+green, done+red-downgrade, inconclusive,
+  incremental-only-unsatisfied, opt-out, update-never-fast-stops, the negative
+  fast-paths, and a static no-emoji/no-em-dash scan.
+
 ## [7.93.0] - 2026-06-29
 
 ### Dashboard fixes: sidebar rebalance, honest App Runner status, stable version

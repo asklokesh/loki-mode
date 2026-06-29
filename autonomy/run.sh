@@ -13383,7 +13383,7 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
                         ITERATION_COUNT=0
                     fi
                     ;;
-                failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled)
+                failed|max_iterations_reached|max_retries_exceeded|exited|council_approved|council_force_approved|completion_promise_fulfilled|reuse_already_satisfied)
                     log_info "Previous session ended with status: $prev_status. Resetting for new session."
                     RETRY_COUNT=0
                     ITERATION_COUNT=0
@@ -14859,6 +14859,40 @@ if os.path.exists(pending_path):
 existing_ids = {t.get("id") for t in existing if isinstance(t, dict)}
 added = 0
 
+# Reuse done-recognition (v7.94.0): if a satisfied-requirements manifest exists
+# AND its prd_sha matches THIS PRD's hash, skip any feature whose title is
+# already satisfied, so an incremental reuse run rebuilds ONLY the gap. A stale
+# or absent manifest is ignored (full build -- the safe default). The sha is
+# computed over the SAME PRD file bytes the gate hashed (hashlib.sha256), so the
+# guard matches byte-for-byte. Title match is normalized (case-insensitive, with
+# a leading "feature:/requirement:/epic:/story:" heading prefix stripped) so a
+# model-returned title like "User login" matches the parser's heading title
+# "Feature: User login". bash 3.2 safe: all normalization happens in python.
+def _dr_norm_title(s):
+    s = (s or "").strip().lower()
+    for _pfx in ("feature:", "requirement:", "epic:", "story:", "user story:"):
+        if s.startswith(_pfx):
+            s = s[len(_pfx):].strip()
+            break
+    return s
+
+_dr_satisfied = set()
+try:
+    import hashlib
+    _dr_manifest = ".loki/state/satisfied-requirements.json"
+    if os.path.isfile(_dr_manifest):
+        with open(_dr_manifest, "r") as _mf:
+            _dr_data = json.load(_mf)
+        _dr_manifest_sha = (_dr_data.get("prd_sha") or "").strip()
+        with open(prd_path, "rb") as _pf:
+            _dr_cur_sha = hashlib.sha256(_pf.read()).hexdigest()
+        if _dr_manifest_sha and _dr_manifest_sha == _dr_cur_sha:
+            for _t in _dr_data.get("satisfied", []):
+                if isinstance(_t, str) and _t.strip():
+                    _dr_satisfied.add(_dr_norm_title(_t))
+except Exception:
+    _dr_satisfied = set()
+
 # BUG-V63-001 fix: extract audience once with flag to break both loops
 audience = "a user"
 audience_found = False
@@ -14876,6 +14910,12 @@ for key in ["target audience", "users", "user personas", "audience"]:
 for i, feat in enumerate(features):
     task_id = f"prd-{i+1:03d}"
     if task_id in existing_ids:
+        continue
+
+    # Skip features the done-recognition gate verified as already satisfied
+    # (manifest-driven, title-keyed, normalized match). Only unmet requirements
+    # become tasks, so the RARV loop works only the gap.
+    if _dr_satisfied and _dr_norm_title(feat.get("title")) in _dr_satisfied:
         continue
 
     criteria = extract_acceptance_criteria(feat["section"], sections)
@@ -15237,6 +15277,39 @@ except Exception:
 
     load_state
     local retry=$RETRY_COUNT
+
+    # Reuse done-recognition gate (v7.94.0). On a no-PRD run that is REUSING an
+    # already-generated PRD, model-verify whether the codebase already satisfies
+    # that spec BEFORE rebuilding a task queue and re-running the RARV loop.
+    # Routes to one of three outcomes (the verdict is the model's, grounded in
+    # re-run tests + code; the only deterministic shortcut is NEGATIVE -> build):
+    #   done        -> refresh the verified-completion record, finalize, return 0
+    #                  so the queue/loop is skipped and main()'s terminal block
+    #                  finishes the run (no wasted iterations, no stray delegate
+    #                  branch -- this runs BEFORE the start-sha/delegate block).
+    #   incomplete  -> write .loki/state/satisfied-requirements.json so
+    #                  populate_prd_queue builds ONLY the unsatisfied items, then
+    #                  fall through to the (now incremental) build.
+    #   inconclusive-> fall through to the normal full build (safe default).
+    # Default-on; LOKI_DONE_RECOGNITION=0 disables it. Armed only on a reuse of
+    # an existing generated PRD; `update` (stale PRD) may never fast-stop as done.
+    case "${GENERATED_PRD_ACTION:-}" in
+        reuse|user_owned|update)
+            local _done_recog_lib="$SCRIPT_DIR/lib/done-recognition.sh"
+            if [ -f "$_done_recog_lib" ]; then
+                # shellcheck source=lib/done-recognition.sh
+                source "$_done_recog_lib" 2>/dev/null || true
+                if declare -f reuse_done_recognition_gate >/dev/null 2>&1; then
+                    if reuse_done_recognition_gate "$prd_path"; then
+                        # done verdict: the gate finalized; main()'s terminal
+                        # block (run_autonomous's caller) runs the COMPLETED
+                        # marker, proof-of-run, and HANDOFF.md.
+                        return 0
+                    fi
+                fi
+            fi
+            ;;
+    esac
 
     # Capture run-start SHA for the evidence hard gate (v7.19.1).
     # Fresh-run-aware: recapture HEAD when ITERATION_COUNT==0 (fresh invocation,
