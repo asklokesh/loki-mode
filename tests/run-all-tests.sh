@@ -303,6 +303,11 @@ run_test "Proven PR Detached Path (cmd_run --pr/--ship -d carries receipt)" "$SC
 # isolated HOME/XDG/TMPDIR so a generated app cannot litter the user's real home.
 run_test "Build-time HOME isolation (in-build app exec sandbox)" "$SCRIPT_DIR/test-build-home-isolation.sh"
 
+# Reuse done-recognition gate (v7.94.0): a no-PRD reuse run over an already-done
+# project must model-verify "already satisfied?" and fast-stop instead of
+# rebuilding finished work; never fake-green; build only the unsatisfied gap.
+run_test "Reuse done-recognition gate (no-PRD reuse: done/incomplete/inconclusive)" "$SCRIPT_DIR/test-reuse-done-recognition.sh"
+
 # Linting
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 

@@ -1,7 +1,7 @@
 {
   "name": "loki-mode",
   "mcpName": "io.github.asklokesh/loki-mode",
-  "version": "7.93.0",
+  "version": "7.94.0",
   "description": "Loki Mode by Autonomi. Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief to a deployed app via the RARV-C closure loop with 8 quality gates. Provider-agnostic (Claude Code, OpenAI Codex, Cline, Aider).",
   "keywords": [
     "agent",

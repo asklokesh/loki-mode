@@ -102,7 +102,7 @@ JSON
 cleanup_repo() { cd /; rm -rf "$REPO_DIR" 2>/dev/null || true; }
 
 # --- Terminal states that MUST reset (fresh baseline on run 2) ---------------
-for st in council_approved council_force_approved completion_promise_fulfilled max_iterations_reached failed running; do
+for st in council_approved council_force_approved completion_promise_fulfilled reuse_already_satisfied max_iterations_reached failed running; do
     setup_repo "$st" 8 || { fail "setup $st"; continue; }
     ITERATION_COUNT=999; RETRY_COUNT=999; TARGET_DIR="$REPO_DIR"
     load_state
