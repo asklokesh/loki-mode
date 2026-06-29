@@ -88,14 +88,17 @@ PRD
 }
 cleanup_project() { cd /; rm -rf "$PROJECT_DIR" 2>/dev/null || true; }
 
-# Write a test-results.json with a given green/red shape.
+# Write a test-results.json with a given shape. Uses the REAL production shapes
+# that enforce_test_coverage writes (pass/status/exit_code), not a synthetic
+# failed/passed/total -- so the axis parser is exercised the way production hits
+# it (the council found a gap where green production shape was misread "unknown").
 write_tests() {
-    local state="$1"  # green|red
-    if [ "$state" = "green" ]; then
-        printf '{"failed":0,"passed":26,"total":26}\n' > "$TARGET_DIR/.loki/quality/test-results.json"
-    else
-        printf '{"failed":3,"passed":23,"total":26}\n' > "$TARGET_DIR/.loki/quality/test-results.json"
-    fi
+    local state="$1"  # green|red|notrun
+    case "$state" in
+        green)  printf '{"pass":true,"status":"verified","exit_code":0}\n'  > "$TARGET_DIR/.loki/quality/test-results.json" ;;
+        red)    printf '{"pass":false,"status":"failed","exit_code":1}\n'   > "$TARGET_DIR/.loki/quality/test-results.json" ;;
+        notrun) printf '{"pass":"inconclusive","status":"not_run","runner":"none"}\n' > "$TARGET_DIR/.loki/quality/test-results.json" ;;
+    esac
 }
 
 # ensure_completion_test_evidence is a run.sh function not sourced here. The gate
@@ -133,6 +136,38 @@ if [ -f "$TARGET_DIR/.loki/state/completion.json" ]; then
     [ "$v" = "done" ] && ok "(a) completion.json verdict=done" || fail "(a) completion.json verdict='$v'"
 fi
 [ ! -f "$TARGET_DIR/.loki/state/satisfied-requirements.json" ] && ok "(a) no incremental manifest on done" || fail "(a) unexpected manifest on done"
+cleanup_project
+
+#==============================================================================
+# (a1) HONESTY: a done with NO passing test run (axis unknown / not_run) must NOT
+#      claim "re-ran the tests" in the receipt. The basis is code inspection only.
+#==============================================================================
+new_project
+write_tests notrun   # production no-runner shape -> axis "unknown"
+_loki_done_recog_invoke() {
+    bump_invoke
+    cat <<'JSON'
+{"verdict":"done","summary":"all present by inspection",
+ "requirements":[
+  {"id":"f1","title":"User login","status":"met"},
+  {"id":"f2","title":"Dashboard","status":"met"},
+  {"id":"f3","title":"Export report","status":"met"}]}
+JSON
+}
+reset_invokes
+GENERATED_PRD_ACTION="reuse"
+reuse_done_recognition_gate ".loki/generated-prd.md" >/dev/null 2>&1 || true
+EV="$TARGET_DIR/.loki/completion-evidence.md"
+if [ -f "$EV" ]; then
+    if grep -qiE 're-ran the tests|against re-run tests' "$EV"; then
+        fail "(a1) receipt OVERCLAIMS test-backing with no passing run (axis unknown)"
+    else
+        ok "(a1) receipt does NOT overclaim test-backing when no passing run"
+    fi
+    grep -qiE 'code inspection' "$EV" && ok "(a1) receipt honestly states code-inspection basis" || ok "(a1) receipt present (basis wording)"
+else
+    ok "(a1) no receipt (acceptable if gate fell through)"
+fi
 cleanup_project
 
 #==============================================================================

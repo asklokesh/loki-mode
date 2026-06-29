@@ -327,12 +327,33 @@ def tests_axis(path):
         return "unknown"  # no runner / no file -> not authoritative
     if not isinstance(d, dict):
         return "unknown"
-    # Common shapes: {"failed": N}, {"passed":P,"total":T}, {"status":"pass"}.
+    # PRODUCTION shapes first (enforce_test_coverage in run.sh writes these):
+    #   real runner green : {"pass": true,  "status": "verified", "exit_code": 0}
+    #   real runner red   : {"pass": false, "status": "failed",   "exit_code": 1}
+    #   no runner         : {"pass": "inconclusive", "status": "not_run", "runner": "none"}
+    status = str(d.get("status", "")).strip().lower()
+    if status in ("not_run", "skipped", "none", "inconclusive"):
+        return "unknown"  # no authoritative run happened
+    # exit_code is the most authoritative red signal when present and numeric.
+    ec = d.get("exit_code")
+    if isinstance(ec, bool):
+        ec = None  # guard: bool is an int subclass; do not treat true/false as 0/1
+    if isinstance(ec, int):
+        if ec != 0:
+            return "red"
+        # exit 0 alone is green only if nothing else contradicts it (checked below).
+    p = d.get("pass")
+    if p is True:
+        # A clean pass:true with no contradicting red signal is authoritative green.
+        if d.get("failed") in (None, 0) and (ec in (None, 0)):
+            return "green"
+    if p is False:
+        return "red"
+    # Legacy / generic shapes.
     failed = d.get("failed")
     if isinstance(failed, int):
         return "green" if failed == 0 else "red"
-    status = str(d.get("status", "")).strip().lower()
-    if status in ("pass", "passed", "green", "ok", "success"):
+    if status in ("pass", "passed", "green", "ok", "success", "verified"):
         return "green"
     if status in ("fail", "failed", "red", "error"):
         return "red"
@@ -340,6 +361,9 @@ def tests_axis(path):
     total = d.get("total")
     if isinstance(passed, int) and isinstance(total, int) and total > 0:
         return "green" if passed >= total else "red"
+    # exit_code 0 with no other signal: treat as green (a runner ran and succeeded).
+    if isinstance(ec, int) and ec == 0:
+        return "green"
     return "unknown"
 
 axis = tests_axis(tests_path)
@@ -575,12 +599,23 @@ _loki_done_recog_finish() {
 
     mkdir -p "$loki_dir/state" 2>/dev/null || true
 
-    local summary met total
+    local summary met total axis
     summary=$(printf '%s' "$parsed" | python3 -c "import json,sys;print(json.load(sys.stdin).get('summary','') or 'Project already satisfies its spec.')" 2>/dev/null)
     met=$(printf '%s' "$parsed" | python3 -c "import json,sys;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
     total=$(printf '%s' "$parsed" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total_count',0))" 2>/dev/null)
+    axis=$(printf '%s' "$parsed" | python3 -c "import json,sys;print(json.load(sys.stdin).get('tests_axis','unknown'))" 2>/dev/null)
     [ -n "$met" ] || met=0
     [ -n "$total" ] || total=0
+    [ -n "$axis" ] || axis="unknown"
+    # HONESTY: the receipt must only claim test-backing the gate actually computed.
+    # A green axis means fresh tests ran AND passed now; otherwise the basis is
+    # code inspection alone (no runner / inconclusive) -- never overclaim.
+    local verify_basis
+    if [ "$axis" = "green" ]; then
+        verify_basis="re-ran the tests now (passed) and code inspection"
+    else
+        verify_basis="code inspection (no passing test run was available to confirm)"
+    fi
 
     # Refresh the verified-completion record reflecting the NOW re-run results.
     # Prefer the shared standalone writer (one writer, no divergence). It reads
@@ -600,8 +635,9 @@ _loki_done_recog_finish() {
         echo ""
         echo "Generated: $ts"
         echo ""
-        echo "Verdict: done (model-verified against re-run tests + code inspection)"
+        echo "Verdict: done (basis: ${verify_basis})"
         echo "Requirements met: ${met}/${total}"
+        echo "Fresh-test axis: ${axis}"
         echo ""
         echo "Summary: $summary"
         echo ""
@@ -670,7 +706,11 @@ except Exception:
     # hatches so a user who WANTS to extend a done project sees them unmissably.
     log_header "This project already satisfies its spec. Nothing to build." 2>/dev/null \
         || log_info "This project already satisfies its spec. Nothing to build."
-    log_info "Verified ${met}/${total} requirements met and re-ran the tests now. ${summary}"
+    if [ "$axis" = "green" ]; then
+        log_info "Verified ${met}/${total} requirements met and re-ran the tests now (passed). ${summary}"
+    else
+        log_info "Verified ${met}/${total} requirements met by code inspection (no passing test run was available to confirm). ${summary}"
+    fi
     log_info "To rebuild from scratch run 'loki start --fresh-prd'; to extend it, edit the spec or pass a new/changed PRD."
 }
 
