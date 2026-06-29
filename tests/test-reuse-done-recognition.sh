@@ -30,6 +30,10 @@ SCRIPT_DIR_T="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR_T/.." && pwd)"
 GATE_LIB="$REPO_ROOT/autonomy/lib/done-recognition.sh"
 RUN_SCRIPT="$REPO_ROOT/autonomy/run.sh"
+# The sourced gate reads GENERATED_PRD_ACTION as a global (run.sh sets it in the
+# environment). Declare it exported once so every per-case assignment below is to
+# an exported var (silences shellcheck SC2034 and matches production semantics).
+export GENERATED_PRD_ACTION=""
 
 PASS=0
 FAIL=0
@@ -346,12 +350,12 @@ mkdir -p "$TARGET_DIR/.loki/queue"
 : > "$TARGET_DIR/.loki/queue/.prd-populated"
 # Run the gate's manifest writer the way the incomplete verdict does (it clears
 # the stale marker). _loki_done_recog_write_manifest is sourced from the lib.
-( cd "$TARGET_DIR"
+( cd "$TARGET_DIR" || exit 1
   _loki_done_recog_write_manifest ".loki/generated-prd.md" '{"satisfied":["User login","Dashboard"],"met_count":2,"total_count":3}' >/dev/null 2>&1 || true )
 [ ! -f "$TARGET_DIR/.loki/queue/.prd-populated" ] && ok "(d0) manifest writer cleared the stale .prd-populated marker" || fail "(d0) stale .prd-populated marker NOT cleared (incremental path would be inert)"
 # shellcheck source=/dev/null
 ( source "$PQ_HARNESS"
-  cd "$TARGET_DIR"
+  cd "$TARGET_DIR" || exit 1
   populate_prd_queue ".loki/generated-prd.md" >/dev/null 2>&1
   # Count prd-* tasks built.
   if [ -f .loki/queue/pending.json ]; then
@@ -397,7 +401,8 @@ PQ_HARNESS="$(mktemp -t loki-pq-harness.XXXXXX.sh)"
     echo 'SCRIPT_DIR="/nonexistent"'
     awk '/^populate_prd_queue\(\) \{/{f=1} f{print} f && /PRD task parsing complete/{g=1} g && /^\}/{exit}' "$RUN_SCRIPT"
 } > "$PQ_HARNESS"
-( source "$PQ_HARNESS"; cd "$TARGET_DIR"; rm -f .loki/queue/.prd-populated
+# shellcheck source=/dev/null
+( source "$PQ_HARNESS"; cd "$TARGET_DIR" || exit 1; rm -f .loki/queue/.prd-populated
   populate_prd_queue ".loki/generated-prd.md" >/dev/null 2>&1
   python3 -c "
 import json
