@@ -69,8 +69,15 @@ _po_non_interactive() {
 # successful install. Inherited stdio; Loki never handles credentials.
 _po_run_login() {
     # claude must actually be on PATH for login to make sense.
+    # If the install succeeded but the binary is not yet resolvable, npm's
+    # global bin is almost certainly not on PATH. Print the exact copy-paste
+    # fix. We print the literal $(npm config get prefix) form (single-quoted,
+    # NOT executed here) so the user runs it in their own shell and so this
+    # post-install path makes no extra npm invocation.
     if ! command -v claude >/dev/null 2>&1; then
-        printf "%sInstalled, but 'claude' is not on your PATH yet. You may need to restart your shell or add npm's global bin to PATH (npm config get prefix). Run 'loki doctor' to recheck.%s\n" "$_PO_YELLOW" "$_PO_NC"
+        printf "%sInstalled, but 'claude' is not on your PATH yet. Add npm's global bin to your shell:%s\n" "$_PO_YELLOW" "$_PO_NC"
+        printf '  export PATH="$(npm config get prefix)/bin:$PATH"\n'
+        printf "Then restart your shell (or source your rc) and run: loki doctor\n"
         return 0
     fi
 

@@ -782,7 +782,15 @@ async function runText(): Promise<number> {
   // v7.5.2 fix #33: chromadb + sentence-transformers require Python 3.12; the
   // generic "Python 3 (>= 3.8)" check above passes Python 3.13/3.14 and the
   // operator only finds out via cryptic chromadb errors at runtime. Probe
-  // explicitly here. Informational only -- does NOT contribute to the count.
+  // explicitly here.
+  //
+  // HONESTY (T1.2): 3.12 is needed only for the OPTIONAL vector-search /
+  // embedding path (chromadb + sentence-transformers). Core memory (episodic /
+  // semantic, file-based) and the rest of Loki run fine on Python 3.8+. So this
+  // is a WARN that names the real, narrow impact -- never a FAIL. It stays
+  // badge-only and does NOT touch the pass/fail/warn tally, so it can never flip
+  // doctor's exit code and block a working user (fail-open), and it keeps the
+  // summary counts identical across the bun and bash routes.
   const py = await findPython3();
   if (py !== null) {
     const verRes = await run([py, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"], { timeoutMs: 5000 });
@@ -790,12 +798,12 @@ async function runText(): Promise<number> {
     if (ver.startsWith("3.12")) {
       process.stdout.write(`  ${badge("pass")}  Python 3.12 (chromadb / sentence-transformers): ${ver} at ${py}\n`);
     } else if (ver) {
-      process.stdout.write(`  ${badge("warn")}  Python 3.12 NOT found -- using ${ver} at ${py}; chromadb / sentence-transformers may fail. Install python3.12 (brew install python@3.12 / apt install python3.12).\n`);
+      process.stdout.write(`  ${badge("warn")}  Python 3.12 recommended for memory vector search (chromadb / sentence-transformers); found ${ver} at ${py}. Core memory and the rest of Loki work without it. Install: brew install python@3.12 (macOS) or apt install python3.12 (Debian/Ubuntu).\n`);
     } else {
-      process.stdout.write(`  ${badge("warn")}  Python 3 found at ${py} but version probe failed; chromadb may not work.\n`);
+      process.stdout.write(`  ${badge("warn")}  Python 3 found at ${py} but version probe failed; memory vector search (chromadb / sentence-transformers) may not work. The rest of Loki is unaffected.\n`);
     }
   } else {
-    process.stdout.write(`  ${badge("warn")}  Python 3 not on PATH -- memory + MCP integrations disabled.\n`);
+    process.stdout.write(`  ${badge("warn")}  Python 3 not on PATH -- memory + MCP integrations disabled. The rest of Loki works without them.\n`);
   }
   process.stdout.write(`\n`);
 

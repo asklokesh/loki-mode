@@ -1050,6 +1050,179 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 log_debug() { [[ "${LOKI_DEBUG:-}" == "true" ]] && echo -e "${CYAN}[DEBUG]${NC} $*" >&2 || true; }
 
+#===============================================================================
+# Failure diagnosis helpers (T2.4 / T2.5 / T2.6)
+#
+# These make a failing or crashed build self-explanatory: a copy-pasteable
+# "loki why" hint on any non-zero exit, a durable CLASSIFIED LAST_ERROR record
+# on a failed iteration, and a best-effort terminal record on an untrapped
+# death. Every one is best-effort and NEVER alters the build's exit code.
+#===============================================================================
+
+# _loki_surface_why_hint (T2.4): print the "loki why" hint to stderr and write
+# it to .loki/NEXT_STEPS.txt. Called once from main() finalization when the run
+# failed (result != 0). Best-effort: never crashes, never changes exit code.
+_loki_surface_why_hint() {
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local hint="For a plain-language diagnosis of what happened, run: loki why"
+    printf '%s\n' "$hint" >&2 || true
+    mkdir -p "$loki_dir" 2>/dev/null || true
+    printf '%s\n' "$hint" > "$loki_dir/NEXT_STEPS.txt" 2>/dev/null || true
+    return 0
+}
+
+# _loki_write_last_error (T2.5): write a durable, classified failure record to
+# .loki/state/LAST_ERROR.json. Schema:
+#   {
+#     "iteration":   <int>,
+#     "error_class": "provider_empty_output"|"build_timeout"|"rate_limited"
+#                    |"auth_error"|"unknown",
+#     "brief":       "<one honest sentence>",
+#     "timestamp":   "<UTC ISO-8601>"
+#   }
+# This is what `loki why` (in autonomy/loki, NOT owned here) can later read.
+# Built via python3 so the free-text brief can never break the JSON. Entirely
+# best-effort: any failure is swallowed and the build is never crashed.
+# Usage: _loki_write_last_error <iteration> <error_class> <brief>
+_loki_write_last_error() {
+    local iteration="${1:-0}"
+    local error_class="${2:-unknown}"
+    local brief="${3:-An iteration failed.}"
+    local loki_dir="${TARGET_DIR:-.}/.loki"
+    local state_dir="$loki_dir/state"
+    mkdir -p "$state_dir" 2>/dev/null || true
+    LOKI_LE_ITER="$iteration" \
+    LOKI_LE_CLASS="$error_class" \
+    LOKI_LE_BRIEF="$brief" \
+    LOKI_LE_FILE="$state_dir/LAST_ERROR.json" \
+    python3 -c "
+import json, os, tempfile
+try:
+    rec = {
+        'iteration': int(os.environ.get('LOKI_LE_ITER', '0') or 0),
+        'error_class': os.environ.get('LOKI_LE_CLASS', 'unknown'),
+        'brief': os.environ.get('LOKI_LE_BRIEF', ''),
+        'timestamp': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    target = os.environ['LOKI_LE_FILE']
+    d = os.path.dirname(target)
+    fd, tmp = tempfile.mkstemp(dir=d, suffix='.json')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(rec, f)
+    os.replace(tmp, target)
+except Exception:
+    pass
+" 2>/dev/null || true
+    return 0
+}
+
+# _loki_classify_iteration_error (T2.5 helper): map an iteration's signals to one
+# of the LAST_ERROR error_class values. Conservative: only returns a specific
+# class when a signal confidently supports it, else "unknown". Never fabricates
+# build_timeout (no timeout signal is detected here, so it is reserved for a
+# caller that has one). Echoes the class on stdout.
+# Usage: _loki_classify_iteration_error <iter_output_file> <empty_output_flag 0|1>
+_loki_classify_iteration_error() {
+    local iter_output="${1:-}"
+    local empty_flag="${2:-0}"
+    if [ "$empty_flag" = "1" ]; then
+        echo "provider_empty_output"
+        return 0
+    fi
+    # Rate limit: reuse the same detector the retry path uses.
+    if [ -n "$iter_output" ] && [ -f "$iter_output" ] && detect_rate_limit "$iter_output" 2>/dev/null | grep -qE '^[1-9]'; then
+        echo "rate_limited"
+        return 0
+    fi
+    # Auth error: a clear 401/403/unauthorized in the output tail.
+    if [ -n "$iter_output" ] && [ -f "$iter_output" ]; then
+        local _tail
+        _tail="$(tail -n 40 "$iter_output" 2>/dev/null || true)"
+        if printf '%s\n' "$_tail" | grep -qiE '(http[ /]?40[13]|status[: ]+40[13]|unauthorized|invalid api key|authentication[_ ]error|401 )' 2>/dev/null; then
+            echo "auth_error"
+            return 0
+        fi
+    fi
+    echo "unknown"
+    return 0
+}
+
+# _loki_terminal_record (T2.6, SAFE SUBSET): on an untrapped exit where the
+# persisted run status is still "running" (a true mid-provider-call crash on a
+# trappable signal -- SIGTERM/SIGINT/SIGHUP via the lock-release trap), leave a
+# best-effort, classified LAST_ERROR record so a post-crash `loki why` is not
+# stale. Piggybacks the existing lock-release EXIT trap (see main()) -- it does
+# NOT install a new broad EXIT trap.
+#
+# IMPORTANT (why this does NOT rewrite autonomy-state.json): the resume-detection
+# block in this file (search "Durable resume") keys the ENT-2 pod-loss resume on
+# prev_status == "running". Flipping the status to "exited" here would make a
+# crashed-but-resumable build (LOKI_DURABLE_STATE=1) reset to iteration 0 on the
+# next start, destroying durable progress. So this writes ONLY the LAST_ERROR
+# side-record (which is what `loki why` reads) and deliberately leaves the
+# status untouched. SIGKILL / power-loss are uncatchable (no trap fires); the
+# ENT-2 durable-resume path covers those. Never alters the exit code; best-effort.
+_loki_terminal_record() {
+    local state_file
+    state_file="$(_loki_state_file 2>/dev/null)" || return 0
+    [ -n "$state_file" ] || return 0
+    [ -f "$state_file" ] || return 0
+    local _status
+    _status="$(LOKI_TR_FILE="$state_file" python3 -c "
+import json, os
+try:
+    print(json.load(open(os.environ['LOKI_TR_FILE'])).get('status','unknown'))
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown")"
+    # Only act on a genuinely mid-flight "running" status. Any settled status
+    # (council_approved, failed, exited, paused, ...) is left untouched.
+    [ "$_status" = "running" ] || return 0
+    # Leave a classified LAST_ERROR so `loki why` has something honest -- WITHOUT
+    # touching autonomy-state.json (preserving the ENT-2 "running" resume signal).
+    _loki_write_last_error "${ITERATION_COUNT:-0}" "unknown" \
+        "The build process exited unexpectedly before finishing (possible crash or kill)." 2>/dev/null || true
+    return 0
+}
+
+# _loki_write_rate_limit_signal (T2.7): write a best-effort
+# .loki/signals/RATE_LIMITED file. This is FORWARD-LAID infrastructure: no
+# consumer reads it yet (a future dashboard / external watcher could, to tell a
+# normal provider rate-limit wait apart from a hang). The user-visible signal
+# today is the log_info line at the wait site; this file is the durable record. Schema:
+#   {"rate_limited": true, "wait_seconds": <int>, "reset_time": "<string>"}
+# Built via python3 so the reset-time string can never break the JSON. Entirely
+# best-effort: never crashes, never alters the build.
+# Usage: _loki_write_rate_limit_signal <wait_seconds> <reset_time>
+_loki_write_rate_limit_signal() {
+    local wait_seconds="${1:-0}"
+    local reset_time="${2:-}"
+    local signals_dir="${TARGET_DIR:-.}/.loki/signals"
+    mkdir -p "$signals_dir" 2>/dev/null || true
+    LOKI_RL_WAIT="$wait_seconds" \
+    LOKI_RL_RESET="$reset_time" \
+    LOKI_RL_FILE="$signals_dir/RATE_LIMITED" \
+    python3 -c "
+import json, os, tempfile
+try:
+    w = os.environ.get('LOKI_RL_WAIT', '0')
+    try:
+        w = int(w)
+    except Exception:
+        w = 0
+    rec = {'rate_limited': True, 'wait_seconds': w, 'reset_time': os.environ.get('LOKI_RL_RESET', '')}
+    target = os.environ['LOKI_RL_FILE']
+    d = os.path.dirname(target)
+    fd, tmp = tempfile.mkstemp(dir=d, suffix='.json')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(rec, f)
+    os.replace(tmp, target)
+except Exception:
+    pass
+" 2>/dev/null || true
+    return 0
+}
+
 # Live Build HUD (v7.71.0): a single append-only per-iteration status line on the
 # interactive TTY path. Pure additive stdout decoration -- never piped into any
 # tee, so the dashboard agent.log and the stream-json parser are untouched. The
@@ -1798,8 +1971,92 @@ get_iteration_duration_ms() {
 # Supports Docker/K8s secret file mounts as fallback.
 #===============================================================================
 
+# Zero-friction preflight helpers (T1.1). These run for ALL environments
+# (not just Docker/K8s) BEFORE the build starts, via validate_api_keys. git is a
+# genuine hard requirement (the build inits a repo) so a missing git BLOCKS with a
+# copy-pasteable fix; node-version and network reachability are ADVISORY (warn and
+# continue, fail-open) so a probabilistic or optional signal never blocks a working
+# user. The goal: surface real problems early without ever wrongly refusing to start.
+#
+# _loki_check_node_version: ADVISORY only. If node is present and its major
+# version is < 18, log a warning (node only matters for node-based builds) and
+# continue. If node is absent entirely this is a NO-OP. Always returns 0 -- it
+# never blocks the build (fail-open); the real node call, if any, is the test.
+_loki_check_node_version() {
+    command -v node >/dev/null 2>&1 || return 0
+    local node_version major
+    node_version="$(node --version 2>/dev/null || echo '')"
+    # node --version -> "v20.11.0"; extract the leading major integer.
+    major="$(printf '%s' "$node_version" | sed -E 's/^v?([0-9]+).*/\1/')"
+    # Advisory only: node is OPTIONAL (absence is a no-op above, and many builds -
+    # Python/Go/Rust - never touch node). A present-but-old node only matters for
+    # node-based builds, so WARN and continue (fail-open); never hard-block a
+    # working user. The actual node call (only for JS/TS work) is the real test.
+    if [ -n "$major" ] && [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -lt 18 ]; then
+        log_warn "Node.js >= 18 recommended for node-based builds; found ${node_version:-unknown}. Upgrade if your project uses node: https://nodejs.org"
+    fi
+    return 0
+}
+
+# _loki_check_git_present: the build initializes a git repo, so git is required.
+_loki_check_git_present() {
+    if ! command -v git >/dev/null 2>&1; then
+        log_error "Git is required (the build initializes a repo). Install: https://git-scm.com/downloads"
+        return 1
+    fi
+    return 0
+}
+
+# _loki_check_network_reachable: ADVISORY only. A fast (3s) reachability probe to
+# the active provider endpoint that WARNS and continues if it cannot reach it -- a
+# curl failure does not prove the provider CLI cannot connect (3s timeout under
+# load, transient DNS, or a proxy set for the CLI but not the shell all curl-fail
+# while the real build succeeds). Always returns 0 (fail-open); the actual
+# provider call is the authoritative connectivity test. Skipped entirely when curl
+# is missing, when LOKI_SKIP_NET_PREFLIGHT=1, when ANTHROPIC_BASE_URL is set (alt
+# provider endpoint we cannot assume), or for any provider whose endpoint we do
+# not know. It NEVER blocks the build.
+_loki_check_network_reachable() {
+    local provider="${1:-claude}"
+    [ "${LOKI_SKIP_NET_PREFLIGHT:-}" = "1" ] && return 0
+    command -v curl >/dev/null 2>&1 || return 0
+    # Alternate provider base URL set -> do not assume the default endpoint.
+    [ -n "${ANTHROPIC_BASE_URL:-}" ] && return 0
+
+    local endpoint=""
+    case "$provider" in
+        claude) endpoint="https://api.anthropic.com" ;;
+        *)      return 0 ;;  # unknown endpoint -> fail open, never guess
+    esac
+
+    # Advisory only: a fast curl probe failing does NOT prove the provider CLI
+    # cannot connect (a 3s timeout under load, transient DNS, or a proxy set for
+    # the CLI but not the shell all curl-fail while the real build succeeds). WARN
+    # and continue - the actual provider call is the authoritative connectivity
+    # test. Silence this with LOKI_SKIP_NET_PREFLIGHT=1. Never hard-block here.
+    if ! curl -sS -m 3 -o /dev/null "$endpoint" 2>/dev/null; then
+        log_warn "Could not verify network reachability to the AI provider (firewall/VPN/transient?). Continuing; the provider call will be the real test. Silence with LOKI_SKIP_NET_PREFLIGHT=1."
+    fi
+    return 0
+}
+
 validate_api_keys() {
     local provider="${LOKI_PROVIDER:-claude}"
+
+    # Zero-friction preflight (T1.1): toolchain + reachability checks that apply
+    # to EVERY environment, run BEFORE the Docker/K8s early-return below so they
+    # are not silently skipped in the common local case. Node/git are genuinely
+    # required (node only when present-but-too-old); the network probe is
+    # fail-open and opt-out (LOKI_SKIP_NET_PREFLIGHT=1).
+    if ! _loki_check_node_version; then
+        return 1
+    fi
+    if ! _loki_check_git_present; then
+        return 1
+    fi
+    if ! _loki_check_network_reachable "$provider"; then
+        return 1
+    fi
 
     # CLI tools (claude, codex, cline, aider) use their own login sessions.
     # Only require API keys inside Docker/K8s where CLI login isn't available.
@@ -16170,9 +16427,13 @@ if __name__ == "__main__":
         esac
 
         # BUG-EC-013: Detect empty provider output (0 bytes = no work done)
+        # T2.5: track this distinct cause so the failure path can classify the
+        # durable LAST_ERROR record as provider_empty_output specifically.
+        local _empty_output=0
         if [ -f "$iter_output" ] && [ ! -s "$iter_output" ] && [ $exit_code -eq 0 ]; then
             log_warn "Provider returned empty output (0 bytes) despite exit code 0 -- treating as error"
             exit_code=1
+            _empty_output=1
         fi
 
         save_state $retry "exited" $exit_code
@@ -16967,6 +17228,24 @@ else:
         # the "Will retry" log_warn below. TTY-gated, `|| true`, never tee'd.
         render_build_hud "${ITERATION_COUNT:-0}" "${rarv_phase:-?}" "${duration:-0}" || true
 
+        # T2.5: durable, classified failure record for `loki why`. Best-effort,
+        # never crashes the build. Skip signal-induced exits (130 SIGINT /
+        # 143 SIGTERM / 137 SIGKILL): a user/operator interrupt is not an error
+        # to record (mirrors the crash-capture exclusion above). Classification
+        # is conservative -- provider_empty_output | rate_limited | auth_error,
+        # else unknown; never fabricates a class that no signal supports.
+        if [ "$exit_code" -ne 130 ] && [ "$exit_code" -ne 143 ] && [ "$exit_code" -ne 137 ]; then
+            local _err_class _err_brief
+            _err_class="$(_loki_classify_iteration_error "$iter_output" "${_empty_output:-0}")"
+            case "$_err_class" in
+                provider_empty_output) _err_brief="The provider returned no output (0 bytes) on this iteration -- no work was done." ;;
+                rate_limited)          _err_brief="The provider rate-limited the request; the build will wait and retry." ;;
+                auth_error)            _err_brief="The provider rejected the request as unauthorized (check your login or API key)." ;;
+                *)                     _err_brief="Iteration ${ITERATION_COUNT:-?} failed with exit code ${exit_code} (cause not classified)." ;;
+            esac
+            _loki_write_last_error "${ITERATION_COUNT:-0}" "$_err_class" "$_err_brief" || true
+        fi
+
         # Checkpoint failed iteration state (v5.57.0)
         create_checkpoint "iteration-${ITERATION_COUNT} failed (exit=$exit_code)" "iteration-${ITERATION_COUNT}-fail"
 
@@ -16986,7 +17265,15 @@ else:
             wait_time=$rate_limit_wait
             local human_time=$(format_duration $wait_time)
             log_warn "Rate limit detected! Waiting until reset (~$human_time)..."
-            log_info "Rate limit resets at approximately $(date -v+${wait_time}S '+%I:%M %p' 2>/dev/null || date -d "+${wait_time} seconds" '+%I:%M %p' 2>/dev/null || echo 'soon')"
+            local _reset_at
+            _reset_at="$(date -v+${wait_time}S '+%I:%M %p' 2>/dev/null || date -d "+${wait_time} seconds" '+%I:%M %p' 2>/dev/null || echo 'soon')"
+            log_info "Rate limit resets at approximately $_reset_at"
+            # T2.7: elevate the wait to an explicit, reassuring INFO line (the
+            # human time was previously only at DEBUG inside detect_rate_limit's
+            # calculated-backoff branch) so a multi-minute wait does not look
+            # like a hang, and persist a machine-readable signal for watchers.
+            log_info "Rate-limited by the provider; waiting ~${wait_time}s (resets ${_reset_at}). This is normal, not a hang."
+            _loki_write_rate_limit_signal "$wait_time" "$_reset_at" || true
             notify_rate_limit "$wait_time"
         else
             wait_time=$(calculate_wait $retry)
@@ -17025,6 +17312,10 @@ else:
             remaining=$((remaining - 1))
         done
         echo ""
+
+        # T2.7: the wait is over -- clear the RATE_LIMITED signal so it never
+        # lingers stale once the build resumes. Best-effort.
+        rm -f "${TARGET_DIR:-.}/.loki/signals/RATE_LIMITED" 2>/dev/null || true
 
         # Clean up per-iteration output file
         rm -f "$iter_output" 2>/dev/null
@@ -18010,8 +18301,15 @@ main() {
         fi
         # Release on session-process exit so a fresh `loki start` can
         # immediately re-acquire after this one finishes / is killed.
+        # T2.6: piggyback the existing lock-release trap (we deliberately do NOT
+        # add a new broad EXIT trap) to write a best-effort terminal record on an
+        # untrapped non-zero exit where the run status is still "running" -- so a
+        # post-crash `loki why` is not stale. _loki_terminal_record is a strict
+        # no-op on every graceful path (status already settled) and never alters
+        # the exit code. SIGKILL/power-loss stay uncatchable (no trap fires); the
+        # ENT-2 durable-resume path covers those.
         # shellcheck disable=SC2064
-        trap "safe_release_lock '$lock_file'" EXIT INT TERM HUP
+        trap "_loki_terminal_record || true; safe_release_lock '$lock_file'" EXIT INT TERM HUP
 
         # Check PID file after acquiring lock
         if [ -f "$pid_file" ]; then
@@ -18173,6 +18471,13 @@ main() {
             PARALLEL_MODE=false
         fi
     fi
+
+    # Clear any stale per-run diagnosis record from a PRIOR run before this one
+    # starts. LAST_ERROR.json is a single side-record; if it survived a previous
+    # failed run it must not surface next to THIS run's outcome (a stale error
+    # shown beside a fresh success would be a fake-green-adjacent lie). Mirrors
+    # the RATE_LIMITED signal clear. Best-effort; never blocks the run.
+    rm -f "${TARGET_DIR:-.}/.loki/state/LAST_ERROR.json" 2>/dev/null || true
 
     if [ "$PARALLEL_MODE" = "true" ]; then
         # Parallel mode: orchestrate multiple worktrees
@@ -18421,6 +18726,13 @@ try:
     os.replace(tmp, sf)
 except (json.JSONDecodeError, OSError): pass
 " 2>/dev/null || true
+    fi
+
+    # T2.4: on ANY non-zero final result, surface a plain-language next step
+    # (print to stderr + write .loki/NEXT_STEPS.txt). Single chokepoint at the
+    # finalization exit so it fires once and never double-prints on success.
+    if [ "$result" != "0" ]; then
+        _loki_surface_why_hint || true
     fi
 
     exit $result

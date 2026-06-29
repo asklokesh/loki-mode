@@ -313,6 +313,112 @@ get_version() {
     fi
 }
 
+# Stale-install nudge (bash route; mirrors loki-ts/src/util/update_check.ts).
+# Best-effort, fail-silent, and adds zero latency on the hot path:
+#   - skipped entirely on non-TTY / CI / LOKI_NO_UPDATE_CHECK=1;
+#   - result cached in ~/.loki/cache/update-check-bash.json for >= 24h, so the
+#     network is hit at most once a day (separate file from the Bun cache, which
+#     stores millisecond timestamps; this file stores Unix seconds);
+#   - the registry fetch has a hard 1.5s timeout and is fully fail-silent;
+#   - the hint goes to STDERR so stdout stays byte-identical for scripts and the
+#     bash<->Bun parity tests.
+# We never fabricate a version: the hint prints only when a real check (or a
+# fresh cache from one) reports a strictly newer stable semver.
+_loki_update_cache_path() {
+    echo "$HOME/.loki/cache/update-check-bash.json"
+}
+
+# _loki_semver_newer <latest> <current> -> 0 (true) iff latest is strictly newer.
+# Rejects anything that is not a plain MAJOR.MINOR.PATCH (e.g. "unknown",
+# prereleases): on any unparseable input it returns 1 (never nudge).
+_loki_semver_newer() {
+    local latest="$1" current="$2"
+    case "$latest" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 1 ;;
+    esac
+    case "$current" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 1 ;;
+    esac
+    # Reject prerelease / build suffixes (anything past the third number).
+    case "$latest" in *[!0-9.]*) return 1 ;; esac
+    case "$current" in *[!0-9.]*) return 1 ;; esac
+    local l_maj l_min l_pat c_maj c_min c_pat
+    IFS='.' read -r l_maj l_min l_pat _ <<EOF
+$latest
+EOF
+    IFS='.' read -r c_maj c_min c_pat _ <<EOF
+$current
+EOF
+    # Default any empty component to 0 (defensive).
+    l_maj=${l_maj:-0}; l_min=${l_min:-0}; l_pat=${l_pat:-0}
+    c_maj=${c_maj:-0}; c_min=${c_min:-0}; c_pat=${c_pat:-0}
+    if [ "$l_maj" -ne "$c_maj" ]; then [ "$l_maj" -gt "$c_maj" ]; return; fi
+    if [ "$l_min" -ne "$c_min" ]; then [ "$l_min" -gt "$c_min" ]; return; fi
+    [ "$l_pat" -gt "$c_pat" ]
+}
+
+# maybe_print_update_hint: print the one-line update nudge to stderr if (and
+# only if) a successful, non-fabricated check reports a strictly newer release.
+# Never blocks, never slows the command, never touches stdout. Always returns 0.
+maybe_print_update_hint() {
+    # Opt-out / non-interactive / CI: do nothing, touch neither disk nor network.
+    [ "${LOKI_NO_UPDATE_CHECK:-}" = "1" ] && return 0
+    [ -n "${CI:-}" ] && return 0
+    [ ! -t 1 ] && return 0
+
+    local current
+    current=$(get_version)
+    case "$current" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 0 ;;  # "unknown" or non-semver -> never nudge
+    esac
+
+    local cache_file latest=""
+    cache_file=$(_loki_update_cache_path)
+
+    # Fast path: a fresh (< 24h) cache means zero network.
+    if [ -f "$cache_file" ]; then
+        local checked_at now age
+        checked_at=$(sed -n 's/.*"checkedAt"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        latest=$(sed -n 's/.*"latest"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' "$cache_file" 2>/dev/null | head -1)
+        if [ -n "$checked_at" ] && [ -n "$latest" ]; then
+            now=$(date +%s 2>/dev/null || echo 0)
+            age=$(( now - checked_at ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt 86400 ]; then
+                if _loki_semver_newer "$latest" "$current"; then
+                    printf 'A newer loki-mode is available (%s). Update: bun install -g loki-mode\n' "$latest" >&2
+                fi
+                return 0
+            fi
+        fi
+        latest=""  # stale cache -> fall through to a fresh fetch
+    fi
+
+    # Cache miss/stale: query the registry. Hard timeout, fail-silent.
+    if command -v curl >/dev/null 2>&1; then
+        latest=$(curl -fsS --max-time 1.5 "https://registry.npmjs.org/loki-mode/latest" 2>/dev/null \
+            | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    fi
+    # No usable result -> print nothing, write nothing (never fabricate).
+    case "$latest" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) return 0 ;;
+    esac
+
+    # Persist the fresh result (best-effort; a non-writable HOME must not break).
+    local now2
+    now2=$(date +%s 2>/dev/null || echo 0)
+    ( mkdir -p "$(dirname "$cache_file")" 2>/dev/null \
+        && printf '{"checkedAt":%s,"latest":"%s"}\n' "$now2" "$latest" > "$cache_file" 2>/dev/null ) || true
+
+    if _loki_semver_newer "$latest" "$current"; then
+        printf 'A newer loki-mode is available (%s). Update: bun install -g loki-mode\n' "$latest" >&2
+    fi
+    return 0
+}
+
 # Ensure dashboard Python venv with all deps installed.
 # Uses ~/.loki/dashboard-venv (persistent, writable, survives npm/brew upgrades).
 # Sets DASHBOARD_PYTHON to the venv python3 path on success.
@@ -717,11 +823,11 @@ show_help() {
     echo ""
     echo "Usage: loki <command> [options]"
     echo ""
-    echo "New here? Try one of these first:"
+    echo "New here? Try these in order:"
     echo "  loki doctor               Check your setup is ready (a few seconds)"
-    echo "  loki quick \"add a health endpoint\"   One small task, start to finish"
-    echo "  loki demo                 Build a sample todo app end to end (real run)"
+    echo "  loki quickstart           Guided first build from your idea (no PRD needed)"
     echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub issue, or no arg)"
+    echo "  quickstart = guided first build; quick = one small task (3 iters max)."
     echo "  Docs: https://github.com/asklokesh/loki-mode  |  Report a problem: loki crash"
     echo ""
     # CLI consolidation (Phase A): the front page presents ~17 canonical
@@ -778,11 +884,11 @@ show_help() {
     echo "  version          Show version"
     echo "  help             Show this help ('loki help aliases' for old names)"
     echo ""
-    echo "More commands (ship, grill, spec, deploy, cleanup, init, watch, demo, web, api,"
-    echo "logs, github, import, council, proof, audit, compliance, agent, template,"
-    echo "magic, docs, wiki, ci, test, bench, secrets, telemetry, crash, worktree,"
-    echo "failover, monitor, remote, ...) are dispatchable and documented via"
-    echo "'loki <command> --help'."
+    echo "More commands (the most useful; many more are dispatchable):"
+    echo "  Advanced:    ship, deploy, init, web"
+    echo "  Cloud + CI:  github, import, ci"
+    echo "  Debugging:   logs, crash, cleanup"
+    echo "...run 'loki help <name>' for any command."
     echo ""
     echo "Aliases (deprecated): older command names still work; they print a"
     echo "one-line pointer to stderr and never alter --json output. See the full"
@@ -804,19 +910,8 @@ show_help() {
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo "  --openspec PATH      Use OpenSpec change directory as input"
     echo ""
-    echo "Options for 'run' (v6.0.0):"
-    echo "  --dry-run          Preview generated PRD without starting"
-    echo "  --no-start         Generate PRD but don't start execution"
-    echo "  --output FILE      Save PRD to custom path"
-    echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
-    echo "  --parallel         Enable parallel mode with git worktrees"
-    echo "  --budget USD       Set cost budget limit"
-    echo ""
-    echo "Progressive Isolation (for 'run'):"
-    echo "  --worktree, -w     Git worktree isolation (separate branch)"
-    echo "  --pr               Auto-create PR after completion (implies --worktree)"
-    echo "  --ship             Auto-merge after PR (implies --pr)"
-    echo "  --detach, -d       Run in background (implies --worktree)"
+    echo "Deprecated alias 'run': 'loki run <issue-ref>' still works as an alias"
+    echo "for 'loki start'. See its options with 'loki run --help'."
     echo ""
     echo "Examples:"
     echo ""
@@ -941,11 +1036,11 @@ show_landing() {
     echo ""
     echo -e "First time here? ${CYAN}loki doctor${NC} checks your setup (an AI provider CLI is required)."
     echo ""
-    echo "Get started:"
+    echo "Get started (in order):"
+    echo -e "  ${CYAN}loki doctor${NC}           Check your setup is ready (a few seconds)"
     echo -e "  ${CYAN}loki quickstart${NC}       Guided first build from your idea (no PRD needed)"
     echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub issue, or no arg)"
-    echo -e "  ${CYAN}loki demo${NC}             Build a sample todo app end to end (real run)"
-    echo -e "  ${CYAN}loki dashboard start${NC}  Start the live run monitor (then: loki dashboard open)"
+    echo "  quickstart = guided first build; quick = one small task (3 iters max)."
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
     echo "Tip: preview cost and scope before building: loki plan <your-prd.md>"
@@ -3408,7 +3503,8 @@ cmd_why() {
     fi
 
     if [ "$as_json" = "1" ]; then
-        _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" python3 - <<'WHYJSON'
+        _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
+        _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" python3 - <<'WHYJSON'
 import json, os
 def load(p):
     try:
@@ -3416,7 +3512,8 @@ def load(p):
     except Exception: return {}
 state = load(os.environ.get("_LOKI_WHY_STATE", ""))
 comp = load(os.environ.get("_LOKI_WHY_COMPLETION", ""))
-print(json.dumps({"state": state, "completion": comp}, indent=2))
+last_error = load(os.environ.get("_LOKI_WHY_LAST_ERROR", ""))
+print(json.dumps({"state": state, "completion": comp, "last_error": last_error}, indent=2))
 WHYJSON
         return 0
     fi
@@ -3428,6 +3525,7 @@ WHYJSON
     _why_head_sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
     _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
     _LOKI_WHY_HEAD_SHA="$_why_head_sha" \
+    _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
     _LOKI_WHY_HANDOFFS="$loki_dir/memory/handoffs" python3 - <<'WHYTXT'
 import json, os, glob
 def load(p):
@@ -3518,6 +3616,28 @@ if comp.get("pr_url"):
 print()
 print(f"  What happened: {meaning}")
 print(f"  What to do   : {action}")
+
+# Surface the structured per-iteration error record, if one exists at
+# .loki/state/LAST_ERROR.json (the run.sh writer that produces it ships in the
+# SAME v7.92.0 release; on an older engine the file is simply absent and this
+# block stays dormant - never fabricated). run.sh clears it at the start of every
+# fresh run, so a present record belongs to the CURRENT run. We still only show it
+# when THIS run's outcome is itself a failure - never beside a success verdict
+# (that would be a fake-green-adjacent lie) - using the same SUCCESS set below.
+SUCCESS_STATUSES = {"council_approved", "completion_promise_fulfilled", "complete", "completed"}
+le = {}
+try:
+    with open(os.environ.get("_LOKI_WHY_LAST_ERROR", "")) as f:
+        le = json.load(f)
+except Exception:
+    le = {}
+if isinstance(le, dict) and le.get("error_class") and status not in SUCCESS_STATUSES:
+    print()
+    _it = le.get("iteration")
+    _it_s = f" (iteration {_it})" if _it not in (None, "") else ""
+    print(f"  Last error  : {le.get('error_class')}{_it_s}")
+    if le.get("brief"):
+        print(f"                {le.get('brief')}")
 
 # Surface the latest structured handoff (already-captured context), honestly.
 hd = sorted(glob.glob(os.path.join(os.environ.get("_LOKI_WHY_HANDOFFS",""), "*.md")))
@@ -10104,6 +10224,9 @@ except Exception:
     echo ""
     echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
     echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
+    # Best-effort stale-install nudge (stderr only; never blocks; off on
+    # non-TTY/CI). Reached only on the human-readable path (--json returns above).
+    maybe_print_update_hint
     return 0
 }
 
@@ -10476,6 +10599,9 @@ cmd_version() {
             ;;
     esac
     echo "Loki Mode v$(get_version)"
+    # Best-effort stale-install nudge (stderr only; never blocks; off on
+    # non-TTY/CI). Mirrors the Bun route's update check for parity.
+    maybe_print_update_hint
 }
 
 # Secrets / credential management
@@ -16704,7 +16830,8 @@ main() {
             if _suggestion=$(_suggest_command "$command"); then
                 echo "Did you mean 'loki ${_suggestion}'?" >&2
             fi
-            echo "Run 'loki help' for usage." >&2
+            # Always point to the full command list, even with no near-miss match.
+            echo "Run 'loki help' to see every command." >&2
             exit 1
             ;;
     esac

@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.92.0] - 2026-06-27
+
+### Zero-friction adoption: fail-open preflight, honest failure diagnosis, CLI polish
+
+First-run and error-diagnosis improvements so a new user gets unblocked fast and a
+failed build explains itself, with every check fail-open and honest.
+
+Added (first-run preflight, advisory):
+- `validate_api_keys` now does a fast preflight before a build: git presence (a
+  genuine hard requirement - the build inits a repo - so a missing git blocks with
+  a copy-paste fix), plus ADVISORY node-version and provider-reachability checks
+  that WARN and continue (never block a working user; the real call is the test).
+  Opt out of the network probe with `LOKI_SKIP_NET_PREFLIGHT=1`.
+
+Added (failure diagnosis):
+- On any failed/empty iteration or a mid-run crash, the engine writes a classified
+  `.loki/state/LAST_ERROR.json` ({iteration, error_class, brief, timestamp}),
+  cleared at the start of every fresh run. `loki why` now surfaces it (text +
+  `--json`) only when the current run actually failed - never beside a success.
+- On any failed build exit, a one-line "run loki why" hint + a `.loki/NEXT_STEPS.txt`.
+- Rate-limit waits now log the human wait/reset time (not a silent backoff) and
+  write a best-effort `.loki/signals/RATE_LIMITED` record (forward-laid).
+
+Added / changed (CLI + doctor):
+- npm global-bin PATH guidance after a provider CLI install that isn't on PATH.
+- Consistent first-run onboarding between bare `loki` and `loki help`; deprecated
+  `run` demoted out of main help into `loki run --help`.
+- Bash route now has the update-available nudge (parity with the Bun route),
+  surfaced via `loki doctor`; friendlier unknown-command pointer + grouped
+  "more commands" footer.
+- `loki doctor` Python check reworded honestly: Python 3.12 is recommended for
+  memory vector search; core memory and the rest of Loki work without it (WARN,
+  not a hard fail).
+
 ## [7.91.1] - 2026-06-27
 
 ### Fix: green the CI shell suite (caveman moat-audit false positive)
