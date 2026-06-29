@@ -139,6 +139,36 @@ fi
 cleanup_project
 
 #==============================================================================
+# (a0) TOP-LINE GATE: the model said inconclusive/incomplete but the per-req
+#      breakdown is all-met + green. The gate must RESPECT the model's negative
+#      top-line and NOT fast-stop (never UPGRADE a non-done verdict to done).
+#==============================================================================
+for tl in inconclusive incomplete; do
+    new_project
+    write_tests green
+    _loki_done_recog_invoke() {
+        bump_invoke
+        cat <<JSON
+{"verdict":"$DR_TOPLINE","summary":"not confident it is done",
+ "requirements":[
+  {"id":"f1","title":"User login","status":"met"},
+  {"id":"f2","title":"Dashboard","status":"met"},
+  {"id":"f3","title":"Export report","status":"met"}]}
+JSON
+    }
+    DR_TOPLINE="$tl"
+    reset_invokes
+    GENERATED_PRD_ACTION="reuse"
+    if reuse_done_recognition_gate ".loki/generated-prd.md"; then
+        fail "(a0/$tl) model top-line '$tl' was WRONGLY upgraded to done (fake-green)"
+    else
+        ok "(a0/$tl) model top-line '$tl' is respected (no fast-stop)"
+    fi
+    [ ! -f "$TARGET_DIR/.loki/COMPLETED" ] && ok "(a0/$tl) no COMPLETED marker on non-done top-line" || fail "(a0/$tl) COMPLETED wrongly written"
+    cleanup_project
+done
+
+#==============================================================================
 # (a1) HONESTY: a done with NO passing test run (axis unknown / not_run) must NOT
 #      claim "re-ran the tests" in the receipt. The basis is code inspection only.
 #==============================================================================

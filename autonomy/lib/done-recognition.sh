@@ -486,12 +486,30 @@ if _prd_titles is not None:
     _missing = [t for t in set(_prd_titles) if t not in _covered]
     coverage_gap = len(_missing) > 0
 
-# Defensive re-derivation (do NOT trust obj["verdict"] blindly).
-# done requires: all requirements met AND tests not red. If there is no test
-# runner (axis unknown) the model may still establish done by code evidence,
-# but a RED axis hard-blocks done (no fake-green).
-if all_met and axis != "red" and not coverage_gap and not coverage_unknown:
+# The model's own top-line verdict. It is NECESSARY-but-not-sufficient for done:
+# the defensive re-derivation can only ever DOWNGRADE from it, never upgrade. If
+# the model itself did not say done (inconclusive/incomplete), we must not fast-
+# stop even when the per-requirement breakdown looks all-met -- that would
+# override the model's explicit negative judgment (critical-check-1: inconclusive
+# falls through to build; critical-check-2: the positive decision is the model's,
+# never a deterministic all-met=>done shortcut).
+obj_verdict = str(obj.get("verdict", "")).strip().lower()
+model_says_done = obj_verdict == "done"
+
+# Defensive re-derivation: the model must say done AND every objective guard must
+# pass. done requires: model top-line done AND all requirements met AND tests not
+# red AND no coverage gap/unknown. Any guard failing downgrades (never upgrades).
+if model_says_done and all_met and axis != "red" and not coverage_gap and not coverage_unknown:
     verdict = "done"
+elif model_says_done and coverage_unknown and all_met and axis != "red":
+    # Even with a model 'done', if we cannot enumerate the PRD to confirm full
+    # coverage, route to inconclusive -> build (no fake-green over an unverifiable
+    # spec). Handled by the coverage_unknown branch below; fall through.
+    verdict = "inconclusive"
+elif all_met and axis != "red" and not coverage_gap and not coverage_unknown and not model_says_done:
+    # Per-requirement breakdown looks complete but the MODEL did not declare done
+    # (it said inconclusive/incomplete). Respect the model: do not fast-stop.
+    verdict = "inconclusive"
 elif coverage_unknown and all_met and axis != "red":
     # We could not enumerate the PRD to confirm the model covered all of it. A
     # done over an unverifiable spec is a fake-green risk (the model may have
