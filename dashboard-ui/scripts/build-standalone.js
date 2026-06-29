@@ -233,10 +233,17 @@ function generateStandaloneHTML(bundleCode) {
       font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     }
 
-    /* Dashboard Layout */
+    /* Dashboard Layout. v7.92 sidebar rebalance: a THREE-column grid -- a clean
+       left navigation rail, the main content, and a collapsible right status
+       sidebar. The left column is navigation only; the system status + session
+       controls moved out of the cramped left footer into the right column so
+       both surfaces can breathe. The third track is sized by a CSS var so the
+       same rule drives expanded (288px) and collapsed (a 48px rail). */
     .dashboard-layout {
+      --status-rail-width: 48px;
+      --status-panel-width: 288px;
       display: grid;
-      grid-template-columns: 240px 1fr;
+      grid-template-columns: 240px 1fr var(--status-panel-width);
       grid-template-rows: 1fr;
       /* Pin to the viewport (not min-height) so the grid row can never grow
          taller than the screen. With min-height the 1fr row stretched to the
@@ -249,8 +256,16 @@ function generateStandaloneHTML(bundleCode) {
       overflow: hidden;
     }
 
+    /* Collapsed: the status sidebar shrinks to a thin rail and the center
+       content reclaims the freed width. Driven by a class on the GRID (not just
+       the aside) so the track resizes in lockstep with the panel. */
+    .dashboard-layout.status-collapsed {
+      grid-template-columns: 240px 1fr var(--status-rail-width);
+    }
+
     @media (max-width: 768px) {
-      .dashboard-layout {
+      .dashboard-layout,
+      .dashboard-layout.status-collapsed {
         grid-template-columns: 1fr;
       }
       .sidebar { display: none; }
@@ -260,6 +275,18 @@ function generateStandaloneHTML(bundleCode) {
         left: 0; top: 0; bottom: 0;
         width: 240px;
         z-index: 100;
+      }
+      /* On mobile the third column would steal the whole row; collapse it to a
+         pinned rail on the right edge instead so status stays one tap away
+         without crowding the content. */
+      .status-sidebar {
+        position: fixed;
+        right: 0; top: 0; bottom: 0;
+        width: var(--status-rail-width);
+        z-index: 90;
+      }
+      .dashboard-layout:not(.status-collapsed) .status-sidebar {
+        width: min(320px, 88vw);
       }
     }
 
@@ -451,51 +478,56 @@ function generateStandaloneHTML(bundleCode) {
       flex-shrink: 0;
     }
 
-    /* Sidebar footer: anchored bottom region. v7.84 enterprise pass -- the dev
-       "API URL + Go" control is no longer always-visible clutter; it now lives
-       behind a small Settings (gear) popover. The footer shows only the
-       intentional controls: session control, Settings, and the theme toggle. */
-    .sidebar-footer {
-      padding: 10px 12px 12px;
-      border-top: 1px solid var(--loki-border);
+    /* (v7.92) The left sidebar footer was removed: the session control + the
+       Settings gear it used to hold moved into the right status sidebar, so the
+       left column is navigation only.
+
+       (v7.93) The Settings gear + upward-opening popover were replaced by an
+       inline collapsible disclosure that lives in the right sidebar's scrolling
+       body (.status-settings). Inline-in-flow has no anchoring/clipping/z-index
+       failure modes, is keyboard-accessible, and matches the collapsible-sidebar
+       design language. The disclosure header is a real button (aria-expanded +
+       aria-controls); the region is hidden from the tab order while collapsed. */
+
+    /* Inline Settings disclosure (right-sidebar, in-flow). */
+    .status-settings {
       flex: 0 0 auto;
-    }
-
-    .sidebar-controls {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      padding: 8px 0 0;
-    }
-
-    /* Icon-style footer buttons (settings gear + theme). The theme toggle keeps
-       its text label; both share the muted-chip resting style. */
-    .footer-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      background: var(--loki-bg-tertiary);
       border: 1px solid var(--loki-border);
-      border-radius: 7px;
+      border-radius: 8px;
+      background: var(--loki-bg-tertiary);
+      overflow: hidden;
+    }
+
+    /* Disclosure header: a full-width real button. The chevron rotates to point
+       down when the section is open. */
+    .settings-disclosure {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 9px 11px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      font-family: 'Inter', system-ui, sans-serif;
       font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
       color: var(--loki-text-secondary);
       cursor: pointer;
-      transition: all var(--loki-transition);
-      font-family: inherit;
+      transition: background var(--loki-transition), color var(--loki-transition);
     }
-
-    .footer-btn:hover {
+    .settings-disclosure:hover {
       background: var(--loki-bg-hover);
       color: var(--loki-text-primary);
     }
-
-    .footer-btn:focus-visible {
+    .settings-disclosure:focus-visible {
       outline: 2px solid var(--loki-accent);
-      outline-offset: 1px;
+      outline-offset: -2px;
     }
-
-    .footer-btn svg {
+    .settings-disclosure svg {
       width: 14px;
       height: 14px;
       stroke: currentColor;
@@ -503,31 +535,56 @@ function generateStandaloneHTML(bundleCode) {
       fill: none;
       flex-shrink: 0;
     }
-
-
-    .footer-settings {
-      position: relative;
+    .settings-disclosure .settings-gear {
+      margin-right: 2px;
+    }
+    .settings-disclosure .settings-chevron {
+      margin-left: auto;
+      transition: transform var(--loki-transition);
+    }
+    .settings-disclosure[aria-expanded="true"] .settings-chevron {
+      transform: rotate(90deg);
     }
 
-    /* Settings popover: opens above the gear; holds the (rarely used) API URL
-       override so it is reachable but never crowds the product chrome. */
-    .settings-popover {
-      display: none;
-      position: absolute;
-      bottom: calc(100% + 8px);
-      left: 0;
-      width: 232px;
-      padding: 12px;
-      background: var(--loki-bg-card);
-      border: 1px solid var(--loki-border);
-      border-radius: 10px;
-      box-shadow: var(--loki-glass-shadow);
-      z-index: 50;
+    /* Collapsible region. Uses the grid 0fr/1fr trick for a smooth height
+       transition; the inner wrapper is the actual clipping box. While collapsed
+       the region carries the [hidden] attribute (set by JS). We override the
+       default display:none [hidden] gives so the height can animate, but pair it
+       with visibility:hidden on the inner wrapper, which removes the input + Go
+       button from the tab order while collapsed (a plain 0fr collapse would
+       leave them tab-focusable). visibility is delayed on collapse and reset on
+       expand so the controls are reachable exactly when the section is open. */
+    .settings-region {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows var(--loki-transition);
     }
-    .settings-popover.open {
+    .settings-region[hidden] {
+      display: grid;
+      grid-template-rows: 0fr;
+    }
+    .settings-region-inner {
+      overflow: hidden;
+      min-height: 0;
+      visibility: visible;
+      transition: visibility 0s linear 0s;
+    }
+    .settings-region[hidden] .settings-region-inner {
+      visibility: hidden;
+      transition: visibility 0s linear 0.2s;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .settings-region[hidden] .settings-region-inner { transition: none; }
+    }
+    .settings-region-body {
+      padding: 4px 11px 11px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .settings-region { transition: none; }
+      .settings-disclosure .settings-chevron { transition: none; }
+    }
+    .settings-field-label {
       display: block;
-    }
-    .settings-popover-label {
       font-size: 9.5px;
       font-weight: 600;
       text-transform: uppercase;
@@ -535,7 +592,7 @@ function generateStandaloneHTML(bundleCode) {
       color: var(--loki-text-muted);
       margin-bottom: 6px;
     }
-    .settings-popover-row {
+    .settings-field-row {
       display: flex;
       gap: 6px;
       align-items: center;
@@ -708,6 +765,147 @@ function generateStandaloneHTML(bundleCode) {
       opacity: 0.6;
       cursor: default;
     }
+
+    /* Right status sidebar (v7.92). Mirrors the left sidebar's glass treatment
+       and three-region flex column (anchored header + scrolling body), but on
+       the right edge and collapsible. It owns its own scroll (min-height:0 +
+       overflow-y:auto on the body) so the tall status panel can never grow the
+       grid row and reintroduce the window-scroll bug documented above. */
+    .status-sidebar {
+      display: flex;
+      flex-direction: column;
+      background: var(--loki-glass-bg);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      border-left: 1px solid var(--loki-glass-border);
+      overflow: hidden;
+      min-height: 0;
+      height: 100vh;
+    }
+
+    /* Anchored header: a small label + the collapse toggle. Does not scroll. */
+    .status-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 16px 14px 12px;
+      flex: 0 0 auto;
+      border-bottom: 1px solid var(--loki-border-light);
+    }
+    .status-header-title {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--loki-text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Collapse/expand toggle: a small square icon button. The chevron points
+       right when expanded (click to collapse) and is swapped in the rail. */
+    .status-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      padding: 0;
+      background: var(--loki-bg-tertiary);
+      border: 1px solid var(--loki-border);
+      border-radius: 7px;
+      color: var(--loki-text-secondary);
+      cursor: pointer;
+      transition: background var(--loki-transition), color var(--loki-transition);
+    }
+    .status-toggle:hover {
+      background: var(--loki-bg-hover);
+      color: var(--loki-text-primary);
+    }
+    .status-toggle:focus-visible {
+      outline: 2px solid var(--loki-accent);
+      outline-offset: 1px;
+    }
+    .status-toggle svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+    }
+
+    /* Scrolling body: holds the session-control component + the settings gear.
+       The only scroller in this column. */
+    .status-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Collapsed state: hide the expanded body AND the whole header (its collapse
+       chevron is meaningless once collapsed); the rail becomes the sole
+       affordance, so there is never a redundant pair of chevrons. */
+    .dashboard-layout.status-collapsed .status-body,
+    .dashboard-layout.status-collapsed .status-header {
+      display: none;
+    }
+
+    /* Collapsed rail: a thin vertical strip with the expand affordance and a
+       single glanceable live/connected dot. Hidden while expanded. */
+    .status-rail {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 0;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .dashboard-layout.status-collapsed .status-rail {
+      display: flex;
+    }
+    .status-rail-label {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 9.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--loki-text-muted);
+      user-select: none;
+    }
+    /* Live dot on the rail. Reflects connection state via a class set by JS that
+       reads the shared API client (see initStatusSidebar). Never a static dot
+       implying liveness it does not have. */
+    .status-rail-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--loki-text-muted);
+      flex: 0 0 auto;
+    }
+    .status-rail-dot.connected {
+      background: var(--loki-success);
+      animation: pulse 2s infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .status-rail-dot.connected { animation: none; }
+    }
+
+    /* (v7.93) The anchored .status-footer that held the settings gear + its
+       upward-opening popover was removed: Settings is now an inline disclosure
+       inside the scrolling .status-body, so there is no separate footer to
+       anchor or hide on collapse. */
 
     /* Main Content */
     .main-content {
@@ -1026,28 +1224,10 @@ function generateStandaloneHTML(bundleCode) {
         </div>
       </nav>
 
-      <div class="sidebar-footer">
-        <loki-session-control id="session-control"></loki-session-control>
-        <div class="sidebar-controls">
-          <!-- Settings (gear) holds the rarely-used API URL override behind a
-               popover so it no longer clutters the always-visible footer. -->
-          <div class="footer-settings">
-            <button class="footer-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings" aria-haspopup="true" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-              <span>Settings</span>
-            </button>
-            <div class="settings-popover" id="settings-popover" role="dialog" aria-label="Settings">
-              <div class="settings-popover-label">API URL</div>
-              <div class="settings-popover-row">
-                <input type="text" class="api-url-input" id="api-url" placeholder="API URL">
-                <button class="api-btn" id="connect-btn" type="button">Go</button>
-              </div>
-            </div>
-          </div>
-          <!-- v7.90.1: dark mode removed (light-only). The theme toggle and its
-               handler are gone; the dashboard ships a single light theme. -->
-        </div>
-      </div>
+      <!-- v7.92 sidebar rebalance: the system status + session controls moved
+           out of this left footer into a dedicated, collapsible RIGHT sidebar
+           (#status-sidebar) so the left column is clean navigation that can
+           breathe. The settings gear moved with them. -->
     </aside>
 
     <!-- Main Content -->
@@ -1513,6 +1693,67 @@ function generateStandaloneHTML(bundleCode) {
         <loki-wiki-browser id="wiki-browser"></loki-wiki-browser>
       </div>
     </main>
+
+    <!-- v7.92 Right status sidebar: system status + session controls, moved out
+         of the cramped left footer. Collapsible (state remembered per machine;
+         default expanded). Collapsed -> a thin rail with an expand affordance
+         and a single live/connected dot, so the info is never lost. -->
+    <aside class="status-sidebar" id="status-sidebar" aria-label="System status and session controls">
+      <div class="status-header">
+        <span class="status-header-title">Session</span>
+        <button class="status-toggle" id="status-toggle" type="button"
+                aria-controls="status-sidebar" aria-expanded="true"
+                title="Collapse status panel" aria-label="Collapse status panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+
+      <!-- Expanded body: the intact session-control component (status rows,
+           Pause/Stop, model selector, Connected/version, agent/task counts) plus
+           the inline Settings disclosure. Its API/polling wiring is preserved by
+           moving the element whole. -->
+      <div class="status-body">
+        <loki-session-control id="session-control"></loki-session-control>
+
+        <!-- Settings: an inline collapsible disclosure (replaces the former
+             floating gear popover, which mis-anchored in this column). The
+             header is a real button driving aria-expanded + aria-controls; the
+             region is [hidden] while collapsed so the API controls stay out of
+             the tab order. Default collapsed - the API override is rarely used. -->
+        <div class="status-settings">
+          <button class="settings-disclosure" id="settings-disclosure" type="button"
+                  aria-expanded="false" aria-controls="settings-region">
+            <svg class="settings-gear" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            <span>Settings</span>
+            <svg class="settings-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+          </button>
+          <div class="settings-region" id="settings-region" hidden>
+            <div class="settings-region-inner">
+              <div class="settings-region-body">
+                <label class="settings-field-label" for="api-url">API URL</label>
+                <div class="settings-field-row">
+                  <input type="text" class="api-url-input" id="api-url" placeholder="API URL">
+                  <button class="api-btn" id="connect-btn" type="button">Go</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsed rail: shown only when the column is collapsed. The expand
+           button + a vertical label + a single live/connected dot wired to the
+           shared API client (set in initStatusSidebar). -->
+      <div class="status-rail" aria-hidden="false">
+        <button class="status-toggle" id="status-expand" type="button"
+                aria-controls="status-sidebar" aria-expanded="false"
+                title="Expand status panel" aria-label="Expand status panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span class="status-rail-dot" id="status-rail-dot" title="Connection status" role="status" aria-label="Disconnected"></span>
+        <span class="status-rail-label" aria-hidden="true">Status</span>
+      </div>
+    </aside>
   </div>
 
   <!-- Keyboard Shortcuts Help Overlay -->
@@ -1727,34 +1968,108 @@ document.addEventListener('DOMContentLoaded', function() {
     updateComponentsApiUrl(apiUrlInput.value);
   });
 
-  // v7.84 Settings popover: holds the API URL override. Toggled by the gear,
-  // closed on outside click or Escape. Best-effort -- if the elements are not
-  // present (older build) this block simply no-ops.
-  (function initSettingsPopover() {
-    var settingsBtn = document.getElementById('settings-btn');
-    var popover = document.getElementById('settings-popover');
-    if (!settingsBtn || !popover) return;
-    function open() {
-      popover.classList.add('open');
-      settingsBtn.setAttribute('aria-expanded', 'true');
+  // v7.93 Settings disclosure: an inline collapsible section in the right
+  // sidebar holding the API URL override (replaces the former floating popover).
+  // The header button drives aria-expanded; the region toggles the [hidden]
+  // attribute (which both animates the height via CSS and removes the API
+  // controls from the tab order while collapsed). State is remembered per
+  // machine. Best-effort -- no-ops on an older build without the elements.
+  (function initSettingsDisclosure() {
+    var btn = document.getElementById('settings-disclosure');
+    var region = document.getElementById('settings-region');
+    if (!btn || !region) return;
+    var STORE_KEY = 'loki-settings-expanded';
+
+    function apply(expanded, persist) {
+      btn.setAttribute('aria-expanded', String(expanded));
+      region.hidden = !expanded;
+      if (persist) {
+        try { localStorage.setItem(STORE_KEY, expanded ? '1' : '0'); } catch (e) { /* ignore */ }
+      }
     }
-    function close() {
-      popover.classList.remove('open');
-      settingsBtn.setAttribute('aria-expanded', 'false');
+
+    var stored = null;
+    try { stored = localStorage.getItem(STORE_KEY); } catch (e) { /* ignore */ }
+    // Default collapsed: the API override is rarely used.
+    apply(stored === '1', false);
+
+    btn.addEventListener('click', function() {
+      apply(btn.getAttribute('aria-expanded') !== 'true', true);
+    });
+  })();
+
+  // v7.92 Right status sidebar collapse. Toggled by the header chevron (when
+  // expanded) and the rail chevron (when collapsed). State is remembered per
+  // machine in localStorage; default is EXPANDED so nothing is hidden on first
+  // load. Best-effort -- no-ops on an older build without the elements.
+  (function initStatusSidebar() {
+    var layout = document.querySelector('.dashboard-layout');
+    var aside = document.getElementById('status-sidebar');
+    var collapseBtn = document.getElementById('status-toggle');
+    var expandBtn = document.getElementById('status-expand');
+    if (!layout || !aside || !collapseBtn || !expandBtn) return;
+    var STORE_KEY = 'loki-status-collapsed';
+
+    function syncAria(collapsed) {
+      // aria-expanded describes the panel's state on whichever control is the
+      // active affordance. Both controls point at the same panel.
+      collapseBtn.setAttribute('aria-expanded', String(!collapsed));
+      expandBtn.setAttribute('aria-expanded', String(!collapsed));
     }
-    settingsBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (popover.classList.contains('open')) { close(); }
-      else { open(); }
-    });
-    // Clicks inside the popover should not close it.
-    popover.addEventListener('click', function(e) { e.stopPropagation(); });
-    document.addEventListener('click', function() {
-      if (popover.classList.contains('open')) close();
-    });
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && popover.classList.contains('open')) close();
-    });
+
+    function apply(collapsed, persist) {
+      layout.classList.toggle('status-collapsed', collapsed);
+      syncAria(collapsed);
+      if (persist) {
+        try { localStorage.setItem(STORE_KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      }
+    }
+
+    function collapse() {
+      apply(true, true);
+      // Move focus to the rail's expand control so keyboard focus is never
+      // orphaned on a now-hidden button.
+      try { expandBtn.focus(); } catch (e) { /* ignore */ }
+    }
+    function expand() {
+      apply(false, true);
+      try { collapseBtn.focus(); } catch (e) { /* ignore */ }
+    }
+
+    collapseBtn.addEventListener('click', collapse);
+    expandBtn.addEventListener('click', expand);
+
+    // Restore remembered state (default expanded). Applied without persisting
+    // and without stealing focus on load. On a narrow viewport the expanded
+    // panel is a full overlay, so force the rail on load there (without
+    // persisting -- the desktop preference is untouched); the user can still tap
+    // expand to open the overlay and the header chevron to close it.
+    var stored = null;
+    try { stored = localStorage.getItem(STORE_KEY); } catch (e) { /* ignore */ }
+    var startCollapsed = (window.innerWidth <= 768) ? true : (stored === '1');
+    apply(startCollapsed, false);
+
+    // Glanceable live dot on the collapsed rail. Wired to the SAME shared API
+    // client the session-control uses, so it reflects real connection state
+    // rather than a static dot implying liveness it does not have.
+    var dot = document.getElementById('status-rail-dot');
+    if (dot && typeof LokiDashboard !== 'undefined' && LokiDashboard.getApiClient) {
+      try {
+        var api = LokiDashboard.getApiClient({ baseUrl: window.location.origin });
+        function setConnected(connected) {
+          dot.classList.toggle('connected', !!connected);
+          dot.setAttribute('aria-label', connected ? 'Connected' : 'Disconnected');
+        }
+        api.addEventListener('api:connected', function () { setConnected(true); });
+        api.addEventListener('api:disconnected', function () { setConnected(false); });
+        api.addEventListener('api:status-update', function () { setConnected(true); });
+        // Initial probe so the dot is honest before the first event arrives.
+        if (typeof api.getStatus === 'function') {
+          api.getStatus().then(function () { setConnected(true); })
+            .catch(function () { setConnected(false); });
+        }
+      } catch (e) { /* leave the dot in its muted default */ }
+    }
   })();
 
   // Offline detection

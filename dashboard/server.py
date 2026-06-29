@@ -667,7 +667,14 @@ async def _push_loki_state_loop() -> None:
                             "running_agents": running_agents,
                             "pending_tasks": len(pending) if isinstance(pending, list) else 0,
                             "current_task": in_prog[0].get("payload", {}).get("action", "") if isinstance(in_prog, list) and in_prog else "",
-                            "version": raw.get("version", ""),
+                            # Version reflects the RUNNING engine, not the project's
+                            # stored state. raw.get("version") is whatever engine
+                            # last wrote dashboard-state.json for THIS project (can
+                            # be an old version, e.g. a project first built under
+                            # 7.7.29), which made the displayed version flip between
+                            # this stale value and the live one from the fallback
+                            # path below. Always use the live engine version.
+                            "version": _version,
                         }
                         await manager.broadcast({
                             "type": "status_update",
@@ -705,14 +712,10 @@ async def _push_loki_state_loop() -> None:
                                 pass
 
                         if _sk_fresh:
-                            # Read version from VERSION file
-                            _sk_version = ""
-                            _vf = _Path(os.path.dirname(os.path.dirname(__file__))) / "VERSION"
-                            if _vf.is_file():
-                                try:
-                                    _sk_version = _vf.read_text().strip()
-                                except OSError:
-                                    pass
+                            # Version reflects the running engine (single source of
+                            # truth), the same value the dashboard-state path uses
+                            # above, so the displayed version never flips.
+                            _sk_version = _version
 
                             # Read orchestrator state
                             _sk_phase = ""
@@ -1106,17 +1109,10 @@ async def get_status() -> StatusResponse:
     loki_dir = _get_loki_dir()
     uptime = (datetime.now(timezone.utc) - start_time).total_seconds()
 
-    # Read VERSION file early (independent of .loki/ dir)
-    version = "unknown"
-    dashboard_dir = os.path.dirname(__file__)
-    project_root = os.path.dirname(dashboard_dir)
-    version_file = os.path.join(project_root, "VERSION")
-    if os.path.isfile(version_file):
-        try:
-            with open(version_file) as vf:
-                version = vf.read().strip()
-        except (OSError, IOError) as e:
-            logger.warning(f"Failed to read VERSION file: {e}")
+    # Version reflects the running engine (single source of truth: the package
+    # __version__, same value every status path uses) so the displayed version is
+    # always the live engine, never a stale per-project value.
+    version = _version
 
     # If .loki/ directory doesn't exist, return idle status immediately
     if not loki_dir.is_dir():
@@ -8784,6 +8780,157 @@ def _reconcile_app_runner_liveness(state):
     return state
 
 
+# Per-probe TCP connect timeout (seconds) for the single-process port probe.
+# Kept short so a stopped/firewalled port fails fast and the status endpoint
+# stays responsive for the dashboard's 3-5s pollers.
+_APP_RUNNER_PORT_PROBE_TIMEOUT = 1.0
+
+
+def _port_is_serving(port):
+    """True only if a TCP connection to 127.0.0.1:<port> genuinely succeeds.
+
+    Honest by construction: this proves *something* is accepting connections on
+    the recorded port right now, never fabricates a result. Any failure (refused,
+    timeout, bad port, OS error) returns False so the caller degrades to an
+    honest non-running state. Synchronous; the caller offloads it to a worker
+    thread so the event loop is never blocked by the connect.
+    """
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False
+    if port <= 0 or port > 65535:
+        return False
+    import socket
+    for host in ("127.0.0.1", "::1"):
+        sock = None
+        try:
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            sock.settimeout(_APP_RUNNER_PORT_PROBE_TIMEOUT)
+            if sock.connect_ex((host, port)) == 0:
+                return True
+        except OSError:
+            continue
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+    return False
+
+
+def _dashboard_self_port():
+    """The TCP port this dashboard process itself is bound to, or None.
+
+    The user's app can never listen on the port the dashboard already occupies,
+    so this is used to exclude a self-hit from the single-process probe (a stale
+    recorded port that happens to equal the dashboard's port would otherwise
+    probe-succeed against the dashboard and be misreported as the app running).
+    Reads LOKI_DASHBOARD_PORT (the same env run_server binds), defaulting to the
+    well-known 57374. Returns an int or None.
+    """
+    try:
+        return int(os.environ.get("LOKI_DASHBOARD_PORT", "57374"))
+    except (TypeError, ValueError):
+        return 57374
+
+
+def _recorded_app_port(state):
+    """Best-effort recorded port for the single-process app, or None.
+
+    Reads the port the app-runner/CLI already recorded for THIS project, never a
+    guessed value: first state.json's own `port`, then the app-runner
+    detection.json the engine writes (`.loki/app-runner/detection.json`). Returns
+    an int in the valid range or None. Pairing the probe to a *recorded* port is
+    what keeps the result honest -- we never sweep arbitrary common ports.
+
+    Honesty guards:
+      - A docker-compose detection.json is ignored here; a compose stack is the
+        compose-discovery path's domain (which verifies the container belongs to
+        the project), so feeding its port into the single-process probe would
+        risk a false positive against an unrelated local service.
+      - The dashboard's own port is never returned, since the user's app cannot
+        bind it and a stale recorded value equal to it would self-hit the probe.
+    """
+    self_port = _dashboard_self_port()
+
+    def _ok(p):
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            return None
+        if not (0 < p <= 65535):
+            return None
+        if self_port is not None and p == self_port:
+            return None
+        return p
+
+    if isinstance(state, dict):
+        p = _ok(state.get("port"))
+        if p is not None:
+            return p
+    try:
+        det_file = _get_loki_dir() / "app-runner" / "detection.json"
+        if det_file.is_file():
+            det = json.loads(det_file.read_text())
+            if isinstance(det, dict) and not det.get("is_docker"):
+                p = _ok(det.get("port"))
+                if p is not None:
+                    return p
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _discover_single_process_app_runner_state(state):
+    """Detect a genuinely-running single-process app via a recorded-port probe.
+
+    A SKILL/CLI-built project (e.g. one started with `npm run dev` outside
+    app-runner.sh, or whose orchestrator has since exited) leaves a state.json
+    with status "stopped"/"stale" and main_pid 0, even while the app itself is
+    still serving. The dashboard would then report "not running" for a live app.
+
+    Resolution (all probe-verified, never fabricated):
+      - Find the RECORDED port (state.json.port or non-docker detection.json) --
+        never a guessed port, and never the dashboard's own port.
+      - Probe 127.0.0.1:<port>. Only if the connection genuinely succeeds do we
+        synthesize a "running" state using the recorded url/port.
+      - Otherwise (no recorded port, or recorded port not reachable) return None;
+        the caller keeps the honest reconciled state, which already carries
+        positive evidence (the writer's settled "stopped", or a pid_gone /
+        recycled / health_stale downgrade). "Unknown" would be less honest than
+        that evidence, so we never override it here.
+
+    Synchronous and self-contained; the caller offloads it onto a worker thread.
+    Never raises.
+    """
+    try:
+        port = _recorded_app_port(state)
+        if not port:
+            return None
+        if not _port_is_serving(port):
+            return None
+        url = ""
+        if isinstance(state, dict):
+            url = state.get("url") or ""
+        if not url:
+            url = "http://localhost:{}".format(port)
+        return {
+            "status": "running",
+            "url": url,
+            "port": int(port),
+            "method": (state.get("method") if isinstance(state, dict) else "") or "",
+            "source": "probe",
+            "externally_managed": True,
+            "last_health": {"ok": True},
+        }
+    except Exception:
+        # Fail open: never let the probe break the status endpoint.
+        return None
+
+
 # =============================================================================
 # Docker-compose app-runner discovery
 #
@@ -9191,6 +9338,10 @@ async def get_app_runner_status():
         discovered = await asyncio.to_thread(_discover_compose_app_runner_state)
         if discovered is not None:
             return discovered
+        # No state.json at all and no compose stack: there is no recorded port to
+        # probe, so the single-process probe can only ever return an honest
+        # "unknown" here. Keep returning not_initialized (the project has never
+        # had an app-runner record) rather than overstating with "unknown".
         return {"status": "not_initialized"}
 
     try:
@@ -9208,6 +9359,14 @@ async def get_app_runner_status():
     discovered = await asyncio.to_thread(_discover_compose_app_runner_state)
     if discovered is not None:
         return discovered
+
+    # Still nothing from compose: a SKILL/CLI-built project may be serving on its
+    # recorded port even though no live app-runner.sh process owns it (main_pid 0
+    # / orchestrator exited). Probe the RECORDED port and only report running when
+    # the port genuinely answers; otherwise keep the honest reconciled state.
+    probed = await asyncio.to_thread(_discover_single_process_app_runner_state, state)
+    if isinstance(probed, dict) and probed.get("status") == "running":
+        return probed
     return reconciled
 
 

@@ -144,8 +144,8 @@ export class LokiSessionControl extends LokiElement {
   }
 
   _startPolling() {
-    // The session control lives in the always-visible sidebar footer (not
-    // inside a .section-page), so it opts OUT of section gating (sectionId:
+    // The session control lives in the right status sidebar (not inside a
+    // .section-page), so it opts OUT of section gating (sectionId:
     // null) and is gated on tab visibility ONLY: a hidden tab does not poll,
     // but it stays fresh on every active section. connectedCallback already did
     // the first load, so immediate is disabled to avoid a duplicate fetch.
@@ -622,6 +622,10 @@ export class LokiSessionControl extends LokiElement {
 
         .model-select {
           flex: 1;
+          /* Allow the select to shrink below its longest option's intrinsic
+             width (the flex min-content floor) so it never overflows a narrow
+             sidebar column; the native control ellipsizes the label. */
+          min-width: 0;
           padding: 5px 8px;
           border-radius: 4px;
           border: 1px solid var(--loki-border);

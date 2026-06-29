@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.93.0] - 2026-06-29
+
+### Dashboard fixes: sidebar rebalance, honest App Runner status, stable version
+
+- **Sidebar rebalance**: the left sidebar is now clean navigation that breathes;
+  the System Status panel + session controls move into a new COLLAPSIBLE right
+  sidebar (remembered state; a 48px rail with a live connection dot when
+  collapsed; a11y + responsive). This also fixes a real reachability bug where
+  the tall status panel starved the left nav to ~88px, leaving only 2 of 16 tabs
+  clickable - all 16 are now reachable.
+- **App Runner honest status**: a skill/CLI-built app (no app-runner.json) was
+  always reported "stopped" even while serving. The dashboard now probes the
+  recorded port (real TCP connect, off the event loop) and reports running with
+  the real URL ONLY when it genuinely answers - never fabricated; excludes the
+  dashboard's own port and compose-owned detections; honest "stopped" when the
+  port is not serving.
+- **Stable version display**: the System Status version flipped between a stale
+  per-project value (baked into a project's state file by whatever engine last
+  built it) and the live version. All status paths now read the single live
+  engine version, so it no longer flips.
+
 ## [7.92.0] - 2026-06-27
 
 ### Zero-friction adoption: fail-open preflight, honest failure diagnosis, CLI polish
