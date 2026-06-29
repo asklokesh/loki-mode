@@ -17150,6 +17150,30 @@ else:
             if [ "$_completion_claimed" = 1 ] && type ensure_completion_test_evidence &>/dev/null; then
                 ensure_completion_test_evidence || true
             fi
+            # TRUST MOAT (fail-CLOSED): each completion gate below is armed only
+            # when its function is loadable (`type fn && ! fn`). If the council
+            # library failed to source, those `type` probes are FALSE, so every
+            # gate arm is silently skipped and a completion claim sails straight to
+            # the accept branch UNVERIFIED -- a fake-green. Before the gate chain,
+            # verify the core gate functions exist; if any is missing, the library
+            # is incomplete and we CANNOT verify completion, so we refuse the claim
+            # (force another iteration) rather than pass ungated. This never fires
+            # in a healthy install (functions are sourced) and only triggers on a
+            # genuinely broken/partial load -- exactly when failing open is unsafe.
+            if [ "$_completion_claimed" = 1 ]; then
+                _gates_loadable=1
+                for _gate_fn in council_checklist_gate council_evidence_gate council_heldout_gate council_assumption_ledger_gate; do
+                    if ! type "$_gate_fn" &>/dev/null; then
+                        log_error "Completion gate unavailable: ${_gate_fn} (council library incomplete or failed to load)."
+                        _gates_loadable=0
+                    fi
+                done
+                if [ "$_gates_loadable" -eq 0 ]; then
+                    log_error "Cannot verify completion: required council gates are missing. Refusing the completion claim (fail-closed) and continuing to iterate."
+                    _completion_claimed=0
+                fi
+                unset _gates_loadable _gate_fn
+            fi
             if [ -n "$_gate_block_for_completion" ] && [ "$_completion_claimed" = 1 ]; then
                 log_warn "Completion claim rejected: code review is BLOCKED for this iteration (Critical/High findings). Fix review issues before completion."
                 log_warn "  Review details under .loki/quality/reviews/ ; gate_failures=${gate_failures}"

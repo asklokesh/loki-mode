@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.95.0] - 2026-06-29
+
+### Trust moat: completion gates now fail CLOSED
+
+- **Fail-closed completion gates** (`autonomy/run.sh`): each completion gate was
+  armed as `type <gate_fn> && ! <gate_fn>`, so if the council library failed to
+  source, the `type` probe was false and the gate was silently skipped - a
+  completion claim could then reach the accept branch UNVERIFIED (a fake-green).
+  The gate chain now verifies the core gate functions are loadable before running;
+  if any is missing, the completion claim is refused and the loop keeps iterating
+  rather than passing ungated. Never fires in a healthy install (functions are
+  sourced); only triggers on a genuinely broken/partial load, exactly when
+  failing open is unsafe. Found by the cycle-3 adversarial bug-hunt.
+
 ## [7.94.0] - 2026-06-29
 
 ### Reuse done-recognition: a no-PRD reuse run no longer rebuilds finished work
