@@ -270,12 +270,14 @@ DR_PROMPT_EOF
     parsed=$(LOKI_DR_RESP="$response" \
              LOKI_DR_TESTS="$_test_results" \
              LOKI_DR_ACTION="$action" \
+             LOKI_DR_PRD="$prd_path" \
              python3 << 'DR_PARSE_EOF'
-import json, os, sys
+import json, os, re, sys
 
 resp = os.environ.get("LOKI_DR_RESP", "")
 action = os.environ.get("LOKI_DR_ACTION", "")
 tests_path = os.environ.get("LOKI_DR_TESTS", "")
+prd_path = os.environ.get("LOKI_DR_PRD", "")
 
 def parse_object(text):
     try:
@@ -342,16 +344,98 @@ def tests_axis(path):
 
 axis = tests_axis(tests_path)
 
+# Requirement COVERAGE guard (deterministic, NEGATIVE-only: it can only route
+# toward build, never toward done). The model returning "all met" over a SUBSET
+# of the PRD is a fake-green: it silently declares unbuilt features satisfied.
+# So we independently parse the PRD's feature/requirement titles and require the
+# model to have COVERED every one. Any PRD title the model did not return a
+# status for -> coverage gap -> done is not trustworthy.
+def _norm_title(t):
+    t = (t or "").strip().lower()
+    # Mirror the populate_prd_queue normalization: drop a leading
+    # "feature:"/"requirement:" label and surrounding markdown/heading marks.
+    t = re.sub(r"^\s*(?:feature|requirement)\s*[:\-]\s*", "", t)
+    t = re.sub(r"^[#\s>*\-]+", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def prd_feature_titles(path):
+    """Best-effort PRD feature/requirement titles. Honest: returns None when we
+    cannot reliably enumerate (so the guard does NOT fire on an unparseable PRD
+    and wrongly block a real done -- it only fires when we DO know the set)."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", errors="replace") as f:
+            raw = f.read()
+    except Exception:
+        return None
+    if not raw.strip():
+        return None
+    titles = []
+    # JSON PRD: collect "title"/"name"/"feature"/"requirement" values.
+    try:
+        d = json.loads(raw)
+        def walk(o):
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    if k in ("title", "name", "feature", "requirement") and isinstance(v, str) and v.strip():
+                        titles.append(v)
+                    else:
+                        walk(v)
+            elif isinstance(o, list):
+                for it in o:
+                    walk(it)
+        walk(d)
+        if titles:
+            return [_norm_title(t) for t in titles if _norm_title(t)]
+    except Exception:
+        pass
+    # Markdown PRD: only count an explicit feature/requirement marker, mirroring
+    # populate_prd_queue's "title"|"name"|"feature"|"requirement" basis. A bare
+    # heading (e.g. the document title "# Demo App") is NOT a feature -- counting
+    # it would inflate the PRD set and wrongly flag a complete project as a gap.
+    for line in raw.splitlines():
+        s = line.strip()
+        # "## Feature: X", "# Requirement: X", or "Feature: X" / "Requirement: X".
+        m = re.match(r"^(?:#{1,6}\s+)?(?:feature|requirement)\s*[:\-]\s+(.+)$", s, re.I)
+        if m:
+            n = _norm_title(m.group(1))
+            if n:
+                titles.append(n)
+    titles = [t for t in titles if t]
+    # Only return a set we are CONFIDENT enumerates the PRD. If we found no
+    # explicit feature markers, return None (do not guess from bare headings and
+    # risk a false coverage gap that blocks a genuine done).
+    return titles if titles else None
+
 all_met = len(statuses) > 0 and all(s == "met" for s in statuses)
 any_unmet = any(s == "unmet" for s in statuses)
 any_met = any(s == "met" for s in statuses)
+
+# Coverage check: did the model address every PRD feature? If the PRD set is
+# known and the model omitted any of it, the "all met" is over a subset -> not
+# trustworthy as done.
+_prd_titles = prd_feature_titles(prd_path)
+_covered = set(_norm_title(t) for t in (
+    (r.get("title") or "") for r in reqs if isinstance(r, dict)
+) if _norm_title(t))
+coverage_gap = False
+if _prd_titles is not None:
+    _missing = [t for t in set(_prd_titles) if t not in _covered]
+    coverage_gap = len(_missing) > 0
 
 # Defensive re-derivation (do NOT trust obj["verdict"] blindly).
 # done requires: all requirements met AND tests not red. If there is no test
 # runner (axis unknown) the model may still establish done by code evidence,
 # but a RED axis hard-blocks done (no fake-green).
-if all_met and axis != "red":
+if all_met and axis != "red" and not coverage_gap:
     verdict = "done"
+elif coverage_gap and all_met and axis != "red":
+    # Model reported all-met but did not cover every PRD feature -> it declared a
+    # SUBSET done. Never a fast-stop on partial coverage (no fake-green). The met
+    # subset can still seed an incremental build of the omitted features.
+    verdict = "incomplete"
 elif any_unmet or (any_met and not all_met):
     verdict = "incomplete"
 elif all_met and axis == "red":
@@ -388,6 +472,8 @@ print(json.dumps({
     "tests_axis": axis,
     "met_count": len([s for s in statuses if s == "met"]),
     "total_count": len(statuses),
+    "prd_feature_count": (len(set(_prd_titles)) if _prd_titles is not None else None),
+    "coverage_gap": coverage_gap,
     "satisfied": satisfied,
 }))
 DR_PARSE_EOF

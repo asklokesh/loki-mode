@@ -136,6 +136,42 @@ fi
 cleanup_project
 
 #==============================================================================
+# (a2) COVERAGE GUARD: model returns all-met over a SUBSET of the PRD (1 of 3)
+#      with GREEN tests -> must NOT fast-stop done (that would declare 2 unbuilt
+#      features satisfied = fake-green). Downgrades to build; the omitted
+#      features are queued. This is the council-found HIGH trust hole.
+#==============================================================================
+new_project
+write_tests green
+# The model addresses only "User login" and calls it met -- it silently omits
+# Dashboard + Export report. A green suite covering 1 feature must not pass as done.
+_loki_done_recog_invoke() {
+    bump_invoke
+    cat <<'JSON'
+{"verdict":"done","summary":"login works",
+ "tests":{"passed":8,"total":8,"green":true},
+ "requirements":[
+  {"id":"f1","title":"User login","status":"met","evidence":"auth.py:10"}]}
+JSON
+}
+reset_invokes
+GENERATED_PRD_ACTION="reuse"
+if reuse_done_recognition_gate ".loki/generated-prd.md"; then
+    fail "(a2) partial-coverage all-met WRONGLY fast-stopped as done (fake-green)"
+else
+    ok "(a2) partial-coverage all-met does NOT fast-stop (returns build)"
+fi
+[ ! -f "$TARGET_DIR/.loki/COMPLETED" ] && ok "(a2) no COMPLETED marker on partial coverage" || fail "(a2) COMPLETED wrongly written on partial coverage"
+# The 1 genuinely-met feature may still seed the incremental manifest...
+if [ -f "$TARGET_DIR/.loki/state/satisfied-requirements.json" ]; then
+    has_login=$(python3 -c "import json;d=json.load(open('$TARGET_DIR/.loki/state/satisfied-requirements.json'));print(any('login' in str(x).lower() for x in (d.get('satisfied',d) if isinstance(d,dict) else d)))" 2>/dev/null)
+    [ "$has_login" = "True" ] && ok "(a2) met subset seeds incremental manifest" || ok "(a2) manifest present (subset handling)"
+else
+    ok "(a2) no manifest (conservative full build) is acceptable too"
+fi
+cleanup_project
+
+#==============================================================================
 # (b) model done but fresh tests RED -> downgraded to build (no fake-green)
 #==============================================================================
 new_project
