@@ -272,10 +272,21 @@ if grep -q 'populate_prd_queue() {' "$PQ_HARNESS" && grep -q '_dr_satisfied' "$P
 else
     fail "(d) populate_prd_queue extraction incomplete (line drift?)"
 fi
+# PRODUCTION-FAITHFUL: the prior completed run left .loki/queue/.prd-populated.
+# We do NOT hand-remove it -- the gate's manifest writer must clear it so the
+# incremental rebuild runs. (Removing it manually here would mask the inert-path
+# bug the council found.) Simulate the real reuse state: marker present from the
+# prior run, then the gate has already written the manifest + cleared the marker.
+mkdir -p "$TARGET_DIR/.loki/queue"
+: > "$TARGET_DIR/.loki/queue/.prd-populated"
+# Run the gate's manifest writer the way the incomplete verdict does (it clears
+# the stale marker). _loki_done_recog_write_manifest is sourced from the lib.
+( cd "$TARGET_DIR"
+  _loki_done_recog_write_manifest ".loki/generated-prd.md" '{"satisfied":["User login","Dashboard"],"met_count":2,"total_count":3}' >/dev/null 2>&1 || true )
+[ ! -f "$TARGET_DIR/.loki/queue/.prd-populated" ] && ok "(d0) manifest writer cleared the stale .prd-populated marker" || fail "(d0) stale .prd-populated marker NOT cleared (incremental path would be inert)"
 # shellcheck source=/dev/null
 ( source "$PQ_HARNESS"
   cd "$TARGET_DIR"
-  rm -f .loki/queue/.prd-populated 2>/dev/null || true
   populate_prd_queue ".loki/generated-prd.md" >/dev/null 2>&1
   # Count prd-* tasks built.
   if [ -f .loki/queue/pending.json ]; then

@@ -391,23 +391,54 @@ def prd_feature_titles(path):
             return [_norm_title(t) for t in titles if _norm_title(t)]
     except Exception:
         pass
-    # Markdown PRD: only count an explicit feature/requirement marker, mirroring
-    # populate_prd_queue's "title"|"name"|"feature"|"requirement" basis. A bare
-    # heading (e.g. the document title "# Demo App") is NOT a feature -- counting
-    # it would inflate the PRD set and wrongly flag a complete project as a gap.
+    # Markdown PRD. Loki's OWN generated PRDs (the canonical reuse target, written
+    # by the codebase-analysis prompt) do NOT use "## Feature:" markers -- they use
+    # sections like "## Existing Behavior and Requirements" with bullet items. So
+    # we must enumerate from multiple shapes, not just an explicit Feature: label:
+    #   - explicit "Feature:"/"Requirement:" lines (any depth)
+    #   - bullet/numbered requirement items under a requirements-like section
+    #   - sub-section headings (### ...) that name a discrete capability
+    # A bare top-level document title (the single "# Title" line) is excluded.
+    REQ_SECTION = re.compile(r"requirement|feature|behavior|capabilit|user stor|acceptance", re.I)
+    NON_FEATURE = ("overview", "summary", "prd", "spec", "requirements", "features",
+                   "scope", "goals", "detected stack", "stack", "non-goals",
+                   "out of scope", "context", "background", "existing behavior and requirements")
+    in_req_section = False
     for line in raw.splitlines():
         s = line.strip()
-        # "## Feature: X", "# Requirement: X", or "Feature: X" / "Requirement: X".
-        m = re.match(r"^(?:#{1,6}\s+)?(?:feature|requirement)\s*[:\-]\s+(.+)$", s, re.I)
+        if not s:
+            continue
+        # Explicit label anywhere.
+        m = re.match(r"^(?:[#>*\-\d.\s]+)?(?:feature|requirement)\s*[:\-]\s+(.+)$", s, re.I)
         if m:
             n = _norm_title(m.group(1))
-            if n:
+            if n and n not in NON_FEATURE:
                 titles.append(n)
-    titles = [t for t in titles if t]
-    # Only return a set we are CONFIDENT enumerates the PRD. If we found no
-    # explicit feature markers, return None (do not guess from bare headings and
-    # risk a false coverage gap that blocks a genuine done).
-    return titles if titles else None
+            continue
+        # Section heading: track whether we are inside a requirements-like section.
+        hm = re.match(r"^#{1,6}\s+(.+)$", s)
+        if hm:
+            head = _norm_title(hm.group(1))
+            in_req_section = bool(REQ_SECTION.search(head))
+            # A discrete sub-section heading (###+) that is not a known non-feature
+            # label is itself a feature title.
+            if re.match(r"^#{3,6}\s+", s) and head and head not in NON_FEATURE:
+                titles.append(head)
+            continue
+        # Bullet / numbered item inside a requirements-like section is a requirement.
+        if in_req_section:
+            bm = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", s)
+            if bm:
+                n = _norm_title(bm.group(1))
+                # Keep it short-ish (a requirement line, not a paragraph) and real.
+                if n and n not in NON_FEATURE and len(n) <= 200:
+                    titles.append(n)
+    # Dedup, preserve order.
+    seen = set(); uniq = []
+    for t in titles:
+        if t not in seen:
+            seen.add(t); uniq.append(t)
+    return uniq if uniq else None
 
 all_met = len(statuses) > 0 and all(s == "met" for s in statuses)
 any_unmet = any(s == "unmet" for s in statuses)
@@ -420,7 +451,13 @@ _prd_titles = prd_feature_titles(prd_path)
 _covered = set(_norm_title(t) for t in (
     (r.get("title") or "") for r in reqs if isinstance(r, dict)
 ) if _norm_title(t))
+# coverage_gap is True when we KNOW the model under-enumerated the spec.
+# coverage_unknown is True when we could NOT enumerate the PRD at all -- in which
+# case we CANNOT trust a done (a wrong done burns trust; a wrong incomplete only
+# costs a rebuild). Per the NEGATIVE-only-fast-path rule, an inability to verify
+# coverage must block done, never enable it.
 coverage_gap = False
+coverage_unknown = _prd_titles is None
 if _prd_titles is not None:
     _missing = [t for t in set(_prd_titles) if t not in _covered]
     coverage_gap = len(_missing) > 0
@@ -429,8 +466,13 @@ if _prd_titles is not None:
 # done requires: all requirements met AND tests not red. If there is no test
 # runner (axis unknown) the model may still establish done by code evidence,
 # but a RED axis hard-blocks done (no fake-green).
-if all_met and axis != "red" and not coverage_gap:
+if all_met and axis != "red" and not coverage_gap and not coverage_unknown:
     verdict = "done"
+elif coverage_unknown and all_met and axis != "red":
+    # We could not enumerate the PRD to confirm the model covered all of it. A
+    # done over an unverifiable spec is a fake-green risk (the model may have
+    # addressed a subset). Route to inconclusive -> build, never a fast-stop.
+    verdict = "inconclusive"
 elif coverage_gap and all_met and axis != "red":
     # Model reported all-met but did not cover every PRD feature -> it declared a
     # SUBSET done. Never a fast-stop on partial coverage (no fake-green). The met
@@ -677,6 +719,39 @@ try:
 except Exception:
     pass
 " 2>/dev/null || true
+
+    # The satisfied-requirements manifest is read by populate_prd_queue's
+    # incremental skip-filter -- but populate_prd_queue early-returns when a stale
+    # .prd-populated marker from the PRIOR (completed) run still exists, never
+    # reaching the filter. Clear that marker (and reset the pending queue) so the
+    # incremental rebuild actually runs and skips the satisfied features. Without
+    # this, the founder-locked "build only the unsatisfied gap" behavior is inert.
+    rm -f ".loki/queue/.prd-populated" 2>/dev/null || true
+    if [ -f ".loki/queue/pending.json" ]; then
+        # Drop prior PRD-sourced tasks so the incremental pass is the source of
+        # truth; non-PRD tasks (if any) are preserved.
+        python3 - <<'RESET_EOF' 2>/dev/null || true
+import json, os, tempfile
+p = ".loki/queue/pending.json"
+try:
+    with open(p) as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(0)
+tasks = data.get("tasks", data) if isinstance(data, dict) else data
+if isinstance(tasks, list):
+    kept = [t for t in tasks if not (isinstance(t, dict) and str(t.get("id", "")).startswith("prd-"))]
+    if isinstance(data, dict):
+        data["tasks"] = kept
+    else:
+        data = kept
+    d = os.path.dirname(os.path.abspath(p)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".pending-", suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, p)
+RESET_EOF
+    fi
 
     local met total
     met=$(printf '%s' "$parsed" | python3 -c "import json,sys;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
